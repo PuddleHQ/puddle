@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the host asks of the machine before the runtime opens, behind a trait so the start-up
 //! order can be tested without touching the process environment or the runtime folder.
 
@@ -75,10 +75,13 @@ impl Platform for SystemPlatform {
     }
 
     fn corporate_roots(&self) -> Result<CorporateRoots, HostError> {
-        let snapshot = read_host_stores().map_err(|e| HostError::Roots(e.to_string()))?;
+        let snapshot = read_host_stores().map_err(HostError::Roots)?;
         Ok(CorporateRoots::select(
             &snapshot,
             std::time::SystemTime::now(),
         ))
     }
 }
+
+#[cfg(all(test, not(windows)))]
+mod tests;

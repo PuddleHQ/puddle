@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A destination behind a private-access client, against the real guard, rules and audit: the
 //! intranet name resolves to a `100.64.0.0/10` address, the host reaches the intranet through the
 //! client's tunnel, and a physical-LAN address sits next to it.

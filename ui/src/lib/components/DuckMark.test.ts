@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { render } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 import DuckMark from "./DuckMark.svelte";

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The readiness gate: no SSH and no exec for anyone until the boot hook has returned 0.
 //!
 //! ```text

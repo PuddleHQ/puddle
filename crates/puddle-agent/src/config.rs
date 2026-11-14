@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent's settings, from environment variables (the boot hook sets them).
 //!
 //! | Variable | Default | |
@@ -324,7 +324,18 @@ impl Config {
                 .parse()
                 .map_err(|_| bad(var, &v, "expected <ip>:<port>"))?;
         }
-        config.bridge = bridge_from(&lookup)?;
+        let mut bridge = BridgeConfig::default();
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_BRIDGE_POLL_MS") {
+            bridge.poll = millis(var, &v)?;
+        }
+        config.bridge = match lookup("PUDDLE_AGENT_BRIDGE") {
+            None => Some(bridge),
+            Some((v, _)) if v == "off" => None,
+            Some((v, var)) => {
+                bridge.addr = bridge_addr(var, &v)?;
+                Some(bridge)
+            }
+        };
         if let Some((v, var)) = lookup("PUDDLE_AGENT_TARGET") {
             config.target = v.parse().map_err(|reason: String| bad(var, &v, &reason))?;
         }
@@ -341,7 +352,7 @@ impl Config {
         if let Some((v, var)) = lookup("PUDDLE_AGENT_WINDOW") {
             config.window = v.parse().map_err(|_| bad(var, &v, "expected bytes"))?;
         }
-        config.oom = oom_from(&lookup)?;
+        config.oom = oom_watch(&lookup)?;
         config.entrypoint = match lookup("PUDDLE_AGENT_ENTRYPOINT_EXIT") {
             None => Some(EntrypointWatch::default()),
             Some((v, _)) if v == "off" => None,
@@ -350,21 +361,22 @@ impl Config {
                 ..EntrypointWatch::default()
             }),
         };
-        config.ports = ports_from(&lookup)?;
-        let (capture, dns) = capture_and_dns_from(&lookup)?;
-        config.capture = capture;
-        config.dns = dns;
-        config.editor = editor_from(&get)?;
-        config.ssh_agent = match lookup("PUDDLE_AGENT_SSH_AGENT") {
-            None => None,
-            Some((v, _)) if v == "off" => None,
-            Some((v, var)) => Some(SshAgentConfig {
-                socket: path(var, &v)?,
-                user: lookup("PUDDLE_AGENT_SSH_AGENT_USER")
-                    .map_or_else(|| "root".to_owned(), |(user, _)| user),
-                owner_wait: Duration::from_secs(60),
-            }),
-        };
+        config.ports = port_watch(&lookup)?;
+        config.ssh_agent = ssh_agent(&lookup)?;
+        (config.capture, config.dns) = capture_and_dns(&lookup)?;
+        config.editor = EditorServer::from_lookup(&get)
+            .map_err(|e| bad(e.var, &get(e.var).unwrap_or_default(), &e.reason))?
+            .map(|server| {
+                let password_file = get("PUDDLE_AGENT_EDITOR_PASSWORD_FILE")
+                    .filter(|p| !p.is_empty())
+                    .map_or_else(|| PathBuf::from(editor::PASSWORD_FILE), PathBuf::from);
+                EditorConfig {
+                    server,
+                    password_file,
+                    boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
+                    root: PathBuf::from("/"),
+                }
+            });
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()
@@ -374,25 +386,11 @@ impl Config {
     }
 }
 
-/// One variable's value and its name, or `None` when it is unset.
+/// Reads one variable: its value and name, `None` when unset.
 type Lookup<'a> = &'a dyn Fn(&'static str) -> Option<(String, &'static str)>;
 
-fn bridge_from(lookup: Lookup<'_>) -> Result<Option<BridgeConfig>, ConfigError> {
-    let mut bridge = BridgeConfig::default();
-    if let Some((v, var)) = lookup("PUDDLE_AGENT_BRIDGE_POLL_MS") {
-        bridge.poll = millis(var, &v)?;
-    }
-    Ok(match lookup("PUDDLE_AGENT_BRIDGE") {
-        None => Some(bridge),
-        Some((v, _)) if v == "off" => None,
-        Some((v, var)) => {
-            bridge.addr = bridge_addr(var, &v)?;
-            Some(bridge)
-        }
-    })
-}
-
-fn oom_from(lookup: Lookup<'_>) -> Result<Option<OomSources>, ConfigError> {
+/// The OOM watch: its sources and timings, or `None` when `PUDDLE_AGENT_OOM` turns it off.
+fn oom_watch(lookup: Lookup<'_>) -> Result<Option<OomSources>, ConfigError> {
     let mut oom = OomSources::default();
     if let Some((v, var)) = lookup("PUDDLE_AGENT_VMSTAT") {
         oom.vmstat = path(var, &v)?;
@@ -414,7 +412,8 @@ fn oom_from(lookup: Lookup<'_>) -> Result<Option<OomSources>, ConfigError> {
     }
 }
 
-fn ports_from(lookup: Lookup<'_>) -> Result<Option<PortWatch>, ConfigError> {
+/// The port watch: its folder and timing, or `None` when `PUDDLE_AGENT_PORTS` turns it off.
+fn port_watch(lookup: Lookup<'_>) -> Result<Option<PortWatch>, ConfigError> {
     let mut ports = PortWatch::default();
     if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_DIR") {
         ports.dir = path(var, &v)?;
@@ -430,8 +429,23 @@ fn ports_from(lookup: Lookup<'_>) -> Result<Option<PortWatch>, ConfigError> {
     }
 }
 
-/// The capture and the stub DNS settings, read together: capture on needs the stub DNS.
-fn capture_and_dns_from(
+/// The guest's SSH agent socket, or `None` when `PUDDLE_AGENT_SSH_AGENT` is unset or `off`.
+fn ssh_agent(lookup: Lookup<'_>) -> Result<Option<SshAgentConfig>, ConfigError> {
+    match lookup("PUDDLE_AGENT_SSH_AGENT") {
+        None => Ok(None),
+        Some((v, _)) if v == "off" => Ok(None),
+        Some((v, var)) => Ok(Some(SshAgentConfig {
+            socket: path(var, &v)?,
+            user: lookup("PUDDLE_AGENT_SSH_AGENT_USER")
+                .map_or_else(|| "root".to_owned(), |(user, _)| user),
+            owner_wait: Duration::from_secs(60),
+        })),
+    }
+}
+
+/// The capture and the stub DNS it needs: `PUDDLE_AGENT_CAPTURE` and `PUDDLE_AGENT_DNS` decide
+/// together, since capture's redirect sends DNS to the stub.
+fn capture_and_dns(
     lookup: Lookup<'_>,
 ) -> Result<(Option<CaptureConfig>, Option<DnsConfig>), ConfigError> {
     let mut dns = DnsConfig::default();
@@ -487,22 +501,6 @@ fn capture_and_dns_from(
         }
     };
     Ok((capture_on.then_some(capture), dns))
-}
-
-fn editor_from(get: &impl Fn(&str) -> Option<String>) -> Result<Option<EditorConfig>, ConfigError> {
-    Ok(EditorServer::from_lookup(get)
-        .map_err(|e| bad(e.var, &get(e.var).unwrap_or_default(), &e.reason))?
-        .map(|server| {
-            let password_file = get("PUDDLE_AGENT_EDITOR_PASSWORD_FILE")
-                .filter(|p| !p.is_empty())
-                .map_or_else(|| PathBuf::from(editor::PASSWORD_FILE), PathBuf::from);
-            EditorConfig {
-                server,
-                password_file,
-                boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
-                root: PathBuf::from("/"),
-            }
-        }))
 }
 
 fn bad(var: &'static str, value: &str, reason: &str) -> ConfigError {

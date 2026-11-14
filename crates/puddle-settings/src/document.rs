@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading and writing settings documents: version check, migrations, unknown fields.
 
 use std::collections::BTreeMap;
@@ -57,6 +57,15 @@ pub enum SettingsError {
         /// What went wrong, from the value's own validation.
         reason: String,
     },
+    /// The settings cannot be written as a document. Settings types have string keys only, so this
+    /// is not expected; it is returned rather than assumed.
+    #[error("cannot write {kind} settings as a document: {reason}")]
+    Unstorable {
+        /// The document kind.
+        kind: &'static str,
+        /// The serialiser's message.
+        reason: String,
+    },
 }
 
 /// A document read by `from_document`.
@@ -98,18 +107,20 @@ pub(crate) fn load<T: Document>(doc: Value) -> Result<Loaded<T>, SettingsError> 
     })
 }
 
-pub(crate) fn store<T: Document>(settings: &T) -> Value {
-    #[expect(
-        clippy::expect_used,
-        reason = "settings types have string keys only and serialise to a JSON object"
-    )]
-    let mut value = serde_json::to_value(settings).expect("settings serialise to JSON");
+pub(crate) fn store<T: Document>(settings: &T) -> Result<Value, SettingsError> {
+    let mut value = serde_json::to_value(settings).map_err(|e| SettingsError::Unstorable {
+        kind: T::KIND,
+        reason: e.to_string(),
+    })?;
     if let Value::Object(map) = &mut value {
         map.insert(VERSION_KEY.to_owned(), Value::from(T::VERSION));
     }
-    value
+    Ok(value)
 }
 
 pub(crate) fn push_unknown(prefix: &str, extra: &BTreeMap<String, Value>, out: &mut Vec<String>) {
     out.extend(extra.keys().map(|k| format!("{prefix}{k}")));
 }
+
+#[cfg(test)]
+mod tests;

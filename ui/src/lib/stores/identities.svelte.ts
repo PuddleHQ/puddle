@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the sets here are bookkeeping that no template reads */
 // The Identities screens' state: the identities in your order, what Puddle found signed in on this
 // computer, what the last check of each credential came to, and what a user does to them (make,

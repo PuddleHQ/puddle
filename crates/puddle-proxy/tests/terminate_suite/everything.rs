@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of a workspace that decrypts every host: what is decrypted, what is passed through
 //! untouched (a never-decrypt name, a host a tool refused the certificate for, anything that is
 //! not TLS, a server Puddle's TLS cannot talk to), and that the switch applies to the next

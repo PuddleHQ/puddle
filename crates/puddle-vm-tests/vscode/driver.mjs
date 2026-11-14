@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // VS Code half of the desktop VS Code client (crates/puddle-vm-tests/src/vscode.rs).
 //
 // Drives a desktop VS Code that the test started with `--remote-debugging-port`, over Electron's DevTools Protocol, with

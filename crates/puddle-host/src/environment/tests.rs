@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -131,14 +131,14 @@ fn a_secret_whose_value_is_gone_or_unreadable_stops_the_start_with_its_name() {
         &["api.example.com"],
     );
     vault.delete(&StoredId::new("env-TOKEN").unwrap()).unwrap();
-    let gone = resolve(&store, &vault, &ws("a")).unwrap_err();
+    let gone = resolve(&store, &vault, &ws("a")).unwrap_err().to_string();
     assert!(
         gone.contains("TOKEN") && gone.contains("Environment tab"),
         "{gone}"
     );
 
     vault.break_it();
-    let broken = resolve(&store, &vault, &ws("a")).unwrap_err();
+    let broken = resolve(&store, &vault, &ws("a")).unwrap_err().to_string();
     assert!(
         broken.contains("TOKEN") && broken.contains("credential store"),
         "{broken}"
@@ -179,7 +179,7 @@ fn a_secret_that_the_proxy_would_not_swap_stops_the_start_instead_of_starting_de
             EnvDraft::secret(id, vec![SecretHost::new("api.example.com").unwrap()]).unwrap(),
         )
         .unwrap();
-    let err = resolve(&store, &vault, &ws("a")).unwrap_err();
+    let err = resolve(&store, &vault, &ws("a")).unwrap_err().to_string();
     assert!(
         err.contains("BAD") && err.contains("cannot be used"),
         "{err}"
@@ -279,4 +279,29 @@ fn the_hosts_the_store_accepts_are_the_hosts_a_stand_in_accepts() {
             );
         }
     }
+}
+
+#[test]
+fn each_failure_names_its_workspace_or_variable_for_the_user() {
+    let store = puddle_store::StoreError::Backup("disk full".to_owned());
+    let err = EnvironmentError::store(&ws("a"))(store);
+    assert_eq!(
+        err.to_string(),
+        "cannot read a's environment: could not back up the database before migrating: disk full"
+    );
+
+    let bad = TerminationSet::parse(["not a host"]).unwrap_err();
+    let err = EnvironmentError::hosts("TOKEN")(bad);
+    assert_eq!(
+        err.to_string(),
+        "the hosts of the secret TOKEN are not usable: \"not a host\" is not a host name"
+    );
+
+    let refused = QueryName::new("bad name").unwrap_err();
+    let err = EnvironmentError::variable("bad name")(refused);
+    assert!(
+        err.to_string()
+            .starts_with("the variable bad name cannot be set: "),
+        "{err}"
+    );
 }

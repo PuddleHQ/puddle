@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What Puddle puts into a guest: paths, files and environment variables.
 //!
 //! Providers (proxy config, corporate roots, the per-workspace CA) produce [`GuestFile`]s and
@@ -14,6 +14,96 @@ use crate::merge::MergeSpec;
 
 /// Longest accepted guest path (Linux `PATH_MAX`).
 const MAX_PATH_LEN: usize = 4096;
+
+/// Whether `path` is a valid [`GuestPath`], as a `const fn` so a literal is checked at compile time
+/// (see [`GuestPathLit`]). [`GuestPath::new`] agrees with it (a unit test compares them).
+const fn is_valid_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let [b'/', after_root @ ..] = bytes else {
+        return false;
+    };
+    if bytes.len() > MAX_PATH_LEN {
+        return false;
+    }
+    if after_root.is_empty() {
+        return true;
+    }
+    // A component is valid unless it is empty, `.` or `..`.
+    let mut len = 0_usize;
+    let mut only_dots = true;
+    let mut rest = after_root;
+    while let [byte, tail @ ..] = rest {
+        rest = tail;
+        match *byte {
+            0 => return false,
+            b'/' => {
+                if len == 0 || (only_dots && len <= 2) {
+                    return false;
+                }
+                len = 0;
+                only_dots = true;
+            }
+            other => {
+                len += 1;
+                if other != b'.' {
+                    only_dots = false;
+                }
+            }
+        }
+    }
+    len != 0 && !(only_dots && len <= 2)
+}
+
+/// A guest path written in the source and checked when the crate is built, not when it runs.
+///
+/// Use [`guest_path!`](crate::guest_path) for a constant; a path that comes from input goes
+/// through [`GuestPath::new`], which returns the error.
+///
+/// ```
+/// use puddle_types::{GuestPath, guest_path};
+/// const AGENT: &str = "/opt/puddle/agent";
+/// let p: GuestPath = guest_path!(AGENT);
+/// assert_eq!(p.as_str(), "/opt/puddle/agent");
+/// ```
+///
+/// A relative one does not compile:
+///
+/// ```compile_fail
+/// use puddle_types::guest_path;
+/// let _ = guest_path!("relative");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuestPathLit(&'static str);
+
+impl GuestPathLit {
+    /// Checks `path`.
+    ///
+    /// # Panics
+    ///
+    /// When `path` is not a valid [`GuestPath`]. In a `const` context that is a build error.
+    #[must_use]
+    pub const fn new(path: &'static str) -> Self {
+        assert!(is_valid_path(path), "not a valid guest path");
+        Self(path)
+    }
+}
+
+impl From<GuestPathLit> for GuestPath {
+    fn from(lit: GuestPathLit) -> Self {
+        Self(lit.0.to_owned())
+    }
+}
+
+/// A [`GuestPath`] from a constant string, checked at build time: no `Result`, no `expect`.
+///
+/// The argument must be a literal or a `const`; the check runs in a `const` block, so an invalid
+/// path stops the build.
+#[macro_export]
+macro_rules! guest_path {
+    ($path:expr) => {
+        $crate::GuestPath::from(const { $crate::GuestPathLit::new($path) })
+    };
+}
 
 /// An absolute, normalised path inside the guest (always `/`-separated, whatever the host OS).
 ///
@@ -124,6 +214,52 @@ impl From<GuestPath> for String {
     }
 }
 
+/// Permission bits of a [`GuestFile`]: within `0o7777`.
+///
+/// ```
+/// use puddle_types::FileMode;
+/// const SECRET: FileMode = FileMode::new(0o600);
+/// assert_eq!(SECRET.bits(), 0o600);
+/// assert!(FileMode::try_new(0o10000).is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileMode(u32);
+
+impl FileMode {
+    /// Checks `mode`, in a `const` it stops the build.
+    ///
+    /// # Panics
+    ///
+    /// When `mode` has bits outside `0o7777`.
+    #[must_use]
+    pub const fn new(mode: u32) -> Self {
+        assert!(mode & !0o7777 == 0, "a file mode is within 0o7777");
+        Self(mode)
+    }
+
+    /// Checks a mode that comes from input.
+    ///
+    /// # Errors
+    ///
+    /// When `mode` has bits outside `0o7777`.
+    pub fn try_new(mode: u32) -> Result<Self, ValidationError> {
+        if mode & !0o7777 != 0 {
+            return Err(ValidationError::new(
+                "file mode",
+                &format!("{mode:o}"),
+                "must be within 0o7777",
+            ));
+        }
+        Ok(Self(mode))
+    }
+
+    /// The permission bits.
+    #[must_use]
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+}
+
 /// A file the boot hook writes into the guest: path, contents, permission bits and how it is
 /// applied ([`ApplyKind`]).
 ///
@@ -133,10 +269,9 @@ impl From<GuestPath> for String {
 /// disk like the rest, so only put one here when the guest has to hold it.
 ///
 /// ```
-/// use puddle_types::{GuestFile, GuestPath};
+/// use puddle_types::{FileMode, GuestFile, GuestPath};
 /// let f = GuestFile::new(GuestPath::new("/etc/profile.d/01-puddle-env.sh").unwrap(), b"export A=1\n".to_vec())
-///     .with_mode(0o644)
-///     .unwrap();
+///     .with_mode(FileMode::new(0o644));
 /// assert_eq!(f.mode(), 0o644);
 /// ```
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,20 +375,10 @@ impl GuestFile {
     }
 
     /// The same file with permission bits `mode`.
-    ///
-    /// # Errors
-    ///
-    /// When `mode` has bits outside `0o7777`.
-    pub fn with_mode(mut self, mode: u32) -> Result<Self, ValidationError> {
-        if mode & !0o7777 != 0 {
-            return Err(ValidationError::new(
-                "file mode",
-                &format!("{mode:o}"),
-                "must be within 0o7777",
-            ));
-        }
-        self.mode = mode;
-        Ok(self)
+    #[must_use]
+    pub fn with_mode(mut self, mode: FileMode) -> Self {
+        self.mode = mode.bits();
+        self
     }
 
     /// Where the file goes in the guest.

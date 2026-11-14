@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host: one start-up sequence and one shutdown sequence for the whole process.
 //!
 //! Starting has two phases because one step has to run before the process has any other thread:
@@ -304,7 +304,7 @@ fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceId) -> LocalAc
 fn local_access_checked(
     settings: &dyn SettingsRepo,
     workspace: &WorkspaceId,
-) -> Result<LocalAccess, String> {
+) -> Result<LocalAccess, crate::settings_read::SettingsReadError> {
     let global = crate::settings_read::global(settings)?;
     let own = crate::settings_read::workspace(settings, workspace)?;
     Ok(LocalAccess::from_effective(&resolve(&global, Some(&own))))
@@ -783,6 +783,7 @@ fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
         .secret_store
         .clone()
         .unwrap_or_else(crate::vault::os_vault);
+    crate::vault::check_in_background(options.secret_store.clone(), problems.clone());
     let vault_sweep =
         crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
     let marks = config.paths.login_markers();

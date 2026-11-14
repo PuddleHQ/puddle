@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests ci/fetch-tauri-cli.sh against a small release served from a folder (no network). The
 # archive here is a tarball: the script unpacks either kind by the pinned asset's extension.
 set -eu

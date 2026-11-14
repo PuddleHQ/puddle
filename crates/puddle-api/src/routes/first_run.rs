@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The first-run flow's state: shown until the user has been through it or skipped it, kept in
 //! the global settings document with the user's other settings.
 
@@ -77,7 +77,7 @@ pub(crate) async fn put_first_run(
             (false, Some(_)) => first_run.completed_at = None,
             _ => return Ok(view(first_run, state.dev_cert.status())),
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         tracing::info!(completed = body.completed, "first-run state changed");
         Ok(view(&loaded.settings.first_run, state.dev_cert.status()))
     })

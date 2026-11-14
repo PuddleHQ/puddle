@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The system check the API serves: `puddle doctor`'s checks run against this machine and the
 //! runtime folder the host was started with.
 

@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The inputs: where the proxy is, and which destinations bypass it.
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use puddle_types::GuestPath;
+use puddle_types::{GuestPath, guest_path};
 
 use crate::ConfigError;
 
@@ -62,27 +62,11 @@ impl Default for ProxySettings {
             proxy: DEFAULT_PROXY,
             container_proxy: Some(DEFAULT_CONTAINER_PROXY),
             no_proxy: Vec::new(),
-            home: default_home(),
-            agent: default_agent(),
+            home: guest_path!(DEFAULT_HOME),
+            agent: guest_path!(DEFAULT_AGENT),
             ssh_agent: None,
         }
     }
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "invariant: DEFAULT_AGENT is a constant valid guest path (unit test)"
-)]
-fn default_agent() -> GuestPath {
-    GuestPath::new(DEFAULT_AGENT).expect("DEFAULT_AGENT is a valid guest path")
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "invariant: DEFAULT_HOME is a constant valid guest path (unit test)"
-)]
-fn default_home() -> GuestPath {
-    GuestPath::new(DEFAULT_HOME).expect("DEFAULT_HOME is a valid guest path")
 }
 
 /// One destination that bypasses the proxy: a host name (which also covers its subdomains, as

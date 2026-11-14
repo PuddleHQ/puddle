@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the guest gets: the synced roots and Puddle's CAs as boot files, the step that builds
 //! the full bundle in the guest, and the environment that points tools at it.
 
 use std::collections::BTreeSet;
 
 use puddle_ca::{CaCertificate, TrustBundle};
-use puddle_types::{GuestEnv, GuestFile, GuestPath, SessionUser};
+use puddle_types::{FileMode, GuestEnv, GuestFile, GuestPath, SessionUser, guest_path};
 
 use crate::devcert::GuestDevCert;
 use crate::select::{CorporateRoots, Fingerprint};
@@ -13,6 +13,9 @@ use crate::select::{CorporateRoots, Fingerprint};
 /// Directory for the synced host certificates, one `<fingerprint prefix>.crt` each, inside
 /// `update-ca-certificates`' input so the system store gets them (Debian, Ubuntu, Alpine).
 pub const HOST_CA_DIR: &str = "/usr/local/share/ca-certificates/puddle-host";
+
+/// The mode of the step scripts: executable.
+const STEP_MODE: FileMode = FileMode::new(0o755);
 
 /// Every extra CA (synced host certificates, then Puddle's CAs), each once:
 /// `NODE_EXTRA_CA_CERTS`, which adds to Node's built-in roots.
@@ -135,11 +138,24 @@ impl GuestTrust {
             (all.pop(), rest)
         });
         files.extend(dev_system);
-        files.push(fixed(EXTRA_CAS_PATH, self.extra_cas().into_bytes()));
-        let step = fixed(BUNDLE_STEP_PATH, BUNDLE_STEP_SH.as_bytes().to_vec());
-        files.extend(step.with_mode(0o755).ok());
-        let java = fixed(JAVA_STEP_PATH, JAVA_STEP_SH.as_bytes().to_vec());
-        files.extend(java.with_mode(0o755).ok());
+        files.push(GuestFile::new(
+            guest_path!(EXTRA_CAS_PATH),
+            self.extra_cas().into_bytes(),
+        ));
+        files.push(
+            GuestFile::new(
+                guest_path!(BUNDLE_STEP_PATH),
+                BUNDLE_STEP_SH.as_bytes().to_vec(),
+            )
+            .with_mode(STEP_MODE),
+        );
+        files.push(
+            GuestFile::new(
+                guest_path!(JAVA_STEP_PATH),
+                JAVA_STEP_SH.as_bytes().to_vec(),
+            )
+            .with_mode(STEP_MODE),
+        );
         files.extend(dev_rest);
         files
     }
@@ -182,7 +198,7 @@ impl GuestTrust {
         if self.is_empty() {
             return Vec::new();
         }
-        [path(BUNDLE_STEP_PATH), path(JAVA_STEP_PATH)]
+        [guest_path!(BUNDLE_STEP_PATH), guest_path!(JAVA_STEP_PATH)]
             .into_iter()
             .chain(self.dev.as_ref().map(|_| GuestDevCert::step()))
             .collect()
@@ -216,18 +232,6 @@ impl GuestTrust {
 /// The DER of a single-certificate PEM.
 fn der_of(cert_pem: &str) -> Option<Vec<u8>> {
     pem::parse(cert_pem).ok().map(pem::Pem::into_contents)
-}
-
-fn path(p: &str) -> GuestPath {
-    #[expect(
-        clippy::expect_used,
-        reason = "invariant: only called with this module's absolute, normalised constants"
-    )]
-    GuestPath::new(p).expect("a constant guest path is valid")
-}
-
-fn fixed(p: &str, contents: Vec<u8>) -> GuestFile {
-    GuestFile::new(path(p), contents)
 }
 
 #[cfg(test)]

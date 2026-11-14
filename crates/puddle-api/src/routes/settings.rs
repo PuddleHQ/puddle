@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings and consents (`puddle-settings`). Documents are read through their versioning rules:
 //! an older one is migrated and written back, unknown fields are kept and logged, one from a
 //! newer Puddle is refused with 409.
@@ -46,7 +46,7 @@ pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettin
         tracing::warn!(fields = ?loaded.unknown_fields, "global settings have fields this Puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         tracing::info!(from, "global settings migrated");
     }
     Ok(loaded)
@@ -66,7 +66,7 @@ pub(crate) fn load_workspace(
         tracing::warn!(%workspace, fields = ?loaded.unknown_fields, "workspace settings have fields this Puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_workspace(workspace, loaded.settings.to_document())?;
+        repo.save_workspace(workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, from, "workspace settings migrated");
     }
     Ok(loaded)
@@ -145,7 +145,7 @@ pub(crate) async fn put_global(
                 "ui.app_icon: give Puddle an image before choosing your own icon",
             ));
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         Ok(loaded)
     })
     .await?;
@@ -213,7 +213,7 @@ pub(crate) async fn put_workspace_settings(
         body.overrides.apply_to(&mut loaded.settings.overrides)?;
         loaded.settings.tools.mise = body.tools.mise;
         loaded.settings.tools.repo_code = body.tools.repo_code;
-        repo.save_workspace(&workspace, loaded.settings.to_document())?;
+        repo.save_workspace(&workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, "workspace settings changed");
         Ok(workspace_view(workspace, &global.settings, &loaded))
     })
@@ -279,7 +279,7 @@ pub(crate) async fn put_consent(
         {
             loaded.settings.vscode_server.server = Some(puddle_settings::ServerChoice::CodeServer);
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         Ok(Consents::from(&loaded.settings.consents))
     })
     .await?;

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 <#
 .SYNOPSIS
 Runs Puddle's real-machine VM tests (tier R) on a real Windows machine and posts the result as

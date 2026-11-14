@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The one mount source that is not under the guest share: the `.git` directory of a checkout the
 //! user picked ([`puddle_compute::MountKind::Checkout`]).
 //!

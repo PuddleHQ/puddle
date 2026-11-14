@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settling a running workspace: plans, environment, shell init, locks and repairs.
 
 use crate::agent_reports::{clear_no_sudo, entrypoint_problem, no_sudo_problem};
+use crate::op_error::OpError;
 use std::sync::{Arc, PoisonError};
 
 use puddle_api::WorkspaceRecord;
@@ -23,7 +24,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         self.run_plan_report(name, gated, guest).await.map(|_| ())
     }
 
@@ -33,7 +34,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
-    ) -> Result<puddle_boot::BootReport, String> {
+    ) -> Result<puddle_boot::BootReport, OpError> {
         let kit = &self.inner.kit;
         let inputs = GuestInputs {
             ca: &guest.ca,
@@ -49,11 +50,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ssh_agent: guest.ssh_agent,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
-        let report = kit
-            .hook()
-            .run(gated.ungated(), &plan)
-            .await
-            .map_err(|failure| failure.to_string())?;
+        let report = kit.hook().run(gated.ungated(), &plan).await?;
         self.announce_loader_replaced(name, &report);
         self.settle_merge_notices(name, &report);
         Ok(report)
@@ -159,7 +156,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Writes the saved shell init of `id` to the folder its guest sees, for a start. A folder that
     /// held something else is put right and remembered, so `settle` tells the user.
-    pub(super) fn publish_shell_init(&self, id: &WorkspaceId) -> Result<(), String> {
+    pub(super) fn publish_shell_init(&self, id: &WorkspaceId) -> Result<(), OpError> {
         let published = self.inner.kit.shell_init().publish(id)?;
         if published == crate::shell_init::Published::Restored {
             self.inner
@@ -305,7 +302,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         script: &str,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, OpError> {
         let user = self.booted_user(name).await;
         match gated
             .ungated()
@@ -319,7 +316,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(ComputeError::ExecTimeout { .. }) => {
                 Ok(Some(crate::shell_init::timed_out_message()))
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -328,8 +325,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn abort_attachment(
         &self,
         attachment: puddle_workspace::Attachment<'_>,
-        reason: String,
-    ) -> String {
+        reason: OpError,
+    ) -> OpError {
         match attachment.abort(&self.inner.runtime).await {
             Ok(()) => reason,
             Err(e) => {
@@ -433,7 +430,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// After a boot: Puddle's directory and stale locks on the volume, the notice and check for the
     /// shell init, the SSH endpoint, and the handle the lifecycle stops at exit.
-    pub(super) async fn settle(&self, record: &WorkspaceRecord) -> Result<(), String> {
+    pub(super) async fn settle(&self, record: &WorkspaceRecord) -> Result<(), OpError> {
         let inner = &self.inner;
         let (id, name) = (&record.id, &record.id);
         self.progress(name, WorkspaceStep::Syncing, None);
@@ -441,13 +438,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let live = inner.live.lock().await;
             live.get(name)
                 .and_then(|l| l.gated.clone())
-                .ok_or_else(|| format!("{name} is not running"))?
+                .ok_or_else(|| OpError::NotRunning(name.clone()))?
         };
         let locks = inner
             .workspaces
             .after_boot(gated.ungated(), id, self.booted_user(name).await)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
         self.settle_entrypoint(name, gated.boot_report());
@@ -463,18 +459,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Some(authors) = authors {
             self.settle_git_version(name, gated.boot_report(), &authors);
         }
-        let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
+        let root = Layout::new(id)?.mount().clone();
         self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
             .await;
-        let mount = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
-        let handle = inner
-            .runtime
-            .get(&name.sandbox_name())
-            .await
-            .map_err(|e| e.to_string())?;
-        if inner.lifecycle.manage(handle, vec![mount]).is_err() {
-            return Err("Puddle is shutting down".to_owned());
-        }
+        let mount = Layout::new(id)?.mount().clone();
+        let handle = inner.runtime.get(&name.sandbox_name()).await?;
+        inner
+            .lifecycle
+            .manage(handle, vec![mount])
+            .or(Err(OpError::ShuttingDown))?;
         // Direct SSH is off unless the user allowed it: then there is no endpoint to connect to
         // and no ssh config entry, however the guest behaves.
         if self.direct_ssh_allowed(name) {

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 <#
 .SYNOPSIS
 Measures how long the machine takes to start a trivial program, while the Windows tests run.

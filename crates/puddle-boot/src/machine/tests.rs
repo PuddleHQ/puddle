@@ -1,14 +1,17 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_types::{ApplyKind, Merged};
 
 use super::*;
 
 #[test]
 fn settings_forward_by_process_and_guard_git_auth() {
-    let f = machine_settings(3128, SessionUser::Root);
+    let f = machine_settings(3128, SessionUser::Root).unwrap();
     assert_eq!(f.path().as_str(), MACHINE_SETTINGS_GUEST);
     assert_eq!(
-        machine_settings(3128, SessionUser::Agent).path().as_str(),
+        machine_settings(3128, SessionUser::Agent)
+            .unwrap()
+            .path()
+            .as_str(),
         "/home/agent/.vscode-server/data/Machine/settings.json"
     );
     assert_eq!(f.mode(), 0o644);
@@ -31,7 +34,7 @@ fn settings_forward_by_process_and_guard_git_auth() {
 
 #[test]
 fn puddle_owns_leaves_not_whole_port_tables() {
-    let keys = machine_settings(3128, SessionUser::Root);
+    let keys = machine_settings(3128, SessionUser::Root).unwrap();
     let ApplyKind::Merge(spec) = keys.apply() else {
         panic!()
     };
@@ -49,14 +52,14 @@ fn puddle_owns_leaves_not_whole_port_tables() {
 #[test]
 fn any_agent_port_gives_a_valid_spec() {
     for port in [0, 1, 3128, u16::MAX] {
-        let _ = machine_settings(port, SessionUser::Agent);
+        let _ = machine_settings(port, SessionUser::Agent).unwrap();
     }
 }
 
 #[test]
 fn the_users_own_machine_settings_survive_a_boot_and_the_guard_is_kept() {
     let user = "// mine\n{\n  \"editor.fontSize\": 14, // big\n  \"github.gitAuthentication\": true,\n  \"remote.portsAttributes\": { \"8080\": { \"label\": \"web\" }, },\n}\n";
-    let f = machine_settings(3128, SessionUser::Root);
+    let f = machine_settings(3128, SessionUser::Root).unwrap();
     let ApplyKind::Merge(spec) = f.apply() else {
         panic!()
     };
@@ -84,6 +87,7 @@ fn the_users_own_machine_settings_survive_a_boot_and_the_guard_is_kept() {
 fn settings_leave_workspace_trust_to_the_desktop_editor() {
     let text = String::from_utf8(
         machine_settings(3128, SessionUser::Root)
+            .unwrap()
             .contents()
             .to_vec(),
     )
@@ -96,9 +100,22 @@ fn settings_leave_workspace_trust_to_the_desktop_editor() {
 fn settings_name_no_credential_helper() {
     let text = String::from_utf8(
         machine_settings(3128, SessionUser::Root)
+            .unwrap()
             .contents()
             .to_vec(),
     )
     .unwrap();
     assert!(!text.to_lowercase().contains("credential"));
+}
+
+#[test]
+fn the_machine_settings_path_follows_the_session_user() {
+    assert_eq!(
+        machine_settings_path(SessionUser::Root),
+        MACHINE_SETTINGS_GUEST
+    );
+    assert_eq!(
+        machine_settings_path(SessionUser::Agent),
+        "/home/agent/.vscode-server/data/Machine/settings.json"
+    );
 }

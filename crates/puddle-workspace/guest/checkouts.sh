@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puddle's list of the git checkouts on a workspace's volume.
 #
 # Usage: sh checkouts.sh <volume mount point> [<one directory under it>]

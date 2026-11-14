@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The icon of Puddle's window, tray and taskbar button.
 //!
 //! The user picks one of the built-in duck icons ([`built_in`]) or gives an image of their own

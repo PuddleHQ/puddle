@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces resource over real HTTP, against `FakeWorkspaces`.
 
 use puddle_api::DisplayName;
@@ -392,11 +392,11 @@ fn refused_bodies() -> [(Value, &'static str); 20] {
     [
         (
             json!({"name": "a", "repositories": [{"url": "git@github.com:acme/api.git"}]}),
-            "SSH remotes are not supported yet",
+            "ssh remotes are not supported yet",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "ssh://git@github.com/acme/api.git"}]}),
-            "SSH remotes are not supported yet",
+            "ssh remotes are not supported yet",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "http://github.com/a/b"}]}),

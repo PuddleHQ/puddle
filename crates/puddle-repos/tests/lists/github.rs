@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! GitHub lists: paging, mapping, which API a host has, what a list says about itself.
 
 use puddle_repos::{

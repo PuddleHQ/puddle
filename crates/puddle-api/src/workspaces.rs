@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces the API serves: the [`WorkspaceService`] trait the routes call, the domain
 //! types it speaks, and the [`Launcher`] that opens a desktop editor.
 //!
@@ -28,8 +28,10 @@ pub use launch::{
     Launcher, OpenTarget,
 };
 pub use repositories::{
-    LocalSource, MAX_REPO_URL_LEN, MAX_REPOSITORIES, NewRepository, RepoUrl, Repository,
-    RepositoryDraft, check_repositories, check_repositories_with, new_entry_id,
+    CheckoutProblem, EntryProblem, LocalCheckoutError, LocalSource, MAX_REPO_URL_LEN,
+    MAX_REPOSITORIES, NewRepository, NoFreeEntryId, RepoUrl, RepoUrlError, Repository,
+    RepositoryDraft, RepositoryListError, check_repositories, check_repositories_with,
+    new_entry_id,
 };
 pub use service::{
     KeptLogin, KeptLogins, NoWorkspaces, ShellInitCheck, WorkspaceError, WorkspaceService,
@@ -175,6 +177,21 @@ impl WorkspaceRecord {
     }
 }
 
+/// Why a workspace name is refused. The messages are for the user.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DisplayNameError {
+    /// Nothing but white space.
+    #[error("the name must not be empty")]
+    Empty,
+    /// More than [`DisplayName::MAX_CHARS`] characters.
+    #[error("the name is longer than {} characters", DisplayName::MAX_CHARS)]
+    TooLong,
+    /// A control character, a line break included.
+    #[error("the name must not contain line breaks or control characters")]
+    ControlCharacter,
+}
+
 /// A workspace's name: free text of 1 to [`DisplayName::MAX_CHARS`]
 /// characters, trimmed, with no control characters (a line break included).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -188,20 +205,17 @@ impl DisplayName {
     ///
     /// # Errors
     ///
-    /// A message for the user when the name is empty, too long or has control characters.
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// [`DisplayNameError`] when the name is empty, too long or has control characters.
+    pub fn parse(text: &str) -> Result<Self, DisplayNameError> {
         let text = text.trim();
         if text.is_empty() {
-            return Err("the name must not be empty".into());
+            return Err(DisplayNameError::Empty);
         }
         if text.chars().count() > Self::MAX_CHARS {
-            return Err(format!(
-                "the name is longer than {} characters",
-                Self::MAX_CHARS
-            ));
+            return Err(DisplayNameError::TooLong);
         }
         if text.chars().any(char::is_control) {
-            return Err("the name must not contain line breaks or control characters".into());
+            return Err(DisplayNameError::ControlCharacter);
         }
         Ok(Self(text.to_owned()))
     }
@@ -356,6 +370,36 @@ impl StartFolderChange {
     }
 }
 
+/// Why a start folder is refused. The messages are for the user and name the rule broken.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum StartFolderError {
+    /// An empty path.
+    #[error("the start folder must not be empty; use null for the volume root")]
+    Empty,
+    /// Longer than [`StartFolder::MAX_BYTES`].
+    #[error("the start folder is longer than {} bytes", StartFolder::MAX_BYTES)]
+    TooLong,
+    /// A leading `/`.
+    #[error("the start folder is a path under the volume, without a leading /")]
+    Absolute,
+    /// A control character or a backslash.
+    #[error("the start folder must not contain control characters or \\")]
+    ControlCharacter,
+    /// An empty, `.` or `..` part.
+    #[error("the start folder has an empty, . or .. part ({path}); name each folder")]
+    BadPart {
+        /// The path as given.
+        path: String,
+    },
+    /// Inside a folder Puddle keeps for itself.
+    #[error("the start folder must not be inside {folder}")]
+    Reserved {
+        /// The reserved first part.
+        folder: String,
+    },
+}
+
 /// A start folder: a relative path under the volume root, `/` between its
 /// parts, no part empty, `.` or `..`, no control character or `\`, not inside `.puddle` or
 /// `lost+found`, at most [`StartFolder::MAX_BYTES`] bytes.
@@ -370,33 +414,32 @@ impl StartFolder {
     ///
     /// # Errors
     ///
-    /// A message for the user that says which rule the path breaks.
-    pub fn parse(path: &str) -> Result<Self, String> {
+    /// [`StartFolderError`], which says which rule the path breaks.
+    pub fn parse(path: &str) -> Result<Self, StartFolderError> {
         if path.is_empty() {
-            return Err("the start folder must not be empty; use null for the volume root".into());
+            return Err(StartFolderError::Empty);
         }
         if path.len() > Self::MAX_BYTES {
-            return Err(format!(
-                "the start folder is longer than {} bytes",
-                Self::MAX_BYTES
-            ));
+            return Err(StartFolderError::TooLong);
         }
         if path.starts_with('/') {
-            return Err("the start folder is a path under the volume, without a leading /".into());
+            return Err(StartFolderError::Absolute);
         }
         if path.chars().any(|c| c.is_control() || c == '\\') {
-            return Err("the start folder must not contain control characters or \\".into());
+            return Err(StartFolderError::ControlCharacter);
         }
         for part in path.split('/') {
             if matches!(part, "" | "." | "..") {
-                return Err(format!(
-                    "the start folder has an empty, . or .. part ({path}); name each folder"
-                ));
+                return Err(StartFolderError::BadPart {
+                    path: path.to_owned(),
+                });
             }
         }
         let first = path.split('/').next().unwrap_or_default();
         if first == ".puddle" || first == CheckoutDir::LOST_AND_FOUND {
-            return Err(format!("the start folder must not be inside {first}"));
+            return Err(StartFolderError::Reserved {
+                folder: first.to_owned(),
+            });
         }
         Ok(Self(path.to_owned()))
     }
@@ -430,6 +473,18 @@ pub const MAX_ID_DRAWS: u32 = 16;
 #[non_exhaustive]
 pub struct NoFreeId;
 
+/// Why an [`IdSource`] gave no id for one draw. That draw counts, and the create draws again.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum IdDrawError {
+    /// The operating system's random source failed.
+    #[error("no randomness: {0}")]
+    Random(getrandom::Error),
+    /// The text made from the name is not an id.
+    #[error(transparent)]
+    Invalid(#[from] puddle_types::ValidationError),
+}
+
 /// Where new workspace ids come from.
 pub trait IdSource: Send + Sync {
     /// Draw number `attempt` (counted from 0) for a new workspace called `name`. A create
@@ -437,8 +492,8 @@ pub trait IdSource: Send + Sync {
     ///
     /// # Errors
     ///
-    /// When the source gave nothing, with the reason. That draw counts.
-    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String>;
+    /// [`IdDrawError`] when the source gave nothing. That draw counts.
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError>;
 }
 
 /// The operating system's random source, five bytes a draw ([`WorkspaceId::from_random`]);
@@ -447,9 +502,9 @@ pub trait IdSource: Send + Sync {
 pub struct RandomIds;
 
 impl IdSource for RandomIds {
-    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, IdDrawError> {
         let mut bytes = [0_u8; 5];
-        getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
+        getrandom::fill(&mut bytes).map_err(IdDrawError::Random)?;
         Ok(WorkspaceId::from_random(bytes))
     }
 }
@@ -463,16 +518,18 @@ impl IdSource for RandomIds {
 pub struct NameIds;
 
 impl IdSource for NameIds {
-    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
-        let base = id_for_name(name).map_err(|e| e.to_string())?;
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError> {
+        let base = id_for_name(name)?;
         if attempt == 0 {
             return Ok(base);
         }
         let suffix = format!("-{}", attempt + 1);
         let room = WorkspaceId::MAX_LEN - suffix.len();
         let stem: String = base.as_str().chars().take(room).collect();
-        WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))
-            .map_err(|e| e.to_string())
+        Ok(WorkspaceId::new(&format!(
+            "{}{suffix}",
+            stem.trim_end_matches('-')
+        ))?)
     }
 }
 

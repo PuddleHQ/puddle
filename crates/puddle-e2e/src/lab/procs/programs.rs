@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #[cfg(windows)]
 pub(in super::super) const IDLE: (&str, &[&str]) = ("ping", &["-n", "30", "127.0.0.1"]);
 #[cfg(not(windows))]

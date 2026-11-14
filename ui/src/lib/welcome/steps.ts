@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The steps of the first-run flow, in order. One list, so the step bar, the page titles and the
 // Back and Continue links agree.
 

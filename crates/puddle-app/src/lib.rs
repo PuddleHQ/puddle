@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's desktop shell (desktop): a Tauri 2 app that runs the API in-process and shows
 //! the single-page app in its main window.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the Git hosts are called in URLs: the names Puddle decrypts for a credential, and the
 //! remote URLs that belong to an owner (which choose the commit author).
 //!
@@ -184,14 +184,24 @@ pub(crate) struct Authors {
     pub(crate) left_out: Vec<String>,
 }
 
+/// Why an identity gives its commits no author.
+#[derive(Debug, thiserror::Error)]
+#[error("the identity {label} gives commits no author: {source}")]
+struct AuthorRefused {
+    /// The identity's label.
+    label: String,
+    /// What git cannot keep.
+    source: puddle_boot::PlanError,
+}
+
 /// The author an identity gives its commits, or why the store's text is not something git can
 /// keep.
-fn author_of(identity: &Identity) -> Result<GitIdentity, String> {
-    GitIdentity::new(&identity.author.name, &identity.author.email).map_err(|err| {
-        format!(
-            "the identity {} gives commits no author: {err}",
-            identity.label
-        )
+fn author_of(identity: &Identity) -> Result<GitIdentity, AuthorRefused> {
+    GitIdentity::new(&identity.author.name, &identity.author.email).map_err(|source| {
+        AuthorRefused {
+            label: identity.label.clone(),
+            source,
+        }
     })
 }
 
@@ -210,7 +220,7 @@ pub(crate) fn authors(git: &WorkspaceGit) -> Authors {
         .map(|identity| match author_of(identity) {
             Ok(author) => (identity, Some(author)),
             Err(why) => {
-                left_out.push(why);
+                left_out.push(why.to_string());
                 (identity, None)
             }
         })

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Errors of the process-level parts (job object, front/worker split). Runtime failures during
 //! shutdown and reconcile are reported per sandbox in the reports, not as errors.
 

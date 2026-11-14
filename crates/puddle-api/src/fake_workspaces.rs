@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An in-memory [`WorkspaceService`] for tests and the UI fixture, with scripted progress.
 //!
 //! It follows the trait's contract the way the real service does: a call checks the request,
@@ -23,8 +23,9 @@ use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, chec
 use crate::workspaces::{
     AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB,
     DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
-    LocalSource, NameIds, NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck,
-    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    LocalCheckoutError, LocalSource, NameIds, NewRepository, NewWorkspace, Operation, RepoFindings,
+    ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
+    WorkspaceService,
 };
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
@@ -567,14 +568,14 @@ impl FakeWorkspaces {
                     ))
                 })
                 .and_then(|u| {
-                    crate::workspaces::RepoUrl::parse(u).map_err(WorkspaceError::Conflict)
+                    crate::workspaces::RepoUrl::parse(u).map_err(WorkspaceError::conflict)
                 })?;
             crate::checkouts::check_seen(directory, seen, &url)?;
             let repository = crate::workspaces::Repository {
                 entry: crate::workspaces::new_entry_id(|e| {
                     record.repositories.iter().any(|r| r.entry == *e)
                 })
-                .map_err(WorkspaceError::Unavailable)?,
+                .map_err(WorkspaceError::unavailable)?,
                 url,
                 directory: directory.clone(),
             };
@@ -640,7 +641,7 @@ fn delete_check(entry: &Entry) -> DeleteCheck {
 /// A checkout on this computer as the fake sees it: a folder with a `.git/HEAD`, its origin the
 /// first `url = ` line of `.git/config`. Only the shape a screen needs; the real service reads
 /// much more carefully (`puddle-workspace`'s `LocalCheckout`).
-fn fake_local_checkout(path: &str) -> Result<LocalSource, String> {
+fn fake_local_checkout(path: &str) -> Result<LocalSource, LocalCheckoutError> {
     let folder = std::path::Path::new(path.trim_end_matches(['/', '\\']));
     let folder = if folder.file_name().is_some_and(|n| n == ".git") {
         folder.parent().unwrap_or(folder)
@@ -649,10 +650,9 @@ fn fake_local_checkout(path: &str) -> Result<LocalSource, String> {
     };
     let git_dir = folder.join(".git");
     if !git_dir.join("HEAD").is_file() {
-        return Err(format!(
-            "{} is not a git checkout: it has no .git",
-            folder.display()
-        ));
+        return Err(LocalCheckoutError::NotCheckout {
+            folder: folder.to_path_buf(),
+        });
     }
     let origin = std::fs::read_to_string(git_dir.join("config"))
         .ok()
@@ -672,7 +672,7 @@ fn fake_local_checkout(path: &str) -> Result<LocalSource, String> {
 }
 
 impl WorkspaceService for FakeWorkspaces {
-    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
         fake_local_checkout(path)
     }
 
@@ -712,7 +712,7 @@ impl WorkspaceService for FakeWorkspaces {
                 // paths before it exists.
                 let id = new
                     .id(&NameIds, |id| state.entries.contains_key(id))
-                    .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
+                    .map_err(WorkspaceError::unavailable)?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new
@@ -1062,7 +1062,7 @@ impl WorkspaceService for FakeWorkspaces {
                 };
                 let entry = crate::workspaces::Repository {
                     entry: crate::workspaces::new_entry_id(|_| false)
-                        .map_err(WorkspaceError::Unavailable)?,
+                        .map_err(WorkspaceError::unavailable)?,
                     directory: CheckoutDir::from_url(url.as_str()),
                     url,
                 };

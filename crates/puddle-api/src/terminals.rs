@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals: the [`TerminalService`] trait the routes call (a shell session in a running
 //! workspace), the registry of tickets and limits, [`NoTerminals`] for a build without it and
 //! [`FakeTerminals`] for tests and the UI fixture.

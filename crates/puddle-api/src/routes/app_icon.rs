@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The app icon: the built-in icons to preview, and the user's own image. Which icon is in use is
 //! the `ui.app_icon` setting; the image is kept beside the settings (`SettingsRepo`).
 
@@ -137,6 +137,6 @@ pub(crate) async fn delete_custom_icon(
 fn refuse(err: &IconError) -> ApiError {
     match err {
         IconError::Encode(_) => ApiError::internal(err),
-        _ => ApiError::invalid(err.to_string()),
+        _ => ApiError::invalid(err),
     }
 }

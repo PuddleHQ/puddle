@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Claude Code, `gh` and GitHub Copilot command-line tools logging in through the proxy
 //! and the real login capture, against fake servers that speak the three logins' wire formats.
 //! No account is involved and nothing leaves the machine.
@@ -383,6 +383,11 @@ impl Tools {
             // github.com): git must not look above it.
             .env("GIT_CEILING_DIRECTORIES", home.parent().unwrap_or(home))
             .env("DO_NOT_TRACK", "1")
+            // A tool that finds no session bus starts its own (`dbus-launch`) and, with gnome-keyring
+            // installed, a keyring daemon behind it that waits for a prompt nobody answers: `gh auth login`
+            // then hangs instead of writing hosts.yml. A bus address that goes nowhere keeps every tool
+            // on its file store, whatever keyring the machine has.
+            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/no-session-bus")
             .current_dir(home)
             .kill_on_drop(true)
             .stdin(Stdio::piped())

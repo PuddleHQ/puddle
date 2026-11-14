@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Whose an entry in the operating system's credential store is: its name says so.
 //!
 //! A pasted token or a secret's value is kept under a name Puddle makes. The owner's names are as
@@ -20,17 +20,28 @@ pub(crate) fn name(user: UserId, base: &str) -> String {
     }
 }
 
+/// Why no fresh stored name could be made.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StoredIdError {
+    /// The system's random source failed.
+    #[error("no randomness: {0}")]
+    Random(getrandom::Error),
+    /// The name is not a valid id (a bug).
+    #[error(transparent)]
+    Invalid(#[from] puddle_secrets::NameError),
+}
+
 /// A fresh name for `user`: `kind`, `-` and 128 random bits.
 ///
 /// # Errors
 /// The system's random source failed, or the name is not a valid id (a bug).
-pub(crate) fn fresh(user: UserId, kind: &str) -> Result<StoredId, String> {
+pub(crate) fn fresh(user: UserId, kind: &str) -> Result<StoredId, StoredIdError> {
     let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).map_err(|err| err.to_string())?;
+    getrandom::fill(&mut bytes).map_err(StoredIdError::Random)?;
     let base = bytes
         .iter()
         .fold(format!("{kind}-"), |id, byte| format!("{id}{byte:02x}"));
-    StoredId::new(name(user, &base)).map_err(|err| err.to_string())
+    Ok(StoredId::new(name(user, &base))?)
 }
 
 /// The user an entry's name says it belongs to.

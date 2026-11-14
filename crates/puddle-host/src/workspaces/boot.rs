@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Booting a workspace's sandbox and syncing git and editor state into it.
 
 use std::sync::Arc;
@@ -8,13 +8,12 @@ use puddle_api::{StartFolder, WorkspaceRecord};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_compute::{DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
 use puddle_types::{
-    CheckoutDir, GuestEnv, GuestFile, GuestPath, ImageRef, Problem, SessionUser, WorkspaceId,
-    WorkspaceStep,
+    CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, SessionUser, WorkspaceId, WorkspaceStep,
 };
 
 use puddle_workspace::Layout;
 
-use super::{GuestState, HostWorkspaces, Live, boot_message, editor_file_title, problem_key};
+use super::{GuestState, HostWorkspaces, Live, editor_file_title, problem_key};
 use crate::boot::{GuestInputs, root_disk_size};
 use crate::git_hosts::{
     Authors, GitProblem, SshListing, authors, credentials_problem, left_out_problem,
@@ -22,6 +21,7 @@ use crate::git_hosts::{
 };
 use crate::kubernetes::kubernetes_problem;
 use crate::merge_notice::settle_merge_notices;
+use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn boot_new(
@@ -30,7 +30,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         created_volume: &mut bool,
         announce_pull: bool,
         fresh: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         let inner = &self.inner;
         let (id, name) = (&record.id, &record.id);
         let size = DiskSize::mib(u32::try_from(record.disk_size_mib).unwrap_or(u32::MAX));
@@ -53,33 +53,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             if matches!(e, puddle_workspace::WorkspaceError::VolumeMissing { .. }) {
                 self.mark_volume_missing(id);
             }
-            e.to_string()
+            e
         })?;
         *created_volume = attachment.created_volume();
-        let image = ImageRef::new(&record.image).map_err(|e| e.to_string());
-        let config = match &image {
-            Ok(image) => {
-                if announce_pull {
-                    self.progress(
-                        name,
-                        WorkspaceStep::PullingImage,
-                        Some(record.image.clone()),
-                    );
-                }
-                self.image_config(image).await
-            }
-            Err(e) => Err(e.clone()),
-        };
-        let config = match config {
-            Ok(config) => config,
+        let (image, config) = match self.pulled_image(record, announce_pull).await {
+            Ok(pulled) => pulled,
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
-        let image = image.map_err(|e| e.clone())?;
         self.progress(name, WorkspaceStep::Starting, None);
-        if let Err(reason) = self.publish_shell_init(id) {
-            return Err(self.abort_attachment(attachment, reason).await);
-        }
-        let route = match inner.kit.route(name) {
+        let route = match self
+            .publish_shell_init(id)
+            .and_then(|()| inner.kit.route(name).map_err(OpError::from))
+        {
             Ok(route) => route,
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
@@ -126,7 +111,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Err(e) => {
                 inner.injection.end(name);
-                let reason = self.abort_attachment(attachment, boot_message(&e)).await;
+                let reason = self.abort_attachment(attachment, e.into()).await;
                 route.shutdown().await;
                 Err(reason)
             }
@@ -138,7 +123,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         image: ImageConfig,
-    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
+    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
         self.plan_guest(
             &record.id,
             &record.id,
@@ -159,7 +144,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         image: ImageConfig,
         start_folder: Option<&StartFolder>,
         session_user: SessionUser,
-    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
+    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
         let editor = inner
@@ -169,7 +154,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
-        let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
+        let root = Layout::new(id)?.mount().clone();
         // Only a running guest can list the checkouts, so the multi-root file the last attach
         // wrote stays as it is and the editor server opens it at this start; the next attach
         // writes it again. A start folder replaces it.
@@ -211,7 +196,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Ok((plan, env)) => Ok((plan, env, state)),
             Err(reason) => {
                 inner.injection.end(name);
-                Err(reason)
+                Err(reason.into())
             }
         }
     }
@@ -400,7 +385,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Tells the user the commit authors in `name` could not be updated and why.
-    pub(super) fn raise_author_sync(&self, name: &WorkspaceId, reason: &str) {
+    pub(super) fn raise_author_sync(&self, name: &WorkspaceId, reason: &dyn std::fmt::Display) {
         GitProblem::AuthorSync.settle(
             &self.inner.problems,
             name,
@@ -575,7 +560,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.check_start_folder(name, &gated, &guest.root, record.start_folder.as_ref())
             .await;
         let key = problem_key("editor-file", name);
-        let not_updated = |reason: &str| {
+        let not_updated = |reason: &dyn std::fmt::Display| {
             tracing::warn!(workspace = %name, %reason, "the editor's target is not updated");
             inner.problems.raise(
                 Problem::new(
@@ -596,7 +581,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         {
             Ok(list) => crate::editor_file::Found::from_listing(&list),
             Err(e) => {
-                not_updated(&e.to_string());
+                not_updated(&e);
                 return;
             }
         };

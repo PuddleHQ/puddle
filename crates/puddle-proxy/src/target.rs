@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The destination of a request, normalised into a [`Host`] the rules engine accepts
 //! (`puddle_netpolicy::normalise_host`: lower case, IDNA to ASCII, LDH labels, canonical IP
 //! literals; anything else is a `400`).

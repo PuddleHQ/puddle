@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The WebKit half of the Linux UI end-to-end tests, nightly and by hand: the half a merge queue run skips
 # with PUDDLE_TIER=on (ci/scope.sh). A pull request to main runs both browsers in ci.yml. WebKit stands in
 # for WebKitGTK and, later, WKWebView.

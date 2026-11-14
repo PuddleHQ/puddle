@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Error responses: one JSON shape for every refusal and failure.
 
 use axum::Json;
@@ -69,6 +69,14 @@ pub struct ApiErrorBody {
     pub message: String,
 }
 
+impl std::fmt::Display for ApiErrorBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ApiErrorBody {}
+
 /// An error a handler or the guard returns; becomes a status and an [`ApiErrorBody`].
 #[derive(Debug)]
 pub(crate) struct ApiError {
@@ -109,11 +117,11 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, ErrorCode::NotFound, message)
     }
 
-    pub(crate) fn invalid(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid(message: impl std::fmt::Display) -> Self {
         Self::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Invalid,
-            message,
+            message.to_string(),
         )
     }
 
@@ -155,8 +163,14 @@ impl ApiError {
     }
 
     /// What the refusal says.
+    #[cfg(test)]
     pub(crate) fn message(&self) -> &str {
         &self.body.message
+    }
+
+    /// The body a client would get.
+    pub(crate) fn into_body(self) -> ApiErrorBody {
+        self.body
     }
 
     #[cfg(test)]
@@ -225,7 +239,7 @@ impl From<StoreError> for ApiError {
             | StoreError::EnvInvalid(_)
             | StoreError::ShellInitInvalid(_)
             | StoreError::RequestRuleInvalid(_)
-            | StoreError::TooManySshAgentHosts(_) => Self::invalid(err.to_string()),
+            | StoreError::TooManySshAgentHosts(_) => Self::invalid(&err),
             _ => Self::internal(&err),
         }
     }
@@ -271,9 +285,7 @@ impl From<NetworkHealthError> for ApiError {
 impl From<ProxySignInError> for ApiError {
     fn from(err: ProxySignInError) -> Self {
         match err {
-            ProxySignInError::BadUser | ProxySignInError::BadPassword => {
-                Self::invalid(err.to_string())
-            }
+            ProxySignInError::BadUser | ProxySignInError::BadPassword => Self::invalid(&err),
             ProxySignInError::Store | ProxySignInError::Unavailable(_) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorCode::Unavailable,

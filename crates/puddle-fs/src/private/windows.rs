@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows: an explicit ACL with one entry, full control for the current user's SID, and
 //! protected from inheritance, so neither the parent's entries (administrators, `SYSTEM`) nor
 //! Everyone come back. It is set when the file or folder is created, so there is no window with

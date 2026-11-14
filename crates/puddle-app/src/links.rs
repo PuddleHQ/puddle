@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the user is told when a link in the window goes nowhere.
 //!
 //! A clicked link either opens in the default browser or it doesn't: the opener can fail, and the

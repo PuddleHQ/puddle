@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The red signal for runs no ruleset requires. When a scheduled run (or a manual run on develop) of one of
 # the workflows below ends, ci/nightly-issue.sh opens or rewrites one issue per workflow ("Nightly red:
 # <workflow>") after a failed run and closes it after a green one, so a red nightly is seen the same day.

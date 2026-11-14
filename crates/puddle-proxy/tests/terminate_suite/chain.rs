@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of the upstream leg of a terminated connection through a company proxy: the proxy
 //! gets `CONNECT <name>:443` (and the `407` answer on the same connection), the TLS handshake
 //! with the real server runs inside that tunnel and is verified exactly as without a proxy.

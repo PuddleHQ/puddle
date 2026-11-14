@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git identities and a workspace's Git settings on the wire (credentials spec §7, §8). A
 //! credential names a source; no request or response carries a secret value.
 
@@ -98,8 +98,8 @@ impl CredentialSource {
     ///
     /// # Errors
     /// The refusal in words: a host, account, path, id or organisation that is not valid.
-    pub fn into_spec(self) -> Result<SourceSpec, String> {
-        self.into_store().map_err(|err| err.message().to_owned())
+    pub fn into_spec(self) -> Result<SourceSpec, crate::ApiErrorBody> {
+        self.into_store().map_err(ApiError::into_body)
     }
 
     pub(crate) fn into_store(self) -> Result<SourceSpec, ApiError> {
@@ -379,8 +379,8 @@ impl IdentityRequest {
     ///
     /// # Errors
     /// The refusal in words.
-    pub fn into_store_draft(self) -> Result<store::IdentityDraft, String> {
-        self.into_draft().map_err(|err| err.message().to_owned())
+    pub fn into_store_draft(self) -> Result<store::IdentityDraft, crate::ApiErrorBody> {
+        self.into_draft().map_err(ApiError::into_body)
     }
 
     pub(crate) fn into_draft(self) -> Result<store::IdentityDraft, ApiError> {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The login key of direct SSH: the one key the runtime's SSH server accepts and the ssh config
 //! entries name.
 //!
@@ -71,7 +71,7 @@ impl LoginKey {
             }
         }
         let mut seed = Zeroizing::new([0u8; 32]);
-        getrandom::fill(&mut *seed).map_err(|e| io::Error::other(e.to_string()))?;
+        getrandom::fill(&mut *seed).map_err(io::Error::other)?;
         let key = SigningKey::from_bytes(&seed);
         let public_bytes = key.verifying_key().to_bytes();
         let public_line = format!(

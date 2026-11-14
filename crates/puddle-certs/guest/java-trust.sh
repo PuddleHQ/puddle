@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Java's own trust store: imports Puddle's extra CAs (the host's corporate and user-added roots,
 # Puddle's own CAs; /etc/puddle/extra-cas.pem) into the `cacerts` of every JDK or JRE the image

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows SSPI as a [`TokenSource`]: `Negotiate` and `NTLM` contexts for the logged-on
 //! user. The credential handle is acquired with no identity (`pAuthData = NULL`), which makes
 //! Windows use the user's own sign-in: no password is read, stored or asked for, and no flag

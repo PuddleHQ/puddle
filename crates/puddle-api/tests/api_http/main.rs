@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests over real loopback HTTP (tier L2): the guard's refusals,
 //! every route against a real store, and the SSE stream.
 #![expect(

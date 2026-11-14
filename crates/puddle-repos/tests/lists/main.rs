@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The lists and profiles of `puddle-repos` over scripted host answers shaped like the ones
 //! GitHub and Azure DevOps document (`tests/data`), and the route to a host over a local TLS
 //! server and a fake company proxy.

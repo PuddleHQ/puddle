@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared setup of the VM tests: the adapter on the VM harness's private msb home.
 #![allow(
     dead_code,

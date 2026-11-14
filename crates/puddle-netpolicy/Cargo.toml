@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-netpolicy"
 description = "Puddle's destination guard: host-name normalisation, address classes, local-destination toggles, Puddle's own endpoints"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Path scoping for pull request and merge queue checks. A `scope` job in each workflow runs
 # `ci/scope.sh` and the heavy jobs read its outputs, so a change only pays for the jobs its files
 # can affect.

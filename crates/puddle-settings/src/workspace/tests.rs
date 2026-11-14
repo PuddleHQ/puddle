@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use serde_json::json;
 
 use super::*;
@@ -15,7 +15,7 @@ fn unknown_fields_are_listed_with_their_path() {
         ["dangerous", "overrides.local_toggles.vpn"]
     );
     assert_eq!(
-        loaded.settings.to_document()["dangerous"]["reach_puddle_endpoints"],
+        loaded.settings.to_document().unwrap()["dangerous"]["reach_puddle_endpoints"],
         true
     );
 }
@@ -41,7 +41,7 @@ fn errors_name_the_document_kind() {
 #[test]
 fn a_document_without_overrides_is_version_only() {
     assert_eq!(
-        WorkspaceSettings::default().to_document(),
+        WorkspaceSettings::default().to_document().unwrap(),
         json!({"schema_version": 1})
     );
 }
@@ -56,7 +56,7 @@ fn tool_switches_round_trip_and_unknown_ones_are_kept() {
     assert_eq!(loaded.settings.tools.mise, Some(false));
     assert!(loaded.settings.tools.repo_code());
     assert!(!loaded.settings.tools.mise());
-    assert_eq!(loaded.settings.to_document()["tools"]["later"], 1);
+    assert_eq!(loaded.settings.to_document().unwrap()["tools"]["later"], 1);
 }
 
 #[test]

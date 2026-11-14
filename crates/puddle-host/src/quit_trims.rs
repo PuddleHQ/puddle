@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces whose disk a quit could not trim, kept in a small file so the next start can
 //! tell the user. The quit has no window left to say it in, and the log is not where a user looks.
 
@@ -69,7 +69,7 @@ impl QuitTrims {
     pub(crate) fn save(&self, untrimmed: &BTreeMap<WorkspaceId, String>) {
         let result = if untrimmed.is_empty() {
             match std::fs::remove_file(&self.path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(SaveError::Io(e)),
                 _ => Ok(()),
             }
         } else {
@@ -81,15 +81,26 @@ impl QuitTrims {
                     .collect(),
             };
             serde_json::to_vec_pretty(&file)
-                .map_err(|e| e.to_string())
+                .map_err(SaveError::Encode)
                 .and_then(|body| {
-                    puddle_fs::private::write_atomic(&self.path, &body).map_err(|e| e.to_string())
+                    puddle_fs::private::write_atomic(&self.path, &body).map_err(SaveError::Io)
                 })
         };
         if let Err(error) = result {
             tracing::warn!(path = %self.path.display(), %error, "the trim notes of this quit were not saved");
         }
     }
+}
+
+/// Why the trim notes were not saved.
+#[derive(Debug, thiserror::Error)]
+enum SaveError {
+    /// The file could not be written or removed.
+    #[error(transparent)]
+    Io(std::io::Error),
+    /// The notes could not be encoded.
+    #[error(transparent)]
+    Encode(serde_json::Error),
 }
 
 /// The problem key of a workspace's untrimmed disk (the one a failed trim at a stop raises).

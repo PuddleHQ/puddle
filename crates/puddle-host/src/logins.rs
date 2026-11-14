@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's side of captured logins: one [`Logins`] for each start of a workspace's sandbox, the
 //! credential store its real tokens are kept in, and the notice that goes to the user when a
 //! login cannot be captured.
@@ -18,7 +18,7 @@ use puddle_secrets::SecretStore;
 use puddle_settings::resolve;
 use puddle_types::{Event, EventSink, LoginProblemKind, WorkspaceId};
 
-use crate::settings_read;
+use crate::settings_read::{self, SettingsReadError};
 
 /// Turns what `puddle-logins` reports into the event the user's screens show a notice for.
 struct EventNotices {
@@ -126,7 +126,7 @@ pub(crate) fn capture_enabled(
     settings: &dyn puddle_api::SettingsRepo,
     workspace: &WorkspaceId,
 ) -> bool {
-    let read = || -> Result<bool, String> {
+    let read = || -> Result<bool, SettingsReadError> {
         let global = settings_read::global(settings)?;
         let own = settings_read::workspace(settings, workspace)?;
         Ok(resolve(&global, Some(&own)).capture_logins.value)
@@ -144,7 +144,7 @@ pub(crate) fn foreign_warning_enabled(
     settings: &dyn puddle_api::SettingsRepo,
     workspace: &WorkspaceId,
 ) -> bool {
-    let read = || -> Result<bool, String> {
+    let read = || -> Result<bool, SettingsReadError> {
         let global = settings_read::global(settings)?;
         let own = settings_read::workspace(settings, workspace)?;
         Ok(resolve(&global, Some(&own)).warn_foreign_credentials.value)

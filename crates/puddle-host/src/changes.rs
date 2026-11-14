@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Following the events of the store for changes to a workspace's Git settings and environment,
 //! so that a change applies to the running workspace at once.
 

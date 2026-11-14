@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The desktop behaviour around the main window: what the close and minimize buttons do, the tray,
 //! the badge, and the operating-system notifications. It runs in Rust, driven by the backend's
 //! event hub and the settings; the page calls no Tauri API for any of it.

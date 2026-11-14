@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Egress proxy: the only way out of a workspace.
 //!
 //! Every guest connection reaches the host as a yamux stream on the workspace's route (a per-workspace

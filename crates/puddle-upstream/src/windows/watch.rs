@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Change notification: WinHTTP's proxy-change registration (loaded at run time, because its
 //! minimum Windows version is undocumented) plus a registry watch on the Internet Settings key,
 //! which every Windows version supports and which catches group policy and user edits.

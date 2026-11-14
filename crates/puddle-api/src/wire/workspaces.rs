@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Wire types of the workspaces resource.
 
 use puddle_types::{
@@ -324,7 +324,10 @@ impl NewWorkspaceRequest {
         self,
         owner: puddle_store::UserId,
         identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
-        locals: &std::collections::BTreeMap<String, Result<domain::LocalSource, String>>,
+        locals: &std::collections::BTreeMap<
+            String,
+            Result<domain::LocalSource, domain::LocalCheckoutError>,
+        >,
     ) -> Result<domain::NewWorkspace, ApiError> {
         if self.repo_url.is_some() {
             return Err(ApiError::invalid(
@@ -356,12 +359,12 @@ impl NewWorkspaceRequest {
             .as_deref()
             .map(ImageRef::new)
             .transpose()
-            .map_err(|e| ApiError::invalid(e.to_string()))?;
+            .map_err(ApiError::invalid)?;
         let memory = self
             .memory_mib
             .map(MemoryMib::new)
             .transpose()
-            .map_err(|e| ApiError::invalid(e.to_string()))?;
+            .map_err(ApiError::invalid)?;
         let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
         Ok(domain::NewWorkspace {
             owner,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a click on a workspace does, shared by the list and the detail page: start, stop,
 // reclaim, connect (the "how do you want to connect" step, with the direct-SSH switch and its
 // trust text), delete (with the check of what would be lost) and the create dialog. The dialogs themselves are drawn by

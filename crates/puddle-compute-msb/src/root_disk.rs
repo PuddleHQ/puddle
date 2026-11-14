@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How full a sandbox's root disk is, read from msb's root-disk journal.
 //!
 //! msb keeps `root-disk.json` in the sandbox's own folder, out of the guest's reach (the copy in

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest tries a port forward of its own workspace through the real proxy: the forward's
 //! listener on this computer's loopback is one of Puddle's own, so the agent's `CONNECT` to it is
 //! refused with a reason, whatever the loopback toggles and the rules say. Without that, a guest
@@ -135,11 +135,10 @@ async fn connect_via(agent: SocketAddr, authority: &str) -> io::Result<(u16, Vec
 async fn a_guest_cannot_dial_a_forward_of_its_own_workspace_even_with_every_local_toggle_on() {
     let rig = rig().await;
     rig.ports.started(&rig.workspace).await;
-    // A port of this computer the forward will take.
-    let host_port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // A port of this computer the forward will take: `forward` binds the number itself, so no
+    // listener can be handed over, and a bound-then-dropped port goes to whichever parallel test
+    // binds port 0 next. `quiet_port` is below the range port 0 draws from.
+    let host_port = puddle_test_kit::quiet_port();
     let row = rig
         .ports
         .forward(&rig.workspace, rig.guest_port, Some(host_port), false)

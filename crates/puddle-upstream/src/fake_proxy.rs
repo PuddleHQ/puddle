@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`FakeProxy`]: a scripted HTTP proxy on loopback for tests (feature `testing`). It speaks just
 //! enough of a company proxy to drive the chain: `CONNECT` spliced to a local target, absolute-form
 //! requests, Basic and NTLM-shaped `407` rounds, refusals, silence and garbage.

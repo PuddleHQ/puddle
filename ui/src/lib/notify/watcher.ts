@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Turns the shell's event stream into notices: out-of-memory kills, a workspace that stopped
 // or crashed without being asked to, a network that got worse, and a drive that runs low on room.
 //

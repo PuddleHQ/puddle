@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Operating-system notifications: which events raise one, what it says, and how a burst of
 //! requests from one workspace is folded into one. Every choice follows a Settings switch
 //! ([`UiPrefs`]); nothing here can approve anything, a notification only opens the inbox.

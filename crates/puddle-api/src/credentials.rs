@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host side of the identities screens: which accounts are already signed in on this computer,
 //! whether Puddle can read a credential now, a pasted token's entry in the OS credential store, and
 //! signing in on a click ([`CredentialService`]). [`HostCredentials`] runs the real sources;
@@ -228,7 +228,8 @@ impl CredentialService for HostCredentials {
             })?;
             drop(token);
             // `tok-` and 128 random bits, with the user's mark.
-            let id = crate::stored_ids::fresh(user, "tok").map_err(CredentialsError::Internal)?;
+            let id = crate::stored_ids::fresh(user, "tok")
+                .map_err(|e| CredentialsError::Internal(e.to_string()))?;
             let (store, key) = (Arc::clone(&self.store), id.clone());
             tokio::task::spawn_blocking(move || store.set(&key, &secret))
                 .await

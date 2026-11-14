@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A TCP byte stream to the stub: length-prefixed messages with honest and lying prefixes, the limit and
 //! one past it, a stream cut anywhere. The checks are in `fuzz/checks/dns_transport.rs`.
 #![no_main]

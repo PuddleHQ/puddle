@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Why a source could not supply a secret. No variant carries a secret or tool output.
 
 /// A tool Puddle runs.

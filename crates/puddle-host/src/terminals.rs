@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A terminal's session: the host's own SSH connection to the runtime's SSH server over an
 //! in-memory stream, signed in with the login key, with a pseudo-terminal and a login shell.
 //!
@@ -42,10 +42,11 @@ pub(crate) struct Identity(Arc<PrivateKey>);
 
 impl Identity {
     /// Reads the private key file.
-    pub(crate) fn load(path: &Path) -> Result<Self, String> {
-        russh::keys::load_secret_key(path, None)
-            .map(|key| Self(Arc::new(key)))
-            .map_err(|e| format!("the login key cannot be read: {e}"))
+    ///
+    /// # Errors
+    /// The key file is missing, damaged or encrypted.
+    pub(crate) fn load(path: &Path) -> Result<Self, russh::keys::Error> {
+        russh::keys::load_secret_key(path, None).map(|key| Self(Arc::new(key)))
     }
 }
 
@@ -139,7 +140,7 @@ pub(crate) struct Open<'a> {
 /// Opens a session: `serve` runs the runtime's SSH server on the stream it is given (it returns
 /// when the connection ends), and `gone` says why a connection that ended without an exit status
 /// did (the workspace stopped or crashed). The link is returned once the shell has started.
-pub(crate) async fn open<F, Fut, G>(
+pub(crate) async fn open<F, Fut, E, G>(
     hub: &Hub,
     request: Open<'_>,
     serve: F,
@@ -147,7 +148,8 @@ pub(crate) async fn open<F, Fut, G>(
 ) -> Result<TerminalLink, TerminalError>
 where
     F: FnOnce(tokio::io::DuplexStream) -> Fut,
-    Fut: Future<Output = Result<(), String>> + Send + 'static,
+    Fut: Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
     G: Fn() -> EndReason + Send + Sync + 'static,
 {
     let (near, far) = tokio::io::duplex(65_536);
@@ -156,7 +158,7 @@ where
         ended = &mut server => {
             // The server ended before a shell started: its refusal is the reason.
             let message = match ended {
-                Ok(Err(reason)) => reason,
+                Ok(Err(reason)) => reason.to_string(),
                 Ok(Ok(())) => "the workspace's SSH server closed the connection".to_owned(),
                 Err(e) => e.to_string(),
             };
@@ -174,14 +176,13 @@ where
             // A server that ended the connection says why itself; one that answered with a
             // refusal is quoted as the client heard it (the client leaving ends the server with
             // an error of its own).
-            let refusal = match failure {
-                Failure::Broke(text) => {
-                    match tokio::time::timeout(REFUSAL_WAIT, &mut server).await {
-                        Ok(Ok(Err(reason))) => reason,
-                        _ => text,
-                    }
+            let refusal = if failure.server_may_explain() {
+                match tokio::time::timeout(REFUSAL_WAIT, &mut server).await {
+                    Ok(Ok(Err(reason))) => reason.to_string(),
+                    _ => failure.to_string(),
                 }
-                Failure::Refused(text) => text,
+            } else {
+                failure.to_string()
             };
             server.abort();
             return Err(TerminalError::Ended(TerminalEnd {
@@ -207,12 +208,50 @@ where
 
 type Shell = russh::Channel<client::Msg>;
 
-/// Why the client could not get a shell.
+/// Why the client could not get a shell. The messages are shown to the user, through
+/// `puddle_ssh::sanitize_reason`.
+#[derive(Debug, thiserror::Error)]
 enum Failure {
-    /// The connection broke: the server may say why.
-    Broke(String),
-    /// The server answered with a refusal.
-    Refused(String),
+    /// The connection could not be made; the server may say why.
+    #[error("the SSH connection failed: {0}")]
+    Connect(#[source] russh::Error),
+    /// Signing in failed on the wire; the server may say why.
+    #[error("signing in failed: {0}")]
+    SignIn(#[source] russh::Error),
+    /// No session channel could be opened; the server may say why.
+    #[error("a session could not be opened: {0}")]
+    Session(#[source] russh::Error),
+    /// A request on the channel failed on the wire; the server may say why.
+    #[error("{0}")]
+    Request(#[source] russh::Error),
+    /// The server refused the login.
+    #[error("the workspace's SSH server refused the login as {user}")]
+    LoginRefused {
+        /// The user it was refused for.
+        user: String,
+    },
+    /// The server refused a request.
+    #[error("the workspace's SSH server refused to give {what}")]
+    RequestRefused {
+        /// What was asked for.
+        what: String,
+    },
+    /// The connection ended first.
+    #[error("the connection ended before {what} was given")]
+    Closed {
+        /// What was asked for.
+        what: String,
+    },
+}
+
+impl Failure {
+    /// Whether the server's own end of the connection may say better why than the client heard.
+    fn server_may_explain(&self) -> bool {
+        matches!(
+            self,
+            Self::Connect(_) | Self::SignIn(_) | Self::Session(_) | Self::Request(_)
+        )
+    }
 }
 
 async fn start<S>(
@@ -228,20 +267,20 @@ where
     let config = Arc::new(client::Config::default());
     let mut handle = client::connect_stream(config, stream, InMemory)
         .await
-        .map_err(|e| Failure::Broke(format!("the SSH connection failed: {e}")))?;
+        .map_err(Failure::Connect)?;
     let signed_in = handle
         .authenticate_publickey(user, PrivateKeyWithHashAlg::new(identity.0.clone(), None))
         .await
-        .map_err(|e| Failure::Broke(format!("signing in failed: {e}")))?;
+        .map_err(Failure::SignIn)?;
     if !signed_in.success() {
-        return Err(Failure::Refused(format!(
-            "the workspace's SSH server refused the login as {user}"
-        )));
+        return Err(Failure::LoginRefused {
+            user: user.to_owned(),
+        });
     }
     let mut channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| Failure::Broke(format!("a session could not be opened: {e}")))?;
+        .map_err(Failure::Session)?;
     channel
         .request_pty(
             true,
@@ -253,14 +292,14 @@ where
             &[],
         )
         .await
-        .map_err(|e| Failure::Broke(e.to_string()))?;
+        .map_err(Failure::Request)?;
     expect_success(&mut channel, "a pseudo-terminal").await?;
     // Not every server takes variables; the shell works without.
     let _ = channel.set_env(false, "COLORTERM", "truecolor").await;
     channel
         .exec(true, LOGIN_SHELL)
         .await
-        .map_err(|e| Failure::Broke(e.to_string()))?;
+        .map_err(Failure::Request)?;
     expect_success(&mut channel, "a shell").await?;
     Ok((handle, channel))
 }
@@ -311,14 +350,14 @@ async fn expect_success(channel: &mut Shell, what: &str) -> Result<(), Failure> 
         match channel.wait().await {
             Some(ChannelMsg::Success) => return Ok(()),
             Some(ChannelMsg::Failure) => {
-                return Err(Failure::Refused(format!(
-                    "the workspace's SSH server refused to give {what}"
-                )));
+                return Err(Failure::RequestRefused {
+                    what: what.to_owned(),
+                });
             }
             Some(ChannelMsg::Close | ChannelMsg::Eof) | None => {
-                return Err(Failure::Refused(format!(
-                    "the connection ended before {what} was given"
-                )));
+                return Err(Failure::Closed {
+                    what: what.to_owned(),
+                });
             }
             Some(_) => {}
         }
@@ -326,12 +365,12 @@ async fn expect_success(channel: &mut Shell, what: &str) -> Result<(), Failure> 
 }
 
 /// Moves bytes between the page and the shell until the session ends; returns how it ended.
-async fn pump(
+async fn pump<E: std::fmt::Display>(
     mut channel: Shell,
     mut from_page: mpsc::Receiver<TerminalInput>,
     to_page: &mpsc::Sender<TerminalOutput>,
     mut ending: watch::Receiver<Option<EndReason>>,
-    server: &mut JoinHandle<Result<(), String>>,
+    server: &mut JoinHandle<Result<(), E>>,
     gone: &(impl Fn() -> EndReason + Send + Sync),
 ) -> TerminalEnd {
     let mut window = Window::default();

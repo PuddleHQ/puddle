@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // `npm run dev` proxy: /api goes to the running API from its connection file, and the bearer
 // token is added here, server side, so the browser tab never holds it. Point
 // PUDDLE_CONNECTION_FILE at the file `ConnectionInfo::write` made (or the UI fixture backend's).

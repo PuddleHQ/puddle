@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The ACL as the OS reports it, and other principals trying to open the file.
 
 use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};

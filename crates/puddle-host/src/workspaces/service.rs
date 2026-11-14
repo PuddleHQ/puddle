@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `TerminalService` and `WorkspaceService` implementations of the host.
 
 use std::sync::Arc;
@@ -6,21 +6,22 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, KeptLogins,
-    LocalSource, NewWorkspace, Operation, ShellInitCheck, StartFolder, StartFolderChange,
-    WorkspaceError, WorkspaceRecord, WorkspaceService,
+    LocalCheckoutError, LocalSource, NewWorkspace, Operation, ShellInitCheck, StartFolder,
+    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_api::{TerminalError, TerminalLink, TerminalService, TerminalSize};
-use puddle_compute::{ComputeError, DiskSize, Runtime};
+use puddle_compute::{DiskSize, Runtime};
 use puddle_store::{WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{EntryId, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep};
 
 use puddle_workspace::{Import, LocalCheckout};
 
 use super::{
-    HostWorkspaces, Room, SAVE_HINT, Slot, delete_check, kept_login_row, not_found, problem_key,
-    room, workspace_error,
+    HostWorkspaces, Room, SAVE_HINT, Slot, checkout_refusal, delete_check, kept_login_row,
+    not_found, problem_key, room, workspace_error,
 };
 use crate::boot::root_disk_size;
+use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
     fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
@@ -52,7 +53,7 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
                 .inner
                 .ssh
                 .identity()
-                .map_err(TerminalError::Unavailable)?;
+                .map_err(|e| TerminalError::Unavailable(e.to_string()))?;
             let (gated, user) = self.terminal_target(&workspace).await?;
             let host = self.clone();
             let named = workspace.clone();
@@ -64,9 +65,7 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
                     user: &user.to_string(),
                     size,
                 },
-                move |stream| async move {
-                    gated.serve_ssh(stream).await.map_err(|e| e.to_string())
-                },
+                move |stream| async move { gated.serve_ssh(stream).await },
                 move || host.terminal_gone(&named),
             )
             .await
@@ -75,16 +74,14 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
 }
 
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
-    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
-        let found = LocalCheckout::open(std::path::Path::new(path))?;
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
+        let found =
+            LocalCheckout::open(std::path::Path::new(path)).map_err(LocalCheckoutError::Refused)?;
         // The runtime's own rule (owner, Puddle's folders) now, not only when the create runs.
         self.inner
             .runtime
             .check_checkout(&found.git_dir)
-            .map_err(|e| match e {
-                ComputeError::InvalidSpec { reason } => reason,
-                other => other.to_string(),
-            })?;
+            .map_err(checkout_refusal)?;
         Ok(LocalSource {
             folder_name: found
                 .folder
@@ -161,7 +158,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .id(&*self.inner.ids, |id| {
                         self.id_taken(&state, &runtime_names, id)
                     })
-                    .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
+                    .map_err(WorkspaceError::unavailable)?;
                 // Whose it is, before it is listed or announced.
                 git.claim(&id, new.owner)?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
@@ -315,7 +312,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .reclaim_space(&this.inner.runtime, &work.id)
                     .await
                     .map(|_| ())
-                    .map_err(|e| e.to_string())
+                    .map_err(OpError::from)
             });
             Ok(record)
         })
@@ -669,7 +666,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             match mode {
                 AttachMode::Browser => Ok(self.attach_browser(&record).await),
                 AttachMode::Desktop => Ok(match self.desktop_target(&record).await {
-                    Err(reason) => Attached::not_opened(reason),
+                    Err(reason) => Attached::not_opened(reason.to_string()),
                     Ok(target) => match self.inner.launcher.open_desktop(&record, &target).await {
                         Ok(()) => Attached::opened(),
                         Err(err) => Attached::not_opened(err.to_string()),
@@ -738,7 +735,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             match self.run_shell_init_check(&record.id, &gated, script).await {
                 Ok(None) => Ok(ShellInitCheck::Passed),
                 Ok(Some(why)) => Ok(ShellInitCheck::Refused(why)),
-                Err(reason) => Err(WorkspaceError::Unavailable(reason)),
+                Err(reason) => Err(WorkspaceError::unavailable(reason)),
             }
         })
     }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `CryptoAPI` store reading. All of the crate's `unsafe` is in this module.
 
 use std::ffi::c_void;
@@ -127,10 +127,9 @@ impl Store {
         if handle.is_null() {
             // SAFETY: no preconditions; reads this thread's last error right after the call.
             let code = unsafe { GetLastError() };
-            #[expect(clippy::cast_sign_loss, reason = "HRESULT bit pattern compared as u32")]
             let not_found = code == ERROR_FILE_NOT_FOUND
                 || code == ERROR_PATH_NOT_FOUND
-                || code == CRYPT_E_NOT_FOUND as u32;
+                || code == CRYPT_E_NOT_FOUND.cast_unsigned();
             return Err(if not_found {
                 OpenError::Missing
             } else {
@@ -183,8 +182,8 @@ fn drain(
         out.push(der);
     }
     let code = last_error();
-    #[expect(clippy::cast_sign_loss, reason = "HRESULT bit pattern compared as u32")]
-    let end_of_store = code == ERROR_SUCCESS || code == CRYPT_E_NOT_FOUND as u32;
+    // An HRESULT is compared by its bit pattern.
+    let end_of_store = code == ERROR_SUCCESS || code == CRYPT_E_NOT_FOUND.cast_unsigned();
     (out, (!end_of_store).then_some(code))
 }
 

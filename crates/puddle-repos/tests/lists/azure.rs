@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Azure DevOps lists: one call per organisation a credential names, the sign-in page a bad token
 //! gets, and a credential that names no organisation.
 

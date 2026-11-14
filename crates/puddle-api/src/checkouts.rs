@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The checkouts a workspace holds and how its repository list relates to them: what the guest's
 //! listing found, which list entry each checkout has, which checkouts "Manage this" is offered
 //! for, and the checks that decide whether a repository may be added.
@@ -149,10 +149,10 @@ pub fn checkouts_view(
     }
 }
 
-fn not_offered(reason: impl Into<String>) -> Manage {
+fn not_offered(reason: impl std::fmt::Display) -> Manage {
     Manage {
         offered: false,
-        reason: Some(reason.into()),
+        reason: Some(reason.to_string()),
     }
 }
 

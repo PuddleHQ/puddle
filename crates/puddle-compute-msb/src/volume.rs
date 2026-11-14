@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Named volumes: who holds one, and the catalog view as [`VolumeInfo`].
 //!
 //! msb's own refusal of a second attach doesn't name the holder, so Puddle works it out:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Answers: a real value that comes back from one of its hosts goes to the guest as the stand-in.
 //!
 //! A host a stand-in is for sees the real value, and it can hand it back: an error page or a debug

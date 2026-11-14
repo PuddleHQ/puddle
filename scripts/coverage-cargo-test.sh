@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test: the coverage gates run plain `cargo` even when CARGO names a wrapper (mbx). A shared build cache
 # restores instrumented objects compiled in another checkout, so the wrapper's coverage report counts that
 # checkout's files and fails the ratchet from the second checkout on. Runs the real scripts/check.sh in a scratch

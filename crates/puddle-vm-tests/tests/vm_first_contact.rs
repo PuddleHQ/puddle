@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which common tools accept a certificate the decrypting proxy's CA signed, on first contact,
 //! on a real microVM (the Linux host; WHP on Windows).
 //!

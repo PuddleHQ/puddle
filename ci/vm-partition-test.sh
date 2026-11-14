@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/vm-partition.sh, ci/vm-timings-refresh.sh and ci/vm-filter.sh on small fixtures: the split is balanced
 # by time, deterministic and independent of the list's order, names every test exactly once, treats new tests as the
 # median, and falls back to the hash split (with a warning) on a missing list, a missing or stale timing file and a

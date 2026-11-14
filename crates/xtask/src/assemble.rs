@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `cargo xtask runtime`: the bundled runtime folder, built in a staging folder and moved into
 //! place only when every check passed, so a half-built or unverified folder never exists at `out`.
 //!

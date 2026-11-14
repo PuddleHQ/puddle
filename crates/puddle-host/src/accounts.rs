@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle user reset <name>`: the server's own way to give a user back their way in. It takes
 //! the password away, signs every device of that user out, and makes a one-time invite; it never
 //! sets or shows a password. Like `puddle backup`, it works on the database file while the host
@@ -38,10 +38,10 @@ pub fn reset_user(paths: &HostPaths, name: &str) -> Result<ResetInvite, AccountE
     }
     let clock = Arc::new(SystemClock);
     let store = Store::open(&db, clock.clone(), Limits::default())?;
-    let Some(secrets) = store.take_account_secrets() else {
-        // A fresh handle always has them; reaching here means this function was changed.
-        return Err(ResetError::Random("the sign-in secrets were already taken".to_owned()).into());
-    };
+    // A fresh handle always has them; a miss here means this function was changed.
+    let secrets = store
+        .take_account_secrets()
+        .ok_or(ResetError::SecretsTaken)?;
     Ok(reset_account(&store, &secrets, name, clock.now_ms())?)
 }
 

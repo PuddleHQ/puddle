@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Plain HTTP on a kept-alive guest connection: every request is decided, judged and recorded on
 //! its own, a request for the same host reuses the upstream connection, and nothing a request
 //! leaves behind (a pipelined request, a body the server did not wait for, a head cut in pieces)

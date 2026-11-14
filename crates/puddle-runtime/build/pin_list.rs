@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The reader of the runtime pin list, `ci/msb-runtime.sha256` (lines of `<tag> <name> <value>`).
 //! One file, included by `puddle-runtime`'s build script and by `crates/xtask`, so the build that
 //! embeds the expected hashes and the tool that installs the runtime read the list the same way.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Property tests for resolution and for documents (round trip, unknown fields, versions).
 #![expect(
     clippy::unwrap_used,
@@ -233,7 +233,7 @@ proptest! {
         // The same key inside a workspace's override layer or as a stray workspace field is an
         // unknown field: kept, listed, and without effect.
         g.tools.mise = Some(false);
-        let mut doc = s.to_document();
+        let mut doc = s.to_document().unwrap();
         doc["overrides"] = json!({"mise": v});
         doc["tools"] = json!({"mise": v, "global": v});
         let loaded = WorkspaceSettings::from_document(doc).unwrap();
@@ -268,7 +268,7 @@ proptest! {
 
     #[test]
     fn global_documents_round_trip(g in global()) {
-        let doc = g.to_document();
+        let doc = g.to_document().unwrap();
         prop_assert_eq!(&doc["schema_version"], &json!(GLOBAL_SCHEMA_VERSION));
         let loaded = GlobalSettings::from_document(doc).unwrap();
         prop_assert_eq!(loaded.settings, g);
@@ -278,7 +278,7 @@ proptest! {
 
     #[test]
     fn workspace_documents_round_trip(s in workspace()) {
-        let doc = s.to_document();
+        let doc = s.to_document().unwrap();
         prop_assert_eq!(&doc["schema_version"], &json!(WORKSPACE_SCHEMA_VERSION));
         prop_assert_eq!(WorkspaceSettings::from_document(doc).unwrap().settings, s);
     }
@@ -294,7 +294,7 @@ proptest! {
             Just(json!({"nested": [1, null, "x"]})),
         ],
     ) {
-        let mut doc = g.to_document();
+        let mut doc = g.to_document().unwrap();
         let mut paths = Vec::new();
         for (i, key) in keys.iter().enumerate() {
             let parent = ["", "workspace_defaults", "vscode_server", "consents"][i % 4];
@@ -311,14 +311,14 @@ proptest! {
         listed.sort();
         paths.sort();
         prop_assert_eq!(listed, paths);
-        prop_assert_eq!(loaded.settings.to_document(), doc);
+        prop_assert_eq!(loaded.settings.to_document().unwrap(), doc);
     }
 
     #[test]
     fn an_old_document_without_the_tool_fields_loads_as_on(g in global(), s in workspace()) {
-        let mut gdoc = g.to_document();
+        let mut gdoc = g.to_document().unwrap();
         gdoc.as_object_mut().unwrap().remove("tools");
-        let mut sdoc = s.to_document();
+        let mut sdoc = s.to_document().unwrap();
         sdoc.as_object_mut().unwrap().remove("tools");
         let g = GlobalSettings::from_document(gdoc).unwrap();
         let s = WorkspaceSettings::from_document(sdoc).unwrap();

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The shell's [`Launcher`]: the desktop editor through VS Code's `code` command, as `puddle serve`
 //! has it, and the browser editor in a window of Puddle's own ([`SandboxWindows`]).
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over SSH, the guest's side: a real SSH client (russh) through the agent's route, the real
 //! proxy and the real Git injector, to a recording upstream. What the client may do, what the
 //! table says about each repository, what the record says, and the limits.

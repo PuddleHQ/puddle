@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a fixture's processes are doing: the tree under the process a fixture started, with each
 //! process's start time and CPU time, and how long the machine takes to start a trivial program.
 //!

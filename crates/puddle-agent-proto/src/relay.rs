@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Splicing a TCP connection to a yamux stream so that an abort stays an abort.
 //!
 //! If one side of a proxied connection fails (the client aborted its upload, the server reset, or

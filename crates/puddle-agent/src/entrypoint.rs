@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Watches for the image entrypoint's exit and reports it to the host.
 //!
 //! The boot hook starts the entrypoint under a wrapper that waits for it and then writes one line,

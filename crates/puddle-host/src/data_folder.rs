@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The data folder and the database in it are owner-only, also on an install made before they
 //! were: start-up fixes what it can and refuses to run when it can't.
 

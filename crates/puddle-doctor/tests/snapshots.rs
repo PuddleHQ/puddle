@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Every finding, worded exactly: the report for each faked machine is compared with a file in
 //! `tests/snapshots/` (text, then JSON). After a deliberate wording change, regenerate with
 //! `PUDDLE_UPDATE_SNAPSHOTS=1 cargo nextest run -p puddle-doctor --test snapshots` and review
@@ -18,7 +18,7 @@ use puddle_doctor::{
     CheckId, CodeIntegrity, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
     DiskFacts, Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os,
     Probe, ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
-    SwapArea, SwapFacts, WritableFolder, diagnose,
+    StoreHealth, SwapArea, SwapFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -48,6 +48,7 @@ struct Fake {
     enc: DiskEncryptionFacts,
     ssh: SshAgentFacts,
     az: AzCliFacts,
+    store: StoreHealth,
     launches: Cell<u32>,
     boots: Cell<u32>,
 }
@@ -132,6 +133,7 @@ fn windows() -> Fake {
             endpoint: WIN_PIPE.into(),
             families: vec!["ed25519".into(), "rsa".into()],
         },
+        store: StoreHealth::Working,
         az: AzCliFacts::Found {
             version: "2.64.0".into(),
         },
@@ -216,6 +218,9 @@ impl Probe for Fake {
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
         assert_eq!(limit, AZ_CLI_LIMIT, "the Azure CLI gets its own limit");
         self.az.clone()
+    }
+    fn credential_store(&self) -> StoreHealth {
+        self.store
     }
 }
 
@@ -1229,6 +1234,7 @@ fn json_schema_is_versioned_and_stable() {
             "disk_encryption",
             "ssh_agent",
             "az_cli",
+            "credential_store",
             "global_secure_access"
         ]
     );
@@ -1890,4 +1896,75 @@ fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
     );
     assert!(r.ok, "the Azure CLI never fails the report");
     assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Warn);
+}
+
+#[test]
+fn a_credential_store_that_takes_a_write_is_ok() {
+    let r = run(&linux(), &Options::default());
+    let check = r.check(CheckId::CredentialStore).unwrap();
+    assert_eq!(check.status, Status::Ok);
+    assert_eq!(check.finding, None);
+}
+
+#[test]
+fn a_linux_host_with_no_credential_store_gets_the_headless_fix_as_a_warning() {
+    let fake = Fake {
+        store: StoreHealth::NoProvider,
+        ..linux()
+    };
+    let r = check(
+        "credential_store_missing_linux",
+        &fake,
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreMissing),
+    );
+    assert!(r.ok, "a store that refuses writes does not stop sandboxes");
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(fix.contains("apt install gnome-keyring"), "{fix}");
+    assert!(fix.contains("restart Puddle"), "{fix}");
+}
+
+#[test]
+fn a_locked_credential_store_names_the_unlock_command() {
+    let fake = Fake {
+        store: StoreHealth::Locked,
+        ..linux()
+    };
+    let r = check(
+        "credential_store_locked_linux",
+        &fake,
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreLocked),
+    );
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(
+        fix.contains("gnome-keyring-daemon --daemonize --login"),
+        "{fix}"
+    );
+}
+
+#[test]
+fn the_windows_credential_store_advice_does_not_name_gnome_keyring() {
+    let fake = Fake {
+        store: StoreHealth::Locked,
+        ..windows()
+    };
+    let r = run(&fake, &Options::default());
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(!fix.contains("gnome-keyring"), "{fix}");
 }

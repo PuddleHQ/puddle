@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's small state files: the settings documents and the workspace book.
 //!
 //! Both are JSON written atomically and owner-only ([`puddle_fs::private::write_atomic`]). A
@@ -17,21 +17,131 @@ use serde_json::Value;
 
 use crate::HostError;
 
+/// Why a state file could not be read or written. The messages name the file.
+#[derive(Debug, thiserror::Error)]
+enum StateFileError {
+    /// The file holds something that is not JSON.
+    #[error("{} is not valid JSON: {source}", path.display())]
+    NotJson {
+        /// The file.
+        path: PathBuf,
+        /// What the parser said.
+        source: serde_json::Error,
+    },
+    /// The file exists and could not be read.
+    #[error("cannot read {}: {source}", path.display())]
+    Read {
+        /// The file.
+        path: PathBuf,
+        /// What went wrong.
+        source: io::Error,
+    },
+    /// The document could not be encoded.
+    #[error(transparent)]
+    Encode(serde_json::Error),
+    /// The file could not be written.
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        /// The file.
+        path: PathBuf,
+        /// What went wrong.
+        source: io::Error,
+    },
+}
+
 /// Reads `path` as JSON, `None` when it does not exist.
-fn read_json(path: &Path) -> Result<Option<Value>, String> {
+fn read_json(path: &Path) -> Result<Option<Value>, StateFileError> {
     match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|e| format!("{} is not valid JSON: {e}", path.display())),
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|source| StateFileError::NotJson {
+                    path: path.to_owned(),
+                    source,
+                })
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+        Err(source) => Err(StateFileError::Read {
+            path: path.to_owned(),
+            source,
+        }),
     }
 }
 
-fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    let body = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    puddle_fs::private::write_atomic(path, &body)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+fn write_json(path: &Path, value: &Value) -> Result<(), StateFileError> {
+    let body = serde_json::to_vec_pretty(value).map_err(StateFileError::Encode)?;
+    puddle_fs::private::write_atomic(path, &body).map_err(|source| StateFileError::Write {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// An entry id the entry's repository list gives twice.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct DuplicateEntry(EntryId);
+
+/// A damaged entry of workspace `id`: `what` was being read and `source` is wrong with it.
+fn bad_entry<E: std::error::Error + Send + Sync + 'static>(
+    id: &str,
+    what: &'static str,
+    source: E,
+) -> BookError {
+    BookError::Entry {
+        id: id.to_owned(),
+        what,
+        source: Box::new(source),
+    }
+}
+
+/// Why a workspace book is refused. The messages name the file or the entry.
+#[derive(Debug, thiserror::Error)]
+enum BookError {
+    /// The file could not be read or written.
+    #[error(transparent)]
+    File(#[from] StateFileError),
+    /// The file is JSON but not a workspace list.
+    #[error("{} is not a workspace list: {source}", path.display())]
+    NotAList {
+        /// The file.
+        path: PathBuf,
+        /// What the parser said.
+        source: serde_json::Error,
+    },
+    /// A newer Puddle wrote the file.
+    #[error("{} was written by a newer Puddle (version {version})", path.display())]
+    Newer {
+        /// The file.
+        path: PathBuf,
+        /// Its version.
+        version: u32,
+    },
+    /// A version no Puddle wrote.
+    #[error("{} has version {version}, which no Puddle wrote", path.display())]
+    Unknown {
+        /// The file.
+        path: PathBuf,
+        /// Its version.
+        version: u32,
+    },
+    /// A retired id is not an id.
+    #[error("retired id {id:?} is not an id: {source}")]
+    RetiredId {
+        /// The id as stored.
+        id: String,
+        /// What is wrong with it.
+        source: puddle_types::ValidationError,
+    },
+    /// One workspace's entry is damaged.
+    #[error("workspace {id:?} {what}: {source}")]
+    Entry {
+        /// The id as stored.
+        id: String,
+        /// What was being read.
+        what: &'static str,
+        /// What is wrong with it.
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 /// Settings documents as files: `global.json` and `workspaces/<name>.json` in one folder.
@@ -98,7 +208,8 @@ impl SettingsRepo for FileSettings {
         if cache.global_read {
             return Ok(cache.global.clone());
         }
-        let loaded = read_json(&self.global_path()).map_err(SettingsRepoError::new)?;
+        let loaded =
+            read_json(&self.global_path()).map_err(|e| SettingsRepoError::new(e.to_string()))?;
         cache.global.clone_from(&loaded);
         cache.global_read = true;
         Ok(loaded)
@@ -106,7 +217,8 @@ impl SettingsRepo for FileSettings {
 
     fn save_global(&self, document: Value) -> Result<(), SettingsRepoError> {
         let mut cache = self.cache();
-        write_json(&self.global_path(), &document).map_err(SettingsRepoError::new)?;
+        write_json(&self.global_path(), &document)
+            .map_err(|e| SettingsRepoError::new(e.to_string()))?;
         cache.global = Some(document);
         cache.global_read = true;
         Ok(())
@@ -117,10 +229,11 @@ impl SettingsRepo for FileSettings {
         if let Some(cached) = cache.workspaces.get(workspace) {
             return Ok(cached.clone());
         }
-        let mut loaded =
-            read_json(&self.workspace_path(workspace)).map_err(SettingsRepoError::new)?;
+        let mut loaded = read_json(&self.workspace_path(workspace))
+            .map_err(|e| SettingsRepoError::new(e.to_string()))?;
         if loaded.is_none() {
-            loaded = read_json(&self.legacy_path(workspace)).map_err(SettingsRepoError::new)?;
+            loaded = read_json(&self.legacy_path(workspace))
+                .map_err(|e| SettingsRepoError::new(e.to_string()))?;
         }
         cache.workspaces.insert(workspace.clone(), loaded.clone());
         Ok(loaded)
@@ -132,7 +245,8 @@ impl SettingsRepo for FileSettings {
         document: Value,
     ) -> Result<(), SettingsRepoError> {
         let mut cache = self.cache();
-        write_json(&self.workspace_path(workspace), &document).map_err(SettingsRepoError::new)?;
+        write_json(&self.workspace_path(workspace), &document)
+            .map_err(|e| SettingsRepoError::new(e.to_string()))?;
         // The document now lives in its new place; a leftover old copy would only be read again
         // if the new one were deleted. Failing to remove it changes nothing.
         let _ = std::fs::remove_file(self.legacy_path(workspace));
@@ -367,35 +481,40 @@ impl From<EntryV1> for EntryV2 {
 }
 
 impl EntryV3 {
-    fn check(self) -> Result<Stored, String> {
-        let at =
-            |what: &str, e: &dyn std::fmt::Display| format!("workspace {:?} {what}: {e}", self.id);
-        let id = WorkspaceId::new(&self.id).map_err(|e| at("has a bad id", &e))?;
-        let name =
-            puddle_api::DisplayName::parse(&self.name).map_err(|e| at("has a bad name", &e))?;
+    fn check(self) -> Result<Stored, BookError> {
+        let id = WorkspaceId::new(&self.id).map_err(|e| bad_entry(&self.id, "has a bad id", e))?;
+        let name = puddle_api::DisplayName::parse(&self.name)
+            .map_err(|e| bad_entry(&self.id, "has a bad name", e))?;
         let mut taken: Vec<EntryId> = Vec::new();
         for given in self.repositories.iter().filter_map(|r| r.entry.as_deref()) {
-            let entry = EntryId::new(given).map_err(|e| at("has a bad repository entry id", &e))?;
+            let entry = EntryId::new(given)
+                .map_err(|e| bad_entry(&self.id, "has a bad repository entry id", e))?;
             if taken.contains(&entry) {
-                return Err(at("lists one repository entry id twice", &entry));
+                return Err(bad_entry(
+                    &self.id,
+                    "lists one repository entry id twice",
+                    DuplicateEntry(entry),
+                ));
             }
             taken.push(entry);
         }
         let mut repositories = Vec::with_capacity(self.repositories.len());
         for r in &self.repositories {
             let entry = if let Some(given) = &r.entry {
-                EntryId::new(given).map_err(|e| at("has a bad repository entry id", &e))?
+                EntryId::new(given)
+                    .map_err(|e| bad_entry(&self.id, "has a bad repository entry id", e))?
             } else {
                 let fresh = puddle_api::new_entry_id(|e| taken.contains(e))
-                    .map_err(|e| at("could not give a repository an id", &e))?;
+                    .map_err(|e| bad_entry(&self.id, "could not give a repository an id", e))?;
                 taken.push(fresh.clone());
                 fresh
             };
             repositories.push(Repository {
                 entry,
-                url: RepoUrl::parse(&r.url).map_err(|e| at("has a bad repository address", &e))?,
+                url: RepoUrl::parse(&r.url)
+                    .map_err(|e| bad_entry(&self.id, "has a bad repository address", e))?,
                 directory: CheckoutDir::new(&r.directory)
-                    .map_err(|e| at("has a bad checkout directory", &e))?,
+                    .map_err(|e| bad_entry(&self.id, "has a bad checkout directory", e))?,
             });
         }
         let start_folder = self
@@ -403,7 +522,7 @@ impl EntryV3 {
             .as_deref()
             .map(StartFolder::parse)
             .transpose()
-            .map_err(|e| at("has a bad start folder", &e))?;
+            .map_err(|e| bad_entry(&self.id, "has a bad start folder", e))?;
         Ok(Stored {
             id,
             name,
@@ -481,10 +600,10 @@ impl WorkspaceBook {
         Self { path: path.into() }
     }
 
-    fn error(reason: String) -> HostError {
+    fn error(reason: impl std::fmt::Display) -> HostError {
         HostError::State {
             what: "the workspace list",
-            reason,
+            reason: reason.to_string(),
         }
     }
 
@@ -493,14 +612,16 @@ impl WorkspaceBook {
     /// A version 1 or 2 book is read as version 3 and stays on disk as it is until the next save; a
     /// book newer than this Puddle knows is refused, so it is never read wrongly or overwritten.
     pub(crate) fn load(&self) -> Result<Book, HostError> {
-        let Some(value) = read_json(&self.path).map_err(Self::error)? else {
+        self.read_book().map_err(Self::error)
+    }
+
+    fn read_book(&self) -> Result<Book, BookError> {
+        let Some(value) = read_json(&self.path)? else {
             return Ok(Book::default());
         };
-        let not_a_list = |e: serde_json::Error| {
-            Self::error(format!(
-                "{} is not a workspace list: {e}",
-                self.path.display()
-            ))
+        let not_a_list = |source: serde_json::Error| BookError::NotAList {
+            path: self.path.clone(),
+            source,
         };
         let version = Version::deserialize(&value).map_err(not_a_list)?.version;
         let (entries, retired): (Vec<EntryV3>, Vec<String>) = match version {
@@ -527,27 +648,29 @@ impl WorkspaceBook {
                 (file.workspaces, file.retired_ids)
             }
             newer if newer > BOOK_VERSION => {
-                return Err(Self::error(format!(
-                    "{} was written by a newer Puddle (version {newer})",
-                    self.path.display()
-                )));
+                return Err(BookError::Newer {
+                    path: self.path.clone(),
+                    version: newer,
+                });
             }
             older => {
-                return Err(Self::error(format!(
-                    "{} has version {older}, which no Puddle wrote",
-                    self.path.display()
-                )));
+                return Err(BookError::Unknown {
+                    path: self.path.clone(),
+                    version: older,
+                });
             }
         };
         let workspaces = entries
             .into_iter()
-            .map(|entry| entry.check().map_err(Self::error))
+            .map(EntryV3::check)
             .collect::<Result<_, _>>()?;
         let retired = retired
             .iter()
             .map(|id| {
-                WorkspaceId::new(id)
-                    .map_err(|e| Self::error(format!("retired id {id:?} is not an id: {e}")))
+                WorkspaceId::new(id).map_err(|source| BookError::RetiredId {
+                    id: id.clone(),
+                    source,
+                })
             })
             .collect::<Result<_, _>>()?;
         Ok(Book {
@@ -569,7 +692,9 @@ impl WorkspaceBook {
                 .collect::<Vec<_>>(),
             retired_ids: retired.iter().map(ToString::to_string).collect(),
         };
-        let value = serde_json::to_value(&file).map_err(|e| Self::error(e.to_string()))?;
+        let value = serde_json::to_value(&file)
+            .map_err(StateFileError::Encode)
+            .map_err(Self::error)?;
         write_json(&self.path, &value).map_err(Self::error)
     }
 }

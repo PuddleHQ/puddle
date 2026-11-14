@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a session does while a stream is not read: a peer that sends more than the stream's
 //! receive window gets that stream reset and the session goes on serving the others (a session
 //! that stopped reading its socket instead would stall every stream on it); a peer that stays

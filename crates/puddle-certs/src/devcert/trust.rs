@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host operations the development certificate needs, behind one trait so the choices made
 //! on top of them are tested over a fake store and a Linux host builds without any of them.
 

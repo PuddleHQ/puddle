@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Watches the free space on the drive that holds Puddle's data folder while nobody asks.
 //!
 //! The system check reads the space when it runs; a drive that fills up during a long build in a

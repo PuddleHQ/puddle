@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The credential store Puddle keeps its values in, and the clean-up of what nothing names.
 
 use std::sync::Arc;
 
-use puddle_secrets::{ChunkedStore, IndexedStore, KeyringStore, SecretStore, StoredId, Sweep};
+use puddle_secrets::{
+    ChunkedStore, IndexedStore, KeyringStore, SecretStore, StoreHealth, StoredId, Sweep,
+    probe_os_store, probe_store,
+};
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
 
@@ -100,6 +103,35 @@ pub(crate) fn sweep_in_background(
     problems: Arc<Problems>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
+}
+
+/// The problem that stands while the credential store refuses a write. A store that failed once
+/// stays failed for the life of the process, so only a restart ends it.
+const STORE_PROBLEM: &str = "credential-store";
+
+/// Raises the one problem that names why `health` is not [`StoreHealth::Working`], worded for
+/// Linux when `linux` is set; a working store raises none.
+fn report_health(health: StoreHealth, linux: bool, problems: &Problems) {
+    match health.advice(linux) {
+        None => problems.clear(STORE_PROBLEM),
+        Some(advice) => problems.raise(Problem::new(STORE_PROBLEM, advice.title, advice.fix)),
+    }
+}
+
+/// Writes and deletes a throwaway value in the credential store at start, off the async threads
+/// (a locked keyring may be slow to answer), and raises a problem naming the cause when the write
+/// fails. `fake` is the store a test gave the host; `None` probes the operating system's.
+pub(crate) fn check_in_background(
+    fake: Option<Arc<dyn SecretStore>>,
+    problems: Arc<Problems>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let health = match fake {
+            Some(store) => probe_store(store.as_ref(), || true),
+            None => probe_os_store(),
+        };
+        report_health(health, cfg!(target_os = "linux"), &problems);
+    })
 }
 
 /// How long shutdown waits for the sweep: a locked keyring may take far longer, and a quit must

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Who `ssh -T` to a Git host is greeted as: the account of the identity Puddle would use there.
 //!
 //! The identity is the one on the workspace whose credential for the host covers the rest of the

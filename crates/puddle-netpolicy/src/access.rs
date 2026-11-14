@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The local-destination settings one workspace runs with: a toggle per category and
 //! whether wildcard allows reach local addresses.
 

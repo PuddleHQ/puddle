@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `list_identities` and `sign` against a fake agent on a real owner-only pipe (Windows) or socket (Unix),
 //! the same endpoint kinds a real agent uses.
 

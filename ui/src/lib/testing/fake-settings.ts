@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the API's global settings and consents endpoints, in the shape openapi-fetch
 // returns them. Like the API it refuses Microsoft's server without a granted consent. Not
 // shipped (tests import it).
@@ -51,6 +51,7 @@ const noUi = (): S["UiPrefs"] => ({
   notify_low_disk_space: null,
   disk_warn_free_gb: null,
   disk_fail_free_gb: null,
+  ssh_agent_pipe: null,
   confirm_global_rules: null,
   inbox_shortcuts: null,
   start_at_login: null,

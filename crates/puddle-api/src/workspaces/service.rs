@@ -1,6 +1,7 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspace service: the trait the API calls and the stand-in for a host without workspaces.
 
+use std::fmt;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -9,8 +10,8 @@ use puddle_types::{EntryId, SessionUser, WorkspaceId};
 use crate::checkouts::{AddRepository, Checkouts};
 
 use super::{
-    AttachMode, Attached, DeleteCheck, DisplayName, GitSetup, LocalSource, NewWorkspace, RepoUrl,
-    StartFolder, StartFolderChange, WorkspaceRecord,
+    AttachMode, Attached, DeleteCheck, DisplayName, GitSetup, LocalCheckoutError, LocalSource,
+    NewWorkspace, RepoUrl, StartFolder, StartFolderChange, WorkspaceRecord,
 };
 
 /// Why a workspace call failed. Messages are for the user: lower case, no trailing period.
@@ -33,6 +34,32 @@ pub enum WorkspaceError {
     /// Puddle failed; the text goes to the log, not to the client.
     #[error("{0}")]
     Internal(String),
+}
+
+impl WorkspaceError {
+    /// [`WorkspaceError::Conflict`] with the message of `cause`.
+    #[must_use]
+    pub fn conflict(cause: impl fmt::Display) -> Self {
+        Self::Conflict(cause.to_string())
+    }
+
+    /// [`WorkspaceError::Invalid`] with the message of `cause`.
+    #[must_use]
+    pub fn invalid(cause: impl fmt::Display) -> Self {
+        Self::Invalid(cause.to_string())
+    }
+
+    /// [`WorkspaceError::Unavailable`] with the message of `cause`.
+    #[must_use]
+    pub fn unavailable(cause: impl fmt::Display) -> Self {
+        Self::Unavailable(cause.to_string())
+    }
+
+    /// [`WorkspaceError::Internal`] with the message of `cause`.
+    #[must_use]
+    pub fn internal(cause: impl fmt::Display) -> Self {
+        Self::Internal(cause.to_string())
+    }
 }
 
 /// What running a shell init in a throwaway shell in the workspace showed.
@@ -102,10 +129,10 @@ pub trait WorkspaceService: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Why the folder can't be used, for the user.
-    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
+    /// [`LocalCheckoutError`] says why the folder can't be used.
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
         let _ = path;
-        Err("starting from a checkout on this computer is not available here".into())
+        Err(LocalCheckoutError::NotAvailable)
     }
 
     /// Boots a workspace that is down.

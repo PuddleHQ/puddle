@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Validated names: workspace ids, sandboxes, volumes and image references.
 //!
 //! Workspace id, sandbox and volume names are DNS labels (RFC 1123: `a-z`, `0-9`, `-`, 1–63
@@ -407,6 +407,62 @@ impl ImageRef {
 }
 
 string_newtype!(ImageRef);
+
+/// An image reference written in the source and checked when the crate is built.
+///
+/// Use [`image_ref!`](crate::image_ref) for a constant; a reference from input goes through
+/// [`ImageRef::new`].
+///
+/// ```
+/// use puddle_types::{ImageRef, image_ref};
+/// let image: ImageRef = image_ref!("mcr.microsoft.com/devcontainers/base:debian");
+/// assert_eq!(image.as_str(), "mcr.microsoft.com/devcontainers/base:debian");
+/// ```
+///
+/// ```compile_fail
+/// use puddle_types::image_ref;
+/// let _ = image_ref!("has space");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageRefLit(&'static str);
+
+impl ImageRefLit {
+    /// Checks `reference`.
+    ///
+    /// # Panics
+    ///
+    /// When `reference` is not a valid [`ImageRef`]. In a `const` context that is a build error.
+    #[must_use]
+    pub const fn new(reference: &'static str) -> Self {
+        assert!(
+            !reference.is_empty() && reference.len() <= ImageRef::MAX_LEN,
+            "an image reference is 1 to 512 characters"
+        );
+        let mut rest = reference.as_bytes();
+        while let [byte, tail @ ..] = rest {
+            assert!(
+                byte.is_ascii_graphic(),
+                "an image reference is printable ASCII without spaces"
+            );
+            rest = tail;
+        }
+        Self(reference)
+    }
+}
+
+impl From<ImageRefLit> for ImageRef {
+    fn from(lit: ImageRefLit) -> Self {
+        Self(lit.0.to_owned())
+    }
+}
+
+/// An [`ImageRef`] from a constant string, checked at build time: no `Result`, no `expect`.
+#[macro_export]
+macro_rules! image_ref {
+    ($reference:expr) => {
+        $crate::ImageRef::from(const { $crate::ImageRefLit::new($reference) })
+    };
+}
 
 /// A checkout's directory directly under a workspace's volume root: ASCII letters, digits, `.`,
 /// `_` and `-`, not starting with `.` or `-`, at most [`CheckoutDir::MAX_LEN`] characters, and

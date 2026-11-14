@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the maps and sets here are bookkeeping that no template reads, so they need no reactivity */
 // The inbox's state: open requests (grouped by registrable domain, R-18), the local toggles that
 // decide whether a local destination can be approved (R-14), and the "decided just now" list with

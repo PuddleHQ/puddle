@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The data-folder lock across real processes: a holder that is refused against, killed (the
 //! stale lock a crash leaves) and ended cleanly. The test runs as a plain program
 //! (`harness = false`) whose children are copies of itself that take the lock and wait.

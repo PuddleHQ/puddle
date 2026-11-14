@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_store::{Limits, ManualClock, ShellInitText};
+use puddle_types::GuestPath;
 
 use super::*;
 
@@ -176,8 +177,8 @@ fn a_save_that_picked_the_workspace_before_its_delete_does_not_bring_the_folder_
     store
         .set_shell_init(&id("w1"), &ShellInitText::new("export A=1").unwrap())
         .unwrap();
-    assert_eq!(copies.refresh(&id("w1")), Ok(Published::Clean));
-    assert_eq!(copies.refresh(&id("w1")), Ok(Published::Clean));
+    assert_eq!(copies.refresh(&id("w1")).unwrap(), Published::Clean);
+    assert_eq!(copies.refresh(&id("w1")).unwrap(), Published::Clean);
     assert!(!dir.path().join("w1").exists());
 }
 
@@ -241,19 +242,19 @@ fn a_folder_that_cannot_be_written_says_which_workspace_and_why() {
     fs::write(&file, "x").unwrap();
     // The root is a file, so no folder can be made below it.
     let (copies, _) = copies(&file);
-    let why = copies.publish(&id("w1")).unwrap_err();
+    let why = copies.publish(&id("w1")).unwrap_err().to_string();
     assert!(why.contains("cannot write the shell init"), "{why}");
 }
 
 /// What a verdict says, as text to assert on: a refusal's message is in it.
-fn refusal(said: &Result<Verdict, String>) -> String {
+fn refusal(said: &Result<Verdict, ShellInitError>) -> String {
     format!("{said:?}")
 }
 
 #[test]
 fn the_check_reads_every_exit_the_guest_script_has() {
     let said = |code: i32, out: &str| verdict(&ExecOutput::new(code, out, "err"));
-    assert_eq!(said(0, ""), Ok(Verdict::Quiet));
+    assert_eq!(said(0, "").unwrap(), Verdict::Quiet);
     let syntax = refusal(&said(65, "line 3: unexpected end"));
     assert!(
         syntax.contains("does not parse") && syntax.contains("line 3"),
@@ -267,7 +268,12 @@ fn the_check_reads_every_exit_the_guest_script_has() {
     let long = "y".repeat(10_000);
     let cut = refusal(&said(66, &long));
     assert!(cut.len() < 3000 && cut.contains(" ...\""), "{}", cut.len());
-    assert!(said(70, "").unwrap_err().contains("could not run"));
+    assert!(
+        said(70, "")
+            .unwrap_err()
+            .to_string()
+            .contains("could not run")
+    );
     assert!(timed_out_message().contains("5 seconds"));
 }
 
@@ -304,7 +310,7 @@ fn the_guest_script_catches_a_syntax_error_and_output_and_passes_a_quiet_script(
         ExecOutput::new(out.status.code().unwrap(), out.stdout, out.stderr)
     };
     let quiet = run("export A=1\nalias ll='ls -l'\nif false; then echo never; fi\n");
-    assert_eq!(verdict(&quiet), Ok(Verdict::Quiet), "{quiet:?}");
+    assert_eq!(verdict(&quiet).unwrap(), Verdict::Quiet, "{quiet:?}");
     assert!(
         matches!(verdict(&run("if then\n")), Ok(Verdict::Refused(m)) if m.contains("does not parse"))
     );

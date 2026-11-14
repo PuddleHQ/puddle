@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The audit record union on the wire (docs/spec/rules.md §5).
 
 use puddle_store as store;

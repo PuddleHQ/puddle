@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Unix: modes `0700` for folders Puddle creates, `0600` for files.
 
 use std::fs::{self, DirBuilder, File, OpenOptions};

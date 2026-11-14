@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Edges of the smaller modules that the unit tests next to the code leave open: the exact length
 //! limits of host names, the path of an absolute-form request target, the descriptions of the
 //! local-address categories, the empty check of a guest environment and when a prefix clear is

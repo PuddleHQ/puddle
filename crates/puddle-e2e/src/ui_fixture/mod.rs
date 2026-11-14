@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The UI fixture backend: the real `puddle-api` router on an in-memory store, a manual
 //! clock and in-memory settings, seeded from a [`Scenario`] and driven by scripted [`Step`]s.
 //!
@@ -661,7 +661,7 @@ impl State {
                 self.events.emit(Event::NetworkChanged { epoch });
             }
             Step::CredentialReadable { source, readable } => {
-                let spec = source.clone().into_spec()?;
+                let spec = source.clone().into_spec().map_err(|e| e.to_string())?;
                 self.credentials
                     .set_unreadable(spec, (!readable).then_some(SourceError::NotSignedIn));
             }
@@ -815,7 +815,10 @@ impl State {
 
     fn step_orphan_volume(&self, id: &str, remote: Option<&str>) -> Result<(), String> {
         let id = WorkspaceId::new(id).map_err(|err| format!("workspace id {id:?}: {err}"))?;
-        let remote = remote.map(puddle_api::RepoUrl::parse).transpose()?;
+        let remote = remote
+            .map(puddle_api::RepoUrl::parse)
+            .transpose()
+            .map_err(|e| e.to_string())?;
         self.workspaces.add_orphan_volume(&id, remote);
         self.events.emit(Event::ProblemsChanged {});
         Ok(())
@@ -830,7 +833,7 @@ impl State {
     ) -> Result<(), String> {
         let at = std::time::SystemTime::now() - Duration::from_millis(ago_ms);
         self.credentials.note_read_at(
-            &source.clone().into_spec()?,
+            &source.clone().into_spec().map_err(|e| e.to_string())?,
             match by {
                 ReadBy::Injection => puddle_secrets::ReadUse::Injection,
                 ReadBy::RepositoryList => puddle_secrets::ReadUse::RepositoryList,
@@ -1035,7 +1038,10 @@ impl State {
             .iter()
             .map(|request| {
                 let label = request.label.clone();
-                let draft = request.clone().into_store_draft()?;
+                let draft = request
+                    .clone()
+                    .into_store_draft()
+                    .map_err(|e| e.to_string())?;
                 let made = self
                     .store
                     .create_identity(UserId::OWNER, draft)
@@ -1138,8 +1144,10 @@ impl State {
         self.credentials
             .set_found(found(&seed.found, &seed.missing)?);
         for source in &seed.signed_out {
-            self.credentials
-                .set_unreadable(source.clone().into_spec()?, Some(SourceError::NotSignedIn));
+            self.credentials.set_unreadable(
+                source.clone().into_spec().map_err(|e| e.to_string())?,
+                Some(SourceError::NotSignedIn),
+            );
         }
         self.credentials.set_sign_in(match &seed.sign_in {
             Some(start) => SignInStart {

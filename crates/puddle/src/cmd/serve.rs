@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle serve`: runs the host process (store, proxies, sandbox runtime, workspaces, API)
 //! until Ctrl-C, a termination signal or the end of the console session, then stops every
 //! workspace cleanly.
@@ -176,7 +176,7 @@ pub fn run(args: &ServeArgs) -> ExitCode {
     puddle_no_dump::harden_from_env().log();
     // Everything up to the async runtime happens while this is the only thread.
     let prepared = match std::env::current_exe()
-        .map_err(|e| puddle_host::HostError::DataDir(e.to_string()))
+        .map_err(puddle_host::HostError::ProgramFolder)
         .and_then(|exe| config(&options, &exe))
         .and_then(|config| prepare(config, &SystemPlatform::new().with_dev_override_from_env()))
     {

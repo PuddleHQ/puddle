@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shutdown and reconcile on the fake runtime (tier U).
 #![expect(
     clippy::unwrap_used,

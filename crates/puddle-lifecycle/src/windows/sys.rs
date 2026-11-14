@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Win32 calls: job objects and the console control handler. Every `unsafe` block of the
 //! crate is here.
 #![expect(unsafe_code, reason = "Win32 job object and console handler calls")]

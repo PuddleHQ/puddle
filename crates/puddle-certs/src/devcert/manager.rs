@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The development certificate end to end: reuse what Windows already trusts, else keep one
 //! localhost leaf in the data folder and trust it once.
 

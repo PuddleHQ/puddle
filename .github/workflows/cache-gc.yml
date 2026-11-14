@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Keeps the Actions caches under the repo's 10 GB cap (ci/cache-gc.sh): drops superseded rust-cache
 # entries on develop, stale task-branch caches and every merge queue cache, so the cargo-xwin cache
 # is never evicted.

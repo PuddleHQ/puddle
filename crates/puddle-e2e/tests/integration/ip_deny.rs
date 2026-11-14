@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! R-27 end to end, no VM: an exact deny of an address wins over every rule for a name, with the
 //! real agent, proxy and SQLite rules engine. A guest TCP client → the real guest agent → the
 //! real proxy → servers on `127.0.0.1` (allowed) and `127.0.0.2` (denied by an IP rule).

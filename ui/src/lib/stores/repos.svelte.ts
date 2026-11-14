@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The repository lists of one screen: the repositories the identities' credentials reach (`GET
 // /api/repos`) and how current each credential's list is. The host reads a list from the Git host
 // when a screen asks and it was never read, so a first read can take many seconds: the store says it

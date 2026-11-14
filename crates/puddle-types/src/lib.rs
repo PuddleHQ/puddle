@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared types for Puddle's crates: identifiers, wire types and errors that cross crate
 //! boundaries. Keep this crate small and free of I/O, so every other crate can depend on it.
 //!
@@ -56,7 +56,7 @@ pub use event::{
     NullSink, PendingEnd, PendingSummary, UnknownTokenKind, WorkspaceStatus, WorkspaceStep,
 };
 pub use fill::{Fill, Rgb, SET_PALETTE};
-pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
+pub use guest::{ApplyKind, FileMode, GuestEnv, GuestFile, GuestPath, GuestPathLit};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
 pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
@@ -65,7 +65,7 @@ pub use merge::{
     MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
 };
 pub use name::{
-    CheckoutDir, EntryId, ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
+    CheckoutDir, EntryId, ImageRef, ImageRefLit, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 

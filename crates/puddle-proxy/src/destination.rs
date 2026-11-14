@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which destinations and resolved addresses the proxy may connect to (R-14), and how names are
 //! resolved.
 //!

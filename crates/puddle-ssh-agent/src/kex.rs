@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a spliced SSH connection's first key exchange shows in clear: the server's host key and its
 //! signature over the session identifier.
 //!

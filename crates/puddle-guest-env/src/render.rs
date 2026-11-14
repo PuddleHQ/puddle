@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings in, [`GuestEnv`] and [`GuestFile`]s out.
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 
-use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
+use puddle_types::{FileMode, GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
 
 use crate::settings::{java_ip, loopback_entries};
 use crate::{ConfigError, NoProxyEntry, ProxySettings};
@@ -41,10 +41,10 @@ pub const MAVEN_SETTINGS_GUEST: &str = "/etc/puddle/maven/settings.xml";
 /// build, so Gradle keeps the proxy when a tool clears `JAVA_TOOL_OPTIONS`.
 pub const GRADLE_INIT_RELATIVE: &str = "init.d/puddle-proxy.gradle";
 
-const SUDOERS_MODE: u32 = 0o440;
+const SUDOERS_MODE: FileMode = FileMode::new(0o440);
 
 /// Mode of a Docker CLI config Puddle creates: `docker login` stores credentials in it later.
-const DOCKER_CONFIG_MODE: u32 = 0o600;
+const DOCKER_CONFIG_MODE: FileMode = FileMode::new(0o600);
 
 /// Header of every generated file (the boot hook rewrites them at every boot).
 const GENERATED: &str = "Written by Puddle at every boot; changes here are overwritten.";
@@ -141,9 +141,7 @@ pub fn guest_proxy_config(
         .map_or_else(|| format!("{}/.gradle", home(settings)), str::to_owned);
     let mut files = vec![
         file(APT_CONF_GUEST, apt_conf(&proxy_url, &bypass))?,
-        file(SUDOERS_GUEST, sudoers(&env))?
-            .with_mode(SUDOERS_MODE)
-            .map_err(|e| path_error(&e))?,
+        file(SUDOERS_GUEST, sudoers(&env))?.with_mode(SUDOERS_MODE),
         file(
             MAVEN_SETTINGS_GUEST,
             maven_settings(settings.proxy, &java_bypass),
@@ -162,8 +160,7 @@ pub fn guest_proxy_config(
             GuestPath::new(&format!("{docker_dir}/config.json")).map_err(|e| path_error(&e))?;
         files.push(
             GuestFile::merged(path, docker_cli_config(container, &no_proxy)?)
-                .with_mode(DOCKER_CONFIG_MODE)
-                .map_err(|e| path_error(&e))?,
+                .with_mode(DOCKER_CONFIG_MODE),
         );
     }
     Ok(GuestProxyConfig { env, files })

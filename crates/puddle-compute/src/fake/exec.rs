@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake's command interpreter: a handful of built-in commands over an in-memory file
 //! system, plus test-supplied handlers.
 

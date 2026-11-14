@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Rule sets and System managed against the real API on the fixture backend (rules spec §7): the
 // Rules screen's sections, a set's switches, and an inbox decision into a set. Every test starts
 // from the `default` scenario (one pending request, demo -> registry.example.org).

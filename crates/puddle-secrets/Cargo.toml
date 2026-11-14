@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-secrets"
 description = "where Puddle gets a secret on the host: signed-in gh, Git Credential Manager, a pasted token in the OS store"
@@ -11,13 +11,15 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+aes-gcm = { workspace = true }
 getrandom = { workspace = true }
 keyring = { workspace = true }
 keyring-core = { workspace = true }
+puddle-fs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 tracing = { workspace = true }
 zeroize = { workspace = true }
 

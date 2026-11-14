@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Weekly upkeep of the forks Puddle ships (microsandbox, libkrun, russh, imago, libkrunfw): ci/fork-upkeep.py
 # checks that every commit a fork carries over its upstream has a label in ci/fork-labels.tsv (permanent, or an
 # upstream candidate), and replays those commits on upstream's newest code in a scratch checkout. Nothing is pushed.

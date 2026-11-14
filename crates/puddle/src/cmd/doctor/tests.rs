@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::time::Duration;
 
 use puddle_doctor::{
@@ -108,6 +108,9 @@ impl Probe for Fake {
             endpoint: "/run/agent.sock".into(),
             families: vec!["ed25519".into()],
         }
+    }
+    fn credential_store(&self) -> puddle_doctor::StoreHealth {
+        puddle_doctor::StoreHealth::Working
     }
     fn az_cli(&self, _limit: Duration) -> puddle_doctor::AzCliFacts {
         puddle_doctor::AzCliFacts::Found {

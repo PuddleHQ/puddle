@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Smoke test of the real shell: starts `puddle-app` with WebView2's remote-debugging port
 // open and checks, over the Chrome DevTools Protocol, that the main window shows the SPA served
 // by the in-process backend, that the page holds the API token, and that it can call no Tauri

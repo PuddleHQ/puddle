@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A terminated connection whose guest speaks HTTP/2.
 //!
 //! Every stream is one request, decided, checked and injected exactly like an HTTP/1.1 request on

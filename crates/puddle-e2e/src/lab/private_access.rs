@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A private-access client's network, as the host sees it: the stand-in for Zscaler Private Access,
 //! Netskope, WARP or a similar client, none of which a test can install.
 //!

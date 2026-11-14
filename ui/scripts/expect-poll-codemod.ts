@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Codemod for the e2e specs: `expect(await read)` becomes `await expect.poll(() => read)`.
 //
 // `expect(await read)` takes one reading of the page before it has settled, so a spec that passes on an

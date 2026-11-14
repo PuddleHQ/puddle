@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/boot.sh`, run on the test host against a fake root with stubbed `sysctl`,
 //! `update-ca-certificates` and `puddle-agent`, under every POSIX shell the host has (dash and
 //! bash at least). The VM version of these checks is `tests/vm_boot.rs`.
@@ -22,7 +22,7 @@ use puddle_boot::{
 use puddle_compute::ImageConfig;
 use puddle_test_kit::eventually_blocking;
 use puddle_types::{
-    GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, SessionUser,
+    FileMode, GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, SessionUser,
 };
 
 const IMAGE_PATH: &str = "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin";
@@ -53,11 +53,7 @@ fn full_plan(ca: &str) -> BootPlan {
     BootPlan::builder(&image(&[], &["bash"]))
         .env(&env())
         .file(file(CA, ca.as_bytes()))
-        .file(
-            file("/etc/npmrc", b"proxy=http://127.0.0.1:3128\n")
-                .with_mode(0o600)
-                .unwrap(),
-        )
+        .file(file("/etc/npmrc", b"proxy=http://127.0.0.1:3128\n").with_mode(FileMode::new(0o600)))
         .git_identity(GitIdentity::new("Ada Lovelace", "ada@example.org").unwrap())
         .build()
         .unwrap()
@@ -824,9 +820,7 @@ fn merged(path: &str) -> GuestFile {
         )],
     )
     .unwrap();
-    GuestFile::merged(GuestPath::new(path).unwrap(), spec)
-        .with_mode(0o600)
-        .unwrap()
+    GuestFile::merged(GuestPath::new(path).unwrap(), spec).with_mode(FileMode::new(0o600))
 }
 
 fn plan_with(files: Vec<GuestFile>) -> BootPlan {

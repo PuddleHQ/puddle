@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/clear-locks.sh` under dash and bash, against real git repositories in a temp
 //! dir that plays the volume root, driven through [`Workspaces::clear_stale_locks`] on the fake
 //! (its exec handler runs the script on the host). A fake proc dir stands in for `/proc`. Needs

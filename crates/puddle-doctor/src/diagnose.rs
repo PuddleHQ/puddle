@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! From facts to findings: the order of the checks, what depends on what, and the exact text of
 //! every finding and fix. Pure, so every case is tested with a faked [`Probe`].
 
@@ -13,6 +13,8 @@ use crate::facts::{
     HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection,
     RuntimeFacts, RuntimeState, SshAgentFacts, SwapFacts, WritableFolder,
 };
+use puddle_secrets::StoreHealth;
+
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
 /// The exit code of the probe program the test VM runs.
@@ -49,6 +51,8 @@ pub trait Probe {
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts;
     /// Asks the Azure CLI for its version, waiting at most `limit`.
     fn az_cli(&self, limit: Duration) -> AzCliFacts;
+    /// Writes a throwaway value to the credential store and deletes it.
+    fn credential_store(&self) -> StoreHealth;
 }
 
 /// What to run and how long it may take.
@@ -158,6 +162,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
 
     checks.push(ssh_agent(os, &probe.ssh_agent(options.ssh_agent_limit)));
     checks.push(az_cli(&probe.az_cli(AZ_CLI_LIMIT)));
+    checks.push(credential_store(os, probe.credential_store()));
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -951,11 +956,8 @@ fn load_failure(os: Os, msb: &Path, code: i32, hypervisor_ready: bool) -> Option
     if os != Os::Windows {
         return None;
     }
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "Windows reports NTSTATUS exit codes as i32; the bits are the code"
-    )]
-    let status = code as u32;
+    // Windows reports NTSTATUS exit codes as i32; the bits are the code.
+    let status = code.cast_unsigned();
     match status {
         codes::STATUS_INVALID_IMAGE_HASH => Some(app_control(msb)),
         codes::STATUS_ACCESS_DENIED => Some(edr(msb)),
@@ -980,11 +982,8 @@ Platform DLLs of a current Windows 10/11."
 
 fn hex_or_dec(os: Os, code: i32) -> String {
     if os == Os::Windows && code < 0 {
-        #[expect(
-            clippy::cast_sign_loss,
-            reason = "Windows reports NTSTATUS exit codes as i32; the bits are the code"
-        )]
-        let status = code as u32;
+        // Windows reports NTSTATUS exit codes as i32; the bits are the code.
+        let status = code.cast_unsigned();
         format!("0x{status:08X}")
     } else {
         code.to_string()
@@ -1268,6 +1267,27 @@ fn az_cli(facts: &AzCliFacts) -> Check {
         )
         .fix("Azure DevOps sources need a working `az`; reinstall the Azure CLI if `az --version` fails."),
     }
+}
+
+// ---- Credential store ----
+
+/// Warn only: a store that refuses writes stops saving secrets and sign-ins, not sandboxes. The
+/// words come from `puddle-secrets`, which also words the problem the running service raises.
+fn credential_store(os: Os, health: StoreHealth) -> Check {
+    let id = CheckId::CredentialStore;
+    let Some(advice) = health.advice(os == Os::Linux) else {
+        return Check::new(id, Status::Ok, "a test write and delete worked");
+    };
+    let (summary, finding) = match health {
+        StoreHealth::Locked => ("locked: it refuses writes", Finding::CredentialStoreLocked),
+        _ => (
+            "not available: nothing answers where Puddle keeps secrets",
+            Finding::CredentialStoreMissing,
+        ),
+    };
+    Check::new(id, Status::Warn, summary)
+        .finding(finding)
+        .fix(advice.fix)
 }
 
 fn ssh_agent(os: Os, facts: &SshAgentFacts) -> Check {

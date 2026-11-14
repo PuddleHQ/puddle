@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The browsers signed in as the current user, the way to sign one out, and the sign-in methods.
 // Nothing here is a credential: a device is a name and some times.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";

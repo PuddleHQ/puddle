@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The terminal socket's vocabulary: the sub-protocol, the size limits, the control
 // messages the page sends as text and the one the host sends back. Pure, so every rule is tested
 // without a socket.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A moment as it reads in a log: the time for today, the date and time for earlier days, in the
 // OS locale via Intl (English only for now, no i18n framework).
 

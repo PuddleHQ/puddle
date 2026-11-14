@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `session-bind@openssh.com` extension: before it lists keys, OpenSSH's `ssh` tells the agent
 //! which session it logs in to, by the server's host key, the session identifier and the server's
 //! signature over that identifier from the key exchange.

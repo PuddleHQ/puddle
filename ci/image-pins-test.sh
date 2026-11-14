@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/image-pins.sh: a bare origin, a checkout of its develop with two files that hold a pin line, a fake
 # `curl` (a registry that answers from $FAKE_REG) and a fake `gh` (a table of open pull requests, a log of calls). Cases:
 # `check` passes on equal digest pins and fails on a tag without digest, on two different pins, on a missing pin line and on

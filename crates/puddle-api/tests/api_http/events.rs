@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The SSE stream over real HTTP: filtering, lag notices, and ending on shutdown.
 
 use std::time::Duration;

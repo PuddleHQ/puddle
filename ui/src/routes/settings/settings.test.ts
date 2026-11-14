@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   cleanup,
   fireEvent,
@@ -158,6 +158,7 @@ describe("the screen", () => {
       "Inbox",
       "Workspaces",
       "Disk space",
+      "SSH agent",
       "Network",
       "Browser VS Code",
       "Git and credentials",
@@ -1066,6 +1067,57 @@ describe("disk space lines", () => {
     await open();
     await type(warn(), "50");
     await type(warn(), "20");
+    expect(screen.getByText("No unsaved changes.")).toBeVisible();
+  });
+});
+
+describe("SSH agent pipe", () => {
+  const field = () => screen.getByLabelText("SSH agent pipe or socket");
+  const type = async (box: HTMLElement, text: string) => {
+    await fireEvent.input(box, { target: { value: text } });
+    await fireEvent.change(box);
+  };
+
+  it("starts empty, saves a typed pipe trimmed on Save and shows what is stored", async () => {
+    await open();
+    expect(field()).toHaveValue("");
+    await type(field(), String.raw`  \\.\pipe\pageant.alice  `);
+    expect(putBodies()).toHaveLength(0);
+    await save();
+    expect(api.ui.ssh_agent_pipe).toBe(String.raw`\\.\pipe\pageant.alice`);
+  });
+
+  it("shows a stored pipe and clears it with an empty field", async () => {
+    api.ui.ssh_agent_pipe = "/run/agent.sock";
+    await open();
+    expect(field()).toHaveValue("/run/agent.sock");
+    await type(field(), "");
+    await save();
+    expect(api.ui.ssh_agent_pipe).toBeNull();
+  });
+
+  it("refuses a control character and holds Save until it is fixed", async () => {
+    await open();
+    await type(field(), "/run/a\tb");
+    expect(
+      await screen.findByText(
+        "A pipe or socket path cannot hold a control character.",
+      ),
+    ).toBeVisible();
+    expect(field()).toHaveAttribute("aria-invalid", "true");
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(screen.getByText("Fix the SSH agent pipe to save.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await type(field(), "/run/agent.sock");
+    await save();
+    expect(api.ui.ssh_agent_pipe).toBe("/run/agent.sock");
+  });
+
+  it("puts the field back to what is stored without it counting as a change", async () => {
+    api.ui.ssh_agent_pipe = "/run/agent.sock";
+    await open();
+    await type(field(), "/other");
+    await type(field(), "/run/agent.sock");
     expect(screen.getByText("No unsaved changes.")).toBeVisible();
   });
 });

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The real-tool radar (tests named `vm_radar_*`): apt, npm, pnpm, cargo, go and maven fetch thousands of
 # packages from the real registries through the whole stack in a real microVM, and the tools' answer
 # to a certificate they refuse is recorded. It discovers; it never blocks a merge (it is not a required
@@ -51,7 +51,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
       - name: msb runtime (fork tag; download, verify)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The report: one line per check, a finding code and the exact fix for each problem, as text for
 //! people and as versioned JSON for tools and (later) crash reports.
 
@@ -70,6 +70,8 @@ pub enum CheckId {
     GuestKernel,
     /// The Azure CLI (`az`), needed only for Azure DevOps sources.
     AzCli,
+    /// Whether the credential store takes a write.
+    CredentialStore,
 }
 
 impl CheckId {
@@ -91,6 +93,7 @@ impl CheckId {
             Self::SshAgent => "SSH agent",
             Self::GuestKernel => "Guest kernel",
             Self::AzCli => "Azure CLI (az)",
+            Self::CredentialStore => "Credential store",
         }
     }
 }
@@ -194,6 +197,10 @@ pub enum Finding {
     GuestDevMemPresent,
     /// No Azure CLI (`az`) is on the search path.
     AzCliMissing,
+    /// No credential store answers where Puddle keeps its secrets.
+    CredentialStoreMissing,
+    /// The credential store answers and refuses a write: it is locked.
+    CredentialStoreLocked,
 }
 
 /// One line of the report.

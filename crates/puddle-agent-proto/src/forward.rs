@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `forward` stream: the host reaches a port inside the guest.
 //!
 //! The one stream kind the **host** opens. It writes [`PREAMBLE`] and one line with the port

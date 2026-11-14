@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Consents on the wire.
 
 use puddle_settings as settings;
@@ -115,8 +115,8 @@ pub struct ConsentRequest {
 
 impl ConsentRequest {
     pub(crate) fn into_consent(self, now_ms: u64) -> Result<settings::Consent, ApiError> {
-        let terms_version = settings::TermsVersion::new(&self.terms_version)
-            .map_err(|err| ApiError::invalid(err.to_string()))?;
+        let terms_version =
+            settings::TermsVersion::new(&self.terms_version).map_err(ApiError::invalid)?;
         let at = settings::UnixMillis(now_ms);
         Ok(match self.decision {
             ConsentDecision::Granted => settings::Consent::Granted { at, terms_version },

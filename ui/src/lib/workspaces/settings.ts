@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A workspace's own settings as the form shows them: what each control offers and how a choice
 // becomes an override (a value, or `null` to inherit).
 import type { components } from "#lib/api/schema.d.ts";

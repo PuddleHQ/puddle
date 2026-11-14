@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows probes. Every call works without administrator rights. This module holds the crate's
 //! only `unsafe` code: plain Win32 calls with stack buffers whose sizes are passed alongside.
 

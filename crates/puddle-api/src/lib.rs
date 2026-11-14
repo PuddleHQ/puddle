@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's local HTTP API axum on `127.0.0.1`, an SSE event stream, and the
 //! `OpenAPI` contract the UI and CLI are generated from (ADR 0004).
 //!
@@ -116,13 +116,15 @@ pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
 pub use ui::EmbeddedUi;
 pub use ui::{UiAssets, UiFile};
 pub use workspaces::{
-    AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, DEFAULT_DISK_MIB, DEFAULT_IMAGE,
-    DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget, DisplayName, EditorLogin, EditorSignIn,
-    GitSetup, IdSource, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, LocalSource,
-    MAX_ID_DRAWS, MAX_REPO_URL_LEN, MAX_REPOSITORIES, NameIds, NewRepository, NewWorkspace,
-    NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation, RandomIds, RepoFindings, RepoUrl,
-    Repository, RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
-    WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, entry_id_from_text, label_taken,
-    new_entry_id,
+    AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, CheckoutProblem,
+    DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget,
+    DisplayName, DisplayNameError, EditorLogin, EditorSignIn, EntryProblem, GitSetup, IdDrawError,
+    IdSource, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, LocalCheckoutError,
+    LocalSource, MAX_ID_DRAWS, MAX_REPO_URL_LEN, MAX_REPOSITORIES, NameIds, NewRepository,
+    NewWorkspace, NoFreeEntryId, NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation,
+    RandomIds, RepoFindings, RepoUrl, RepoUrlError, Repository, RepositoryDraft,
+    RepositoryListError, ShellInitCheck, StartFolder, StartFolderChange, StartFolderError,
+    WorkspaceError, WorkspaceRecord, WorkspaceService, check_rename, check_repositories,
+    check_repositories_with, check_session_user_change, check_start_folder_change,
+    entry_id_from_text, label_taken, new_entry_id,
 };

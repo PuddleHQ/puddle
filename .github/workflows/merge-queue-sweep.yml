@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Backstop for pull requests that are armed for auto-merge and green but never enter the merge queue: GitHub does not
 # always hand an armed pull request to a ruleset queue (seen on a Dependabot PR armed with the workflow token, which sat
 # green for 2 h until it was disarmed and armed again). ci/merge-queue-sweep.sh adds each such PR's head commit to the
@@ -44,13 +44,15 @@ jobs:
         run: sleep 150
       # A merge-queue entry added with the default GITHUB_TOKEN started no merge-group run (PR 768, 2026-11-09: queued 21:05Z by
       # github-actions[bot], no run in 95 min, dropped 22:40Z), so the entry is added as the GitHub App that coverage-baseline.yml
-      # already uses (same variable and secret; Pull requests write is what enqueuePullRequest needs).
+      # already uses (same variable and secret). enqueuePullRequest and disablePullRequestAutoMerge need Contents write as well
+      # as Pull requests write: a token with Pull requests write alone got "Resource not accessible by integration" on both for PR 915, 2026-11-13.
       - name: Token for the coverage baseline app
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.COVERAGE_BASELINE_CLIENT_ID }}
           private-key: ${{ secrets.COVERAGE_BASELINE_APP_PRIVATE_KEY }}
+          permission-contents: write
           permission-pull-requests: write
       - name: add armed, green PRs that are not queued
         env:

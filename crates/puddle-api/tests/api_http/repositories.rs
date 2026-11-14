@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's checkouts and the calls that add, manage and remove its repositories, over real
 //! HTTP against `FakeWorkspaces`: every refusal of API-56 and what API-57 lists.
 
@@ -409,7 +409,7 @@ async fn adding_a_repository_that_makes_no_sense_is_a_422_that_never_echoes_a_cr
             "web",
             json!({"kind": "clone", "url": "git@github.com:a/b.git"}),
             422,
-            "SSH",
+            "ssh remotes",
         ),
         (
             "web",

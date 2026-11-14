@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Second half of the notices refresh on a Dependabot npm PR (first half: dependabot-notices-build.yml). Runs from
 # develop's copy of this file after the build run, holds a write token, and never runs the PR's code: it takes the one
 # file the build run uploaded as data, and ci/dependabot-notices.sh checks it and pushes it as a bot commit with plain

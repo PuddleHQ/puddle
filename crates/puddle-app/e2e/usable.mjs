@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The "usable" run (install, create, approve, edit, build, push), with no person: the installed,
 // release build of the app on Windows, driven through the REST API its own screens call, with real
 // virtual machines and a real Git forge (the lab's, see below).
@@ -378,7 +378,7 @@ try {
 
   // 1. An SSH remote is refused with the explicit message, and nothing is made.
   const ssh = await api("POST", "/api/workspaces", { name: "ssh-refused", repositories: [{ url: sshUrl }] });
-  check("an SSH remote is refused with the explicit message", ssh.status >= 400 && ssh.status < 500 && /SSH remotes are not supported yet/.test(ssh.body), `${ssh.status} ${ssh.body.slice(0, 200)}`);
+  check("an SSH remote is refused with the explicit message", ssh.status >= 400 && ssh.status < 500 && /ssh remotes are not supported yet/.test(ssh.body), `${ssh.status} ${ssh.body.slice(0, 200)}`);
   const none = await api("GET", "/api/workspaces");
   check("the refused create made no workspace", none.json?.workspaces?.length === 0, none.body.slice(0, 200));
 

@@ -50,16 +50,17 @@ static OS: Connection = Connection::new(connect_platform_store);
 /// Makes the platform store `keyring-core`'s default.
 fn connect_platform_store() -> Result<(), StoreError> {
     #[cfg(target_os = "macos")]
-    let store = apple_native_keyring_store::keychain::Store::new().map_err(|_| StoreError)?;
+    return apple_native_keyring_store::keychain::Store::new()
+        .map(|store| keyring_core::set_default_store(store))
+        .map_err(|_| StoreError);
     #[cfg(target_os = "windows")]
-    let store = windows_native_keyring_store::Store::new().map_err(|_| StoreError)?;
+    return windows_native_keyring_store::Store::new()
+        .map(|store| keyring_core::set_default_store(store))
+        .map_err(|_| StoreError);
     #[cfg(all(unix, not(target_os = "macos")))]
-    let store = zbus_secret_service_keyring_store::Store::new().map_err(|_| StoreError)?;
-    #[cfg(any(unix, windows))]
-    {
-        keyring_core::set_default_store(store);
-        Ok(())
-    }
+    return zbus_secret_service_keyring_store::Store::new()
+        .map(|store| keyring_core::set_default_store(store))
+        .map_err(|_| StoreError);
     #[cfg(not(any(unix, windows)))]
     Err(StoreError)
 }

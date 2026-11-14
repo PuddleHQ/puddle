@@ -28,6 +28,9 @@ pub enum XtaskError {
     /// A test-only feature is on in a shipped program's dependency tree.
     #[error("a test-only feature would ship:\n{0}")]
     Leak(String),
+    /// A release would ship a runtime file the pin list has no hash for.
+    #[error("a release build would not check the runtime files it ships:\n{0}")]
+    Unpinned(String),
     /// Input that should be machine-made didn't parse.
     #[error("cannot parse {what}: {reason}")]
     Parse {

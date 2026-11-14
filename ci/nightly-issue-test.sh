@@ -76,6 +76,15 @@ for f in "$here/../.github/workflows/"*.yml; do
     grep -q '^  schedule:' "$f" || continue
     n=$(sed -n 's/^name: //p' "$f" | head -1)
     case "$covered" in *" $n "*) continue ;; esac
-    printf '%s\n' "$listed" | grep -qx "$n" || fail "workflow '$n' runs on a schedule but nightly-signal.yml does not watch it"
+    # No `printf | grep -qx` here: grep -q quits at the first match, printf then gets SIGPIPE, and pipefail turns the 141 into a
+    # failure of a check that found its match (seen once, reproduced at 0.1 % under CPU load). A case match has no pipe.
+    case $'\n'"$listed"$'\n' in *$'\n'"$n"$'\n'*) ;; *) fail "workflow '$n' runs on a schedule but nightly-signal.yml does not watch it" ;; esac
+done
+
+# Guard for the flake above: under pipefail a pipe into an early-exit grep (-q, -m) in the two nightly scripts is a coin toss.
+early_exit_pipe=$(printf '%s' '\| *(grep|rg|egrep|fgrep) +-[A-Za-z]*[qm]')
+for s in "$here/nightly-issue.sh" "$0"; do
+    hit=$(grep -nE "$early_exit_pipe" "$s" | grep -v 'early_exit_pipe=' | grep -v '^[0-9]*: *#' || true)
+    [ -z "$hit" ] || fail "$(basename "$s") pipes into an early-exit grep (SIGPIPE under pipefail); capture to a variable and use case: $hit"
 done
 echo "nightly-issue-test: ok"

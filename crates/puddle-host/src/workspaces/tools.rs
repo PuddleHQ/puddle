@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The managed tools layer after a start: Puddle downloads the pinned mise onto the volume in the
-//! background (`puddle-agent mise-fetch`). The start never waits for it and never fails because of
-//! it: a failure is the problem `tools:<id>`, and the workspace runs without managed tools.
+//! The managed tools layer after a start: Puddle downloads the pinned mise onto the volume
+//! (`puddle-agent mise-fetch`), then installs the tools the workspace's mise files ask for
+//! ([`install`]), in the background. The start never waits for either and never fails because of
+//! them: a failure is the problem `tools:<id>`, and the workspace runs without managed tools.
+//!
+//! One run per workspace at a time ([`ToolRuns`]): a start, a clone and an allowed host each ask
+//! for a run, and a second one waits for the first.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
@@ -12,6 +18,8 @@ use puddle_types::{Decision, Host, Problem, RuleId, WorkspaceId};
 use puddle_workspace::{PUDDLE_DIR, WORKSPACES_ROOT};
 
 use super::{HostWorkspaces, problem_key};
+
+mod install;
 
 /// The host the download comes from: the one an own deny rule would block it on.
 const DOWNLOAD_HOST: &str = "mise.jdx.dev";
@@ -25,15 +33,71 @@ pub(super) fn tools_key(name: &WorkspaceId) -> String {
     problem_key("tools", name)
 }
 
-impl<R: Runtime + Clone> HostWorkspaces<R> {
-    /// After a start has settled: fetches mise on a task of the service, when the layer is on for
-    /// the workspace. Returns at once.
-    pub(super) fn fetch_mise_later(&self, name: &WorkspaceId) {
-        let (this, name) = (self.clone(), name.clone());
-        self.spawn(async move { this.fetch_mise(&name).await });
+/// The tool runs of every workspace: the lock that keeps them one at a time, and the pending
+/// requests a failed install waited on, which an allow turns into one more run.
+#[derive(Debug, Default)]
+pub(super) struct ToolRuns {
+    locks: Mutex<BTreeMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
+    waiting: Mutex<BTreeMap<WorkspaceId, BTreeSet<i64>>>,
+}
+
+impl ToolRuns {
+    /// The lock of `name`'s runs. Locks no run holds or waits for are dropped on the way, so a
+    /// deleted workspace leaves none behind.
+    fn lock_of(&self, name: &WorkspaceId) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
+        locks.retain(|key, lock| key == name || Arc::strong_count(lock) > 1);
+        locks.entry(name.clone()).or_default().clone()
     }
 
-    async fn fetch_mise(&self, name: &WorkspaceId) {
+    /// Notes the pending requests the last install of `name` waited on (none clears them).
+    fn wait_on(&self, name: &WorkspaceId, ids: BTreeSet<i64>) {
+        let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        if ids.is_empty() {
+            waiting.remove(name);
+        } else {
+            waiting.insert(name.clone(), ids);
+        }
+    }
+
+    /// A pending request of `name` was closed. Whether that calls for one more run: it was one the
+    /// last install waited on, and it was allowed. Either way it is waited on no longer; an allow
+    /// forgets the others too, since the run it starts looks at every host again.
+    fn closed(&self, name: &WorkspaceId, id: i64, allowed: bool) -> bool {
+        let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(ids) = waiting.get_mut(name) else {
+            return false;
+        };
+        if !ids.remove(&id) {
+            return false;
+        }
+        if allowed || ids.is_empty() {
+            waiting.remove(name);
+        }
+        allowed
+    }
+}
+
+impl<R: Runtime + Clone> HostWorkspaces<R> {
+    /// Fetches mise and installs the tools on a task of the service, when the layer is on for the
+    /// workspace: after a start has settled, after a clone, after an allowed host. Returns at once.
+    pub(super) fn set_up_tools_later(&self, name: &WorkspaceId) {
+        let (this, name) = (self.clone(), name.clone());
+        self.spawn(async move { this.set_up_tools(&name).await });
+    }
+
+    /// A pending request of `name` was closed: one the last install waited on and that the user
+    /// allowed runs the install once more.
+    pub(crate) fn tools_pending_closed(&self, name: &WorkspaceId, id: i64, allowed: bool) {
+        if self.inner.tools.closed(name, id, allowed) {
+            tracing::info!(workspace = %name, pending = id, "a host the tool install waited on was allowed; installing again");
+            self.set_up_tools_later(name);
+        }
+    }
+
+    async fn set_up_tools(&self, name: &WorkspaceId) {
+        let lock = self.inner.tools.lock_of(name);
+        let _one_at_a_time = lock.lock().await;
         let inner = &self.inner;
         let key = tools_key(name);
         match crate::settings_read::mise(inner.settings.as_ref(), name) {
@@ -49,23 +113,30 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // `None`: the workspace was not running before or after the fetch, which says nothing
         // about mise.
-        if let Some(outcome) = self.run_mise_fetch(name).await {
-            self.record_mise_outcome(name, outcome);
+        if let Some(outcome) = self.run_mise_fetch(name).await
+            && self.record_mise_outcome(name, outcome)
+        {
+            self.install_tools(name).await;
         }
     }
 
-    /// Clears the problem after a good fetch, raises it after a failed one.
-    fn record_mise_outcome(&self, name: &WorkspaceId, outcome: Result<ExecOutput, ComputeError>) {
-        let problems = &self.inner.problems;
+    /// Raises the problem after a failed fetch. Whether mise is on the volume; the install that
+    /// follows a good fetch clears or raises the problem itself.
+    fn record_mise_outcome(
+        &self,
+        name: &WorkspaceId,
+        outcome: Result<ExecOutput, ComputeError>,
+    ) -> bool {
         match outcome {
             Ok(output) if output.status.code == 0 => {
                 tracing::info!(workspace = %name, result = %output.stdout_text().trim(), "mise is on the volume");
-                problems.clear(&tools_key(name));
+                true
             }
             failed => {
                 let reason = failure_reason(failed);
                 tracing::warn!(workspace = %name, %reason, "mise could not be put on the volume");
-                problems.raise(self.mise_problem(name, &reason));
+                self.inner.problems.raise(self.mise_problem(name, &reason));
+                false
             }
         }
     }

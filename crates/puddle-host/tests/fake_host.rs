@@ -13,7 +13,10 @@ mod support;
 
 #[path = "fake_host/dropped_requests.rs"]
 mod dropped_requests;
+#[path = "fake_host/tools_install.rs"]
+mod tools_install;
 
+use std::fmt::Write as _;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -194,6 +197,22 @@ struct Guest {
     mise_failure: Mutex<Option<&'static str>>,
     /// Every `puddle-agent mise-fetch` as (arguments, user).
     mise_fetches: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// The tools `puddle-agent mise-install` finds missing; a good install clears them.
+    tools_missing: Mutex<Vec<String>>,
+    /// What an install (not a report) answers on standard error with exit code 1, leaving the
+    /// tools missing, instead of installing them.
+    tools_failure: Mutex<Option<&'static str>>,
+    /// Runs inside every install (not a report), before it answers: what the tools asked of the
+    /// network while it ran.
+    at_install: Mutex<Option<Box<dyn Fn() + Send>>>,
+    /// Every `puddle-agent mise-install` as (arguments, user), reports included.
+    tools_runs: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// A report (`--missing`) answers with lines that are not the agent's.
+    tools_report_garbled: AtomicBool,
+    /// How often the trust step for a new JDK ran, and as whom.
+    java_trusts: Mutex<Vec<Option<String>>>,
+    /// The trust step for a new JDK fails.
+    java_trust_fails: AtomicBool,
     /// The script (stdin) of every shell-init check, and what the guest saw at the mounted file
     /// while it ran.
     checks: Mutex<Vec<(String, Option<String>)>>,
@@ -239,7 +258,10 @@ impl Guest {
 
     fn answer(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> Option<ExecOutput> {
         let second = r.args.get(1).map(String::as_str);
-        if let Some(answer) = self.answer_volume_question(r) {
+        if let Some(answer) = self
+            .answer_volume_question(r)
+            .or_else(|| self.answer_tools(r))
+        {
             return Some(answer);
         }
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
@@ -254,7 +276,6 @@ impl Guest {
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
             ("sh", _) if second.is_some_and(|s| s.contains("mktemp")) => "shell-init-check",
-            ("/puddle/puddle-agent", Some("mise-fetch")) => "mise-fetch",
             ("fstrim", _) => "trim",
             ("git", _) => "clone",
             ("sync", _) => "sync",
@@ -287,7 +308,6 @@ impl Guest {
                 ExecOutput::new(0, "", "")
             }
             "shell-init-check" => self.answer_shell_init_check(ctx, r),
-            "mise-fetch" => self.answer_mise_fetch(r),
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
@@ -339,6 +359,27 @@ impl Guest {
         })
     }
 
+    /// The managed tools commands: the mise fetch, the install and the trust step for a new JDK.
+    /// They run in the background after a start, so their place among the commands a test counts
+    /// is a race: they stay out of the command log and have logs of their own.
+    fn answer_tools(&self, r: &ExecRequest) -> Option<ExecOutput> {
+        Some(
+            match (r.program.as_str(), r.args.first().map(String::as_str)) {
+                ("/puddle/puddle-agent", Some("mise-fetch")) => self.answer_mise_fetch(r),
+                ("/puddle/puddle-agent", Some("mise-install")) => self.answer_mise_install(r),
+                ("sh", Some(puddle_certs::JAVA_STEP_PATH)) => {
+                    self.java_trusts.lock().unwrap().push(r.user.clone());
+                    if self.java_trust_fails.load(Ordering::SeqCst) {
+                        ExecOutput::new(1, "", "keytool: permission denied")
+                    } else {
+                        ExecOutput::new(0, "java-trust: 1 store updated\n", "")
+                    }
+                }
+                _ => return None,
+            },
+        )
+    }
+
     /// Records a `mise-fetch` and answers as set up.
     fn answer_mise_fetch(&self, r: &ExecRequest) -> ExecOutput {
         self.mise_fetches
@@ -349,6 +390,56 @@ impl Guest {
             Some(said) => ExecOutput::new(1, "", said),
             None => ExecOutput::new(0, "installed\n", ""),
         }
+    }
+
+    /// Records a `mise-install` and answers like the agent: the missing tools, and for an install
+    /// what landed or failed, then `end`.
+    fn answer_mise_install(&self, r: &ExecRequest) -> ExecOutput {
+        self.tools_runs
+            .lock()
+            .unwrap()
+            .push((r.args.clone(), r.user.clone()));
+        let report_only = r.args.get(2).map(String::as_str) == Some("--missing");
+        if report_only && self.tools_report_garbled.load(Ordering::SeqCst) {
+            return ExecOutput::new(0, "Segmentation fault\n", "");
+        }
+        let before = self.tools_missing.lock().unwrap().clone();
+        let mut out = String::new();
+        for tool in &before {
+            writeln!(out, "missing {tool}").unwrap();
+        }
+        if report_only || before.is_empty() {
+            out.push_str("end\n");
+            return ExecOutput::new(0, out, "");
+        }
+        if let Some(during) = self.at_install.lock().unwrap().as_ref() {
+            during();
+        }
+        let failure = *self.tools_failure.lock().unwrap();
+        let word = if failure.is_some() {
+            "failed"
+        } else {
+            "installed"
+        };
+        for tool in &before {
+            writeln!(out, "{word} {tool}").unwrap();
+        }
+        out.push_str("end\n");
+        if let Some(said) = failure {
+            return ExecOutput::new(1, out, said);
+        }
+        self.tools_missing.lock().unwrap().clear();
+        ExecOutput::new(0, out, "")
+    }
+
+    /// The installs (not the reports) `mise-install` ran.
+    fn tool_installs(&self) -> usize {
+        self.tools_runs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(args, _)| args.len() == 2)
+            .count()
     }
 
     /// Records the script a shell-init check ran and the file it saw, then answers as set up.
@@ -471,11 +562,6 @@ impl Guest {
 
     /// Notes that `r` ran in `ctx`'s sandbox as a command of `kind`, and as whom.
     fn record(&self, ctx: &ExecContext<'_>, kind: &str, r: &ExecRequest) {
-        // Not in the command log: the mise fetch runs in the background after a start, so its
-        // place among the commands a test counts is a race. `mise_fetches` has it.
-        if kind == "mise-fetch" {
-            return;
-        }
         self.commands
             .lock()
             .unwrap()

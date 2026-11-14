@@ -128,6 +128,10 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         std::future::ready(())
     }
 
+    fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool) {
+        self.tools_pending_closed(workspace, id, allowed);
+    }
+
     fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
         let names: Vec<WorkspaceId> = self
             .state()
@@ -340,6 +344,9 @@ struct Inner<R: Runtime + Clone> {
     /// between a settings change's read and its write.
     settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
+    /// The install's reach across every user's data, for the tool install's look at a
+    /// workspace's pending requests whoever owns it.
+    all_users: AllUsers,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
     /// The terminals open now, ended with their reason when the workspace stops.
@@ -380,6 +387,8 @@ struct Inner<R: Runtime + Clone> {
     listings: Mutex<BTreeMap<WorkspaceId, repositories::CachedListing>>,
     /// The disks the host has already warned about, until they drop below the threshold again.
     disk_warned: Mutex<BTreeSet<(WorkspaceId, DiskKind)>>,
+    /// The managed tools runs; see [`tools::ToolRuns`].
+    tools: tools::ToolRuns,
 }
 
 /// Why [`HostWorkspaces::end_extension_hosts`] did not reach the guest.

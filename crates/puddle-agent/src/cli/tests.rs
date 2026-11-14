@@ -42,7 +42,16 @@ fn arguments_map_to_commands() {
         &["mise-fetch"][..],
         &["mise-fetch", ""],
         &["mise-fetch", "a", "b"],
+        &["mise-install"],
+        &["mise-install", "/workspaces/w", "--force"],
     ] {
         assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
     }
+    assert_eq!(
+        parse(&["mise-install", "/workspaces/w", "--missing"]),
+        Command::MiseInstall(mise_install::Request {
+            root: "/workspaces/w".into(),
+            report_only: true,
+        })
+    );
 }

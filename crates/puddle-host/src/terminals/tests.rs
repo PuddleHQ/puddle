@@ -402,7 +402,10 @@ where
     end
 }
 
-#[tokio::test]
+// On paused time the clock moves only when every task is idle: the server's 50 ms always runs
+// out before the client's 500 ms wait for it, whatever the load (a real clock made the arm
+// that quotes the server's reason a coin flip on a busy machine).
+#[tokio::test(start_paused = true)]
 async fn a_server_that_ends_before_or_after_the_client_gave_up_still_gives_its_reason() {
     // It ends while the client still waits for the server's greeting.
     let early = open_with_server(|stream| async move {

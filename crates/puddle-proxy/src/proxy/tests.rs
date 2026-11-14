@@ -1634,6 +1634,105 @@ async fn forwarding_one_request_counts_pipelined_bytes_held_in_both_buffers() {
     assert_eq!(dropped, pipelined.len());
 }
 
+/// An upstream stream that holds its answer back until the request side was flushed (the
+/// last thing the upload does), so the upload finishes before the answer can: the order of the
+/// two halves of a forwarded request no longer depends on how the scheduler interleaves them.
+struct AnswersAfterFlush {
+    inner: tokio::io::DuplexStream,
+    flushed: bool,
+    waiting: Option<std::task::Waker>,
+}
+
+impl tokio::io::AsyncRead for AnswersAfterFlush {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        if !self.flushed {
+            self.waiting = Some(cx.waker().clone());
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for AnswersAfterFlush {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let done = std::pin::Pin::new(&mut self.inner).poll_flush(cx);
+        if done.is_ready() {
+            self.flushed = true;
+            if let Some(waker) = self.waiting.take() {
+                waker.wake();
+            }
+        }
+        done
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn an_answer_that_comes_after_the_whole_body_is_still_forwarded_in_full() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (guest, mut guest_peer) = tokio::io::duplex(4096);
+    let (held, mut upstream_peer) = tokio::io::duplex(4096);
+    guest_peer.write_all(b"hello").await.unwrap();
+    upstream_peer.write_all(b"OK").await.unwrap();
+    upstream_peer.shutdown().await.unwrap();
+    let mut client = BufReader::new(guest);
+    let mut upstream = AnswersAfterFlush {
+        inner: held,
+        flushed: false,
+        waiting: None,
+    };
+    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
+        .await
+        .unwrap();
+    assert_eq!(dropped, 0);
+    let mut answer = Vec::new();
+    guest_peer.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(answer, b"OK");
+}
+
+#[tokio::test]
+async fn an_answer_that_ends_before_the_body_is_sent_is_forwarded_and_the_upload_dropped() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (guest, mut guest_peer) = tokio::io::duplex(4096);
+    // One byte of room and a peer that never reads: the body cannot be written to the end.
+    let (mut upstream, mut upstream_peer) = tokio::io::duplex(1);
+    guest_peer.write_all(&[b'x'; 64]).await.unwrap();
+    let server = tokio::spawn(async move {
+        upstream_peer.write_all(b"E").await.unwrap();
+        upstream_peer.shutdown().await.unwrap();
+        upstream_peer
+    });
+    let mut client = BufReader::new(guest);
+    forward_one_request(&mut client, &mut upstream, Body::Length(64))
+        .await
+        .unwrap();
+    let _held_open = server.await.unwrap();
+    let mut answer = Vec::new();
+    guest_peer.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(answer, b"E");
+}
+
 mod company_network {
     use puddle_netpolicy::StaticSignals;
     use puddle_types::CompanySignal;

@@ -22,6 +22,7 @@ fn info_names_parse_only_when_valid() {
         status: WorkspaceStatus::Running,
         puddle_owned: true,
         root_disk: None,
+        routes: Vec::new(),
     };
     assert_eq!(ours.sandbox_name().unwrap().as_str(), "box");
     let foreign = SandboxInfo {
@@ -29,6 +30,7 @@ fn info_names_parse_only_when_valid() {
         status: WorkspaceStatus::Stopped,
         puddle_owned: false,
         root_disk: None,
+        routes: Vec::new(),
     };
     assert!(foreign.sandbox_name().is_none());
     let vol = VolumeInfo {

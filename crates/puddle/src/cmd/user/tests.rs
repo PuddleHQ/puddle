@@ -268,3 +268,20 @@ fn the_last_sign_in_reads_as_how_long_ago() {
     assert_eq!(ago(900_000_000, Some(900_000_000 - 200_000_000)), "2 d ago");
     assert_eq!(ago(5, Some(10)), "just now");
 }
+
+#[test]
+fn a_user_who_chose_a_password_shows_as_active_in_the_list() {
+    let (dir, paths) = with_database();
+    execute(&config_with(dir.path(), REMOTE, Action::Add("Ann".into()))).unwrap();
+    let store = Store::open(&paths.store(), Arc::new(SystemClock), Limits::default()).unwrap();
+    let ann = store.user_named("Ann").unwrap().unwrap().id;
+    store
+        .take_account_secrets()
+        .unwrap()
+        .set_password_hash(ann, "a stored hash")
+        .unwrap();
+    drop(store);
+    let list = execute(&config_with(dir.path(), REMOTE, Action::List)).unwrap();
+    let ann_line = list.result.lines().find(|l| l.starts_with("Ann")).unwrap();
+    assert!(ann_line.contains("active"), "{}", list.result);
+}

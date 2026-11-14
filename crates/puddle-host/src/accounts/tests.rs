@@ -125,3 +125,23 @@ fn listing_adding_and_removing_need_a_database() {
     ));
     assert!(!paths.store().exists());
 }
+
+#[test]
+fn a_user_who_chose_a_password_is_listed_as_active() {
+    let (_dir, paths) = data_with_owner();
+    add_user(&paths, "Ann").unwrap();
+    let store = reopen(&paths);
+    let ann = store.user_named("Ann").unwrap().unwrap();
+    store
+        .take_account_secrets()
+        .unwrap()
+        .set_password_hash(ann.id, "a stored hash")
+        .unwrap();
+    drop(store);
+    let rows = list_users(&paths).unwrap();
+    assert_eq!(
+        (rows[1].name.as_str(), rows[1].state),
+        ("Ann", UserState::Active)
+    );
+    assert_eq!(rows[0].state, UserState::Invited);
+}

@@ -10,7 +10,7 @@ use puddle_types::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
+use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec, VsockRoute};
 
 /// What a runtime can do, from [`Runtime::probe`]. Code that works around a runtime bug checks
 /// the matching flag instead of the version.
@@ -18,11 +18,6 @@ use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
 pub struct Capabilities {
     /// The runtime's version (`0.7.7`, `0.7.7-puddle.1`, `fake`).
     pub runtime_version: String,
-    /// A failed create leaves no stale directory behind (the upstream msb bug is fixed). When
-    /// `false`, a failed create blocks its name until [`Runtime::remove_stale_dir`].
-    pub stale_dir_fixed: bool,
-    /// SSH sessions report a signal-killed command as a failure. msb 0.7.6 reports exit 0.
-    pub ssh_reports_signal_exit: bool,
 }
 
 /// A sandbox as [`Runtime::list`] sees it.
@@ -37,6 +32,10 @@ pub struct SandboxInfo {
     pub puddle_owned: bool,
     /// How full its root disk is, when the runtime can tell.
     pub root_disk: Option<RootDiskUse>,
+    /// The vsock routes it was made with, which it starts with whatever the host serves now: a
+    /// host can start it again only when it serves each of them. Empty when the runtime can't
+    /// tell.
+    pub routes: Vec<VsockRoute>,
 }
 
 /// The root disk of a sandbox (home directory, tool caches, installed packages): its capacity and
@@ -192,10 +191,8 @@ pub trait Runtime: Send + Sync + 'static {
     /// shutdown (`fstrim` first, ADR 0006). Pulls the image if needed. Named volumes with
     /// [`crate::VolumeMount::ensure_size`] are created if missing.
     ///
-    /// On failure nothing is created, except that, without
-    /// [`Capabilities::stale_dir_fixed`], a failed volume check leaves a stale directory that
-    /// blocks the name; and a refused volume attach leaves a `Stopped` record, which
-    /// [`Runtime::remove`] clears.
+    /// On failure nothing is created, except that a refused volume attach leaves a `Stopped`
+    /// record, which [`Runtime::remove`] clears.
     ///
     /// # Errors
     ///

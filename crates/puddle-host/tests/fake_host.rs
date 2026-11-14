@@ -723,6 +723,11 @@ struct Rig {
     /// command at a moment no test chose, which would move the count of commands that a test
     /// injects a fault after.
     mise_on: AtomicBool,
+    /// Starts the host the way `puddle serve --headless` does: no store handed in, so the choice
+    /// of store runs and picks the file vault, whose key is a file in this rig's config folder.
+    file_vault: AtomicBool,
+    /// With `file_vault`: leaves the headless flag off, as a restart of a recorded install does.
+    without_headless_flag: AtomicBool,
 }
 
 impl Rig {
@@ -751,6 +756,8 @@ impl Rig {
             git_ssh: AtomicBool::new(false),
             ids: Mutex::new(None),
             mise_on: AtomicBool::new(false),
+            file_vault: AtomicBool::new(false),
+            without_headless_flag: AtomicBool::new(false),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
         // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
@@ -812,6 +819,13 @@ impl Rig {
             self.launcher.clone()
         };
         options.secret_store = Some(self.secrets.clone());
+        if self.file_vault.load(Ordering::SeqCst) {
+            options.secret_store = None;
+            options.secret_setup.headless = !self.without_headless_flag.load(Ordering::SeqCst);
+            options.secret_setup.key_home = Some(self.dir.path().join("config"));
+            options.secret_setup.tools = Some(puddle_secrets::ToolPaths::default());
+            options.secret_setup.session = Some(puddle_secrets::LoginSession::NotGraphical);
+        }
         options.git_ssh = self.git_ssh.load(Ordering::SeqCst);
         options
             .rewrite_gate
@@ -13380,4 +13394,106 @@ async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
         .await;
         assert_eq!(mise_fetches(&rig).len(), before, "{switch}: no new fetch");
     }
+}
+
+#[cfg(target_os = "linux")]
+/// Everything under `dir` that holds `needle`, as the files' relative paths.
+fn files_holding(dir: &std::path::Path, needle: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if std::fs::read(&path)
+                .is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle.as_bytes()))
+            {
+                found.push(path.strip_prefix(dir).unwrap().display().to_string());
+            }
+        }
+    }
+    found
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_headless_host_keeps_an_environment_secret_a_pasted_token_and_a_proxy_sign_in_in_the_file_vault()
+ {
+    let rig = Rig::new();
+    rig.file_vault.store(true, Ordering::SeqCst);
+    let proxy = puddle_upstream::ProxyAddr::new("proxy.corp", 8080);
+    let sign_in = fixture::password("vault");
+    let token = "ghp_CANARY-pasted-token-in-the-file-vault";
+
+    let host = rig.start().await;
+    proxy_sign_ins_loaded(&host, 0).await;
+    let first = api(&host);
+    put_env(
+        &first,
+        "/api/env/GLOBAL_TOKEN",
+        secret_body(Some(REAL), &["api.example.org"]),
+    )
+    .await;
+    add_github_identity(&first, token).await;
+    host.proxy_passwords().set(&proxy, "svc", &sign_in).unwrap();
+    assert!(
+        problems_of(&first).await.is_empty(),
+        "no credential-store problem"
+    );
+    let record = std::fs::read_to_string(rig.dir.path().join("data/secrets/store.json")).unwrap();
+    assert!(record.contains("\"store\": \"file\""), "{record}");
+    host.shutdown().await;
+    drop(host);
+
+    // The values are in the vault file and nowhere else: not in the memory store the other tests
+    // hand in, and no file of the run holds one in the clear.
+    assert!(rig.secrets.ids().is_empty());
+    for canary in [REAL, token, sign_in.as_str()] {
+        assert_eq!(files_holding(rig.dir.path(), canary), Vec::<String>::new());
+    }
+    let vault_file = puddle_secrets::vault_path(&rig.dir.path().join("data"));
+    assert!(vault_file.is_file());
+    let held = open_the_vault(&rig, &vault_file).await;
+    for canary in [REAL, token] {
+        assert!(
+            held.iter().any(|value| value == canary),
+            "{canary} not in the vault"
+        );
+    }
+
+    // A start without the flag reads the record, opens the same vault and finds the sign-in.
+    rig.without_headless_flag.store(true, Ordering::SeqCst);
+    let again = rig.start().await;
+    proxy_sign_ins_loaded(&again, 1).await;
+    assert_eq!(
+        again.proxy_passwords().proxies(),
+        [(proxy, "svc".to_owned())]
+    );
+    assert!(problems_of(&api(&again)).await.is_empty());
+    again.shutdown().await;
+}
+
+#[cfg(target_os = "linux")]
+/// Every value in the vault at `file`, opened with the key the rig's host kept in its config
+/// folder: what a restart of the host would read.
+async fn open_the_vault(rig: &Rig, file: &std::path::Path) -> Vec<String> {
+    let keys = puddle_secrets::VaultKeys::new(
+        &rig.dir.path().join("config"),
+        file,
+        puddle_secrets::ToolPaths::default(),
+    );
+    let found = keys.find_or_make().await.unwrap();
+    let vault = puddle_secrets::FileVault::open(file, found.key).unwrap();
+    vault
+        .ids()
+        .unwrap()
+        .iter()
+        .filter_map(|id| {
+            vault
+                .get(&puddle_secrets::StoredId::new(id.as_str()).unwrap())
+                .unwrap()
+        })
+        .map(|secret| secret.expose().to_owned())
+        .collect()
 }

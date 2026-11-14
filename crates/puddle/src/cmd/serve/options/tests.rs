@@ -30,10 +30,15 @@ fn samples(kind: Kind) -> Samples {
             file: "error",
         },
         // Two values only: the source tells the winner where the value cannot.
-        Kind::Bool => Samples {
+        Kind::Bool | Kind::Toggle => Samples {
             flag: "true",
             env: "false",
             file: "true",
+        },
+        Kind::SecretStore => Samples {
+            flag: "file",
+            env: "os",
+            file: "auto",
         },
         Kind::Ip => Samples {
             flag: "10.0.0.1",
@@ -62,8 +67,8 @@ fn samples(kind: Kind) -> Samples {
 fn file_line(spec: &Spec) -> String {
     let file = samples(spec.kind).file;
     match spec.kind {
-        Kind::Port | Kind::Bool => format!("{} = {file}\n", spec.key),
-        Kind::Path | Kind::Log | Kind::Ip | Kind::Domain => {
+        Kind::Port | Kind::Bool | Kind::Toggle => format!("{} = {file}\n", spec.key),
+        Kind::Path | Kind::Log | Kind::Ip | Kind::Domain | Kind::SecretStore => {
             format!("{} = \"{file}\"\n", spec.key)
         }
         Kind::IpList | Kind::HostList => {
@@ -265,6 +270,8 @@ fn print_config_lists_every_option_with_its_value_and_where_it_came_from() {
          port = 4000 (flag --port)\n\
          connection_file = {api} (config file {file})\n\
          data_dir = the per-user data folder (default)\n\
+         secret_store = auto (default)\n\
+         headless = off (default)\n\
          log = debug (environment PUDDLE_LOG)\n\
          {remote_defaults}",
         file = file.display(),
@@ -292,6 +299,8 @@ fn print_config_without_anything_set_shows_the_defaults() {
              port = a free port (default)\n\
              connection_file = api.json in the data folder (default)\n\
              data_dir = the per-user data folder (default)\n\
+             secret_store = auto (default)\n\
+             headless = off (default)\n\
              log = info (default)\n{REMOTE_DEFAULTS}"
         )
     );
@@ -422,7 +431,7 @@ fn the_flags_and_the_file_keys_mirror_each_other() {
 fn a_switch_is_flag_and_negated_flag_in_the_table_the_usage_and_the_docs() {
     let docs = include_str!("../../../../../../docs/serve.md");
     let switches: Vec<_> = OPTIONS.iter().filter(|s| s.kind.is_switch()).collect();
-    assert_eq!(switches.len(), 2);
+    assert_eq!(switches.len(), 3);
     for spec in switches {
         let negated = spec.negated_flag().unwrap();
         assert_eq!(negated, format!("--no-{}", spec.key.replace('_', "-")));
@@ -461,6 +470,11 @@ fn each_kind_names_what_it_expects_and_refuses_the_rest() {
         (Kind::Domain, "not a domain"),
         (Kind::Domain, ""),
         (Kind::Domain, "a..example.org"),
+        (Kind::SecretStore, ""),
+        (Kind::SecretStore, "keyring"),
+        (Kind::SecretStore, "Auto"),
+        (Kind::Toggle, "yes"),
+        (Kind::Toggle, ""),
     ];
     for (kind, text) in bad {
         assert_eq!(
@@ -471,6 +485,20 @@ fn each_kind_names_what_it_expects_and_refuses_the_rest() {
     }
     assert_eq!(Kind::Bool.parse_text("true"), Ok(Value::Bool(true)));
     assert_eq!(Kind::Bool.parse_text("false"), Ok(Value::Bool(false)));
+    // A toggle also reads the 1 and 0 a service manager's `Environment=` line usually has.
+    for (text, on) in [("true", true), ("1", true), ("false", false), ("0", false)] {
+        assert_eq!(Kind::Toggle.parse_text(text), Ok(Value::Bool(on)), "{text}");
+    }
+    for (text, store) in [
+        ("auto", StoreOption::Auto),
+        ("os", StoreOption::Os),
+        ("file", StoreOption::File),
+    ] {
+        assert_eq!(
+            Kind::SecretStore.parse_text(text),
+            Ok(Value::SecretStore(store))
+        );
+    }
     assert_eq!(
         Kind::Ip.parse_text("2001:db8::1"),
         Ok(Value::Ip("2001:db8::1".parse().unwrap()))

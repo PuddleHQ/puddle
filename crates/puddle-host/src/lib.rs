@@ -65,6 +65,7 @@ mod ssh_login;
 mod ssh_target;
 mod terminals;
 mod vault;
+pub use vault::SecretSetup;
 mod vscode;
 mod workspaces;
 

@@ -26,6 +26,7 @@ pub struct ToolPaths {
     git: Option<PathBuf>,
     az: Option<PathBuf>,
     systemd_creds: Option<PathBuf>,
+    loginctl: Option<PathBuf>,
 }
 
 impl ToolPaths {
@@ -37,6 +38,7 @@ impl ToolPaths {
             git,
             az: None,
             systemd_creds: None,
+            loginctl: None,
         }
     }
 
@@ -54,7 +56,14 @@ impl ToolPaths {
         self
     }
 
-    /// Looks `gh`, `git`, `az` and `systemd-creds` up in the process's `PATH`.
+    /// The same paths with `loginctl` at `loginctl` (tests, or a setting).
+    #[must_use]
+    pub fn with_loginctl(mut self, loginctl: Option<PathBuf>) -> Self {
+        self.loginctl = loginctl;
+        self
+    }
+
+    /// Looks `gh`, `git`, `az`, `systemd-creds` and `loginctl` up in the process's `PATH`.
     #[must_use]
     pub fn resolve() -> Self {
         Self::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default())
@@ -71,6 +80,7 @@ impl ToolPaths {
             git: find("git", search_path),
             az: find_file(if cfg!(windows) { "az.cmd" } else { "az" }, search_path),
             systemd_creds: find("systemd-creds", search_path),
+            loginctl: find("loginctl", search_path),
         }
     }
 
@@ -80,6 +90,7 @@ impl ToolPaths {
             Tool::Git => &self.git,
             Tool::Az => &self.az,
             Tool::SystemdCreds => &self.systemd_creds,
+            Tool::Loginctl => &self.loginctl,
         };
         path.as_deref().ok_or(SourceError::ToolMissing(tool))
     }

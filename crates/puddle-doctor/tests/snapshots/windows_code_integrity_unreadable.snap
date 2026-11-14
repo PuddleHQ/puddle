@@ -17,7 +17,7 @@ info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
 ok    Azure CLI (az)        version 2.64.0
-ok    Credential store      a test write and delete worked
+ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed
 
 No problems found. (1.2 s)
@@ -93,7 +93,7 @@ No problems found. (1.2 s)
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked"
     },
     {
       "id": "global_secure_access",

@@ -97,7 +97,7 @@ fn a_store_that_does_not_answer_is_left_alone_and_the_sweep_says_so() {
     disk.break_it();
     assert_eq!(
         sweep(&IndexedStore::new(Shared(disk.clone())), &store),
-        Err("the operating system's credential store did not answer")
+        Err("the credential store did not answer")
     );
     disk.heal();
     assert!(disk.get(&id("tok-a")).unwrap().is_some());
@@ -265,7 +265,7 @@ async fn the_startup_check_raises_for_a_locked_store_and_stays_quiet_for_a_healt
     let locked = Arc::new(MemoryStore::new());
     locked.break_it();
     let list = Arc::new(problems());
-    check_in_background(Some(locked), list.clone())
+    run_check(Probe::Store(locked), None, None, list.clone())
         .await
         .unwrap();
     let raised = list.list();
@@ -274,7 +274,7 @@ async fn the_startup_check_raises_for_a_locked_store_and_stays_quiet_for_a_healt
 
     let healthy = Arc::new(MemoryStore::new());
     let quiet = Arc::new(problems());
-    check_in_background(Some(healthy.clone()), quiet.clone())
+    run_check(Probe::Store(healthy.clone()), None, None, quiet.clone())
         .await
         .unwrap();
     assert_eq!(quiet.list(), Vec::new());

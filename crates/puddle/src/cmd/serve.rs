@@ -197,7 +197,7 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         }
     };
     runtime.block_on(async {
-        let host = match Host::start(prepared, &MsbFactory, HostOptions::system()).await {
+        let host = match Host::start(prepared, &MsbFactory, host_options(&options)).await {
             Ok(host) => host,
             Err(e) => {
                 eprintln!("puddle: {e}");
@@ -216,6 +216,16 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         }
         exit_after(&host.shutdown().await.sandboxes)
     })
+}
+
+/// The host's options for these `puddle serve` options: the shipped host's, with the choice of
+/// secret store the user made.
+#[must_use]
+pub fn host_options(options: &Effective) -> HostOptions {
+    let mut host_options = HostOptions::system();
+    host_options.secret_setup.option = options.secret_store();
+    host_options.secret_setup.headless = options.headless();
+    host_options
 }
 
 /// What `puddle serve` prints about the network listener: where it is, and what the proxy's

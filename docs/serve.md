@@ -45,6 +45,12 @@ listen_interface = "192.168.1.10"
 listen_port = 8443
 allowed_proxies = ["192.168.1.20"]
 
+# Where secrets are kept (see "Where secrets are kept" below): "auto", "os" or "file". Default auto.
+secret_store = "auto"
+
+# This start is a server with nobody at a screen. Default false.
+headless = false
+
 # Several users (see "Signing in" below). Default false: everything belongs to the one owner.
 multi_user = true
 ```
@@ -54,7 +60,7 @@ the wrong type or an invalid value stops the start with a message that names the
 what to write:
 
 ```text
-puddle: /etc/puddle/serve.toml:3: unknown key `prot`; the keys are port, connection_file, data_dir, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies, multi_user; fix the spelling or remove the line
+puddle: /etc/puddle/serve.toml:3: unknown key `prot`; the keys are port, connection_file, data_dir, secret_store, headless, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies, multi_user; fix the spelling or remove the line
 ```
 
 A config file that is missing or cannot be read stops the start too. Puddle never falls back to the
@@ -67,6 +73,8 @@ defaults when the file you named is wrong.
 | `port` | integer, 0 to 65535 | The API's port on 127.0.0.1. |
 | `connection_file` | path | Where the connection file is written. |
 | `data_dir` | path | The folder that holds Puddle's state. |
+| `secret_store` | `"auto"`, `"os"` or `"file"` | Where secrets are kept: the operating system's credential store, or Puddle's own file vault. See [Where secrets are kept](#where-secrets-are-kept). |
+| `headless` | `true` or `false` | This start is a server with nobody at a screen: on Linux the first start keeps secrets in the file vault. |
 | `log` | string | The log filter, the same text as `PUDDLE_LOG`. |
 | `remote` | `true` or `false` | Remote serving on or off. |
 | `public_hosts` | array of strings | The exact public names of the reverse proxy, with a port when it is not 443. |
@@ -86,6 +94,8 @@ A relative path in the file means the folder that holds the file.
 | Port | `--port <n>` | `PUDDLE_PORT` | `port` | a free port |
 | Connection file | `--connection-file <path>` | `PUDDLE_CONNECTION_FILE` | `connection_file` | api.json in the data folder |
 | Data folder | `--data-dir <path>` | `PUDDLE_DATA_DIR` | `data_dir` | the per-user data folder |
+| Secret store | `--secret-store <store>` | `PUDDLE_SECRET_STORE` | `secret_store` | auto |
+| Headless | `--headless` or `--no-headless` | `PUDDLE_HEADLESS` (`true`, `false`, `1` or `0`) | `headless` | off |
 | Log filter | `--log <filter>` | `PUDDLE_LOG` | `log` | info |
 | Remote serving | `--remote` or `--no-remote` | `PUDDLE_REMOTE` | `remote` | off |
 | Public hosts | `--public-hosts <host,...>` | `PUDDLE_PUBLIC_HOSTS` | `public_hosts` | none |
@@ -132,6 +142,8 @@ config = /etc/puddle/serve.toml (flag --config)
 port = 8080 (config file /etc/puddle/serve.toml)
 connection_file = /etc/puddle/api.json (config file /etc/puddle/serve.toml)
 data_dir = the per-user data folder (default)
+secret_store = auto (default)
+headless = off (default)
 log = debug (environment PUDDLE_LOG)
 remote = off (default)
 public_hosts = none (default)
@@ -321,9 +333,36 @@ the account that runs Puddle:
 loginctl enable-linger <user>
 ```
 
-### Secrets need the OS keyring to be unlocked
+### Where secrets are kept
 
-Secret values are kept in the operating system's credential store. On Linux, that store is a Secret
+Puddle keeps secret values (pasted tokens, environment secrets, company proxy sign-ins) in one of two
+stores per data folder: the operating system's credential store (`os`), or its own encrypted file vault
+(`file`, `secrets/vault` in the data folder). The first start decides and writes the answer to
+`secrets/store.json`; later starts read it and never decide again, and nothing moves a value between
+the stores by itself. With `secret_store = "auto"` (the default) the first start picks:
+
+1. The `secret_store` option, when it is `os` or `file`.
+2. `os`, when the data folder already has rows that name a secret: its values are in the operating
+   system's store.
+3. Windows and macOS: `os`.
+4. Linux with `--headless` (or `PUDDLE_HEADLESS=1`): `file`. Linux without it: `os`.
+
+A later start whose `secret_store` is `os` or `file` and disagrees with `store.json` stops with a message
+that says so. A Linux start without `--headless` that has no graphical login session, or whose credential
+store does not take a test write, logs a warning and `puddle doctor` says so; neither refuses to start nor
+switches the store. A start without `--headless` whose credential store does not work records nothing, so
+the next start, with the flag, may still pick the file vault.
+
+The file vault's key is read from, in order, a credential the service passes (`puddle-vault-key`), a key
+sealed by `systemd-creds --user` in `puddle/vault-key.cred` in your config folder, and a key file
+(`puddle/vault.key`, owner-only) in your config folder, which Puddle makes at the first start when sealing
+is not possible. `puddle doctor` names the store and where its key comes from. A vault whose key is
+missing or does not open leaves Puddle running with a problem that says what to do; saving a secret then
+fails.
+
+### The operating system's store must be unlocked
+
+When the store is `os`: on Linux, that store is a Secret
 Service provider, such as gnome-keyring. The provider must be running and unlocked. It starts locked
 after every boot, so unlock it again after each restart of the machine.
 

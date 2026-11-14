@@ -15,13 +15,11 @@ use puddle_ssh_agent::{
     AgentEndpoint, AgentError, Identity, WINDOWS_DEFAULT_PIPE, key_family, list_identities,
 };
 
-use puddle_secrets::StoreHealth;
-
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, DataPathFacts,
-    DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, ProcessOutcome,
-    RuntimeFacts, RuntimeState, SshAgentFacts,
+    AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts,
+    DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os,
+    ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts, VaultFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -246,12 +244,88 @@ impl Probe for SystemProbe {
         az_cli_in(std::env::var_os("PATH"), limit)
     }
 
-    fn credential_store(&self) -> StoreHealth {
-        puddle_secrets::probe_os_store()
+    fn credential_store(&self) -> CredentialStoreFacts {
+        let data = self.data_dir.clone().or_else(|| puddle_fs::data_dir().ok());
+        credential_store_facts(data.as_deref(), puddle_secrets::probe_os_store, || {
+            login_session_in(std::env::var_os("PATH"), Duration::from_secs(2))
+        })
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {
         cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
+    }
+}
+
+/// Which store `data` records, read without writing: the operating system's store is probed with
+/// `probe` and the login session read with `session` only when that store is the one in use (or
+/// nothing is decided yet).
+fn credential_store_facts(
+    data: Option<&Path>,
+    probe: impl FnOnce() -> puddle_secrets::StoreHealth,
+    session: impl FnOnce() -> puddle_secrets::LoginSession,
+) -> CredentialStoreFacts {
+    let record = match data {
+        Some(data) => match puddle_secrets::read_record(data) {
+            Ok(record) => record,
+            Err(_) => return CredentialStoreFacts::Unreadable,
+        },
+        None => None,
+    };
+    if let (Some(record), Some(data)) = (&record, data)
+        && record.store == puddle_secrets::StoreKind::File
+    {
+        return CredentialStoreFacts::File(
+            match puddle_secrets::FileVault::header_source(&puddle_secrets::vault_path(data)) {
+                Ok(Some(tag)) => VaultFacts::Header(tag),
+                Ok(None) => VaultFacts::NoVaultYet,
+                Err(_) => VaultFacts::Unreadable,
+            },
+        );
+    }
+    CredentialStoreFacts::Os {
+        recorded: record.is_some(),
+        health: probe(),
+        session: session(),
+    }
+}
+
+/// What `loginctl` says about the display session of this user, found on `PATH`.
+fn login_session_in(
+    path: Option<std::ffi::OsString>,
+    limit: Duration,
+) -> puddle_secrets::LoginSession {
+    use puddle_secrets::LoginSession;
+    let (Some(program), Some(uid)) = (
+        find_on_path("loginctl", path),
+        puddle_secrets::login_user_id(),
+    ) else {
+        return LoginSession::Unknown;
+    };
+    let ask = |args: &[&str]| match launch::run(Command::new(&program).args(args), limit) {
+        ProcessOutcome::Exited {
+            code: Some(0),
+            stdout_first_line,
+            ..
+        } => Some(stdout_first_line.trim().to_owned()),
+        _ => None,
+    };
+    let Some(display) = ask(&[
+        "show-user",
+        &uid.to_string(),
+        "--property=Display",
+        "--value",
+    ]) else {
+        return LoginSession::Unknown;
+    };
+    if display.is_empty() {
+        return LoginSession::NotGraphical;
+    }
+    if !display.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return LoginSession::Unknown;
+    }
+    match ask(&["show-session", &display, "--property=Type", "--value"]) {
+        Some(kind) => LoginSession::of_type(&kind),
+        None => LoginSession::Unknown,
     }
 }
 

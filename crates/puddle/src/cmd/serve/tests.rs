@@ -77,6 +77,9 @@ fn every_option_has_a_flag() {
         "--allowed-proxies",
         "192.168.1.20, 10.0.0.1",
         "--multi-user",
+        "--secret-store",
+        "file",
+        "--headless",
         "--print-config",
     ])
     .unwrap();
@@ -114,6 +117,11 @@ fn every_option_has_a_flag() {
         ]))
     );
     assert_eq!(a.flags.get("multi_user"), Some(&Value::Bool(true)));
+    assert_eq!(
+        a.flags.get("secret_store"),
+        Some(&Value::SecretStore(puddle_secrets::StoreOption::File))
+    );
+    assert_eq!(a.flags.get("headless"), Some(&Value::Bool(true)));
     assert_eq!(a.flags.len(), OPTIONS.len());
 }
 
@@ -290,5 +298,38 @@ fn the_start_up_lines_name_the_listener_its_fingerprint_and_its_certificate_file
     assert_eq!(
         lines[2],
         "  certificate file: /srv/remote-cert/listener.crt"
+    );
+}
+
+#[test]
+fn the_secret_store_options_reach_the_hosts_setup_and_default_to_auto_and_not_headless() {
+    use puddle_secrets::StoreOption;
+    let host_options_for = |flags: &Flags, vars: &[(&str, &str)]| {
+        let env = |name: &str| {
+            vars.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| std::ffi::OsString::from(v))
+        };
+        let options = resolve(flags, &env, std::path::Path::new("/")).unwrap();
+        host_options(&options).secret_setup
+    };
+    let none = host_options_for(&Flags::new(), &[]);
+    assert_eq!((none.option, none.headless), (StoreOption::Auto, false));
+
+    // A service manager's `Environment=` line writes the toggle as 1.
+    let by_env = host_options_for(
+        &Flags::new(),
+        &[("PUDDLE_HEADLESS", "1"), ("PUDDLE_SECRET_STORE", "os")],
+    );
+    assert_eq!((by_env.option, by_env.headless), (StoreOption::Os, true));
+
+    // A flag wins over the environment, `--no-headless` included.
+    let mut flags = Flags::new();
+    flags.insert("headless", Value::Bool(false));
+    flags.insert("secret_store", Value::SecretStore(StoreOption::File));
+    let by_flag = host_options_for(&flags, &[("PUDDLE_HEADLESS", "1")]);
+    assert_eq!(
+        (by_flag.option, by_flag.headless),
+        (StoreOption::File, false)
     );
 }

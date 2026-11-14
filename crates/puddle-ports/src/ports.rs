@@ -547,21 +547,26 @@ impl Ports {
     }
 
     fn bind_failed(&self, host_port: u16, err: &std::io::Error) -> PortsError {
-        if err.kind() == std::io::ErrorKind::AddrInUse {
-            let program = self.inner.programs.program(host_port);
-            return PortsError::Taken {
-                host_port,
-                owner: PortOwner::Program(program),
-            };
-        }
-        PortsError::Cannot {
+        bind_failure(host_port, err, self.inner.programs.as_ref())
+    }
+}
+
+/// What a refused bind of `host_port` means to the user: the port is taken (and by which program),
+/// or the system will not open it.
+fn bind_failure(host_port: u16, err: &std::io::Error, programs: &dyn ProgramLookup) -> PortsError {
+    if err.kind() == std::io::ErrorKind::AddrInUse {
+        return PortsError::Taken {
             host_port,
-            reason: if err.kind() == std::io::ErrorKind::PermissionDenied {
-                "the system does not let Puddle use it (ports below 1024 and ranges the system reserves are closed to programs without special rights)".to_owned()
-            } else {
-                err.to_string()
-            },
-        }
+            owner: PortOwner::Program(programs.program(host_port)),
+        };
+    }
+    PortsError::Cannot {
+        host_port,
+        reason: if err.kind() == std::io::ErrorKind::PermissionDenied {
+            "the system does not let Puddle use it (ports below 1024 and ranges the system reserves are closed to programs without special rights)".to_owned()
+        } else {
+            err.to_string()
+        },
     }
 }
 

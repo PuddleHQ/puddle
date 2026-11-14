@@ -105,3 +105,43 @@ fn a_lock_file_that_cannot_be_created_is_not_retried_as_an_existing_one() {
         (!can_write).then_some(io::ErrorKind::PermissionDenied)
     );
 }
+
+#[test]
+fn a_lock_call_the_system_refuses_for_another_reason_is_an_io_error_naming_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock_path = dir.path().join(LOCK_FILE);
+    let refused = TryLockError::Error(io::Error::from(io::ErrorKind::Unsupported));
+    let err = lock_outcome(Err(refused), dir.path(), &lock_path).unwrap_err();
+    assert!(
+        matches!(&err, LockError::Io { path, source }
+            if *path == lock_path && source.kind() == io::ErrorKind::Unsupported),
+        "{err}"
+    );
+    assert!(
+        err.to_string().contains(&lock_path.display().to_string()),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_lock_held_elsewhere_names_the_holder_from_its_note() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(HOLDER_FILE), "4242\n").unwrap();
+    let err = lock_outcome(
+        Err(TryLockError::WouldBlock),
+        dir.path(),
+        &dir.path().join(LOCK_FILE),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            LockError::Held {
+                holder: Some(4242),
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert!(lock_outcome(Ok(()), dir.path(), &dir.path().join(LOCK_FILE)).is_ok());
+}

@@ -224,8 +224,7 @@ async fn vm_mount_sources_outside_the_share_are_refused() {
 
 /// msb's SSH server (SDK, in Puddle's process) reports a signal-killed command as a failure: the
 /// guest agent gives no signal number, so the server sends exit status 1, and a normal exit code
-/// still arrives as is (upstream `superradcompany/microsandbox#2011`, carried by the fork). The
-/// reason [`puddle_compute::Capabilities::ssh_reports_signal_exit`] is `true` on the fork.
+/// still arrives as is (upstream `superradcompany/microsandbox#2011`, carried by the fork).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
     let settings = support::settings();
@@ -244,7 +243,6 @@ async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
             Ok::<_, microsandbox::MicrosandboxError>((killed, seven))
         }))
         .await;
-    assert!(rt.probe().await.unwrap().ssh_reports_signal_exit);
     sb.stop().await.unwrap();
     cleanup(&rt, &[&n]).await;
     let (killed, seven) = statuses.expect("SSH exec through the SDK client");

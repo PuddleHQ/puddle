@@ -143,7 +143,7 @@ pub enum StoreError {
     #[error("no SSH agent question {0}")]
     UnknownSshAgentAsk(i64),
     /// The SSH agent question was already answered.
-    #[error("SSH agent question {id} is already {state}")]
+    #[error("the SSH agent question {id} is already {state}")]
     SshAgentAskNotOpen {
         /// The question.
         id: i64,

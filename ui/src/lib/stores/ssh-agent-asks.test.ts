@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { FakeSshAgent, ask } from "#lib/testing/fake-ssh-agent.ts";
+import { live } from "./live.svelte.ts";
 import { SshAgentAsksStore } from "./ssh-agent-asks.svelte.ts";
 
 let api: FakeSshAgent;
@@ -17,6 +18,13 @@ beforeEach(() => {
 });
 
 describe("reading", () => {
+  it("tells the app's badge by default", async () => {
+    api.asks = [ask(1), ask(2), ask(3)];
+    await new SshAgentAsksStore(api as never, source).load();
+    expect(live.asks).toBe(3);
+    live.setAsks(0);
+  });
+
   it("reads the open questions and tells the badge how many", async () => {
     api.asks = [ask(1), ask(2)];
     const store = make();

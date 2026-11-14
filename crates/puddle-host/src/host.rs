@@ -560,6 +560,10 @@ impl<R: Runtime + Clone> Host<R> {
             settings.clone(),
         ))
         .with_dev_cert(dev_cert)
+        .with_credential_store(Arc::new(crate::vault::StoreRetry::new(
+            options.secret_store.clone(),
+            problems.clone(),
+        )))
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_terminals(Arc::new(service.clone()))
         .with_learned(Arc::new(HostLearned::new(

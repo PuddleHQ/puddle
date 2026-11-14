@@ -10267,6 +10267,50 @@ async fn a_credential_store_that_refuses_a_write_at_start_is_one_problem_naming_
     again.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retry_after_the_store_is_unlocked_clears_the_problem_in_the_same_process() {
+    let rig = Rig::new();
+    rig.secrets.break_it();
+    let host = rig.start().await;
+    let api = api(&host);
+    eventually(
+        "the credential store problem raised",
+        Duration::from_secs(5),
+        || {
+            host.problems()
+                .list()
+                .iter()
+                .any(|p| p.key == "credential-store")
+        },
+    )
+    .await;
+
+    // Still locked: the retry says so and the problem stands, once.
+    let refused = api.post("/api/credential-store/retry", "").await;
+    assert_eq!(refused.status, 200, "{}", refused.body);
+    assert_eq!(refused.json()["working"], false, "{}", refused.body);
+    let ours = problems_of(&api)
+        .await
+        .into_iter()
+        .filter(|(key, ..)| key == "credential-store")
+        .count();
+    assert_eq!(ours, 1);
+
+    // Unlocked while Puddle runs: the same process picks it up and the problem ends.
+    rig.secrets.heal();
+    let worked = api.post("/api/credential-store/retry", "").await;
+    assert_eq!(worked.status, 200, "{}", worked.body);
+    assert_eq!(worked.json()["working"], true, "{}", worked.body);
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|(key, ..)| key != "credential-store")
+    );
+    assert_eq!(rig.secrets.ids(), Vec::<String>::new());
+    host.shutdown().await;
+}
+
 // ---- shell init -------------------------------------------------------------------------------
 
 /// The folder the guest sees a workspace's shell init in, on the host.

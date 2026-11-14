@@ -169,7 +169,7 @@ const SERVICE: &str = "puddle-test-persistence";
 /// What the Windows store itself says about an entry's persistence ("Local", "Enterprise", ...).
 #[cfg(windows)]
 fn persistence_of(service: &str, id: &StoredId) -> String {
-    keyring::Entry::store_status().as_ref().unwrap();
+    assert!(keyring_available());
     keyring_core::Entry::new(service, &format!("credential:{id}"))
         .unwrap()
         .get_attributes()

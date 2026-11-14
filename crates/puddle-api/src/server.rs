@@ -28,6 +28,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::auth::{Guard, Listener, guard};
 use crate::authz::{Isolation, Principal, authorize};
+use crate::credential_store::{CredentialStoreService, NoCredentialStore};
 use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
 use crate::dev_cert::{DevCertService, NoDevCert};
 use crate::doctor::{DoctorService, NoDoctor};
@@ -163,6 +164,10 @@ pub struct Services {
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
+    /// The credential store check behind the first-run banner's Retry. [`Services::new`] starts
+    /// with [`NoCredentialStore`], which answers 503; set the real one with
+    /// [`Services::with_credential_store`].
+    pub credential_store: Arc<dyn CredentialStoreService>,
     /// Where the development certificate stands. [`Services::new`] starts with [`NoDevCert`],
     /// which says "not checked"; set the real one with [`Services::with_dev_cert`].
     pub dev_cert: Arc<dyn DevCertService>,
@@ -217,6 +222,7 @@ impl Services {
             secrets: Arc::new(NoSecretStore),
             repos: Arc::new(NoRepos),
             doctor: Arc::new(NoDoctor),
+            credential_store: Arc::new(NoCredentialStore),
             dev_cert: Arc::new(NoDevCert),
             ports: Arc::new(NoPorts),
             learned: Arc::new(NoLearned),
@@ -282,6 +288,16 @@ impl Services {
     #[must_use]
     pub fn with_dev_cert(mut self, dev_cert: Arc<dyn DevCertService>) -> Self {
         self.dev_cert = dev_cert;
+        self
+    }
+
+    /// These services with this credential store check behind the first-run banner's Retry.
+    #[must_use]
+    pub fn with_credential_store(
+        mut self,
+        credential_store: Arc<dyn CredentialStoreService>,
+    ) -> Self {
+        self.credential_store = credential_store;
         self
     }
 
@@ -651,6 +667,7 @@ impl ApiServer {
             secrets: services.secrets,
             repos: services.repos,
             doctor: services.doctor,
+            credential_store: services.credential_store,
             dev_cert: services.dev_cert,
             ports: services.ports,
             learned: services.learned,

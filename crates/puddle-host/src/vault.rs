@@ -3,9 +3,10 @@
 
 use std::sync::Arc;
 
+use puddle_api::CredentialStoreService;
 use puddle_secrets::{
     ChunkedStore, IndexedStore, KeyringStore, SecretStore, StoreHealth, StoredId, Sweep,
-    probe_os_store, probe_store,
+    probe_os_store, probe_store, reconnect_os_store,
 };
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
@@ -126,12 +127,46 @@ pub(crate) fn check_in_background(
     problems: Arc<Problems>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
-        let health = match fake {
-            Some(store) => probe_store(store.as_ref(), || true),
-            None => probe_os_store(),
-        };
-        report_health(health, cfg!(target_os = "linux"), &problems);
+        check_now(fake.as_deref(), false, &problems);
     })
+}
+
+/// One check of the store: probes it and raises or clears the problem to match. `reconnect`
+/// connects to the operating system's store afresh first, which is what lets a Puddle that began
+/// with a locked or missing store use it once the user has unlocked it.
+fn check_now(fake: Option<&dyn SecretStore>, reconnect: bool, problems: &Problems) -> StoreHealth {
+    let health = match fake {
+        Some(store) => probe_store(store, || true),
+        None => {
+            if reconnect {
+                // A refused reconnect shows in the probe below as the failure it is.
+                let _ = reconnect_os_store();
+            }
+            probe_os_store()
+        }
+    };
+    report_health(health, cfg!(target_os = "linux"), problems);
+    health
+}
+
+/// The check behind the first-run banner's Retry.
+pub(crate) struct StoreRetry {
+    /// The store a test gave the host; `None` checks the operating system's.
+    fake: Option<Arc<dyn SecretStore>>,
+    problems: Arc<Problems>,
+}
+
+impl StoreRetry {
+    pub(crate) fn new(fake: Option<Arc<dyn SecretStore>>, problems: Arc<Problems>) -> Self {
+        Self { fake, problems }
+    }
+}
+
+impl CredentialStoreService for StoreRetry {
+    fn retry(&self) -> Option<bool> {
+        let health = check_now(self.fake.as_deref(), true, &self.problems);
+        Some(health == StoreHealth::Working)
+    }
 }
 
 /// How long shutdown waits for the sweep: a locked keyring may take far longer, and a quit must

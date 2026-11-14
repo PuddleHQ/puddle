@@ -14,6 +14,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::authz::Authorizer;
+use crate::credential_store::CredentialStoreService;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
@@ -31,6 +32,7 @@ use crate::workspaces::WorkspaceService;
 mod app_icon;
 mod audit;
 pub(crate) mod auth;
+mod credential_store;
 mod credentials;
 mod doctor;
 mod environment;
@@ -101,6 +103,8 @@ pub(crate) struct AppState {
     pub(crate) doctor: Arc<dyn DoctorService>,
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
+    /// The credential store check the first-run banner retries.
+    pub(crate) credential_store: Arc<dyn CredentialStoreService>,
     pub(crate) ports: Arc<dyn PortsService>,
     pub(crate) learned: Arc<dyn LearnedService>,
     pub(crate) terminal_service: Arc<dyn TerminalService>,
@@ -330,4 +334,5 @@ pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
         .routes(routes!(first_run::trust_dev_certificate))
+        .routes(routes!(credential_store::retry_credential_store))
 }

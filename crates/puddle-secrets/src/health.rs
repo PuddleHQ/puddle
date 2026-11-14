@@ -32,8 +32,8 @@ pub enum StoreHealth {
 pub struct StoreAdvice {
     /// One line: what is wrong.
     pub title: &'static str,
-    /// What Puddle does about it and the fix. It says to restart Puddle, because a store that
-    /// failed to start once stays failed for the life of the process.
+    /// What Puddle does about it and the fix. It ends with the two ways to check again: the
+    /// retry action in Puddle, or a restart.
     pub fix: &'static str,
 }
 
@@ -51,30 +51,30 @@ impl StoreHealth {
                       a sign-in fails. On a headless Linux host install gnome-keyring \
                       (`apt install gnome-keyring` on Debian and Ubuntu), unlock it with \
                       `printf %s \"<password>\" | gnome-keyring-daemon --daemonize --login \
-                      --components=secrets`, then restart Puddle. Puddle checks the store only \
-                      when it starts and cannot recover while it runs.",
+                      --components=secrets`, then choose Retry in Puddle or restart Puddle. Puddle checks \
+                      the store when it starts and when you choose Retry.",
             }),
             (Self::Locked, true) => Some(StoreAdvice {
                 title: "Puddle cannot save secrets: the credential store is locked",
                 fix: "The Secret Service answers but refuses writes, and nothing on this \
                       computer can ask you to unlock it. On a headless Linux host unlock it with \
                       `printf %s \"<password>\" | gnome-keyring-daemon --daemonize --login \
-                      --components=secrets` and restart Puddle. This is needed again after every \
-                      reboot. Puddle checks the store only when it starts and cannot recover \
-                      while it runs.",
+                      --components=secrets`, then choose Retry in Puddle or restart Puddle. This is \
+                      needed again after every reboot. Puddle checks the store when it starts \
+                      and when you choose Retry.",
             }),
             (Self::NoProvider, false) => Some(StoreAdvice {
                 title: "Puddle cannot save secrets: the credential store is not available",
                 fix: "The operating system's credential store does not answer, so saving a \
-                      secret or a sign-in fails. Check that it is running, then restart Puddle: \
-                      Puddle checks the store only when it starts and cannot recover while it \
-                      runs.",
+                      secret or a sign-in fails. Check that it is running, then choose Retry in \
+                      Puddle or restart Puddle. Puddle checks the store when it starts and when you \
+                      choose Retry.",
             }),
             (Self::Locked, false) => Some(StoreAdvice {
                 title: "Puddle cannot save secrets: the credential store is locked",
                 fix: "The operating system's credential store refuses writes. Unlock it (sign in \
-                      to the account that runs Puddle), then restart Puddle: Puddle checks the \
-                      store only when it starts and cannot recover while it runs.",
+                      to the account that runs Puddle), then choose Retry in Puddle or restart \
+                      Puddle. Puddle checks the store when it starts and when you choose Retry.",
             }),
         }
     }

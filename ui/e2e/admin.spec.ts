@@ -91,7 +91,7 @@ test.describe("with several users on", () => {
     await acceptInvite(backend, page, secret);
     await page.reload();
     await expect(row).toContainText("Active");
-    await expect(row).toContainText("Devices1");
+    await expect(row).toContainText("Devices 1");
     // Nothing the owner can read carries the secret or the password.
     await expect(page.locator("body")).not.toContainText(PASSWORD);
 

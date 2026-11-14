@@ -378,7 +378,7 @@ impl Workspaces {
     /// settings). Returns
     /// the checkout's path. Call [`Workspaces::sync`] after the last clone before calling it
     /// done: a VMM kill within seconds of a clone could otherwise lose the whole repository
-    /// (directory entries aren't covered by `core.fsync=committed` until the first fsync).
+    /// (directory entries aren't covered by `core.fsync=added` until the first fsync).
     ///
     /// # Errors
     ///

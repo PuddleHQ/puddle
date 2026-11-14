@@ -294,7 +294,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn open_pending_attempts(&self, name: &WorkspaceId) -> BTreeMap<i64, u64> {
         self.inner
             .store
-            .open_pending_every_user(Some(name))
+            .open_pending_every_user(&self.inner.all_users, Some(name))
             .unwrap_or_default()
             .into_iter()
             .map(|row| (row.id.0, row.attempts))
@@ -306,7 +306,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn waited_on(&self, name: &WorkspaceId, before: &BTreeMap<i64, u64>) -> BTreeMap<i64, String> {
         self.inner
             .store
-            .open_pending_every_user(Some(name))
+            .open_pending_every_user(&self.inner.all_users, Some(name))
             .unwrap_or_default()
             .into_iter()
             .filter(|row| before.get(&row.id.0).is_none_or(|was| row.attempts > *was))

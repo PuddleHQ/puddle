@@ -344,6 +344,9 @@ struct Inner<R: Runtime + Clone> {
     /// between a settings change's read and its write.
     settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
+    /// The install's reach across every user's data, for the tool install's look at a
+    /// workspace's pending requests whoever owns it.
+    all_users: AllUsers,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
     /// The terminals open now, ended with their reason when the workspace stops.

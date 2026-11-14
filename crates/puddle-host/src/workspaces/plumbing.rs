@@ -86,7 +86,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             };
             slots.insert(id, Slot::new(record, false));
         }
-        let all_users = parts.all_users;
         let service = Self {
             inner: Arc::new(Inner {
                 runtime: parts.runtime,
@@ -98,6 +97,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 settings: parts.settings,
                 settings_lock: Arc::default(),
                 store: parts.store,
+                all_users: parts.all_users,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
                 terminals: Arc::default(),
@@ -133,7 +133,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }),
         };
         service.note_names(&service.state());
-        service.adopt_listed(&all_users)?;
+        service.adopt_listed(&service.inner.all_users)?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.

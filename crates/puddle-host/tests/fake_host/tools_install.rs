@@ -136,7 +136,7 @@ fn install_asks_for(rig: &Rig, host: &Host<FakeRuntime>, asked: &'static str) {
 
 fn open_row_of(host: &Host<FakeRuntime>, asked: &str) -> i64 {
     host.store()
-        .open_pending_every_user(Some(&name("acme")))
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(&name("acme")))
         .unwrap()
         .into_iter()
         .find(|row| row.host.to_string() == asked)

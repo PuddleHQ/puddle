@@ -4,6 +4,8 @@
 //! boot produces; `ci/windows-e2e.ps1` runs them, the CI jobs leave them out
 //! (`ci/vm-filter.sh`). Runs only under `cargo nextest run --profile vm`.
 
+#![expect(clippy::expect_used, reason = "VM test: a failed step fails the test")]
+
 use std::time::Duration;
 
 use microsandbox::Sandbox;

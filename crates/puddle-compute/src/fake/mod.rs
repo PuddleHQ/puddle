@@ -888,12 +888,14 @@ impl Runtime for FakeRuntime {
                 status: r.status,
                 puddle_owned: true,
                 root_disk: r.root_disk,
+                routes: r.spec.routes.clone(),
             })
             .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
                 name: name.clone(),
                 status: *status,
                 puddle_owned: false,
                 root_disk: None,
+                routes: Vec::new(),
             }))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));

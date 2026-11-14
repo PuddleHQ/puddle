@@ -8,8 +8,9 @@ fn a_tool_is_named_the_way_the_user_knows_it() {
             Tool::Gh.name(),
             Tool::Git.name(),
             Tool::Az.name(),
-            Tool::SystemdCreds.name()
+            Tool::SystemdCreds.name(),
+            Tool::Loginctl.name()
         ),
-        ("gh", "git", "az", "systemd-creds")
+        ("gh", "git", "az", "systemd-creds", "loginctl")
     );
 }

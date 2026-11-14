@@ -12040,6 +12040,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
@@ -12114,6 +12123,15 @@ export interface operations {
             };
             /** @description forbidden origin */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace; settings are never stored ahead of a create */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

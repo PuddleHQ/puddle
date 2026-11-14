@@ -235,7 +235,7 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
     let refused = lab.records().await;
     assert!(
         !refused.is_empty()
-            && refused.iter().all(|r| r["decision"] == "deny"
+            && refused.iter().all(|r| r["decision"] == "blocked"
                 && r["category"] == "company_network"
                 && r["signal"].is_string()),
         "the audit names the category: {refused:#?}"

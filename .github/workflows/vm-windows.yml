@@ -49,8 +49,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # No debug info: the archive build is CPU-bound and this saves about a minute of it. A failing test still prints its
+  # panic file:line, test name and assertion text (they come from #[track_caller]); only backtrace frames lose their lines.
+  CARGO_PROFILE_DEV_DEBUG: 0
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, memory),
   # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle

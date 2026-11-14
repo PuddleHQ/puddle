@@ -52,12 +52,13 @@ pub use diagnose::{
 };
 pub use facts::{
     AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
-    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts,
-    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection,
-    RuntimeFacts, RuntimeState, ServiceState, SshAgentFacts, SwapArea, SwapFacts, WritableFolder,
+    CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
+    Protection, RuntimeFacts, RuntimeState, ServiceState, SshAgentFacts, SwapArea, SwapFacts,
+    VaultFacts, WritableFolder,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;
-pub use puddle_secrets::StoreHealth;
+pub use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
 pub use report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 pub use system::SystemProbe;

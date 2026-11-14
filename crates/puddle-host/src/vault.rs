@@ -4,13 +4,19 @@
 use std::sync::Arc;
 
 use puddle_secrets::{
-    ChunkedStore, IndexedStore, KeyringStore, SecretStore, StoreHealth, StoredId, Sweep,
-    probe_os_store, probe_store,
+    ChunkedStore, IndexedStore, KeyringStore, LoginSession, SecretStore, StoreHealth, StoreKind,
+    StoredId, Sweep, probe_os_store, probe_store, write_record,
 };
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
 
 use crate::proxy_passwords::ID_PREFIX;
+
+mod choose;
+
+pub use choose::SecretSetup;
+pub(crate) use choose::{Chosen, open};
+use choose::{Probe, WriteWhenWorking};
 
 /// The operating system's credential store, with long values split over entries and an index of
 /// the ids kept, so [`sweep_in_background`] can find a value its row never named.
@@ -33,7 +39,7 @@ fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> 
         .sweep_orphans(&|id| in_use.contains(id) || id.as_str().starts_with(ID_PREFIX))
         .map_err(|_| {
             tracing::warn!("credential store sweep skipped: the store did not answer");
-            "the operating system's credential store did not answer"
+            "the credential store did not answer"
         })
 }
 
@@ -118,19 +124,83 @@ fn report_health(health: StoreHealth, linux: bool, problems: &Problems) {
     }
 }
 
-/// Writes and deletes a throwaway value in the credential store at start, off the async threads
-/// (a locked keyring may be slow to answer), and raises a problem naming the cause when the write
-/// fails. `fake` is the store a test gave the host; `None` probes the operating system's.
-pub(crate) fn check_in_background(
-    fake: Option<Arc<dyn SecretStore>>,
+/// The problem for a file vault that does not take a write: unlike the operating system's store
+/// it has no lock and no service, so the usual cause is the disk.
+fn report_file_health(health: StoreHealth, problems: &Problems) {
+    if health == StoreHealth::Working {
+        problems.clear(STORE_PROBLEM);
+    } else {
+        problems.raise(Problem::new(
+            STORE_PROBLEM,
+            "Puddle cannot save secrets: its file vault does not take a write",
+            "The vault opened but a test write failed. Check the free space and the permissions of the `secrets` folder in the data folder, then restart Puddle.",
+        ));
+    }
+}
+
+impl Chosen {
+    /// Writes and deletes a throwaway value in the store this start chose, off the async threads
+    /// (a locked keyring may be slow to answer), and raises a problem naming the cause when the
+    /// write fails. It writes the decision down once the operating system's store works, and
+    /// logs the headless warning.
+    pub(crate) fn check_in_background(
+        &self,
+        problems: Arc<Problems>,
+    ) -> tokio::task::JoinHandle<()> {
+        run_check(
+            self.probe.clone(),
+            self.record_when_working.clone(),
+            self.warn_without_flag,
+            problems,
+        )
+    }
+}
+
+/// Whether a start without the headless flag deserves the warning: it has no graphical login
+/// session, or its credential store does not take a write.
+fn warns(session: LoginSession, health: StoreHealth) -> bool {
+    session == LoginSession::NotGraphical || health != StoreHealth::Working
+}
+
+fn run_check(
+    probe: Probe,
+    record_when_working: Option<WriteWhenWorking>,
+    warn_without_flag: Option<LoginSession>,
     problems: Arc<Problems>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
-        let health = match fake {
-            Some(store) => probe_store(store.as_ref(), || true),
-            None => probe_os_store(),
+        let health = match &probe {
+            Probe::Store(store) => probe_store(store.as_ref(), || true),
+            Probe::Os => probe_os_store(),
+            Probe::File(store) => probe_store(store.as_ref(), || true),
+            Probe::Skip => return,
         };
-        report_health(health, cfg!(target_os = "linux"), &problems);
+        if matches!(probe, Probe::File(_)) {
+            report_file_health(health, &problems);
+        } else {
+            report_health(health, cfg!(target_os = "linux"), &problems);
+        }
+        if health == StoreHealth::Working
+            && let Some(decision) = record_when_working
+            && write_record(&decision.data, StoreKind::Os, decision.rule).is_err()
+        {
+            tracing::warn!(
+                "could not write which store keeps the secrets; the next start tries again"
+            );
+        }
+        if let Some(session) = warn_without_flag
+            && warns(session, health)
+        {
+            tracing::warn!(
+                graphical_session = session != LoginSession::NotGraphical,
+                store_works = health == StoreHealth::Working,
+                "Puddle was started without --headless and keeps its secrets in the operating \
+                 system's credential store, which has no unlocked keyring to rely on here. On a \
+                 server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
+                 in Puddle's own file vault; that takes effect only for a data folder that has \
+                 not recorded a store yet (`secrets/store.json`)"
+            );
+        }
     })
 }
 

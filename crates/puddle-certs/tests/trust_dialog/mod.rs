@@ -85,6 +85,19 @@ pub(crate) fn run_answerer(
     seconds: u64,
     title: Option<&str>,
 ) -> Result<String, String> {
+    run_answerer_for(action, owner_pid, false, seconds, title)
+}
+
+/// Like [`run_answerer`], but with `tree` the dialog may also belong to a descendant of
+/// `owner_pid`: `dotnet dev-certs` is the `dotnet` muxer, and the tool it runs in a child process
+/// shows the dialog.
+pub(crate) fn run_answerer_for(
+    action: &str,
+    owner_pid: u32,
+    tree: bool,
+    seconds: u64,
+    title: Option<&str>,
+) -> Result<String, String> {
     let script = answerer_script()?;
     let mut command = Command::new("powershell.exe");
     command
@@ -99,6 +112,9 @@ pub(crate) fn run_answerer(
         .args(["-Action", action, "-OwnerPid"])
         .arg(owner_pid.to_string())
         .args(["-Seconds", &seconds.to_string()]);
+    if tree {
+        command.arg("-OwnerTree");
+    }
     if let Some(title) = title {
         command.args(["-Title", title]);
     }

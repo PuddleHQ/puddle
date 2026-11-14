@@ -4168,8 +4168,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "anyhow",
  "astral-tokio-tar",
@@ -4228,8 +4228,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-agent-client"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "bytes",
  "ciborium",
@@ -4248,8 +4248,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-control-client"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "microsandbox-protocol",
  "microsandbox-protocol-client",
@@ -4264,8 +4264,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-db"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "async-trait",
  "libc",
@@ -4281,8 +4281,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-filesystem"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -4302,8 +4302,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-image"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "astral-tokio-tar",
  "async-compression",
@@ -4335,8 +4335,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-metrics"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "chrono",
  "libc",
@@ -4346,8 +4346,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-migration"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "microsandbox-db",
  "sea-orm-migration",
@@ -4356,8 +4356,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-network"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "hickory-proto",
  "ipnetwork",
@@ -4372,8 +4372,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "bytes",
  "chrono",
@@ -4389,8 +4389,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol-client"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "microsandbox-protocol",
  "serde",
@@ -4401,8 +4401,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-runtime"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "base64 0.23.1",
  "cap-primitives",
@@ -4434,8 +4434,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "chrono",
  "hex",
@@ -4451,8 +4451,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types-macros"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4461,8 +4461,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-utils"
-version = "0.7.12-puddle.3"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.3#3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540"
+version = "0.7.12-puddle.4"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.4#cea57d2394f90922cec924e11b954019e1dc1345"
 dependencies = [
  "dirs",
  "libc",
@@ -5013,7 +5013,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 3.5.0",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

@@ -357,6 +357,19 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   The gate's header lists what it cannot see (a skip deeper than 30 lines into a test, a helper that
   returns `None` without printing, a flag set in a job that does not run the test). A new skip still
   needs the review to ask whether CI runs the test.
+- Tests and DNS: no test waits on a real resolver (2026-11-14: a dead LAN resolver on a build host turned
+  tests red in many pull requests). The coverage gate runs the whole suite through `scripts/dead-resolver.sh`,
+  a private mount namespace whose only nameserver logs each query and never answers; the gate fails and lists
+  the names asked. Fix a failure by injecting the lookup (`HostOptions::host_lookup`, `front_resolver`,
+  `puddle_api::NoNames`, `puddle_proxy::testing::StaticResolver`) or by using a name that needs no query
+  (`localhost`, a name with a space, an IP literal). A built binary that a test runs resolves names itself:
+  `puddle-agent connect` has a `test-lookup` feature that reads `PUDDLE_AGENT_TEST_LOOKUP`, turned on only by
+  the crate's dev-dependency on itself, so a release build lacks it (`scripts/check-test-hooks.sh` proves it
+  with `cargo tree`). A test that starts a real doctor sets `az_search_path` (`SystemProbe::with_az_search_path`),
+  or the doctor runs the machine's `az`, which waits on the network; the same script fails a test file that
+  builds `HostOptions::default()` or a `SystemProbe` without it (`az-ok: <why>` on the site is the exception).
+  Reproduce a lane failure locally with `scripts/dead-resolver.sh cargo nextest run -p <crate>` (needs
+  passwordless sudo and `setpriv`; without them the script says so and runs the command as it is, outside CI).
 - Test names say the behaviour: `denied_request_is_held_until_approved`, not `test_pending_2`.
 - Temp files go through `$TMPDIR`, never a hardcoded `/tmp`: `scripts/check.sh` points it, when the target dir is outside the repository, at a directory under
   the target dir for the run and removes it afterwards (`CHECK_TMPDIR=DIR` picks another base), so a gate run

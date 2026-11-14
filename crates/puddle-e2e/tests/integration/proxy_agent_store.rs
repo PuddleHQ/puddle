@@ -25,8 +25,8 @@ use puddle_store::{Actor, Limits, PendingState, Resolution};
 use puddle_test_kit::cpu_time;
 use serde_json::Value;
 use support::{
-    LOCAL, allow, connect_via, connection_records, echo_server, rig, round_trip, wait_for_records,
-    workspace,
+    LOCAL, Rig, allow, connect_via, connection_records, echo_server, rig, round_trip,
+    wait_for_records, workspace,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -548,6 +548,19 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     assert_eq!(records[2]["workspace_id"], "e2e");
 }
 
+/// The settings of the agent's `connect` command towards `rig`'s agent, with no name resolving on
+/// this machine: the destinations here are Git hosts and made-up names, and a resolver that is
+/// slow or down must not decide how long a test takes.
+fn settings_for(rig: &Rig) -> puddle_agent::connect::Settings {
+    puddle_agent::connect::Settings {
+        lookup: |_, _, _| Box::pin(async { None }),
+        ..puddle_agent::connect::Settings::from_config(&Config {
+            listen: rig.agent.local_addr(),
+            ..Config::default()
+        })
+    }
+}
+
 /// SSH to a Git host's name is refused at once with its own audit reason, whatever the port and
 /// the rules: it never becomes a pending row, never counts as an allow, and a rule that allows the
 /// host changes nothing. The client is the agent's `connect` command (what `ssh` runs as its
@@ -556,10 +569,7 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
 async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
     let rig = rig().await;
     allow(&rig.store, "github.com");
-    let settings = puddle_agent::connect::Settings::from_config(&Config {
-        listen: rig.agent.local_addr(),
-        ..Config::default()
-    });
+    let settings = settings_for(&rig);
     let destinations = [
         ("github.com", 22),
         ("ssh.github.com", 443),
@@ -616,10 +626,7 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
 #[tokio::test]
 async fn ssh_to_another_host_waits_in_the_inbox_with_its_port() {
     let rig = rig().await;
-    let settings = puddle_agent::connect::Settings::from_config(&Config {
-        listen: rig.agent.local_addr(),
-        ..Config::default()
-    });
+    let settings = settings_for(&rig);
     let request = puddle_agent::connect::Request::parse(&["nas.test", "2222"]).unwrap();
     let (mut ssh, stdin) = tokio::io::duplex(1024);
     let (stdout, _printed) = tokio::io::duplex(1024);

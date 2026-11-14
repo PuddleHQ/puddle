@@ -317,6 +317,15 @@ fn zlib(data: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
+fn brotli_pack(data: &[u8]) -> Vec<u8> {
+    let mut packed = Vec::new();
+    {
+        let mut encoder = brotli::CompressorWriter::new(&mut packed, 4096, 5, 22);
+        encoder.write_all(data).unwrap();
+    }
+    packed
+}
+
 fn raw_deflate(data: &[u8]) -> Vec<u8> {
     let mut encoder =
         flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
@@ -933,6 +942,7 @@ fn bombs(size: usize) -> Vec<(&'static str, Vec<u8>)> {
         ("gzip", gzip(&zeros)),
         ("deflate", zlib(&zeros)),
         ("deflate", raw_deflate(&zeros)),
+        ("br", brotli_pack(&zeros)),
         ("zstd", zstd::stream::encode_all(&zeros[..], 3).unwrap()),
     ]
 }
@@ -1022,7 +1032,10 @@ async fn scrubbed_frames(encoding: &str, body: Vec<u8>) -> Result<Vec<usize>, St
 #[tokio::test]
 async fn a_frame_that_inflates_a_lot_reaches_the_guest_in_bounded_pieces() {
     const SIZE: usize = 32 * 1024 * 1024;
-    for (encoding, packed) in bombs(SIZE).into_iter().filter(|(c, _)| *c != "zstd") {
+    for (encoding, packed) in bombs(SIZE)
+        .into_iter()
+        .filter(|(c, _)| !matches!(*c, "zstd" | "br"))
+    {
         let sizes = scrubbed_frames(encoding, packed).await.unwrap();
         assert_eq!(
             sizes.iter().sum::<usize>(),
@@ -1047,6 +1060,18 @@ async fn a_step_that_inflates_past_the_step_limit_ends_the_answer_with_an_error(
         zstd.len()
     );
     let err = scrubbed_frames("zstd", zstd).await.unwrap_err();
+    assert!(err.contains("inflates too far"), "{err}");
+}
+
+#[tokio::test]
+async fn a_brotli_step_that_inflates_past_the_step_limit_ends_the_answer_with_an_error() {
+    let packed = brotli_pack(&vec![0_u8; 3 * MAX_DECODED_STEP]);
+    assert!(
+        packed.len() <= DECODE_STEP,
+        "one step of the input: {}",
+        packed.len()
+    );
+    let err = scrubbed_frames("br", packed).await.unwrap_err();
     assert!(err.contains("inflates too far"), "{err}");
 }
 

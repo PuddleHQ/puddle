@@ -123,7 +123,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         blocker_words(decision, |id| {
             self.inner
                 .store
-                .rules_every_user(&self.inner.all_users)
+                .rules(owner)
                 .into_iter()
                 .find(|r| r.id == id)
                 .map(|r| r.pattern.to_string())

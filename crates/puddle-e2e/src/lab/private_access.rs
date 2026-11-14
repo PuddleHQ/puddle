@@ -55,7 +55,12 @@ impl PrivateAccess {
 
     /// Starts the intranet site and the tunnel to it.
     pub async fn start() -> Self {
-        let web = WebHost::start(&[Self::NAME], WebOptions::default()).await;
+        Self::start_with(WebOptions::default()).await
+    }
+
+    /// [`Self::start`] with the intranet site answering as `options` say.
+    pub async fn start_with(options: WebOptions) -> Self {
+        let web = WebHost::start(&[Self::NAME], options).await;
         let tunnel = NameProxy::start(&[]).await;
         web.register(&tunnel, &[Self::NAME]);
         Self { web, tunnel }
@@ -83,6 +88,12 @@ impl PrivateAccess {
     #[must_use]
     pub fn tunnel_port(&self) -> u16 {
         self.tunnel.port()
+    }
+
+    /// The certificate authority of the intranet site's TLS certificate.
+    #[must_use]
+    pub fn root(&self) -> &rustls::pki_types::CertificateDer<'static> {
+        self.web.root()
     }
 
     /// The `CONNECT` targets the tunnel carried (`host:port`).

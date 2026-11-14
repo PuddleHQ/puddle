@@ -12,7 +12,7 @@
 //!   allow rule exists and the private toggle is on; with the toggle on the same request reaches
 //!   the site, and the audit says which category it is.
 //! - `vm_radar_company_network_*`: the real tools of the corporate-network acceptance battery
-//!   (`curl`, `git`, `npm`, with a 3 MB download from the intranet) run once with the toggle off
+//!   (`curl`, `git`, `npm`, `dotnet restore`, with a 3 MB download from the intranet) run once with the toggle off
 //!   and once with it on, so the toggle changes the intranet's answer and nothing else. The tools
 //!   come from live package mirrors and the public internet, so this one is named `vm_radar_*`:
 //!   the per-pull-request jobs skip it.
@@ -295,6 +295,14 @@ const PUBLIC: &[&str] = &[
     "deb.debian.org",
     "security.debian.org",
     "registry.npmjs.org",
+    // dotnet: the install script, its download hosts, and the NuGet v3 feed with its CDN.
+    "dot.net",
+    "builds.dotnet.microsoft.com",
+    "ci.dot.net",
+    "dotnetcli.azureedge.net",
+    "dotnetcli.blob.core.windows.net",
+    "api.nuget.org",
+    "globalcdn.nuget.org",
 ];
 
 /// The battery's public part, in the guest: `RESULT,<phase>,<test>,PASS|FAIL,<detail>`.
@@ -312,6 +320,17 @@ mkdir -p $W/npm && cd $W/npm && echo '{{"name":"battery","version":"1.0.0","priv
 npm install is-odd --no-audit --no-fund --cache $W/npm-cache >$W/npm.log 2>&1; rc=$?
 [ "$rc" = 0 ] && ! node -e "require('is-odd')" 2>>$W/npm.log && rc=1
 res npm_install $rc "$(grep -E 'ERR|added' $W/npm.log | tail -2 | tr '\n,' '  ' | head -c 150)"
+mkdir -p $W/dn && cd $W/dn
+cat > probe.csproj <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+  <ItemGroup><PackageReference Include="Newtonsoft.Json" Version="13.0.3" /></ItemGroup>
+</Project>
+EOF
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 PATH=/opt/dotnet:$PATH NUGET_PACKAGES=$W/nuget-pkgs
+timeout 300 dotnet restore --no-cache >$W/dn.log 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -d $NUGET_PACKAGES/newtonsoft.json/13.0.3 ] && rc=1
+res dotnet_restore $rc "$(tail -n 3 $W/dn.log | tr '\n,' '  ' | head -c 150)"
 "#
     )
 }
@@ -351,16 +370,22 @@ async fn vm_radar_company_network_toggle_changes_only_the_intranets_answer_for_t
     let long = Duration::from_mins(25);
     let install = lab
         .guest(
-            "(apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl git nodejs npm) >/tmp/apt.log 2>&1; echo apt=$?; tail -3 /tmp/apt.log",
+            "(apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl git nodejs npm libicu-dev) >/tmp/apt.log 2>&1; echo apt=$?; tail -3 /tmp/apt.log; (curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && bash /tmp/dotnet-install.sh --channel 8.0 --install-dir /opt/dotnet) >/tmp/dotnet.log 2>&1; echo dotnet_install=$?; tail -3 /tmp/dotnet.log",
             long,
         )
         .await;
     assert!(
-        install.contains("apt=0"),
-        "the tools could not be installed (live third party: the Debian mirrors; an outage there fails this test): {install}"
+        install.contains("apt=0") && install.contains("dotnet_install=0"),
+        "the tools could not be installed (live third party: the Debian mirrors, Microsoft's dotnet-install; an outage there fails this test): {install}"
     );
     let want = blob_sha256();
-    let wanted_public = ["curl_https", "curl_plain_http", "git_clone", "npm_install"];
+    let wanted_public = [
+        "curl_https",
+        "curl_plain_http",
+        "git_clone",
+        "npm_install",
+        "dotnet_restore",
+    ];
 
     // Toggle off: every public part passes; the intranet is refused and its bytes never leave.
     lab.toggles(false, false).await;

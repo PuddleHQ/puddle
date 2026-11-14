@@ -200,14 +200,14 @@ async fn company_toggle_off_refuses_the_intranet_name_as_company_network() {
         .unwrap_err();
     assert!(refusal.contains("403"), "{refusal}");
     assert!(
-        refusal.contains("x-puddle-blocked: company_network"),
+        refusal.contains("x-puddle-blocked: toggle:company_network"),
         "{refusal}"
     );
     assert!(refusal.contains("Company network"), "{refusal}");
     assert!(access.carried().is_empty(), "{:?}", access.carried());
     let records = connection_records(&rig.store, 1).await;
     assert_eq!(
-        records[0]["reason"], "company_network_off",
+        records[0]["reason"], "toggle:company_network",
         "{}",
         records[0]
     );

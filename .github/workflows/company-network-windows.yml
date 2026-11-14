@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The company-network bars on Windows (the Windows half of the corporate-network acceptance
+# battery), by hand on any branch (`gh workflow run company-network-windows.yml --ref <branch>`):
+#   1. the end-to-end tests over the private-access stand-in (puddle-e2e `private_access`, with the four
+#      company-network ones): toggle off refuses `toggle:company_network`, toggle on needs an exact allow;
+#   2. `vm_company_network_*` and `vm_radar_company_network_*` in a real microVM on WHP: the guest's
+#      curl, git, npm and dotnet restore with the toggle off and on, and the intranet refused off and
+#      served on. The radar half calls live package mirrors, so it never runs per pull request.
+# It runs on GitHub's windows-2025 runner, never on a developer's machine (Defender ASR rule). A
+# runner without a usable hypervisor fails the job here: this workflow exists to run the VM bars.
+name: company-network-windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: company-network-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  PUDDLE_VM_MSB_LOG_LEVEL: debug
+
+jobs:
+  company-network:
+    name: company-network bars (windows-2025, WHP)
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: WHP preflight
+        shell: pwsh
+        run: |
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
+          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
+          if (-not ($cs.HypervisorPresent -and "$whp" -eq 'Enabled')) {
+            "::error title=no hypervisor::Windows Hypervisor Platform is not usable on this runner"
+            exit 1
+          }
+      - name: Toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: company-network-windows
+          save-if: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: msb runtime (fork tag release assets; download, verify)
+        shell: bash
+        run: |
+          dir=$(cygpath -w "$RUNNER_TEMP")
+          ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      - name: guest agent (static musl build)
+        shell: bash
+        run: echo "PUDDLE_AGENT_BIN=$(cygpath -w "$PWD/$(ci/build-agent.sh --locked)")" >> "$GITHUB_ENV"
+      - name: end-to-end bars over the stand-in (private_access) (toggle off refused, toggle on served)
+        shell: bash
+        run: cargo nextest run -p puddle-e2e --locked --no-fail-fast -E 'test(/private_access::/)' --no-tests=fail
+      - name: VM bars and the real-tool battery (toggle off, then on)
+        shell: bash
+        timeout-minutes: 50
+        run: |
+          PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast \
+            -E 'test(/(^|::)vm_company_network_/) | test(/(^|::)vm_radar_company_network_/)' --no-tests=fail
+      - name: upload test results and msb logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: company-network-windows-results
+          path: |
+            target/nextest/vm/junit.xml
+            ${{ runner.temp }}/pvm/**/logs/**
+          retention-days: 14
+          if-no-files-found: ignore

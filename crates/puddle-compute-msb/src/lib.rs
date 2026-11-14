@@ -16,7 +16,7 @@
 //! | Exit codes exact, signals `-1` | passed through from the SDK |
 //! | `VolumeInUse` names the holder | Puddle looks it up: the running sandbox whose config mounts the volume (msb's own refusal doesn't name it) |
 //! | `VolumeNotFound` / `VolumeSizeMismatch` | checked against the volume catalog before the SDK create |
-//! | No stale directory after a failed create | a create that fails removes the sandbox directory it left (fixed upstream in v0.7.12, `superradcompany/microsandbox#1929`; the contract suite checks it), so [`puddle_compute::Capabilities::stale_dir_fixed`] is `true` |
+//! | No stale directory after a failed create | a create that fails removes the sandbox directory it left (fixed upstream in v0.7.12, `superradcompany/microsandbox#1929`; the contract suite checks it) |
 //! | A start the runtime cannot vouch for is a named refusal | msb keeps the root-disk journal out of the guest's reach since v0.7.12 (upstream advisory GHSA-3f94-vm6x-3jv3) and refuses to start a sandbox whose stored disk state it cannot prove after an upgrade ("migration/recovery required"); [`error::map`] turns that into [`puddle_compute::StartRefusal::RootDiskNeedsRecovery`] |
 //! | Mount sources | every file or directory mount's host path must lie under [`MsbConfig::guest_share`]; the one exception, a checkout's `.git` ([`puddle_compute::MountKind::Checkout`]), must be its canonical path, a real git directory outside Puddle's folders, owned by this user on Unix, in a sandbox with no route |
 //! | Read-only mounts | every file, directory and checkout mount is passed to msb read-only, so msb's file server refuses writes whatever the guest does to its mount flags |

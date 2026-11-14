@@ -625,8 +625,6 @@ impl Runtime for FakeRuntime {
         let c = &self.inner.config;
         Ok(Capabilities {
             runtime_version: c.runtime_version.clone(),
-            stale_dir_fixed: true,
-            ssh_reports_signal_exit: true,
         })
     }
 

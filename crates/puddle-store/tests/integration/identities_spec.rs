@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use puddle_secrets::{AccountName, HostName, SourceSpec};
+use puddle_store::testing::own;
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
     IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, StartBasis,
@@ -22,6 +23,24 @@ fn fixture() -> (Arc<CollectingSink>, Store) {
     let store = Store::open_in_memory(clock, Limits::default())
         .unwrap()
         .with_events(sink.clone());
+    for name in [
+        "blog",
+        "both",
+        "broken",
+        "elsewhere",
+        "fresh",
+        "had",
+        "lonely",
+        "multi",
+        "never-had",
+        "old",
+        "only-identity",
+        "own",
+        "shop",
+        "w",
+    ] {
+        own(&store, &ws(name));
+    }
     (sink, store)
 }
 

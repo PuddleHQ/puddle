@@ -9,8 +9,8 @@ use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, Work
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
-    PENDING_COLUMNS, Store, append, append_for, decide_row_by, load_rules, lock, pending_from_raw,
-    raw_pending, sql_ts, stored_ts, users,
+    AllUsers, PENDING_COLUMNS, Store, append, append_for, decide_row_by, load_rules, lock,
+    pending_from_raw, raw_pending, sql_ts, stored_ts, users,
 };
 use crate::audit::{AuditRecord, RuleDeleteReason, RuleSetWire, RuleWire, actor_str};
 use crate::catalogue::{self, BUILT_IN_SETS, SystemReason};
@@ -360,7 +360,10 @@ pub(super) fn require_on(
     workspace: &WorkspaceId,
 ) -> Result<(), StoreError> {
     let index = load_index(conn)?;
-    require_user_set(conn, index.owner_of(workspace), id)?;
+    let user = index
+        .owner_of(workspace)
+        .ok_or_else(|| StoreError::UnknownWorkspace(workspace.clone()))?;
+    require_user_set(conn, user, id)?;
     if index.is_on(RuleSetId::User(id), workspace) {
         Ok(())
     } else {
@@ -440,7 +443,7 @@ fn close_rows_now_decided(
     drop(stmt);
     let mut closed = Vec::new();
     for row in &open {
-        if user.is_some_and(|user| index.owner_of(&row.workspace) != user) {
+        if user.is_some_and(|user| index.owner_of(&row.workspace) != Some(user)) {
             continue;
         }
         let Some(hit) = index.decide(&row.workspace, &row.host, now, SuffixAllows::Count) else {
@@ -738,7 +741,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error.
-    pub fn system_managed_every_user(&self) -> Result<Vec<SystemHost>, StoreError> {
+    pub fn system_managed_every_user(&self, _: &AllUsers) -> Result<Vec<SystemHost>, StoreError> {
         let reasons = load_reasons(&lock(&self.conn))?;
         Ok(system_hosts(reasons))
     }

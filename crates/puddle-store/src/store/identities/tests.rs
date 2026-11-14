@@ -9,7 +9,9 @@ use crate::identity::{Coverage, Owner};
 use crate::store::Limits;
 
 fn store() -> Store {
-    Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    crate::testing::own(&store, &WorkspaceId::new("shop").unwrap());
+    store
 }
 
 fn made(store: &Store) -> IdentityId {

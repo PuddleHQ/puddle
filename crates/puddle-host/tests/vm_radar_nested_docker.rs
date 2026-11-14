@@ -237,7 +237,7 @@ fn field<'a>(text: &'a str, key: &str) -> &'a str {
 fn asked_for(vm: &VmHost, workspace: &puddle_types::WorkspaceId) -> Vec<String> {
     vm.host
         .store()
-        .open_pending_every_user(Some(workspace))
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(workspace))
         .unwrap()
         .iter()
         .map(|r| format!("{}:{}", r.host, r.port))

@@ -199,9 +199,38 @@ impl Settings {
             first_bytes: Duration::from_secs(2),
             answer: Duration::from_secs(60),
             lookup_limit: Duration::from_secs(2),
-            lookup: system_lookup,
+            lookup: chosen_lookup(),
         }
     }
+}
+
+/// The system resolver; a test build (feature `test-lookup`) run with `PUDDLE_AGENT_TEST_LOOKUP`
+/// set uses [`hosts_only_lookup`] instead, so the test never waits on the machine's resolver.
+#[cfg(not(feature = "test-lookup"))]
+fn chosen_lookup() -> Lookup {
+    system_lookup
+}
+
+#[cfg(feature = "test-lookup")]
+fn chosen_lookup() -> Lookup {
+    if std::env::var_os("PUDDLE_AGENT_TEST_LOOKUP").is_some() {
+        hosts_only_lookup
+    } else {
+        system_lookup
+    }
+}
+
+/// Finds `localhost` and no other name, at once: a name that does not resolve is not local, so
+/// the connection goes through the proxy, the same as for a name the resolver cannot answer.
+#[cfg(feature = "test-lookup")]
+fn hosts_only_lookup(
+    host: String,
+    _port: u16,
+    _limit: Duration,
+) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>> {
+    Box::pin(async move {
+        (host == "localhost").then(|| vec![Ipv4Addr::LOCALHOST.into(), Ipv6Addr::LOCALHOST.into()])
+    })
 }
 
 /// How the command ended.

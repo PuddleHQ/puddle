@@ -675,6 +675,23 @@ async fn the_system_resolver_answers_with_addresses_and_gives_none_for_a_name_it
     );
 }
 
+#[cfg(feature = "test-lookup")]
+#[tokio::test]
+async fn the_test_lookup_finds_localhost_and_no_other_name_without_asking_a_resolver() {
+    let limit = Duration::from_secs(10);
+    let found = hosts_only_lookup("localhost".to_owned(), 22, limit)
+        .await
+        .unwrap();
+    assert!(found.iter().all(IpAddr::is_loopback), "{found:?}");
+    for name in [
+        "github.com",
+        "nas.example.test",
+        "127.0.0.1.nip.example.test",
+    ] {
+        assert_eq!(hosts_only_lookup(name.to_owned(), 22, limit).await, None);
+    }
+}
+
 fn never_answers(
     _: String,
     _: u16,

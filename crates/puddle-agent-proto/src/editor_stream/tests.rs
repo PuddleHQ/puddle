@@ -57,26 +57,16 @@ fn a_password_answer_is_the_password_a_refusal_or_an_error_that_says_what_was_wr
     assert_eq!(password_answer(&password_line(&hex)).unwrap(), hex);
 
     let refused = password_answer(&Answer::Refused("not started".into()).to_line());
-    assert!(
-        matches!(refused, Err(OpenError::Refused(ref why)) if why == "not started"),
-        "{refused:?}"
-    );
+    assert!(matches!(refused, Err(OpenError::Refused(ref why)) if why == "not started"));
 
     let bad = password_answer(b"password not-hex!\n");
-    assert!(
-        matches!(bad, Err(OpenError::Io(ref why)) if why.contains("not one the agent makes")),
-        "{bad:?}"
-    );
+    assert!(matches!(bad, Err(OpenError::Io(ref why)) if why.contains("not one the agent makes")));
 
     let other = password_answer(b"ok\n");
     assert!(
-        matches!(other, Err(OpenError::Io(ref why)) if why.contains("not an answer to a password request")),
-        "{other:?}"
+        matches!(other, Err(OpenError::Io(ref why)) if why.contains("not an answer to a password request"))
     );
 
     let binary = password_answer(&[0xff, 0xfe, b'\n']);
-    assert!(
-        matches!(binary, Err(OpenError::Io(ref why)) if why.contains("not text")),
-        "{binary:?}"
-    );
+    assert!(matches!(binary, Err(OpenError::Io(ref why)) if why.contains("not text")));
 }

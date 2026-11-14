@@ -43,3 +43,10 @@ fn a_header_that_points_past_the_file_is_not_read() {
     truncated.truncate(0x90);
     assert_eq!(pe_stack_reserve_bytes(&truncated), None);
 }
+
+#[test]
+fn a_file_cut_off_inside_the_optional_header_is_not_read() {
+    let mut cut = image(PE32_PLUS, 1);
+    cut.truncate(0x80 + OPTIONAL_HEADER_OFFSET + 10);
+    assert_eq!(pe_stack_reserve_bytes(&cut), None);
+}

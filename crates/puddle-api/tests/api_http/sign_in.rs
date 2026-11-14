@@ -18,11 +18,11 @@ use tokio::net::TcpStream;
 
 use crate::common::{Reply, START_MS, STEP, raw};
 
-const HOST: &str = "puddle.example.org";
-const ORIGIN: &str = "https://puddle.example.org";
+pub(super) const HOST: &str = "puddle.example.org";
+pub(super) const ORIGIN: &str = "https://puddle.example.org";
 /// A test password made at run time, the same one for the same label. A literal handed to the
 /// hasher is flagged as a hard-coded cryptographic value, and none of these protects anything.
-fn pw(label: &str) -> &'static str {
+pub(super) fn pw(label: &str) -> &'static str {
     static SUFFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let suffix = SUFFIX.get_or_init(|| {
         let mut bytes = [0_u8; 6];
@@ -35,23 +35,34 @@ fn pw(label: &str) -> &'static str {
     Box::leak(format!("{label} {suffix}").into_boxed_str())
 }
 
-fn password() -> &'static str {
+pub(super) fn password() -> &'static str {
     pw("correct horse battery")
 }
-const COOKIE: &str = "__Host-puddle-session";
+pub(super) const COOKIE: &str = "__Host-puddle-session";
 
-struct Site {
-    running: RunningApi,
-    addr: SocketAddr,
-    install_token: String,
-    store: Arc<Store>,
-    clock: Arc<ManualClock>,
+pub(super) struct Site {
+    pub(super) running: RunningApi,
+    pub(super) addr: SocketAddr,
+    pub(super) install_token: String,
+    pub(super) store: Arc<Store>,
+    pub(super) clock: Arc<ManualClock>,
     /// The database file, which the server's command line opens by itself.
     path: std::path::PathBuf,
     _dir: tempfile::TempDir,
 }
 
-async fn site_with(multi_user: bool) -> Site {
+pub(super) async fn site_with(multi_user: bool) -> Site {
+    site_built(multi_user, |_, _| None).await
+}
+
+/// A site whose workspaces are the ones `workspaces` makes from the event hub and the clock.
+pub(super) async fn site_built(
+    multi_user: bool,
+    workspaces: impl FnOnce(
+        &Arc<EventHub>,
+        &Arc<ManualClock>,
+    ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
+) -> Site {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let dir = tempfile::tempdir().unwrap();
@@ -61,7 +72,8 @@ async fn site_with(multi_user: bool) -> Site {
             .unwrap()
             .with_events(events.clone()),
     );
-    let services = Services::new(
+    let made = workspaces(&events, &clock);
+    let mut services = Services::new(
         store.clone(),
         Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
         events,
@@ -69,6 +81,9 @@ async fn site_with(multi_user: bool) -> Site {
     )
     .with_front_resolver(Arc::new(NoNames))
     .with_account_secrets(store.take_account_secrets().unwrap());
+    if let Some(made) = made {
+        services = services.with_workspaces(made);
+    }
     let mut config = ApiConfig::default();
     config.remote = Some(Remote::new(
         RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),
@@ -90,13 +105,13 @@ async fn site_with(multi_user: bool) -> Site {
     }
 }
 
-async fn site() -> Site {
+pub(super) async fn site() -> Site {
     site_with(false).await
 }
 
 /// How a request presents itself.
 #[derive(Default, Clone)]
-struct Req<'a> {
+pub(super) struct Req<'a> {
     host: Option<&'a str>,
     origin: Option<&'a str>,
     fetch_site: Option<&'a str>,
@@ -106,21 +121,21 @@ struct Req<'a> {
 
 impl<'a> Req<'a> {
     /// A page of the site itself.
-    fn page() -> Self {
+    pub(super) fn page() -> Self {
         Self {
             origin: Some(ORIGIN),
             ..Self::default()
         }
     }
 
-    fn bearer(token: &'a str) -> Self {
+    pub(super) fn bearer(token: &'a str) -> Self {
         Self {
             bearer: Some(token),
             ..Self::default()
         }
     }
 
-    fn cookie(mut self, cookie: &'a str) -> Self {
+    pub(super) fn cookie(mut self, cookie: &'a str) -> Self {
         self.cookie = Some(cookie);
         self
     }
@@ -135,7 +150,7 @@ impl<'a> Req<'a> {
         self
     }
 
-    fn on(mut self, host: &'a str) -> Self {
+    pub(super) fn on(mut self, host: &'a str) -> Self {
         self.host = Some(host);
         self
     }
@@ -172,11 +187,17 @@ fn head(method: &str, path: &str, req: &Req<'_>, body: Option<&Value>) -> String
 }
 
 impl Site {
-    async fn send(&self, method: &str, path: &str, req: &Req<'_>, body: Option<&Value>) -> Reply {
+    pub(super) async fn send(
+        &self,
+        method: &str,
+        path: &str,
+        req: &Req<'_>,
+        body: Option<&Value>,
+    ) -> Reply {
         raw(self.addr, head(method, path, req, body).as_bytes()).await
     }
 
-    async fn setup(&self) -> Reply {
+    pub(super) async fn setup(&self) -> Reply {
         self.send(
             "POST",
             "/api/auth/setup",
@@ -186,7 +207,7 @@ impl Site {
         .await
     }
 
-    async fn sign_in(&self, name: &str, password: &str) -> Reply {
+    pub(super) async fn sign_in(&self, name: &str, password: &str) -> Reply {
         self.send(
             "POST",
             "/api/auth/sign-in",
@@ -203,13 +224,13 @@ impl Site {
         reset_account(&cli, &secrets, name, self.clock.now_ms()).unwrap()
     }
 
-    fn loopback_host(&self) -> String {
+    pub(super) fn loopback_host(&self) -> String {
         format!("127.0.0.1:{}", self.addr.port())
     }
 }
 
 /// The refresh cookie's value in a reply, and the whole `Set-Cookie` line.
-fn set_cookie(reply: &Reply) -> (String, String) {
+pub(super) fn set_cookie(reply: &Reply) -> (String, String) {
     let line = reply
         .header("set-cookie")
         .unwrap_or_else(|| panic!("no Set-Cookie in {reply:?}"))
@@ -224,7 +245,7 @@ fn set_cookie(reply: &Reply) -> (String, String) {
     (value, line)
 }
 
-fn access_token(reply: &Reply) -> String {
+pub(super) fn access_token(reply: &Reply) -> String {
     reply.json()["access_token"].as_str().unwrap().to_owned()
 }
 

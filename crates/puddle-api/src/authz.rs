@@ -123,10 +123,6 @@ pub(crate) enum Action {
     /// listing them and signing in. They are the operator's.
     UseComputerAccounts,
     /// The user list and its changes (the admin screen).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the admin screen's routes use it")
-    )]
     ManageUsers,
     /// Serving the API beyond this computer.
     #[cfg_attr(
@@ -390,6 +386,9 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         ("PUT", "/api/auth/password")
         | ("GET", "/api/devices")
         | ("DELETE", "/api/devices/{id}") => (A::ManageSessions, T::Own),
+        ("GET", "/api/admin/users" | "/api/admin/stats" | "/api/admin/audit")
+        | ("POST", "/api/admin/users" | "/api/admin/users/{id}/invite")
+        | ("DELETE", "/api/admin/users/{id}") => (A::ManageUsers, T::Install),
         (
             "GET",
             "/api/network-health"

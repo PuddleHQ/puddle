@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod account_secrets;
+mod admin;
 mod audit;
 mod backup;
 mod catalogue;
@@ -29,6 +30,7 @@ mod users;
 mod workspace_git;
 
 pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
+pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
     PendingExpiryReason, PendingWire, RequestRuleWire, RuleDeleteReason, RuleSetWire, RuleWire,

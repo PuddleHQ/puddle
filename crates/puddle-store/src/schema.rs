@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24,
+    V22, V23, V24, V25,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 24;
+pub const SCHEMA_VERSION: u32 = 25;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -889,6 +889,23 @@ INSERT INTO sqlite_sequence (name, seq)
 DROP TABLE identities;
 ALTER TABLE identities_v24 RENAME TO identities;
 CREATE UNIQUE INDEX identities_one_default ON identities (user_id) WHERE is_default = 1;
+";
+
+/// The admin screen: a user the owner is deleting stays listed as `deleting` until their
+/// workspaces are gone, and every user-management action is written to an audit that outlives the
+/// user it names. The audit has no foreign key and holds names, never a credential.
+const V25: &str = r"
+ALTER TABLE users ADD COLUMN deleting_at INTEGER;
+CREATE TABLE admin_audit (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    at             INTEGER NOT NULL,
+    actor_user_id  INTEGER NOT NULL,
+    actor_name     TEXT    NOT NULL,
+    action         TEXT    NOT NULL CHECK (action IN
+        ('user_created', 'invite_reissued', 'user_delete_started', 'user_deleted')),
+    target_user_id INTEGER NOT NULL,
+    target_name    TEXT    NOT NULL
+) STRICT;
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

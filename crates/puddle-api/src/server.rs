@@ -26,6 +26,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
 
+use crate::admin::AdminService;
 use crate::auth::{Guard, Listener, guard};
 use crate::authz::{Isolation, Principal, authorize};
 use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
@@ -386,6 +387,8 @@ pub struct ApiServer {
     stop: watch::Sender<bool>,
     registration: Registration,
     remote: Option<RemoteBound>,
+    /// Finishes the deletions the owner started.
+    admin: Option<Arc<AdminService>>,
 }
 
 /// What remote serving binds and registers.
@@ -585,6 +588,20 @@ async fn sign_in_for(
     Ok(Some(sign_in))
 }
 
+/// The owner's admin screen: only with several users on, and only where there is sign-in.
+fn admin_for(
+    config: &ApiConfig,
+    sign_in: Option<&Arc<SignIn>>,
+    services: &Services,
+) -> Option<Arc<AdminService>> {
+    let sign_in = sign_in.filter(|_| config.multi_user)?;
+    Some(Arc::new(AdminService::new(
+        services.store.clone(),
+        sign_in.clone(),
+        services.workspaces.clone(),
+    )))
+}
+
 /// Says so in the log while nobody has made the owner account: the first visitor to the public
 /// address would.
 async fn warn_while_unclaimed(sign_in: &Arc<SignIn>) {
@@ -637,7 +654,9 @@ impl ApiServer {
             .settings_lock()
             .unwrap_or_else(|| Arc::new(Mutex::new(())));
         let sign_in = sign_in_for(&config, &services).await?;
+        let admin = admin_for(&config, sign_in.as_ref(), &services);
         let state = AppState {
+            admin: admin.clone(),
             authorizer: Arc::new(Isolation::new(services.store.clone())),
             store: services.store,
             settings: services.settings,
@@ -709,6 +728,7 @@ impl ApiServer {
             stop,
             registration,
             remote,
+            admin,
         })
     }
 
@@ -748,6 +768,7 @@ impl ApiServer {
             stop,
             registration,
             remote,
+            admin,
             ..
         } = self;
         let shutdown = stop.subscribe();
@@ -758,6 +779,9 @@ impl ApiServer {
             max_connections,
             shutdown.clone(),
         ))];
+        if let Some(admin) = admin {
+            tasks.push(tokio::spawn(admin.run_reaper(shutdown.clone())));
+        }
         let mut network_addr = None;
         let mut held: Vec<Box<dyn std::any::Any + Send>> = vec![Box::new(registration)];
         if let Some(RemoteBound {

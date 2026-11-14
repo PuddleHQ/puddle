@@ -1829,6 +1829,77 @@
         }
       }
     },
+    "/api/credential-store/retry": {
+      "post": {
+        "tags": [
+          "first-run"
+        ],
+        "summary": "Connects to the credential store again and checks that it takes a write. The\n`credential-store` problem in `GET /api/problems` is raised or cleared to match, and\n`problems_changed` says so.",
+        "operationId": "retry_credential_store",
+        "responses": {
+          "200": {
+            "description": "whether the store takes a write now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialStoreRetry"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "this build has no credential store check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/credentials/check": {
       "post": {
         "tags": [
@@ -14376,6 +14447,20 @@
           }
         ],
         "description": "Where the host reads a credential's value. A closed list; there is no command-line source, and\na field the list does not know (a `command`, say) is refused."
+      },
+      "CredentialStoreRetry": {
+        "type": "object",
+        "description": "What the first-run banner's Retry came to.",
+        "required": [
+          "working"
+        ],
+        "properties": {
+          "working": {
+            "type": "boolean",
+            "description": "The credential store took a write on this check, so Puddle can save secrets and sign-ins.\n`false` leaves the `credential-store` problem standing with its advice."
+          }
+        },
+        "additionalProperties": false
       },
       "CustomIcon": {
         "type": "object",

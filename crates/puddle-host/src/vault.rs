@@ -3,9 +3,10 @@
 
 use std::sync::Arc;
 
+use puddle_api::CredentialStoreService;
 use puddle_secrets::{
     ChunkedStore, IndexedStore, KeyringStore, LoginSession, SecretStore, StoreHealth, StoreKind,
-    StoredId, Sweep, probe_os_store, probe_store, write_record,
+    StoredId, Sweep, probe_os_store, probe_store, reconnect_os_store, write_record,
 };
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
@@ -169,17 +170,9 @@ fn run_check(
     problems: Arc<Problems>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
-        let health = match &probe {
-            Probe::Store(store) => probe_store(store.as_ref(), || true),
-            Probe::Os => probe_os_store(),
-            Probe::File(store) => probe_store(store.as_ref(), || true),
-            Probe::Skip => return,
+        let Some(health) = check_now(&probe, false, &problems) else {
+            return;
         };
-        if matches!(probe, Probe::File(_)) {
-            report_file_health(health, &problems);
-        } else {
-            report_health(health, cfg!(target_os = "linux"), &problems);
-        }
         if health == StoreHealth::Working
             && let Some(decision) = record_when_working
             && write_record(&decision.data, StoreKind::Os, decision.rule).is_err()
@@ -202,6 +195,53 @@ fn run_check(
             );
         }
     })
+}
+
+/// One check of the chosen store: probes it and raises or clears the problem to match. `None`
+/// when there is nothing to probe. `reconnect` connects to the operating system's store afresh
+/// first, which is what lets a Puddle that began with a locked or missing store use it once the
+/// user has unlocked it.
+fn check_now(probe: &Probe, reconnect: bool, problems: &Problems) -> Option<StoreHealth> {
+    let health = match probe {
+        Probe::Store(store) => probe_store(store.as_ref(), || true),
+        Probe::Os => {
+            if reconnect {
+                // A refused reconnect shows in the probe below as the failure it is.
+                let _ = reconnect_os_store();
+            }
+            probe_os_store()
+        }
+        Probe::File(store) => {
+            let health = probe_store(store.as_ref(), || true);
+            report_file_health(health, problems);
+            return Some(health);
+        }
+        Probe::Skip => return None,
+    };
+    report_health(health, cfg!(target_os = "linux"), problems);
+    Some(health)
+}
+
+/// The check behind the first-run banner's Retry.
+pub(crate) struct StoreRetry {
+    probe: Probe,
+    problems: Arc<Problems>,
+}
+
+impl Chosen {
+    /// The check the first-run banner's Retry runs against the store this start chose.
+    pub(crate) fn retry_check(&self, problems: Arc<Problems>) -> StoreRetry {
+        StoreRetry {
+            probe: self.probe.clone(),
+            problems,
+        }
+    }
+}
+
+impl CredentialStoreService for StoreRetry {
+    fn retry(&self) -> Option<bool> {
+        check_now(&self.probe, true, &self.problems).map(|health| health == StoreHealth::Working)
+    }
 }
 
 /// How long shutdown waits for the sweep: a locked keyring may take far longer, and a quit must

@@ -5,6 +5,7 @@
 use zeroize::Zeroize;
 
 use crate::name::StoredId;
+use crate::os_store::ensure_os_store;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
 
@@ -42,18 +43,14 @@ impl KeyringStore {
             // Credential Manager's default, "enterprise", lets Windows copy the entry to the
             // user's other computers when the account has a roaming profile.
             let modifiers = std::collections::HashMap::from([("persistence", "local")]);
-            // The wrapper's constructor sets the default store up and takes no modifiers.
-            keyring::Entry::store_status()
-                .as_ref()
-                .map_err(|_| StoreError)?;
+            ensure_os_store()?;
             keyring_core::Entry::new_with_modifiers(service, &user, &modifiers)
                 .map_err(|_| StoreError)
         }
         #[cfg(not(windows))]
         {
-            keyring::Entry::new(service, &user)
-                .map(|entry| entry.inner)
-                .map_err(|_| StoreError)
+            ensure_os_store()?;
+            keyring_core::Entry::new(service, &user).map_err(|_| StoreError)
         }
     }
 }
@@ -62,8 +59,8 @@ impl SecretStore for KeyringStore {
     fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
         match self.entry(id)?.get_password() {
             Ok(value) => Ok(Some(Secret::new(value))),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(keyring::Error::BadEncoding(mut blob)) => {
+            Err(keyring_core::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::BadEncoding(mut blob)) => {
                 // The error carries the stored bytes; overwrite them before they are freed.
                 blob.zeroize();
                 Err(StoreError)
@@ -80,7 +77,7 @@ impl SecretStore for KeyringStore {
 
     fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
         match self.entry(id)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(_) => Err(StoreError),
         }
     }
@@ -97,7 +94,7 @@ impl SecretStore for KeyringStore {
                     let value = entry.get_password().map_err(|_| StoreError)?;
                     entry.set_password(&value).map_err(|_| StoreError)?;
                 }
-                Err(keyring::Error::NoEntry) => {}
+                Err(keyring_core::Error::NoEntry) => {}
                 Err(_) => return Err(StoreError),
             }
         }
@@ -120,7 +117,7 @@ fn is_kept_local(attributes: &std::collections::HashMap<String, String>) -> bool
 /// to know whether a value can be stored.
 #[must_use]
 pub fn keyring_available() -> bool {
-    keyring::Entry::store_status().is_ok()
+    ensure_os_store().is_ok()
 }
 
 #[cfg(test)]

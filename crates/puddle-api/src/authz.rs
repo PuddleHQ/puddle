@@ -417,9 +417,12 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/auth/methods",
         )
         | ("DELETE", "/api/app-icons/custom" | "/api/proxy-sign-ins/{proxy}")
-        | ("POST", "/api/dev-certificate/trust" | "/api/orphan-volumes/{id}/restore") => {
-            (A::ChangeInstall, T::Install)
-        }
+        | (
+            "POST",
+            "/api/dev-certificate/trust"
+            | "/api/credential-store/retry"
+            | "/api/orphan-volumes/{id}/restore",
+        ) => (A::ChangeInstall, T::Install),
         ("GET", "/api/workspaces" | "/api/workspaces/lookup") => (A::ListWorkspaces, T::Own),
         ("POST", "/api/workspaces" | "/api/repository-hosts") => (A::CreateWorkspace, T::Own),
         (

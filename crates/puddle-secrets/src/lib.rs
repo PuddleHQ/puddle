@@ -34,6 +34,7 @@ mod indexed;
 mod keyring_store;
 mod login_session;
 mod name;
+mod os_store;
 mod readlog;
 mod run;
 mod scheme;
@@ -60,6 +61,7 @@ pub use login_session::{LoginSession, login_session, login_user_id};
 pub use name::{
     AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
 };
+pub use os_store::reconnect_os_store;
 pub use readlog::{LastRead, ReadLog, ReadUse};
 pub use run::ToolPaths;
 pub use scheme::{TokenScheme, azure_devops_scheme};

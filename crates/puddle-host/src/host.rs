@@ -418,14 +418,7 @@ impl<R: Runtime + Clone> Host<R> {
         let watchers = spawn_watchers(&shared, &service, &credentials.injecting, &editor_windows);
         steps.push(Step::WorkspacesReady);
 
-        let services = build_services(
-            &shared,
-            &service,
-            &credentials.injecting,
-            &outbound,
-            credentials.vault,
-            dev_cert,
-        );
+        let services = build_services(&shared, &service, &credentials, &outbound, dev_cert);
         let served = serve_api(&config, services, &mut steps).await?;
 
         Ok(Self {
@@ -793,6 +786,7 @@ fn build_outbound(
 struct Credentials {
     vault: Arc<dyn SecretStore>,
     vault_sweep: tokio::task::JoinHandle<()>,
+    store_retry: Arc<crate::vault::StoreRetry>,
     injecting: Injecting,
     proxy_passwords: Arc<ProxyPasswords>,
 }
@@ -820,6 +814,7 @@ async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError>
     .await?;
     let vault: Arc<dyn SecretStore> = chosen.vault.clone();
     chosen.check_in_background(problems.clone());
+    let store_retry = Arc::new(chosen.retry_check(problems.clone()));
     let vault_sweep = if chosen.usable {
         crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone())
     } else {
@@ -832,6 +827,7 @@ async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError>
     Ok(Credentials {
         vault,
         vault_sweep,
+        store_retry,
         injecting,
         proxy_passwords,
     })
@@ -1102,11 +1098,17 @@ fn spawn_watchers<R: Runtime + Clone>(
 fn build_services<R: Runtime + Clone>(
     shared: &Shared<'_>,
     service: &HostWorkspaces<R>,
-    injecting: &Injecting,
+    credentials: &Credentials,
     outbound: &Outbound,
-    vault: Arc<dyn SecretStore>,
     dev_cert: Arc<dyn DevCertSource>,
 ) -> Services {
+    let Credentials {
+        vault,
+        store_retry,
+        injecting,
+        ..
+    } = credentials;
+    let vault = vault.clone();
     let Shared {
         config,
         options,
@@ -1150,6 +1152,7 @@ fn build_services<R: Runtime + Clone>(
         options.az_search_path.clone(),
     ))
     .with_dev_cert(dev_cert)
+    .with_credential_store(store_retry.clone())
     .with_ports(Arc::new(HostPorts::new(outbound.ports.clone())))
     .with_terminals(Arc::new(service.clone()))
     .with_learned(Arc::new(HostLearned::new(

@@ -349,6 +349,42 @@ async fn scripts_run_in_order_and_an_unknown_one_is_404() {
 }
 
 #[tokio::test]
+async fn a_spread_adds_that_many_pending_requests_and_an_orphan_volume_is_listed() {
+    let run = start("lived-in").await;
+    let before = run.state().await["pending"].as_u64().unwrap();
+    let spread = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "spread", "count": 7})),
+        )
+        .await;
+    assert_eq!(spread.status, 204, "{}", spread.body);
+    assert_eq!(run.state().await["pending"].as_u64().unwrap(), before + 7);
+
+    let orphan = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "orphan_volume", "id": "bare"})),
+        )
+        .await;
+    assert_eq!(orphan.status, 204, "{}", orphan.body);
+    let listed = run.get("/api/orphan-volumes").await;
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    assert!(listed.body.contains("bare"), "{}", listed.body);
+
+    let bad = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "orphan_volume", "id": "Not A Valid Id!"})),
+        )
+        .await;
+    assert_eq!(bad.status, 422, "{}", bad.body);
+}
+
+#[tokio::test]
 async fn advancing_the_clock_expires_rules_like_the_sweeper() {
     let run = start("lived-in").await;
     let rules = |reply: Value| reply["rules"].as_array().unwrap().len();

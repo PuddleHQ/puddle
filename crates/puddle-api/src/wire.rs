@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+mod admin;
 mod app_icon;
 mod audit;
 mod audit_record;
@@ -44,6 +45,10 @@ mod ssh_agent;
 mod start_folder;
 mod workspaces;
 
+pub use admin::{
+    AdminActionKind, AdminAuditLine, AdminAuditList, AdminStats, AdminUser, AdminUserList,
+    AdminUserState, CreateUserRequest, InviteIssued,
+};
 pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
 pub use audit::{
     AuditEntry, AuditOutcome, AuditPage, AuditPending, AuditRequestRule, AuditRule, AuditRuleSet,

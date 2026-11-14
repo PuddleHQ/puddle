@@ -226,7 +226,8 @@ impl From<StoreError> for ApiError {
             | StoreError::IdentityLabelTaken(_)
             | StoreError::IdentityAttached { .. }
             | StoreError::RepoListed(_)
-            | StoreError::SetupDone => {
+                        | StoreError::SetupDone
+            | StoreError::OwnerKept => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, err.to_string())
             }
             StoreError::UserName(_)

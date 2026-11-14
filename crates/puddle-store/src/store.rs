@@ -32,6 +32,7 @@ use crate::rule::{Actor, NewRule, Rule, Scope};
 use crate::schema;
 use crate::users::UserId;
 
+mod admin;
 mod audit;
 mod devices;
 mod environment;

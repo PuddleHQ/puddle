@@ -145,6 +145,9 @@ pub enum StoreError {
     /// No user has this id.
     #[error("no user {0}")]
     UnknownUser(UserId),
+    /// The owner is never deleted.
+    #[error("the owner can't be deleted")]
+    OwnerKept,
     /// A user name was refused; the text says why.
     #[error("{0}")]
     UserName(String),

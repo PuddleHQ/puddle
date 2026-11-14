@@ -54,3 +54,53 @@ fn only_a_deny_is_named_as_the_blocker() {
     };
     assert_eq!(blocker_words(allow, pattern), None);
 }
+
+fn ws(name: &str) -> WorkspaceId {
+    WorkspaceId::new(name).unwrap()
+}
+
+#[test]
+fn an_allowed_request_the_install_waited_on_runs_it_once_and_a_denied_one_never() {
+    let runs = ToolRuns::default();
+    runs.wait_on(&ws("acme"), BTreeSet::from([4, 5]));
+    assert!(!runs.closed(&ws("acme"), 9, true), "not waited on");
+    assert!(!runs.closed(&ws("other"), 4, true), "another workspace");
+    assert!(!runs.closed(&ws("acme"), 4, false), "denied");
+    assert!(runs.closed(&ws("acme"), 5, true), "allowed: one more run");
+    assert!(!runs.closed(&ws("acme"), 5, true), "only once");
+    runs.wait_on(&ws("acme"), BTreeSet::from([6, 7]));
+    assert!(runs.closed(&ws("acme"), 6, true));
+    assert!(
+        !runs.closed(&ws("acme"), 7, true),
+        "the run an allow starts looks at every host again"
+    );
+    runs.wait_on(&ws("acme"), BTreeSet::from([8]));
+    runs.wait_on(&ws("acme"), BTreeSet::new());
+    assert!(
+        !runs.closed(&ws("acme"), 8, true),
+        "a good install waits on nothing"
+    );
+}
+
+#[tokio::test]
+async fn one_lock_per_workspace_and_an_unused_one_is_dropped() {
+    let runs = ToolRuns::default();
+    let a = runs.lock_of(&ws("acme"));
+    let held = a.lock().await;
+    assert!(
+        runs.lock_of(&ws("acme")).try_lock().is_err(),
+        "the same lock"
+    );
+    assert!(runs.lock_of(&ws("other")).try_lock().is_ok());
+    drop(held);
+    drop(a);
+    let _b = runs.lock_of(&ws("third"));
+    let names: Vec<String> = runs
+        .locks
+        .lock()
+        .unwrap()
+        .keys()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(names, ["third"], "locks nobody holds are gone");
+}

@@ -41,6 +41,7 @@ const BEARER: &str = "bearer";
     tags(
         (name = "service", description = "Who is answering"),
         (name = "events", description = "The server-sent event stream"),
+        (name = "admin", description = "The owner's admin screen: users with counts and sizes, totals, making and deleting users, invites, and their audit. Owner only, and only when several users are on"),
         (name = "auth", description = "Browser sign-in on a public address: the first visitor's owner account, passwords, devices and the sign-in methods"),
         (name = "pending", description = "Connections waiting for a decision"),
         (name = "rules", description = "Allow and deny rules"),

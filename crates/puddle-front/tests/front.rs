@@ -922,10 +922,9 @@ async fn the_front_is_one_of_puddles_own_listeners_on_the_loopback_only() {
 
 #[tokio::test]
 async fn the_usual_port_is_kept_when_free_and_replaced_when_taken() {
-    let free = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // Below the ports a bind to port 0 or an outgoing connection is given, so no parallel test
+    // takes it between this pick and the two `Front::bind` calls.
+    let free = puddle_test_kit::quiet_port();
     let make = |preferred| async move {
         let dir = tempfile::tempdir().unwrap();
         let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(dir.path()));

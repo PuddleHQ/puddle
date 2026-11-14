@@ -139,9 +139,14 @@ pub(crate) fn with_fake_names<'a>(
 
 /// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
 /// knows the fake hosts' names).
-pub(crate) fn through_company_proxy(mut options: HostOptions, proxy: &NameProxy) -> HostOptions {
+pub(crate) fn through_company_proxy(options: HostOptions, proxy: &NameProxy) -> HostOptions {
+    through_company_proxy_port(options, proxy.port())
+}
+
+/// [`through_company_proxy`] for a company proxy that is only known by its port on `127.0.0.1`.
+pub(crate) fn through_company_proxy_port(mut options: HostOptions, port: u16) -> HostOptions {
     let os = FakeOs::new(ProxyConfig {
-        rules: ProxyRules::parse(&format!("http://127.0.0.1:{}", proxy.port())),
+        rules: ProxyRules::parse(&format!("http://127.0.0.1:{port}")),
         ..ProxyConfig::default()
     });
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));

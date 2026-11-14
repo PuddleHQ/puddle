@@ -52,7 +52,7 @@ serve() { # serve <fails> <name>: starts the server, sets $port and $srv_pid
     n=0
     until [ -s "$tmp/$2.port" ]; do
         n=$((n + 1))
-        [ "$n" -lt 200 ] || fail "the fake server did not start"
+        [ "$n" -lt 1200 ] || fail "the fake server did not start" # about a minute: python starts slowly on a loaded host
         kill -0 "$srv_pid" 2>/dev/null || fail "the fake server died"
         sleep 0.05
     done

@@ -42,3 +42,19 @@ fn a_failed_connection_is_tried_again_and_a_working_one_is_kept() {
     );
     assert_eq!(ATTEMPTS.load(Ordering::SeqCst), 6);
 }
+
+/// The public entry point drives the process-wide connection: after it, the connection's memory
+/// matches the answer, whether or not this machine has a platform store.
+#[test]
+fn reconnecting_the_platform_store_makes_a_fresh_attempt_and_records_its_outcome() {
+    *OS.ready.lock().unwrap_or_else(PoisonError::into_inner) = false;
+
+    let answer = reconnect_os_store();
+
+    let remembered = *OS.ready.lock().unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(
+        remembered,
+        answer.is_ok(),
+        "the answer is the attempt's, and it is remembered"
+    );
+}

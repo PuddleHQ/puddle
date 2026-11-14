@@ -410,16 +410,22 @@ impl World {
     }
 }
 
-#[tokio::test]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
-    if !enter("tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address").await {
-        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
-        return;
-    }
+/// The world every by-name and by-address test starts from: the Docker bridge, the redirect
+/// rules and the stub resolver.
+async fn redirect_world() -> World {
     docker_bridge().await;
     let w = world("redirect").await;
     stub_resolver(&w.dir.0).await;
+    w
+}
+
+#[tokio::test]
+async fn dns_to_any_resolver_is_answered_by_the_stub_with_a_stand_in() {
+    if !enter("dns_to_any_resolver_is_answered_by_the_stub_with_a_stand_in").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let _w = redirect_world().await;
 
     // DNS to any resolver is the stub's: a stand-in for a name the host allows.
     let answer = ok(
@@ -428,6 +434,15 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
     )
     .await;
     assert!(answer.starts_with("198.18."), "{answer}");
+}
+
+#[tokio::test]
+async fn a_tool_with_an_empty_environment_reaches_the_proxy_by_name() {
+    if !enter("a_tool_with_an_empty_environment_reaches_the_proxy_by_name").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
 
     // A tool that resolves and connects, with an empty environment.
     let (success, page) = run(
@@ -450,6 +465,15 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
         "{:?}",
         w.authorities()
     );
+}
+
+#[tokio::test]
+async fn a_raw_tcp_client_handed_a_real_address_reaches_the_proxy_by_address() {
+    if !enter("a_raw_tcp_client_handed_a_real_address_reaches_the_proxy_by_address").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
 
     // A raw TCP client that was handed a real address: asked for by address.
     let (success, line) =
@@ -457,6 +481,15 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
             .await;
     assert!(success && line.trim() == "ping", "{line}");
     assert!(w.authorities().contains(&"192.0.2.7:5432".to_owned()));
+}
+
+#[tokio::test]
+async fn a_client_that_waits_for_the_server_first_still_gets_through() {
+    if !enter("a_client_that_waits_for_the_server_first_still_gets_through").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
 
     // A client that waits for the server first still gets through, and sent nothing with the head.
     let (success, line) = bash(
@@ -471,6 +504,15 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
         .find(|c| c.authority == "db.test:5433")
         .unwrap();
     assert!(late.behind.is_empty() && !late.ssh_header, "{late:?}");
+}
+
+#[tokio::test]
+async fn loopback_and_the_bridge_are_not_captured() {
+    if !enter("loopback_and_the_bridge_are_not_captured").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
 
     // What is inside the guest is not captured: loopback and the bridge go straight there.
     let before = w.authorities().len();
@@ -492,6 +534,16 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
         before,
         "local connections reached the proxy"
     );
+}
+
+#[tokio::test]
+async fn dialling_the_capture_port_directly_is_closed_and_sends_nothing_up() {
+    if !enter("dialling_the_capture_port_directly_is_closed_and_sends_nothing_up").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
+    let before = w.authorities().len();
 
     // Dialling the capture port yourself has no original destination: closed, nothing sent up.
     let port = w.agent.capture_addr().unwrap().port();
@@ -501,10 +553,29 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
     .await;
     assert!(!text.contains("got:[hello"), "{text}");
     assert_eq!(w.authorities().len(), before);
+}
+
+#[tokio::test]
+async fn a_stand_in_nobody_handed_out_is_reset_and_nothing_is_asked_of_the_host() {
+    if !enter("a_stand_in_nobody_handed_out_is_reset_and_nothing_is_asked_of_the_host").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
+    let before = w.authorities().len();
 
     // A stand-in nobody handed out has no name to ask for: reset, nothing asked of the host.
     bash_not_hung("exec 3<>/dev/tcp/198.18.200.1/80; read -t 3 l <&3").await;
     assert_eq!(w.authorities().len(), before);
+}
+
+#[tokio::test]
+async fn a_refused_connection_is_a_reset_soon_never_a_hang() {
+    if !enter("a_refused_connection_is_a_reset_soon_never_a_hang").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
 
     // A refusal is a reset, soon, never a hang.
     let (code, text) = run_code(
@@ -523,6 +594,15 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
     // curl's own `--max-time` ends a hang with status 28; a refusal ends it with another one.
     assert!(code.is_some_and(|c| c != 0 && c != 28), "{code:?} {text}");
     assert!(w.authorities().contains(&"x.deny.test:8080".to_owned()));
+}
+
+#[tokio::test]
+async fn a_raw_ssh_client_is_recognised_from_its_first_bytes_and_refused() {
+    if !enter("a_raw_ssh_client_is_recognised_from_its_first_bytes_and_refused").await {
+        // skip-ok: the outer run re-ran this test in a namespace and asserted that it passed
+        return;
+    }
+    let w = redirect_world().await;
 
     // A raw SSH client that never read ssh_config: recognised from its first bytes, refused with
     // the proxy's words ahead of any banner.

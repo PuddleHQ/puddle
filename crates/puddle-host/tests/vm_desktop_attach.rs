@@ -69,11 +69,12 @@ mod attach {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use puddle_host::{HostOptions, VsCodeLauncher};
+    use puddle_compute_msb::MsbRuntime;
+    use puddle_host::{Host, HostOptions, VsCodeLauncher};
     use puddle_types::WorkspaceId;
     use serde_json::json;
 
-    use crate::support::{Api, ended, named_id_options};
+    use crate::support::{Api, Events, ended, named_id_options};
     use crate::vm_support::{VmHost, guest, start_vm_host_config};
 
     const WAIT: Duration = Duration::from_secs(120);
@@ -179,11 +180,77 @@ mod attach {
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one VM, one story, read top to bottom"
-    )]
+    /// The one booted VM and everything the phases share.
+    struct Story {
+        scratch: tempfile::TempDir,
+        seen: PathBuf,
+        empty_cfg: String,
+        known_hosts: String,
+        user_config: PathBuf,
+        host: Host<MsbRuntime>,
+        runtime: MsbRuntime,
+        api: Api,
+        events: Events,
+        name: String,
+        name_static: &'static str,
+        workspace: WorkspaceId,
+        sandbox: WorkspaceId,
+        ssh_dir: PathBuf,
+        config: PathBuf,
+        alias: String,
+        cfg: String,
+    }
+
+    impl Story {
+        async fn direct(&self, on: bool) {
+            let reply = self
+                .api
+                .put(
+                    &format!("/api/settings/workspaces/{}", self.name),
+                    &json!({"overrides": {"direct_ssh": on}}).to_string(),
+                )
+                .await;
+            assert_eq!(reply.status, 200, "{}", reply.body);
+        }
+
+        async fn bare(&self, proxy: &str, identity: &Path) -> Output {
+            ssh(&[
+                "-F",
+                &self.empty_cfg,
+                "-o",
+                proxy,
+                "-o",
+                &format!("IdentityFile={}", option_path(identity)),
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "IdentityAgent=none",
+                "-o",
+                &format!("UserKnownHostsFile={}", self.known_hosts),
+                "-o",
+                "StrictHostKeyChecking=no",
+                "root@x",
+                "true",
+            ])
+            .await
+        }
+    }
+
     async fn run() {
+        let mut story = boot().await;
+        phase_off(&story).await;
+        let first_endpoint = phase_on(&story).await;
+        phase_editor_opens(&story).await;
+        phase_hostile_guest(&story).await;
+        let other_pub = phase_other_key(&story, &first_endpoint).await;
+        let second_endpoint =
+            phase_stale_host_key_and_restart(&mut story, &other_pub, &first_endpoint).await;
+        phase_off_again(&story, &second_endpoint).await;
+        phase_user_config(&story);
+        story.host.shutdown().await;
+    }
+
+    async fn boot() -> Story {
         let scratch = tempfile::tempdir().unwrap();
         let seen = scratch.path().join("code-args");
         let bin = stub_code(scratch.path(), &seen);
@@ -233,40 +300,60 @@ mod attach {
         let config = ssh_dir.join("config");
         let alias = format!("puddle-{name}");
         let cfg = config.to_str().unwrap().to_owned();
-        let direct = |on: bool| {
-            let api = &api;
-            let name = &name;
-            async move {
-                let reply = api
-                    .put(
-                        &format!("/api/settings/workspaces/{name}"),
-                        &json!({"overrides": {"direct_ssh": on}}).to_string(),
-                    )
-                    .await;
-                assert_eq!(reply.status, 200, "{}", reply.body);
-            }
-        };
+        Story {
+            scratch,
+            seen,
+            empty_cfg,
+            known_hosts,
+            user_config,
+            host,
+            runtime,
+            api,
+            events,
+            name,
+            name_static,
+            workspace,
+            sandbox,
+            ssh_dir,
+            config,
+            alias,
+            cfg,
+        }
+    }
 
-        // Off: no entry, no endpoint, nothing for the name to resolve to.
-        assert!(host.workspaces().ssh_endpoint(&workspace).await.is_none());
+    /// Off: no entry, no endpoint, nothing for the name to resolve to.
+    async fn phase_off(s: &Story) {
+        assert!(
+            s.host
+                .workspaces()
+                .ssh_endpoint(&s.workspace)
+                .await
+                .is_none()
+        );
         // (No file of Puddle's exists yet, so nothing defines the name.)
-        let off = ssh(&["-F", &empty_cfg, &alias, "true"]).await;
+        let off = ssh(&["-F", &s.empty_cfg, &s.alias, "true"]).await;
         assert!(!off.status.success());
         assert!(
             text(&off).contains("Could not resolve hostname"),
             "{}",
             text(&off)
         );
+    }
 
-        // On: ssh logs in as the new workspace's session user, `agent`, who becomes root with
-        // sudo, through the entry, with Puddle's own file and through the user's file's include
-        // line.
-        direct(true).await;
-        let first_endpoint = host.workspaces().ssh_endpoint(&workspace).await.unwrap();
+    /// On: ssh logs in as the new workspace's session user, `agent`, who becomes root with sudo,
+    /// through the entry, with Puddle's own file and through the user's file's include line.
+    async fn phase_on(s: &Story) -> PathBuf {
+        s.direct(true).await;
+        let first_endpoint = s
+            .host
+            .workspaces()
+            .ssh_endpoint(&s.workspace)
+            .await
+            .unwrap();
         let login = ssh(&[
             "-F",
-            &cfg,
-            &alias,
+            &s.cfg,
+            &s.alias,
             "id -un; echo \"$HOME\"; sudo -n id -un; echo from-the-guest",
         ])
         .await;
@@ -276,35 +363,41 @@ mod attach {
             said.starts_with("agent\n/home/agent\nroot\n") && said.contains("from-the-guest"),
             "{said}"
         );
-        let uc = user_config.to_str().unwrap();
-        let through_include = ssh(&["-F", uc, &alias, "hostname"]).await;
+        let uc = s.user_config.to_str().unwrap();
+        let through_include = ssh(&["-F", uc, &s.alias, "hostname"]).await;
         assert!(
             through_include.status.success(),
             "{}",
             text(&through_include)
         );
+        first_endpoint
+    }
 
-        // The editor is opened on the entry's host.
-        let attach = api
+    /// The editor is opened on the entry's host.
+    async fn phase_editor_opens(s: &Story) {
+        let attach = s
+            .api
             .post(
-                &format!("/api/workspaces/{name}/attach"),
+                &format!("/api/workspaces/{}/attach", s.name),
                 &json!({"mode": "desktop"}).to_string(),
             )
             .await;
         assert_eq!(attach.json()["opened"], true, "{}", attach.body);
-        let args = std::fs::read_to_string(&seen)
+        let args = std::fs::read_to_string(&s.seen)
             .unwrap()
             .replace("\r\n", "\n");
         assert!(
             args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
-                && args.contains(&format!("+{alias}/workspaces/")),
+                && args.contains(&format!("+{}/workspaces/", s.alias)),
             "{args}"
         );
+    }
 
-        // Hostile guest: the private key is nowhere in the guest, and the guest has no SSH daemon.
+    /// Hostile guest: the private key is nowhere in the guest, and the guest has no SSH daemon.
+    async fn phase_hostile_guest(s: &Story) {
         let found = guest(
-            &runtime,
-            &sandbox,
+            &s.runtime,
+            &s.sandbox,
             "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspaces /opt /var 2>/dev/null; echo done",
         )
         .await;
@@ -313,14 +406,17 @@ mod attach {
             "done",
             "a private key is in the guest: {found}"
         );
-        let listening = guest(&runtime, &sandbox, "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk 'NR>1 && $4==\"0A\" {print $2}'; echo done").await;
+        let listening = guest(&s.runtime, &s.sandbox, "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk 'NR>1 && $4==\"0A\" {print $2}'; echo done").await;
         assert!(
             !listening.contains(":0016"),
             "something listens on port 22 in the guest: {listening}"
         );
+    }
 
-        // Another key is refused by the runtime's server; the host's own key is not.
-        let other = scratch.path().join("other");
+    /// Another key is refused by the runtime's server; the host's own key is not. Returns the
+    /// other key's public half.
+    async fn phase_other_key(s: &Story, first_endpoint: &Path) -> String {
+        let other = s.scratch.path().join("other");
         let other_pub = keygen(&other);
         // The entry's own form: the program and the endpoint each in quotes, nothing around both.
         let proxy = format!(
@@ -328,90 +424,82 @@ mod attach {
             std::env::current_exe().unwrap().display(),
             first_endpoint.display()
         );
-        let bare = |identity: &Path| {
-            let identity = option_path(identity);
-            let proxy = proxy.clone();
-            let empty_cfg = empty_cfg.clone();
-            let known_hosts = known_hosts.clone();
-            async move {
-                ssh(&[
-                    "-F",
-                    &empty_cfg,
-                    "-o",
-                    &proxy,
-                    "-o",
-                    &format!("IdentityFile={identity}"),
-                    "-o",
-                    "IdentitiesOnly=yes",
-                    "-o",
-                    "IdentityAgent=none",
-                    "-o",
-                    &format!("UserKnownHostsFile={known_hosts}"),
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "root@x",
-                    "true",
-                ])
-                .await
-            }
-        };
-        let refused = bare(&other).await;
+        let refused = s.bare(&proxy, &other).await;
         assert_eq!(refused.status.code(), Some(255), "{}", text(&refused));
         assert!(
             text(&refused).contains("Permission denied"),
             "{}",
             text(&refused)
         );
-        let ours = bare(&ssh_dir.join("login_ed25519")).await;
+        let ours = s.bare(&proxy, &s.ssh_dir.join("login_ed25519")).await;
         assert!(ours.status.success(), "control: {}", text(&ours));
+        other_pub
+    }
 
-        // A host key left over from before the sandbox was made anew stops ssh until the host
-        // forgets it, which it does when the endpoint opens.
-        let known = ssh_dir.join("known_hosts").join(&name);
-        std::fs::write(&known, format!("{alias} {other_pub}\n")).unwrap();
-        let stale = ssh(&["-F", &cfg, &alias, "true"]).await;
+    /// A host key left over from before the sandbox was made anew stops ssh until the host forgets
+    /// it, which it does when the endpoint opens. Returns the endpoint after the restart.
+    async fn phase_stale_host_key_and_restart(
+        s: &mut Story,
+        other_pub: &str,
+        first_endpoint: &Path,
+    ) -> PathBuf {
+        let known = s.ssh_dir.join("known_hosts").join(&s.name);
+        std::fs::write(&known, format!("{} {other_pub}\n", s.alias)).unwrap();
+        let stale = ssh(&["-F", &s.cfg, &s.alias, "true"]).await;
         assert_eq!(stale.status.code(), Some(255), "control: {}", text(&stale));
         assert!(
             text(&stale).contains("HOST IDENTIFICATION HAS CHANGED"),
             "{}",
             text(&stale)
         );
-        api.post(&format!("/api/workspaces/{name}/stop"), "").await;
-        events
-            .until(ended(name_static), Duration::from_secs(120))
+        s.api
+            .post(&format!("/api/workspaces/{}/stop", s.name), "")
+            .await;
+        s.events
+            .until(ended(s.name_static), Duration::from_secs(120))
             .await;
         // The refused login and the host key refusal above end their sessions with no SSH
         // disconnect (msb's server calls that "early eof"); neither is a failure of direct SSH.
         assert!(
-            !events
+            !s.events
                 .seen
                 .iter()
                 .any(|event| event["type"] == "workspace_ssh_failed"),
             "direct SSH reported a failure: {:?}",
-            events.seen
+            s.events.seen
         );
-        let config_text = std::fs::read_to_string(&config).unwrap();
+        let config_text = std::fs::read_to_string(&s.config).unwrap();
         assert!(
             !config_text.contains("Host puddle-"),
             "a stopped workspace has no entry"
         );
-        api.post(&format!("/api/workspaces/{name}/start"), "").await;
-        events
-            .until(ended(name_static), Duration::from_secs(300))
+        s.api
+            .post(&format!("/api/workspaces/{}/start", s.name), "")
             .await;
-        let second_endpoint = host.workspaces().ssh_endpoint(&workspace).await.unwrap();
+        s.events
+            .until(ended(s.name_static), Duration::from_secs(300))
+            .await;
+        let second_endpoint = s
+            .host
+            .workspaces()
+            .ssh_endpoint(&s.workspace)
+            .await
+            .unwrap();
         assert_ne!(first_endpoint, second_endpoint);
-        let again = ssh(&["-F", &cfg, &alias, "echo again"]).await;
+        let again = ssh(&["-F", &s.cfg, &s.alias, "echo again"]).await;
         assert!(again.status.success(), "{}", text(&again));
+        second_endpoint
+    }
 
-        // Off again: the entry goes, and the endpoint's old name says why it is gone.
-        direct(false).await;
+    /// Off again: the entry goes, and the endpoint's old name says why it is gone.
+    async fn phase_off_again(s: &Story, second_endpoint: &Path) {
+        s.direct(false).await;
         assert!(
-            !std::fs::read_to_string(&config)
+            !std::fs::read_to_string(&s.config)
                 .unwrap()
                 .contains("Host puddle-")
         );
-        let gone = ssh(&["-F", &cfg, &alias, "true"]).await;
+        let gone = ssh(&["-F", &s.cfg, &s.alias, "true"]).await;
         assert!(
             text(&gone).contains("Could not resolve hostname"),
             "{}",
@@ -419,7 +507,7 @@ mod attach {
         );
         let old = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("ssh-bridge")
-            .arg(&second_endpoint)
+            .arg(second_endpoint)
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap();
@@ -429,20 +517,20 @@ mod attach {
             "{}",
             text(&old)
         );
-        let refused = api
+        let refused = s
+            .api
             .post(
-                &format!("/api/workspaces/{name}/attach"),
+                &format!("/api/workspaces/{}/attach", s.name),
                 &json!({"mode": "desktop"}).to_string(),
             )
             .await;
         assert_eq!(refused.status, 409, "{}", refused.body);
+    }
 
-        // The include line is in the user's file once, and nothing else is.
-        let user = std::fs::read_to_string(&user_config).unwrap();
+    /// The include line is in the user's file once, and nothing else is.
+    fn phase_user_config(s: &Story) {
+        let user = std::fs::read_to_string(&s.user_config).unwrap();
         assert_eq!(user.lines().count(), 1, "{user}");
         assert_eq!(user.matches("Include").count(), 1);
-
-        let _: PathBuf = second_endpoint;
-        host.shutdown().await;
     }
 }

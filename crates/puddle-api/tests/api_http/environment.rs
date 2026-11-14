@@ -497,20 +497,23 @@ async fn without_a_credential_store_a_secret_is_refused_and_plain_variables_stil
     running.shutdown().await;
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one table of refusals, read top to bottom"
-)]
-#[tokio::test]
-async fn what_is_refused_says_why_and_never_quotes_a_secret() {
+/// The message of a refused body, after checking it is the plain 422 `invalid`.
+fn refused(reply: &crate::common::Reply) -> String {
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert_eq!(reply.error(), "invalid");
+    reply.json()["message"].as_str().unwrap().to_owned()
+}
+
+/// An API with one workspace, for the tests of what the variables routes refuse.
+async fn api_with_a_workspace() -> Api {
     let api = start().await;
     workspace(&api, "shop").await;
-    let refused = |reply: &crate::common::Reply| {
-        assert_eq!(reply.status, 422, "{}", reply.body);
-        assert_eq!(reply.error(), "invalid");
-        reply.json()["message"].as_str().unwrap().to_owned()
-    };
+    api
+}
 
+#[tokio::test]
+async fn a_refused_name_says_why_and_the_users_own_names_are_kept() {
+    let api = api_with_a_workspace().await;
     // Names Puddle owns, and names that are not names.
     for (name, says) in [
         ("PATH", "image"),
@@ -538,8 +541,16 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
             200
         );
     }
+    assert_eq!(
+        names(&api.get("/api/env").await.json()).len(),
+        4,
+        "only the four valid ones"
+    );
+}
 
-    // Hosts.
+#[tokio::test]
+async fn a_refused_host_says_why_and_never_quotes_the_secret() {
+    let api = api_with_a_workspace().await;
     for (hosts, says) in [
         (vec![], "at least one host"),
         (vec!["*.github.io"], "anyone can register"),
@@ -557,8 +568,12 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
         api.secrets.ids().is_empty(),
         "a refused secret leaves no value behind"
     );
+    assert_eq!(names(&api.get("/api/env").await.json()).len(), 0);
+}
 
-    // Values.
+#[tokio::test]
+async fn a_refused_value_says_why_and_never_quotes_the_secret() {
+    let api = api_with_a_workspace().await;
     let long = "x".repeat(9000);
     for (value, says) in [
         (Value::from(""), "can't be empty"),
@@ -583,13 +598,12 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
     assert!(refused(&nul).contains("NUL"));
     let too_big = put(&api, "/api/env/T", &plain(&"x".repeat(49 * 1024))).await;
     assert!(refused(&too_big).contains("at most"));
-    assert_eq!(
-        names(&api.get("/api/env").await.json()).len(),
-        4,
-        "only the four valid ones"
-    );
+    assert_eq!(names(&api.get("/api/env").await.json()).len(), 0);
+}
 
-    // Unknown workspace, unknown kind, unknown field.
+#[tokio::test]
+async fn an_unknown_workspace_kind_or_field_is_refused() {
+    let api = api_with_a_workspace().await;
     assert_eq!(
         put(&api, "/api/workspaces/nope/env/A", &plain("x"))
             .await
@@ -620,7 +634,11 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
         422
     );
     assert_eq!(put(&api, "/api/env/A", &json!(["x"])).await.status, 422);
-    // A malformed body that carries a secret does not quote it back.
+}
+
+#[tokio::test]
+async fn a_malformed_body_that_carries_a_secret_does_not_quote_it_back() {
+    let api = api_with_a_workspace().await;
     for body in [
         json!({"kind": "secret", "value": canary(), "hosts": ["a.example.com"], "extra": 1}),
         json!({"kind": "secret", "value": canary()}),

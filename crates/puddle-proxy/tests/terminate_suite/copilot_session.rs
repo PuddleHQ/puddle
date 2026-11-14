@@ -21,7 +21,8 @@ use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::h2_rig::{H2Server, Reply as H2Reply, Script, full};
 use terminate_support::{
-    FakeServer, Flaw, Handler, Pki, Recorded, Reply, RigBuilder, TestInjector, captured_logs,
+    Client, FakeServer, Flaw, Handler, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector,
+    captured_logs,
 };
 
 const API: &str = "api.github.com";
@@ -131,9 +132,18 @@ fn fields_of(token: &str) -> &str {
     token.split_once(':').unwrap().0
 }
 
-#[tokio::test]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn hostile_the_real_copilot_session_token_never_reaches_the_guest_and_every_stand_in_works() {
+/// A proxy in front of the three fake hosts, with the stand-in `gho_` token registered.
+struct Session {
+    api: FakeServer,
+    copilot: FakeServer,
+    elsewhere: FakeServer,
+    rig: Rig,
+    gho: String,
+    notices: Arc<Notices>,
+    _registry: Arc<StandIns>,
+}
+
+async fn session() -> Session {
     let pki = Pki::new();
     let api = FakeServer::tls(pki.server_config(API, Flaw::None), api_handler()).await;
     let copilot = FakeServer::tls(
@@ -159,43 +169,91 @@ async fn hostile_the_real_copilot_session_token_never_reaches_the_guest_and_ever
         .stand_ins(&registry)
         .exchanges(Arc::new(logins.clone()))
         .build();
-    let mut guest = rig.guest();
+    Session {
+        api,
+        copilot,
+        elsewhere,
+        rig,
+        gho,
+        notices,
+        _registry: registry,
+    }
+}
+
+impl Session {
+    /// Two exchanges, as the extension makes them: the extension's `GET` with the stand-in
+    /// `gho_` token in `Authorization: token ...`. Returns the two session stand-ins.
+    async fn two_exchanges(&self, token_client: &mut Client) -> Vec<String> {
+        let mut given = Vec::new();
+        for n in 1..=2 {
+            token_client
+                .send(&request(
+                    "GET",
+                    API,
+                    "/copilot_internal/v2/token",
+                    &format!(
+                        "Authorization: token {}\r\nX-GitHub-Api-Version: 2025-04-01\r\n",
+                        self.gho
+                    ),
+                ))
+                .await;
+            let response = token_client.response("GET").await;
+            assert_eq!(response.status, 200, "{}", response.text());
+            assert_no_real_session(&response.text());
+            let answer: Value = serde_json::from_slice(&response.body).unwrap();
+            let token = answer.get("token").unwrap().as_str().unwrap().to_owned();
+            // What the extension reads: the same fields, the same envelope, a MAC of the same length.
+            assert_eq!(fields_of(&token), fields_of(&real_session(n)));
+            assert_eq!(mac_of(&token).len(), mac_of(&real_session(n)).len());
+            assert_eq!(answer.get("refresh_in"), Some(&json!(1500)));
+            assert_eq!(
+                answer.pointer("/endpoints/api"),
+                Some(&json!(format!("https://{COPILOT}")))
+            );
+            assert_eq!(
+                response.header("content-length"),
+                Some(response.body.len().to_string().as_str())
+            );
+            given.push(token);
+        }
+        given
+    }
+
+    /// What no test may leave behind: the real token in the audit rows, the logs or the notices.
+    async fn finish(self, clients: Vec<Client>) {
+        for client in clients {
+            client.close().await;
+        }
+        let events = self.rig.events(1).await;
+        assert_no_real_session(&format!("{events:?}"));
+        assert_no_real_session(&captured_logs());
+        assert!(self.notices.0.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn hostile_the_real_copilot_session_token_never_reaches_the_guest_in_two_exchanges() {
+    let s = session().await;
+    let mut guest = s.rig.guest();
     let mut token_client = guest.tls(&format!("{API}:443"), None).await.unwrap();
 
-    // Two exchanges, as the extension makes them: the extension's `GET` with the stand-in
-    // `gho_` token in `Authorization: token ...`.
-    let mut given = Vec::new();
-    for n in 1..=2 {
-        token_client
-            .send(&request(
-                "GET",
-                API,
-                "/copilot_internal/v2/token",
-                &format!("Authorization: token {gho}\r\nX-GitHub-Api-Version: 2025-04-01\r\n"),
-            ))
-            .await;
-        let response = token_client.response("GET").await;
-        assert_eq!(response.status, 200, "{}", response.text());
-        assert_no_real_session(&response.text());
-        let answer: Value = serde_json::from_slice(&response.body).unwrap();
-        let token = answer["token"].as_str().unwrap().to_owned();
-        // What the extension reads: the same fields, the same envelope, a MAC of the same length.
-        assert_eq!(fields_of(&token), fields_of(&real_session(n)));
-        assert_eq!(mac_of(&token).len(), mac_of(&real_session(n)).len());
-        assert_eq!(answer["refresh_in"], 1500);
-        assert_eq!(answer["endpoints"]["api"], format!("https://{COPILOT}"));
-        assert_eq!(
-            response.header("content-length"),
-            Some(response.body.len().to_string().as_str())
-        );
-        given.push(token);
-    }
+    let given = s.two_exchanges(&mut token_client).await;
     assert_ne!(given[0], given[1], "a new stand-in at every exchange");
     assert_eq!(
-        api.recorded()[0].header("authorization"),
+        s.api.recorded()[0].header("authorization"),
         Some(format!("token {GH_TOKEN}").as_str()),
         "the real GitHub token went out in the request"
     );
+
+    s.finish(vec![token_client]).await;
+}
+
+#[tokio::test]
+async fn hostile_both_session_stand_ins_work_toward_the_copilot_host_each_with_its_real_token() {
+    let s = session().await;
+    let mut guest = s.rig.guest();
+    let mut token_client = guest.tls(&format!("{API}:443"), None).await.unwrap();
+    let given = s.two_exchanges(&mut token_client).await;
 
     // Both stand-ins work toward the Copilot host, each with the real token of its exchange.
     let mut chat = guest.tls(&format!("{COPILOT}:443"), None).await.unwrap();
@@ -209,10 +267,20 @@ async fn hostile_the_real_copilot_session_token_never_reaches_the_guest_and_ever
         .await;
         assert_eq!(chat.response("GET").await.status, 200);
         assert_eq!(
-            copilot.recorded()[n].header("authorization"),
+            s.copilot.recorded()[n].header("authorization"),
             Some(format!("Bearer {}", real_session(n + 1)).as_str())
         );
     }
+
+    s.finish(vec![token_client, chat]).await;
+}
+
+#[tokio::test]
+async fn hostile_a_session_stand_in_toward_a_host_that_is_not_the_service_goes_out_as_text() {
+    let s = session().await;
+    let mut guest = s.rig.guest();
+    let mut token_client = guest.tls(&format!("{API}:443"), None).await.unwrap();
+    let given = s.two_exchanges(&mut token_client).await;
 
     // A stand-in toward a decrypted host that is not the service's goes out as the text it is.
     let mut away = guest.tls("elsewhere.test:443", None).await.unwrap();
@@ -226,9 +294,20 @@ async fn hostile_the_real_copilot_session_token_never_reaches_the_guest_and_ever
     assert_eq!(away.response("GET").await.status, 200);
     away.close().await;
     assert_eq!(
-        elsewhere.recorded()[0].header("authorization"),
+        s.elsewhere.recorded()[0].header("authorization"),
         Some(format!("Bearer {}", given[1]).as_str())
     );
+
+    s.finish(vec![token_client]).await;
+}
+
+#[tokio::test]
+async fn hostile_a_made_up_session_token_with_a_real_ones_fields_gets_nothing_swapped() {
+    let s = session().await;
+    let mut guest = s.rig.guest();
+    let mut token_client = guest.tls(&format!("{API}:443"), None).await.unwrap();
+    let given = s.two_exchanges(&mut token_client).await;
+    let mut chat = guest.tls(&format!("{COPILOT}:443"), None).await.unwrap();
 
     // A guest that makes up a session token with a real one's fields gets nothing swapped.
     let forged = format!("{}:{}", fields_of(&given[1]), "0".repeat(64));
@@ -241,16 +320,11 @@ async fn hostile_the_real_copilot_session_token_never_reaches_the_guest_and_ever
     .await;
     assert_eq!(chat.response("GET").await.status, 200);
     assert_eq!(
-        copilot.recorded().last().unwrap().header("authorization"),
+        s.copilot.recorded().last().unwrap().header("authorization"),
         Some(format!("Bearer {forged}").as_str())
     );
 
-    token_client.close().await;
-    chat.close().await;
-    let events = rig.events(1).await;
-    assert_no_real_session(&format!("{events:?}"));
-    assert_no_real_session(&captured_logs());
-    assert!(notices.0.lock().unwrap().is_empty());
+    s.finish(vec![token_client, chat]).await;
 }
 
 #[tokio::test]

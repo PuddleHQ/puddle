@@ -1879,10 +1879,17 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
     host.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[expect(clippy::too_many_lines, reason = "one scenario, one rig")]
-async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
-    const MOVED: &str = "https://example.org/acme/moved.git";
+const MOVED_REMOTE: &str = "https://example.org/acme/moved.git";
+
+/// A running host with workspace `adds` and two foreign checkouts, `legacy` (https) and `ssh`.
+struct ManagedRig {
+    rig: Rig,
+    host: Host<FakeRuntime>,
+    api: Api,
+    events: support::Events,
+}
+
+async fn managed_checkouts_rig() -> ManagedRig {
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
@@ -1893,13 +1900,19 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         .put_checkout("legacy", "https://example.org/acme/legacy.git");
     rig.guest
         .put_checkout("ssh", "git@example.org:acme/ssh.git");
-    let clones = rig.guest.clone_commands().len();
-    let commands = rig.guest.commands().len();
+    ManagedRig {
+        rig,
+        host,
+        api,
+        events,
+    }
+}
 
-    // The listing offers it; then its remote changes before the call.
+/// The listing offers `legacy`; then its remote changes, so the user's view is stale.
+async fn move_the_legacy_remote(m: &ManagedRig) {
     // A listing made at the same millisecond as the call would be shared with it.
     tokio::time::sleep(Duration::from_millis(20)).await;
-    let list = checkouts_of(&api, "adds").await;
+    let list = checkouts_of(&m.api, "adds").await;
     let legacy = list["checkouts"]
         .as_array()
         .unwrap()
@@ -1909,40 +1922,32 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         .clone();
     assert_eq!(legacy["entry"], serde_json::Value::Null);
     assert_eq!(legacy["manage"]["offered"], true);
-    rig.guest.put_checkout("legacy", MOVED);
+    m.rig.guest.put_checkout("legacy", MOVED_REMOTE);
+}
 
-    // The user saw the old address: a swapped remote is refused, naming both, and adds nothing.
-    let swapped = add_and_wait(
-        &api,
-        &mut events,
+async fn manage_legacy_at_its_new_remote(m: &mut ManagedRig) -> support::Reply {
+    add_and_wait(
+        &m.api,
+        &mut m.events,
         "adds",
-        json!({"kind": "existing", "url": "https://example.org/acme/legacy.git", "directory": "legacy"}),
+        json!({"kind": "existing", "url": MOVED_REMOTE, "directory": "legacy"}),
     )
-    .await;
-    assert_eq!(swapped.status, 409, "{}", swapped.body);
-    assert!(
-        swapped.body.contains("legacy.git") && swapped.body.contains(MOVED),
-        "{}",
-        swapped.body
-    );
-    let record = api.get("/api/workspaces/adds").await.json();
-    assert_eq!(
-        record["repositories"].as_array().unwrap().len(),
-        1,
-        "{record}"
-    );
-    let listings = rig.guest.listings.lock().unwrap().len();
+    .await
+}
 
-    let reply = add_and_wait(
-        &api,
-        &mut events,
-        "adds",
-        json!({"kind": "existing", "url": MOVED, "directory": "legacy"}),
-    )
-    .await;
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
+    let mut m = managed_checkouts_rig().await;
+    let clones = m.rig.guest.clone_commands().len();
+    let commands = m.rig.guest.commands().len();
+    move_the_legacy_remote(&m).await;
+    let listings = m.rig.guest.listings.lock().unwrap().len();
+
+    let reply = manage_legacy_at_its_new_remote(&mut m).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(
-        rig.guest
+        m.rig
+            .guest
             .listings
             .lock()
             .unwrap()
@@ -1952,23 +1957,23 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         Some("legacy"),
         "its remote was read again for this call"
     );
-    assert_eq!(rig.guest.listings.lock().unwrap().len(), listings + 1);
+    assert_eq!(m.rig.guest.listings.lock().unwrap().len(), listings + 1);
     let entries = reply.json()["repositories"].clone();
     assert_eq!(
         without_entries(&json!([entries[1]])),
-        json!([{"url": MOVED, "directory": "legacy"}])
+        json!([{"url": MOVED_REMOTE, "directory": "legacy"}])
     );
     assert_eq!(
-        rig.guest.clone_commands().len(),
+        m.rig.guest.clone_commands().len(),
         clones,
         "nothing was cloned"
     );
     assert_eq!(
-        rig.guest.commands().len(),
+        m.rig.guest.commands().len(),
         commands,
         "no command but the reads ran in the guest"
     );
-    let git = api.get("/api/workspaces/adds/git").await.json();
+    let git = m.api.get("/api/workspaces/adds/git").await.json();
     let rows: Vec<_> = git["repos"]
         .as_array()
         .unwrap()
@@ -1980,19 +1985,56 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         ["api", "moved"],
         "the new row is the one read just now"
     );
+    m.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_a_checkout_whose_remote_was_swapped_is_refused_naming_both_and_adds_nothing() {
+    let mut m = managed_checkouts_rig().await;
+    move_the_legacy_remote(&m).await;
+
+    // The user saw the old address: a swapped remote is refused, naming both, and adds nothing.
+    let swapped = add_and_wait(
+        &m.api,
+        &mut m.events,
+        "adds",
+        json!({"kind": "existing", "url": "https://example.org/acme/legacy.git", "directory": "legacy"}),
+    )
+    .await;
+    assert_eq!(swapped.status, 409, "{}", swapped.body);
+    assert!(
+        swapped.body.contains("legacy.git") && swapped.body.contains(MOVED_REMOTE),
+        "{}",
+        swapped.body
+    );
+    let record = m.api.get("/api/workspaces/adds").await.json();
+    assert_eq!(
+        record["repositories"].as_array().unwrap().len(),
+        1,
+        "{record}"
+    );
+    m.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_something_that_is_not_a_checkout_has_an_ssh_remote_or_is_listed_is_refused() {
+    let mut m = managed_checkouts_rig().await;
+    move_the_legacy_remote(&m).await;
+    let reply = manage_legacy_at_its_new_remote(&mut m).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
 
     // One that is not a checkout, one with an SSH remote and one already listed are refused.
     for dir in ["missing", "ssh", "legacy"] {
         let refused = add_and_wait(
-            &api,
-            &mut events,
+            &m.api,
+            &mut m.events,
             "adds",
             json!({"kind": "existing", "url": "https://example.org/acme/x.git", "directory": dir}),
         )
         .await;
         assert_eq!(refused.status, 409, "{dir}: {}", refused.body);
     }
-    host.shutdown().await;
+    m.host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -8956,16 +8998,57 @@ async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_an
     );
 }
 
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
- {
+/// A running host with two running workspaces, `acme` and `beta`.
+struct TwoWorkspaces {
+    rig: Rig,
+    host: Host<FakeRuntime>,
+    api: Api,
+}
+
+async fn acme_and_beta() -> TwoWorkspaces {
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     create(&api, &mut events, "beta").await;
+    TwoWorkspaces { rig, host, api }
+}
+
+/// A secret for a host the workspace has never used and no identity names.
+async fn put_acme_api_key(w: &TwoWorkspaces) {
+    put_env(
+        &w.api,
+        "/api/workspaces/acme/env/API_KEY",
+        secret_body(Some(REAL), &["api.example.org"]),
+    )
+    .await;
+    eventually("the secret's host is decrypted", APPLY, || {
+        decrypts(&w.host, "acme", "api.example.org")
+    })
+    .await;
+}
+
+async fn put_global_shared(w: &TwoWorkspaces) {
+    put_env(
+        &w.api,
+        "/api/env/SHARED",
+        secret_body(Some(REAL), &["shared.example.org"]),
+    )
+    .await;
+    for workspace in ["acme", "beta"] {
+        eventually("the global secret's host is decrypted", APPLY, || {
+            decrypts(&w.host, workspace, "shared.example.org")
+        })
+        .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
+ {
+    let w = acme_and_beta().await;
+    let (rig, host) = (&w.rig, &w.host);
     let ca_before = host
         .workspaces()
         .termination(&name("acme"))
@@ -8981,23 +9064,13 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         .filter(|c| c.starts_with("beta "))
         .count();
     let (creates, starts, stops) = (
-        calls_of(&rig, "Create"),
-        calls_of(&rig, "Start"),
-        calls_of(&rig, "Stop"),
+        calls_of(rig, "Create"),
+        calls_of(rig, "Start"),
+        calls_of(rig, "Stop"),
     );
-    assert!(!decrypts(&host, "acme", "api.example.org"));
+    assert!(!decrypts(host, "acme", "api.example.org"));
 
-    // A host the workspace has never used and no identity names.
-    put_env(
-        &api,
-        "/api/workspaces/acme/env/API_KEY",
-        secret_body(Some(REAL), &["api.example.org"]),
-    )
-    .await;
-    eventually("the secret's host is decrypted", APPLY, || {
-        decrypts(&host, "acme", "api.example.org")
-    })
-    .await;
+    put_acme_api_key(&w).await;
     let after = host.workspaces().termination(&name("acme")).unwrap();
     assert_eq!(after.stand_ins().ids(), ["stand-in:secret:API_KEY"]);
     // The same CA and the same registry: the guest's trust is unchanged and open connections see
@@ -9007,7 +9080,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     // Only that workspace, and nothing was started or stopped. (The login-shell file is rewritten
     // for a change to the variables, which runs the boot plan again in that guest alone; the next
     // test is about that.)
-    assert!(!decrypts(&host, "beta", "api.example.org"));
+    assert!(!decrypts(host, "beta", "api.example.org"));
     assert_eq!(
         rig.guest
             .commands()
@@ -9019,41 +9092,43 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     );
     assert_eq!(
         (
-            calls_of(&rig, "Create"),
-            calls_of(&rig, "Start"),
-            calls_of(&rig, "Stop")
+            calls_of(rig, "Create"),
+            calls_of(rig, "Start"),
+            calls_of(rig, "Stop")
         ),
         (creates, starts, stops)
     );
+    w.host.shutdown().await;
+}
 
-    // A global secret reaches every running workspace.
-    put_env(
-        &api,
-        "/api/env/SHARED",
-        secret_body(Some(REAL), &["shared.example.org"]),
-    )
-    .await;
-    for workspace in ["acme", "beta"] {
-        eventually("the global secret's host is decrypted", APPLY, || {
-            decrypts(&host, workspace, "shared.example.org")
-        })
-        .await;
-    }
+#[tokio::test(flavor = "multi_thread")]
+async fn a_global_secret_reaches_every_running_workspace_with_its_own_stand_in() {
+    let w = acme_and_beta().await;
+    put_global_shared(&w).await;
     // Each holds its own stand-in for it.
     assert_ne!(
-        stand_in_of(&host, "acme", "SHARED"),
-        stand_in_of(&host, "beta", "SHARED")
+        stand_in_of(&w.host, "acme", "SHARED"),
+        stand_in_of(&w.host, "beta", "SHARED")
     );
+    w.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn changed_hosts_move_the_decrypted_host_and_removing_the_secrets_takes_them_out_again() {
+    let w = acme_and_beta().await;
+    let (rig, host, api) = (&w.rig, &w.host, &w.api);
+    put_acme_api_key(&w).await;
+    put_global_shared(&w).await;
 
     // Changed hosts move the decrypted host; removing the secret takes it out again.
     put_env(
-        &api,
+        api,
         "/api/workspaces/acme/env/API_KEY",
         secret_body(None, &["other.example.org"]),
     )
     .await;
     eventually("the hosts moved", APPLY, || {
-        decrypts(&host, "acme", "other.example.org") && !decrypts(&host, "acme", "api.example.org")
+        decrypts(host, "acme", "other.example.org") && !decrypts(host, "acme", "api.example.org")
     })
     .await;
     assert_eq!(
@@ -9064,9 +9139,9 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     );
     assert_eq!(api.delete("/api/env/SHARED", None).await.status, 204);
     eventually("removed secrets are not decrypted", APPLY, || {
-        !decrypts(&host, "acme", "other.example.org")
-            && !decrypts(&host, "acme", "shared.example.org")
-            && !decrypts(&host, "beta", "shared.example.org")
+        !decrypts(host, "acme", "other.example.org")
+            && !decrypts(host, "acme", "shared.example.org")
+            && !decrypts(host, "beta", "shared.example.org")
     })
     .await;
     assert!(
@@ -9081,13 +9156,20 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         rig.secrets.ids().is_empty(),
         "no value left in the credential store"
     );
-    host.shutdown().await;
+    w.host.shutdown().await;
 }
 
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_changed_environment_is_applied_to_the_stopped_sandbox_at_the_next_start_and_keeps_the_root_disk()
- {
+/// A running host with the global variable `EDITOR=vim` and a running workspace `acme` made under it.
+struct EditorRig {
+    rig: Rig,
+    host: Host<FakeRuntime>,
+    api: Api,
+    events: support::Events,
+    volumes: Vec<String>,
+    creates: usize,
+}
+
+async fn editor_rig() -> EditorRig {
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
@@ -9104,107 +9186,118 @@ async fn a_changed_environment_is_applied_to_the_stopped_sandbox_at_the_next_sta
         rig.guest.boot_envs.lock().unwrap()[0].get("EDITOR"),
         Some("vim")
     );
-
-    // Nothing changed: the stopped sandbox is started again, not made again.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
     let creates = calls_of(&rig, "Create");
-    api.post("/api/workspaces/acme/start", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(calls_of(&rig, "Create"), creates);
-    assert_eq!(calls_of(&rig, "Remove"), 0);
+    EditorRig {
+        rig,
+        host,
+        api,
+        events,
+        volumes,
+        creates,
+    }
+}
 
-    // A changed variable is written to the stopped sandbox: no new sandbox, the root disk stays.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
+async fn stop_acme(e: &mut EditorRig) {
+    e.api.post("/api/workspaces/acme/stop", "").await;
+    e.events.until(ended("acme"), Duration::from_secs(20)).await;
+}
+
+async fn start_acme(e: &mut EditorRig) -> serde_json::Value {
+    e.api.post("/api/workspaces/acme/start", "").await;
+    e.events.until(ended("acme"), Duration::from_secs(20)).await
+}
+
+async fn set_editor(e: &EditorRig, value: &str) {
     put_env(
-        &api,
+        &e.api,
         "/api/env/EDITOR",
-        json!({"kind": "plain", "value": "nano"}),
+        json!({"kind": "plain", "value": value}),
     )
     .await;
-    let set_envs = calls_of(&rig, "SetEnv");
-    api.post("/api/workspaces/acme/start", "").await;
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(end["step"], "done", "{end}");
-    assert_eq!(calls_of(&rig, "Create"), creates);
-    assert_eq!(calls_of(&rig, "Remove"), 0);
-    assert_eq!(calls_of(&rig, "SetEnv"), set_envs + 1);
-    let warned = events.seen.iter().any(|e| {
-        e["type"] == "workspace_progress"
-            && e["detail"]
+}
+
+fn last_boot_env(e: &EditorRig, var: &str) -> Option<String> {
+    e.rig
+        .guest
+        .boot_envs
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .get(var)
+        .map(str::to_owned)
+}
+
+fn said_made_again(e: &EditorRig, also: &str) -> bool {
+    e.events.seen.iter().any(|ev| {
+        ev["type"] == "workspace_progress"
+            && ev["detail"]
                 .as_str()
-                .is_some_and(|d| d.contains("made again"))
-    });
-    assert!(!warned, "a kept root disk needs no warning");
-    assert_eq!(
-        rig.guest
-            .boot_envs
-            .lock()
-            .unwrap()
-            .last()
-            .unwrap()
-            .get("EDITOR"),
-        Some("nano")
+                .is_some_and(|d| d.contains("made again") && d.contains(also))
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unchanged_environment_starts_the_stopped_sandbox_again_and_does_not_make_it_again() {
+    let mut e = editor_rig().await;
+    stop_acme(&mut e).await;
+    start_acme(&mut e).await;
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates);
+    assert_eq!(calls_of(&e.rig, "Remove"), 0);
+    e.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_changed_variable_is_written_to_the_stopped_sandbox_and_keeps_the_root_disk() {
+    let mut e = editor_rig().await;
+    stop_acme(&mut e).await;
+    set_editor(&e, "nano").await;
+    let set_envs = calls_of(&e.rig, "SetEnv");
+    let end = start_acme(&mut e).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates);
+    assert_eq!(calls_of(&e.rig, "Remove"), 0);
+    assert_eq!(calls_of(&e.rig, "SetEnv"), set_envs + 1);
+    assert!(
+        !said_made_again(&e, ""),
+        "a kept root disk needs no warning"
     );
+    assert_eq!(last_boot_env(&e, "EDITOR").as_deref(), Some("nano"));
     // Puddle's own variables are written with them, not dropped.
     assert_eq!(
-        rig.guest
-            .boot_envs
-            .lock()
-            .unwrap()
-            .last()
-            .unwrap()
-            .get("HTTPS_PROXY"),
+        last_boot_env(&e, "HTTPS_PROXY").as_deref(),
         Some("http://127.0.0.1:3128")
     );
-    assert_eq!(volume_names(&rig).await, volumes);
+    assert_eq!(volume_names(&e.rig).await, e.volumes);
 
     // The same variables at the next start write nothing more.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    api.post("/api/workspaces/acme/start", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(calls_of(&rig, "Create"), creates);
-    assert_eq!(calls_of(&rig, "SetEnv"), set_envs + 1);
+    stop_acme(&mut e).await;
+    start_acme(&mut e).await;
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates);
+    assert_eq!(calls_of(&e.rig, "SetEnv"), set_envs + 1);
+    e.host.shutdown().await;
+}
 
-    // A write that fails falls back to a new sandbox on the same volume, and says so.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    put_env(
-        &api,
-        "/api/env/EDITOR",
-        json!({"kind": "plain", "value": "emacs"}),
-    )
-    .await;
-    rig.runtime.inject(
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_environment_write_falls_back_to_a_new_sandbox_on_the_same_volume_and_says_so() {
+    let mut e = editor_rig().await;
+    stop_acme(&mut e).await;
+    set_editor(&e, "emacs").await;
+    e.rig.runtime.inject(
         Op::SetEnv,
         Fault::once(disk_error("set the environment of")),
     );
-    api.post("/api/workspaces/acme/start", "").await;
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    let end = start_acme(&mut e).await;
     assert_eq!(end["step"], "done", "{end}");
-    assert_eq!(calls_of(&rig, "Create"), creates + 1);
-    assert_eq!(calls_of(&rig, "Remove"), 1);
-    let said = events.seen.iter().any(|e| {
-        e["type"] == "workspace_progress"
-            && e["detail"]
-                .as_str()
-                .is_some_and(|d| d.contains("made again") && d.contains("volume"))
-    });
-    assert!(said, "no notice that the sandbox was made again");
-    assert_eq!(
-        rig.guest
-            .boot_envs
-            .lock()
-            .unwrap()
-            .last()
-            .unwrap()
-            .get("EDITOR"),
-        Some("emacs")
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates + 1);
+    assert_eq!(calls_of(&e.rig, "Remove"), 1);
+    assert!(
+        said_made_again(&e, "volume"),
+        "no notice that the sandbox was made again"
     );
-    assert_eq!(volume_names(&rig).await, volumes);
-    host.shutdown().await;
+    assert_eq!(last_boot_env(&e, "EDITOR").as_deref(), Some("emacs"));
+    assert_eq!(volume_names(&e.rig).await, e.volumes);
+    e.host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -13341,7 +13434,7 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
 const MISE_SUDOERS: &str = "/etc/sudoers.d/puddle-mise";
 
 /// The variables the latest start gave the sandbox, as (name, value).
-fn last_boot_env(rig: &Rig) -> GuestEnv {
+fn last_boot_guest_env(rig: &Rig) -> GuestEnv {
     rig.guest.boot_envs.lock().unwrap().last().cloned().unwrap()
 }
 
@@ -13381,7 +13474,7 @@ async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_ke
     let mut events = api.events().await;
     global_mise(&api, true).await;
     create(&api, &mut events, "acme").await;
-    let env = last_boot_env(&rig);
+    let env = last_boot_guest_env(&rig);
     let dir = "/workspaces/acme/.puddle/mise";
     assert_eq!(
         env.get("MISE_DATA_DIR"),
@@ -13433,7 +13526,7 @@ async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_works
     global_mise(&api, true).await;
     create(&api, &mut events, "acme").await;
     assert!(
-        last_boot_env(&rig)
+        last_boot_guest_env(&rig)
             .get("MISE_TRUSTED_CONFIG_PATHS")
             .is_some()
     );
@@ -13447,7 +13540,7 @@ async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_works
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     restart(&api, &mut events, "acme").await;
-    let env = last_boot_env(&rig);
+    let env = last_boot_guest_env(&rig);
     assert_eq!(env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
     assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
@@ -13463,7 +13556,7 @@ async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the
     let mut events = api.events().await;
     global_mise(&api, false).await;
     create(&api, &mut events, "acme").await;
-    let env = last_boot_env(&rig);
+    let env = last_boot_guest_env(&rig);
     assert_eq!(mise_names(&env), Vec::<String>::new());
     assert_eq!(env.get("PATH"), None, "the image's PATH stays as it is");
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
@@ -13480,7 +13573,7 @@ async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     restart(&api, &mut events, "acme").await;
-    assert_eq!(mise_names(&last_boot_env(&rig)), Vec::<String>::new());
+    assert_eq!(mise_names(&last_boot_guest_env(&rig)), Vec::<String>::new());
     // Switched on, the next start has it.
     let reply = api
         .request(
@@ -13492,7 +13585,7 @@ async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     restart(&api, &mut events, "acme").await;
-    assert!(last_boot_env(&rig).get("MISE_DATA_DIR").is_some());
+    assert!(last_boot_guest_env(&rig).get("MISE_DATA_DIR").is_some());
     host.shutdown().await;
 }
 

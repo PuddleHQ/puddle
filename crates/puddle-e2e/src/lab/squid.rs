@@ -119,6 +119,9 @@ fn remove_shared_memory(name: &str) {
     }
 }
 
+/// Squid asks a resolver for every name it forwards, even to a parent proxy; `dns_nameservers 127.0.0.2` (nothing
+/// listens) makes that fail at once instead of waiting on the machine's DNS, and the hosts file still answers the
+/// split names.
 /// Writes Squid's configuration, hosts file and Basic helper into `dir`; `seen` is where Squid
 /// sees that directory.
 fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
@@ -182,6 +185,7 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              {access}\n\
              http_access deny all\n\
              hosts_file {hosts}\n\
+             dns_nameservers 127.0.0.2\n\
              {parent}\
              cache deny all\n\
              buffered_logs off\n\

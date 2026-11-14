@@ -50,6 +50,7 @@ mod admin;
 mod auth;
 mod authz;
 mod checkouts;
+mod credential_store;
 mod credentials;
 mod dev_cert;
 mod doctor;
@@ -81,6 +82,7 @@ pub use checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
     check_seen, checkouts_view, why_no_remote,
 };
+pub use credential_store::{CredentialStoreService, NoCredentialStore};
 pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
     NoSecretStore,

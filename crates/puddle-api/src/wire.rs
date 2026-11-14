@@ -71,7 +71,9 @@ pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
 pub use environment::{
     EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretPlace, SecretText, WorkspaceEnv,
 };
-pub use first_run::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
+pub use first_run::{
+    CredentialStoreRetry, DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest,
+};
 pub use identities::{
     AttachIdentityRequest, CheckedBy, CredentialCoverage, CredentialSource, GitDefaultsView,
     GitRepoRequest, GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor,
@@ -122,7 +124,10 @@ pub use settings_view::{
     WorkspaceSettingsView, WorkspaceTools,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
-pub use ssh_agent::{SshAgentHostRequest, SshAgentHostView, SshAgentView};
+pub use ssh_agent::{
+    SshAgentAnswerKind, SshAgentAnswerRequest, SshAgentAskList, SshAgentAskView,
+    SshAgentHostRequest, SshAgentHostView, SshAgentView,
+};
 pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{

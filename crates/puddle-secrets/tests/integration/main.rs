@@ -5,6 +5,7 @@ mod common;
 
 mod discovery;
 mod fixture_profile;
+mod login_session;
 mod real_store;
 mod signin;
 mod sources;

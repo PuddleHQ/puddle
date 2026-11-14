@@ -9,11 +9,11 @@ use puddle_runtime::RuntimeError;
 
 use crate::facts::{
     AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
-    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts,
-    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection,
-    RuntimeFacts, RuntimeState, SshAgentFacts, SwapFacts, WritableFolder,
+    CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
+    Protection, RuntimeFacts, RuntimeState, SshAgentFacts, SwapFacts, VaultFacts, WritableFolder,
 };
-use puddle_secrets::StoreHealth;
+use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
 
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -51,8 +51,10 @@ pub trait Probe {
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts;
     /// Asks the Azure CLI for its version, waiting at most `limit`.
     fn az_cli(&self, limit: Duration) -> AzCliFacts;
-    /// Writes a throwaway value to the credential store and deletes it.
-    fn credential_store(&self) -> StoreHealth;
+    /// Which store keeps the secrets and how it is doing: reads the data folder's record, and
+    /// writes a throwaway value to the operating system's store (and deletes it) when that is the
+    /// one in use.
+    fn credential_store(&self) -> CredentialStoreFacts;
 }
 
 /// What to run and how long it may take.
@@ -1272,11 +1274,98 @@ fn az_cli(facts: &AzCliFacts) -> Check {
 // ---- Credential store ----
 
 /// Warn only: a store that refuses writes stops saving secrets and sign-ins, not sandboxes. The
-/// words come from `puddle-secrets`, which also words the problem the running service raises.
-fn credential_store(os: Os, health: StoreHealth) -> Check {
+/// words for the operating system's store come from `puddle-secrets`, which also words the problem
+/// the running service raises.
+fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
+    let id = CheckId::CredentialStore;
+    match facts {
+        CredentialStoreFacts::Os {
+            recorded,
+            health,
+            session,
+        } => os_credential_store(os, recorded, health, session),
+        CredentialStoreFacts::File(vault) => match vault {
+            VaultFacts::Header(tag) => {
+                let check = Check::new(
+                    id,
+                    if tag == KeySourceTag::KeyFile {
+                        Status::Info
+                    } else {
+                        Status::Ok
+                    },
+                    format!("Puddle's file vault, {}", key_words(tag)),
+                );
+                if tag == KeySourceTag::KeyFile {
+                    check.fix(
+                        "The key is a file in your config folder, so a copy of that folder opens the vault. systemd 256 or later seals the key to this machine instead.",
+                    )
+                } else {
+                    check
+                }
+            }
+            VaultFacts::NoVaultYet => Check::new(
+                id,
+                Status::Info,
+                "Puddle's file vault: no vault file yet; Puddle makes it at the next start",
+            ),
+            VaultFacts::Unreadable => Check::new(
+                id,
+                Status::Warn,
+                "Puddle's file vault: the vault file's header cannot be read",
+            )
+            .finding(Finding::CredentialStoreVaultUnreadable)
+            .fix(
+                "Restore `secrets/vault` in the data folder from a copy. If there is none, stop Puddle, move the file aside, start it again and enter the secrets again.",
+            ),
+        },
+        CredentialStoreFacts::Unreadable => Check::new(
+            id,
+            Status::Warn,
+            "`secrets/store.json` cannot be read, so Puddle does not know where it keeps its secrets",
+        )
+        .finding(Finding::CredentialStoreRecordUnreadable)
+        .fix(
+            "Restore the file from a copy. It records the first start's choice of store, and Puddle does not choose again by itself.",
+        ),
+    }
+}
+
+fn key_words(tag: KeySourceTag) -> &'static str {
+    match tag {
+        KeySourceTag::SystemdHost => "key sealed with the host key by systemd",
+        KeySourceTag::SystemdHostTpm2 => {
+            "key sealed with the host key and the TPM2 chip by systemd"
+        }
+        KeySourceTag::KeyFile => "key in a file in your config folder",
+    }
+}
+
+fn os_credential_store(
+    os: Os,
+    recorded: bool,
+    health: StoreHealth,
+    session: LoginSession,
+) -> Check {
     let id = CheckId::CredentialStore;
     let Some(advice) = health.advice(os == Os::Linux) else {
-        return Check::new(id, Status::Ok, "a test write and delete worked");
+        if os == Os::Linux && session == LoginSession::NotGraphical {
+            return Check::new(
+                id,
+                Status::Warn,
+                "the operating system's credential store works, but this computer has no graphical login session, so its keyring may be locked after a reboot",
+            )
+            .finding(Finding::CredentialStoreNoDesktop)
+            .fix(if recorded {
+                "This data folder keeps its secrets in the operating system's store, and Puddle does not move them to the file vault by itself. If this computer is a server, unlock the keyring after every reboot, or use a new data folder started with `puddle serve --headless`."
+            } else {
+                "If this computer is a server, start `puddle serve --headless` (or set `PUDDLE_HEADLESS=1`) before the first secret is saved: secrets then go in Puddle's file vault, which needs no unlocked keyring."
+            });
+        }
+        return Check::new(
+            id,
+            Status::Ok,
+            "the operating system's credential store: a test write and delete worked",
+        );
     };
     let (summary, finding) = match health {
         StoreHealth::Locked => ("locked: it refuses writes", Finding::CredentialStoreLocked),

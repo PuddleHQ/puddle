@@ -168,6 +168,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("unmanaged-checkouts", 0, 0),
         ("start-folder-missing", 0, 0),
         ("environment", 0, 1),
+        ("multi-user", 0, 0),
         ("request-rules", 0, 1),
     ];
     for (name, pending, rules_min) in counts {
@@ -202,6 +203,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "unmanaged-checkouts",
             "start-folder-missing",
             "environment",
+            "multi-user",
             "request-rules"
         ]
     );
@@ -1972,4 +1974,20 @@ async fn an_orphan_disk_with_an_address_that_is_not_a_repository_is_refused_with
             .unwrap();
     let err = running.fixture.apply(&step).await.unwrap_err();
     assert!(err.contains("space"), "{err}");
+}
+
+#[tokio::test]
+async fn an_ssh_agent_ask_step_puts_one_open_question_for_the_workspace() {
+    let run = start("empty").await;
+    let body = json!({"do": "ssh_agent_ask", "workspace": "demo", "host": "git.example.org"});
+    assert_eq!(
+        run.control("POST", "/control/step", Some(&body))
+            .await
+            .status,
+        204
+    );
+    let asks = run.get("/api/ssh-agent-asks").await.json();
+    assert_eq!(asks["asks"].as_array().map(Vec::len), Some(1), "{asks}");
+    assert_eq!(asks["asks"][0]["host"], "git.example.org");
+    assert_eq!(asks["asks"][0]["workspace"], "demo");
 }

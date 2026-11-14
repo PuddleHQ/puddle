@@ -417,9 +417,12 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/auth/methods",
         )
         | ("DELETE", "/api/app-icons/custom" | "/api/proxy-sign-ins/{proxy}")
-        | ("POST", "/api/dev-certificate/trust" | "/api/orphan-volumes/{id}/restore") => {
-            (A::ChangeInstall, T::Install)
-        }
+        | (
+            "POST",
+            "/api/dev-certificate/trust"
+            | "/api/credential-store/retry"
+            | "/api/orphan-volumes/{id}/restore",
+        ) => (A::ChangeInstall, T::Install),
         ("GET", "/api/workspaces" | "/api/workspaces/lookup") => (A::ListWorkspaces, T::Own),
         ("POST", "/api/workspaces" | "/api/repository-hosts") => (A::CreateWorkspace, T::Own),
         (
@@ -489,7 +492,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         )
         | ("PUT" | "DELETE", "/api/workspaces/{id}/git/repos/{repo}")
         | ("DELETE", "/api/workspaces/{id}/identities/{identity}") => (A::ChangeWorkspaceGit, WS),
-        ("GET", "/api/pending" | "/api/inbox") => (A::ReadRequests, T::Own),
+        ("GET", "/api/pending" | "/api/inbox" | "/api/ssh-agent-asks") => (A::ReadRequests, T::Own),
+        ("POST", "/api/workspaces/{id}/ssh-agent-asks/{ask}/answer") => (A::DecideRequests, WS),
         ("GET", "/api/pending/{id}") => (A::ReadRequests, T::Pending),
         ("POST", "/api/pending/{id}/approve" | "/api/pending/{id}/deny") => {
             (A::DecideRequests, T::Pending)

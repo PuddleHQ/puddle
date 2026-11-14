@@ -19,7 +19,7 @@
     title: string;
     description?: string;
     children: Snippet;
-    onClose?: () => void;
+    onClose?: (() => void) | undefined;
     /** Where focus goes on close, when the dialog was not opened from a control that will take it back. */
     returnFocusTo?: () => HTMLElement | null | undefined;
     /** The element that takes focus on open, when it is not the first tabbable one. */

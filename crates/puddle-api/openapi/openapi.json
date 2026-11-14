@@ -1829,6 +1829,77 @@
         }
       }
     },
+    "/api/credential-store/retry": {
+      "post": {
+        "tags": [
+          "first-run"
+        ],
+        "summary": "Connects to the credential store again and checks that it takes a write. The\n`credential-store` problem in `GET /api/problems` is raised or cleared to match, and\n`problems_changed` says so.",
+        "operationId": "retry_credential_store",
+        "responses": {
+          "200": {
+            "description": "whether the store takes a write now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialStoreRetry"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "this build has no credential store check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/credentials/check": {
       "post": {
         "tags": [
@@ -7023,6 +7094,67 @@
         }
       }
     },
+    "/api/ssh-agent-asks": {
+      "get": {
+        "tags": [
+          "ssh-agent"
+        ],
+        "summary": "The first-use questions of the filtered agent that wait for the user, most recent first: a\nworkspace's `ssh` is logging in to a host the agent is on for, with a key no answer covers yet.\nOnly the caller's own workspaces' questions are listed.",
+        "operationId": "list_asks",
+        "responses": {
+          "200": {
+            "description": "the open questions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshAgentAskList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces": {
       "get": {
         "tags": [
@@ -11052,6 +11184,111 @@
         }
       }
     },
+    "/api/workspaces/{id}/ssh-agent-asks/{ask}/answer": {
+      "post": {
+        "tags": [
+          "ssh-agent"
+        ],
+        "summary": "Answers a first-use question: sign this once (for the logins waiting now), until the workspace\nstops, or until the agent is turned off for the host; or do not sign. The workspace's `ssh`,\nwhich waits, goes on at once.",
+        "operationId": "answer_ask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ask",
+            "in": "path",
+            "description": "question id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshAgentAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "answered"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or no such question in it (one dropped as the workspace stopped, or answered long ago, is gone)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/ssh-agent/{host}": {
       "put": {
         "tags": [
@@ -14211,6 +14448,20 @@
         ],
         "description": "Where the host reads a credential's value. A closed list; there is no command-line source, and\na field the list does not know (a `command`, say) is refused."
       },
+      "CredentialStoreRetry": {
+        "type": "object",
+        "description": "What the first-run banner's Retry came to.",
+        "required": [
+          "working"
+        ],
+        "properties": {
+          "working": {
+            "type": "boolean",
+            "description": "The credential store took a write on this check, so Puddle can save secrets and sign-ins.\n`false` leaves the `credential-store` problem standing with its advice."
+          }
+        },
+        "additionalProperties": false
+      },
       "CustomIcon": {
         "type": "object",
         "description": "The user's own image after it was checked and resized.",
@@ -15246,6 +15497,26 @@
                 "enum": [
                   "repo_lists_changed"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The first-use questions of a workspace's filtered SSH agent changed: one opened, was\nanswered, or went when the agent was turned off for its host. Refetch\n`GET /api/ssh-agent-asks`.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ssh_agent_asks_changed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId",
+                "description": "The workspace."
               }
             }
           },
@@ -19735,6 +20006,101 @@
         },
         "additionalProperties": false
       },
+      "SshAgentAnswerKind": {
+        "type": "string",
+        "description": "How the user answers a first-use question.",
+        "enum": [
+          "once",
+          "run",
+          "always",
+          "deny"
+        ]
+      },
+      "SshAgentAnswerRequest": {
+        "type": "object",
+        "description": "The user's answer to a first-use question.",
+        "required": [
+          "answer"
+        ],
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/SshAgentAnswerKind",
+            "description": "What the user decided."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SshAgentAskList": {
+        "type": "object",
+        "description": "The open questions of the filtered SSH agent, most recent first.",
+        "required": [
+          "asks"
+        ],
+        "properties": {
+          "asks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SshAgentAskView"
+            },
+            "description": "The questions that wait for an answer."
+          }
+        }
+      },
+      "SshAgentAskView": {
+        "type": "object",
+        "description": "A question the filtered SSH agent has put to the user and that waits for an answer:\nthe workspace's `ssh` is logging in to `host` and the agent would sign with `key`.",
+        "required": [
+          "id",
+          "workspace",
+          "host",
+          "key_type",
+          "fingerprint",
+          "first_seen",
+          "last_seen",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many requests the question stands for.",
+            "minimum": 0
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The key's SHA-256 fingerprint (`SHA256:...`, as `ssh-keygen -l` prints it)."
+          },
+          "first_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms of the first request.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The host the login is for: a normalised name or an IP address. Untrusted (the guest\nnames it): escape it when rendering."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Question id, never reused."
+          },
+          "key_type": {
+            "type": "string",
+            "description": "The key's type, such as `ssh-ed25519`."
+          },
+          "last_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms of the latest request.",
+            "minimum": 0
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId",
+            "description": "The workspace whose `ssh` is waiting."
+          }
+        }
+      },
       "SshAgentHostRequest": {
         "type": "object",
         "description": "Which keys a host may use.",
@@ -20832,7 +21198,10 @@
           "repo_switched",
           "repo_removed",
           "git_repaired",
-          "root_disk_grown"
+          "root_disk_grown",
+          "ssh_agent_signed",
+          "ssh_agent_refused",
+          "ssh_agent_answered"
         ]
       },
       "WorkspaceOpOutcome": {

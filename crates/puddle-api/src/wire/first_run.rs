@@ -64,3 +64,12 @@ pub struct FirstRunRequest {
     /// kept); `false` makes it run again at the next start.
     pub completed: bool,
 }
+
+/// What the first-run banner's Retry came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialStoreRetry {
+    /// The credential store took a write on this check, so Puddle can save secrets and sign-ins.
+    /// `false` leaves the `credential-store` problem standing with its advice.
+    pub working: bool,
+}

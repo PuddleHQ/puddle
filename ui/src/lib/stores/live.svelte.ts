@@ -33,8 +33,15 @@ export interface LiveDeps {
   pollMs?: number;
 }
 
+const isAsksChanged = (event: unknown): boolean =>
+  typeof event === "object" &&
+  event !== null &&
+  (event as { type?: unknown }).type === "ssh_agent_asks_changed";
+
 export class LiveState implements LiveSource {
   pending = $state(0);
+  /** First-use questions of the SSH agent that wait for an answer; they sit in the inbox too. */
+  asks = $state(0);
   stream = $state<StreamState>("connecting");
   problem = $state<LiveProblem | null>(null);
   /** For `failing`: what the service answered. */
@@ -70,6 +77,26 @@ export class LiveState implements LiveSource {
     this.pending = count;
   }
 
+  /** Everything that waits in the inbox: requests and SSH agent questions. */
+  get open(): number {
+    return this.pending + this.asks;
+  }
+
+  /** A screen that knows the number of waiting SSH agent questions tells the badge at once. */
+  setAsks(count: number): void {
+    this.asks = count;
+  }
+
+  /** Reads the number of waiting SSH agent questions. A failure leaves the count as it was. */
+  async refreshAsks(): Promise<void> {
+    try {
+      const { data } = await this.#api.GET("/api/ssh-agent-asks");
+      if (data) this.asks = data.asks.length;
+    } catch {
+      // The pending count carries the connection problem; this one only adds to the badge.
+    }
+  }
+
   /** Reads the open-request count. Never throws: a failure sets `problem`. */
   async refresh(): Promise<void> {
     try {
@@ -77,6 +104,7 @@ export class LiveState implements LiveSource {
       if (data) {
         const recovered = this.problem !== null;
         this.pending = data.requests.length;
+        void this.refreshAsks();
         this.problem = null;
         this.problemDetail = null;
         // The service failed this app too and answers again (a restart, a key handover): the
@@ -130,6 +158,7 @@ export class LiveState implements LiveSource {
         });
         for await (const event of stream) {
           // The count itself still comes from the poll until the API sends pending events.
+          if (isAsksChanged(event)) void this.refreshAsks();
           for (const l of [...this.#listeners]) l.event?.(event);
         }
       })();

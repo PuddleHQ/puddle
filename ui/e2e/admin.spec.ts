@@ -115,8 +115,11 @@ test.describe("with several users on", () => {
     const first = await addUser(page, "Kim");
     await page.getByRole("button", { name: "Done" }).click();
     await page.getByRole("button", { name: "New invite link for Kim" }).click();
-    const second = await page.getByLabel("Invite link").inputValue();
-    expect(second).not.toContain(first);
+    const link = page.getByLabel("Invite link");
+    await expect(link).toHaveValue(/\/invite#.+/);
+    await expect(link).not.toHaveValue(
+      new RegExp(first.replace(/[^\w-]/g, "\\$&")),
+    );
     await page.getByRole("button", { name: "Done" }).click();
     const audit = page.getByRole("list", { name: /Admin audit/ });
     await expect(audit).toContainText("made the account Kim");

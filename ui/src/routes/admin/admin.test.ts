@@ -152,6 +152,16 @@ describe("the admin page", () => {
     expect(document.body.textContent).not.toContain("s3cret");
   });
 
+  it("closes the add dialog on Cancel without making anyone", async () => {
+    render(Page);
+    await fireEvent.click(screen.getByRole("button", { name: "Add user" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel" }),
+    );
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(store.create).not.toHaveBeenCalled();
+  });
+
   it("keeps the add dialog open with the reason when the create is refused", async () => {
     store.create.mockResolvedValue({
       ok: false,

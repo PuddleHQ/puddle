@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
 use puddle_settings::MiseMode;
+use puddle_store::UserId;
 use puddle_types::{Decision, Host, Problem, RuleId, WorkspaceId};
 use puddle_workspace::{PUDDLE_DIR, WORKSPACES_ROOT};
 
@@ -112,7 +113,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Which rule of the user's blocks the download host for `name`, in words.
     fn download_blocker(&self, name: &WorkspaceId) -> Option<String> {
         let host = Host::parse_normalised(DOWNLOAD_HOST).ok()?;
-        let decision = self.inner.store.peek(name, &host)?;
+        let store = &self.inner.store;
+        let owner = store
+            .workspace_owner(name)
+            .ok()
+            .flatten()
+            .unwrap_or(UserId::OWNER);
+        let decision = store.as_user(owner).peek(name, &host)?;
         blocker_words(decision, |id| {
             self.inner
                 .store

@@ -13285,6 +13285,7 @@ async fn a_failed_mise_fetch_is_a_problem_with_the_blocking_rule_and_the_start_s
     let api = api(&host);
     let mut events = api.events().await;
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {
             scope: puddle_store::Scope::Workspace(name("acme")),
             pattern: puddle_store::Pattern::parse("mise.jdx.dev").unwrap(),

@@ -383,6 +383,7 @@ async fn vm_radar_an_own_deny_on_the_mise_host_gives_a_problem_and_a_done_start(
         .unwrap();
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {
             scope: puddle_store::Scope::Workspace(id.clone()),
             pattern: puddle_store::Pattern::parse("mise.jdx.dev").unwrap(),

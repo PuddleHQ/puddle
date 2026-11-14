@@ -15,7 +15,7 @@ use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditOutcome, AuditRecord, ConnectionRecord, Effect, Limits,
     ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire, Resolution,
-    RuleDeleteReason, RuleWire, Scope, Store,
+    RuleDeleteReason, RuleWire, Scope, Store, UserId, UserName,
 };
 use puddle_test_kit::cpu_time;
 use puddle_types::{
@@ -221,7 +221,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
     let id = new_id(ask(&store, "a", "www.example.com"));
     drop(sink.take());
     let rule = store
-        .as_user(puddle_store::UserId::OWNER)
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse(".example.com").unwrap(),
@@ -247,7 +247,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
 
     // The sweeper's expiry of a rule is a rule change too.
     store
-        .as_user(puddle_store::UserId::OWNER)
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("short.example").unwrap(),
@@ -300,7 +300,7 @@ fn deleted_workspaces_close_their_rows_as_expired() {
 fn deleting_a_workspace_with_rules_reports_rules_changed() {
     let (_, sink, store) = fixture(Limits::default());
     store
-        .as_user(puddle_store::UserId::OWNER)
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sb("a")),
             pattern: Pattern::parse("example.com").unwrap(),
@@ -1168,7 +1168,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         (
             "everything at once",
             AuditFilter {
-                user: Some(puddle_store::UserId::OWNER),
+                user: Some(UserId::OWNER),
                 workspace: Some(sb("gamma")),
                 kind: Some("connection"),
                 outcome: Some(AuditOutcome::Pending),
@@ -1248,7 +1248,7 @@ fn deleting_a_workspace_that_only_had_a_rule_set_switch_reports_rules_changed() 
     let (_, sink, store) = fixture(Limits::default());
     store
         .switch_rule_set(
-            puddle_store::UserId::OWNER,
+            UserId::OWNER,
             puddle_types::RuleSetId::BuiltIn("github"),
             Some(&sb("a")),
             Some(false),
@@ -1278,4 +1278,28 @@ fn deleting_a_workspace_that_only_had_a_system_reason_reports_rules_changed() {
         !rules_changed_by_deleting(&store, &sink, "b"),
         "nothing to drop, nothing reported"
     );
+}
+
+#[test]
+fn a_users_audit_query_returns_only_that_users_records_when_the_filter_names_no_user() {
+    let (_, _, store) = fixture(Limits::default());
+    let ann = store.add_user(&UserName::new("Ann").unwrap()).unwrap().id;
+    store.set_workspace_owner(&sb("anns"), ann).unwrap();
+    ask(&store, "a", "owner.example");
+    ask(&store, "anns", "ann.example");
+
+    let page = |user: UserId| -> Vec<String> {
+        store
+            .audit_query(user, &AuditFilter::default(), AuditCursor::After(0), 100)
+            .unwrap()
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect()
+    };
+    let owners = page(UserId::OWNER);
+    let anns = page(ann);
+    assert_eq!(owners.len(), 1, "{owners:?}");
+    assert!(owners[0].contains("owner.example"), "{owners:?}");
+    assert_eq!(anns.len(), 1, "{anns:?}");
+    assert!(anns[0].contains("ann.example"), "{anns:?}");
 }

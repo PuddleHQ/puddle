@@ -96,6 +96,7 @@ fn sweep(args: &[&str], spec: &SandboxSpec) -> ExecOutput {
         tokio::spawn(async move {
             if let Ok(mut conn) = puddle_ipc::connect(&host).await {
                 let _ = conn.write_all(line.as_bytes()).await;
+                // the fake probe is best effort; a refused connection simply records nothing
                 let _ = conn.shutdown().await;
             }
         });

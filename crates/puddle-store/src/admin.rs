@@ -77,3 +77,6 @@ pub struct AdminAuditEntry {
     /// Their name then.
     pub target_name: String,
 }
+
+#[cfg(test)]
+mod tests;

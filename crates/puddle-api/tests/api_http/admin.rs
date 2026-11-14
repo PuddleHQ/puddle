@@ -488,6 +488,17 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     admin.site.setup().await;
     let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
     make_box(&admin, &ann, "ann-box").await;
+    let started = admin
+        .site
+        .send(
+            "POST",
+            "/api/workspaces/ann-box/start",
+            &Req::bearer(&ann),
+            None,
+        )
+        .await;
+    assert_eq!(started.status, 202, "{started:?}");
+    admin.workspaces.idle().await;
     let mut others = Vec::new();
     for name in ["Bob", "Cy", "Dee"] {
         others.push((name, admin.user(name, pw("other password three")).await.1));
@@ -508,7 +519,7 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
         admin.workspaces.idle().await;
     }
     admin.gone("Ann").await;
-    assert!(admin.workspaces.list().await.unwrap().is_empty());
+    assert_eq!(admin.workspaces.list().await.unwrap(), Vec::new());
     admin.site.running.shutdown().await;
 }
 
@@ -521,11 +532,16 @@ async fn a_workspace_still_busy_is_left_alone_until_it_is_idle() {
     make_box(&admin, &ann, "ann-box").await;
 
     start_delete(&admin, ann_id, "Ann").await;
+    // A user who is going cannot be given a new invite.
+    let again = admin
+        .owner("POST", &format!("/api/admin/users/{ann_id}/invite"), None)
+        .await;
+    assert_eq!(again.status, 409, "{again:?}");
     // The stop is under way (the box is busy); this second look must leave it alone.
     start_delete(&admin, bob_id, "Bob").await;
     admin.gone("Ann").await;
     admin.gone("Bob").await;
     admin.workspaces.idle().await;
-    assert!(admin.workspaces.list().await.unwrap().is_empty());
+    assert_eq!(admin.workspaces.list().await.unwrap(), Vec::new());
     admin.site.running.shutdown().await;
 }

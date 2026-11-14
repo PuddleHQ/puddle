@@ -34,6 +34,7 @@ fn main() -> ExitCode {
             }
         }
         Command::Connect(request) => connect(&request),
+        Command::MiseFetch(request) => mise_fetch(&request),
         Command::Usage(msg) => {
             eprintln!("{msg}");
             ExitCode::from(2)
@@ -64,6 +65,38 @@ fn main() -> ExitCode {
 /// Descriptors the agent needs to carry every connection the host lets one workspace open (the
 /// proxy's per-workspace cap is 4096), with room for its listeners, sessions and name lookups.
 const FDS_NEEDED: u64 = 4096 + 512;
+
+/// `mise-fetch`: prints `installed` or `current`; on failure the reason, as the user should read
+/// it, goes to standard error and the exit code is 1.
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "CLI output: the host reads this subcommand's output"
+)]
+fn mise_fetch(request: &puddle_agent::mise::Request) -> ExitCode {
+    let result = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(puddle_agent::mise::MiseError::from)
+        .and_then(|runtime| {
+            let pin = puddle_agent::mise::Pin::current()?;
+            runtime.block_on(puddle_agent::mise::fetch(
+                &puddle_agent::download::Downloader::system(),
+                &pin,
+                &request.dir,
+            ))
+        });
+    match result {
+        Ok(outcome) => {
+            println!("{}", outcome.as_str());
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
 /// The ssh `ProxyCommand`: stdin and stdout are the ssh client's connection.
 #[expect(

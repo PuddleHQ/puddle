@@ -21,6 +21,7 @@ mod fuzz_corpus;
 mod host_control;
 mod merge_file;
 mod microsoft_server;
+mod mise_fetch;
 mod oom;
 mod real_bridge;
 mod relay;

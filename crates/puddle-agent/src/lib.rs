@@ -42,6 +42,7 @@ pub mod cli;
 pub mod config;
 pub mod connect;
 pub mod control;
+pub mod download;
 pub mod editor;
 pub mod editor_stream;
 pub mod entrypoint;
@@ -53,6 +54,7 @@ pub mod host_streams;
 mod ifaddrs;
 pub mod merge_file;
 pub mod microsoft;
+pub mod mise;
 pub mod oom;
 #[cfg(target_os = "linux")]
 pub mod origin;

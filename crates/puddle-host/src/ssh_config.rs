@@ -268,6 +268,7 @@ impl SshSetup {
                 source: Box::new(e),
             });
         }
+        // best-effort removal of a file that may not exist
         let _ = std::fs::remove_file(self.known_hosts(workspace));
         Ok(())
     }
@@ -334,6 +335,7 @@ fn render(
         let identity = quoted(context.identity)?;
         let known_hosts = quoted(&context.known_hosts_dir.join(workspace.as_str()))?;
         let proxy = proxy_command(context.bridge, endpoint)?;
+        // writing into a `String` cannot fail
         let _ = write!(
             text,
             "\nHost {host}\n\
@@ -507,6 +509,7 @@ fn replace_keeping_permissions(
         puddle_fs::private::replace_file(&tmp, target)
     })();
     if result.is_err() {
+        // best-effort removal of the temporary file; the write error is what the caller gets
         let _ = std::fs::remove_file(&tmp);
     }
     result

@@ -310,6 +310,7 @@ where
                 Step::Shutdown => connection.as_mut().graceful_shutdown(),
                 Step::Drop(code) => {
                     tracing::info!(host = %shared.cx.target.host, reason = code, "guest HTTP/2 connection dropped");
+                    // the first limit hit wins; a later one finds the cell already set
                     let _ = limit_hit.set(code);
                     break;
                 }
@@ -1094,6 +1095,7 @@ async fn websocket(
     tokio::spawn(async move {
         let _guard = guard;
         let _lease = lease;
+        // a failed upgrade is logged inside; the task ends whether or not the splice ran
         let _ = async {
             let guest = guest_upgrade
                 .await

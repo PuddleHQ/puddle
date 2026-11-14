@@ -15,6 +15,7 @@ pub(crate) fn keep(from: &Path, to: &Path) {
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         if path.is_file() {
+            // best-effort log collection: an unreadable file is left out of the copy
             let _ = std::fs::copy(&path, to.join(entry.file_name()));
         }
     }

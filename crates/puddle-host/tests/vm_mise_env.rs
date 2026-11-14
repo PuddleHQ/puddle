@@ -212,6 +212,20 @@ async fn vm_radar_mise_environment_reaches_every_way_into_the_guest_and_follows_
     )
     .await;
     assert!(code == 0 && out.contains("yes"), "with repo_code on: {out}");
+    // A new interactive shell (an editor terminal reads only /etc/bash.bashrc) gets the `[env]`
+    // from mise's hook, which runs when the shell starts in the repository and at every prompt.
+    let (code, out) = terminal(
+        &vm,
+        &ws,
+        "interactive",
+        &format!("cd {mount}/repo && bash -ic 'echo \"env=$PUDDLE_REPO_ENV\"' 2>&1"),
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("env=yes"),
+        "interactive shell, repo_code on: {out}"
+    );
     put(
         &api,
         &format!("/api/settings/workspaces/{name}"),
@@ -228,6 +242,18 @@ async fn vm_radar_mise_environment_reaches_every_way_into_the_guest_and_follows_
     .await;
     assert_ne!(code, 0, "the shim runs the untrusted [env]: {out}");
     assert!(out.contains("not trusted"), "{out}");
+    let (code, out) = terminal(
+        &vm,
+        &ws,
+        "interactive untrusted",
+        &format!("cd {mount}/repo && bash -ic 'echo \"env=$PUDDLE_REPO_ENV\"' 2>&1"),
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("env=\n") && !out.contains("not trusted"),
+        "an interactive shell with repo_code off prints nothing of the repository's env: {out}"
+    );
     // Outside the repository the root file (tools only) still works.
     let (code, out) = terminal(
         &vm,

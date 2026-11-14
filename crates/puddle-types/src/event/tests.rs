@@ -287,6 +287,37 @@ fn pending_rule_and_audit_events_have_fixed_shapes() {
 }
 
 #[test]
+fn tools_events_have_fixed_shapes() {
+    for (state, json) in [
+        (
+            ToolsState::Installing {
+                tools: vec!["node@22.11.0".into()],
+                done: 1,
+                total: 2,
+            },
+            r#"{"phase":"installing","tools":["node@22.11.0"],"done":1,"total":2}"#,
+        ),
+        (ToolsState::Ready, r#"{"phase":"ready"}"#),
+        (
+            ToolsState::Failed {
+                tools: vec!["python@3.13.1".into()],
+                waiting_on: vec!["github.com".into()],
+            },
+            r#"{"phase":"failed","tools":["python@3.13.1"],"waiting_on":["github.com"]}"#,
+        ),
+    ] {
+        let event = Event::WorkspaceTools {
+            workspace: name(),
+            state,
+        };
+        let json = format!(r#"{{"type":"workspace_tools","workspace":"box","state":{json}}}"#);
+        assert_eq!(serde_json::to_string(&event).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
+        assert_eq!(event.workspace(), Some(&name()));
+    }
+}
+
+#[test]
 fn port_events_have_fixed_shapes() {
     for (event, json, workspace) in [
         (
@@ -543,6 +574,7 @@ fn openapi_schema_is_the_tagged_union() {
             "oom_kill",
             "disk_nearly_full",
             "workspace_progress",
+            "workspace_tools",
             "pending_opened",
             "pending_updated",
             "pending_closed",

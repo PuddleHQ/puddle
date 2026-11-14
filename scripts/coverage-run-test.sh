@@ -97,7 +97,7 @@ run() {
     (
         # shellcheck disable=SC2016 # the script text is for the inner shell
         env -u LLVM_PROFDATA_FLAGS -u GITHUB_ACTIONS -u PROPTEST_RNG_SEED PROFILES="$tmp/$name" TARGET="$tmp/target-$name" "$@" sh -c '
-            "$0/scripts/coverage-run.sh" "$1" --workspace && "$1" llvm-cov report --lcov' "$here" "$tmp/cargo"
+            COVERAGE_RUN_NO_DEAD_RESOLVER=1 "$0/scripts/coverage-run.sh" "$1" --workspace && "$1" llvm-cov report --lcov' "$here" "$tmp/cargo"
     ) >"$tmp/$name.out" 2>&1
     echo $? >"$tmp/$name.rc"
     set -e

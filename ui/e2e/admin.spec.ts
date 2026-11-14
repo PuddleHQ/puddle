@@ -80,7 +80,10 @@ test.describe("with several users on", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.locator("body")).not.toContainText(secret);
 
-    const row = page.getByRole("listitem").filter({ hasText: "Sam" });
+    const row = page
+      .getByRole("list", { name: "Users" })
+      .getByRole("listitem")
+      .filter({ hasText: "Sam" });
     await expect(row).toContainText("Invited");
     await expectNoAxeViolations(page, "admin with an invited user");
 

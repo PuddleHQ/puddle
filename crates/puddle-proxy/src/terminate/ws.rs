@@ -100,6 +100,7 @@ where
     };
     tokio::select! {
         ended = copy => {
+            // the error is logged just above; the answer is only whether to go on
             let _ = ended.inspect_err(|err| tracing::debug!(error = %err, "WebSocket ended with an error"));
             false
         }

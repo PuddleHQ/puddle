@@ -128,6 +128,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) fn refresh_checkouts_later(&self, id: &WorkspaceId) {
         let (this, id) = (self.clone(), id.clone());
         self.spawn(async move {
+            // `checkouts_of` logs its own errors; this only warms the listing
             let _ = this.checkouts_of(&id).await;
         });
     }

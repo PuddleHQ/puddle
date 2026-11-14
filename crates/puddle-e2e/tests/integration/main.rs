@@ -19,6 +19,7 @@ mod hostile_flood_names;
 mod hostile_listeners;
 mod hostile_names;
 mod image_pull_company_proxy;
+mod image_pull_intercepting_proxy;
 mod image_pull_layer_connections;
 mod image_pull_resume;
 mod ip_deny;

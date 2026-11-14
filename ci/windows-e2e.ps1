@@ -7,7 +7,9 @@ the commit status `puddle/windows-e2e`.
 .DESCRIPTION
 Tier R covers what the hosted runners can't: a real client OS on mains power, sleep/resume,
 Defender, the corporate network. The tests live in crates/puddle-vm-tests and are named
-`vm_machine_*`; -All also runs the K/W set the CI jobs run.
+`vm_machine_*`; -All also runs the K/W set the CI jobs run. No `vm_machine_*` test exists yet, so the
+default filter also selects the `vm_smoke` binary: a boot on the real machine (WHP, Defender, its network).
+A run that selects no test fails (`--no-tests=fail`) instead of posting a green status.
 
 Steps: power check (refuses on battery below -MinBattery percent), per-run prefix, private msb
 home under -Root, `cargo nextest run --profile vm`, the msb fork's regression repros
@@ -28,7 +30,7 @@ Run every VM test (real-machine and CI ones) instead of -Filter.
 
 .PARAMETER MsbRepros
 Cases of ci/msb-repros/repros.ps1 to run against the runtime's msb.exe after the nextest run:
-relay, signal, scp, forward, stale-dir (default: all), or 'none'. They pin the fixes the puddle
+relay, signal, scp, forward, stale-dir (default: all), or 'none'. They pin the fixes the Puddle
 fork of msb carries; stock msb fails them. Not run in -Bisect steps.
 
 .PARAMETER ReproPort
@@ -75,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -Bisect -Good v0.1.0
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$RuntimeDir = $env:PUDDLE_VM_RUNTIME_DIR,
-    [string]$Filter = 'test(/(^|::)vm_machine_/)',
+    [string]$Filter = 'test(/(^|::)vm_machine_/) | binary(vm_smoke)',
     [switch]$All,
     [string[]]$MsbRepros = @('relay', 'signal', 'scp', 'forward', 'stale-dir'),
     [int]$ReproPort = 18190,
@@ -240,7 +242,7 @@ $env:PUDDLE_VM_PREFIX = $Prefix
 $env:PUDDLE_VM_ROOT = $Root
 Write-Step "prefix $Prefix, msb home $(Join-Path $Root $Prefix), runtime $RuntimeDir"
 
-$nextest = @('nextest', 'run', '-p', 'puddle-vm-tests', '--profile', 'vm', '--locked', '--no-tests=warn')
+$nextest = @('nextest', 'run', '-p', 'puddle-vm-tests', '--profile', 'vm', '--locked', '--no-tests=fail')
 if (-not $All) { $nextest += @('-E', $Filter) }
 
 # The msb fork's regression repros (vendored from the fork's tests/puddle, see ci/msb-repros/SOURCE).

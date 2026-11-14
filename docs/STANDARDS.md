@@ -209,7 +209,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   `cfg(unix)` is not "Linux".
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
-  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment and each `expect`
+  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment, each `let _ =` outside tests a comment on the line or within three lines above (`let _ = name;` is exempt), and each `expect`
   a message; each fixed sleep in a test (outside a polling loop and a `start_paused` test) a comment saying whether it
   is an absence window, simulated latency or an ordering with no signal to wait on; each `shellcheck disable` a
   `# why` (in `*.sh` and in workflow `run:` blocks), each UI suppression a reason; each `TODO`, `HACK`, `FIXME` names its

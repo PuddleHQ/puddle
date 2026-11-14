@@ -296,7 +296,7 @@ pub(crate) fn lookup<'a>(
 
 /// The image a workspace gets when the request names none, pinned by digest so a registry change reaches users
 /// only through a reviewed update (`ci/image-pins.sh`).
-pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:71b6fe7c4e07ec747a94a72b2a17f2f8c286eaa7b1c59862888df764efb8b6c6";
+pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
 
 /// The volume size a new workspace gets (32 GiB, sparse on the host apart from the 64 MiB journal
 /// written when the volume is made).
@@ -561,6 +561,7 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
     }
     let digest = Sha256::digest(name.as_str().to_lowercase().as_bytes());
     let hex = digest.iter().take(4).fold(String::new(), |mut out, b| {
+        // writing into a `String` cannot fail
         let _ = fmt::Write::write_fmt(&mut out, format_args!("{b:02x}"));
         out
     });
@@ -854,6 +855,7 @@ fn fingerprint(check: &DeleteCheck) -> String {
         .iter()
         .fold(String::with_capacity(64), |mut out, byte| {
             use std::fmt::Write as _;
+            // writing into a `String` cannot fail
             let _ = write!(out, "{byte:02x}");
             out
         })

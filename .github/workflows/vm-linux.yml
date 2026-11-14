@@ -45,8 +45,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # No debug info: the archive build is CPU-bound and this saves about a minute of it. A failing test still prints its
+  # panic file:line, test name and assertion text (they come from #[track_caller]); only backtrace frames lose their lines.
+  CARGO_PROFILE_DEV_DEBUG: 0
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, memory),
   # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle
@@ -131,7 +132,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the ci entry restored (exact) it was no faster than a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -284,7 +285,7 @@ jobs:
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146

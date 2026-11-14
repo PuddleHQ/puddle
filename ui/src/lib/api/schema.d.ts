@@ -5434,7 +5434,7 @@ export interface components {
          * @description Why Puddle allows a System managed host: a choice you made.
          * @enum {string}
          */
-        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed";
+        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed" | "mise";
         /** @description The size a new terminal starts with. */
         TerminalRequest: {
             /**
@@ -5532,6 +5532,12 @@ export interface components {
             palette: components["schemas"]["PaletteChoice"] | null;
             /** @description The system sound with a notification (default off). */
             sound: boolean | null;
+            /**
+             * @description The SSH agent `puddle doctor` asks for the key list: a named pipe on Windows (default
+             *     `\\.\pipe\openssh-ssh-agent`), a socket path elsewhere (default the `SSH_AUTH_SOCK` of
+             *     Puddle's session). Null or blank is unset; at most 1024 characters, no control characters.
+             */
+            ssh_agent_pipe: string | null;
             /** @description Start Puddle when the user signs in to the computer (default off). */
             start_at_login: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;

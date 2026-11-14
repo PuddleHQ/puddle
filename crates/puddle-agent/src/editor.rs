@@ -45,7 +45,8 @@ use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 
 use crate::account::Account;
-use crate::microsoft::{self, Downloader, Fetch};
+use crate::download::{Downloader, Fetch};
+use crate::microsoft;
 
 /// Where the server's user data lives, below [`EditorServer::data`].
 const USER_DATA: &str = "user-data";

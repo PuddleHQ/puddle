@@ -72,6 +72,7 @@ async fn rig(tag: &str, gate: usize) -> Rig {
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(BULK_HOST).unwrap(),

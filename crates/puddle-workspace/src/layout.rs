@@ -119,7 +119,7 @@ impl Layout {
     }
 
     /// `sync`, as root: flushes everything the guest has cached to the volume. Directory entries
-    /// aren't covered by `core.fsync=committed` until the first fsync, so a VMM kill within
+    /// aren't covered by `core.fsync=added` until the first fsync, so a VMM kill within
     /// seconds of a fresh clone or `git init` can lose the whole repository without it.
     #[must_use]
     pub fn sync_request() -> ExecRequest {

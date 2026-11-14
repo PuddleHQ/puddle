@@ -166,14 +166,15 @@ pub fn run(request: &Request, stdin: impl Read) -> Result<Outcome, MergeFileErro
             let spec: MergeSpec =
                 serde_json::from_slice(&input).map_err(|e| MergeFileError::Spec(e.to_string()))?;
             let applied = apply(request, &spec, mode);
-            // The line in `ssh_config` only improves a message and the host keys in
-            // `ssh_known_hosts` only spare the user a prompt: a file Puddle can't read or write is
-            // left as it is, with a notice, and never stops the boot.
+            // The line in `ssh_config` only improves a message, the host keys in
+            // `ssh_known_hosts` only spare the user a prompt and the variables in a shell startup
+            // file only reach terminals that skip the login files: a file Puddle can't read or
+            // write is left as it is, with a notice, and never stops the boot.
             match applied {
                 Err(e @ MergeFileError::Io { .. })
                     if matches!(
                         spec.format(),
-                        MergeFormat::SshConfig | MergeFormat::KnownHosts
+                        MergeFormat::SshConfig | MergeFormat::KnownHosts | MergeFormat::ShellBlock
                     ) =>
                 {
                     Ok(Outcome::Left(e.to_string()))
@@ -195,6 +196,14 @@ fn apply(request: &Request, spec: &MergeSpec, mode: u32) -> Result<Outcome, Merg
         return Ok(Outcome::Left(DANGLING.to_owned()));
     };
     let existing = read_file(&target)?;
+    // A shell's startup file in a directory its package makes (`/etc/zsh`) is for a shell that is
+    // installed; making the directory would also trip the package's own file at its install.
+    if spec.format() == MergeFormat::ShellBlock
+        && existing.is_none()
+        && target.parent().is_some_and(|dir| !dir.exists())
+    {
+        return Ok(Outcome::Left(NOT_INSTALLED.to_owned()));
+    }
     let previous = state.as_ref().map(|s| s.keys.clone()).unwrap_or_default();
     let merged = match spec.apply(existing.as_ref().map(|(b, _)| b.as_slice()), &previous) {
         Ok(m) => m,
@@ -252,6 +261,8 @@ fn remove_keys(request: &Request, state: &State) -> Result<Outcome, MergeFileErr
         }
     }
 }
+
+const NOT_INSTALLED: &str = "its directory doesn't exist, so the shell is not installed";
 
 const DANGLING: &str = "it is a symbolic link to a file that doesn't exist";
 
@@ -732,6 +743,70 @@ mod tests {
         let r = known_hosts_request(&d);
         fs::create_dir_all(&r.file).unwrap();
         let why = run(&r, known_hosts("github.com ssh-ed25519 AAAA").as_slice())
+            .unwrap()
+            .to_string();
+        assert!(why.starts_with("left: "), "{why}");
+    }
+
+    fn shell_request(dir: &Dir, file: &str) -> Request {
+        Request {
+            action: Action::Apply { mode: 0o644 },
+            state_dir: dir.0.join("state"),
+            key: format!("/{file}"),
+            file: dir.0.join(file),
+        }
+    }
+
+    fn shell(text: &str) -> Vec<u8> {
+        let entry = MergeEntry::shell_block(text);
+        serde_json::to_vec(&MergeSpec::new(MergeFormat::ShellBlock, vec![entry]).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_shell_file_gets_the_block_after_the_image_text_and_a_rerun_changes_nothing() {
+        let d = Dir::new("shell-block");
+        let r = shell_request(&d, "etc/bash.bashrc");
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        fs::write(&r.file, "# image\n").unwrap();
+        let one = shell("export A='1'");
+        assert_eq!(run(&r, one.as_slice()).unwrap(), Outcome::Changed);
+        assert_eq!(run(&r, one.as_slice()).unwrap(), Outcome::Unchanged);
+        assert_eq!(
+            fs::read_to_string(&r.file).unwrap(),
+            "# image\n# >>> Puddle shell >>>\nexport A='1'\n# <<< Puddle shell <<<\n"
+        );
+        let two = shell("export A='2'");
+        assert_eq!(run(&r, two.as_slice()).unwrap(), Outcome::Changed);
+        assert!(fs::read_to_string(&r.file).unwrap().contains("A='2'"));
+    }
+
+    #[test]
+    fn a_shell_file_whose_directory_is_missing_is_left_and_not_made() {
+        let d = Dir::new("shell-no-zsh");
+        let r = shell_request(&d, "etc/zsh/zshenv");
+        fs::create_dir_all(d.0.join("etc")).unwrap();
+        let why = run(&r, shell("export A='1'").as_slice())
+            .unwrap()
+            .to_string();
+        assert!(
+            why.starts_with("left: ") && why.contains("not installed"),
+            "{why}"
+        );
+        assert!(!d.0.join("etc/zsh").exists());
+        // With the directory (the shell is installed) the file is made.
+        fs::create_dir_all(d.0.join("etc/zsh")).unwrap();
+        assert_eq!(
+            run(&r, shell("export A='1'").as_slice()).unwrap(),
+            Outcome::Changed
+        );
+    }
+
+    #[test]
+    fn a_shell_file_that_cannot_be_written_is_a_notice_and_not_a_failed_boot() {
+        let d = Dir::new("shell-directory");
+        let r = shell_request(&d, "etc/bash.bashrc");
+        fs::create_dir_all(&r.file).unwrap();
+        let why = run(&r, shell("export A='1'").as_slice())
             .unwrap()
             .to_string();
         assert!(why.starts_with("left: "), "{why}");

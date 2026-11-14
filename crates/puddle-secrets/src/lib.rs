@@ -28,6 +28,7 @@ mod chunked;
 mod discovery;
 mod error;
 mod file_vault;
+mod health;
 mod indexed;
 mod keyring_store;
 mod name;
@@ -39,15 +40,19 @@ mod signin;
 mod sources;
 mod spec;
 mod store;
+mod vault_key;
 
 pub use cache::{SecretCache, SignInNeeded, Ttl, Ttls};
 pub use chunked::{CHUNK_UNITS, ChunkedStore};
 pub use discovery::{DiscoveredAccount, Discovery, Listing, discover};
 pub use error::{Refusal, SourceError, Tool};
 pub use file_vault::{FileVault, KeySourceTag, VaultError, VaultKey};
+pub use health::{StoreAdvice, StoreHealth, probe_os_store, probe_store};
 pub use indexed::IndexedStore;
 pub use keyring_store::{KeyringStore, keyring_available};
-pub use name::{AccountName, HostName, NameError, OrgName, StoredId, TenantId, UrlPath};
+pub use name::{
+    AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
+};
 pub use readlog::{LastRead, ReadLog, ReadUse};
 pub use run::ToolPaths;
 pub use scheme::{TokenScheme, azure_devops_scheme};
@@ -56,3 +61,4 @@ pub use signin::{SignInError, SignInStart, SignIns};
 pub use sources::{Credential, Fetch, Fetched, Sources, pasted_token};
 pub use spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 pub use store::{MemoryStore, SecretStore, StoreError, Sweep};
+pub use vault_key::{FoundKey, KeyError, KeySource, Unseal, VaultKeys, config_home};

@@ -22,7 +22,7 @@ use puddle_boot::{
 use puddle_compute::ImageConfig;
 use puddle_test_kit::eventually_blocking;
 use puddle_types::{
-    GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, SessionUser,
+    FileMode, GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, SessionUser,
 };
 
 const IMAGE_PATH: &str = "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin";
@@ -53,11 +53,7 @@ fn full_plan(ca: &str) -> BootPlan {
     BootPlan::builder(&image(&[], &["bash"]))
         .env(&env())
         .file(file(CA, ca.as_bytes()))
-        .file(
-            file("/etc/npmrc", b"proxy=http://127.0.0.1:3128\n")
-                .with_mode(0o600)
-                .unwrap(),
-        )
+        .file(file("/etc/npmrc", b"proxy=http://127.0.0.1:3128\n").with_mode(FileMode::new(0o600)))
         .git_identity(GitIdentity::new("Ada Lovelace", "ada@example.org").unwrap())
         .build()
         .unwrap()
@@ -141,7 +137,11 @@ fn boot_applies_every_step() {
             format!("[include]\n\tpath = {GIT_CONFIG_GUEST}\n")
         );
         let git = fr.read(GIT_CONFIG_GUEST);
-        assert!(git.contains("fsync = committed") && git.contains("name = \"Ada Lovelace\""));
+        assert!(
+            git.contains("fsync = added")
+                && git.contains("fsyncMethod = batch")
+                && git.contains("name = \"Ada Lovelace\"")
+        );
 
         // CA changed (first boot): update-ca-certificates ran once.
         assert_eq!(count(&calls, "update-ca-certificates"), 1);
@@ -217,6 +217,27 @@ fn files_dropped_from_the_plan_are_removed_and_trigger_the_ca_step() {
     assert!(!fr.path("/etc/npmrc").exists());
     assert_eq!(count(&fr.calls(), "update-ca-certificates"), 2);
     assert!(fr.path(ENV_FILE_GUEST).exists());
+}
+
+/// A workspace made by an older Puddle holds the old git settings; its next boot rewrites them.
+#[test]
+fn an_existing_workspace_gets_the_current_git_fsync_settings_at_its_next_boot() {
+    let fr = FakeRoot::new(&shells()[0]);
+    let first = fr.run(&full_plan("CA\n"));
+    assert!(first.status.success(), "{}", show(&first));
+    std::fs::write(
+        fr.path(GIT_CONFIG_GUEST),
+        "[core]\n\tfsync = committed\n[user]\n\tname = \"Ada Lovelace\"\n",
+    )
+    .unwrap();
+    let second = fr.run(&full_plan("CA\n"));
+    assert!(second.status.success(), "{}", show(&second));
+    let git = fr.read(GIT_CONFIG_GUEST);
+    assert!(
+        git.contains("fsync = added\n") && git.contains("fsyncMethod = batch\n"),
+        "{git}"
+    );
+    assert!(!git.contains("committed"), "{git}");
 }
 
 #[test]
@@ -824,9 +845,7 @@ fn merged(path: &str) -> GuestFile {
         )],
     )
     .unwrap();
-    GuestFile::merged(GuestPath::new(path).unwrap(), spec)
-        .with_mode(0o600)
-        .unwrap()
+    GuestFile::merged(GuestPath::new(path).unwrap(), spec).with_mode(FileMode::new(0o600))
 }
 
 fn plan_with(files: Vec<GuestFile>) -> BootPlan {

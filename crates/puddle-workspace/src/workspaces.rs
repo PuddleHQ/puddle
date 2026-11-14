@@ -10,7 +10,7 @@ use puddle_compute::{
 };
 use puddle_types::{
     CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, SessionUser, VolumeName, WorkspaceId,
-    WorkspaceStatus,
+    WorkspaceStatus, image_ref,
 };
 use tracing::{debug, info, warn};
 
@@ -71,12 +71,7 @@ impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             default_size: Self::DEFAULT_SIZE,
-            #[expect(
-                clippy::expect_used,
-                reason = "invariant: the constant is a valid image reference (unit-tested)"
-            )]
-            maintenance_image: ImageRef::new(Self::DEFAULT_MAINTENANCE_IMAGE)
-                .expect("the default maintenance image is a valid reference"),
+            maintenance_image: image_ref!(Self::DEFAULT_MAINTENANCE_IMAGE),
             maintenance_memory: MemoryMib::new(Self::DEFAULT_MAINTENANCE_MEMORY_MIB)
                 .unwrap_or(MemoryMib::DEFAULT),
         }
@@ -213,20 +208,15 @@ impl Workspaces {
         may_create: bool,
     ) -> Result<Attachment<'_>, WorkspaceError> {
         self.reserve(rt, id, sandbox).await?;
-        let mut attachment = Attachment {
+        // On error the reservation drops here, which releases it.
+        let reservation = Reservation {
             workspaces: self,
             id: id.clone(),
             sandbox: sandbox.clone(),
-            mount: None,
-            created_volume: false,
-            kept_size: None,
-            before: Before {
-                record: true,
-                stale_dir: true,
-            },
             open: true,
         };
-        // On error the attachment drops here, which releases the reservation.
+        let mut created_volume = false;
+        let mut kept_size = None;
         let volume = id.volume_name();
         let existing = rt
             .volume(&volume)
@@ -244,16 +234,16 @@ impl Workspaces {
             .list()
             .await
             .map_err(|e| WorkspaceError::runtime("list sandboxes", id, e))?;
-        attachment.before.record = sandboxes.iter().any(|s| s.name == sandbox.as_str());
+        let record = sandboxes.iter().any(|s| s.name == sandbox.as_str());
         let stale = rt
             .stale_dirs()
             .await
             .map_err(|e| WorkspaceError::runtime("list stale directories", id, e))?;
-        attachment.before.stale_dir = stale.iter().any(|s| s == sandbox.as_str());
+        let stale_dir = stale.iter().any(|s| s == sandbox.as_str());
         let info = if let Some(info) = existing {
             if let Some(requested) = size.filter(|s| *s != info.size) {
                 info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
-                attachment.kept_size = Some(KeptSize {
+                kept_size = Some(KeptSize {
                     requested,
                     actual: info.size,
                 });
@@ -273,12 +263,17 @@ impl Workspaces {
                 })
                 .await
                 .map_err(|e| WorkspaceError::runtime("create the volume", id, e))?;
-            attachment.created_volume = true;
+            created_volume = true;
             info!(workspace = %id, %size, "workspace volume created");
             info
         };
-        attachment.mount = Some(mount_for(id, &volume, &info)?);
-        Ok(attachment)
+        Ok(Attachment {
+            reservation,
+            mount: mount_for(id, &volume, &info)?,
+            created_volume,
+            kept_size,
+            before: Before { record, stale_dir },
+        })
     }
 
     /// Reserves `id` for `sandbox`, dropping a registry holder that no longer exists.
@@ -383,7 +378,7 @@ impl Workspaces {
     /// settings). Returns
     /// the checkout's path. Call [`Workspaces::sync`] after the last clone before calling it
     /// done: a VMM kill within seconds of a clone could otherwise lose the whole repository
-    /// (directory entries aren't covered by `core.fsync=committed` until the first fsync).
+    /// (directory entries aren't covered by `core.fsync=added` until the first fsync).
     ///
     /// # Errors
     ///
@@ -1334,14 +1329,29 @@ fn unreachable_job<T>(id: &WorkspaceId) -> Result<T, WorkspaceError> {
 #[derive(Debug)]
 #[must_use = "commit or abort the attachment"]
 pub struct Attachment<'w> {
-    workspaces: &'w Workspaces,
-    id: WorkspaceId,
-    sandbox: SandboxName,
-    mount: Option<VolumeMount>,
+    reservation: Reservation<'w>,
+    mount: VolumeMount,
     created_volume: bool,
     kept_size: Option<KeptSize>,
     before: Before,
+}
+
+/// The claim a sandbox has on a workspace until it commits or aborts; dropping it while open
+/// releases the claim.
+#[derive(Debug)]
+struct Reservation<'w> {
+    workspaces: &'w Workspaces,
+    id: WorkspaceId,
+    sandbox: SandboxName,
     open: bool,
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            self.workspaces.registry.release(&self.id, &self.sandbox);
+        }
+    }
 }
 
 /// A volume that already existed with another size than the one asked for. A volume only ever
@@ -1365,23 +1375,13 @@ impl Attachment<'_> {
     /// The workspace.
     #[must_use]
     pub fn workspace(&self) -> &WorkspaceId {
-        &self.id
+        &self.reservation.id
     }
 
     /// The volume mount to add to the sandbox's spec.
-    ///
-    /// # Panics
-    ///
-    /// Never: an [`Attachment`] only leaves [`Workspaces::prepare`] with its mount set.
     #[must_use]
     pub fn mount(&self) -> &VolumeMount {
-        #[expect(
-            clippy::expect_used,
-            reason = "invariant: prepare sets the mount before returning the attachment"
-        )]
-        self.mount
-            .as_ref()
-            .expect("prepare sets the mount before returning")
+        &self.mount
     }
 
     /// Whether [`Workspaces::prepare`] created the volume (an abort deletes it again).
@@ -1405,9 +1405,12 @@ impl Attachment<'_> {
 
     /// The sandbox was created: it holds the workspace from now on.
     pub fn commit(mut self) {
-        self.open = false;
-        self.workspaces.registry.attach(&self.id, &self.sandbox);
-        info!(workspace = %self.id, sandbox = %self.sandbox, "workspace attached");
+        self.reservation.open = false;
+        self.reservation
+            .workspaces
+            .registry
+            .attach(&self.reservation.id, &self.reservation.sandbox);
+        info!(workspace = %self.reservation.id, sandbox = %self.reservation.sandbox, "workspace attached");
     }
 
     /// The create failed: removes what it left (a down sandbox record, a stale directory,
@@ -1418,37 +1421,41 @@ impl Attachment<'_> {
     ///
     /// [`WorkspaceError::Runtime`] with the first cleanup step that failed (the others still ran).
     pub async fn abort<R: Runtime>(mut self, rt: &R) -> Result<(), WorkspaceError> {
-        self.open = false;
-        let mut result =
-            cleanup_failed_create(rt, &self.sandbox, self.before.record, self.before.stale_dir)
-                .await
-                .map_err(|e| {
-                    WorkspaceError::runtime("clean up after a failed create", &self.id, e)
-                });
+        self.reservation.open = false;
+        let mut result = cleanup_failed_create(
+            rt,
+            &self.reservation.sandbox,
+            self.before.record,
+            self.before.stale_dir,
+        )
+        .await
+        .map_err(|e| {
+            WorkspaceError::runtime("clean up after a failed create", &self.reservation.id, e)
+        });
         if self.created_volume {
-            match rt.remove_volume(&self.id.volume_name()).await {
+            match rt.remove_volume(&self.reservation.id.volume_name()).await {
                 Ok(()) | Err(ComputeError::VolumeNotFound { .. }) => {}
                 Err(e) => {
                     result = result.and(Err(WorkspaceError::runtime(
                         "remove the new volume",
-                        &self.id,
+                        &self.reservation.id,
                         e,
                     )));
                 }
             }
         }
-        self.workspaces.registry.release(&self.id, &self.sandbox);
+        self.reservation
+            .workspaces
+            .registry
+            .release(&self.reservation.id, &self.reservation.sandbox);
         result
     }
 }
 
 impl Drop for Attachment<'_> {
     fn drop(&mut self) {
-        if self.open {
-            if self.mount.is_some() {
-                warn!(workspace = %self.id, sandbox = %self.sandbox, "attachment dropped without commit or abort");
-            }
-            self.workspaces.registry.release(&self.id, &self.sandbox);
+        if self.reservation.open {
+            warn!(workspace = %self.reservation.id, sandbox = %self.reservation.sandbox, "attachment dropped without commit or abort");
         }
     }
 }

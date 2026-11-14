@@ -192,7 +192,7 @@ run_gate() {
     hooks)
         scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
+            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
             ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh
@@ -565,7 +565,9 @@ before_concurrent() {
 
 # shellcheck source=scripts/gate-sched.sh
 . scripts/gate-sched.sh
-# The serial prefix. diff-coverage-fast is in it, so in the pre-push set it fails the run before the streams start.
-serial_gates="$fast_gates diff-coverage-fast"
+# The serial prefix: the fast gates but `hooks` (about 2 min of script self-tests, so it runs beside the streams in the misc
+# stream and still fails the run), then diff-coverage-fast, so in the pre-push set a change no test runs fails before the streams start.
+serial_gates=
+for g in $fast_gates diff-coverage-fast; do [ "$g" = hooks ] || serial_gates="$serial_gates $g"; done
 # shellcheck disable=SC2086 # the gate names are words by design
 run_gates $requested

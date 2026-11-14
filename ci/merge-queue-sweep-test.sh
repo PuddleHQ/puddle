@@ -76,6 +76,13 @@ run "nothing stuck" 0 "" FAKE_X=1
 echo '{"data": {}}' >"$tmp/prs"
 run "unexpected answer: exit 1" 1 "" FAKE_X=1
 
+# The sweep's App token must carry Contents write: with Pull requests write alone GitHub answered "Resource not accessible
+# by integration" to enqueuePullRequest and disablePullRequestAutoMerge (PR 915, 2026-11-13).
+wf="$here/../.github/workflows/merge-queue-sweep.yml"
+for perm in permission-contents permission-pull-requests; do
+    grep -qE "^ +$perm: write$" "$wf" || bad "$wf: the App token does not request $perm: write"
+done
+
 if [ "$fail" = 0 ]; then
     echo "merge-queue-sweep-test: ok"
 else

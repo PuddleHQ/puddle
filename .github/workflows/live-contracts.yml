@@ -5,7 +5,8 @@
 #                 `#[ignore]`d tests: the repository list must read the answer as `token_rejected`);
 #   login-tools   the real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing in a real microVM,
 #                 and which hosts each one calls (crates/puddle-host/tests/vm_radar_logins.rs): a host outside
-#                 the login profile is a login capture would stop seeing.
+#                 the login profile is a login capture would stop seeing;
+#   mise-pin      ci/mise.sha256 against the SHASUMS256.txt that mise's site and GitHub publish for the release.
 # Nightly on develop and by hand (`gh workflow run live-contracts.yml`; a branch's copy only once the file is on develop), never on a
 # pull request: a third party's outage must not stop a merge. A red run opens "Nightly red: live-contracts"
 # through nightly-signal.yml and a green run closes it. Never retried: an outage is told from a change by the
@@ -40,11 +41,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
       - name: live_azure, ignored tests only
         run: cargo nextest run --locked -p puddle-repos --test live_azure --run-ignored only --no-capture
+
+  mise-pin:
+    name: the pinned mise matches its release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ci/mise.sha256 against both release hosts
+        run: ci/check-mise-pin.sh
 
   login-tools:
     name: real login tools in a microVM (KVM)
@@ -63,7 +73,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
       - name: msb runtime (fork tag; download, verify)

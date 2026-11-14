@@ -143,15 +143,9 @@ fn parse_gh(text: &str) -> Vec<DiscoveredAccount> {
     out
 }
 
-fn github_host() -> Option<HostName> {
-    HostName::new("github.com").ok()
-}
-
 /// One account name per line; a line that is not a plain name is dropped.
 fn parse_gcm_github(text: &str) -> Vec<DiscoveredAccount> {
-    let Some(host) = github_host() else {
-        return Vec::new();
-    };
+    let host = crate::host_name!("github.com");
     text.lines()
         .filter_map(|line| AccountName::new(line.trim()).ok())
         .map(|account| DiscoveredAccount {
@@ -166,9 +160,7 @@ fn parse_gcm_github(text: &str) -> Vec<DiscoveredAccount> {
 
 /// `org:` at the start of a line, then `  (global) -> user` or `  (local)  -> user` below it.
 fn parse_gcm_azure(text: &str) -> Vec<DiscoveredAccount> {
-    let Ok(host) = HostName::new("dev.azure.com") else {
-        return Vec::new();
-    };
+    let host = crate::host_name!("dev.azure.com");
     let mut out = Vec::new();
     let mut org: Option<OrgName> = None;
     for line in text.lines() {

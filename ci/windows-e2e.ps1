@@ -7,8 +7,7 @@ the commit status `puddle/windows-e2e`.
 .DESCRIPTION
 Tier R covers what the hosted runners can't: a real client OS on mains power, sleep/resume,
 Defender, the corporate network. The tests live in crates/puddle-vm-tests and are named
-`vm_machine_*`; -All also runs the K/W set the CI jobs run. No `vm_machine_*` test exists yet, so the
-default filter also selects the `vm_smoke` binary: a boot on the real machine (WHP, Defender, its network).
+`vm_machine_*`; -All also runs the K/W set the CI jobs run.
 A run that selects no test fails (`--no-tests=fail`) instead of posting a green status.
 
 Steps: power check (refuses on battery below -MinBattery percent), per-run prefix, private msb
@@ -77,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -Bisect -Good v0.1.0
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$RuntimeDir = $env:PUDDLE_VM_RUNTIME_DIR,
-    [string]$Filter = 'test(/(^|::)vm_machine_/) | binary(vm_smoke)',
+    [string]$Filter = 'test(/(^|::)vm_machine_/)',
     [switch]$All,
     [string[]]$MsbRepros = @('relay', 'signal', 'scp', 'forward', 'stale-dir'),
     [int]$ReproPort = 18190,

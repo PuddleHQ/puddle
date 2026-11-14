@@ -304,10 +304,9 @@ async fn local_forward(rig: &Rig) {
         ))
         .await;
     assert_eq!((code, out.as_str()), (0, "started"));
-    let local_port = {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        probe.local_addr().unwrap().port()
-    };
+    // `ssh -L` binds the port itself, seconds after this pick, so a port 0 probe that is dropped
+    // can be taken first. `quiet_port` is below the ranges port 0 and source ports come from.
+    let local_port = puddle_test_kit::quiet_port();
     let forward = format!("{local_port}:127.0.0.1:9000");
     let ssh = Command::new(tool("ssh"))
         .current_dir(rig.dir.path())

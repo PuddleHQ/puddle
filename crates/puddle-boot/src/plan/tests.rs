@@ -589,6 +589,53 @@ fn bash_and_zsh_startup_files_get_the_same_exports_as_a_merged_block() {
     }
 }
 
+fn shell_block_of(plan: &BootPlan, path: &str) -> String {
+    let f = plan
+        .files()
+        .iter()
+        .find(|f| f.path().as_str() == path)
+        .unwrap_or_else(|| panic!("no {path}"));
+    let ApplyKind::Merge(spec) = f.apply() else {
+        panic!("{path} is not merged")
+    };
+    spec.entries()[0].value().to_owned()
+}
+
+#[test]
+fn interactive_shells_activate_mise_only_with_the_layer_on_and_the_code_trusted() {
+    let build = |pairs: &[(&str, &str)]| {
+        BootPlan::builder(&ImageConfig::default())
+            .env(&env_of(pairs))
+            .build()
+            .unwrap()
+    };
+    let on = build(&[
+        ("MISE_DATA_DIR", "/w/data"),
+        ("MISE_TRUSTED_CONFIG_PATHS", "/w"),
+    ]);
+    let bash = shell_block_of(&on, BASH_RC_GUEST);
+    assert!(
+        bash.ends_with(
+            "*i*) command -v mise >/dev/null 2>&1 && eval \"$(mise activate bash)\" ;; esac"
+        ),
+        "{bash}"
+    );
+    assert!(bash.starts_with("export MISE_DATA_DIR="), "{bash}");
+    let zsh = shell_block_of(&on, ZSH_ENV_GUEST);
+    assert!(
+        zsh.contains("[[ -o interactive ]]") && zsh.contains("mise activate zsh"),
+        "{zsh}"
+    );
+
+    let no_trust = build(&[("MISE_DATA_DIR", "/w/data")]);
+    let off = build(&[("OTHER", "x")]);
+    for plan in [&no_trust, &off] {
+        for path in [BASH_RC_GUEST, ZSH_ENV_GUEST] {
+            assert!(!shell_block_of(plan, path).contains("mise activate"));
+        }
+    }
+}
+
 #[test]
 fn an_empty_environment_writes_no_sudo_or_shell_files() {
     let plan = BootPlan::builder(&ImageConfig::default()).build().unwrap();

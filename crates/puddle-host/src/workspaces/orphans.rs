@@ -222,17 +222,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     .await
             })
             .await?
-            .map_err(|e| match e {
-                puddle_workspace::WorkspaceError::InUse { .. } => {
-                    WorkspaceError::Conflict(e.to_string())
-                }
-                puddle_workspace::WorkspaceError::NotFound { .. } => {
-                    WorkspaceError::NotFound(format!("no workspace disk {volume}"))
-                }
-                other => WorkspaceError::Unavailable(format!(
-                    "Puddle could not read {volume}, so it made no list entry: {other}"
-                )),
-            })?;
+            .map_err(|e| listing_error(e, &volume))?;
         let repositories = entries_for(&listed, asked, &volume)?;
         let memory = self.default_memory().map_err(|reason| {
             WorkspaceError::Conflict(format!(
@@ -293,6 +283,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.status_event(&record);
         self.refresh_orphan_problem().await;
         Ok(record)
+    }
+}
+
+/// What the user is told when the maintenance run that lists a disk's checkouts fails.
+fn listing_error(e: puddle_workspace::WorkspaceError, volume: &VolumeName) -> WorkspaceError {
+    match e {
+        puddle_workspace::WorkspaceError::InUse { .. } => WorkspaceError::Conflict(e.to_string()),
+        puddle_workspace::WorkspaceError::NotFound { .. } => {
+            WorkspaceError::NotFound(format!("no workspace disk {volume}"))
+        }
+        other => WorkspaceError::Unavailable(format!(
+            "Puddle could not read {volume}, so it made no list entry: {other}"
+        )),
     }
 }
 

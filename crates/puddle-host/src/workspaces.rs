@@ -749,3 +749,6 @@ mod name_or_id_tests;
 
 #[cfg(test)]
 mod checkout_refusal_tests;
+
+#[cfg(test)]
+mod workspace_error_tests;

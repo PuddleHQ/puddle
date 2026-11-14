@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_agent_proto::kind::StreamKind;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::account::Account;
@@ -96,14 +96,23 @@ pub async fn accept(listener: UnixListener, upstream: Arc<Upstream>) {
 }
 
 /// One client: an `ssh-agent` stream to the host, its bytes both ways until either side ends.
-async fn relay(mut client: UnixStream, upstream: Arc<Upstream>) {
-    let mut stream = match upstream.open().await {
+async fn relay(client: UnixStream, upstream: Arc<Upstream>) {
+    let stream = match upstream.open().await {
         Ok(stream) => stream,
         Err(e) => {
             tracing::warn!(error = %e, "no stream to the host for an ssh agent client; closed");
             return;
         }
     };
+    relay_over(client, stream).await;
+}
+
+/// [`relay`] once the stream to the host is open: a separate step so a test can hand it a
+/// stream that fails where a host session breaks.
+async fn relay_over<S>(mut client: UnixStream, mut stream: S)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     if stream
         .write_all(StreamKind::SshAgent.preamble())
         .await

@@ -381,3 +381,39 @@ fn a_store_that_cannot_count_the_open_questions_opens_none() {
 
     assert!(matches!(failed, Err(StoreError::Database(_))), "{failed:?}");
 }
+
+#[test]
+fn an_answer_returns_the_question_as_stored_with_the_time_it_was_decided() {
+    let (clock, store, _) = store();
+    let id = open(&store, "a", "h.example.com");
+    assert_eq!(store.ssh_agent_ask(id).unwrap().unwrap().decided_at, None);
+    clock.advance(5_000);
+
+    let ask = store
+        .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Once, Actor::Ui)
+        .unwrap();
+
+    assert!(ask.decided_at.is_some());
+    assert_eq!(store.ssh_agent_ask(id).unwrap().unwrap(), ask);
+}
+
+#[test]
+fn breaking_the_database_through_the_testing_helper_makes_writes_fail() {
+    let (_, store, _) = store();
+    crate::testing::break_database(
+        &store,
+        "CREATE TRIGGER asks_insert_fails BEFORE INSERT ON ssh_agent_asks
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    let failed = store.start_ssh_agent_ask(&ws("a"), "h.example.com", KEY, "ssh-ed25519");
+
+    assert!(matches!(failed, Err(StoreError::Database(_))), "{failed:?}");
+}
+
+#[test]
+#[should_panic(expected = "breaking the database")]
+fn breaking_the_database_with_refused_sql_panics() {
+    let (_, store, _) = store();
+    crate::testing::break_database(&store, "DROP TABLE no_such_table");
+}

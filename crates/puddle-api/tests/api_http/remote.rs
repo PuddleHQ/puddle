@@ -602,7 +602,7 @@ async fn the_network_listener_speaks_tls_only_and_trusts_only_its_own_certificat
         .await
         .unwrap();
     assert!(
-        !String::from_utf8_lossy(&bytes).contains("HTTP/1.1 200"),
+        !bytes.starts_with(b"HTTP/"),
         "plain HTTP was answered: {bytes:?}"
     );
     // A client that does not trust the certificate refuses it (a proxy must pin or trust it).

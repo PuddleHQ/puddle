@@ -289,7 +289,7 @@ fn a_forgetting_probe_removes_the_workspace_s_webview_data_before_it_opens() {
 }
 
 #[test]
-fn a_forgetting_probe_that_cannot_remove_the_data_says_so_and_still_opens() {
+fn a_forgetting_probe_that_cannot_remove_the_data_says_so_and_then_fails_to_open_over_it() {
     let app = tauri::test::mock_app();
     let data = tempfile::tempdir().unwrap();
     let webview = data.path().join("webview");
@@ -303,10 +303,16 @@ fn a_forgetting_probe_that_cannot_remove_the_data_says_so_and_still_opens() {
         Some("1"),
     )
     .unwrap();
-    let log = logged(|| {
-        let _ = open_probe(app.handle(), &probe, data.path());
-    });
+    let mut opened = None;
+    let log = logged(|| opened = Some(open_probe(app.handle(), &probe, data.path())));
     assert!(log.contains("sandbox window: data not removed"), "{log}");
+    // The window cannot be made over the file that is in its data folder's place: the error comes
+    // back, it is not swallowed, and no window set is kept.
+    assert!(
+        matches!(opened, Some(Err(_))),
+        "the open reports its failure: {opened:?}"
+    );
+    assert!(app.try_state::<SandboxWindows>().is_none());
 }
 
 /// Runs `act` under a subscriber that keeps what it logs.
@@ -356,13 +362,27 @@ fn init_logging_says_once_that_a_bad_filter_gave_info_and_stays_quiet_for_a_good
 }
 
 #[test]
-fn init_logging_from_env_only_ever_complains_about_a_filter() {
-    let log = logged(init_logging_from_env);
+fn init_logging_reads_puddle_log_and_rust_log_by_their_names() {
+    let vars = |puddle: Option<&'static str>, rust: Option<&'static str>| {
+        move |name: &str| match name {
+            "PUDDLE_LOG" => puddle.map(str::to_owned),
+            "RUST_LOG" => rust.map(str::to_owned),
+            other => panic!("read {other}"),
+        }
+    };
+    let puddle = logged(|| init_logging_from(vars(Some("loud"), None)));
     assert!(
-        log.lines()
-            .all(|line| line.contains("is not a log filter; logging at info")),
-        "{log}"
+        puddle.contains("PUDDLE_LOG=\"loud\" is not a log filter"),
+        "{puddle}"
     );
+    let rust = logged(|| init_logging_from(vars(None, Some("puddle=loud"))));
+    assert!(
+        rust.contains("RUST_LOG=\"puddle=loud\" is not a log filter"),
+        "{rust}"
+    );
+    assert_eq!(logged(|| init_logging_from(vars(None, None))), "");
+    // The process's own variables are only read: whatever they hold, the call does not panic.
+    let _ = logged(init_logging_from_env);
 }
 
 #[test]

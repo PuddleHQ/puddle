@@ -106,6 +106,30 @@ echo "tool=npm-basic rc=${{PIPESTATUS[0]}} installed=$(test -f node_modules/{NPM
 
 /// The same installs with no credential at all: each must fail, or a pass above proves nothing.
 fn control_script() -> String {
+    let id = NUGET_PACKAGE.to_lowercase();
+    let nuget_control = format!(
+        r#"rm -rf /tmp/nuc ~/.nuget/packages/{id} && mkdir -p /tmp/nuc && cd /tmp/nuc
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 PATH=/opt/dotnet:$PATH
+cat > nuget.config <<'EOF'
+<configuration><packageSources><clear /><add key="private" value="https://{NUGET}/v3/index.json" /></packageSources></configuration>
+EOF
+cat > probe.csproj <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+  <ItemGroup><PackageReference Include="{NUGET_PACKAGE}" Version="1.0.0" /></ItemGroup>
+</Project>
+EOF
+dotnet restore 2>&1 | tail -3
+echo "control=nuget rc=${{PIPESTATUS[0]}}"
+"#
+    );
+    let maven_control = format!(
+        r#"rm -rf /tmp/mvc /tmp/m2c && mkdir -p /tmp/mvc && cd /tmp/mvc
+mvn -B -q -Dmaven.repo.local=/tmp/m2c org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
+  -Dartifact={MAVEN_COORDINATES} -DremoteRepositories=feed::default::https://{MAVEN}/m2 2>&1 | tail -3
+echo "control=maven rc=${{PIPESTATUS[0]}}"
+"#
+    );
     format!(
         r#"rm -rf /tmp/nc /tmp/pc ~/.config/pip && mkdir -p /tmp/nc
 cd /tmp/nc && printf 'registry=https://{NPM}/\n' > .npmrc && echo '{{"name":"c","version":"1.0.0"}}' > package.json
@@ -113,7 +137,7 @@ npm install {NPM_PACKAGE} --no-audit --no-fund 2>&1 | tail -3
 echo "control=npm rc=${{PIPESTATUS[0]}}"
 python3 -m pip download --no-deps --retries 0 -d /tmp/pc --index-url https://{PIP}/simple/ {PIP_PROJECT} 2>&1 | tail -3
 echo "control=pip rc=${{PIPESTATUS[0]}}"
-"#
+{nuget_control}{maven_control}"#
     )
 }
 
@@ -380,7 +404,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
     }
 
     let control = run(&vm, &workspace, &control_script(), 5).await;
-    for tool in ["npm", "pip"] {
+    for tool in ["npm", "pip", "nuget", "maven"] {
         assert!(
             control.contains(&format!("control={tool} rc="))
                 && !control.contains(&format!("control={tool} rc=0")),

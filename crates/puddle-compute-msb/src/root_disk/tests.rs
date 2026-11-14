@@ -218,7 +218,6 @@ fn a_live_plan_defers_where_live_grow_does_not_work() {
         on_platform(GrowPlan::Refused("x".into()), false),
         GrowPlan::Refused("x".into())
     );
-    assert_eq!(LIVE_GROW_WORKS, !cfg!(windows));
 }
 
 #[test]

@@ -36,6 +36,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
+import { GiveUp, until } from "./poll.mjs";
 
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
@@ -59,17 +60,6 @@ function note(text) {
   console.log(`     ${text}`);
 }
 
-/** Polls `probe` until it is truthy, for `within` ms; the reason is named at each call, never a fixed sleep. */
-async function until(what, probe, within = 60_000, every = 500) {
-  const deadline = Date.now() + within;
-  for (;;) {
-    const value = await Promise.resolve().then(probe).catch(() => undefined);
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out after ${Math.round(within / 1000)} s waiting for ${what}`);
-    await sleep(every);
-  }
-}
-
 // ---- the lab forge ----------------------------------------------------------------------------------
 
 const infoFile = join(out, "forgejo.json");
@@ -85,7 +75,7 @@ async function startForge() {
   info = await until(
     "the lab forge's info file",
     () => {
-      if (labExited) throw new Error(`the lab forge exited: ${labLog}`);
+      if (labExited) throw new GiveUp(`the lab forge exited: ${labLog}`);
       return JSON.parse(readFileSync(infoFile, "utf8"));
     },
     180_000,
@@ -344,7 +334,7 @@ try {
   await until(
     "the installed app's connection file",
     () => {
-      if (appExited) throw new Error("puddle-app exited before it wrote its connection file");
+      if (appExited) throw new GiveUp("puddle-app exited before it wrote its connection file");
       conn = JSON.parse(readFileSync(connectionFile, "utf8"));
       return conn?.url && conn?.token;
     },
@@ -393,8 +383,8 @@ try {
     `workspace ${id} to run (the create clones the private repository, then the image is pulled and the machine boots)`,
     async () => {
       const w = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.id === id);
-      if (!w) throw new Error("the workspace vanished");
-      if (["crashed", "volume_missing"].includes(w.status)) throw new Error(`the workspace is ${w.status}`);
+      if (!w) throw new GiveUp("the workspace vanished");
+      if (["crashed", "volume_missing"].includes(w.status)) throw new GiveUp(`the workspace is ${w.status}`);
       if (w.status === "running" && !w.busy) return w;
       if (!started && !w.busy && ["created", "stopped"].includes(w.status)) {
         started = true;

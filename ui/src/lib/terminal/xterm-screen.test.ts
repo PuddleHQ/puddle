@@ -235,11 +235,16 @@ describe("links", () => {
   });
 
   it("hovering or leaving a link before the page listens does nothing", () => {
-    const { screen } = make();
+    const { screen, opened } = make();
     const handler = screen.term.options.linkHandler;
-    handler?.hover?.(new MouseEvent("mousemove"), "https://a.b/", {} as never);
-    handler?.leave?.(new MouseEvent("mouseout"), "https://a.b/", {} as never);
-    screen.onLeave();
+    expect(handler?.hover).toBeTypeOf("function");
+    expect(() => {
+      handler?.hover?.(new MouseEvent("mousemove"), "https://a.b/", {} as never);
+      handler?.leave?.(new MouseEvent("mouseout"), "https://a.b/", {} as never);
+      screen.onLeave();
+    }).not.toThrow();
+    // Pointing at a link is not following it.
+    expect(opened).toEqual([]);
   });
 
   it("opens nothing for another scheme or an unforwarded local port, and says what to do", () => {

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use ::http::header::HeaderName;
 use http_body_util::BodyExt as _;
 use proptest::prelude::*;
 
@@ -530,82 +529,6 @@ proptest! {
         if let Ok(out) = stream(&scrubber, &[a, b]) {
             prop_assert_eq!(out, body);
         }
-    }
-}
-
-/// Throughput of the body scrub and the cost of a header scrub, by hand in a release build:
-/// `cargo nextest run --release -p puddle-proxy --lib -E 'test(scrub_speed)' --run-ignored only --no-capture`.
-#[test]
-#[ignore = "a measurement, meaningful only in a release build"]
-fn scrub_speed() {
-    use std::time::Instant;
-    const MIB: usize = 1024 * 1024;
-    let text: Vec<u8> = br#"{"id":12345,"name":"package-name","version":"1.2.3","dist":{"shasum":"abcdef0123456789"}},"#
-        .iter()
-        .copied()
-        .cycle()
-        .take(16 * MIB)
-        .collect();
-    let bodies: [(&str, Vec<u8>); 3] = [
-        ("x", vec![b'x'; 16 * MIB]),
-        ("json", text),
-        // Every byte starts a form: the worst case for the held tail.
-        ("all-s", vec![b's'; 16 * MIB]),
-    ];
-    for count in [1_usize, 8, 50] {
-        let registry = StandIns::new();
-        for n in 0..count {
-            let name = format!("S{n}");
-            registry
-                .insert(entry(
-                    StandInOrigin::Secret,
-                    &name,
-                    &format!("puddle-secret-S{n}-{n:032x}"),
-                    &format!("sk-live-{n}-5c1d9e0a47b2a9f0e1d2c3b4"),
-                    &["api.github.com"],
-                ))
-                .unwrap();
-        }
-        let started = Instant::now();
-        let scrubber = registry.answer_scrubber(&host("api.github.com")).unwrap();
-        eprintln!(
-            "M build registered={count} {:.0} us (once per host until the registry changes)",
-            started.elapsed().as_secs_f64() * 1e6
-        );
-        for (kind, body) in &bodies {
-            let pieces: Vec<&[u8]> = body.chunks(16 * 1024).collect();
-            let started = Instant::now();
-            let out = stream(&scrubber, &pieces).unwrap();
-            let took = started.elapsed();
-            assert_eq!(out.len(), body.len());
-            eprintln!(
-                "M body registered={count} patterns={} kind={kind} {:.0} MiB/s",
-                scrubber.patterns.len(),
-                16.0 / took.as_secs_f64()
-            );
-        }
-        let mut headers = HeaderMap::new();
-        for n in 0..17 {
-            headers.append(
-                HeaderName::from_bytes(format!("x-h{n}").as_bytes()).unwrap(),
-                HeaderValue::from_static("some ordinary header value of a typical length here"),
-            );
-        }
-        headers.append(
-            "set-cookie",
-            HeaderValue::from_str(&"c".repeat(3000)).unwrap(),
-        );
-        let rounds = 2000;
-        let started = Instant::now();
-        for _ in 0..rounds {
-            let mut copy = headers.clone();
-            let scrubber = registry.answer_scrubber(&host("api.github.com")).unwrap();
-            scrubber.scrub_headers(&mut copy, &ScrubNotes::default());
-        }
-        eprintln!(
-            "M headers registered={count} {:.1} us per answer (scrubber made already, 18 headers, a 3 KB cookie)",
-            started.elapsed().as_secs_f64() * 1e6 / f64::from(rounds)
-        );
     }
 }
 

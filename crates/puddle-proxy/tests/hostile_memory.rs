@@ -23,8 +23,9 @@ const TEST: &str = "hostile_hg10_the_heap_does_not_follow_what_a_guest_sends";
 /// What the child prints once every guest is sending.
 const SENDING: &str = "guests: sending";
 const ATTACKERS: usize = 12;
-/// Buffering one 10 MB line would already pass this.
-const LIMIT: usize = 12 * 1024 * 1024;
+/// Twelve heads held at their 64 KiB cap are under 1 MiB; a run measured 2 MiB. Holding the whole
+/// of even one 10 MB line goes over this.
+const LIMIT: usize = 5 * 1024 * 1024;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {

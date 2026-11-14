@@ -88,6 +88,16 @@ async fn the_fixture_runs_no_workspaces_so_it_has_no_terminals_open() {
 async fn the_fixture_stops_only_its_api_and_a_second_shutdown_does_nothing() {
     let backend = start_fixture(0).await;
     let port = backend.url().port().unwrap();
+    // The probe below only proves a stop when it can see a running API.
+    assert_eq!(
+        puddle_test_kit::http_status(
+            ([127, 0, 0, 1], port).into(),
+            "/api/pending",
+            backend.token()
+        ),
+        Some(200),
+        "the running API answers its own token"
+    );
     assert_eq!(
         backend.shutdown().await,
         Some(HostShutdown {

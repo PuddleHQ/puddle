@@ -343,19 +343,21 @@ fn the_login_session_is_read_from_loginctl_found_on_the_path() {
     assert_eq!(answer("c1", "tty"), LoginSession::NotGraphical);
     assert_eq!(answer("", ""), LoginSession::NotGraphical);
     assert_eq!(answer("--help", ""), LoginSession::Unknown);
-    // A display session whose type cannot be read is not guessed at.
-    let dir = tempfile::tempdir().unwrap();
-    puddle_test_kit::write_executable(
-        &dir.path().join("loginctl"),
+    // A display session whose type cannot be read, or a user whose display cannot be read, is not guessed at.
+    for body in [
         "#!/bin/sh\ncase \"$1\" in show-user) echo c1;; *) exit 1;; esac\n",
-    );
-    assert_eq!(
-        login_session_in(
-            Some(dir.path().as_os_str().to_owned()),
-            Duration::from_secs(5)
-        ),
-        LoginSession::Unknown
-    );
+        "#!/bin/sh\nexit 1\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        puddle_test_kit::write_executable(&dir.path().join("loginctl"), body);
+        assert_eq!(
+            login_session_in(
+                Some(dir.path().as_os_str().to_owned()),
+                Duration::from_secs(5)
+            ),
+            LoginSession::Unknown
+        );
+    }
     assert_eq!(
         login_session_in(Some("/nonexistent".into()), Duration::from_secs(1)),
         LoginSession::Unknown

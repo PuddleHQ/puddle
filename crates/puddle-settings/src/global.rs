@@ -37,7 +37,7 @@ pub const GLOBAL_SCHEMA_VERSION: u32 = 2;
 /// assert_eq!(loaded.settings.workspace_defaults.memory.unwrap().get(), 4096);
 /// assert!(loaded.unknown_fields.is_empty());
 ///
-/// let doc = loaded.settings.to_document();
+/// let doc = loaded.settings.to_document().unwrap();
 /// assert_eq!(doc["schema_version"], 2);
 /// assert_eq!(GlobalSettings::from_document(doc).unwrap().settings, loaded.settings);
 /// ```
@@ -80,8 +80,12 @@ impl GlobalSettings {
 
     /// The document to store: the current `schema_version`, set values only, unknown fields
     /// as they were read.
-    #[must_use]
-    pub fn to_document(&self) -> Value {
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsError::Unstorable`] when the settings cannot be serialised, which their types
+    /// (string keys only) rule out.
+    pub fn to_document(&self) -> Result<Value, SettingsError> {
         document::store(self)
     }
 
@@ -281,8 +285,8 @@ pub struct UiPrefs {
     pub disk_fail_free_gb: Option<FreeGb>,
     /// The SSH agent Puddle asks for the key list: a named pipe on Windows (default
     /// `\\.\pipe\openssh-ssh-agent`; Pageant's OpenSSH pipe goes here), a socket path elsewhere
-    /// (default the `SSH_AUTH_SOCK` of Puddle's session). A blank value counts as unset. Set in the
-    /// settings file; no screen edits it yet.
+    /// (default the `SSH_AUTH_SOCK` of Puddle's session). A blank value counts as unset. The
+    /// settings screen edits it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh_agent_pipe: Option<String>,
     #[serde(flatten)]

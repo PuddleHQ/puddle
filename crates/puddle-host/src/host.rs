@@ -282,7 +282,7 @@ fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceId) -> LocalAc
 fn local_access_checked(
     settings: &dyn SettingsRepo,
     workspace: &WorkspaceId,
-) -> Result<LocalAccess, String> {
+) -> Result<LocalAccess, crate::settings_read::SettingsReadError> {
     let global = crate::settings_read::global(settings)?;
     let own = crate::settings_read::workspace(settings, workspace)?;
     Ok(LocalAccess::from_effective(&resolve(&global, Some(&own))))
@@ -336,6 +336,7 @@ impl<R: Runtime + Clone> Host<R> {
             .secret_store
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
+        crate::vault::check_in_background(options.secret_store.clone(), problems.clone());
         let vault_sweep =
             crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let marks = config.paths.login_markers();

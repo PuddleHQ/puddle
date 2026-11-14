@@ -55,3 +55,43 @@ fn error_names_the_kind() {
         "not a valid account name"
     );
 }
+
+#[test]
+fn the_build_time_host_check_agrees_with_the_runtime_one() {
+    let long = "a".repeat(257);
+    let longest = "a".repeat(256);
+    let samples = [
+        &longest,
+        "github.com",
+        "dev.azure.com",
+        "host:8443",
+        "",
+        "-x",
+        ".x",
+        "a b",
+        "a\nb",
+        "né.example",
+        "a_b",
+        &long,
+    ];
+    assert!(is_valid_host(&longest));
+    for sample in samples {
+        assert_eq!(
+            is_valid_host(sample),
+            HostName::new(sample).is_ok(),
+            "{sample:?}"
+        );
+    }
+}
+
+#[test]
+fn a_host_name_literal_is_the_same_host_name_as_a_parsed_one() {
+    let lit = HostNameLit::new("dev.azure.com");
+    assert_eq!(HostName::from(lit), HostName::new("dev.azure.com").unwrap());
+}
+
+#[test]
+#[should_panic(expected = "not a valid host name")]
+fn an_invalid_host_name_literal_panics_which_stops_a_const_build() {
+    let _ = HostNameLit::new("a b");
+}

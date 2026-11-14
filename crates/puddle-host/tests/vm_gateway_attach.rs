@@ -80,15 +80,6 @@ mod gateway {
     use crate::support::{Api, ended, named_id_options};
     use crate::vm_support::{VmHost, start_vm_host_config};
 
-    /// Probe steps that fail on a known defect in msb's SFTP server, with the reason. The probe's
-    /// `sftp` step writes 8 MiB and reads it back through sshj: msb answers `realpath(".")` with `/`
-    /// instead of the user's home and the read returns only the first 16 KiB. The fix is in the msb
-    /// fork (a separate change); delete the entry when the pinned msb carries it.
-    const KNOWN_FAILING: &[(&str, &str)] = &[(
-        "sftp",
-        "msb's SFTP server: home is `/` and a read stops after 16 KiB",
-    )];
-
     /// A port in the guest for the probe's own listener, which it reaches through a forward.
     const GUEST_PORT: &str = "18765";
 
@@ -370,17 +361,11 @@ mod gateway {
             .filter_map(|line| line.strip_prefix("FAIL "))
             .filter_map(|rest| rest.split_whitespace().next())
             .collect();
-        let known: Vec<&str> = KNOWN_FAILING.iter().map(|(step, _)| *step).collect();
         assert!(
             ok && report_text.contains(&format!("DONE failures={}", failed.len())),
             "the probe did not finish, see the report above"
         );
-        // A step in KNOWN_FAILING must keep failing until its fix lands: once it passes, the entry
-        // is stale and the test says so, so the fix cannot go unnoticed.
-        assert_eq!(
-            failed, known,
-            "the failing steps differ from KNOWN_FAILING (a step that now passes: delete its entry); known: {KNOWN_FAILING:?}"
-        );
+        assert!(failed.is_empty(), "the probe's failing steps: {failed:?}");
         // Gateway accepted the new host key itself (`StrictHostKeyChecking accept-new`) and wrote it
         // where Puddle's entry says.
         let known =

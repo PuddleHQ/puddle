@@ -137,6 +137,6 @@ pub(crate) async fn delete_custom_icon(
 fn refuse(err: &IconError) -> ApiError {
     match err {
         IconError::Encode(_) => ApiError::internal(err),
-        _ => ApiError::invalid(err.to_string()),
+        _ => ApiError::invalid(err),
     }
 }

@@ -19208,7 +19208,8 @@
           "direct_ssh",
           "direct_ssh_cursor",
           "direct_ssh_jetbrains",
-          "direct_ssh_zed"
+          "direct_ssh_zed",
+          "mise"
         ]
       },
       "TerminalRequest": {
@@ -19316,7 +19317,8 @@
           "start_at_login",
           "notify_low_disk_space",
           "disk_warn_free_gb",
-          "disk_fail_free_gb"
+          "disk_fail_free_gb",
+          "ssh_agent_pipe"
         ],
         "properties": {
           "app_icon": {
@@ -19501,6 +19503,14 @@
               "null"
             ],
             "description": "The system sound with a notification (default off)."
+          },
+          "ssh_agent_pipe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SSH agent `puddle doctor` asks for the key list: a named pipe on Windows (default\n`\\\\.\\pipe\\openssh-ssh-agent`), a socket path elsewhere (default the `SSH_AUTH_SOCK` of\nPuddle's session). Null or blank is unset; at most 1024 characters, no control characters.",
+            "maxLength": 1024
           },
           "start_at_login": {
             "type": [

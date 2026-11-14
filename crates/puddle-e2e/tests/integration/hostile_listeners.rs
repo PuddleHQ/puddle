@@ -100,10 +100,7 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
         Arc::new(NullSink),
     );
     ports.started(&workspace).await;
-    let forward_port = {
-        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
-        probe.local_addr().unwrap().port()
-    };
+    let forward_port = puddle_test_kit::quiet_port();
     ports
         .forward(&workspace, 8080, Some(forward_port), false)
         .await

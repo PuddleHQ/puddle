@@ -33,12 +33,14 @@ scenario() {
     mkdir -p "$d/spec"
     (
         trap 'echo $? >"$d/rc"' EXIT
+        export CHECK_GATE_DONE_DIR="$d/done"
         # shellcheck source=scripts/gate-sched.sh
         . "$here/scripts/gate-sched.sh"
         run_gate() {
             echo "==> $1"
             read -r secs rc meet <"$d/spec/$1"
             date +%s >"$d/start.$1"
+            printf '%s' "${CHECK_GATE_DONE_DIR:-unset}" >"$d/env.$1"
             echo "$1 begins"
             tries=0
             while [ -n "${meet:-}" ] && [ "$(find "$d" -name 'start.*' | wc -l)" -lt "$meet" ]; do
@@ -82,6 +84,11 @@ PUDDLE_CHECK_SERIAL=1 scenario s4 "" clippy ui notices
 mkdir -p "$tmp/s5/spec"
 spec s5 fmt "0 2"; spec s5 typos "0 0"; spec s5 clippy "0 0"; spec s5 ui "0 0"
 scenario s5 "fmt typos" fmt typos fmt clippy ui
+# S6: a gate of the run that is not in the prefix list (hooks) goes to the streams even when it stands between two prefix gates:
+# the prefix gates after it still run first, one at a time, and hooks overlaps the other streams.
+mkdir -p "$tmp/s6/spec"
+spec s6 fmt "0 0"; spec s6 hooks "0 0 2"; spec s6 typos "0 0"; spec s6 clippy "0 0 2"
+scenario s6 "fmt typos" fmt hooks typos clippy
 wait
 
 rc_of() { cat "$tmp/$1/rc"; }
@@ -100,6 +107,14 @@ for g in clippy ui notices; do
 done
 grep -q '^check: 3 streams' "$tmp/s1/out" || fail "s1: no summary line"
 
+for g in clippy ui notices; do
+    [ -e "$tmp/s1/done/$g" ] || fail "s1: no gate-done marker for $g"
+done
+# A gate's own processes never see the marker directory: a check.sh that a gate starts would write markers for gates that are not done.
+for g in clippy ui notices; do
+    [ "$(cat "$tmp/s1/env.$g")" = unset ] || fail "s1: gate $g saw CHECK_GATE_DONE_DIR ($(cat "$tmp/s1/env.$g"))"
+done
+
 # S2
 [ "$(rc_of s2)" = 3 ] || fail "s2: exit $(rc_of s2), expected the earliest failure's 3 (doc)"
 grep -q '^-- coverage: skipped' "$tmp/s2/out" || fail "s2: coverage ran or was not reported after doc failed"
@@ -109,21 +124,39 @@ grep -q '^-- notices: ok' "$tmp/s2/out" || fail "s2: the misc stream did not fin
 [ "$(grep '^==> ' "$tmp/s2/out" | tail -n 2 | head -n 1)" = "==> ui-e2e" ] || fail "s2: failures are not printed in reverse run order"
 grep -q '^check: failed: doc ui-e2e' "$tmp/s2/out" || fail "s2: failed gates not listed in run order"
 
+# a gate that failed has ended too (its marker is there); a skipped one never ran (none)
+for g in clippy doc ui ui-e2e notices; do
+    [ -e "$tmp/s2/done/$g" ] || fail "s2: no gate-done marker for $g"
+done
+[ ! -e "$tmp/s2/done/coverage" ] || fail "s2: a gate-done marker for the skipped coverage"
+
 # S3
 [ "$(rc_of s3)" = 0 ] || fail "s3: exit $(rc_of s3)"
 [ "$(cat "$tmp/s3/start.coverage")" -ge "$(cat "$tmp/s3/end.ui")" ] || fail "s3: coverage started before ui finished"
 [ "$(rc_of s3b)" = 5 ] || fail "s3b: exit $(rc_of s3b), expected ui's 5"
 grep -q '^-- coverage: skipped (needs ui' "$tmp/s3b/out" || fail "s3b: coverage was not skipped for the failed ui"
 [ ! -e "$tmp/s3b/start.coverage" ] || fail "s3b: coverage ran without ui"
+[ ! -e "$tmp/s3b/done/coverage" ] || fail "s3b: a gate-done marker for the skipped coverage"
 
 # S4
 [ "$(rc_of s4)" = 0 ] || fail "s4: exit $(rc_of s4)"
 [ "$(grep '^==> ' "$tmp/s4/out" | tr '\n' ' ')" = "==> clippy ==> ui ==> notices " ] || fail "s4: gates not run in order"
 ! grep -q '^--\|^check:' "$tmp/s4/out" || fail "s4: the inline run printed scheduler lines"
 
+for g in clippy ui notices; do
+    [ -e "$tmp/s4/done/$g" ] || fail "s4: no gate-done marker for the inline gate $g"
+done
+
 # S5
 [ "$(rc_of s5)" = 2 ] || fail "s5: exit $(rc_of s5), expected fmt's 2"
 [ ! -e "$tmp/s5/start.typos" ] && [ ! -e "$tmp/s5/start.clippy" ] || fail "s5: a gate ran after the prefix failed"
+[ ! -e "$tmp/s5/done/typos" ] && [ ! -e "$tmp/s5/done/clippy" ] || fail "s5: a marker for a gate that never ran"
+
+# S6
+[ "$(rc_of s6)" = 0 ] || fail "s6: exit $(rc_of s6)"
+[ "$(cat "$tmp/s6/end.typos")" -le "$(cat "$tmp/s6/start.hooks")" ] || fail "s6: hooks started before the prefix gate typos ended"
+[ -e "$tmp/s6/start.hooks" ] && [ -e "$tmp/s6/start.clippy" ] || fail "s6: hooks and clippy did not overlap (rendezvous)"
+grep -q '^-- hooks: ok' "$tmp/s6/out" || fail "s6: hooks was not reported"
 
 # The notices skip: a scratch repository with this check.sh and a stub cargo and cargo-about.
 n=$tmp/notices

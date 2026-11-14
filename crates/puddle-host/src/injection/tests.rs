@@ -292,6 +292,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
     let host = |h: &str| Host::parse_normalised(h).unwrap();
     let add = |workspace: Option<&WorkspaceId>, host: &str, path: &str| {
         store
+            .as_user(puddle_store::UserId::OWNER)
             .add_request_rule(&puddle_store::NewRequestRule {
                 workspace: workspace.cloned(),
                 host: host.to_owned(),
@@ -888,7 +889,7 @@ async fn a_start_whose_secret_cannot_be_read_fails_with_the_reason_and_registers
     let ws = workspace("alpha");
     add_secret(&store, &vault, &ws, "T", &["x.example.org"]);
     vault.break_it();
-    let err = injection.begin(&ws, false).await.err().unwrap();
+    let err = injection.begin(&ws, false).await.err().unwrap().to_string();
     assert!(
         err.contains('T') && err.contains("credential store"),
         "{err}"
@@ -1017,7 +1018,7 @@ async fn a_credential_store_that_does_not_answer_fails_that_workspace_in_time_an
         assert!(began.is_ok());
     };
     let (stuck_result, ()) = tokio::join!(waiting, others);
-    let err = stuck_result.err().unwrap();
+    let err = stuck_result.err().unwrap().to_string();
     assert!(err.contains("did not answer within"), "{err}");
     assert!(err.contains("stuck") && err.contains("unlock"), "{err}");
     assert_eq!(vault.asked.lock().unwrap().len(), 1);
@@ -1051,7 +1052,7 @@ async fn stand_ins_that_overlap_stop_a_start_and_leave_a_running_workspace_as_it
     add_secret(&store, &vault, &ws, "A", &["a.example.org"]);
     add_secret(&store, &vault, &ws, "B", &["b.example.org"]);
     overlapping_stand_ins(&store, &ws);
-    let err = injection.begin(&ws, false).await.err().unwrap();
+    let err = injection.begin(&ws, false).await.err().unwrap().to_string();
     assert!(err.contains("cannot be registered"), "{err}");
     assert!(terminations.termination(&ws).is_none());
 
@@ -1682,4 +1683,50 @@ async fn deleting_a_workspace_deletes_the_logins_kept_for_it() {
     injection.forget(&ws).await;
     injection.begin(&ws, true).await.unwrap();
     assert_eq!(login_ids(&terminations, &ws).len(), 0);
+}
+
+#[tokio::test]
+async fn each_failure_to_start_or_remove_names_its_workspace_and_what_broke() {
+    let ws = workspace("a");
+    let aborted = {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        task.await.unwrap_err()
+    };
+    let err = InjectionError::environment_task(&ws)(aborted);
+    assert!(
+        err.to_string().starts_with("cannot read a's environment: "),
+        "{err}"
+    );
+
+    let aborted = {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        task.await.unwrap_err()
+    };
+    let err = InjectionError::host_keys_task(&ws)(aborted);
+    assert!(
+        err.to_string()
+            .starts_with("cannot make a's SSH host keys: "),
+        "{err}"
+    );
+
+    let err = InjectionError::authority(&ws)(puddle_ca::CaError::Expired);
+    assert_eq!(
+        err.to_string(),
+        "cannot make a's certificate authority: the CA certificate has expired"
+    );
+
+    let broke = || puddle_store::StoreError::Backup("disk full".to_owned());
+    let err = InjectionError::settings("the interception setting")(broke());
+    assert_eq!(
+        err.to_string(),
+        "cannot read the interception setting: could not back up the database before migrating: disk full"
+    );
+
+    let err = InjectionError::removal(&ws)(broke());
+    assert_eq!(
+        err.to_string(),
+        "cannot remove a's rules and environment: could not back up the database before migrating: disk full"
+    );
 }

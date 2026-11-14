@@ -121,13 +121,13 @@ fn settings_layer_round_trips_and_keeps_unknown_stored_fields() {
     let wire = SettingsLayer::from(&full_layer());
     wire.clone().apply_to(&mut stored.overrides).unwrap();
     assert_eq!(SettingsLayer::from(&stored.overrides), wire);
-    assert_eq!(stored.to_document()["overrides"]["swap"], 4);
+    assert_eq!(stored.to_document().unwrap()["overrides"]["swap"], 4);
     // Clearing every value leaves only the unknown field.
     SettingsLayer::default()
         .apply_to(&mut stored.overrides)
         .unwrap();
     assert_eq!(
-        stored.to_document(),
+        stored.to_document().unwrap(),
         json!({"schema_version": 1, "overrides": {"swap": 4}})
     );
 }
@@ -182,6 +182,30 @@ fn a_custom_colour_that_is_not_hex_is_refused() {
     };
     let err = bad.apply_to(&mut prefs).unwrap_err();
     assert_eq!(err.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[test]
+fn the_ssh_agent_pipe_is_trimmed_blank_is_unset_and_junk_is_refused() {
+    let apply = |pipe: Option<&str>| {
+        let mut prefs = settings::UiPrefs::default();
+        UiPrefs {
+            ssh_agent_pipe: pipe.map(str::to_owned),
+            ..UiPrefs::default()
+        }
+        .apply_to(&mut prefs)
+        .map(|()| prefs.ssh_agent_pipe)
+    };
+    assert_eq!(
+        apply(Some(" /run/agent.sock ")).unwrap().as_deref(),
+        Some("/run/agent.sock")
+    );
+    assert_eq!(apply(Some("   ")).unwrap(), None, "blank is unset");
+    assert_eq!(apply(None).unwrap(), None);
+    for bad in ["/run/a\nb", "a\u{0}b", &"x".repeat(1025)] {
+        let err = apply(Some(bad)).unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert!(apply(Some(&"x".repeat(1024))).is_ok());
 }
 
 #[test]
@@ -266,6 +290,7 @@ fn global_request_sets_vscode_options() {
             notify_low_disk_space: Some(false),
             disk_warn_free_gb: Some(50),
             disk_fail_free_gb: Some(10),
+            ssh_agent_pipe: Some(r"  \\.\pipe\pageant.alice  ".to_owned()),
         },
         tools: GlobalTools { mise: Some(false) },
     }
@@ -297,6 +322,7 @@ fn global_request_sets_vscode_options() {
     assert!(!g.ui.notify_low_disk_space());
     let lines = g.ui.disk_limits();
     assert_eq!((lines.warn().gb(), lines.fail().gb()), (50, 10));
+    assert_eq!(g.ui.ssh_agent_pipe(), Some(r"\\.\pipe\pageant.alice"));
     assert!(g.vscode_server.telemetry());
     assert!(!g.vscode_server.auto_update());
     assert!(!g.tools.mise());

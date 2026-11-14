@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 use crate::machine::MACHINE_SETTINGS_GUEST;
+use puddle_types::FileMode;
 
 fn image(entrypoint: &[&str], cmd: &[&str], path: Option<&str>) -> ImageConfig {
     ImageConfig {
@@ -148,7 +149,7 @@ fn git_config_has_fsync_identity_and_no_credential_helper() {
     let without_id = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert_eq!(
         text(&without_id, GIT_CONFIG_GUEST),
-        format!("{GENERATED}[core]\n\tfsync = committed\n")
+        format!("{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n")
     );
     let as_agent = BootPlan::builder(&ImageConfig::default())
         .session_user(SessionUser::Agent)
@@ -156,7 +157,9 @@ fn git_config_has_fsync_identity_and_no_credential_helper() {
         .unwrap();
     assert_eq!(
         text(&as_agent, GIT_CONFIG_GUEST),
-        format!("{GENERATED}[core]\n\tfsync = committed\n[safe]\n\tdirectory = *\n"),
+        format!(
+            "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n[safe]\n\tdirectory = *\n"
+        ),
         "root may work in the session user's checkouts"
     );
     let id = GitIdentity::new(r#"Ada "the" \Countess"#, "ada@example.org").unwrap();
@@ -202,7 +205,7 @@ fn author_rules_become_include_if_blocks_in_order_each_with_its_own_file() {
     assert_eq!(
         text(&plan, GIT_CONFIG_GUEST),
         format!(
-            "{GENERATED}[core]\n\tfsync = committed\n\
+            "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n\
                  [user]\n\tname = \"Ada\"\n\temail = \"ada@example.org\"\n\
                  [includeIf \"hasconfig:remote.*.url:https://github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
                  [includeIf \"hasconfig:remote.*.url:https://*@github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
@@ -363,7 +366,7 @@ fn capture_is_on_unless_switched_off_or_there_is_no_agent() {
 #[test]
 fn render_has_header_files_steps_and_end_marker() {
     let plan = BootPlan::builder(&image(&["e"], &[], Some("/bin")))
-        .file(file("/etc/it's", "50%\n").with_mode(0o600).unwrap())
+        .file(file("/etc/it's", "50%\n").with_mode(FileMode::new(0o600)))
         .agent(AgentConfig {
             binary: GuestPath::new("/opt/agent").unwrap(),
             port: 4000,
@@ -500,8 +503,7 @@ fn merged_files_render_their_spec_and_are_counted() {
     )
     .unwrap();
     let merged = GuestFile::merged(GuestPath::new("/root/c.json").unwrap(), spec)
-        .with_mode(0o600)
-        .unwrap();
+        .with_mode(FileMode::new(0o600));
     // Every plan merges VS Code's Machine settings.
     let without = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert!(without.has_merged_files());
@@ -534,4 +536,76 @@ fn a_kept_file_renders_as_its_path_alone() {
         "{r}"
     );
     assert!(!r.contains("puddle_merge '/w/"), "{r}");
+}
+
+fn env_of(pairs: &[(&str, &str)]) -> GuestEnv {
+    let mut env = GuestEnv::new();
+    for (name, value) in pairs {
+        env.set(name, value).unwrap();
+    }
+    env
+}
+
+#[test]
+fn sudo_keeps_every_variable_of_the_plan_and_the_file_is_not_writable() {
+    let env = env_of(&[("API_TOKEN", "stand-in"), ("HTTPS_PROXY", "http://p:1")]);
+    let plan = BootPlan::builder(&ImageConfig::default())
+        .env(&env)
+        .build()
+        .unwrap();
+    assert_eq!(
+        text(&plan, SUDOERS_ENV_GUEST),
+        format!("{GENERATED}Defaults env_keep += \"API_TOKEN HTTPS_PROXY\"\n")
+    );
+    let f = plan
+        .files()
+        .iter()
+        .find(|f| f.path().as_str() == SUDOERS_ENV_GUEST)
+        .unwrap();
+    assert_eq!(f.mode(), 0o440);
+}
+
+#[test]
+fn bash_and_zsh_startup_files_get_the_same_exports_as_a_merged_block() {
+    let env = env_of(&[("ODD", "a'b $c"), ("PLAIN", "x")]);
+    let plan = BootPlan::builder(&ImageConfig::default())
+        .env(&env)
+        .build()
+        .unwrap();
+    for path in [BASH_RC_GUEST, ZSH_ENV_GUEST] {
+        let f = plan
+            .files()
+            .iter()
+            .find(|f| f.path().as_str() == path)
+            .unwrap_or_else(|| panic!("no {path}"));
+        let ApplyKind::Merge(spec) = f.apply() else {
+            panic!("{path} is not merged")
+        };
+        assert_eq!(spec.format(), puddle_types::MergeFormat::ShellBlock);
+        assert_eq!(
+            spec.entries()[0].value(),
+            "export ODD='a'\\''b $c'\nexport PLAIN='x'"
+        );
+    }
+}
+
+#[test]
+fn an_empty_environment_writes_no_sudo_or_shell_files() {
+    let plan = BootPlan::builder(&ImageConfig::default()).build().unwrap();
+    for path in [SUDOERS_ENV_GUEST, BASH_RC_GUEST, ZSH_ENV_GUEST] {
+        assert!(plan.files().iter().all(|f| f.path().as_str() != path));
+    }
+}
+
+#[test]
+fn an_environment_too_large_for_the_shell_files_is_refused_by_name() {
+    let env = env_of(&[("HUGE", &"x".repeat(300 << 10))]);
+    let err = BootPlan::builder(&ImageConfig::default())
+        .env(&env)
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(&err, PlanError::ShellEnv { reason } if reason.contains("too large")),
+        "{err}"
+    );
 }

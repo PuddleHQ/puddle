@@ -885,7 +885,7 @@ async fn a_scenario_with_a_bad_workspace_fails_to_start() {
         ),
         (
             json!({"name": "a", "repositories": [{"url": "git@x.test:a/b"}]}),
-            "SSH remotes",
+            "ssh remotes",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "https://x.test/a"}], "memory_mib": 1}),
@@ -1926,4 +1926,14 @@ fn the_program_prints_its_help_and_exits_2_on_a_bad_option() {
         String::from_utf8_lossy(&bad.stderr).starts_with("puddle-ui-fixture: "),
         "{bad:?}"
     );
+}
+
+#[tokio::test]
+async fn an_orphan_disk_with_an_address_that_is_not_a_repository_is_refused_with_the_reason() {
+    let running = start(built_in_names()[0]).await;
+    let step: Step =
+        serde_json::from_value(json!({"do": "orphan_volume", "id": "lost", "remote": "a b"}))
+            .unwrap();
+    let err = running.fixture.apply(&step).await.unwrap_err();
+    assert!(err.contains("space"), "{err}");
 }

@@ -64,3 +64,15 @@ async fn no_loginctl_is_unknown() {
         LoginSession::Unknown
     );
 }
+
+#[test]
+fn the_user_id_is_the_one_the_kernel_reports_for_this_process() {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let real: u32 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))
+        .and_then(|ids| ids.split_whitespace().next())
+        .and_then(|id| id.parse().ok())
+        .unwrap();
+    assert_eq!(puddle_secrets::login_user_id(), Some(real));
+}

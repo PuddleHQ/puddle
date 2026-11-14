@@ -175,6 +175,12 @@ fn a_time_is_written_in_utc_to_the_second() {
     assert_eq!(utc(at(951_782_400)), "2000-02-29T00:00:00Z");
     assert_eq!(utc(at(1_794_634_435)), "2026-11-14T05:33:55Z");
     assert_eq!(utc(at(4_102_444_799)), "2099-12-31T23:59:59Z");
+    // The century rules of the calendar: 2100 and 2200 are not leap years, 2400 is.
+    assert_eq!(utc(at(4_107_542_400)), "2100-03-01T00:00:00Z");
+    assert_eq!(utc(at(4_107_628_800)), "2100-03-02T00:00:00Z");
+    assert_eq!(utc(at(7_263_216_000)), "2200-03-01T00:00:00Z");
+    assert_eq!(utc(at(13_574_563_200)), "2400-02-29T00:00:00Z");
+    assert_eq!(utc(at(13_574_649_600)), "2400-03-01T00:00:00Z");
 }
 
 #[test]

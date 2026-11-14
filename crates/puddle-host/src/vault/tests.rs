@@ -305,3 +305,13 @@ async fn shutdown_reports_a_sweep_that_panicked_and_one_that_finished() {
         SweepEnd::Finished
     );
 }
+
+#[test]
+fn a_retry_against_the_real_store_answers_and_leaves_the_problem_matching_it() {
+    // Whatever this computer's credential store does, the problem stands exactly when it refuses.
+    let list = Arc::new(problems());
+    let retry = StoreRetry::new(None, list.clone());
+    let working = retry.retry().expect("the host wires a check");
+    let standing = list.list().iter().any(|p| p.key == STORE_PROBLEM);
+    assert_eq!(standing, !working);
+}

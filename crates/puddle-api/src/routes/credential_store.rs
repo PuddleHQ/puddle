@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Checking the credential store again, so the first-run banner's Retry works without a restart.
 
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 
 use crate::ApiErrorBody;
+use crate::credential_store::CredentialStoreService;
 use crate::error::{ApiError, ErrorCode};
 use crate::routes::AppState;
 use crate::wire::CredentialStoreRetry;
@@ -25,7 +28,14 @@ use crate::wire::CredentialStoreRetry;
 pub(crate) async fn retry_credential_store(
     State(state): State<AppState>,
 ) -> Result<Json<CredentialStoreRetry>, ApiError> {
-    let service = state.credential_store;
+    Ok(Json(retry_within(state.credential_store).await?))
+}
+
+/// The service's answer, taken off the async threads; a service that panics is a 500, one that
+/// has no check is a 503.
+async fn retry_within(
+    service: Arc<dyn CredentialStoreService>,
+) -> Result<CredentialStoreRetry, ApiError> {
     let answer = tokio::task::spawn_blocking(move || service.retry())
         .await
         .map_err(|_| {
@@ -36,7 +46,7 @@ pub(crate) async fn retry_credential_store(
             )
         })?;
     match answer {
-        Some(working) => Ok(Json(CredentialStoreRetry { working })),
+        Some(working) => Ok(CredentialStoreRetry { working }),
         None => Err(ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::Unavailable,
@@ -44,3 +54,6 @@ pub(crate) async fn retry_credential_store(
         )),
     }
 }
+
+#[cfg(test)]
+mod tests;

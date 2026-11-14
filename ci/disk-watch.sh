@@ -130,7 +130,7 @@ stop_step() { # <signal> <step pid>
         case "$own" in *" $pid "*) continue ;; esac
         if [ -n "${DISK_WATCH_KILL:-}" ]; then
             args=$(ps -o args= -p "$pid" 2>/dev/null) || continue
-            printf '%s\n' "$args" | grep -Eq -- "$DISK_WATCH_KILL" || continue
+            grep -Eq -- "$DISK_WATCH_KILL" <<<"$args" || continue
         fi
         kill "-$1" "$pid" 2>/dev/null
     done

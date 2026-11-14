@@ -81,10 +81,7 @@ for f in "$here/../.github/workflows/"*.yml; do
     case $'\n'"$listed"$'\n' in *$'\n'"$n"$'\n'*) ;; *) fail "workflow '$n' runs on a schedule but nightly-signal.yml does not watch it" ;; esac
 done
 
-# Guard for the flake above: under pipefail a pipe into an early-exit grep (-q, -m) in the two nightly scripts is a coin toss.
-early_exit_pipe=$(printf '%s' '\| *(grep|rg|egrep|fgrep) +-[A-Za-z]*[qm]')
-for s in "$here/nightly-issue.sh" "$0"; do
-    hit=$(grep -nE "$early_exit_pipe" "$s" | grep -v 'early_exit_pipe=' | grep -v '^[0-9]*: *#' || true)
-    [ -z "$hit" ] || fail "$(basename "$s") pipes into an early-exit grep (SIGPIPE under pipefail); capture to a variable and use case: $hit"
-done
+# Guard for the flake above: the repo-wide lint covers these two scripts and every other one.
+"$here/../scripts/check-early-exit-pipes.sh" --self-test >/dev/null
+"$here/../scripts/check-early-exit-pipes.sh" >/dev/null
 echo "nightly-issue-test: ok"

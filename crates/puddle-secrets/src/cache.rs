@@ -270,6 +270,7 @@ impl<F: Fetch> SecretCache<F> {
                 }
                 *held = None;
                 if err.needs_sign_in() {
+                    // no listener means nobody to prompt; the error below still reaches the caller
                     let _ = self.events.send(SignInNeeded {
                         source: spec.clone(),
                     });

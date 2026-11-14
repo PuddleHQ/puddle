@@ -390,6 +390,7 @@ impl TlsIdentity {
     pub fn fingerprint(&self) -> String {
         let digest = Sha256::digest(&self.cert_der);
         digest.iter().fold(String::new(), |mut hex, b| {
+            // writing into a `String` cannot fail
             let _ = write!(hex, "{b:02x}");
             hex
         })

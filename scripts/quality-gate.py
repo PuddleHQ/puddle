@@ -365,6 +365,12 @@ def scan(root):
                 add("unwrap", c, f, i, raw[i])
                 if c == "prod" and not (com[i].strip() or (i and com[i - 1].strip() and not code[i - 1].strip())):
                     add("noreason", c, f, i, "unwrap outside tests: no comment saying why it cannot fail | " + raw[i])
+            if re.match(r"\s*let\s+_\s*(?::[^=]*)?=", line):
+                add("let-underscore", c, f, i, raw[i])
+                if (c == "prod" and not re.match(r"\s*let\s+_\s*=\s*[A-Za-z_][\w.]*\s*;", line)
+                        and not any(com[k].strip() for k in range(max(0, i - 3), i + 1))):
+                    add("let-underscore-uncommented", c, f, i, raw[i])
+                    add("noreason", c, f, i, "`let _ =` outside tests: no comment saying why the value may be dropped (STANDARDS section 6) | " + raw[i])
             if re.search(r"\.expect\(", line):
                 add("expect", c, f, i, raw[i])
                 if c == "prod" and re.search(r"\.expect\(\s*\"\s*\"\s*\)", raw[i]):
@@ -940,6 +946,13 @@ fn a() {
     let p = r"C:\";
     unsafe { z() };
 }
+fn d(tx: Tx, unused: u8) {
+    let _ = tx.send(1);
+    // the receiver may be gone
+    let _ = tx.send(2);
+    let _ = unused;
+    let _guard = tx.lock();
+}
 #[allow(clippy::foo)]
 fn b() {}
 #[expect(dead_code, reason = "kept")]
@@ -1382,7 +1395,7 @@ def self_test():
         "unsafe-block.prod": 3, "unwrap.prod": 1, "unwrap.test": 1,
         "allow-attr.prod": 1, "expect-attr.prod": 1,
         "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
-        "noreason.prod": 3,
+        "noreason.prod": 4, "let-underscore.prod": 3, "let-underscore-uncommented.prod": 1,
         "sleep.test": 5, "sleep-fixed.test": 3, "sleep-fixed-uncommented.test": 2, "noreason.test": 3,
         "inline-test-block.test": 1,
         "flake-w3.test": 1,

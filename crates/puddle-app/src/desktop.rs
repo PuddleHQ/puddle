@@ -181,6 +181,7 @@ impl Buttons {
                 true
             }
             CloseAction::Minimize => {
+                // a window the system refuses to minimize stays visible, which the log line below already tells
                 let _ = window.minimize();
                 tracing::info!("there is no tray icon, so the close button minimized the window");
                 true
@@ -194,6 +195,7 @@ impl Buttons {
         let prefs = prefs_or_default(self.settings.as_ref());
         let hide = tray::minimize_action(&prefs, self.tray) == MinimizeAction::HideToTray;
         if hide {
+            // a window that cannot hide stays visible, which is harmless
             let _ = window.hide();
         }
         hide
@@ -392,6 +394,7 @@ fn show_badge<R: Runtime>(
     badge_on: bool,
 ) {
     if let Some(window) = app.get_webview_window(MAIN_LABEL) {
+        // the title is cosmetic; a window that closed meanwhile has nothing to retitle
         let _ = window.set_title(&badge::window_title(count, badge_on));
         #[cfg(windows)]
         {
@@ -399,6 +402,7 @@ fn show_badge<R: Runtime>(
                 let number = badge::overlay_number(count);
                 tauri::image::Image::new_owned(number.rgba, number.size, number.size)
             });
+            // the badge is cosmetic; a window that closed meanwhile has nothing to badge
             let _ = window.set_overlay_icon(overlay);
         }
     }

@@ -545,6 +545,7 @@ jobs:
       # machine never does.
       - name: development certificate in Edge, Chrome and Firefox (trust dialog answered No, then Yes)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        timeout-minutes: 12
         shell: bash
         env:
           PUDDLE_REQUIRE_BROWSER_TRUST: "1"

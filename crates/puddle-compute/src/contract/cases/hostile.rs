@@ -200,6 +200,7 @@ impl HostEndpoint {
                 };
                 let Ok(mut conn) = accepted else { break };
                 let mut buf = Vec::new();
+                // the test only needs the bytes the sink saw; a read that times out or fails ends the wait
                 let _ =
                     tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf)).await;
                 let line = String::from_utf8_lossy(&buf).trim_end().to_owned();
@@ -236,8 +237,10 @@ impl HostEndpoint {
         .await;
         tokio::time::sleep(EXTRA_WAIT).await;
         if let Some(stop) = self.stop.take() {
+            // the sink may have stopped already
             let _ = stop.send(());
         }
+        // a panicked sink task leaves `seen()` empty, which the caller asserts on
         let _ = (&mut self.task).await;
         self.seen()
     }

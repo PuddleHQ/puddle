@@ -208,6 +208,7 @@ impl<R: Runtime> Case<'_, R> {
         if let Ok(dirs) = rt.stale_dirs().await {
             for dir in dirs.iter().filter(|d| mine(d)) {
                 if let Ok(name) = SandboxName::new(dir) {
+                    // best-effort sweep of stale leftovers; the next run sweeps again
                     let _ = rt.remove_stale_dir(&name).await;
                 }
             }
@@ -215,6 +216,7 @@ impl<R: Runtime> Case<'_, R> {
         if let Ok(volumes) = rt.list_volumes().await {
             for v in volumes.iter().filter(|v| mine(&v.name)) {
                 if let Some(name) = v.volume_name() {
+                    // best-effort sweep of stale leftovers; the next run sweeps again
                     let _ = rt.remove_volume(&name).await;
                 }
             }
@@ -223,6 +225,7 @@ impl<R: Runtime> Case<'_, R> {
             for entry in entries.flatten() {
                 if mine(&entry.file_name().to_string_lossy()) {
                     let path = entry.path();
+                    // best-effort sweep of stale leftovers; the next run sweeps again
                     let _ = std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir_all(&path));
                 }
             }

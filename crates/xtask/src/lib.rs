@@ -14,6 +14,8 @@
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
 //! - `release-features`: fails when a test-only feature is on in a shipped program's tree
 //!   ([`features`]).
+//! - `release-pins`: fails when the pin list has no hash a release build needs for a shipped OS
+//!   ([`release_pins`]).
 //! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
 //!   ([`openapi`]); `--check` fails when either committed file is stale (a `scripts/check.sh`
 //!   gate).
@@ -32,8 +34,16 @@ pub mod inventory;
 pub mod notice;
 pub mod openapi;
 pub mod pin;
+pub mod release_pins;
 pub mod source;
 pub mod tools;
+
+// The build script of `puddle-runtime` embeds the expected hashes from the pin list; these two
+// files are its reader and its choice of lines, so `release-pins` asks what the build would embed.
+#[path = "../../puddle-runtime/build/digests.rs"]
+mod digests;
+#[path = "../../puddle-runtime/build/pin_list.rs"]
+mod pin_list;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -79,6 +89,11 @@ commands:
   release-features  fail when a test-only feature (`testing`, `fuzzing`) is on in a shipped program
             --target <triple>      only this target (default: every ship target)
             --offline              no network for cargo
+  release-pins  fail when the pin list has no hash for a file a release ships: such a build
+            starts with no check of the runtime files (`DigestStatus::Unpinned`)
+            --os <windows|linux|all>  shipped OS (default: windows, the OS the installer is for)
+            --tag <tag>            fork tag (default: v<BUILT_FOR>)
+            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256)
   openapi   write crates/puddle-api/openapi/openapi.json and ui/src/lib/api/schema.d.ts
             (needs Node for the types)
             --check                only check that both are current (types skipped without Node
@@ -191,6 +206,9 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
         "release-features" => {
             release_features(&Options::parse(args, &["--target"], &["--offline"])?)
         }
+        "release-pins" => {
+            release_pins_command(&Options::parse(args, &["--os", "--tag", "--pins"], &[])?)
+        }
         "openapi" => openapi_command(&Options::parse(args, &[], &["--check"])?),
         "help" | "--help" | "-h" => Ok(USAGE.to_owned()),
         other => Err(XtaskError::Usage(format!("unknown command {other}"))),
@@ -258,6 +276,29 @@ fn release_features(opts: &Options) -> Result<String> {
             &only
         },
     )
+}
+
+/// The release-pin check ([`release_pins`]): no unhashed runtime file in what ships.
+fn release_pins_command(opts: &Options) -> Result<String> {
+    let built_for = match opts.value("--tag") {
+        Some(tag) => tag.strip_prefix('v').unwrap_or(tag),
+        None => BUILT_FOR,
+    };
+    let oses = match opts.value("--os").unwrap_or("windows") {
+        "all" => vec!["windows", "linux"],
+        name @ ("windows" | "linux") => vec![name],
+        other => {
+            return Err(XtaskError::Usage(format!(
+                "--os is windows, linux or all, not {other}"
+            )));
+        }
+    };
+    let pins_path = opts
+        .value("--pins")
+        .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
+    let pins = std::fs::read_to_string(&pins_path)
+        .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
+    release_pins::check(&pins, built_for, &oses)
 }
 
 /// Puddle's own inventory, computed with cargo-about.

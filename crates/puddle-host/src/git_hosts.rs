@@ -58,6 +58,7 @@ pub(crate) fn ssh_credential_hosts(git: &WorkspaceGit) -> TerminationSet {
         for credential in &identity.credentials {
             for pattern in decrypt_patterns(credential.host.as_str()) {
                 if !pattern.contains('*') {
+                    // `insert` reports only whether the pattern was new
                     let _ = set.insert(&pattern);
                 }
             }

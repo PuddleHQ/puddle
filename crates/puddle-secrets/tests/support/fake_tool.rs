@@ -8,7 +8,7 @@
 //! [credential fill]      <- used when the arguments contain this text; `[]` matches always
 //! exit=0
 //! sleep_ms=0
-//! echo_stdin=1           <- print the standard input first
+//! echo_stdin=1           <- print the standard input first (bytes, as read)
 //! stdout=password=x\n    <- `\n` is a newline
 //! stderr=code\n         <- printed (and flushed) before the sleep, as `gh` prints its prompt
 //! ```
@@ -34,8 +34,9 @@ fn main() {
         std::fs::read_to_string(format!("{}.behaviour", exe.display())).unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let joined = args.join(" ");
-    let mut stdin = String::new();
-    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let mut stdin = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut stdin);
+    let stdin_text = String::from_utf8_lossy(&stdin).into_owned();
 
     let mut log = std::fs::OpenOptions::new()
         .create(true)
@@ -46,7 +47,7 @@ fn main() {
     let _ = writeln!(
         log,
         "ARGS {joined}\nSTDIN {}\nENV GCM_INTERACTIVE={} GIT_TERMINAL_PROMPT={} GIT_ASKPASS={} GH_TOKEN={} GH_PROMPT_DISABLED={}",
-        stdin.replace('\n', "\\n"),
+        stdin_text.replace('\n', "\\n"),
         env("GCM_INTERACTIVE"),
         env("GIT_TERMINAL_PROMPT"),
         env("GIT_ASKPASS"),
@@ -83,7 +84,7 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
     if echo {
-        print!("{stdin}");
+        let _ = std::io::stdout().write_all(&stdin);
     }
     print!("{stdout}");
     let _ = std::io::stdout().flush();

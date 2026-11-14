@@ -64,9 +64,11 @@ on top of {upstream_tag}, each viewable at https://github.com/{fork}/commit/<sha
     } else {
         out.push('\n');
         for c in &facts.commits {
+            // writing into a `String` cannot fail
             let _ = writeln!(out, "  {} {}", c.sha, c.subject);
         }
     }
+    // writing into a `String` cannot fail
     let _ = write!(
         out,
         "

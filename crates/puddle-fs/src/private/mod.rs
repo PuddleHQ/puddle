@@ -208,6 +208,7 @@ pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut out, b| {
+        // writing into a `String` cannot fail
         let _ = write!(out, "{b:02x}");
         out
     })

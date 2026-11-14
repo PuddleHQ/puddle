@@ -89,6 +89,7 @@ fn generation() -> Result<String, StoreError> {
     getrandom::fill(&mut bytes).map_err(|_| StoreError)?;
     Ok(bytes.iter().fold(String::new(), |mut hex, b| {
         use std::fmt::Write as _;
+        // writing into a `String` cannot fail
         let _ = write!(hex, "{b:02x}");
         hex
     }))

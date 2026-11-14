@@ -212,8 +212,10 @@ impl SignIns {
         self.open_while(spec, &start, async move {
             let finish = async {
                 while let Ok(Some(_)) = lines.next_line().await {}
+                // the helper already answered; waiting only reaps it, and its exit status is not used
                 let _ = child.wait().await;
             };
+            // only a grace period for the helper to exit; the timeout changes nothing
             let _ = tokio::time::timeout(window, finish).await;
         });
         Ok(start)
@@ -269,8 +271,10 @@ impl SignIns {
                 }
             };
             let signed_in = outcome.is_ok();
+            // the caller may have stopped waiting; the answer is then not needed
             let _ = tell.send(outcome);
             if let (true, Ok(answer)) = (signed_in, &answer) {
+                // telling git to store the answer is best effort; the sign-in itself already succeeded
                 let _ = run_with(
                     Prompts::Never,
                     Tool::Git,

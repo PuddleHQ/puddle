@@ -78,7 +78,7 @@ pub use vscode::{
 };
 
 /// The stock devcontainer image every VM tier boots first.
-pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:71b6fe7c4e07ec747a94a72b2a17f2f8c286eaa7b1c59862888df764efb8b6c6";
+pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
 
 /// Environment variable naming the directory that holds `msb` and `libkrunfw`.
 pub const RUNTIME_DIR_VAR: &str = "PUDDLE_VM_RUNTIME_DIR";

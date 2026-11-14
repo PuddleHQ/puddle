@@ -387,9 +387,11 @@ pub(crate) async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -
 pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: bool) -> Vec<u8> {
     let mut head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if is_banner(first) {
+        // writing into a `String` cannot fail
         let _ = write!(head, "{PROTOCOL_HEADER}: {SSH}\r\n");
     }
     if from_container {
+        // writing into a `String` cannot fail
         let _ = write!(head, "{ORIGIN_HEADER}: {CONTAINER}\r\n");
     }
     head.push_str("\r\n");

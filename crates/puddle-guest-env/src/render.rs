@@ -375,6 +375,7 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
     let mut command = format!("'{}' connect", agent.replace('\'', "'\\''"));
     if let Some(SocketAddr::V4(bridge)) = settings.container_proxy {
         let [a, b, ..] = bridge.ip().octets();
+        // writing into a `String` cannot fail
         let _ = write!(command, " --local-net {a}.{b}.0.0/16");
     }
     let mut config = format!(

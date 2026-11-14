@@ -66,11 +66,11 @@ puddle-test-kit = { path = "crates/puddle-test-kit" }
 # required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
 # and a release msb refuses it ("missing field `sandbox_slot`"). `ssh` for the in-process
 # SSH server.
-microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.3", default-features = false, features = ["local", "net", "ssh"] }
+microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.4", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
-microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.3", default-features = false }
+microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.4", default-features = false }
 # Only for building the SDK's boot error in tests.
-microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.3", default-features = false }
+microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.4", default-features = false }
 object = { version = "0.41", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
@@ -169,6 +169,8 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # in them: gzip and deflate through flate2 above, Brotli (pure Rust) and zstd (already in the tree
 # through microsandbox's async-compression).
 brotli-decompressor = { version = "6.2", default-features = false, features = ["std"] }
+# Test-only Brotli encoder (pure Rust) to build a Brotli bomb in the answer tests.
+brotli = { version = "8", default-features = false, features = ["std"] }
 # Finds every form of every real value in an answer in one pass; already in the tree through regex.
 aho-corasick = "1.1"
 zstd = { version = "0.14", default-features = false }

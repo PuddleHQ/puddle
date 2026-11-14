@@ -289,6 +289,7 @@ fn stand_in_with(name: &str, random: &[u8; RANDOM_BYTES]) -> Result<String, Stan
     }
     let mut text = format!("puddle-secret-{name}-");
     for byte in random {
+        // writing into a `String` cannot fail
         let _ = write!(text, "{byte:02x}");
     }
     Ok(text)

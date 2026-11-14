@@ -197,10 +197,12 @@ where
     let ending = hub.register(request.workspace);
     tokio::spawn(async move {
         let end = pump(channel, from_page, &to_page, ending, &mut server, &gone).await;
+        // the connection may be gone already; the terminal ends either way
         let _ = handle
             .disconnect(Disconnect::ByApplication, "terminal closed", "en")
             .await;
         server.abort();
+        // the page's receiver is gone when this fails; nobody is left to tell
         let _ = to_page.send(TerminalOutput::Ended(end)).await;
     });
     Ok(TerminalLink { input, output })
@@ -399,6 +401,7 @@ async fn pump<E: std::fmt::Display>(
                     let _ = channel.data_bytes(bytes).await;
                 }
                 Some(TerminalInput::Resize(size)) => {
+                    // a resize on a closing channel fails harmlessly; the loop sees the close next
                     let _ = channel
                         .window_change(u32::from(size.cols()), u32::from(size.rows()), 0, 0)
                         .await;

@@ -399,8 +399,10 @@ pub(crate) fn upstream_head(
         }
     }
     let mut out = format!("{} {target} {}\r\n", head.method, head.version);
+    // writing into a `String` cannot fail
     let _ = write!(out, "Host: {host_header}\r\n");
     if let Some(value) = proxy_authorization {
+        // writing into a `String` cannot fail
         let _ = write!(out, "Proxy-Authorization: {value}\r\n");
     }
     for h in &head.headers {

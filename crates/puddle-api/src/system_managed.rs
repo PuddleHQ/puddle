@@ -4,7 +4,7 @@
 //! or consent change, so the allows follow the choices that justify them.
 
 use puddle_settings::{GlobalSettings, MiseMode, ServerChoice, WorkspaceSettings, mise_mode};
-use puddle_store::{SystemPlan, SystemReason};
+use puddle_store::{MISE_TOOLS_SLUG, SystemPlan, SystemReason};
 use puddle_types::{Problem, WorkspaceId};
 
 use puddle_settings::resolve;
@@ -31,6 +31,8 @@ const DIRECT_SSH_REASONS: [SystemReason; 4] = [
 /// - `mise`: the workspaces with mise on (the global switch and their own), which get the two
 ///   hosts of the pinned download and the version lists.
 ///
+/// - the "mise tools" set is hidden while the global tools switch is off.
+///
 /// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]
 pub(crate) fn plan(
@@ -48,6 +50,10 @@ pub(crate) fn plan(
         ServerChoice::CodeServer => {
             plan.everywhere.insert(SystemReason::CodeServer);
         }
+    }
+    // The managed tools layer's hosts are a built-in set only while the layer is on.
+    if !global.tools.mise() {
+        plan.hidden_sets.insert(MISE_TOOLS_SLUG);
     }
     for workspace in direct_ssh {
         plan.workspaces

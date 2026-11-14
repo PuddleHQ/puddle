@@ -314,6 +314,7 @@ pub trait Policy: Send + Sync {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Option<Decision>, PolicyError> {
+        // this implementation has no opinion, so it reads neither argument
         let _ = (request, suffix_allows);
         Ok(None)
     }

@@ -453,3 +453,44 @@ fn syncing_the_folder_of_a_vault_works_and_a_missing_folder_is_reported() {
     assert!(sync_folder(&dir.path().join("gone").join("vault")).is_err());
     assert!(sync_folder(Path::new("/")).is_err());
 }
+
+#[test]
+fn the_header_source_is_read_without_a_key() {
+    for tag in [
+        KeySourceTag::SystemdHost,
+        KeySourceTag::SystemdHostTpm2,
+        KeySourceTag::KeyFile,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        FileVault::create(&path, key(1), tag).unwrap();
+        assert_eq!(FileVault::header_source(&path), Ok(Some(tag)));
+    }
+}
+
+#[test]
+fn the_header_source_of_a_missing_unknown_or_damaged_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault");
+    assert_eq!(FileVault::header_source(&path), Ok(None));
+    let cases: [(&[u8], VaultError); 5] = [
+        (b"", VaultError::Corrupt),
+        (b"PDLV", VaultError::Corrupt),
+        (b"NOPE\x01\x03", VaultError::NotAVault),
+        (b"PDLV\x09\x03", VaultError::UnknownVersion(9)),
+        (b"PDLV\x01\x63", VaultError::Corrupt),
+    ];
+    for (bytes, expected) in cases {
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(FileVault::header_source(&path), Err(expected), "{bytes:?}");
+    }
+    // A folder where the vault should be is an I/O error, not a missing vault.
+    let folder = dir.path().join("folder");
+    fs::create_dir(&folder).unwrap();
+    assert_eq!(FileVault::header_source(&folder), Err(VaultError::Io));
+    // A path the system refuses to open at all (an embedded NUL, on every OS) is an I/O error too.
+    assert_eq!(
+        FileVault::header_source(Path::new("vault\0name")),
+        Err(VaultError::Io)
+    );
+}

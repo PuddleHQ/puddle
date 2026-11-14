@@ -16,9 +16,9 @@
 // MiniBrowser from WebKitGTK's libexec folder), DRIVER_PORT (default 4455). Run under xvfb-run.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
+import { probeHandler } from "./key-probe-page.mjs";
 
 const driverBin = process.env.WEBKIT_DRIVER ?? "WebKitWebDriver";
 const port = Number(process.env.DRIVER_PORT ?? 4455);
@@ -33,11 +33,7 @@ function check(name, ok, detail = "") {
   if (!ok) failures.push(name);
 }
 
-const page = await readFile(new URL("./terminal-keys.html", import.meta.url));
-const server = createServer((_req, res) => {
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(page);
-});
+const server = createServer(probeHandler);
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const url = `http://127.0.0.1:${server.address().port}/`;
 

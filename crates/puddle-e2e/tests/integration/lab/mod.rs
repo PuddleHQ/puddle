@@ -7,6 +7,7 @@
 )]
 #![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
+pub(crate) mod pull;
 pub(crate) mod registry;
 
 use std::fmt::Write as _;

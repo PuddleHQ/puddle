@@ -624,6 +624,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
             (ws("stray"), [SystemReason::CodeServer].into()),
         ]
         .into(),
+        ..SystemPlan::default()
     };
     store.set_system_managed(&plan).unwrap();
     let scopes = |hosts: Vec<puddle_store::SystemHost>| -> BTreeSet<String> {

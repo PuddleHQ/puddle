@@ -8,3 +8,4 @@ mod fixture_profile;
 mod real_store;
 mod signin;
 mod sources;
+mod vault_key;

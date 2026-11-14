@@ -272,7 +272,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ========================================================================
-@lucide/svelte 1.70.0 (ISC)
+@lucide/svelte 1.71.0 (ISC)
 https://github.com/lucide-icons/lucide.git
 
 ISC License
@@ -320,7 +320,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-@sveltejs/kit 3.1.1 (MIT)
+@sveltejs/kit 3.2.0 (MIT)
 https://github.com/sveltejs/kit.git
 
 Copyright (c) 2020 [these people](https://github.com/sveltejs/kit/graphs/contributors)

@@ -155,6 +155,7 @@ fn grammar_string(u: &mut Unstructured<'_>, text: &str) -> ArbResult<String> {
         } else {
             let mut units = [0u16; 2];
             for unit in ch.encode_utf16(&mut units) {
+                // writing into a `String` cannot fail
                 let _ = write!(out, "\\u{unit:04x}");
             }
         }
@@ -189,6 +190,7 @@ fn grammar_object(
             out.push(',');
         }
         let (a, b, c) = (grammar_space(u)?, grammar_space(u)?, grammar_space(u)?);
+        // writing into a `String` cannot fail
         let _ = write!(out, "{a}\"{key}\"{b}:{c}{value}");
     }
     out.push_str(grammar_space(u)?);

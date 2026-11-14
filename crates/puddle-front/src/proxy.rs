@@ -385,11 +385,13 @@ where
     let (mut server_in, mut server_out) = tokio::io::split(server);
     let up = async {
         let copied = tokio::io::copy(&mut client_in, &mut server_out).await;
+        // the other direction may have closed already; the copy result below is what matters
         let _ = server_out.shutdown().await;
         copied.inspect_err(socket_error)
     };
     let down = async {
         let copied = tokio::io::copy(&mut server_in, &mut client_out).await;
+        // the other direction may have closed already; the copy result below is what matters
         let _ = client_out.shutdown().await;
         copied.inspect_err(socket_error)
     };
@@ -398,9 +400,11 @@ where
     tokio::select! {
         _ = &mut up => {
             drop(open);
+            // only a grace period for the other side to finish; its outcome, or the timeout, changes nothing
             let _ = tokio::time::timeout(LINGER, &mut down).await;
         }
         _ = &mut down => {
+            // only a grace period for the other side to finish; its outcome, or the timeout, changes nothing
             let _ = tokio::time::timeout(LINGER, &mut up).await;
         }
     }

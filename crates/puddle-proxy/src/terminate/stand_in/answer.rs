@@ -362,6 +362,7 @@ fn json(text: &str, style: Json) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(String::with_capacity(text.len() + 8));
     let unit = |code: u16, out: &mut String| {
         use std::fmt::Write as _;
+        // writing into a `String` cannot fail
         let _ = write!(out, "\\u{code:04x}");
     };
     for ch in text.chars() {

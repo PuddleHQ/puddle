@@ -36,6 +36,7 @@ What the product promises its users and never does, which every change keeps:
 Layout, coding and testing rules, coverage thresholds and the workflow for agents and humans:
 [docs/STANDARDS.md](docs/STANDARDS.md).
 Architecture decisions and why: [docs/adr/](docs/adr/README.md).
+Git over SSH remotes, what works and the limits: [docs/git-over-ssh.md](docs/git-over-ssh.md).
 
 ## Contributing
 

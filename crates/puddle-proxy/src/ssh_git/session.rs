@@ -324,6 +324,7 @@ impl Drop for Disconnect {
 }
 
 async fn disconnect(handle: russh::server::Handle) {
+    // the guest may have disconnected first; the session is over either way
     let _ = handle
         .disconnect(
             russh::Disconnect::ByApplication,
@@ -752,6 +753,7 @@ async fn lfs_authenticate(
                 "{{\"href\":\"https://{}{}/info/lfs\"}}\n",
                 repository.host, repository.path
             );
+            // best effort: the guest may have gone away, and the refusal is already logged
             let _ = channel.data_bytes(bytes::Bytes::from(href)).await;
             Finish::ok()
         }
@@ -867,11 +869,13 @@ async fn pump(
     };
     let to_guest = async {
         let copied = tokio::io::copy(&mut from_upstream, &mut out).await;
+        // the guest side may have closed; the copy result is what the caller reports
         let _ = out.flush().await;
         copied
     };
     let mut input = channel.make_reader();
     let from_guest = async {
+        // the guest ending its input is the normal end of a push; only the upstream shutdown matters
         let _ = tokio::io::copy(&mut input, &mut to_upstream).await;
         let _ = to_upstream.shutdown().await;
     };
@@ -908,6 +912,7 @@ async fn end(channel: &Channel<Msg>, finish: Finish) {
             .extended_data_bytes(1, bytes::Bytes::from(line))
             .await;
     }
+    // the guest may have gone away; the channel is finished either way
     let _ = channel.exit_status(finish.status).await;
     let _ = channel.eof().await;
     let _ = channel.close().await;

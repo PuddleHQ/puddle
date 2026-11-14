@@ -385,7 +385,7 @@ impl std::fmt::Debug for FakeRuntime {
 
 impl FakeRuntime {
     /// `mcr.microsoft.com/devcontainers/base:debian`: no ENTRYPOINT, CMD `bash`.
-    pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:71b6fe7c4e07ec747a94a72b2a17f2f8c286eaa7b1c59862888df764efb8b6c6";
+    pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
     /// `docker:dind`: ENTRYPOINT `dockerd-entrypoint.sh`.
     pub const DIND: &'static str = "docker:dind";
     /// `alpine:3`: CMD `/bin/sh`.

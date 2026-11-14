@@ -41,6 +41,8 @@ microsandbox	permanent	pick	fix(vsock): 128 connections per route instead of 256
 microsandbox	candidate	pick	test(vsock): guest writes of 4 to 128 KiB per call arrive intact on a route	regression test for the libkrun multi-descriptor fix
 microsandbox	candidate	pick	fix(agentd): give every guest process a SIGTERM and a grace period at shutdown	generic shutdown bug
 microsandbox	candidate	pick	fix(db): open the catalog's first connection outside the pool's connect timeout	generic catalog bug
+microsandbox	candidate	pick	fix(ssh): start SFTP sessions in the user's home directory	generic SFTP bug (a session starts in / instead of the home directory)
+microsandbox	candidate	pick	fix(ssh): answer zero-length SFTP reads with empty data	generic SFTP bug (a zero-length read fails the transfer)
 microsandbox	permanent	regen	build: version the puddle fork as*	the fork's version commit, regenerated per release
 libkrun	candidate	pick	fix(vsock): return custom stream credit within the guest's window	generic vsock bug; upstream main has since changed the same function
 libkrun	candidate	pick	fix(vsock): forward a guest shutdown only after its buffered bytes	generic vsock bug

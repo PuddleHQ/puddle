@@ -12,6 +12,14 @@
 # `<tag> libkrunfw-linux-tag <release>` takes the tag's Linux firmware from that release of
 # Puddle's libkrunfw fork (PuddleHQ/libkrunfw: the libkrunfw commit the tag pins, with a guest
 # kernel built without /dev/mem) instead of the msb release's; the release's own lines follow.
+v0.7.12-puddle.4 libkrunfw-linux-tag v5.6.1-puddle.1
+v0.7.12-puddle.4 msb-windows-x86_64.exe 0c1cfa959d316a05be2010a6f3e71e4b74c314bf63380a4c63862c42766d3a3d
+v0.7.12-puddle.4 libkrunfw-windows-x86_64.dll a5383db7970f32799087d425a06b1dc9e8dba900fba1ba9e15680b5656a94225
+v0.7.12-puddle.4 agentd-x86_64 4587d2a86975ff1db96d6eabd753860a211184f22b8865ca14107e6f8c16a8cb
+v0.7.12-puddle.4 msb-linux-x86_64 776e752c36412a4b38220fae7a14da393ee16e7273e8d20b5d4510b10764fdf6
+v0.7.12-puddle.4 libkrunfw-linux-x86_64.so 3854efcd3fe625528fa00207d97586d9790db8c436bb6881a43986604336d18e
+v0.7.12-puddle.4 source-commit cea57d2394f90922cec924e11b954019e1dc1345
+v0.7.12-puddle.4 libkrunfw-linux-version 5.6.1
 v0.7.12-puddle.3 libkrunfw-linux-tag v5.6.1-puddle.1
 v5.6.1-puddle.1 libkrunfw-linux-x86_64.so 1924653612efb1f22eb6a355fd35ab074e7d91e1f58417100852d9773ba362e5
 v0.7.12-puddle.3 msb-windows-x86_64.exe f3ed68d92f25da37d09a63835b8f5ffc00cf320c8b1e37f7c8d65eaa532746b0

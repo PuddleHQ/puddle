@@ -291,6 +291,7 @@ async fn download_and_unpack(
         let binary = match installed {
             Ok(binary) => binary,
             Err(err) => {
+                // Best-effort cleanup; the install error below is the one to report.
                 let _ = std::fs::remove_file(&partial);
                 return Err(err);
             }

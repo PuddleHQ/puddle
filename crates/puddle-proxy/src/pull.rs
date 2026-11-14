@@ -106,6 +106,7 @@ impl PullToken {
         let text = bytes
             .iter()
             .fold(String::with_capacity(TOKEN_BYTES * 2), |mut text, b| {
+                // writing into a `String` cannot fail
                 let _ = write!(text, "{b:02x}");
                 text
             });

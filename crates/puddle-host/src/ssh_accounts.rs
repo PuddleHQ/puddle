@@ -81,6 +81,7 @@ fn credential_for(identities: &[Identity], host: &Host) -> Option<SourceSpec> {
             .filter(|credential| {
                 let mut names = TerminationSet::new();
                 for pattern in decrypt_patterns(credential.host.as_str()) {
+                    // `insert` reports only whether the pattern was new
                     let _ = names.insert(&pattern);
                 }
                 names.contains(host)

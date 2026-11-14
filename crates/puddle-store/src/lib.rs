@@ -35,7 +35,9 @@ pub use audit::{
     WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use backup::{BackupInfo, backup_database};
-pub use catalogue::{BUILT_IN_SETS, BuiltInSet, CatalogueEntry, SystemReason, built_in};
+pub use catalogue::{
+    BUILT_IN_SETS, BuiltInSet, CatalogueEntry, MISE_TOOLS_SLUG, SystemReason, built_in,
+};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,

@@ -37,15 +37,18 @@ pub fn login_user_id() -> Option<u32> {
     own_uid()
 }
 
-#[cfg(target_os = "linux")]
+// One function with the platform split inside it, so a mutation run on Linux judges the whole
+// body: a second `#[cfg(not(linux))]` function would be mutated although no test can run it.
 fn own_uid() -> Option<u32> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").ok().map(|m| m.uid())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn own_uid() -> Option<u32> {
-    None
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata("/proc/self").ok().map(|m| m.uid())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 /// [`login_session`] for user `uid`, with a limit for each call.

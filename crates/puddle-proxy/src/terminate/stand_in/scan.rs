@@ -22,7 +22,8 @@
 //! - **Streaming**: a token is a maximal run of letters, digits, `_`, `-` and `.`. The body is
 //!   read piece by piece and only the end of a run that could still grow (and a `refresh_token`
 //!   name waiting for its value) is kept for the next piece, so a token split across pieces is
-//!   found as if the body came in one, and the memory held is at most [`MAX_RUN`] bytes.
+//!   found as if the body came in one, and the memory held is at most [`MAX_KEPT`] bytes: a run,
+//!   or a `refresh_token` name with its separator and the start of its value.
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -47,6 +48,11 @@ use crate::terminate::{Context, ForeignCredentialWarning};
 /// The longest run read as a token: a JSON Web Token is the longest kind, and a longer run is
 /// not one.
 const MAX_RUN: usize = 4096;
+
+/// The most bytes kept between two pieces: the longest run, or a `refresh_token` name, a gap, a
+/// separator and a second gap ahead of a value run that is still growing.
+#[cfg(any(test, feature = "fuzzing"))]
+const MAX_KEPT: usize = REFRESH_FIELD.len() + 2 * MAX_GAP + 1 + MAX_RUN;
 
 /// The most bytes of one answer's body (after decoding) that are read.
 pub(crate) const MAX_SCANNED: usize = 1024 * 1024;
@@ -120,6 +126,9 @@ fn is_jwt(run: &[u8]) -> bool {
 enum Value<'a> {
     /// The value, a run of token characters (possibly none).
     Run(&'a [u8]),
+    /// A run longer than any token: not Puddle's own (a held text is never that long), and not
+    /// kept for the next piece.
+    TooLong,
     /// The text ends before the value is complete: ask again with more.
     Pending,
     /// It is not a field (no separator).
@@ -160,6 +169,9 @@ fn field_value(buf: &[u8], at: usize, end: bool) -> Value<'_> {
         .iter()
         .take_while(|b| is_run_byte(**b))
         .count();
+    if run > MAX_RUN {
+        return Value::TooLong;
+    }
     if at + run == buf.len() && !end {
         return Value::Pending;
     }
@@ -259,6 +271,7 @@ impl TokenScanner {
                             self.refresh = true;
                         }
                     }
+                    Value::TooLong => self.refresh = true,
                     Value::Pending => keep = keep.min(start),
                     Value::NotAField => {}
                 }
@@ -443,23 +456,31 @@ impl Body for ScanBody {
     }
 }
 
-/// The check behind the cargo-fuzz target: the first byte sets a piece size, the rest is an
-/// answer read whole and in pieces of that size, and the two must find the same kinds, each at
-/// most once, while keeping no more than one run between pieces.
-///
-/// # Panics
-///
-/// When they differ, a kind is found twice, or the scanner keeps more than it may.
+/// What the cargo-fuzz target compares: an answer read whole and in pieces.
 #[cfg(feature = "fuzzing")]
-pub(crate) fn check(bytes: &[u8]) {
-    let Some((&first, data)) = bytes.split_first() else {
-        return;
-    };
+pub(crate) struct BothWays {
+    /// The piece size the first byte set.
+    pub(crate) size: usize,
+    /// The kinds the whole answer held, sorted.
+    pub(crate) whole: Vec<&'static str>,
+    /// The kinds the pieces found, in the order found, sorted.
+    pub(crate) split: Vec<&'static str>,
+    /// The most bytes the scanner kept between two pieces.
+    pub(crate) kept: usize,
+    /// The most it may keep.
+    pub(crate) limit: usize,
+}
+
+/// Reads `bytes` for the cargo-fuzz target: the first byte sets a piece size, the rest is an
+/// answer read whole and in pieces of that size. No bytes at all has no piece size: `None`.
+#[cfg(feature = "fuzzing")]
+pub(crate) fn read_both_ways(bytes: &[u8]) -> Option<BothWays> {
+    let (&first, data) = bytes.split_first()?;
     let size = usize::from(first) % 97 + 1;
     // A deterministic stand-in for "Puddle holds this run".
     let holds = |run: &[u8]| run.len().is_multiple_of(2);
     let names = |kinds: &[UnknownTokenKind]| {
-        let mut names: Vec<&str> = kinds.iter().map(|kind| kind.as_str()).collect();
+        let mut names: Vec<&'static str> = kinds.iter().map(|kind| kind.as_str()).collect();
         names.sort_unstable();
         names
     };
@@ -468,15 +489,19 @@ pub(crate) fn check(bytes: &[u8]) {
     whole.extend(one.feed(&[], true, &holds));
     let mut pieces = TokenScanner::default();
     let mut split = Vec::new();
+    let mut kept = 0;
     for piece in data.chunks(size) {
         split.extend(pieces.feed(piece, false, &holds));
-        assert!(pieces.carry.len() <= MAX_RUN, "more than a run was kept");
+        kept = kept.max(pieces.carry.len());
     }
     split.extend(pieces.feed(&[], true, &holds));
-    assert_eq!(names(&whole), names(&split), "pieces of {size}");
-    let mut unique = names(&split);
-    unique.dedup();
-    assert_eq!(unique.len(), split.len(), "a kind was found twice");
+    Some(BothWays {
+        size,
+        whole: names(&whole),
+        split: names(&split),
+        kept,
+        limit: MAX_KEPT,
+    })
 }
 
 /// Whether a body of this `Content-Type` is read: text, JSON, XML, a form or a script, or no

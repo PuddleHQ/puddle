@@ -114,6 +114,12 @@ fn the_answer_token_corpus_reads_the_same_whole_and_in_pieces() {
     for size in 0..=255u8 {
         fuzzing::answer_tokens(&[&[size][..], &long].concat());
     }
+    // A `refresh_token` value still growing when a piece ends is kept with the field's start: the
+    // value of 4083 bytes is where that passed a run's length before the bound allowed for it.
+    let field = [vec![96_u8], b"refresh_token=".to_vec(), vec![b'a'; 4083]].concat();
+    for size in 0..=255u8 {
+        fuzzing::answer_tokens(&[&[size][..], &field].concat());
+    }
 }
 
 #[test]

@@ -725,11 +725,6 @@ describe("staleExclusions", () => {
     expect(staleExclusions(e, files, never, source)).toEqual([]);
   });
 
-  it("keeps an entry for a file the report does not know: nothing says it ran", () => {
-    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
-    expect(staleExclusions(e, files, new Map(), source)).toEqual([]);
-  });
-
   it("keeps an entry whose line the report lists as not executable (code compiled out of this run)", () => {
     const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
     const cov = new Map([["src/a.rs", new Map([[3, 1]])]]);
@@ -872,6 +867,46 @@ describe("staleExclusions", () => {
     expect(
       staleExclusions(entries("src/gone.rs | * | why"), files, never, source),
     ).toHaveLength(1);
+  });
+
+  it("flags an entry whose glob names more than one file", () => {
+    const e = entries("src/*.rs | let excused_line = compute_one()?; | why");
+    const [stale] = staleExclusions(e, files, never, source, [".rs"]);
+    expect(stale?.fails).toBe(true);
+    expect(stale?.why).toBe(
+      "its path glob matches 2 files (src/a.rs, src/b.rs); name the one file",
+    );
+  });
+
+  it("counts only the files of the run's own languages when it names the files", () => {
+    const e = entries("src/* | let excused_line = compute_one()?; | why");
+    const mixed = ["src/a.rs", "src/a.ts"];
+    expect(staleExclusions(e, mixed, never, source, [".rs"])).toEqual([]);
+    expect(
+      staleExclusions(e, mixed, never, source, [".rs", ".ts"]),
+    ).toHaveLength(1);
+  });
+
+  it("flags an entry for a file no report lists, since its lines are never measured", () => {
+    const e = entries("src/b.rs | * | why");
+    const [stale] = staleExclusions(e, files, never, source, [".rs"]);
+    expect(stale?.fails).toBe(true);
+    expect(stale?.why).toBe(
+      "no coverage report lists src/b.rs, so its lines are never measured and cannot fail",
+    );
+  });
+
+  it("only notes it when the report is of some crates (the fast gate)", () => {
+    const e = entries("src/b.rs | * | why");
+    const [stale] = staleExclusions(e, files, never, source, [".rs"], false);
+    expect(stale?.fails).toBe(false);
+  });
+
+  it("leaves an entry of another language to that language's run", () => {
+    const e = entries("src/c.ts | * | why");
+    expect(
+      staleExclusions(e, [...files, "src/c.ts"], never, source, [".rs"]),
+    ).toEqual([]);
   });
 
   it("reads the glob across directories and ignores a file that is not on disk", () => {

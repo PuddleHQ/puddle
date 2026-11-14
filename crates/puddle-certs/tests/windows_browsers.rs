@@ -16,6 +16,7 @@
 //! `PUDDLE_STORE_TESTS` asks for it on a workstation that has the three browsers.
 #![cfg(windows)]
 #![expect(
+    clippy::unwrap_used,
     clippy::panic,
     clippy::print_stderr,
     reason = "a failed setup fails the test"

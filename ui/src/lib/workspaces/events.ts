@@ -12,15 +12,40 @@ export type RepositoriesChanged = Extract<
   Event,
   { type: "workspace_repositories_changed" }
 >;
+export type WorkspaceTools = Extract<Event, { type: "workspace_tools" }>;
+export type ToolsState = WorkspaceTools["state"];
 export type WorkspaceEvent =
   | StatusChanged
   | OomKill
   | DiskNearlyFull
   | WorkspaceProgress
-  | RepositoriesChanged;
+  | RepositoriesChanged
+  | WorkspaceTools;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
+
+const isStrings = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === "string");
+
+/** A tools state whose fields have the right types: the card line prints them. */
+function isToolsState(v: unknown): v is ToolsState {
+  if (!isObject(v)) return false;
+  switch (v["phase"]) {
+    case "installing":
+      return (
+        isStrings(v["tools"]) &&
+        typeof v["done"] === "number" &&
+        typeof v["total"] === "number"
+      );
+    case "ready":
+      return true;
+    case "failed":
+      return isStrings(v["tools"]) && isStrings(v["waiting_on"]);
+    default:
+      return false;
+  }
+}
 
 /** The event if it is one the workspace screens use and its fields have the right types. */
 export function asWorkspaceEvent(raw: unknown): WorkspaceEvent | null {
@@ -44,6 +69,8 @@ export function asWorkspaceEvent(raw: unknown): WorkspaceEvent | null {
         : null;
     case "workspace_repositories_changed":
       return raw as RepositoriesChanged;
+    case "workspace_tools":
+      return isToolsState(raw["state"]) ? (raw as WorkspaceTools) : null;
     default:
       return null;
   }

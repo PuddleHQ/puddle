@@ -18,6 +18,11 @@
 # own file still fails, a canary outside the listed paths fails, and each scope sees exactly the
 # commits it should (a dirty side branch fails `all` and passes `head`).
 #
+# Rule: a canary token and its allowlist entry in .gitleaks.toml land in one commit. A commit
+# that adds the token without the entry fails a scan of that commit under its own config, so it
+# breaks bisect, cherry-picks and a scan of any ref that has the commit but not the later entry.
+# The self-test proves that check (scan_commit) on both shapes of commit.
+#
 # What it can't see: a secret with no recognisable shape (a bare password, a low-entropy value),
 # one only in a stash, a file that never reached a commit, and in `head` scope a secret already
 # in the base (the full CI scan covers it). A pass is a safety net, not proof.
@@ -73,6 +78,17 @@ log_opts() {
 scan() { # <repo dir> <scope> <diff base>: exit 1 when gitleaks reports a finding (it prints each one, secret redacted)
     opts=$(log_opts "$1" "$2" "${3:-}")
     gitleaks git --no-banner --verbose --redact --no-color --exit-code 1 --config "$root/.gitleaks.toml" ${opts:+"--log-opts=$opts"} "$1"
+}
+
+# scan_commit <repo dir> <sha>: scan that one commit under the .gitleaks.toml it holds itself (not
+# today's), so an allowlist entry added by a later commit does not count. Exit 1 on a finding.
+scan_commit() {
+    own_dir=$(mktemp -d)
+    git -C "$1" show "$2:.gitleaks.toml" >"$own_dir/c.toml" 2>/dev/null || cp "$root/.gitleaks.toml" "$own_dir/c.toml"
+    rc=0
+    gitleaks git --no-banner --redact --no-color --exit-code 1 --config "$own_dir/c.toml" "--log-opts=$2^!" "$1" >/dev/null 2>&1 || rc=$?
+    rm -rf "$own_dir"
+    return "$rc"
 }
 
 if [ "${1:-}" != "--self-test" ]; then
@@ -145,6 +161,26 @@ expect fail other-token-in-log-canary-file crates/puddle-proxy/tests/terminate_s
 expect fail log-canary-token-outside-listed-path src/app.rs "const T: &str = \"$canary_token\";"
 expect fail token-in-listed-file crates/puddle-proxy/tests/integration/route.rs "let t = \"$token\";"
 expect fail canary-outside-listed-paths src/lib.rs '    password: "CANARY-s3cret".into(),'
+
+# Canary and allowlist entry in one commit. The fixture config lists the canary token for its path.
+canary_config() { # <with|without>: a minimal config, with the allowlist entry or without it
+    printf 'title = "fixture"\n[extend]\nuseDefault = true\n'
+    if [ "$1" = with ]; then
+        printf '[[allowlists]]\ncondition = "AND"\npaths = [%s]\nregexTarget = "match"\nregexes = [%s]\n' \
+            "'''^src/canary\\.rs\$'''" "'''$canary_token'''"
+    fi
+}
+git init -q "$tmp/pair"
+canary_config without >"$tmp/pair/.gitleaks.toml"
+commit_file pair src/canary.rs "const T: &str = \"$canary_token\";"
+only_canary=$(git -C "$tmp/pair" rev-parse HEAD)
+git init -q "$tmp/both"
+canary_config with >"$tmp/both/.gitleaks.toml"
+commit_file both src/canary.rs "const T: &str = \"$canary_token\";"
+both=$(git -C "$tmp/both" rev-parse HEAD)
+verdict() { if scan_commit "$1" "$2"; then echo pass; else echo fail; fi; }
+same commit-with-canary-only "fail" "$(verdict "$tmp/pair" "$only_canary")"
+same commit-with-canary-and-entry "pass" "$(verdict "$tmp/both" "$both")"
 
 # Scope. A repo whose base (origin/develop) is clean, with a dirty commit on a side branch.
 make_repo side README.md 'clean base'

@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, Limits, MAX_REQUEST_RULES, ManualClock, NewRequestRule, Store,
     StoreError,
@@ -29,6 +30,9 @@ fn fixture() -> (Arc<CollectingSink>, Store) {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(T0)), Limits::default())
         .unwrap()
         .with_events(sink.clone());
+    for name in ["empty", "other", "shop"] {
+        own(&store, &sb(name));
+    }
     (sink, store)
 }
 
@@ -44,7 +48,12 @@ fn new_rule(workspace: Option<&str>, host: &str, methods: &[&str], path: &str) -
 
 fn records(store: &Store) -> Vec<Value> {
     store
-        .audit_query_every_user(&AuditFilter::default(), AuditCursor::After(0), 1000)
+        .audit_query_every_user(
+            &puddle_store::testing::all_users(),
+            &AuditFilter::default(),
+            AuditCursor::After(0),
+            1000,
+        )
         .unwrap()
         .into_iter()
         .map(|(_, line)| serde_json::from_str(&line).unwrap())
@@ -78,7 +87,9 @@ fn a_rule_is_kept_with_its_own_numbering_and_listed_by_scope() {
     assert_eq!(global.created_by, Actor::Api);
     assert_eq!(changed(&sink), 3, "each change tells running workspaces");
 
-    let all = store.request_rules_every_user().unwrap();
+    let all = store
+        .request_rules_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert_eq!(all.len(), 3);
     let for_shop: Vec<i64> = store
         .request_rules_for(&sb("shop"))
@@ -158,7 +169,13 @@ fn deleting_a_rule_is_recorded_with_who_did_it() {
     let gone = store.delete_request_rule(rule.id, Actor::Cli).unwrap();
     assert_eq!(gone.id, rule.id);
     assert_eq!(changed(&sink), 1);
-    assert_eq!(store.request_rules_every_user().unwrap().len(), 0);
+    assert_eq!(
+        store
+            .request_rules_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        0
+    );
     let log = records(&store);
     assert_eq!(log[0]["type"], "request_rule_created");
     assert_eq!(log[1]["type"], "request_rule_deleted");
@@ -186,7 +203,9 @@ fn deleting_a_workspace_takes_its_rules_and_keeps_the_global_ones() {
     drop(sink.take());
     store.delete_workspace(&sb("shop")).unwrap();
     assert_eq!(changed(&sink), 1, "one notice for the workspace's rules");
-    let left = store.request_rules_every_user().unwrap();
+    let left = store
+        .request_rules_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].host, "g.example.com");
     let log = records(&store);
@@ -257,7 +276,9 @@ fn a_row_that_cannot_be_read_back_is_reported_as_corrupt_and_not_dropped() {
         conn.execute(&format!("UPDATE request_rules SET {damage}"), [])
             .unwrap();
         let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
-        let err = store.request_rules_every_user().unwrap_err();
+        let err = store
+            .request_rules_every_user(&puddle_store::testing::all_users())
+            .unwrap_err();
         assert!(
             matches!(&err, StoreError::Corrupt { table: "request_rules", id: 1, reason } if reason.contains(said)),
             "{damage}: {err:?}"
@@ -312,6 +333,11 @@ fn a_column_of_the_wrong_type_is_an_error_for_the_listing_and_never_a_guess() {
         ))
         .unwrap();
         let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
-        assert!(store.request_rules_every_user().is_err(), "{column}");
+        assert!(
+            store
+                .request_rules_every_user(&puddle_store::testing::all_users())
+                .is_err(),
+            "{column}"
+        );
     }
 }

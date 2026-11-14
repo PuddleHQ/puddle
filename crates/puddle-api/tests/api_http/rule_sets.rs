@@ -9,7 +9,9 @@ use puddle_api::SettingsRepo as _;
 
 use crate::common::{Api, start};
 
+/// What the rules decide for a request of the owner's workspace `workspace`.
 fn decide(api: &Api, workspace: &str, host: &str) -> Decision {
+    api.own(workspace);
     api.store
         .decide(
             &EgressRequest::new(

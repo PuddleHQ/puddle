@@ -1,19 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The company-network bars on Windows (the Windows half of the corporate-network acceptance
 # battery), by hand on any branch (`gh workflow run company-network-windows.yml --ref <branch>`):
-#   1. the end-to-end tests over the private-access stand-in (puddle-e2e `private_access`, with the four
-#      company-network ones): toggle off refuses `toggle:company_network`, toggle on needs an exact allow;
-#   2. `vm_company_network_*` and `vm_radar_company_network_*` in a real microVM on WHP: the guest's
-#      curl, git, npm and dotnet restore with the toggle off and on, and the intranet refused off and
-#      served on. The radar half calls live package mirrors, so it never runs per pull request.
-# It runs on GitHub's windows-2025 runner, never on a developer's machine (Defender ASR rule). A
-# runner without a usable hypervisor fails the job here: this workflow exists to run the VM bars.
+# `vm_company_network_*` and `vm_radar_company_network_*` in a real microVM on WHP: the guest's
+# curl, git, npm and dotnet restore with the toggle off and on, and the intranet refused off and
+# served on. The radar half calls live package mirrors, so it never runs per pull request.
+# It runs on GitHub's windows-2025 runner, never on a developer's machine (Defender ASR rule).
+# The end-to-end tests over the stand-in (puddle-e2e `private_access`) are unix-only and run in the
+# Linux jobs. A runner without a usable hypervisor fails this job: it exists to run the VM bars.
 name: company-network-windows
 
 on:
   workflow_dispatch:
-  push:
-    branches: [task/t-1623]
 
 permissions:
   contents: read
@@ -66,9 +63,6 @@ jobs:
       - name: guest agent (static musl build)
         shell: bash
         run: echo "PUDDLE_AGENT_BIN=$(cygpath -w "$PWD/$(ci/build-agent.sh --locked)")" >> "$GITHUB_ENV"
-      - name: end-to-end bars over the stand-in (private_access) (toggle off refused, toggle on served)
-        shell: bash
-        run: cargo nextest run -p puddle-e2e --locked --no-fail-fast -E 'test(/private_access::/)' --no-tests=fail
       - name: VM bars and the real-tool battery (toggle off, then on)
         shell: bash
         timeout-minutes: 50

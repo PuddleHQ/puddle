@@ -96,10 +96,23 @@ impl PrivateAccess {
         self.web.root()
     }
 
-    /// The `CONNECT` targets the tunnel carried (`host:port`).
+    /// Every `CONNECT` target the tunnel carried (`host:port`), whatever host it names. The host
+    /// under test also downloads on its own (mise's setup after the first start) through the same
+    /// tunnel, so a test that counts what the tunnel carried uses [`Self::carried_to`] instead; a
+    /// guard test (`company_proxy_counting.rs`) rejects the unfiltered call in the VM tests.
     #[must_use]
     pub fn carried(&self) -> Vec<String> {
         self.tunnel.connects()
+    }
+
+    /// The `CONNECT` targets the tunnel carried for the host `name` only (`name:port`).
+    #[must_use]
+    pub fn carried_to(&self, name: &str) -> Vec<String> {
+        let prefix = format!("{name}:");
+        self.carried()
+            .into_iter()
+            .filter(|c| c.starts_with(&prefix))
+            .collect()
     }
 
     /// The requests the intranet site answered.

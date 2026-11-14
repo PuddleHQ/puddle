@@ -1022,6 +1022,7 @@ fn m8_the_hidden_state_is_stored_and_a_repeated_plan_changes_nothing() {
     let path = dir.path().join("store.db");
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open(&path, clock.clone(), Limits::default()).unwrap();
+    own(&store, &sb("a"));
     store
         .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
         .unwrap();

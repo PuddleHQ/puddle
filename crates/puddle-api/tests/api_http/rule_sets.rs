@@ -513,3 +513,71 @@ async fn mise_hosts_follow_the_two_switches() {
     assert!(!decide(&api, "tools", "mise-versions.jdx.dev").is_allow());
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_mise_tools_set_is_hidden_while_the_global_tools_switch_is_off() {
+    let api = start().await;
+    let ids = |list: &Value| -> Vec<String> {
+        list["sets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let switch = "/api/rule-sets/builtin:mise-tools/switch";
+    // On by default (the layer is on): listed, ships off, switches on.
+    let list = api.get("/api/rule-sets").await.json();
+    let set = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "builtin:mise-tools")
+        .unwrap()
+        .clone();
+    assert_eq!(set["default_on"], false);
+    assert_eq!(set["global"], Value::Null);
+    let reply = api
+        .send("PUT", switch, Some(&json!({"enabled": true})))
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(decide(&api, "box", "nodejs.org").is_allow());
+
+    // Off: gone from the list, decides nothing, 409 on its switch.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let list = api.get("/api/rule-sets").await.json();
+    assert!(!ids(&list).contains(&"builtin:mise-tools".to_owned()));
+    assert!(!decide(&api, "box", "nodejs.org").is_allow());
+    let reply = api
+        .send("PUT", switch, Some(&json!({"enabled": false})))
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+
+    // On again: back as the user left it (switched on).
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let list = api.get("/api/rule-sets").await.json();
+    let set = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "builtin:mise-tools")
+        .unwrap()
+        .clone();
+    assert_eq!(set["global"], true);
+    assert!(decide(&api, "box", "nodejs.org").is_allow());
+    api.running.shutdown().await;
+}

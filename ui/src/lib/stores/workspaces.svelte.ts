@@ -11,9 +11,11 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import {
   asWorkspaceEvent,
+  type ToolsState,
   type WorkspaceEvent,
 } from "#lib/workspaces/events.ts";
 import {
+  isDown,
   operationOfStep,
   sortWorkspaces,
   type DeleteCheck,
@@ -97,6 +99,8 @@ export class WorkspaceStore {
   loadError = $state<string | null>(null);
   progress = $state.raw<Record<string, Progress>>({});
   oom = $state.raw<Record<string, OomEvent>>({});
+  /** The last `workspace_tools` state of each workspace that is up; the record has no field for it. */
+  tools = $state.raw<Record<string, ToolsState>>({});
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -197,8 +201,16 @@ export class WorkspaceStore {
           return;
         }
         this.#put({ ...w, status: event.status });
+        // Nothing installs in a workspace that is down, and the next start tells afresh.
+        if (isDown(event.status) && id in this.tools) {
+          const { [id]: _gone, ...rest } = this.tools;
+          this.tools = rest;
+        }
         return;
       }
+      case "workspace_tools":
+        this.tools = { ...this.tools, [id]: event.state };
+        return;
       case "workspace_repositories_changed":
         // The list of repositories is part of the record: read it again.
         void this.refresh();

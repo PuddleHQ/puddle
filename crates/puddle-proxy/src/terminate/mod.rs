@@ -116,7 +116,7 @@ pub(crate) mod h1 {
 }
 pub use set::{PatternError, TerminationSet};
 #[cfg(feature = "fuzzing")]
-pub(crate) use stand_in::{BothWays, read_both_ways};
+pub(crate) use stand_in::read_both_ways;
 pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyField, BodyFormat, FieldKind, TokenBody, TokenBodyError};
 

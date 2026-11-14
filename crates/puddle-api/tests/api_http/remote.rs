@@ -429,7 +429,7 @@ async fn a_front_whose_record_moves_is_followed_while_the_api_serves() {
         .lock()
         .unwrap()
         .insert("puddle.example.org", vec![new]);
-    tokio::time::sleep(std::time::Duration::from_secs(70)).await;
+    tokio::time::sleep(Duration::from_secs(70)).await;
     assert!(
         blocked(new),
         "the new address is blocked after the next lookup"

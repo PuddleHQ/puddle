@@ -58,9 +58,9 @@ pub(crate) use answer::{
     ANSWER_WITHHELD, NotScrubbed, ScrubBody, ScrubNotes, answer_encoding_refusal,
     answer_failed_refusal, limit_accept_encoding, scrub_answer,
 };
-pub(crate) use scan::{AnswerReport, ScanBody, scan_answer};
 #[cfg(feature = "fuzzing")]
-pub(crate) use scan::{BothWays, read_both_ways};
+pub(crate) use scan::read_both_ways;
+pub(crate) use scan::{AnswerReport, ScanBody, scan_answer};
 
 /// The shortest stand-in accepted. A short one would match inside ordinary header text and swap
 /// it.

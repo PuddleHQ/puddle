@@ -34,6 +34,7 @@ tracing = { workspace = true }
 # The tests record their workspaces' users through `puddle_store::testing`.
 puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
+puddle-upstream = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 puddle-boot = { workspace = true }

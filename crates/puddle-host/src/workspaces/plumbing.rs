@@ -128,6 +128,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
                 disk_warned: Mutex::new(BTreeSet::new()),
+                tools: super::tools::ToolRuns::default(),
             }),
         };
         service.note_names(&service.state());

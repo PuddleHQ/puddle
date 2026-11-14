@@ -17,7 +17,6 @@ crates/puddle-front/src/proxy.rs | fn socket_error(err: &std::io::Error) {\ntrac
 crates/puddle-front/src/proxy.rs | let (Ok(client), Ok(server)) = tokio::join!(client_upgrade, server_upgrade) else {\nreturn; | the closing line of the failure branch listed just above it; the reason there applies
 crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor connection ended with an error"); | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the line only logs
 crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor socket ended with an error"); | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the line only logs
-crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor socket ended with an error");\n}\n}\n}\n});\n} | the closing line of the failure branch listed just above it; the reason there applies
 crates/puddle-front/src/proxy.rs | tracing::warn!(%workspace, error = %why, "the editor's secret key could not be made"); | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
 crates/puddle-front/src/proxy.rs | tracing::warn!(%workspace, error = %why, "the editor's secret key could not be made");\ntext( | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
 crates/puddle-front/src/server.rs | Ok(accepted) => accepted,\nErr(err) => { | the closing line of the failure branch listed just above it; the reason there applies

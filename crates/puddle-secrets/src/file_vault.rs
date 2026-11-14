@@ -31,7 +31,7 @@
 //! later format gets a new number and the old one stays readable.
 
 use std::fs;
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
@@ -227,6 +227,38 @@ impl FileVault {
         vault.source = loaded.source;
         vault.vault_id = loaded.vault_id;
         Ok(vault)
+    }
+
+    /// The key source the vault at `path` names in its header, read without any key; `None` when
+    /// there is no vault. The byte is not vouched for until a key opens the vault (it is part of
+    /// the key check's additional data), so a start uses it to pick where to look for the key and
+    /// to refuse a different source, never to trust the vault.
+    ///
+    /// # Errors
+    /// [`VaultError::NotAVault`], [`VaultError::UnknownVersion`], [`VaultError::Corrupt`] (cut
+    /// short, or a source byte this program does not know) or [`VaultError::Io`].
+    pub fn header_source(path: &Path) -> Result<Option<KeySourceTag>, VaultError> {
+        let mut head = Vec::with_capacity(6);
+        match fs::File::open(path) {
+            Ok(file) => file
+                .take(6)
+                .read_to_end(&mut head)
+                .map_err(|_| VaultError::Io)?,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(VaultError::Io),
+        };
+        let mut at = Reader(&head);
+        if at.take(4)? != MAGIC {
+            return Err(VaultError::NotAVault);
+        }
+        let version = u8::from_be_bytes(at.array()?);
+        if version != VERSION {
+            return Err(VaultError::UnknownVersion(version));
+        }
+        let tag = u8::from_be_bytes(at.array()?);
+        KeySourceTag::from_byte(tag)
+            .map(Some)
+            .ok_or(VaultError::Corrupt)
     }
 
     /// Where the key that sealed this vault came from, as its header says.

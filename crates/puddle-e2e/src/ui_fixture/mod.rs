@@ -32,12 +32,14 @@ use puddle_api::{
     RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
     WorkspaceRecord, check_repositories, entry_id_from_text,
 };
+use puddle_api::{NoNames, PublicHost, Remote, RemoteServing};
 use puddle_netpolicy::StaticSignals;
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
     SignInStart, SourceError, Tool,
 };
 use puddle_settings::GLOBAL_SCHEMA_VERSION;
+use puddle_store::AccountSecrets;
 use puddle_store::{
     Actor, Clock, IdentityId, Limits, ManualClock, NewRequestRule, NewRule, Pattern, RepoRef,
     Scope, Store, UserId,
@@ -65,7 +67,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 16] = [
+const BUILT_IN: [(&str, &str); 17] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -125,6 +127,10 @@ const BUILT_IN: [(&str, &str); 16] = [
     (
         "environment",
         include_str!("../../../../ui/e2e/fixtures/environment.json"),
+    ),
+    (
+        "multi-user",
+        include_str!("../../../../ui/e2e/fixtures/multi-user.json"),
     ),
     (
         "request-rules",
@@ -199,8 +205,14 @@ struct State {
     ports: Arc<FakePorts>,
     /// Every workspace's learned pass-through hosts: none until a step says so.
     learned: Arc<FakeLearned>,
+    /// The sign-in secrets of a multi-user scenario, kept so that a restart of the API reuses them
+    /// (the store hands them out once).
+    account_secrets: Option<Arc<AccountSecrets>>,
     api: Option<RunningApi>,
 }
+
+/// The public name a multi-user scenario's API answers to besides the loopback address.
+const MULTI_USER_HOST: &str = "puddle.example.org";
 
 /// A running fixture: the API, its fakes and the scenario that seeded them.
 pub struct Fixture {
@@ -261,6 +273,11 @@ impl Fixture {
         let doctor = Arc::new(FakeDoctor::new());
         let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
+        let account_secrets = if scenario.multi_user {
+            Some(sign_in_secrets(&store)?)
+        } else {
+            None
+        };
         let state = State {
             store,
             clock,
@@ -277,6 +294,7 @@ impl Fixture {
             problems,
             ports: Arc::new(FakePorts::new()),
             learned: Arc::new(FakeLearned::new()),
+            account_secrets,
             api: None,
         };
         state.seed(scenario)?;
@@ -310,13 +328,20 @@ impl Fixture {
             .with_learned(state.learned.clone() as Arc<dyn LearnedService>)
             .with_terminals(Arc::new(FakeTerminals::new()))
             .with_proxy_sign_ins(state.proxy_sign_ins.clone() as Arc<dyn ProxySignInService>);
-            match ApiServer::bind(
-                ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
-                self.token.clone(),
-                services,
-            )
-            .await
-            {
+            let mut config = ApiConfig::with_port(self.port.load(Ordering::SeqCst));
+            let mut services = services;
+            if let Some(secrets) = &state.account_secrets {
+                // Sign-in and the admin screen exist only on a public name: the desktop window's
+                // token on the loopback address is still the owner.
+                let host = PublicHost::parse(MULTI_USER_HOST).map_err(|err| err.to_string())?;
+                let serving =
+                    RemoteServing::new(vec![host], None).map_err(|err| err.to_string())?;
+                config.remote = Some(Remote::new(serving));
+                config.multi_user = true;
+                services = services.with_front_resolver(Arc::new(NoNames));
+                services.account_secrets = Some(secrets.clone());
+            }
+            match ApiServer::bind(config, self.token.clone(), services).await {
                 Ok(server) => {
                     self.port
                         .store(server.local_addr().port(), Ordering::SeqCst);
@@ -1364,6 +1389,17 @@ fn workspace(name: &str) -> Result<WorkspaceId, String> {
     WorkspaceId::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
 }
 
+/// The store hands its sign-in secrets out once; a second taker is told so.
+fn sign_in_secrets(store: &Store) -> Result<Arc<AccountSecrets>, String> {
+    store
+        .take_account_secrets()
+        .map(Arc::new)
+        .ok_or_else(|| "the store's sign-in secrets were taken already".to_owned())
+}
+
 fn host(name: &str) -> Result<Host, String> {
     Host::parse_normalised(name).map_err(|err| format!("host {name:?}: {err}"))
 }
+
+#[cfg(test)]
+mod tests;

@@ -37,6 +37,12 @@ vi.mock("#lib/stores/network-health.svelte.ts", () => ({
   networkHealth: health,
 }));
 
+const admin = vi.hoisted(() => ({
+  available: false,
+  probe: vi.fn(async () => undefined),
+}));
+vi.mock("#lib/stores/admin.svelte.ts", () => ({ admin }));
+
 import Layout from "../../routes/+layout.svelte";
 import ErrorPage from "../../routes/+error.svelte";
 import { ssr, prerender } from "../../routes/+layout.ts";
@@ -59,6 +65,8 @@ beforeEach(() => {
   // The desktop window: the shell hands the page its token, so there is nothing to sign in to.
   (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__ = { token: "shell" };
   session.mode = "local";
+  admin.available = false;
+  admin.probe.mockClear();
   localStorage.clear();
   delete document.documentElement.dataset["theme"];
   // The theme is one object for the whole file: read the (now empty) storage so every test starts on "system".
@@ -71,7 +79,7 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-  it("lists the six sections and marks the current one", () => {
+  it("lists the sections an owner of a single-user Puddle sees and marks the current one", () => {
     url.pathname = "/rules/abc";
     render(Sidebar);
     const links = screen.getAllByRole("link");
@@ -93,6 +101,18 @@ describe("Sidebar", () => {
     expect(
       screen.getByRole("navigation", { name: "Main" }),
     ).toBeInTheDocument();
+  });
+
+  it("lists Admin last, only where the server has an admin screen for the viewer", () => {
+    admin.available = true;
+    url.pathname = "/admin";
+    render(Sidebar);
+    const links = screen.getAllByRole("link").map((l) => l.textContent?.trim());
+    expect(links.at(-1)).toBe("Admin");
+    expect(screen.getByRole("link", { name: "Admin" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("shows the pending badge with an accessible name, only when there is something pending", () => {
@@ -158,6 +178,8 @@ describe("root layout", () => {
     expect(theme.choice).toBe("light");
     expect(live.start).toHaveBeenCalledTimes(1);
     expect(health.start).toHaveBeenCalledTimes(1);
+    // The sidebar asks once whether there is an admin screen to list.
+    expect(admin.probe).toHaveBeenCalledTimes(1);
     // The notice watcher and the build guard each listen to the shell's stream.
     expect(live.subscribe).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();

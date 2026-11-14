@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use puddle_ssh_agent::filter::{AllowedKeys, Context, Filter, Outcome};
+use puddle_ssh_agent::filter::{AllowedKeys, Context, Disapproval, Filter, Outcome};
 use puddle_ssh_agent::kex::{KexObserver, SeenExchange};
 use puddle_ssh_agent::wire::MAX_MESSAGE;
 use puddle_ssh_agent::{AgentEndpoint, AgentError, Identity};
@@ -45,6 +45,35 @@ pub trait HostAgent: Send + Sync {
     ///
     /// Whatever the agent fails with.
     fn sign(&self, key: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>, AgentError>;
+}
+
+/// What Puddle does around the filter: the first-use question and the audit record of
+/// each outcome. Both run on a blocking thread.
+pub trait AgentGate: Send + Sync {
+    /// Whether the user lets `workspace` sign for `key` at `host`. It may wait for the user's
+    /// answer; the guest's `ssh` waits with it.
+    ///
+    /// # Errors
+    ///
+    /// Why the answer is not a yes.
+    fn approve(&self, workspace: &WorkspaceId, host: &str, key: &[u8]) -> Result<(), Disapproval>;
+    /// What one request on `workspace`'s agent stream came to; `host` is the one the stream is
+    /// bound to, once it is.
+    fn record(&self, workspace: &WorkspaceId, host: Option<&str>, outcome: &Outcome);
+}
+
+/// A gate that says yes to every question and records nothing, for tests of what lies behind it.
+#[cfg(feature = "testing")]
+#[derive(Debug, Clone, Copy)]
+pub struct ApproveEverything;
+
+#[cfg(feature = "testing")]
+impl AgentGate for ApproveEverything {
+    fn approve(&self, _: &WorkspaceId, _: &str, _: &[u8]) -> Result<(), Disapproval> {
+        Ok(())
+    }
+
+    fn record(&self, _: &WorkspaceId, _: Option<&str>, _: &Outcome) {}
 }
 
 /// The agent at an endpoint, asked with a time limit per request.
@@ -90,6 +119,7 @@ struct Seen {
 /// The filtered agent of every workspace: the host's agent and the sessions seen so far.
 pub struct SshAgents {
     agent: Arc<dyn HostAgent>,
+    gate: Arc<dyn AgentGate>,
     seen: Mutex<Vec<Seen>>,
     next_id: AtomicU64,
 }
@@ -101,11 +131,12 @@ impl std::fmt::Debug for SshAgents {
 }
 
 impl SshAgents {
-    /// The filtered agent in front of `agent`.
+    /// The filtered agent in front of `agent`, with `gate` asking the user and keeping the record.
     #[must_use]
-    pub fn new(agent: Arc<dyn HostAgent>) -> Self {
+    pub fn new(agent: Arc<dyn HostAgent>, gate: Arc<dyn AgentGate>) -> Self {
         Self {
             agent,
+            gate,
             seen: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(0),
         }
@@ -221,6 +252,10 @@ impl Context for StreamContext {
         self.agents.agent.list()
     }
 
+    fn approve(&self, host: &str, key: &[u8]) -> Result<(), Disapproval> {
+        self.agents.gate.approve(&self.workspace, host, key)
+    }
+
     fn sign(&self, key: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>, AgentError> {
         self.agents.agent.sign(key, data, flags)
     }
@@ -261,6 +296,9 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         };
         let answered = tokio::task::spawn_blocking(move || {
             let (answer, outcome) = filter.answer(&message, &cx);
+            cx.agents
+                .gate
+                .record(&cx.workspace, filter.host(), &outcome);
             (filter, answer, outcome)
         })
         .await;
@@ -286,7 +324,7 @@ fn log(workspace: &WorkspaceId, host: Option<&str>, outcome: &Outcome) {
         Outcome::Listed(keys) => {
             tracing::debug!(workspace = %workspace, host, keys, "ssh agent keys listed");
         }
-        Outcome::Signed(family) => {
+        Outcome::Signed { family, .. } => {
             tracing::info!(workspace = %workspace, host, key = family, "ssh agent signed a login");
         }
     }

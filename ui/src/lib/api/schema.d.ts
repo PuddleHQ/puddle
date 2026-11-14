@@ -1212,6 +1212,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ssh-agent-asks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The first-use questions of the filtered agent that wait for the user, most recent first: a
+         *     workspace's `ssh` is logging in to a host the agent is on for, with a key no answer covers yet.
+         *     Only the caller's own workspaces' questions are listed.
+         */
+        get: operations["list_asks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces": {
         parameters: {
             query?: never;
@@ -1871,6 +1892,27 @@ export interface paths {
         get: operations["get_ssh_agent"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/ssh-agent-asks/{ask}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answers a first-use question: sign this once (for the logins waiting now), until the workspace
+         *     stops, or until the agent is turned off for the host; or do not sign. The workspace's `ssh`,
+         *     which waits, goes on at once.
+         */
+        post: operations["answer_ask"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3368,6 +3410,11 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "repo_lists_changed";
+        } | {
+            /** @enum {string} */
+            type: "ssh_agent_asks_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "workspace_git_changed";
@@ -5319,6 +5366,58 @@ export interface components {
             /** @description The subject's common name, when readable. */
             subject: string | null;
         };
+        /**
+         * @description How the user answers a first-use question.
+         * @enum {string}
+         */
+        SshAgentAnswerKind: "once" | "run" | "always" | "deny";
+        /** @description The user's answer to a first-use question. */
+        SshAgentAnswerRequest: {
+            /** @description What the user decided. */
+            answer: components["schemas"]["SshAgentAnswerKind"];
+        };
+        /** @description The open questions of the filtered SSH agent, most recent first. */
+        SshAgentAskList: {
+            /** @description The questions that wait for an answer. */
+            asks: components["schemas"]["SshAgentAskView"][];
+        };
+        /**
+         * @description A question the filtered SSH agent has put to the user and that waits for an answer:
+         *     the workspace's `ssh` is logging in to `host` and the agent would sign with `key`.
+         */
+        SshAgentAskView: {
+            /**
+             * Format: int64
+             * @description How many requests the question stands for.
+             */
+            attempts: number;
+            /** @description The key's SHA-256 fingerprint (`SHA256:...`, as `ssh-keygen -l` prints it). */
+            fingerprint: string;
+            /**
+             * Format: int64
+             * @description Epoch ms of the first request.
+             */
+            first_seen: number;
+            /**
+             * @description The host the login is for: a normalised name or an IP address. Untrusted (the guest
+             *     names it): escape it when rendering.
+             */
+            host: string;
+            /**
+             * Format: int64
+             * @description Question id, never reused.
+             */
+            id: number;
+            /** @description The key's type, such as `ssh-ed25519`. */
+            key_type: string;
+            /**
+             * Format: int64
+             * @description Epoch ms of the latest request.
+             */
+            last_seen: number;
+            /** @description The workspace whose `ssh` is waiting. */
+            workspace: components["schemas"]["WorkspaceId"];
+        };
         /** @description Which keys a host may use. */
         SshAgentHostRequest: {
             /**
@@ -5738,7 +5837,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired" | "root_disk_grown";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -11340,6 +11439,62 @@ export interface operations {
             };
         };
     };
+    list_asks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the open questions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshAgentAskList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     list_workspaces: {
         parameters: {
             query?: never;
@@ -14599,6 +14754,87 @@ export interface operations {
             };
             /** @description no such workspace */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    answer_ask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description question id */
+                ask: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SshAgentAnswerRequest"];
+            };
+        };
+        responses: {
+            /** @description answered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or no such question in it (one dropped as the workspace stopped, or answered long ago, is gone) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description already answered */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

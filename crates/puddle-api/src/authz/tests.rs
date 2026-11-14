@@ -600,6 +600,15 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         global_request_rule,
         token: stored_token,
     } = owners_things(&pair).await;
+    // The owner's SSH agent waits for a first-use answer.
+    pair.store
+        .start_ssh_agent_ask(
+            &ws(&box_id),
+            "owners.example",
+            "SHA256:owners",
+            "ssh-ed25519",
+        )
+        .unwrap();
 
     let mut checked = 0;
     for (method, path) in operations() {
@@ -628,7 +637,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 53, "routes that name a resource");
+    assert_eq!(checked, 54, "routes that name a resource");
 
     // The routes of a user's own collections name the resource by an id the store looks up for
     // the principal: the owner's answer exactly as ids nobody has.
@@ -825,7 +834,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         })
         .map(|(_, path)| path)
         .collect();
-    assert_eq!(lists.len(), 13, "{lists:?}");
+    assert_eq!(lists.len(), 14, "{lists:?}");
     for path in &lists {
         let (status, body) = send(ann, token, "GET", path, None).await;
         // The devices list answers 503 here: this server has no sign-in.
@@ -846,6 +855,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
     for path in [
         "/api/workspaces",
         "/api/pending",
+        "/api/ssh-agent-asks",
         "/api/rules",
         "/api/request-rules",
         "/api/audit",

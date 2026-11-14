@@ -133,6 +133,20 @@ pub enum StoreError {
     /// A workspace has the SSH agent on for as many hosts as it may.
     #[error("at most {0} hosts may use the SSH agent in one workspace")]
     TooManySshAgentHosts(usize),
+    /// A workspace has as many SSH agent questions open as it may.
+    #[error("at most {0} SSH agent questions may wait in one workspace")]
+    TooManySshAgentAsks(usize),
+    /// No SSH agent question has this id in this workspace.
+    #[error("no SSH agent question {0}")]
+    UnknownSshAgentAsk(i64),
+    /// The SSH agent question was already answered.
+    #[error("SSH agent question {id} is already {state}")]
+    SshAgentAskNotOpen {
+        /// The question.
+        id: i64,
+        /// Where it is.
+        state: &'static str,
+    },
     /// No rule on method and path has this id.
     #[error("no rule on method and path {0}")]
     UnknownRequestRule(i64),

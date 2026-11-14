@@ -161,3 +161,151 @@ async fn an_unknown_workspace_is_not_found_and_a_workspace_has_a_limit_of_hosts(
     assert_eq!(over.status, 422, "{}", over.body);
     assert!(over.body.contains("at most 100 hosts"), "{}", over.body);
 }
+
+const FINGERPRINT: &str = "SHA256:Cccccccccccccccccccccccccccccccccccccccc+/9";
+
+/// A guest's login to `host` with the key waits as a question, as the host's gate puts it.
+fn ask(api: &Api, workspace: &str, host: &str) -> i64 {
+    match api
+        .store
+        .start_ssh_agent_ask(
+            &puddle_types::WorkspaceId::new(workspace).unwrap(),
+            host,
+            FINGERPRINT,
+            "ssh-ed25519",
+        )
+        .unwrap()
+    {
+        puddle_store::SshAgentAskStart::Open(id) => id,
+        puddle_store::SshAgentAskStart::Granted => panic!("a grant answered"),
+    }
+}
+
+async fn asks(api: &Api) -> Value {
+    let reply = api.send("GET", "/api/ssh-agent-asks", None).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    reply.json()
+}
+
+#[tokio::test]
+async fn a_question_the_agent_puts_is_listed_with_who_asks_and_which_key() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    assert_eq!(asks(&api).await, json!({"asks": []}));
+    let id = ask(&api, "shop", "build.example.com");
+    let listed = asks(&api).await;
+    assert_eq!(
+        listed["asks"],
+        json!([{
+            "id": id,
+            "workspace": "shop",
+            "host": "build.example.com",
+            "key_type": "ssh-ed25519",
+            "fingerprint": FINGERPRINT,
+            "first_seen": listed["asks"][0]["first_seen"],
+            "last_seen": listed["asks"][0]["last_seen"],
+            "attempts": 1
+        }])
+    );
+}
+
+#[tokio::test]
+async fn an_answer_ends_the_question_and_always_leaves_a_grant_that_stops_later_ones() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let id = ask(&api, "shop", "build.example.com");
+    let url = format!("/api/workspaces/shop/ssh-agent-asks/{id}/answer");
+    let done = api
+        .send("POST", &url, Some(&json!({"answer": "always"})))
+        .await;
+    assert_eq!(done.status, 204, "{}", done.body);
+    assert_eq!(asks(&api).await, json!({"asks": []}));
+    let granted = api
+        .store
+        .start_ssh_agent_ask(
+            &puddle_types::WorkspaceId::new("shop").unwrap(),
+            "build.example.com",
+            FINGERPRINT,
+            "ssh-ed25519",
+        )
+        .unwrap();
+    assert_eq!(granted, puddle_store::SshAgentAskStart::Granted);
+    let again = api
+        .send("POST", &url, Some(&json!({"answer": "deny"})))
+        .await;
+    assert_eq!(again.status, 409, "{}", again.body);
+}
+
+#[tokio::test]
+async fn an_answer_names_one_of_four_and_a_question_of_another_workspace_is_not_found() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    workspace(&api, "lab").await;
+    let id = ask(&api, "shop", "build.example.com");
+    for (path, body, status) in [
+        (
+            format!("/api/workspaces/shop/ssh-agent-asks/{id}/answer"),
+            json!({"answer": "maybe"}),
+            422,
+        ),
+        (
+            format!("/api/workspaces/shop/ssh-agent-asks/{id}/answer"),
+            json!({}),
+            422,
+        ),
+        (
+            format!("/api/workspaces/lab/ssh-agent-asks/{id}/answer"),
+            json!({"answer": "once"}),
+            404,
+        ),
+        (
+            "/api/workspaces/shop/ssh-agent-asks/999/answer".to_owned(),
+            json!({"answer": "once"}),
+            404,
+        ),
+        (
+            format!("/api/workspaces/nothere/ssh-agent-asks/{id}/answer"),
+            json!({"answer": "once"}),
+            404,
+        ),
+    ] {
+        let reply = api.send("POST", &path, Some(&body)).await;
+        assert_eq!(reply.status, status, "{path}: {}", reply.body);
+    }
+    assert_eq!(asks(&api).await["asks"].as_array().unwrap().len(), 1);
+    for answer in ["once", "run", "deny"] {
+        let id = ask(&api, "lab", &format!("{answer}.example.com"));
+        let reply = api
+            .send(
+                "POST",
+                &format!("/api/workspaces/lab/ssh-agent-asks/{id}/answer"),
+                Some(&json!({"answer": answer})),
+            )
+            .await;
+        assert_eq!(reply.status, 204, "{answer}: {}", reply.body);
+    }
+}
+
+#[tokio::test]
+async fn turning_the_agent_off_for_a_host_takes_its_questions_off_the_list() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let put = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/ssh-agent/build.example.com",
+            Some(&json!({})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    ask(&api, "shop", "build.example.com");
+    let off = api
+        .send(
+            "DELETE",
+            "/api/workspaces/shop/ssh-agent/build.example.com",
+            None,
+        )
+        .await;
+    assert_eq!(off.status, 204, "{}", off.body);
+    assert_eq!(asks(&api).await, json!({"asks": []}));
+}

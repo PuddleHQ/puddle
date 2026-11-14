@@ -120,3 +120,244 @@ fn a_new_agent_reads_the_auth_sock_of_its_process() {
     let made = SettingsAgent::new(None);
     assert_eq!(made.auth_sock, std::env::var_os("SSH_AUTH_SOCK"));
 }
+
+mod gate {
+    use puddle_ssh_agent::testing::TestKey;
+    use puddle_store::{Limits, ManualClock, SshAgentAnswer, SshAgentAskState};
+
+    use super::*;
+
+    fn ws(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
+    }
+
+    fn store() -> Arc<Store> {
+        Arc::new(
+            Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap(),
+        )
+    }
+
+    /// A gate that waits up to `wait` and looks every millisecond.
+    fn gate(store: &Arc<Store>, wait: Duration, refusal_every: Duration) -> Arc<StoreGate> {
+        Arc::new(StoreGate::with_timing(
+            Arc::clone(store),
+            wait,
+            Duration::from_millis(1),
+            refusal_every,
+        ))
+    }
+
+    fn answer_when_asked(
+        store: &Arc<Store>,
+        answer: SshAgentAnswer,
+    ) -> std::thread::JoinHandle<()> {
+        let store = Arc::clone(store);
+        std::thread::spawn(move || {
+            let mut waited = 0;
+            // flake-ok: a fake user polling for the question the code under test opens.
+            while waited < 5_000 {
+                if let Some(ask) = store.open_ssh_agent_asks(None, None).unwrap().first() {
+                    store
+                        .answer_ssh_agent_ask(&ask.workspace, ask.id, answer, Actor::Ui)
+                        .unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+                waited += 1;
+            }
+            panic!("no question was put");
+        })
+    }
+
+    fn audit(store: &Store) -> Vec<String> {
+        store
+            .audit_lines(0, 100)
+            .unwrap()
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect()
+    }
+
+    #[test]
+    fn a_first_use_waits_for_the_users_answer_then_signs() {
+        let store = store();
+        let gate = gate(&store, Duration::from_secs(5), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        let user = answer_when_asked(&store, SshAgentAnswer::Once);
+        assert_eq!(gate.approve(&ws("a"), "h.example.com", &key), Ok(()));
+        user.join().unwrap();
+        let ask = store
+            .ssh_agent_ask(1)
+            .unwrap()
+            .expect("the question is kept for a while");
+        assert_eq!(ask.state, SshAgentAskState::AllowedOnce);
+        assert_eq!(ask.host, "h.example.com");
+        assert_eq!(ask.key_type, "ssh-ed25519");
+        assert_eq!(ask.fingerprint, TestKey::ed25519(2).fingerprint());
+    }
+
+    #[test]
+    fn a_no_is_a_refusal_and_an_always_stops_the_questions() {
+        let store = store();
+        let gate = gate(&store, Duration::from_secs(5), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        let user = answer_when_asked(&store, SshAgentAnswer::Deny);
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Denied)
+        );
+        user.join().unwrap();
+        let user = answer_when_asked(&store, SshAgentAnswer::Always);
+        assert_eq!(gate.approve(&ws("a"), "h.example.com", &key), Ok(()));
+        user.join().unwrap();
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Ok(()),
+            "a standing yes asks nothing"
+        );
+        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    }
+
+    #[test]
+    fn no_answer_in_time_leaves_the_question_open_for_a_later_try() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unanswered)
+        );
+        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap().len(), 1);
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unanswered)
+        );
+        assert_eq!(
+            store.open_ssh_agent_asks(None, None).unwrap()[0].attempts,
+            2,
+            "the second try joined the question"
+        );
+    }
+
+    #[test]
+    fn a_workspace_that_stops_while_a_login_waits_ends_the_wait() {
+        let store = store();
+        let gate = gate(&store, Duration::from_secs(30), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        let stopper = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                // flake-ok: a fake stop, once the question the code under test opens is there.
+                while store.open_ssh_agent_asks(None, None).unwrap().is_empty() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                store.end_ssh_agent_run(Some(&ws("a"))).unwrap();
+            })
+        };
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unanswered)
+        );
+        stopper.join().unwrap();
+    }
+
+    #[test]
+    fn something_that_is_not_a_key_is_never_asked_about() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", b"junk"),
+            Err(Disapproval::Unavailable)
+        );
+        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    }
+
+    #[test]
+    fn a_new_gate_clears_what_an_earlier_run_left() {
+        let store = store();
+        let key = TestKey::ed25519(2).blob();
+        let first = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        let user = answer_when_asked(&store, SshAgentAnswer::Run);
+        assert_eq!(first.approve(&ws("a"), "h.example.com", &key), Ok(()));
+        user.join().unwrap();
+        let _second = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        let third = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        assert_eq!(
+            third.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unanswered),
+            "the run grant of the earlier run is gone"
+        );
+    }
+
+    #[test]
+    fn a_signature_and_a_refusal_are_written_to_the_audit_log_and_listing_is_not() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::from_secs(60));
+        let w = ws("a");
+        gate.record(&w, Some("h.example.com"), &Outcome::Listed(2));
+        gate.record(
+            &w,
+            Some("h.example.com"),
+            &Outcome::Bound("h.example.com".into()),
+        );
+        gate.record(&w, None, &Outcome::Refused(Refusal::NotBound));
+        assert_eq!(audit(&store), Vec::<String>::new());
+        gate.record(
+            &w,
+            Some("h.example.com"),
+            &Outcome::Signed {
+                family: "ed25519",
+                fingerprint: "SHA256:abc".into(),
+            },
+        );
+        gate.record(
+            &w,
+            Some("h.example.com"),
+            &Outcome::Refused(Refusal::SshSig),
+        );
+        let lines = audit(&store);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("ssh_agent_signed"), "{}", lines[0]);
+        assert!(
+            lines[0].contains("signed a login to h.example.com with ed25519 key SHA256:abc"),
+            "{}",
+            lines[0]
+        );
+        assert!(lines[1].contains("ssh_agent_refused"), "{}", lines[1]);
+        assert!(lines[1].contains("an SSHSIG signature"), "{}", lines[1]);
+        assert!(lines[1].contains("\"outcome\":\"failed\""), "{}", lines[1]);
+    }
+
+    #[test]
+    fn the_same_refusal_is_written_once_a_minute_and_each_signature_is_written() {
+        let store = store();
+        let w = ws("a");
+        let hold = gate(&store, Duration::from_millis(30), Duration::from_secs(60));
+        for _ in 0..5 {
+            hold.record(&w, Some("h"), &Outcome::Refused(Refusal::SshSig));
+        }
+        hold.record(&w, Some("h"), &Outcome::Refused(Refusal::Extension));
+        hold.record(&ws("b"), Some("h"), &Outcome::Refused(Refusal::SshSig));
+        assert_eq!(audit(&store).len(), 3, "one per workspace and cause");
+        let none = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        let before = audit(&store).len();
+        none.record(&w, Some("h"), &Outcome::Refused(Refusal::SshSig));
+        none.record(&w, Some("h"), &Outcome::Refused(Refusal::SshSig));
+        assert_eq!(audit(&store).len(), before + 2, "with no hold, every one");
+    }
+
+    #[test]
+    fn many_distinct_refusals_do_not_grow_the_memory_without_bound() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        for n in 0..(REFUSALS_REMEMBERED * 2) {
+            gate.record(
+                &ws("a"),
+                Some("h"),
+                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+            );
+        }
+        let len = gate.refused.lock().unwrap().len();
+        assert!(len <= REFUSALS_REMEMBERED, "{len}");
+    }
+}

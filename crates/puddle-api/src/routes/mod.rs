@@ -313,6 +313,8 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::get_learned_limits,
             interception::put_learned_limits
         ))
+        .routes(routes!(ssh_agent::list_asks))
+        .routes(routes!(ssh_agent::answer_ask))
         .routes(routes!(ssh_agent::get_ssh_agent))
         .routes(routes!(
             ssh_agent::put_ssh_agent_host,

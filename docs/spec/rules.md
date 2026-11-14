@@ -304,7 +304,13 @@ readable as JSONL (one record per line).
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
   `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
   `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
-  at boot; `detail` names the file and what was done).
+  at boot; `detail` names the file and what was done) and three for the filtered SSH agent:
+  `ssh_agent_signed` (actor `system`: it signed a login, `detail` names the host, the key family and the
+  key's fingerprint), `ssh_agent_refused` (actor `system`, outcome `failed`: it refused a request, `detail`
+  says why; the same refusal of one workspace is written once a minute, and a key list asked before a
+  session bind, which every `ssh` that does not bind sends, is not written) and `ssh_agent_answered` (the
+  user's answer to the first-use question, actor `cli`, `ui` or `api`; `detail` says which of "allowed once",
+  "allowed run", "allowed always" or "denied", for which key and host).
   A create or a delete is written whether it worked or not; a start or a stop only when it failed
   (a start that worked shows in the workspace's state); a rename when it worked, or when the
   workspace list could not be saved; the identity and repository changes, a new order of the identities included, when they worked. A call

@@ -75,7 +75,7 @@
 </script>
 
 <svelte:head>
-  <title>{documentTitle(page.url.pathname, live.pending)}</title>
+  <title>{documentTitle(page.url.pathname, live.open)}</title>
 </svelte:head>
 
 {#if session.mode === "checking"}

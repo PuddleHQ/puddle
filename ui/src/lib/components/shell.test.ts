@@ -15,6 +15,10 @@ vi.mock("$app/state", () => ({
 
 const live = vi.hoisted(() => ({
   pending: 0,
+  asks: 0,
+  get open() {
+    return this.pending + this.asks;
+  },
   problem: null as null | "unauthorized" | "unreachable" | "failing",
   problemDetail: null as string | null,
   streamError: null as string | null,

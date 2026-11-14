@@ -484,6 +484,15 @@ fn a_repository_list_change_carries_only_the_workspace() {
 }
 
 #[test]
+fn a_change_to_the_ssh_agent_questions_carries_only_the_workspace() {
+    let event = Event::SshAgentAsksChanged { workspace: name() };
+    let json = r#"{"type":"ssh_agent_asks_changed","workspace":"box"}"#;
+    assert_eq!(serde_json::to_string(&event).unwrap(), json);
+    assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+    assert_eq!(event.workspace(), Some(&name()));
+}
+
+#[test]
 fn shell_init_events_have_fixed_shapes() {
     for (event, json) in [
         (
@@ -550,6 +559,7 @@ fn openapi_schema_is_the_tagged_union() {
             "request_rules_changed",
             "identities_changed",
             "repo_lists_changed",
+            "ssh_agent_asks_changed",
             "workspace_git_changed",
             "global_env_changed",
             "workspace_env_changed",

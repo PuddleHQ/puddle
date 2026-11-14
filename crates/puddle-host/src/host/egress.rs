@@ -304,9 +304,12 @@ impl Egress {
                 .unwrap_or_else(|| Arc::new(TcpPortProbe::default())),
         )
         // On for no host until the user turns it on for one; the hosts are each workspace's.
-        .with_ssh_agent(Arc::new(SshAgents::new(Arc::new(
-            crate::ssh_agent::SettingsAgent::new(Some(Arc::clone(settings))),
-        ))));
+        .with_ssh_agent(Arc::new(SshAgents::new(
+            Arc::new(crate::ssh_agent::SettingsAgent::new(Some(Arc::clone(
+                settings,
+            )))),
+            Arc::new(crate::ssh_agent::StoreGate::new(connections.store().clone())),
+        )));
         if let Some(resolver) = &options.resolver {
             proxy = proxy.with_resolver(Arc::clone(resolver));
         }

@@ -325,6 +325,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     .workspaces
                     .sync(gated.ungated(), &record.id)
                     .await?;
+                // The new checkout may ask for tools of its own.
+                self.set_up_tools_later(&record.id);
             }
             Err(puddle_workspace::WorkspaceError::Clone { reason, .. }) => {
                 let listed = self.state().slots.get(&record.id).is_some_and(|s| {

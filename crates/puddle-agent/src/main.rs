@@ -35,6 +35,7 @@ fn main() -> ExitCode {
         }
         Command::Connect(request) => connect(&request),
         Command::MiseFetch(request) => mise_fetch(&request),
+        Command::MiseInstall(request) => mise_install(&request),
         Command::Usage(msg) => {
             eprintln!("{msg}");
             ExitCode::from(2)
@@ -93,6 +94,37 @@ fn mise_fetch(request: &puddle_agent::mise::Request) -> ExitCode {
         }
         Err(err) => {
             eprintln!("{err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `mise-install`: prints the report the host reads; exit code 1, with the reason as the last
+/// line on standard error, when a tool is still missing or mise could not be asked.
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "CLI output: the host reads this subcommand's output"
+)]
+fn mise_install(request: &puddle_agent::mise_install::Request) -> ExitCode {
+    use puddle_agent::mise_install::{SystemMise, config_folders, run};
+    let report = run(
+        &SystemMise::new(request.binary()),
+        &config_folders(&request.root),
+        request.report_only,
+    );
+    print!("{}", report.render());
+    match report.error {
+        None if report.failed.is_empty() => ExitCode::SUCCESS,
+        None => {
+            eprintln!(
+                "mise did not install {}",
+                report.failed.iter().cloned().collect::<Vec<_>>().join(", ")
+            );
+            ExitCode::FAILURE
+        }
+        Some(error) => {
+            eprintln!("{error}");
             ExitCode::FAILURE
         }
     }

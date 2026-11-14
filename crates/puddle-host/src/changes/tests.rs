@@ -62,6 +62,13 @@ impl Changes for Fake {
     async fn all_shell_inits_changed(&self) {
         self.calls.lock().unwrap().push("all shell init".to_owned());
     }
+
+    fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool) {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("pending {workspace} {id} {allowed}"));
+    }
 }
 
 async fn calls_after(fake: &Fake, want: usize) -> Vec<String> {
@@ -141,6 +148,34 @@ async fn a_change_to_a_shell_init_reaches_the_workspace_it_names() {
         workspace: WorkspaceId::new("beta").unwrap(),
     });
     assert_eq!(calls_after(&fake, 1).await, ["shell init alpha"]);
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_closed_pending_request_reaches_the_workspace_it_names_saying_whether_it_was_allowed() {
+    let hub = EventHub::default();
+    let fake = Fake::default();
+    let task = follow(hub.subscribe(), fake.clone());
+    for (id, state) in [
+        (1, PendingEnd::Allowed),
+        (2, PendingEnd::Denied),
+        (3, PendingEnd::Expired),
+    ] {
+        hub.emit(Event::PendingClosed {
+            workspace: WorkspaceId::new("alpha").unwrap(),
+            id,
+            state,
+            rule_id: None,
+        });
+    }
+    assert_eq!(
+        calls_after(&fake, 3).await,
+        [
+            "pending alpha 1 true",
+            "pending alpha 2 false",
+            "pending alpha 3 false"
+        ]
+    );
     task.abort();
 }
 

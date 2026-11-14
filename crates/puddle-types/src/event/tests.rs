@@ -574,6 +574,7 @@ fn openapi_schema_is_the_tagged_union() {
             "oom_kill",
             "disk_nearly_full",
             "workspace_progress",
+            "workspace_tools",
             "pending_opened",
             "pending_updated",
             "pending_closed",

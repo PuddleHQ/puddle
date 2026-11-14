@@ -413,3 +413,125 @@ async fn vm_radar_an_own_deny_on_the_mise_host_gives_a_problem_and_a_done_start(
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
+
+const NODE_PIN: &str = "22.23.5";
+const JAVA_PIN: &str = "temurin-21.0.13+9.0.LTS";
+
+/// Matches the `workspace_tools` event of `ws` in `phase`.
+fn tools_in(
+    ws: &puddle_types::WorkspaceId,
+    phase: &'static str,
+) -> impl Fn(&serde_json::Value) -> bool {
+    let ws = ws.to_string();
+    move |e| {
+        e.get("type").and_then(|t| t.as_str()) == Some("workspace_tools")
+            && e.get("workspace").and_then(|w| w.as_str()) == Some(ws.as_str())
+            && e.pointer("/state/phase").and_then(|p| p.as_str()) == Some(phase)
+    }
+}
+
+/// Stops and starts `ws`, returning once the start ended.
+async fn restart(api: &Api, events: &mut support::Events, ws: &puddle_types::WorkspaceId) {
+    api.post(&format!("/api/workspaces/{ws}/stop"), "").await;
+    events
+        .until(support::ended(ws.as_str()), Duration::from_mins(2))
+        .await;
+    api.post(&format!("/api/workspaces/{ws}/start"), "").await;
+    let end = events
+        .until(support::ended(ws.as_str()), Duration::from_mins(5))
+        .await;
+    assert_eq!(
+        end.get("step").and_then(|s| s.as_str()),
+        Some("done"),
+        "{end}"
+    );
+}
+
+/// Plan M-5: after a start Puddle installs what the root `mise.toml` asks for (node and a JDK),
+/// in the background, reporting progress until "ready"; the JDK trusts Puddle's CAs; a second
+/// start finds nothing missing, runs no install and makes no connection to a tool host.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_tools_install_after_the_start_and_a_second_start_installs_nothing() {
+    let net = web_internet(&[], WebOptions::default(), named_id_options()).await;
+    let vm = start_vm_host_platform("miseinst", net.options.clone(), &net.platform, |_| {}).await;
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let mut events = api.events().await;
+    let ws = create_workspace_from(&vm, &api, "miseinst", HOSTS, json!({})).await;
+    // Nothing asks for a tool yet: the download, then "ready" with no install.
+    events
+        .until(tools_in(&ws, "ready"), Duration::from_mins(3))
+        .await;
+    let (code, out) = run(
+        &vm,
+        &ws,
+        "config",
+        &format!(
+            "printf '[tools]\\nnode = \"{NODE_PIN}\"\\njava = \"{JAVA_PIN}\"\\n' > /workspaces/{ws}/mise.toml && cat /workspaces/{ws}/mise.toml"
+        ),
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+
+    restart(&api, &mut events, &ws).await;
+    let installing = events
+        .until(tools_in(&ws, "installing"), Duration::from_mins(2))
+        .await;
+    assert_eq!(installing["state"]["total"], 2, "{installing}");
+    events
+        .until(tools_in(&ws, "ready"), Duration::from_mins(15))
+        .await;
+    assert_eq!(tools_problem(&api, &ws).await, None);
+    let (code, out) = run(
+        &vm,
+        &ws,
+        "node",
+        &format!("cd /workspaces/{ws} && node --version"),
+    )
+    .await;
+    assert!(code == 0 && out.contains(&format!("v{NODE_PIN}")), "{out}");
+    // The trust step ran for the new JDK: its cacerts holds Puddle's CAs.
+    let (code, out) = run(
+        &vm,
+        &ws,
+        "jdk-trust",
+        &format!(
+            "k=$(ls /workspaces/{ws}/.puddle/mise/data/installs/java/*/bin/keytool | head -1); \
+             echo \"puddle_cas=$(\"$k\" -list -cacerts -storepass changeit 2>/dev/null | grep -c '^puddle-')\""
+        ),
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert_ne!(
+        field(&out, "puddle_cas="),
+        "0",
+        "the JDK does not trust Puddle's CAs: {out}"
+    );
+    assert!(asked_for(&vm, &ws).is_empty(), "{:?}", asked_for(&vm, &ws));
+
+    let name = ws.to_string();
+    let before = connections(&api, &name).await;
+    let seen = events.seen.len();
+    restart(&api, &mut events, &ws).await;
+    events
+        .until(tools_in(&ws, "ready"), Duration::from_mins(3))
+        .await;
+    let since: Vec<_> = events
+        .seen
+        .iter()
+        .skip(seen)
+        .filter(|e| tools_in(&ws, "installing")(e))
+        .collect();
+    assert!(since.is_empty(), "the second start installed: {since:?}");
+    let made = made_between(&before, &connections(&api, &name).await);
+    let tool_hosts: Vec<_> = made
+        .keys()
+        .filter(|h| HOSTS.iter().any(|t| h.starts_with(t)))
+        .collect();
+    assert!(
+        tool_hosts.is_empty(),
+        "the second start reached tool hosts: {made:?}"
+    );
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}

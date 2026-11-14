@@ -184,7 +184,7 @@ fn config_folders_are_the_root_and_the_checkouts_with_a_mise_file() {
     );
     std::fs::remove_file(root.join("mise.toml")).unwrap();
     assert_eq!(config_folders(root).first(), Some(&root.join("api")));
-    assert!(config_folders(&root.join("absent")).is_empty());
+    assert_eq!(config_folders(&root.join("absent")), Vec::<PathBuf>::new());
 }
 
 #[cfg(unix)]

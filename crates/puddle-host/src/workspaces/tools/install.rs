@@ -222,13 +222,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     async fn missing_tools(&self, name: &WorkspaceId) -> Option<Report> {
         let outcome = self.mise_install(name, true, REPORT_TIMEOUT).await?;
         match outcome {
-            Ok(out) => match parse_report(&out.stdout_text()) {
-                Some(report) => Some(report),
-                None => {
+            Ok(out) => {
+                let report = parse_report(&out.stdout_text());
+                if report.is_none() {
                     tracing::warn!(workspace = %name, code = out.status.code, stderr = %out.stderr_text().trim(), "the guest's report of missing tools was not readable");
-                    None
                 }
-            },
+                report
+            }
             Err(e) => {
                 tracing::warn!(workspace = %name, error = %e, "the guest was not asked which tools are missing");
                 None

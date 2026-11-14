@@ -16,6 +16,7 @@ mod dropped_requests;
 #[path = "fake_host/tools_install.rs"]
 mod tools_install;
 
+use std::fmt::Write as _;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -253,7 +254,10 @@ impl Guest {
 
     fn answer(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> Option<ExecOutput> {
         let second = r.args.get(1).map(String::as_str);
-        if let Some(answer) = self.answer_volume_question(r) {
+        if let Some(answer) = self
+            .answer_volume_question(r)
+            .or_else(|| self.answer_tools(r))
+        {
             return Some(answer);
         }
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
@@ -268,9 +272,6 @@ impl Guest {
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
             ("sh", _) if second.is_some_and(|s| s.contains("mktemp")) => "shell-init-check",
-            ("/puddle/puddle-agent", Some("mise-fetch")) => "mise-fetch",
-            ("/puddle/puddle-agent", Some("mise-install")) => "mise-install",
-            ("sh", Some(puddle_certs::JAVA_STEP_PATH)) => "java-trust",
             ("fstrim", _) => "trim",
             ("git", _) => "clone",
             ("sync", _) => "sync",
@@ -303,12 +304,6 @@ impl Guest {
                 ExecOutput::new(0, "", "")
             }
             "shell-init-check" => self.answer_shell_init_check(ctx, r),
-            "mise-fetch" => self.answer_mise_fetch(r),
-            "mise-install" => self.answer_mise_install(r),
-            "java-trust" => {
-                self.java_trusts.lock().unwrap().push(r.user.clone());
-                ExecOutput::new(0, "java-trust: 1 store updated\n", "")
-            }
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
@@ -360,6 +355,23 @@ impl Guest {
         })
     }
 
+    /// The managed tools commands: the mise fetch, the install and the trust step for a new JDK.
+    /// They run in the background after a start, so their place among the commands a test counts
+    /// is a race: they stay out of the command log and have logs of their own.
+    fn answer_tools(&self, r: &ExecRequest) -> Option<ExecOutput> {
+        Some(
+            match (r.program.as_str(), r.args.first().map(String::as_str)) {
+                ("/puddle/puddle-agent", Some("mise-fetch")) => self.answer_mise_fetch(r),
+                ("/puddle/puddle-agent", Some("mise-install")) => self.answer_mise_install(r),
+                ("sh", Some(puddle_certs::JAVA_STEP_PATH)) => {
+                    self.java_trusts.lock().unwrap().push(r.user.clone());
+                    ExecOutput::new(0, "java-trust: 1 store updated\n", "")
+                }
+                _ => return None,
+            },
+        )
+    }
+
     /// Records a `mise-fetch` and answers as set up.
     fn answer_mise_fetch(&self, r: &ExecRequest) -> ExecOutput {
         self.mise_fetches
@@ -381,7 +393,10 @@ impl Guest {
             .push((r.args.clone(), r.user.clone()));
         let report_only = r.args.get(2).map(String::as_str) == Some("--missing");
         let before = self.tools_missing.lock().unwrap().clone();
-        let mut out: String = before.iter().map(|t| format!("missing {t}\n")).collect();
+        let mut out = String::new();
+        for tool in &before {
+            writeln!(out, "missing {tool}").unwrap();
+        }
         if report_only || before.is_empty() {
             out.push_str("end\n");
             return ExecOutput::new(0, out, "");
@@ -395,15 +410,15 @@ impl Guest {
         } else {
             "installed"
         };
-        out.extend(before.iter().map(|t| format!("{word} {t}\n")));
-        out.push_str("end\n");
-        match failure {
-            Some(said) => ExecOutput::new(1, out, said),
-            None => {
-                self.tools_missing.lock().unwrap().clear();
-                ExecOutput::new(0, out, "")
-            }
+        for tool in &before {
+            writeln!(out, "{word} {tool}").unwrap();
         }
+        out.push_str("end\n");
+        if let Some(said) = failure {
+            return ExecOutput::new(1, out, said);
+        }
+        self.tools_missing.lock().unwrap().clear();
+        ExecOutput::new(0, out, "")
     }
 
     /// The installs (not the reports) `mise-install` ran.
@@ -536,11 +551,6 @@ impl Guest {
 
     /// Notes that `r` ran in `ctx`'s sandbox as a command of `kind`, and as whom.
     fn record(&self, ctx: &ExecContext<'_>, kind: &str, r: &ExecRequest) {
-        // Not in the command log: the mise fetch runs in the background after a start, so its
-        // place among the commands a test counts is a race. `mise_fetches` has it.
-        if matches!(kind, "mise-fetch" | "mise-install" | "java-trust") {
-            return;
-        }
         self.commands
             .lock()
             .unwrap()

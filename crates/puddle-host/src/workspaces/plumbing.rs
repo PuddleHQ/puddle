@@ -760,18 +760,23 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.status_event(record);
         }
         self.audit_operation(&name, op, &result, delete_note);
+        self.last_step(&name, op, result);
+    }
+
+    /// The event that ends an operation, `done` or `failed`. A create or a start that worked then
+    /// sets up the managed tools in the background: the start is done whatever mise does, and a
+    /// create's clones are on the volume by now.
+    fn last_step(&self, name: &WorkspaceId, op: Operation, result: Result<(), OpError>) {
         match result {
             Ok(()) => {
-                self.progress(&name, WorkspaceStep::Done, None);
-                // After `done`, in the background: the start is done whatever mise does, and a
-                // create's clones are on the volume by now.
+                self.progress(name, WorkspaceStep::Done, None);
                 if matches!(op, Operation::Creating | Operation::Starting) {
-                    self.set_up_tools_later(&name);
+                    self.set_up_tools_later(name);
                 }
             }
             Err(reason) => {
-                tracing::warn!(workspace = %id, %op, %reason, "workspace operation failed");
-                self.progress(&name, WorkspaceStep::Failed, Some(reason.to_string()));
+                tracing::warn!(workspace = %name, %op, %reason, "workspace operation failed");
+                self.progress(name, WorkspaceStep::Failed, Some(reason.to_string()));
             }
         }
     }

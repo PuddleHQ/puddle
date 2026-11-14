@@ -964,6 +964,7 @@ fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_docum
         "/home/dev/.jdks/corretto-21",
         "/root/.asdf/installs/java/temurin-21",
         "/home/dev/.local/share/mise/installs/java/21",
+        "/workspaces/w1/.puddle/mise/data/installs/java/temurin-21",
         "/usr/java/jdk-17",
         "/usr/lib64/jvm/java-21",
         "/usr/local/java-17",

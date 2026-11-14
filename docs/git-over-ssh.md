@@ -69,7 +69,8 @@ name. Keep tokens out of the workspace for that reason: the credentials Puddle h
 computer never reach it.
 
 An SSH address on the Git tab's add form is listed as the same repository as its HTTPS address.
-The create-workspace form still asks for an `https://` address.
+The form reads only the four hosts above, so for your own server add the HTTPS address. The
+create-workspace form still asks for an `https://` address.
 
 ## Limits
 

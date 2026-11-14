@@ -30,7 +30,9 @@ use puddle_ports::Ports;
 use puddle_proxy::{PortProbe, ProxyUrl, PullProxy, PullRoute, Resolver};
 use puddle_secrets::{SecretStore, ToolPaths};
 use puddle_settings::resolve;
-use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
+use puddle_store::{
+    AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
+};
 use puddle_types::{EventSink, Problems, WorkspaceId, WorkspaceStatus};
 use puddle_upstream::{Chain, Discovery, Watching};
 use puddle_workspace::Workspaces;
@@ -355,12 +357,12 @@ impl<R: Runtime + Clone> Host<R> {
         let clock = Arc::new(SystemClock);
         let State {
             store,
+            all_users,
             settings,
             book,
             stored,
             retired,
-        } = open_state(&config.paths, &events, &clock)?;
-        steps.push(Step::StoreOpened);
+        } = open_state(&config.paths, &events, &clock, &mut steps)?;
 
         let shared = Shared {
             config: &config,
@@ -404,7 +406,7 @@ impl<R: Runtime + Clone> Host<R> {
             &credentials.injecting,
             &serving,
             opened,
-            (workspaces, book),
+            (workspaces, book, all_users),
             lifecycle.clone(),
         );
         let service = HostWorkspaces::new(parts, stored, retired, &reconciled.status)?;
@@ -636,6 +638,8 @@ impl<R: Runtime + Clone> Host<R> {
 /// What `open_state` opened.
 struct State {
     store: Arc<Store>,
+    /// The reach across every user's data, taken before anything serves.
+    all_users: AllUsers,
     settings: Arc<dyn SettingsRepo>,
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
@@ -647,20 +651,29 @@ fn open_state(
     paths: &crate::HostPaths,
     events: &Arc<EventHub>,
     clock: &Arc<SystemClock>,
+    steps: &mut Vec<Step>,
 ) -> Result<State, HostError> {
     crate::data_folder::make_owner_only(paths)?;
     let store = Arc::new(
         Store::open(&paths.store(), clock.clone(), Limits::default())?
             .with_events(events.clone() as Arc<dyn EventSink>),
     );
+    // Taken here, before the store reaches anything that serves requests, so no request handler
+    // can take it after.
+    let all_users = store.take_all_users().ok_or(HostError::State {
+        what: "the database",
+        reason: "the reach across every user was taken before the host started".to_owned(),
+    })?;
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
     let crate::files::Book {
         workspaces: stored,
         retired,
     } = book.load()?;
+    steps.push(Step::StoreOpened);
     Ok(State {
         store,
+        all_users,
         settings,
         book,
         stored,
@@ -984,7 +997,7 @@ fn workspace_parts<R: Runtime + Clone>(
     injecting: &Injecting,
     serving: &Serving,
     opened: Opened<R>,
-    (workspaces, book): (Workspaces, WorkspaceBook),
+    (workspaces, book, all_users): (Workspaces, WorkspaceBook, AllUsers),
     lifecycle: Arc<Lifecycle<R>>,
 ) -> Parts<R> {
     let Shared {
@@ -1006,6 +1019,7 @@ fn workspace_parts<R: Runtime + Clone>(
         clock: clock.clone(),
         settings: settings.clone(),
         store: store.clone(),
+        all_users,
         launcher: options.launcher.clone(),
         ssh: opened.ssh,
         book,

@@ -133,6 +133,49 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
     );
 }
 
+/// The reads across every user's data take the install's `AllUsers`, which the host takes before
+/// it serves and never hands to the API. This crate's own code (its request handlers, the route
+/// layer, the event stream) names none of it, so a handler cannot read past its principal's
+/// workspaces by accident: it would have to take the capability on purpose, here, in review.
+#[test]
+fn no_request_handler_can_reach_the_reads_across_every_user() {
+    fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                // Unit tests live in `tests/` folders and `tests.rs` files.
+                if name != "tests" {
+                    sources(&path, out);
+                }
+            } else if path.extension().is_some_and(|e| e == "rs") && name != "tests.rs" {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    sources(&root, &mut files);
+    assert!(files.len() > 50, "the walk found {} files", files.len());
+    let mut found = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file).unwrap();
+        for (n, line) in text.lines().enumerate() {
+            for word in [
+                "AllUsers",
+                "take_all_users",
+                "_every_user",
+                "puddle_store::testing",
+            ] {
+                if line.contains(word) {
+                    found.push(format!("{}:{}: {word}", file.display(), n + 1));
+                }
+            }
+        }
+    }
+    assert_eq!(found, Vec::<String>::new());
+}
+
 #[test]
 fn owner_only_actions_and_the_install_token_rule() {
     for action in [
@@ -248,7 +291,6 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
     };
     let anns_request = pending("anns");
     let owners_request = pending("owners");
-    let nobodys_request = pending("nobodys");
     let isolation = Isolation::new(store);
     let ann = ann_principal(ann);
     let owner = Principal::INSTALL;
@@ -278,12 +320,11 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
         check(&ann, ResourceRef::Pending(PendingId(9_999))),
         Err(Denial::NotFound(_))
     ));
-    // An id nobody has, and a workspace with no recorded user (with its requests), are nobody's:
-    // the owner gets no more of them than anyone else.
+    // An id nobody has, and a workspace with no recorded user, are nobody's: the owner gets no
+    // more of them than anyone else. (Such a workspace has no requests: the store decides none.)
     for principal in [&owner, &ann] {
         for resource in [
             ResourceRef::Workspace(ws("nobodys")),
-            ResourceRef::Pending(nobodys_request),
             ResourceRef::Pending(PendingId(9_999)),
             ResourceRef::Rule(RuleId(9_999)),
             ResourceRef::RequestRule(9_999),
@@ -343,6 +384,8 @@ async fn pair() -> Pair {
             .with_events(events.clone()),
     );
     let ann_id = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    // The owner's workspace that the tests send requests from without creating it.
+    puddle_store::testing::own(&store, &ws("ownerbox"));
     let services = Services::new(
         store.clone(),
         Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,

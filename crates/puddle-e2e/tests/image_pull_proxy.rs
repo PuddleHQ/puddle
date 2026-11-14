@@ -194,7 +194,12 @@ async fn assert_pulls_are_audited(store: &Store, token: &str) {
 /// The `connection` records `filter` matches, oldest first.
 fn connection_records(store: &Store, filter: &AuditFilter) -> Vec<puddle_store::ConnectionRecord> {
     store
-        .audit_query_every_user(filter, AuditCursor::After(0), 500)
+        .audit_query_every_user(
+            &puddle_store::testing::all_users(),
+            filter,
+            AuditCursor::After(0),
+            500,
+        )
         .unwrap()
         .iter()
         .filter_map(|(_, line)| match serde_json::from_str(line).unwrap() {

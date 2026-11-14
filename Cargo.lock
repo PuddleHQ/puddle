@@ -6797,6 +6797,7 @@ dependencies = [
  "proptest",
  "psl",
  "puddle-secrets",
+ "puddle-store",
  "puddle-test-kit",
  "puddle-types",
  "rusqlite",

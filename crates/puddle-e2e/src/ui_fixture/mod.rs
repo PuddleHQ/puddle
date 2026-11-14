@@ -274,9 +274,7 @@ impl Fixture {
         let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
         let account_secrets = if scenario.multi_user {
-            Some(Arc::new(store.take_account_secrets().ok_or_else(|| {
-                "the store's sign-in secrets were taken already".to_owned()
-            })?))
+            Some(sign_in_secrets(&store)?)
         } else {
             None
         };
@@ -1373,6 +1371,17 @@ fn workspace(name: &str) -> Result<WorkspaceId, String> {
     WorkspaceId::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
 }
 
+/// The store hands its sign-in secrets out once; a second taker is told so.
+fn sign_in_secrets(store: &Store) -> Result<Arc<AccountSecrets>, String> {
+    store
+        .take_account_secrets()
+        .map(Arc::new)
+        .ok_or_else(|| "the store's sign-in secrets were taken already".to_owned())
+}
+
 fn host(name: &str) -> Result<Host, String> {
     Host::parse_normalised(name).map_err(|err| format!("host {name:?}: {err}"))
 }
+
+#[cfg(test)]
+mod tests;

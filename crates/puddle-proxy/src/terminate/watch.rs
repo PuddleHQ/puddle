@@ -224,6 +224,7 @@ impl<S> Watch<S> {
 }
 
 fn violation(why: Violation, hit: &LimitHit) -> io::Error {
+    // the first limit hit wins; a later one finds the cell already set
     let _ = hit.set(why.code());
     tracing::info!(reason = why.message(), "guest HTTP/2 connection ended");
     io::Error::new(io::ErrorKind::InvalidData, why.message())

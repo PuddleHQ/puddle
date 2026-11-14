@@ -13,6 +13,8 @@ pub enum Tool {
     Az,
     /// `systemd-creds`, which seals the file vault's key (Linux).
     SystemdCreds,
+    /// `loginctl`, which says whether the user has a graphical login session (Linux).
+    Loginctl,
 }
 
 impl Tool {
@@ -24,6 +26,7 @@ impl Tool {
             Self::Git => "git",
             Self::Az => "az",
             Self::SystemdCreds => "systemd-creds",
+            Self::Loginctl => "loginctl",
         }
     }
 }

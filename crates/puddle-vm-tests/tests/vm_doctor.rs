@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_doctor::{
-    AzCliFacts, BootFacts, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
-    DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, Probe, ProcessOutcome, Protection,
-    RuntimeFacts, SshAgentFacts, StoreHealth, SwapArea, SwapFacts,
+    AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts,
+    DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, LoginSession, Os, Probe,
+    ProcessOutcome, Protection, RuntimeFacts, SshAgentFacts, StoreHealth, SwapArea, SwapFacts,
 };
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
 use puddle_runtime::{
@@ -112,8 +112,12 @@ impl Probe for EncryptedHost {
             version: "fixed for this test".into(),
         }
     }
-    fn credential_store(&self) -> StoreHealth {
-        self.1
+    fn credential_store(&self) -> CredentialStoreFacts {
+        CredentialStoreFacts::Os {
+            recorded: true,
+            health: self.1,
+            session: LoginSession::Graphical,
+        }
     }
 }
 

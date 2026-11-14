@@ -87,6 +87,9 @@ pub struct HostOptions {
     /// long for one of its entries is spread over several). Tests give an in-memory store, so they
     /// never touch the real one.
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    /// How the store is chosen when `secret_store` is `None`: the `secret_store` option, the
+    /// headless flag and the places the choice reads. The defaults are the shipped host's.
+    pub secret_setup: crate::vault::SecretSetup,
     /// Where the development certificate comes from: the first-run state and the certificate every
     /// workspace gets at boot. Without one, the host's own (its certificate stores and the data
     /// folder). Tests give a double.
@@ -139,6 +142,7 @@ impl Default for HostOptions {
             discovery: None,
             injector: None,
             secret_store: None,
+            secret_setup: crate::vault::SecretSetup::default(),
             dev_cert: None,
             resolver: None,
             company_signals: None,
@@ -375,7 +379,7 @@ impl<R: Runtime + Clone> Host<R> {
             endpoints: &endpoints,
             roots: &roots,
         };
-        let credentials = open_credentials(&shared)?;
+        let credentials = open_credentials(&shared).await?;
         let (outbound, pull) = build_outbound(
             &shared,
             &credentials.injecting,
@@ -795,7 +799,7 @@ struct Credentials {
 
 /// Credential injection: what each workspace decrypts, the injector and the secrets behind it,
 /// and the client that verifies the real servers of decrypted hosts.
-fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
+async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
     let Shared {
         config,
         options,
@@ -806,13 +810,21 @@ fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
         roots,
         ..
     } = *shared;
-    let vault: Arc<dyn SecretStore> = options
-        .secret_store
-        .clone()
-        .unwrap_or_else(crate::vault::os_vault);
-    crate::vault::check_in_background(options.secret_store.clone(), problems.clone());
-    let vault_sweep =
-        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
+    let chosen = crate::vault::open(
+        options.secret_store.as_ref(),
+        &options.secret_setup,
+        &config.paths,
+        store,
+        problems,
+    )
+    .await?;
+    let vault: Arc<dyn SecretStore> = chosen.vault.clone();
+    chosen.check_in_background(problems.clone());
+    let vault_sweep = if chosen.usable {
+        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone())
+    } else {
+        tokio::task::spawn_blocking(|| ())
+    };
     let marks = config.paths.login_markers();
     let injecting = Injecting::build(options, &vault, store, events, roots, marks, settings)?;
     let proxy_passwords = ProxyPasswords::new(vault.clone());

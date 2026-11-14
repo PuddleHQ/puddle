@@ -75,6 +75,19 @@ fn an_invite_works_once_and_not_after_it_expires() {
 }
 
 #[test]
+fn clearing_an_invite_ends_it_and_touches_nobody_elses() {
+    let (store, secrets, _) = setup();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    let bob = store.add_user(&UserName::new("bob").unwrap()).unwrap().id;
+    secrets.put_invite(ann, &[1; 32], 5_000).unwrap();
+    secrets.put_invite(bob, &[2; 32], 5_000).unwrap();
+    secrets.clear_invite(ann).unwrap();
+    secrets.clear_invite(ann).unwrap();
+    assert_eq!(secrets.redeem_invite(&[1; 32]).unwrap(), None);
+    assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), Some(bob));
+}
+
+#[test]
 fn the_repository_never_shows_a_secret_in_its_debug_text() {
     let (_store, secrets, _) = setup();
     secrets

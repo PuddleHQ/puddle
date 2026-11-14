@@ -6,6 +6,110 @@
  */
 
 export interface paths {
+    "/api/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Who made, re-invited or deleted which account, and when: names and dates, never a credential. */
+        get: operations["admin_audit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The totals of this Puddle: users, workspaces, running sandboxes, disk and memory in use. */
+        get: operations["admin_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every account with counts and sizes: name, role, state, dates, devices, and how many
+         *     workspaces are running or stopped and what their disks hold. Never a workspace's name,
+         *     contents, repositories, requests, rules or audit.
+         */
+        get: operations["list_users"];
+        put?: never;
+        /**
+         * Makes an account in the invited state and answers with its one-time invite secret, once. The
+         *     owner hands the link `<address>/invite#<secret>` to the person, who chooses their own password.
+         *     The owner never types, sees or sets a password.
+         */
+        post: operations["create_user"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a user: signs them out at once, then stops and deletes their workspaces and volumes
+         *     and removes their devices, sessions, rules, environment, identities and settings. Irreversible.
+         *     The name must be typed exactly. The owner can't delete themselves. Answers 202: the account
+         *     shows as deleting until the workspaces are gone. Calling it again for a user being deleted is
+         *     harmless.
+         */
+        delete: operations["delete_user"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{id}/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A new invite for a user (an expired one, or a forgotten password). It ends that user's
+         *     password and every browser signed in as them, and invalidates the old invite. It reveals
+         *     nothing about the account.
+         */
+        post: operations["reissue_invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/app-icons": {
         parameters: {
             query?: never;
@@ -2074,6 +2178,122 @@ export interface components {
              */
             url: string;
         };
+        /**
+         * @description What the owner did to an account.
+         * @enum {string}
+         */
+        AdminActionKind: "user_created" | "invite_reissued" | "user_delete_started" | "user_deleted";
+        /** @description One line of the admin audit: who did what to whom, and when. */
+        AdminAuditLine: {
+            /** @description What was done. */
+            action: components["schemas"]["AdminActionKind"];
+            /** @description The owner who did it. */
+            actor: string;
+            /**
+             * Format: int64
+             * @description When, epoch ms.
+             */
+            at: number;
+            /** @description The account's name when it happened. */
+            target: string;
+            /**
+             * Format: int64
+             * @description The account's id (never reused).
+             */
+            target_id: number;
+        };
+        /** @description The newest admin audit lines. */
+        AdminAuditList: {
+            /** @description Newest first. */
+            lines: components["schemas"]["AdminAuditLine"][];
+        };
+        /** @description What this Puddle holds in total. There are no per-user limits. */
+        AdminStats: {
+            /**
+             * Format: int64
+             * @description What every workspace's disks hold, in MiB.
+             */
+            disk_used_mib: number;
+            /**
+             * Format: int32
+             * @description Logical processors of this computer.
+             */
+            host_cpus: number;
+            /**
+             * Format: int64
+             * @description Memory the running workspaces were given, in MiB.
+             */
+            memory_mib: number;
+            /**
+             * Format: int32
+             * @description Running or starting workspaces.
+             */
+            running: number;
+            /**
+             * Format: int32
+             * @description Accounts, the owner included.
+             */
+            users: number;
+            /**
+             * Format: int32
+             * @description Workspaces of every user.
+             */
+            workspaces: number;
+        };
+        /** @description One account as the owner sees it: counts and sizes, never what is inside. */
+        AdminUser: {
+            /**
+             * Format: int64
+             * @description When the account was made, epoch ms.
+             */
+            created_at: number;
+            /**
+             * Format: int32
+             * @description Browsers signed in as them that still work.
+             */
+            devices: number;
+            /**
+             * Format: int64
+             * @description What their workspaces' disks hold, in MiB; workspaces whose use is unknown count nothing.
+             */
+            disk_used_mib: number;
+            /**
+             * Format: int64
+             * @description The account's id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description When they last signed in, epoch ms; `null` if they never have.
+             */
+            last_sign_in: number | null;
+            /** @description The name. */
+            name: string;
+            /** @description `owner` or `user`. */
+            role: string;
+            /** @description Invited, active or being deleted. */
+            state: components["schemas"]["AdminUserState"];
+            /**
+             * Format: int32
+             * @description Their workspaces that are running or starting.
+             */
+            workspaces_running: number;
+            /**
+             * Format: int32
+             * @description Their workspaces that are not running.
+             */
+            workspaces_stopped: number;
+        };
+        /** @description The accounts. */
+        AdminUserList: {
+            /** @description The owner first, then by id. */
+            users: components["schemas"]["AdminUser"][];
+        };
+        /**
+         * @description Where an account stands.
+         * @enum {string}
+         */
+        AdminUserState: "invited" | "active" | "deleting";
         /** @description A host a create (or adding a repository) allowed for a workspace. */
         AllowedHost: {
             /** @description The host. */
@@ -2895,6 +3115,11 @@ export interface components {
             telemetry: components["schemas"]["Consent"];
             /** @description Microsoft's VS Code server and its licence terms. */
             vscode_server: components["schemas"]["Consent"];
+        };
+        /** @description The name of the account to make. */
+        CreateUserRequest: {
+            /** @description The new user's name: 1 to 64 characters, unique ignoring case. */
+            name: string;
         };
         /** @description What a credential covers on its host. */
         CredentialCoverage: {
@@ -3924,6 +4149,22 @@ export interface components {
             never_decrypt: string[];
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceId"];
+        };
+        /**
+         * @description A new invite, shown once: the account and the secret that goes after `#` in the link
+         *     `<this address>/invite#<secret>`. It works once and for 24 hours, and nothing can read it
+         *     back afterwards.
+         */
+        InviteIssued: {
+            /**
+             * Format: int64
+             * @description When the invite stops working, epoch ms.
+             */
+            expires_at: number;
+            /** @description The link's secret. */
+            invite_secret: string;
+            /** @description The account the invite is for. */
+            user: components["schemas"]["AdminUser"];
         };
         /** @description Uses an invite link (made by the server's command line) to set a password. */
         InviteRequest: {
@@ -5846,6 +6087,443 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    admin_audit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the newest lines first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAuditList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description several users are not on */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    admin_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the totals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStats"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description several users are not on */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_users: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description several users are not on */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description the account and its invite, shown once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteIssued"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description several users are not on */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the name was refused or is taken */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_user: {
+        parameters: {
+            query: {
+                /** @description the user's name, typed exactly */
+                confirm: string;
+            };
+            header?: never;
+            path: {
+                /** @description the user */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleting has begun */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such user, or several users are not on */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the owner, or yourself */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the name does not match */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    reissue_invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the user */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the new invite, shown once */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteIssued"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such user, or several users are not on */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the owner, or a user being deleted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     list_app_icons: {
         parameters: {
             query?: never;

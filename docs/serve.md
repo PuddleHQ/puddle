@@ -229,6 +229,33 @@ like the sign-in form. A password typed there is the guest's. Passkeys, which a 
 cannot use, are the answer after the first release; until then sign in only at the address you
 typed or bookmarked, and keep workspaces you do not trust away from the public address.
 
+### Managing users
+
+With `multi_user` on, the owner has an admin screen at `/admin` (and the API under `/api/admin`). Nobody
+else sees it: for a plain user every admin route answers 403, and with `multi_user` off the routes do
+not exist.
+
+- **User list.** Name, role, state (invited, active, deleting), when the account was made and last
+  signed in, signed-in browsers, running and stopped workspaces, and the disk those hold. Counts and
+  sizes only: never a workspace's name, contents, repositories, requests, rules or audit.
+- **Totals.** Users, workspaces, running workspaces, disk and memory in use. There are no per-user limits.
+- **Create a user.** The owner types a name. The account starts invited, and the answer holds a link
+  secret exactly once: the link is `<your address>/invite#<secret>`. The person opens it and chooses their
+  own password; the owner never types, sees or sets a password. An unused invite expires after 24 hours.
+- **Reissue.** A new invite for a user whose invite expired or who forgot their password. It ends their
+  password and every signed-in browser and invalidates the old invite. It shows nothing about the account.
+  The owner's own password is reset with `puddle user reset <name>` on the server.
+- **Delete a user.** The owner types the user's name to confirm. The user is signed out at once; their
+  workspaces are then stopped and deleted with their volumes, and their devices, sessions, rules,
+  environment, identities and settings are removed. It can't be undone. The owner can't delete themselves.
+  If Puddle stops half way, the deletion finishes at the next start.
+- **Audit.** Who made, re-invited or deleted which account, and when. It holds names and dates, never a
+  credential.
+
+No admin route, event, log line or audit entry carries a password hash, an invite secret after it was
+made, a device key, a session token or credential-store content, and the owner has no way into another
+user's workspace data (no impersonation, no "sign in as").
+
 ### The reverse proxy on the same machine
 
 Point the proxy at the API's port on `127.0.0.1` (`port`, so set it to a fixed number) and keep the

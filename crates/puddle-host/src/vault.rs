@@ -135,15 +135,14 @@ pub(crate) fn check_in_background(
 /// connects to the operating system's store afresh first, which is what lets a Puddle that began
 /// with a locked or missing store use it once the user has unlocked it.
 fn check_now(fake: Option<&dyn SecretStore>, reconnect: bool, problems: &Problems) -> StoreHealth {
-    let health = match fake {
-        Some(store) => probe_store(store, || true),
-        None => {
-            if reconnect {
-                // A refused reconnect shows in the probe below as the failure it is.
-                let _ = reconnect_os_store();
-            }
-            probe_os_store()
+    let health = if let Some(store) = fake {
+        probe_store(store, || true)
+    } else {
+        if reconnect {
+            // A refused reconnect shows in the probe below as the failure it is.
+            let _ = reconnect_os_store();
         }
+        probe_os_store()
     };
     report_health(health, cfg!(target_os = "linux"), problems);
     health

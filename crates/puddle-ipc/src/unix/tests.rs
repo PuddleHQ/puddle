@@ -43,6 +43,22 @@ fn a_root_in_a_missing_parent_fails_with_the_path() {
     }
 }
 
+#[test]
+fn a_stable_root_below_a_file_fails_with_the_path_and_the_cause() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("a-file");
+    std::fs::write(&file, "x").unwrap();
+    let state = tmp.path().join("state");
+    std::fs::create_dir(&state).unwrap();
+    match crate::IpcRoot::stable_in(&file, &state).unwrap_err() {
+        IpcError::Root { path, source } => {
+            assert!(path.starts_with(&file), "{}", path.display());
+            assert_ne!(source.kind(), io::ErrorKind::NotFound);
+        }
+        other => panic!("unexpected {other}"),
+    }
+}
+
 fn stable_root(parent: &Path, state: &Path) -> crate::IpcRoot {
     crate::IpcRoot::stable_in(parent, state).unwrap()
 }

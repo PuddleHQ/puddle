@@ -71,6 +71,17 @@ fn the_install_id_is_made_once_kept_and_remade_when_it_is_garbage() {
 }
 
 #[test]
+fn an_install_id_that_cannot_be_written_names_the_file() {
+    let state = tempfile::tempdir().unwrap();
+    let missing = state.path().join("a-file");
+    std::fs::write(&missing, "x").unwrap();
+    match install_id(&missing).unwrap_err() {
+        IpcError::Root { path, .. } => assert_eq!(path, missing.join(INSTALL_ID_FILE)),
+        other => panic!("unexpected {other}"),
+    }
+}
+
+#[test]
 fn endpoint_names_are_workspace_shaped_labels() {
     for ok in ["a", "acme-api", "a0000000", &"a".repeat(63)] {
         name::check_name(ok).unwrap();

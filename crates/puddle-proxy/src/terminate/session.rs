@@ -58,6 +58,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     tracing::info!(host = %cx.target.host, "TLS handshake refused: the client asked for another name");
+    // the refusal is best effort; the connection closes whether or not the alert goes out
     let _ = async {
         let (refuse_config, _) =
             server_config(cx.termination.ca(), &cx.target.host, &[ALPN_HTTP11]).ok()?;
@@ -428,6 +429,7 @@ where
             && cx.termination.is_token_endpoint(&name)
         {
             tracing::info!(workspace = %cx.workspace, "connection refused: the TLS hello asks for a token endpoint");
+            // best effort: the peer may already have closed, and nothing else depends on this write
             let _ = stream.write_all(&crate::token_gate::ALERT).await;
             let _ = stream.shutdown().await;
             outcome.refused = Some(crate::token_gate::CODE);

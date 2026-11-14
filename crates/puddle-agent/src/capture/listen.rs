@@ -197,6 +197,7 @@ async fn tell_ssh_client(client: &mut TcpStream, body: &[u8]) {
         out.push_str(line);
         out.push_str("\r\n");
     }
+    // best-effort reply to a refused client; it may already have hung up and the connection ends here either way
     let _ = client.write_all(out.as_bytes()).await;
     let _ = client.shutdown().await;
 }

@@ -567,6 +567,7 @@ pub fn switch_to_staged(builds: &Path) -> io::Result<Option<String>> {
     let Some(staged) = pointer(builds, STAGED) else {
         return Ok(None);
     };
+    // best-effort cleanup of a pointer file; a leftover one is replaced on the next write
     let _ = std::fs::remove_file(builds.join(STAGED));
     if complete(builds, &staged).is_none() {
         return Ok(None);
@@ -606,6 +607,7 @@ pub fn confirm(builds: &Path, commit: &str) -> io::Result<()> {
         return Ok(());
     }
     write_pointer(builds, CONFIRMED, commit)?;
+    // best-effort cleanup of a pointer file; a leftover one is replaced on the next write
     let _ = std::fs::remove_file(builds.join(PREVIOUS));
     prune(builds);
     Ok(())
@@ -627,6 +629,7 @@ pub fn roll_back(builds: &Path, failed: &str) -> io::Result<bool> {
     };
     write_pointer(builds, REJECTED, failed)?;
     write_pointer(builds, CURRENT, &previous)?;
+    // best-effort cleanup of a pointer file; a leftover one is replaced on the next write
     let _ = std::fs::remove_file(builds.join(PREVIOUS));
     prune(builds);
     Ok(true)

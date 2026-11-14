@@ -92,6 +92,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
                     &request.workspace,
                     &[BlockReason::SshUnsupported],
                 );
+                // best effort: the peer may already have closed, and nothing else depends on this write
                 let _ = guest.write_all(&ssh::pre_banner(&message)).await;
                 let _ = guest.shutdown().await;
                 return TunnelEnd {
@@ -121,6 +122,7 @@ async fn refuse_token_endpoint<S: AsyncRead + AsyncWrite + Unpin>(
     guest: &mut ssh::Gate<TokenGate<S>>,
 ) -> TunnelEnd {
     tracing::info!("tunnel refused: the TLS hello asks for a token endpoint");
+    // best effort: the peer may already have closed, and nothing else depends on this write
     let _ = guest.write_all(&token_gate::ALERT).await;
     let _ = guest.shutdown().await;
     TunnelEnd {

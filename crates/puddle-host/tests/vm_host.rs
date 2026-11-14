@@ -3861,6 +3861,47 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
     host.shutdown().await;
 }
 
+/// Opens a shell loop over the guest's processes that stops on those of the editor server, so
+/// the caller appends the commands for one match and `;; esac; done`. A process can exit between
+/// the glob and the read; the redirect that silences that read comes before the input redirect,
+/// because a shell reports a failed `<` on its own stderr when `2>/dev/null` follows it, and that
+/// text lands in the script's output.
+#[cfg(not(windows))]
+const EDITOR_SERVER_PROCS: &str = "for p in /proc/[0-9]*; do \
+     case \"$(tr '\\0' ' ' 2>/dev/null <$p/cmdline)\" in \
+       /puddle/code-server/*--bind-addr*)";
+
+/// Walking `/proc` while processes come and go prints nothing and matches nothing.
+#[cfg(not(windows))]
+#[test]
+fn editor_server_scan_is_silent_while_processes_exit() {
+    let churn: Vec<_> = (0..2)
+        .map(|_| {
+            std::process::Command::new("sh")
+                .args(["-c", "while :; do /bin/true; done"])
+                .spawn()
+                .expect("spawn churn")
+        })
+        .collect();
+    let mut noise = Vec::new();
+    for _ in 0..40 {
+        let out = std::process::Command::new("sh")
+            .args([
+                "-c",
+                &format!("{EDITOR_SERVER_PROCS} echo hit;; esac; done"),
+            ])
+            .output()
+            .expect("run scan");
+        noise.extend(out.stdout);
+        noise.extend(out.stderr);
+    }
+    for mut child in churn {
+        child.kill().expect("stop churn");
+        child.wait().expect("reap churn");
+    }
+    assert_eq!(String::from_utf8_lossy(&noise), "");
+}
+
 /// K tier. The bundled code-server runs in the guest, started by the agent from the read-only
 /// mount: it listens on loopback with a password only its owner can read, signs a client in, and
 /// keeps its data on the workspace volume, so a rebuilt sandbox finds it again. (The Windows tier
@@ -3908,9 +3949,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
         &runtime,
         &sandbox,
         &format!(
-            "for p in /proc/[0-9]*; do \
-               case \"$(tr '\\0' ' ' <$p/cmdline 2>/dev/null)\" in \
-                 /puddle/code-server/*--bind-addr*) stat -c 'server %U' $p;; esac; \
+            "{EDITOR_SERVER_PROCS} stat -c 'server %U' $p;; esac; \
              done | sort -u; stat -c 'data %U' {data}/user-data {data}/extensions"
         ),
     )
@@ -3926,17 +3965,17 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     let creds = guest(
         &runtime,
         &sandbox,
-        "for p in /proc/[0-9]*; do \
-           case \"$(tr '\\0' ' ' <$p/cmdline 2>/dev/null)\" in \
-             /puddle/code-server/*--bind-addr*) \
-               awk '$1==\"Uid:\"{print \"uid\", $2, $3, $4, $5} $1==\"Gid:\"{print \"gid\", $2, $3, $4, $5} \
-                    $1==\"Groups:\"{for(i=2;i<=NF;i++)print \"group\", $i}' $p/status \
+        &format!(
+            "{EDITOR_SERVER_PROCS} \
+               awk '$1==\"Uid:\"{{print \"uid\", $2, $3, $4, $5}} $1==\"Gid:\"{{print \"gid\", $2, $3, $4, $5}} \
+                    $1==\"Groups:\"{{for(i=2;i<=NF;i++)print \"group\", $i}}' $p/status \
                ; break;; \
            esac; \
          done | sort -u; \
          u=$(id -u agent); g=$(id -g agent); \
          echo \"want-uid $u $u $u $u\"; echo \"want-gid $g $g $g $g\"; \
-         for g in $(id -G agent); do echo \"want-group $g\"; done",
+         for g in $(id -G agent); do echo \"want-group $g\"; done"
+        ),
     )
     .await;
     let field = |key: &str| -> BTreeSet<String> {

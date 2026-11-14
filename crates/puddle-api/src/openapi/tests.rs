@@ -186,13 +186,23 @@ const GRANTING: &[&str] = &[
     "/api/auth/refresh",
 ];
 
+/// The only operations that answer with an invite's secret: the owner's request to make a user and
+/// to reissue an invite, once, to the owner who asked.
+const INVITING: &[(&str, &str)] = &[
+    ("/api/admin/users", "post"),
+    ("/api/admin/users/{id}/invite", "post"),
+];
+
 /// Every schema a response can carry, following references.
 fn response_schemas(s: &Value) -> BTreeSet<String> {
-    response_schemas_of(s, |path| !GRANTING.contains(&path))
+    response_schemas_of(s, |path, method| {
+        !GRANTING.contains(&path) && !INVITING.contains(&(path, method))
+    })
 }
 
-/// Every schema the responses of the operations on the paths `keep` accepts can carry.
-fn response_schemas_of(s: &Value, keep: impl Fn(&str) -> bool) -> BTreeSet<String> {
+/// Every schema the responses of the operations `keep` accepts (path and lower-case method) can
+/// carry.
+fn response_schemas_of(s: &Value, keep: impl Fn(&str, &str) -> bool) -> BTreeSet<String> {
     fn refs(value: &Value, out: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
@@ -207,11 +217,10 @@ fn response_schemas_of(s: &Value, keep: impl Fn(&str) -> bool) -> BTreeSet<Strin
     }
     let mut todo = Vec::new();
     for (path, item) in s["paths"].as_object().unwrap() {
-        if !keep(path) {
-            continue;
-        }
-        for op in item.as_object().unwrap().values() {
-            refs(&op["responses"], &mut todo);
+        for (method, op) in item.as_object().unwrap() {
+            if keep(path, method) {
+                refs(&op["responses"], &mut todo);
+            }
         }
     }
     let mut seen = BTreeSet::new();
@@ -277,7 +286,7 @@ fn no_response_can_carry_a_credential() {
 #[test]
 fn only_the_sign_in_answers_carry_an_access_token() {
     let s = spec();
-    let everywhere = response_schemas_of(&s, |_| true);
+    let everywhere = response_schemas_of(&s, |_, _| true);
     assert!(everywhere.contains("SessionGrant"));
     let elsewhere = response_schemas(&s);
     assert!(
@@ -285,7 +294,7 @@ fn only_the_sign_in_answers_carry_an_access_token() {
         "an answer other than a sign-in carries a session grant"
     );
     for path in GRANTING {
-        let only_here = response_schemas_of(&s, |p| p == *path);
+        let only_here = response_schemas_of(&s, |p, _| p == *path);
         assert!(only_here.contains("SessionGrant"), "{path}");
     }
     for (name, schema) in s["components"]["schemas"].as_object().unwrap() {
@@ -293,5 +302,61 @@ fn only_the_sign_in_answers_carry_an_access_token() {
             .as_object()
             .is_some_and(|p| p.contains_key("access_token"));
         assert_eq!(has, name == "SessionGrant", "{name}");
+    }
+}
+
+/// The invite secret is a field of `InviteIssued` and of nothing else, and `InviteIssued` is the
+/// answer of the two operations that make an invite alone. Every admin answer is held to a wider
+/// list of names than the general scan: no hash, digest, key, token, session or password, and
+/// nothing that names what a user keeps (a workspace's name, a repository, a rule, a request).
+#[test]
+fn only_a_new_invite_carries_an_invite_secret_and_no_admin_answer_carries_a_credential() {
+    const ADMIN_FORBIDDEN: &[&str] = &[
+        "hash",
+        "digest",
+        "key",
+        "token",
+        "session",
+        "password",
+        "secret",
+        "credential",
+        "repository",
+        "rule",
+        "request",
+        "workspace_name",
+    ];
+    let s = spec();
+    let everywhere = response_schemas_of(&s, |_, _| true);
+    assert!(everywhere.contains("InviteIssued"));
+    assert!(
+        !response_schemas(&s).contains("InviteIssued"),
+        "an answer other than a new invite carries an invite secret"
+    );
+    for (path, method) in INVITING {
+        let only_here = response_schemas_of(&s, |p, m| p == *path && m == *method);
+        assert!(only_here.contains("InviteIssued"), "{path}");
+    }
+    for (name, schema) in s["components"]["schemas"].as_object().unwrap() {
+        let has = schema["properties"]
+            .as_object()
+            .is_some_and(|p| p.contains_key("invite_secret"));
+        assert_eq!(has, name == "InviteIssued", "{name}");
+    }
+    let admin = response_schemas_of(&s, |path, _| path.starts_with("/api/admin/"));
+    assert!(admin.contains("AdminUserList") && admin.contains("AdminAuditList"));
+    for name in admin.iter().filter(|n| n.as_str() != "ApiErrorBody") {
+        let props = s["components"]["schemas"][name]["properties"]
+            .as_object()
+            .into_iter()
+            .flat_map(|p| p.keys());
+        for prop in props {
+            if name == "InviteIssued" && prop == "invite_secret" {
+                continue;
+            }
+            assert!(
+                !ADMIN_FORBIDDEN.iter().any(|bad| prop.contains(bad)),
+                "admin response {name} has a field {prop}"
+            );
+        }
     }
 }

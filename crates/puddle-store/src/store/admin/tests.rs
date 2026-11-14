@@ -211,7 +211,10 @@ fn a_database_that_fails_leaves_no_half_made_user_and_no_half_written_audit() {
     let (store, _) = setup();
     let bob = add(&store, "bob");
     store.begin_user_delete(UserId::OWNER, bob).unwrap();
-    store.break_database("ALTER TABLE admin_audit RENAME TO audit_gone");
+    store.break_database(
+        "CREATE TRIGGER no_final_line BEFORE INSERT ON admin_audit WHEN NEW.action = 'user_deleted'
+         BEGIN SELECT RAISE(ABORT, 'audit refused'); END",
+    );
     assert!(store.finish_user_delete(bob).is_err());
     assert_eq!(store.users_deleting().unwrap().len(), 1, "still to finish");
 }

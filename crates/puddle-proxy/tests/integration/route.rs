@@ -830,10 +830,9 @@ async fn bytes_sent_with_the_connect_reach_the_server() {
 
 #[tokio::test]
 async fn an_unreachable_server_is_a_502() {
-    let closed = {
-        let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
-        l.local_addr().unwrap()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
@@ -1201,10 +1200,9 @@ async fn an_allowed_connect_is_reported_with_address_and_bytes() {
 /// refused before that (no destination) is not.
 #[tokio::test]
 async fn refused_connections_are_reported_with_decision_and_reason() {
-    let closed = {
-        let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
-        l.local_addr().unwrap()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let rig = Rig::new(&ProxyConfig::default());
     let deny = rig.policy.deny_host(&host("bad.test"));
     let allow = rig.policy.allow(&host("127.0.0.1"));

@@ -3,7 +3,7 @@
 
 scripts/dead-resolver.sh runs it as the only nameserver of a test run. A lookup then waits for the
 resolver's timeout instead of failing at once, as a real outage does, and the log says which names
-were asked.
+were asked and which test binary asked.
 """
 import os
 import socket
@@ -19,6 +19,49 @@ def qname(packet: bytes) -> str:
     return ".".join(labels)
 
 
+def asker(port: int) -> str:
+    """The test binary behind the socket that sent from `port`: its command line (`--exact <test>`).
+
+    The socket stays open while the client waits for the answer that never comes, so /proc still has it.
+    """
+    inode = None
+    for table in ("/proc/net/udp", "/proc/net/udp6"):
+        try:
+            rows = open(table, encoding="ascii").read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            cols = row.split()
+            if int(cols[1].split(":")[1], 16) == port:
+                inode = cols[9]
+    if inode is None:
+        return "unknown"
+    target = f"socket:[{inode}]"
+    pid = None
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            for fd in os.listdir(f"/proc/{entry}/fd"):
+                if os.readlink(f"/proc/{entry}/fd/{fd}") == target:
+                    pid = int(entry)
+        except OSError:
+            continue
+    chain = []
+    while pid and pid > 1 and len(chain) < 8:
+        try:
+            cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode("utf-8", "replace")
+            cmd = " ".join(cmd.split())
+            stat = open(f"/proc/{pid}/stat", encoding="ascii").read()
+        except OSError:
+            break
+        chain.append(cmd)
+        if "--exact" in cmd:
+            return " <- ".join(c[:160] for c in chain)
+        pid = int(stat.rsplit(")", 1)[1].split()[1])
+    return " <- ".join(c[:160] for c in chain) or "unknown"
+
+
 def main() -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((sys.argv[1], 53))
@@ -30,10 +73,10 @@ def main() -> None:
         # ends the parent changes and the server ends too.
         while os.getppid() == parent:
             try:
-                packet, _ = sock.recvfrom(4096)
+                packet, (_, port) = sock.recvfrom(4096)
             except socket.timeout:
                 continue
-            log.write(qname(packet) + "\n")
+            log.write(qname(packet) + "\t" + asker(port) + "\n")
             log.flush()
 
 

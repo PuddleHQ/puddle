@@ -87,10 +87,10 @@ if [ "$rc" = 2 ] && [ ! -s "$work/stub.ready" ]; then
     unavailable "$@"
 fi
 
-asked=$(grep -vx "localhost\|localhost\." "$work/queries" | sort | uniq -c | sort -rn)
+asked=$(grep -v "^localhost\.\{0,1\}	" "$work/queries" | sort | uniq -c | sort -rn)
 if [ -n "$asked" ]; then
     {
-        echo "dead-resolver: the run asked the resolver (count, name):"
+        echo "dead-resolver: the run asked the resolver (count, name, the process that asked):"
         echo "$asked"
         echo "dead-resolver: a test waits on a real resolver. Inject a lookup (docs/STANDARDS.md, 'Tests and DNS') or use a name from /etc/hosts."
     } >&2

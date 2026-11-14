@@ -10,6 +10,8 @@
 //   the next character, since `|` separates the fields: `\|` is a bar and `\\` a backslash in the code.
 // - The file may hold at most N places where the text matches (`xN`, default 1). A copy added later
 //   makes the count N+1 and the entry stops excusing anything in that file, visibly.
+// - An entry that excuses nothing fails the gate, named by exclusion file and line (`staleExclusions`):
+//   its text is gone from every file under its glob, or every place it sits at now runs in a test.
 // - A text under 20 characters is refused when the file is parsed. `*` (a whole file, for code that
 //   only another OS or a VM runs) is the one wildcard and stays a reviewed whole-file choice.
 //
@@ -52,6 +54,9 @@ export interface Exclusion {
   max: number;
   reason: string;
   used: boolean;
+  /** The exclusion file and 1-based line the entry was read from, for messages (set by `readExclusions`). */
+  file?: string;
+  no?: number;
 }
 
 /** The shortest text an entry may have; shorter ones are one token that fits any file's lines. */
@@ -168,7 +173,15 @@ export function parseExclusions(text: string): Exclusion[] {
       );
     }
     if (needle === "*") {
-      out.push({ glob, lines: "*", needle, max, reason, used: false });
+      out.push({
+        glob,
+        lines: "*",
+        needle,
+        max,
+        reason,
+        used: false,
+        no: i + 1,
+      });
       continue;
     }
     const lines = decodeLines(needle);
@@ -177,7 +190,7 @@ export function parseExclusions(text: string): Exclusion[] {
         `exclusions line ${i + 1}: "${needle}" is too short to name one line (under ${MIN_TEXT} characters, or an empty line). Write the whole line, or put the line above it first, joined with ${LINE_JOIN}; use * for a whole file`,
       );
     }
-    out.push({ glob, lines, needle, max, reason, used: false });
+    out.push({ glob, lines, needle, max, reason, used: false, no: i + 1 });
   }
   return out;
 }
@@ -312,6 +325,71 @@ export function judge(
   return report;
 }
 
+/** An entry that excuses nothing any more, and why. */
+export interface StaleEntry {
+  entry: Exclusion;
+  why: string;
+}
+
+/**
+ * The entries that excuse nothing in the tree as it is now, whatever the diff touches:
+ * - no file under the path glob exists, or (for a line-text entry) none of them holds the entry's lines any more;
+ * - every place the text sits at is a line this run's coverage report measured as executed (a test now
+ *   reaches it, so the excuse is a reason that rotted).
+ * A file the report does not know is only checked for the text (another language's or another crate's
+ * run, `cfg` code compiled out): "covered" is judged where a measurement exists, never guessed. A line
+ * the report lists as not executable is left alone, since code compiled out of this run reads that way.
+ * `files` are the repository paths to match globs against.
+ */
+export function staleExclusions(
+  exclusions: Exclusion[],
+  files: string[],
+  coverage: Coverage,
+  source: Source,
+): StaleEntry[] {
+  const out: StaleEntry[] = [];
+  for (const e of exclusions) {
+    const re = globToRegExp(e.glob);
+    const matched = files.filter((f) => re.test(f));
+    if (matched.length === 0) {
+      out.push({ entry: e, why: "no file matches its path glob" });
+      continue;
+    }
+    if (e.lines === "*") continue;
+    const lines = e.lines;
+    let present = false;
+    let alive = false;
+    for (const f of matched) {
+      const text = source(f);
+      if (!text) continue;
+      const hits = coverage.get(f);
+      for (let at = lines.length; at <= text.length; at += 1) {
+        if (!endsAt(text, at, lines)) continue;
+        present = true;
+        const h = hits?.get(at);
+        if (h === undefined || h === 0) alive = true;
+      }
+    }
+    if (!present) {
+      out.push({
+        entry: e,
+        why: "no file under its path glob holds its text any more",
+      });
+    } else if (!alive) {
+      out.push({ entry: e, why: "a test now runs every line it excuses" });
+    }
+  }
+  return out;
+}
+
+/** One stale entry as the gate prints it: the exclusion file and line, then the entry. */
+export function staleMessage(s: StaleEntry): string {
+  const at = s.entry.file
+    ? `${s.entry.file}:${s.entry.no ?? "?"}`
+    : `line ${s.entry.no ?? "?"}`;
+  return `${at}: stale exclusion "${s.entry.glob} | ${s.entry.needle}": ${s.why}; delete the entry`;
+}
+
 /**
  * The exclusion entries as a gate reads them, from a file or from a folder. A file is sorted and every
  * entry valid. A folder holds one `<name>.txt` per crate (`ui.txt` for the SPA): each file is checked
@@ -319,7 +397,11 @@ export function judge(
  * two pull requests that touch different crates edit different files and never conflict.
  */
 export function readExclusions(path: string): Exclusion[] {
-  if (!statSync(path).isDirectory()) return readExclusionFile(path);
+  if (!statSync(path).isDirectory()) {
+    const entries = readExclusionFile(path);
+    for (const e of entries) e.file = path;
+    return entries;
+  }
   const out: Exclusion[] = [];
   for (const name of readdirSync(path)
     .filter((n) => n.endsWith(".txt"))
@@ -327,6 +409,7 @@ export function readExclusions(path: string): Exclusion[] {
     const file = join(path, name);
     try {
       const entries = readExclusionFile(file);
+      for (const e of entries) e.file = file;
       const prefix = exclusionPrefix(name.slice(0, -".txt".length));
       const stray = entries.find((e) => !e.glob.startsWith(prefix));
       if (stray) {
@@ -450,6 +533,12 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
     return cache.get(path);
   };
   const notes: string[] = [];
+  const stale = staleExclusions(
+    exclusions,
+    git(["ls-files"], repoRoot).split("\n").filter(Boolean).map(posix),
+    coverage,
+    source,
+  );
   const report = judge(added, coverage, exclusions, source, notes);
   for (const n of new Set(notes)) console.log(`${opts.label}: note: ${n}`);
   if (report.notMeasured.length > 0) {
@@ -462,6 +551,12 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
       `${opts.label}: note: exclusion "${e.glob} | ${e.needle}" matched nothing in this diff`,
     );
   }
+  if (stale.length > 0) {
+    console.error(
+      `${opts.label}: ${stale.length} stale exclusion(s); an excuse that no longer applies fails the gate:`,
+    );
+    for (const s of stale) console.error(`  ${staleMessage(s)}`);
+  }
   if (report.uncovered.length > 0) {
     console.error(
       `${opts.label}: ${report.uncovered.length} added or changed line(s) never ran in a test:`,
@@ -471,8 +566,8 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
     console.error(
       `  Cover them, or list them with a reason in the exclusion file (reviewed like code).`,
     );
-    return 1;
   }
+  if (stale.length > 0 || report.uncovered.length > 0) return 1;
   console.log(
     `${opts.label} ok: ${report.covered} changed executable line(s) covered, ${report.excluded} excluded, since ${opts.base.slice(0, 10)}`,
   );

@@ -419,6 +419,9 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   Keep the entries sorted by path glob, then by the whole line (the gate fails an unsorted file and names the line):
   a new entry goes at its sorted place, not at the end, so two pull requests that add entries for different files
   merge without a conflict. The same holds for `scripts/full-coverage-exclusions.txt`.
+  An entry that excuses nothing fails the gate on every run, whatever the diff touches, naming the exclusion file
+  and line: no file under its glob holds its text any more, or a test now runs every line it excuses (judged
+  where the run measured the file). Delete the entry; this list never keeps a reason that rotted.
   What it can't see: lines with no coverage data (comments, declarations, code compiled out of the Linux
   run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
   failed), branch or region detail inside a covered line, and whether a covered line is asserted.

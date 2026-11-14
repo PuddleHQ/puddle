@@ -166,6 +166,7 @@ pub(crate) async fn put_global(
     responses(
         (status = OK, description = "the workspace's settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
         (status = CONFLICT, description = "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
@@ -194,6 +195,7 @@ pub(crate) async fn get_workspace_settings(
     responses(
         (status = OK, description = "the workspace's new settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
+        (status = NOT_FOUND, description = "no such workspace; settings are never stored ahead of a create", body = ApiErrorBody),
         (status = CONFLICT, description = "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a value out of range", body = ApiErrorBody)
     )

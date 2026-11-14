@@ -5,7 +5,7 @@
 //! that `ci/msb-runtime.sha256` pins for the tag; a target with none gets
 //! `DigestStatus::Unpinned`, which opens the runtime unchecked and says nothing. That is fine for
 //! a developer build of an old tag, never for a release, so the release's `verify` job runs this
-//! check for each OS it ships. It asks the build script's own reader ([`crate::digests`]), so
+//! check for each OS it ships. It asks the build script's own reader (`build/digests.rs` in `puddle-runtime`), so
 //! "no hash here" means the same in both places.
 
 use crate::digests::{Expected, expected};

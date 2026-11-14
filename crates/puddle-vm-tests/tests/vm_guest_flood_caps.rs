@@ -60,9 +60,18 @@ const CONSOLE_FLOOD: &str =
 /// Opens `/bin/true` over and over without closing, as root so the descriptor limit can be raised.
 /// Only shell builtins run after the flood: once the mount's handles are gone, starting a program
 /// from it fails too. Prints the opens that worked and the shell's own words for the refusal.
-const HANDLE_FLOOD: &str = "ulimit -n 300000 || exit 9; n=0; \
-     while [ $n -lt 120000 ]; do exec {fd}</flood/target 2>/dev/null || break; n=$((n+1)); done; \
-     err=$( { : </flood/target; } 2>&1 ); echo \"opened=$n err=$err\"";
+///
+/// A refused open is confirmed by the same open again in `$( )`, which also yields the shell's
+/// words. One CI run stopped at 65353 opens and a plain probe then found room, so a probe that
+/// succeeds sends the loop on (the host frees handles as releases arrive, the likely cause). The
+/// retries are bounded, so a refusal that never repeats still ends the script and fails the test.
+const HANDLE_FLOOD: &str = "ulimit -n 300000 || exit 9; n=0; err=; retries=0; \
+     while [ $n -lt 120000 ]; do \
+       if exec {fd}</flood/target 2>/dev/null; then n=$((n+1)); continue; fi; \
+       err=$( { exec {pfd}</flood/target; } 2>&1 ); [ -n \"$err\" ] && break; \
+       retries=$((retries+1)); [ $retries -gt 1000 ] && break; \
+     done; \
+     echo \"opened=$n err=$err\"";
 
 fn mib(bytes: u64) -> u64 {
     bytes / MIB

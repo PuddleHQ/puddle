@@ -15,10 +15,11 @@ use puddle_types::{EntryId, WorkspaceStatus};
 use super::*;
 
 /// A [`GitSetup`] whose setup waits once, as the real one waits for the store, so a create or a
-/// clone can be dropped there.
-struct GitThatWaits;
+/// clone can be dropped there. It records the new workspace's user in the store, as the real one
+/// does.
+struct GitThatWaits<'a>(&'a puddle_store::Store);
 
-impl GitSetup for GitThatWaits {
+impl GitSetup for GitThatWaits<'_> {
     fn set_up<'a>(
         &'a self,
         _workspace: &'a WorkspaceId,
@@ -29,10 +30,12 @@ impl GitSetup for GitThatWaits {
 
     fn claim(
         &self,
-        _: &WorkspaceId,
-        _: puddle_store::UserId,
+        workspace: &WorkspaceId,
+        owner: puddle_store::UserId,
     ) -> Result<(), puddle_api::WorkspaceError> {
-        Ok(())
+        self.0
+            .set_workspace_owner(workspace, owner)
+            .map_err(|err| puddle_api::WorkspaceError::Unavailable(err.to_string()))
     }
 }
 
@@ -124,7 +127,7 @@ async fn ready_for(
         let record = service
             .create(
                 NewWorkspace::new(puddle_store::UserId::OWNER, name, Vec::new()),
-                &GitThatWaits,
+                &GitThatWaits(host.store()),
             )
             .await
             .unwrap();
@@ -152,7 +155,7 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
             drop_after(
                 service.create(
                     NewWorkspace::new(puddle_store::UserId::OWNER, name, Vec::new()),
-                    &GitThatWaits,
+                    &GitThatWaits(host.store()),
                 ),
                 waits,
             )
@@ -180,7 +183,7 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
                 local: None,
             };
             drop_after(
-                service.add_repository(id, AddRepository::Clone(new), &GitThatWaits),
+                service.add_repository(id, AddRepository::Clone(new), &GitThatWaits(host.store())),
                 waits,
             )
             .await

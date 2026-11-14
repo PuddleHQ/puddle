@@ -76,6 +76,7 @@ pub(crate) async fn rig_checked(
     check: Arc<dyn AddressCheck>,
 ) -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let chain = Chain::new(discovery, auth);
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))

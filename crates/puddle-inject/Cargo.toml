@@ -24,7 +24,7 @@ zeroize = { workspace = true }
 
 [features]
 # `testing`: in-memory settings and credential sources for tests (never in product code).
-testing = []
+testing = ["puddle-store/testing"]
 
 [dev-dependencies]
 proptest = { workspace = true }

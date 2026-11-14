@@ -8,8 +8,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, PublicHost, Remote, RemoteServing,
-    RunningApi, Services, SettingsRepo, reset_account,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, PublicHost, Remote,
+    RemoteServing, RunningApi, Services, SettingsRepo, reset_account,
 };
 use puddle_store::{Clock as _, Limits, ManualClock, Store, UserName};
 use serde_json::{Value, json};
@@ -67,6 +67,7 @@ async fn site_with(multi_user: bool) -> Site {
         events,
         clock.clone(),
     )
+    .with_front_resolver(Arc::new(NoNames))
     .with_account_secrets(store.take_account_secrets().unwrap());
     let mut config = ApiConfig::default();
     config.remote = Some(Remote::new(
@@ -1163,7 +1164,8 @@ async fn without_accounts_the_routes_answer_unavailable() {
         Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
         Arc::new(EventHub::default()),
         clock,
-    );
+    )
+    .with_front_resolver(Arc::new(NoNames));
     let mut config = ApiConfig::default();
     config.remote = Some(Remote::new(
         RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),

@@ -43,10 +43,11 @@ pub(super) fn load_owners(conn: &Connection) -> Result<HashMap<WorkspaceId, User
     Ok(map)
 }
 
-/// The user `workspace` belongs to, read inside a transaction. A workspace with no row counts as
-/// the owner's here, for deciding its requests and checking writes; every listed workspace has a
-/// row (see [`Store::adopt_unowned_workspaces`]), and what a user may reach is read through
-/// [`Store::workspace_owner`], where such a workspace is nobody's.
+/// The user `workspace` belongs to, read inside a transaction.
+///
+/// # Errors
+/// [`StoreError::UnknownWorkspace`] when no user is recorded for it: a workspace that is nobody's
+/// has no rules to decide by and nothing to write to, so it reads as one that does not exist.
 pub(super) fn owner_in(conn: &Connection, workspace: &WorkspaceId) -> Result<UserId, StoreError> {
     let id: Option<i64> = conn
         .query_row(
@@ -55,7 +56,8 @@ pub(super) fn owner_in(conn: &Connection, workspace: &WorkspaceId) -> Result<Use
             |r| r.get(0),
         )
         .optional()?;
-    Ok(id.map_or(UserId::OWNER, UserId::from_stored))
+    id.map(UserId::from_stored)
+        .ok_or_else(|| StoreError::UnknownWorkspace(workspace.clone()))
 }
 
 /// Fails with [`StoreError::UnknownWorkspace`] unless `workspace` is `user`'s: another user's
@@ -101,6 +103,17 @@ impl Store {
             users.push(user_of(row)?);
         }
         Ok(users)
+    }
+
+    /// The install's reach across every user's data, the first time this is called; `None` after
+    /// that. The host takes it at start, before anything serves a request, so no request handler
+    /// can hold one.
+    #[must_use]
+    pub fn take_all_users(&self) -> Option<AllUsers> {
+        if self.all_users_taken.swap(true, Ordering::SeqCst) {
+            return None;
+        }
+        Some(AllUsers::new())
     }
 
     /// One user.
@@ -173,6 +186,7 @@ impl Store {
     /// A database error; nothing is recorded then, and the next call tries again.
     pub fn adopt_unowned_workspaces<'a>(
         &self,
+        _: &AllUsers,
         workspaces: impl IntoIterator<Item = &'a WorkspaceId>,
     ) -> Result<usize, StoreError> {
         let workspaces: Vec<&WorkspaceId> = workspaces.into_iter().collect();
@@ -240,6 +254,20 @@ impl Store {
                 }
             }
         })
+    }
+}
+
+/// The install's own reach across every user's data: the `*_every_user` reads and the one-shot
+/// adoption of [`Store::adopt_unowned_workspaces`] take it, for the server's jobs (maintenance,
+/// sweeps, metrics). [`Store::take_all_users`] hands out one per store, and the host takes it
+/// before it serves anything; request handlers never get one, so every read they make is kept to
+/// one user.
+#[derive(Debug)]
+pub struct AllUsers(());
+
+impl AllUsers {
+    pub(crate) fn new() -> Self {
+        Self(())
     }
 }
 

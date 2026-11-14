@@ -170,6 +170,7 @@ struct HostRig {
 fn host_rig(endpoints: PuddleEndpoints) -> HostRig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("hostile-agent").unwrap());
     let access = LocalCategory::ALL
         .into_iter()
         .fold(LocalAccess::NONE, |a, c| a.with_toggle(c, true))
@@ -277,7 +278,11 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
             }
         }
     }
-    let pending = rig.store.open_pending_every_user(None).unwrap().len();
+    let pending = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap()
+        .len();
     guest.finish().await;
     pull.shutdown().await;
     assert!(failures.is_empty(), "{failures:#?}");

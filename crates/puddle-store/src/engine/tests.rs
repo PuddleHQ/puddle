@@ -20,9 +20,19 @@ pub(crate) fn rule(id: i64, scope: Option<&str>, pattern: &str, effect: Effect) 
     }
 }
 
-/// An index where every workspace is the owner's.
+/// The workspaces these tests ask for, each recorded as the owner's.
+fn owners_own(names: &[&str]) -> HashMap<WorkspaceId, UserId> {
+    names.iter().map(|name| (sb(name), UserId::OWNER)).collect()
+}
+
+/// An index where every workspace the tests name is the owner's.
 fn new_index(rules: Vec<Rule>, entries: Vec<SetEntry>, switches: Switches) -> RuleIndex {
-    RuleIndex::new(rules, entries, switches, HashMap::new())
+    RuleIndex::new(
+        rules,
+        entries,
+        switches,
+        owners_own(&["a", "b", "c", "mine", "other", "ssh"]),
+    )
 }
 
 fn sb(s: &str) -> WorkspaceId {
@@ -48,6 +58,31 @@ fn r01_empty_rule_set_decides_nothing() {
     let set = RuleIndex::default();
     assert_eq!(set.rules().len(), 0);
     assert_eq!(winner(&set, "a", "example.com"), None);
+}
+
+#[test]
+fn a_workspace_with_no_user_is_decided_by_no_rule() {
+    let github = RuleSetId::BuiltIn("github");
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, github, None, true);
+    let set = RuleIndex::new(
+        vec![
+            rule(1, None, "example.com", Effect::Allow),
+            rule(2, Some("orphan"), "example.com", Effect::Allow),
+        ],
+        vec![
+            system("example.com", None),
+            built_in("github", "github.com"),
+        ],
+        switches,
+        owners_own(&["a"]),
+    );
+    assert_eq!(winner(&set, "a", "example.com"), Some(1));
+    assert!(set.is_on(github, &sb("a")));
+    assert_eq!(set.owner_of(&sb("orphan")), None);
+    assert_eq!(decision(&set, "orphan", "example.com"), None);
+    assert_eq!(decision(&set, "orphan", "github.com"), None);
+    assert!(!set.is_on(github, &sb("orphan")));
 }
 
 #[test]
@@ -332,7 +367,11 @@ fn a_users_global_rules_sets_and_switches_decide_only_their_own_workspaces() {
         ],
         vec![built_in("github", "github.com")],
         switches,
-        HashMap::from([(sb("b"), second), (sb("c"), second)]),
+        HashMap::from([
+            (sb("a"), UserId::OWNER),
+            (sb("b"), second),
+            (sb("c"), second),
+        ]),
     );
     // The owner's workspace `a`: the owner's global rule, no set of the second user, the
     // built-in set as it ships (off).
@@ -344,7 +383,7 @@ fn a_users_global_rules_sets_and_switches_decide_only_their_own_workspaces() {
     assert_eq!(winner(&index, "c", "set.example"), Some(3));
     assert_eq!(decision(&index, "b", "github.com"), None);
     assert!(decision(&index, "c", "github.com").is_some());
-    assert_eq!(index.owner_of(&sb("a")), UserId::OWNER);
+    assert_eq!(index.owner_of(&sb("a")), Some(UserId::OWNER));
     assert_eq!(
         index.overrides(second, RuleSetId::BuiltIn("github")),
         vec![(sb("b"), false)]
@@ -621,13 +660,15 @@ fn reference_p3(
     now: u64,
     suffix_allows: SuffixAllows,
 ) -> Option<Decision> {
+    // A workspace that is nobody's has no rules.
+    index.owner_of(workspace)?;
     let ignore = suffix_allows == SuffixAllows::Ignore;
     let own: Vec<&Rule> = index
         .rules()
         .iter()
         .filter(|r| r.pattern.matches(h) && !r.is_expired(now))
         .filter(|r| {
-            (matches!(r.scope, Scope::Global) && r.user == index.owner_of(workspace))
+            (matches!(r.scope, Scope::Global) && Some(r.user) == index.owner_of(workspace))
                 || r.scope.workspace() == Some(workspace)
         })
         .filter(|r| {
@@ -637,7 +678,7 @@ fn reference_p3(
     let mut sets: Vec<Hit<'_>> = Vec::new();
     for r in index.rules() {
         if let Scope::Set(set) = r.scope
-            && r.user == index.owner_of(workspace)
+            && Some(r.user) == index.owner_of(workspace)
             && r.pattern.matches(h)
             && !r.is_expired(now)
             && index.is_on(RuleSetId::User(set), workspace)
@@ -746,16 +787,15 @@ fn arb_index() -> impl Strategy<Value = RuleIndex> {
         ),
         0..5,
     );
-    // Workspace `b` is the second user's or the owner's.
-    let b_owned = any::<bool>();
-    (rules, entries, switches, b_owned).prop_map(|(rules, entries, switches, b_owned)| {
-        let owners: HashMap<WorkspaceId, UserId> = if b_owned {
-            HashMap::from([(sb("b"), UserId::from_stored(2))])
-        } else {
-            HashMap::new()
-        };
+    // Workspace `a` is the owner's; `b` the second user's, the owner's or nobody's.
+    let b_owner = prop_oneof![Just(None), Just(Some(1i64)), Just(Some(2i64))];
+    (rules, entries, switches, b_owner).prop_map(|(rules, entries, switches, b_owner)| {
+        let mut owners = owners_own(&["a"]);
+        if let Some(user) = b_owner {
+            owners.insert(sb("b"), UserId::from_stored(user));
+        }
         let user_of = |scope: &Scope, user: i64| match scope.workspace() {
-            Some(w) => owners.get(w).copied().unwrap_or(UserId::OWNER),
+            Some(w) => owners.get(w).copied().unwrap_or(UserId::from_stored(user)),
             None => UserId::from_stored(user),
         };
         let rules = rules
@@ -852,22 +892,25 @@ proptest! {
         now in 0..25u64,
     ) {
         let workspace = sb(workspace);
+        // `None` for a workspace that is nobody's, whose requests no rule decides.
         let user = index.owner_of(&workspace);
         if let Some(Hit::Rule(rule)) = index.decide(&workspace, &host(h), now, SuffixAllows::Count) {
-            prop_assert_eq!(rule.user, user);
+            prop_assert_eq!(Some(rule.user), user);
         }
         // Dropping every other user's rules and switches changes no answer.
         let mut switches = Switches::default();
         for ((u, set), on) in &index.switches.global {
-            if *u == user {
+            if Some(*u) == user {
                 switches.insert(*u, *set, None, *on);
             }
         }
         for ((set, w), on) in &index.switches.workspace {
-            switches.insert(user, *set, Some(w.clone()), *on);
+            if let Some(user) = user {
+                switches.insert(user, *set, Some(w.clone()), *on);
+            }
         }
         let alone = RuleIndex::new(
-            index.rules().iter().filter(|r| r.user == user).cloned().collect(),
+            index.rules().iter().filter(|r| Some(r.user) == user).cloned().collect(),
             index.entries.clone(),
             switches,
             index.owners.clone(),

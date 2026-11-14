@@ -103,6 +103,12 @@ fn hermetic() -> HostOptions {
     ));
     options.secret_store = Some(Arc::new(MemoryStore::new()));
     options.dev_cert = Some(Arc::new(NoDevCert));
+    // No name resolves on this machine's DNS and no real `az` runs: the system check and the
+    // host's own connections never wait on the network.
+    options.host_lookup = Some(puddle_upstream::HostLookup::new(|_, _| async {
+        Err(std::io::Error::other("no names resolve in a hermetic host"))
+    }));
+    options.az_search_path = Some(std::ffi::OsString::new());
     options
 }
 

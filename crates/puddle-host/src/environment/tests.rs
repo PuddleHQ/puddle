@@ -16,7 +16,11 @@ use super::*;
 const REAL: &str = "real-value-CANARY-0123";
 
 fn store() -> Store {
-    Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    for name in ["a", "shop"] {
+        puddle_store::testing::own(&store, &ws(name));
+    }
+    store
 }
 
 fn ws(name: &str) -> WorkspaceId {

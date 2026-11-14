@@ -11,7 +11,7 @@ use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
 use puddle_compute::{ImageConfig, Runtime};
 use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, resolve};
-use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{Actor, AllUsers, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceStatus,
     WorkspaceStep,
@@ -86,6 +86,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             };
             slots.insert(id, Slot::new(record, false));
         }
+        let all_users = parts.all_users;
         let service = Self {
             inner: Arc::new(Inner {
                 runtime: parts.runtime,
@@ -131,7 +132,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }),
         };
         service.note_names(&service.state());
-        service.adopt_listed()?;
+        service.adopt_listed(&all_users)?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
@@ -143,11 +144,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// On the first start of this build, records the owner as the user of every listed workspace
     /// that has none: they were made before every create recorded its user. Before anything serves
     /// them, or no user would reach them; later starts change nothing.
-    pub(super) fn adopt_listed(&self) -> Result<(), HostError> {
+    pub(super) fn adopt_listed(&self, all_users: &AllUsers) -> Result<(), HostError> {
         let adopted = self
             .inner
             .store
-            .adopt_unowned_workspaces(self.state().slots.keys())
+            .adopt_unowned_workspaces(all_users, self.state().slots.keys())
             .map_err(|e| HostError::State {
                 what: "the database",
                 reason: format!("whose the listed workspaces are could not be recorded: {e}"),

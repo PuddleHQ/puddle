@@ -55,6 +55,8 @@ testing = []
 fuzzing = []
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 brotli = { workspace = true }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
@@ -71,7 +73,6 @@ puddle-log = { workspace = true }
 puddle-logins = { workspace = true }
 puddle-proxy = { path = ".", features = ["testing", "fuzzing"] }
 puddle-secrets = { workspace = true }
-puddle-store = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-ssh-agent = { workspace = true, features = ["testing"] }
 rcgen = { workspace = true }

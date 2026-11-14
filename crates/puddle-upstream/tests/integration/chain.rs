@@ -587,7 +587,15 @@ async fn host_side_connections_use_the_same_route_and_let_the_proxy_resolve_unkn
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Open).await;
     proxy.resolve_name("telemetry.nowhere.invalid", echo.addr);
-    let chain = chain(vec![via(&proxy)], Arc::new(puddle_upstream::NoAuth));
+    // The host's own lookup finds nothing, at once, whatever the machine's resolver is doing.
+    let chain = Chain::with_lookup(
+        discovery(vec![via(&proxy)]),
+        Arc::new(puddle_upstream::NoAuth),
+        fast(),
+        puddle_upstream::HostLookup::new(|_, _| async {
+            Err(std::io::Error::other("no such name"))
+        }),
+    );
     let dest = https("telemetry.nowhere.invalid");
     let mut connected = puddle_upstream::host::connect(&chain, &dest, Form::Tunnel)
         .await

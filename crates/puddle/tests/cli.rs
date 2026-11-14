@@ -98,7 +98,10 @@ fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
         puddle_store::Limits::default(),
     )
     .unwrap();
-    assert_eq!(restored.rules_every_user(), live.rules_every_user());
+    assert_eq!(
+        restored.rules_every_user(&puddle_store::testing::all_users()),
+        live.rules_every_user(&puddle_store::testing::all_users())
+    );
 }
 
 #[test]
@@ -126,7 +129,10 @@ fn backup_reads_the_folder_the_environment_names_not_the_per_user_one() {
         puddle_store::Limits::default(),
     )
     .unwrap();
-    assert_eq!(copy.rules_every_user(), live.rules_every_user());
+    assert_eq!(
+        copy.rules_every_user(&puddle_store::testing::all_users()),
+        live.rules_every_user(&puddle_store::testing::all_users())
+    );
 }
 
 #[test]

@@ -8,7 +8,17 @@ use crate::clock::ManualClock;
 use crate::store::Limits;
 
 fn store() -> Store {
-    Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
+    owned(Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap())
+}
+
+/// `store` with the workspaces these tests use, each the owner's.
+fn owned(store: Store) -> Store {
+    for name in [
+        "a", "b", "big", "empty", "full", "held", "other", "own", "shop",
+    ] {
+        crate::testing::own(&store, &ws(name));
+    }
+    store
 }
 
 fn name(text: &str) -> EnvName {
@@ -501,9 +511,11 @@ fn changes_say_which_scope_changed() {
         }
     }
     let events = Arc::new(Events::default());
-    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
-        .unwrap()
-        .with_events(events.clone());
+    let store = owned(
+        Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
+            .unwrap()
+            .with_events(events.clone()),
+    );
     store
         .set_env(UserId::OWNER, &EnvScope::Global, &name("A"), plain("1"))
         .unwrap();
@@ -657,9 +669,11 @@ fn deleting_a_workspace_says_its_environment_changed_only_when_it_held_something
         }
     }
     let events = Arc::new(Events::default());
-    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
-        .unwrap()
-        .with_events(events.clone());
+    let store = owned(
+        Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
+            .unwrap()
+            .with_events(events.clone()),
+    );
     let said = |workspace: &str| -> usize {
         let mut seen = events.0.lock().unwrap();
         let n = seen

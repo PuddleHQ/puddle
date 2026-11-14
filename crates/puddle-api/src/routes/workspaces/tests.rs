@@ -21,6 +21,7 @@ fn at(url: &str, identity: Option<i64>) -> NewRepository {
 fn a_list_the_store_cannot_set_up_is_cloned_without_and_every_entry_says_why() {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
     let ws = WorkspaceId::new("w").unwrap();
+    puddle_store::testing::own(&store, &ws);
     // The second repository's identity is gone by the time the create sets it up: the first
     // is not set up either, as the list is one transaction.
     let list = [
@@ -50,6 +51,7 @@ fn a_list_the_store_cannot_set_up_is_cloned_without_and_every_entry_says_why() {
 fn a_repository_the_table_cannot_hold_is_skipped_and_the_rest_are_set_up() {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
     let ws = WorkspaceId::new("w").unwrap();
+    puddle_store::testing::own(&store, &ws);
     let list = [
         at("https://github.com/a/b/c", None),
         at("https://github.com/acme/web", None),

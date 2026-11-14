@@ -56,12 +56,15 @@ fn blocked_by(store: &Store, user: UserId, host: &Host, decision: Decision) -> O
 
 /// Where each host stands for `workspace` of `user` (a workspace of theirs that does not exist
 /// yet when `None`).
+///
+/// # Errors
+/// [`puddle_store::StoreError::UnknownWorkspace`] when `workspace` is nobody's.
 pub(crate) fn stand(
     store: &Store,
     user: UserId,
     workspace: Option<&WorkspaceId>,
     hosts: &[Host],
-) -> Vec<RepositoryHost> {
+) -> Result<Vec<RepositoryHost>, puddle_store::StoreError> {
     let placeholder = new_workspace();
     hosts
         .iter()
@@ -76,11 +79,11 @@ pub(crate) fn stand(
                     None => (RepositoryHostState::Allowed, None),
                 },
             };
-            RepositoryHost {
+            Ok(RepositoryHost {
                 host: host.to_string(),
                 state,
                 blocked_by,
-            }
+            })
         })
         .collect()
 }
@@ -94,7 +97,7 @@ pub(crate) async fn refuse_blocked(
     hosts: Vec<Host>,
 ) -> Result<(), ApiError> {
     let store = store.clone();
-    let stands = blocking(move || Ok(stand(&store, user, workspace.as_ref(), &hosts))).await?;
+    let stands = blocking(move || Ok(stand(&store, user, workspace.as_ref(), &hosts)?)).await?;
     let blocked: Vec<String> = stands.into_iter().filter_map(|h| h.blocked_by).collect();
     if blocked.is_empty() {
         return Ok(());
@@ -145,6 +148,6 @@ pub(crate) async fn repository_hosts(
     let hosts = hosts_of(body.urls.iter().map(String::as_str));
     let store = state.store.clone();
     let user = principal.user;
-    let hosts = blocking(move || Ok(stand(&store, user, workspace.as_ref(), &hosts))).await?;
+    let hosts = blocking(move || Ok(stand(&store, user, workspace.as_ref(), &hosts)?)).await?;
     Ok(Json(RepositoryHosts { hosts }))
 }

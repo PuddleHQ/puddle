@@ -151,10 +151,18 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
                  acl authed proxy_auth REQUIRED\n",
                 at("basic-helper.sh")
             ),
-            "http_access allow authed",
+            // The probe asks for a name that never resolves (`.invalid`). A real company proxy
+            // looks it up and answers 5xx; Squid here answers 503 at once instead, because the
+            // lookup waits as long as the machine's resolver does (on a host with a dead DNS,
+            // 20 s). The deny line names `authed` too (before `probe_host`, which has to come last for `deny_info` to apply), so a request without credentials still
+            // gets the 407 the probe is after.
+            "http_access deny authed probe_host\nhttp_access allow authed",
         )
     } else {
-        (String::new(), "http_access allow all")
+        (
+            String::new(),
+            "http_access deny probe_host\nhttp_access allow all",
+        )
     };
     let parent = options.parent_port.map_or_else(String::new, |parent| {
         format!("cache_peer {LOCAL} parent {parent} 0 no-query no-digest\nnever_direct allow all\n")
@@ -167,6 +175,8 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              acl SSL_ports port {ports}\n\
              acl Safe_ports port {ports}\n\
              acl CONNECT method CONNECT\n\
+             acl probe_host dstdomain puddle.invalid\n\
+             deny_info 503:ERR_ACCESS_DENIED probe_host\n\
              http_access deny !Safe_ports\n\
              http_access deny CONNECT !SSL_ports\n\
              {access}\n\

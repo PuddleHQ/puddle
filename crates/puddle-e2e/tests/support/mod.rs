@@ -44,6 +44,7 @@ pub(crate) async fn rig() -> Rig {
     // 256-connection test alone needs about 1 000, which is the usual default limit of 1 024.
     let _ = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = StaticResolver::new()
         .with("echo.test", &[LOCAL])
         .with("sink.test", &[LOCAL])

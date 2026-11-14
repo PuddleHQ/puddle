@@ -209,7 +209,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   `cfg(unix)` is not "Linux".
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
-  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment and each `expect`
+  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment, each `let _ =` outside tests a comment on the line or within three lines above (`let _ = name;` is exempt), and each `expect`
   a message; each fixed sleep in a test (outside a polling loop and a `start_paused` test) a comment saying whether it
   is an absence window, simulated latency or an ordering with no signal to wait on; each `shellcheck disable` a
   `# why` (in `*.sh` and in workflow `run:` blocks), each UI suppression a reason; each `TODO`, `HACK`, `FIXME` names its
@@ -421,8 +421,12 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   merge without a conflict. The same holds for `scripts/full-coverage-exclusions.txt`.
   An entry whose text is gone fails the gate on every run, whatever the diff touches, naming the exclusion file
   and line: no file under its glob holds its text any more. Delete it. An entry a test now runs every line of
-  (judged where the run measured the file) is only reported as a note, since a racy line reads covered in one run
-  and not the next; delete such an entry when you see it, the gate does not force it.
+  (judged where the run measured the file) fails only when `--lcov` lists the reports of two or more runs
+  (comma-separated) and every one of them ran every line; a report that misses one line keeps the entry, in any
+  order. One report only prints a note, since a racy line (a `select!` arm, a timing path) reads covered in one run
+  and not the next and a single run cannot tell it from an excuse that rotted. The CI gate has one report, so
+  it fails on text only; to find rotted excuses run the gate by hand on the lcov artifacts of several recent
+  runs (`ci` uploads `target/lcov.info` as `linux-test-results`, kept 14 days).
   What it can't see: lines with no coverage data (comments, declarations, code compiled out of the Linux
   run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
   failed), branch or region detail inside a covered line, and whether a covered line is asserted.

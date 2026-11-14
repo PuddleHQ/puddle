@@ -90,7 +90,7 @@ pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, R
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
-pub use front::{NameResolver, SystemResolver};
+pub use front::{NameResolver, NoNames, SystemResolver};
 pub use learned::{FakeLearned, LearnedService, NoLearned};
 pub use network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,

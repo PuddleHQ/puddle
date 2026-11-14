@@ -16,6 +16,7 @@ const DISK_FULL: &str = "database error: disk full";
 fn store_with(limits: Limits) -> (Arc<ManualClock>, Store) {
     let clock = Arc::new(ManualClock::new(1_000_000));
     let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+    crate::testing::own(&store, &workspace());
     (clock, store)
 }
 
@@ -37,7 +38,9 @@ fn new_pending(store: &Store, host: &str) -> PendingId {
         decision,
         Decision::Pending(PendingOutcome::New(_))
     ));
-    let open = store.open_pending_every_user(Some(&workspace())).unwrap();
+    let open = store
+        .open_pending_every_user(&crate::testing::all_users(), Some(&workspace()))
+        .unwrap();
     open.into_iter()
         .find(|row| row.host.to_string() == host)
         .unwrap()
@@ -107,7 +110,10 @@ fn a_rule_that_arrived_while_a_request_waited_for_the_database_decides_it() {
         }
     );
     assert!(
-        waiting.open_pending_every_user(None).unwrap().is_empty(),
+        waiting
+            .open_pending_every_user(&crate::testing::all_users(), None)
+            .unwrap()
+            .is_empty(),
         "no pending row was made"
     );
 }
@@ -140,7 +146,13 @@ fn a_request_whose_open_rows_cannot_be_counted_makes_no_row() {
             .starts_with("database error: not authorized to use function: count"),
         "{err}"
     );
-    assert_eq!(store.open_pending_every_user(None).unwrap().len(), 0);
+    assert_eq!(
+        store
+            .open_pending_every_user(&crate::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -153,7 +165,13 @@ fn a_new_row_whose_record_cannot_be_written_is_not_made() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.open_pending_every_user(None).unwrap().len(), 0);
+    assert_eq!(
+        store
+            .open_pending_every_user(&crate::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0
+    );
     assert_eq!(audit_kinds(&store), Vec::<String>::new());
 }
 
@@ -171,7 +189,10 @@ fn a_rule_that_cannot_be_inserted_is_not_made() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
 }
 
 #[test]
@@ -185,7 +206,10 @@ fn a_rule_whose_record_cannot_be_written_is_not_made() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
 }
 
 #[test]
@@ -200,7 +224,7 @@ fn a_rule_whose_deletion_cannot_be_recorded_stays() {
     let err = store.delete_rule(rule.id, Actor::Cli).unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), [rule]);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
 }
 
 #[test]
@@ -217,7 +241,7 @@ fn a_rule_whose_expiry_change_cannot_be_recorded_keeps_its_expiry() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), [rule]);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
 }
 
 #[test]
@@ -231,7 +255,10 @@ fn a_decision_that_cannot_update_its_row_makes_no_rule() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
     assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
 }
 
@@ -246,7 +273,10 @@ fn a_decision_whose_record_cannot_be_written_makes_no_rule() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
     assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
 }
 
@@ -310,7 +340,7 @@ fn a_workspace_whose_rule_deletion_cannot_be_recorded_keeps_everything() {
     let err = store.delete_workspace(&workspace()).unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), [rule]);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
 }
 
 #[test]
@@ -326,7 +356,7 @@ fn a_workspace_whose_open_requests_cannot_be_expired_keeps_everything() {
     let err = store.delete_workspace(&workspace()).unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), [rule]);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
     assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
 }
 
@@ -350,7 +380,7 @@ fn a_workspace_whose_pinned_ports_cannot_be_removed_keeps_everything() {
     let err = store.delete_workspace(&workspace()).unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.rules_every_user(), [rule]);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
     assert_eq!(store.pinned_ports(&workspace()).unwrap(), [pin]);
 }
 
@@ -471,7 +501,12 @@ fn a_request_rule_whose_scope_cannot_be_counted_is_not_made() {
             .starts_with("database error: not authorized to use function: COUNT"),
         "{err}"
     );
-    assert_eq!(store.request_rules_every_user().unwrap(), []);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        []
+    );
 }
 
 #[test]
@@ -488,7 +523,12 @@ fn a_request_rule_that_cannot_be_inserted_is_not_made() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.request_rules_every_user().unwrap(), []);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        []
+    );
 }
 
 #[test]
@@ -502,7 +542,12 @@ fn a_request_rule_whose_record_cannot_be_written_is_not_made() {
         .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.request_rules_every_user().unwrap(), []);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        []
+    );
     assert_eq!(audit_kinds(&store), Vec::<String>::new());
 }
 
@@ -518,7 +563,12 @@ fn a_request_rule_whose_deletion_cannot_be_recorded_stays() {
     let err = store.delete_request_rule(rule.id, Actor::Cli).unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.request_rules_every_user().unwrap(), [rule]);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        [rule]
+    );
 }
 
 #[test]
@@ -533,7 +583,12 @@ fn a_workspace_whose_request_rule_deletion_cannot_be_recorded_keeps_its_request_
     let err = store.delete_workspace(&workspace()).unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.request_rules_every_user().unwrap(), [rule]);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        [rule]
+    );
 }
 
 #[test]

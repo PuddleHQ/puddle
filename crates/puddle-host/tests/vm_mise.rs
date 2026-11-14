@@ -117,7 +117,7 @@ async fn run(
 fn asked_for(vm: &VmHost, ws: &puddle_types::WorkspaceId) -> Vec<String> {
     vm.host
         .store()
-        .open_pending_every_user(Some(ws))
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(ws))
         .unwrap()
         .iter()
         .map(|r| format!("{}:{}", r.host, r.port))

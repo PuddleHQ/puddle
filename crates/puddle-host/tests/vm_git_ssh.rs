@@ -78,6 +78,7 @@ async fn workspace(fake: &GitHost, tag: &str) -> (NameProxy, VmHost, WorkspaceId
     let vm = start_vm_host_platform(tag, net.options, &net.platform, |_| {}).await;
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(vm.host.store(), &sandbox);
     vm.host
         .store()
         .as_user(puddle_store::UserId::OWNER)

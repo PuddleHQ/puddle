@@ -126,7 +126,7 @@ async fn a_new_user_is_invited_never_given_a_password_and_chooses_their_own() {
     assert_eq!(list[1]["state"], "invited");
     assert_eq!(list[1]["devices"], 0);
     assert_eq!(list[1]["last_sign_in"], Value::Null);
-    let attempt = admin.site.sign_in("Ann", "anything at all goes").await;
+    let attempt = admin.site.sign_in("Ann", pw("anything at all goes")).await;
     assert_eq!(attempt.status, 401, "{attempt:?}");
 
     // The invite works once, for the person who opens it.

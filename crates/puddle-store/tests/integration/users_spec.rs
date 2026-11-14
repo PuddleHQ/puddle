@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use puddle_secrets::{AccountName, HostName, SourceSpec};
+use puddle_store::testing::{all_users, own};
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, Author, Coverage, CredentialBinding, EnvDraft, EnvName,
     EnvScope, IdentityDraft, Limits, ManualClock, NewRequestRule, NewRule, Owner, Pattern,
@@ -31,6 +32,7 @@ fn fixture() -> (Store, UserId, Arc<CollectingSink>) {
         .unwrap()
         .with_events(events.clone());
     let ann = store.add_user(&UserName::new("Ann").unwrap()).unwrap().id;
+    own(&store, &ws("mine"));
     store.set_workspace_owner(&ws("anns"), ann).unwrap();
     (store, ann, events)
 }
@@ -186,13 +188,19 @@ fn approving_for_every_workspace_makes_a_rule_of_the_workspaces_user() {
 }
 
 #[test]
-fn recording_a_workspaces_user_changes_whose_rules_decide_at_once() {
+fn a_workspace_with_no_user_has_no_rules_until_its_user_is_recorded() {
     let (store, ann, _) = fixture();
     store
         .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Global, "owners.example"))
         .unwrap();
-    assert!(allows(&store, "late", "owners.example"));
+    assert!(matches!(
+        store.decide(
+            &EgressRequest::new(ws("late"), host("owners.example"), 443),
+            SuffixAllows::Count
+        ),
+        Err(StoreError::UnknownWorkspace(w)) if w == ws("late")
+    ));
     store.set_workspace_owner(&ws("late"), ann).unwrap();
     assert!(!allows(&store, "late", "owners.example"));
 }
@@ -412,6 +420,7 @@ fn audit_records_and_their_events_reach_the_user_they_belong_to() {
     let page = |user| {
         store
             .audit_query_every_user(
+                &all_users(),
                 &AuditFilter {
                     user: Some(user),
                     ..AuditFilter::default()
@@ -487,15 +496,18 @@ fn one_change_with_records_of_two_users_tells_each_of_them() {
 )]
 fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
     let (store, ann, _) = fixture();
-    store
-        .set_workspace_owner(&ws("mine"), UserId::OWNER)
-        .unwrap();
-    for workspace in ["mine", "anns", "stray"] {
+    for workspace in ["mine", "anns"] {
         assert!(matches!(
             decide(&store, workspace, &format!("{workspace}.example")),
             Decision::Pending(_)
         ));
     }
+    // A workspace with no user gets no decision and leaves no row anyone could list.
+    let stray = store.decide(
+        &EgressRequest::new(ws("stray"), host("stray.example"), 443),
+        SuffixAllows::Count,
+    );
+    assert!(matches!(stray, Err(StoreError::UnknownWorkspace(w)) if w == ws("stray")));
     let workspaces = |rows: Vec<puddle_store::PendingRow>| -> BTreeSet<String> {
         rows.into_iter().map(|r| r.workspace.to_string()).collect()
     };
@@ -518,8 +530,8 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
         set(&["anns"])
     );
     assert_eq!(
-        workspaces(store.open_pending_every_user(None).unwrap()),
-        set(&["mine", "anns", "stray"])
+        workspaces(store.open_pending_every_user(&all_users(), None).unwrap()),
+        set(&["mine", "anns"])
     );
     let inbox = |groups: Vec<puddle_store::InboxGroup>| -> BTreeSet<String> {
         groups
@@ -531,8 +543,8 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
     assert_eq!(inbox(store.inbox(ann).unwrap()), set(&["anns"]));
     assert_eq!(inbox(store.inbox(UserId::OWNER).unwrap()), set(&["mine"]));
     assert_eq!(
-        inbox(store.inbox_every_user().unwrap()),
-        set(&["mine", "anns", "stray"])
+        inbox(store.inbox_every_user(&all_users()).unwrap()),
+        set(&["mine", "anns"])
     );
 
     // Rules on method and path: Ann's, for her workspace only.
@@ -576,7 +588,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
         [owners_rule.id]
     );
     assert_eq!(
-        ids(store.request_rules_every_user().unwrap()),
+        ids(store.request_rules_every_user(&all_users()).unwrap()),
         [owners_rule.id, anns_global.id, anns_own.id]
     );
     assert_eq!(store.request_rule_owner(anns_own.id).unwrap(), Some(ann));
@@ -608,7 +620,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
     assert_eq!(rule_ids(store.rules(ann)), [anns_host.id]);
     assert_eq!(rule_ids(store.rules(UserId::OWNER)), [owners_host.id]);
     assert_eq!(
-        rule_ids(store.rules_every_user()),
+        rule_ids(store.rules_every_user(&all_users())),
         [owners_host.id, anns_host.id]
     );
     assert_eq!(store.rule_owner(anns_host.id), Some(ann));
@@ -645,7 +657,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
         set(&["*", "mine"])
     );
     assert_eq!(
-        scopes(store.system_managed_every_user().unwrap()),
+        scopes(store.system_managed_every_user(&all_users()).unwrap()),
         set(&["*", "mine", "anns", "stray"])
     );
 
@@ -666,6 +678,182 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
     assert!(
         lines.iter().any(|(_, line)| line.contains("a.example")),
         "{lines:?}"
+    );
+}
+
+/// A workspace with no recorded user is nobody's: nothing decides its requests, nothing reads or
+/// writes its rules, variables or identities, for anyone. Deleting it still clears what it held.
+#[test]
+fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
+    let (store, _, _) = fixture();
+    let stray = ws("stray");
+    let nobodys = |result: Result<(), StoreError>| {
+        assert!(
+            matches!(&result, Err(StoreError::UnknownWorkspace(w)) if *w == stray),
+            "{result:?}"
+        );
+    };
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&allow(Scope::Global, "owners.example"))
+        .unwrap();
+    nobodys(
+        store
+            .decide(
+                &EgressRequest::new(stray.clone(), host("owners.example"), 443),
+                SuffixAllows::Count,
+            )
+            .map(drop),
+    );
+    nobodys(
+        store
+            .as_user(UserId::OWNER)
+            .add_rule(&allow(Scope::Workspace(stray.clone()), "x.example"))
+            .map(drop),
+    );
+    nobodys(store.request_rules_for(&stray).map(drop));
+    nobodys(
+        store
+            .as_user(UserId::OWNER)
+            .add_request_rule(&NewRequestRule {
+                workspace: Some(stray.clone()),
+                host: "api.example".to_owned(),
+                methods: Methods::parse(["DELETE"]).unwrap(),
+                path: PathPattern::parse("/x").unwrap(),
+                created_by: Actor::Api,
+            })
+            .map(drop),
+    );
+    nobodys(store.workspace_env(&stray).map(drop));
+    nobodys(
+        store
+            .env_for_start(&stray, &mut |_| Ok("stand-in".to_owned()))
+            .map(drop),
+    );
+    nobodys(store.workspace_git(&stray).map(drop));
+    nobodys(store.set_workspace_identities(&stray, &[]).map(drop));
+    assert_eq!(
+        store.open_pending_every_user(&all_users(), None).unwrap(),
+        []
+    );
+}
+
+/// A workspace whose user row went missing (a damaged or hand-edited database) is refused like
+/// one that never had a user, and deleting it still clears what it held.
+#[test]
+fn a_workspace_that_lost_its_user_is_refused_and_its_delete_clears_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let open = || Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
+    let lost = ws("lost");
+    let store = open();
+    own(&store, &lost);
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&allow(Scope::Workspace(lost.clone()), "x.example"))
+        .unwrap();
+    store
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Workspace(lost.clone()),
+            &EnvName::new("A").unwrap(),
+            EnvDraft::plain("1").unwrap(),
+        )
+        .unwrap();
+    drop(store);
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "DELETE FROM workspace_owners WHERE workspace_id = 'lost'",
+            [],
+        )
+        .unwrap();
+    let store = open();
+    assert!(matches!(
+        store.decide(
+            &EgressRequest::new(lost.clone(), host("x.example"), 443),
+            SuffixAllows::Count
+        ),
+        Err(StoreError::UnknownWorkspace(_))
+    ));
+    assert!(matches!(
+        store.workspace_env(&lost),
+        Err(StoreError::UnknownWorkspace(_))
+    ));
+    let deletion = store.delete_workspace(&lost).unwrap();
+    assert_eq!(deletion.rules_deleted, 1);
+    let scope = Some(lost.clone());
+    assert!(
+        store
+            .rules_every_user(&all_users())
+            .iter()
+            .all(|r| r.scope.workspace() != scope.as_ref())
+    );
+    // Its variables went with it: recorded again for the owner, it starts empty.
+    own(&store, &lost);
+    assert_eq!(store.workspace_env(&lost).unwrap(), []);
+}
+
+/// The proxy asks through `Policy`: both ways in refuse a nobody's workspace, so its request
+/// fails closed with a reason that names the workspace.
+#[test]
+fn the_proxy_gets_no_answer_for_a_workspace_with_no_user() {
+    let (store, _, _) = fixture();
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&allow(Scope::Global, "owners.example"))
+        .unwrap();
+    let request = EgressRequest::new(ws("stray"), host("owners.example"), 443);
+    let looked_up =
+        puddle_types::Policy::lookup(&store, &request, SuffixAllows::Count).unwrap_err();
+    let decided = puddle_types::Policy::decide(&store, &request, SuffixAllows::Count).unwrap_err();
+    assert!(looked_up.reason.contains("stray"), "{}", looked_up.reason);
+    assert_eq!(looked_up.reason, decided.reason);
+}
+
+#[test]
+fn the_reach_across_every_user_is_handed_out_once() {
+    let (store, _, _) = fixture();
+    assert!(store.take_all_users().is_some());
+    assert!(store.take_all_users().is_none());
+}
+
+/// What the install sees through its reach across every user takes in every user's workspaces,
+/// where each user's own reads keep to theirs.
+#[test]
+fn the_install_sees_every_users_workspaces() {
+    let (store, ann, _) = fixture();
+    let all = store.take_all_users().unwrap();
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&allow(Scope::Workspace(ws("mine")), "o.example"))
+        .unwrap();
+    store
+        .as_user(ann)
+        .add_rule(&allow(Scope::Workspace(ws("anns")), "a.example"))
+        .unwrap();
+    decide(&store, "mine", "mine.example");
+    decide(&store, "anns", "anns.example");
+    let scopes = |rules: Vec<puddle_store::Rule>| -> BTreeSet<String> {
+        rules
+            .into_iter()
+            .filter_map(|r| r.scope.workspace().map(ToString::to_string))
+            .collect()
+    };
+    let set =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| (*n).to_owned()).collect() };
+    assert_eq!(scopes(store.rules_every_user(&all)), set(&["mine", "anns"]));
+    assert_eq!(scopes(store.rules(ann)), set(&["anns"]));
+    let pending = |rows: Vec<puddle_store::PendingRow>| -> BTreeSet<String> {
+        rows.into_iter().map(|r| r.workspace.to_string()).collect()
+    };
+    assert_eq!(
+        pending(store.open_pending_every_user(&all, None).unwrap()),
+        set(&["mine", "anns"])
+    );
+    assert_eq!(
+        pending(store.open_pending(ann, None).unwrap()),
+        set(&["anns"])
     );
 }
 

@@ -399,6 +399,47 @@ pub(crate) async fn start_vm_host_platform(
     }
 }
 
+/// Quits `vm`'s host and starts a new one over the same data folder and runtime, as a quit and a
+/// launch of Puddle do (or a reboot of the computer): the sandboxes stay in the runtime, stopped.
+pub(crate) async fn restart_vm_host(vm: VmHost) -> VmHost {
+    let VmHost {
+        host,
+        settings,
+        root,
+        secrets,
+        ..
+    } = vm;
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+    drop(host);
+    let pair = settings.prepare().expect("msb runtime pair");
+    let agent = std::path::PathBuf::from(
+        std::env::var_os("PUDDLE_AGENT_BIN")
+            .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
+    );
+    let config = harness_config(&settings, &pair, &root, agent);
+    let factory = HarnessFactory {
+        settings: settings.clone(),
+        msb: pair.msb.clone(),
+        libkrunfw: pair.libkrunfw.clone(),
+        opened: std::sync::Mutex::new(None),
+    };
+    let prepared = prepare(config, &HarnessPlatform::default()).unwrap();
+    let mut options = crate::support::named_id_options();
+    options.secret_store = Some(secrets.clone());
+    let host = Host::start(prepared, &factory, options)
+        .await
+        .expect("the host starts again");
+    let runtime = factory.opened.lock().unwrap().clone().unwrap();
+    VmHost {
+        host,
+        runtime,
+        settings,
+        root,
+        secrets,
+    }
+}
+
 /// Runs `script` as root in the guest and returns what it printed; fails the test if it fails.
 pub(crate) async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceId, script: &str) -> String {
     guest_within(runtime, sandbox, script, Duration::from_secs(120)).await
@@ -569,6 +610,7 @@ pub(crate) async fn create_workspace_from(
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in allowed {
+        puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
             .as_user(puddle_store::UserId::OWNER)

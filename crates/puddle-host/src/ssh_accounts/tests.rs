@@ -40,6 +40,7 @@ fn store_with(identities: &[(&str, &str, bool)]) -> (Arc<Store>, Vec<SourceSpec>
     let clock = Arc::new(ManualClock::new(1_700_000_000_000));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
     let ws = WorkspaceId::new("box").unwrap();
+    puddle_store::testing::own(&store, &ws);
     let mut sources = Vec::new();
     for (label, host, rest) in identities {
         let spec = source(&format!("{label}tok"), host);

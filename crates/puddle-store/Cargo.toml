@@ -10,6 +10,10 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# `testing`: `puddle_store::testing`, helpers for other crates' tests (never in a shipped program).
+testing = []
+
 [dependencies]
 psl = { workspace = true }
 puddle-secrets = { workspace = true }
@@ -22,6 +26,8 @@ tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The integration tests set up their workspaces' users through `puddle_store::testing`.
+puddle-store = { path = ".", features = ["testing"] }
 # `hooks` lets tests make single statements fail, to run the error paths.
 puddle-test-kit = { workspace = true }
 rusqlite = { workspace = true, features = ["hooks"] }

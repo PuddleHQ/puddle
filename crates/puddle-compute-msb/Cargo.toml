@@ -28,6 +28,8 @@ tracing = { workspace = true }
 rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 tracing-subscriber = { workspace = true }
 microsandbox-runtime = { workspace = true }
 puddle-compute = { workspace = true, features = ["contract"] }
@@ -36,7 +38,6 @@ puddle-boot = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
-puddle-store = { workspace = true }
 puddle-test-kit = { workspace = true }
 puddle-vm-tests = { workspace = true }
 rusqlite = { workspace = true }

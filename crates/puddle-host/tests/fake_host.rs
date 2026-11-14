@@ -4100,13 +4100,14 @@ async fn operations_are_refused_once_shutdown_has_begun() {
 // ---- after a restart ----------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_volume() {
+async fn a_restart_keeps_the_workspaces_and_the_sandbox_with_its_root_disk() {
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
     let created_at = api1.get("/api/workspaces/acme").await.json()["created_at"].clone();
+    let route = rig.runtime.routes(&SandboxName::new("acme").unwrap());
     host.shutdown().await;
     // The next start is a new process: the first one's hold on the data folder ends.
     drop(host);
@@ -4126,7 +4127,8 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
     );
     assert!(again.reconcile_report().volumes_removed.is_empty());
 
-    // This process does not serve the old sandbox's route, so starting rebuilds the sandbox.
+    // This process serves the route the sandbox was made with, so starting keeps the sandbox, and
+    // with it the root disk: no new sandbox, none removed, the same route, no notice.
     let mut events = api2.events().await;
     api2.post("/api/workspaces/acme/start", "").await;
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
@@ -4135,15 +4137,120 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
         status_of(&api2.get("/api/workspaces/acme").await),
         "running"
     );
-    let creates = rig
-        .runtime
-        .calls()
-        .iter()
-        .filter(|c| format!("{:?}", c.op) == "Create")
-        .count();
-    assert_eq!(creates, 2);
+    assert_eq!(calls_of(&rig, "Create"), 1);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(
+        rig.runtime.routes(&SandboxName::new("acme").unwrap()),
+        route
+    );
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again"))
+    });
+    assert!(!said, "a kept sandbox needs no warning");
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+
+    // The workspace works after the takeover: it stops and starts again in the same sandbox.
+    api2.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 1);
     again.shutdown().await;
+}
+
+/// A changed variable and a restart together: the stopped sandbox of the earlier run takes the new
+/// variables, and still keeps its root disk.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_with_a_changed_variable_writes_it_to_the_kept_sandbox() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    api1.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    put_env(
+        &api1,
+        "/api/env/EDITOR",
+        json!({"kind": "plain", "value": "nano"}),
+    )
+    .await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 1);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("EDITOR"),
+        Some("nano")
+    );
+    again.shutdown().await;
+}
+
+/// A sandbox whose route this run does not serve (its install id is gone, as after a copy of the
+/// data folder or a sandbox from before routes were stable) is made again on the same volume,
+/// and the user is told what that costs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says_so() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    // A new install id: every route name changes.
+    std::fs::write(
+        rig.dir.path().join("data/ipc-id"),
+        "0123456789abcdef0123456789abcdef",
+    )
+    .unwrap();
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again") && d.contains("volume"))
+    });
+    assert!(said, "no notice that the sandbox was made again");
+    assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+    // The new sandbox has the new run's stable route: a second restart keeps it.
+    again.shutdown().await;
+    drop(again);
+    drop(events);
+    let third = rig.start().await;
+    let api3 = api(&third);
+    let mut events = api3.events().await;
+    api3.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    third.shutdown().await;
 }
 
 /// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
@@ -4476,6 +4583,9 @@ async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later
             .unwrap(),
         Some(puddle_store::UserId::OWNER)
     );
+    // The host took the reach across every user before it served anything, so nothing the API
+    // is handed can take it after.
+    assert!(host.store().take_all_users().is_none());
     let listed = api(&host).get("/api/workspaces").await.json();
     assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
     host.shutdown().await;
@@ -7114,10 +7224,7 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let installed = rig
-        .dir
-        .path()
-        .join("data/guest-share/puddle/code-server-9.9.9");
+    let installed = rig.dir.path().join("data/guest-share/puddle/code-server");
     assert!(installed.join("bin/code-server").is_file());
     assert!(installed.join(".puddle-installed").is_file());
     let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
@@ -9320,7 +9427,9 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
         1
     );
     assert!(
-        host.store().rules_every_user().is_empty(),
+        host.store()
+            .rules_every_user(&puddle_store::testing::all_users())
+            .is_empty(),
         "its rules went with it"
     );
 
@@ -13227,6 +13336,166 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
     host.shutdown().await;
 }
 
+// ---- the managed tools' environment -----------------------------------------------------------
+
+const MISE_SUDOERS: &str = "/etc/sudoers.d/puddle-mise";
+
+/// The variables the latest start gave the sandbox, as (name, value).
+fn last_boot_env(rig: &Rig) -> GuestEnv {
+    rig.guest.boot_envs.lock().unwrap().last().cloned().unwrap()
+}
+
+fn mise_names(env: &GuestEnv) -> Vec<String> {
+    env.iter()
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with("MISE_"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The global switch for managed tools, set before any workspace exists.
+async fn global_mise(api: &Api, on: bool) {
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": on}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
+    api.post(&format!("/api/workspaces/{id}/stop"), "").await;
+    events.until(ended(id), Duration::from_secs(20)).await;
+    api.post(&format!("/api/workspaces/{id}/start"), "").await;
+    events.until(ended(id), Duration::from_secs(20)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_keep_list() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    let env = last_boot_env(&rig);
+    let dir = "/workspaces/acme/.puddle/mise";
+    assert_eq!(
+        env.get("MISE_DATA_DIR"),
+        Some(format!("{dir}/data").as_str())
+    );
+    assert_eq!(
+        env.get("MISE_CACHE_DIR"),
+        Some(format!("{dir}/cache").as_str())
+    );
+    assert_eq!(
+        env.get("MISE_STATE_DIR"),
+        Some(format!("{dir}/state").as_str())
+    );
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(
+        env.get("MISE_TRUSTED_CONFIG_PATHS"),
+        Some("/workspaces/acme"),
+        "the repository's own code is trusted by default"
+    );
+    assert_eq!(env.get("MISE_DISABLE_UPDATE_WARNING"), Some("1"));
+    assert_eq!(env.get("MISE_USE_VERSIONS_HOST_TRACK"), Some("0"));
+    let path = env.get("PATH").unwrap();
+    assert!(path.starts_with(&format!("{dir}/data/shims:")), "{path}");
+    assert!(path.ends_with(&format!(":{dir}/bin")), "{path}");
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let sudoers = pem_of(&files, MISE_SUDOERS);
+    for name in mise_names(&env) {
+        assert!(sudoers.contains(&name), "{name} in {sudoers}");
+    }
+    assert!(
+        sudoers.contains(&format!("secure_path=\"{path}\"")),
+        "{sudoers}"
+    );
+    // Login shells get the same PATH after Debian's /etc/profile reset it.
+    assert!(
+        pem_of(&files, "/etc/profile.d/00-puddle-path.sh").contains(path),
+        "00-puddle-path.sh"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_workspace_follows_at_its_next_start()
+ {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    assert!(
+        last_boot_env(&rig)
+            .get("MISE_TRUSTED_CONFIG_PATHS")
+            .is_some()
+    );
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": true, "repo_code": false}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    let env = last_boot_env(&rig);
+    assert_eq!(env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!pem_of(&files, MISE_SUDOERS).contains("TRUSTED"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the_guest() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, false).await;
+    create(&api, &mut events, "acme").await;
+    let env = last_boot_env(&rig);
+    assert_eq!(mise_names(&env), Vec::<String>::new());
+    assert_eq!(env.get("PATH"), None, "the image's PATH stays as it is");
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!files.contains_key(MISE_SUDOERS));
+    // A workspace's own switch off does the same under a global switch that is on.
+    global_mise(&api, true).await;
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": false, "repo_code": true}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    assert_eq!(mise_names(&last_boot_env(&rig)), Vec::<String>::new());
+    // Switched on, the next start has it.
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": true, "repo_code": true}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    assert!(last_boot_env(&rig).get("MISE_DATA_DIR").is_some());
+    host.shutdown().await;
+}
+
 // ---- mise after a start -----------------------------------------------------------------------
 
 const MISE_FAILURE: &str = "could not download mise: curl failed (exit status: 56): 403";
@@ -13284,6 +13553,7 @@ async fn a_failed_mise_fetch_is_a_problem_with_the_blocking_rule_and_the_start_s
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
+    puddle_store::testing::own(host.store(), &name("acme"));
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {

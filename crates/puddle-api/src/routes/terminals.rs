@@ -131,6 +131,7 @@ fn new_ticket() -> Result<String, ApiError> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| ApiError::internal(&e))?;
     Ok(bytes.iter().fold(String::with_capacity(64), |mut out, b| {
+        // writing into a `String` cannot fail
         let _ = write!(out, "{b:02x}");
         out
     }))
@@ -276,6 +277,7 @@ async fn await_close(socket: &mut WebSocket) {
 }
 
 async fn refuse(socket: &mut WebSocket) {
+    // the page may already be gone; the socket closes after this either way
     let _ = socket
         .send(Message::Close(Some(CloseFrame {
             code: close_code::POLICY,
@@ -341,8 +343,21 @@ async fn pump(
                 return;
             }
             message = socket.recv() => {
-                let Some(Ok(message)) = message else { return };
+                // A message past the socket's own limit: say so before the connection goes. When
+                // the stream simply ended, the send fails and nothing is lost.
+                let Some(Ok(message)) = message else {
+                    let _ = socket
+                        .send(Message::Close(Some(CloseFrame {
+                            code: close_code::SIZE,
+                            reason: "message too big".into(),
+                        })))
+                        .await;
+                    return;
+                };
                 if matches!(message, Message::Close(_)) {
+                    // The page started the closing handshake. Reading on sends the reply the socket
+                    // queued; without it the page sees the connection reset, not a clean end.
+                    await_close(socket).await;
                     return;
                 }
                 match from_page(message) {

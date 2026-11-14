@@ -7,7 +7,7 @@
 
 use std::fs::{self, Permissions};
 use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,6 +29,9 @@ pub(crate) type Stream = UnixStream;
 #[derive(Debug, Clone)]
 pub(crate) struct Root {
     dir: Arc<RootDir>,
+    /// A root whose folder and names outlive this process: its names are asked for by name, and
+    /// a socket file a dead process left is replaced.
+    stable: bool,
 }
 
 /// Owns the directory; removes it (if empty) when the last root clone and listener are gone.
@@ -59,7 +62,53 @@ impl Root {
         puddle_fs::private::create_new_dir(&path).map_err(root_err)?;
         Ok(Self {
             dir: Arc::new(RootDir { path }),
+            stable: false,
         })
+    }
+
+    pub(crate) fn stable(install_id: &str) -> Result<Self, IpcError> {
+        Self::stable_in(&default_parent(), install_id)
+    }
+
+    /// The root folder `puddle-<first 8 digits of the install id>` below `parent`, made `0700` if
+    /// it is missing and otherwise trusted only when it is a real folder (not a symlink) of this
+    /// user with exactly that mode: anything else could have been put there by someone else.
+    pub(crate) fn stable_in(parent: &Path, install_id: &str) -> Result<Self, IpcError> {
+        let path = parent.join(format!(
+            "puddle-{}",
+            install_id.get(..8).unwrap_or(install_id)
+        ));
+        let root_err = |source| IpcError::Root {
+            path: path.clone(),
+            source,
+        };
+        match fs::symlink_metadata(&path) {
+            Ok(meta) => {
+                let ours = meta.is_dir()
+                    && meta.uid() == rustix::process::geteuid().as_raw()
+                    && meta.permissions().mode() & 0o777 == 0o700;
+                if !ours {
+                    return Err(root_err(io::Error::other(
+                        "it exists and is not a folder of this user with mode 0700",
+                    )));
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                puddle_fs::private::create_new_dir(&path).map_err(root_err)?;
+            }
+            Err(e) => return Err(root_err(e)),
+        }
+        Ok(Self {
+            dir: Arc::new(RootDir { path }),
+            stable: true,
+        })
+    }
+
+    pub(crate) fn named_path(&self, name: &str) -> Result<PathBuf, IpcError> {
+        if !self.stable {
+            return Err(IpcError::NotStable);
+        }
+        Ok(self.dir.path.join(format!("{name}.sock")))
     }
 
     pub(crate) fn dir(&self) -> &Path {
@@ -83,7 +132,14 @@ impl Root {
             endpoint: path.to_path_buf(),
             source,
         };
-        let std_listener = std::os::unix::net::UnixListener::bind(path).map_err(|source| {
+        let bound = match std::os::unix::net::UnixListener::bind(path) {
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse && self.stable && is_stale(path) => {
+                fs::remove_file(path).map_err(|source| io_err("remove the stale", source))?;
+                std::os::unix::net::UnixListener::bind(path)
+            }
+            other => other,
+        };
+        let std_listener = bound.map_err(|source| {
             if source.kind() == io::ErrorKind::AddrInUse {
                 IpcError::NameTaken {
                     endpoint: path.to_path_buf(),
@@ -122,6 +178,16 @@ fn default_parent() -> PathBuf {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute() && p.is_dir())
         .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Whether the file at `path` is a socket nobody listens on any more: what a Puddle that was
+/// killed leaves in its private folder. A socket that accepts is a live process, which is never
+/// replaced.
+fn is_stale(path: &Path) -> bool {
+    matches!(
+        std::os::unix::net::UnixStream::connect(path),
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused
+    )
 }
 
 fn check_length(path: &Path) -> Result<(), IpcError> {

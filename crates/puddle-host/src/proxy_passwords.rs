@@ -218,6 +218,7 @@ impl ProxyPasswords {
     fn entry_id(&self, proxy: &ProxyAddr) -> Result<StoredId, StoreError> {
         let digest = Sha256::digest(proxy.to_string().as_bytes());
         let hex = digest.iter().take(16).fold(String::new(), |mut hex, byte| {
+            // writing into a `String` cannot fail
             let _ = write!(hex, "{byte:02x}");
             hex
         });

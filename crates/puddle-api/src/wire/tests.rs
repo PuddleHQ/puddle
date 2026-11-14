@@ -857,3 +857,22 @@ fn the_ssh_agent_audit_kinds_reach_the_wire_under_their_own_names() {
         );
     }
 }
+
+#[test]
+fn every_theme_and_close_behaviour_converts_both_ways() {
+    for (wire, stored) in [
+        (ThemeChoice::System, settings::ThemeChoice::System),
+        (ThemeChoice::Light, settings::ThemeChoice::Light),
+        (ThemeChoice::Dark, settings::ThemeChoice::Dark),
+    ] {
+        assert_eq!(settings::ThemeChoice::from(wire), stored);
+        assert_eq!(ThemeChoice::from(stored), wire);
+    }
+    for (wire, stored) in [
+        (CloseBehaviour::Tray, settings::CloseBehaviour::Tray),
+        (CloseBehaviour::Quit, settings::CloseBehaviour::Quit),
+    ] {
+        assert_eq!(settings::CloseBehaviour::from(wire), stored);
+        assert_eq!(CloseBehaviour::from(stored), wire);
+    }
+}

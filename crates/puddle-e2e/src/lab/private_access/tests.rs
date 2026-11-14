@@ -13,3 +13,10 @@ fn the_intranet_answer_and_the_route_are_inside_cgnat_and_the_lan_host_is_not() 
     assert!(!inside(PrivateAccess::LAN_ADDRESS));
     assert!(PrivateAccess::NAME.ends_with(adapter.dns_suffix));
 }
+
+#[tokio::test]
+async fn the_root_is_the_one_that_signed_the_intranet_sites_certificate() {
+    let access = PrivateAccess::start().await;
+    assert_eq!(access.root(), access.web.root());
+    assert!(!access.root().as_ref().is_empty());
+}

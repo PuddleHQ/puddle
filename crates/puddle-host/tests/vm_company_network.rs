@@ -8,7 +8,7 @@
 //! name through the client's tunnel.
 //!
 //! - `vm_company_network_*`: the guest's own `curl` is refused with `403` and
-//!   `x-puddle-blocked: company_network` while the category's toggle is off, also when an exact
+//!   `x-puddle-blocked: toggle:company_network` while the category's toggle is off, also when an exact
 //!   allow rule exists and the private toggle is on; with the toggle on the same request reaches
 //!   the site, and the audit says which category it is.
 //! - `vm_radar_company_network_*`: the real tools of the corporate-network acceptance battery
@@ -217,13 +217,13 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
     lab.toggles(false, true).await;
     let plain = lab.guest(PLAIN, limit).await;
     assert!(
-        plain.contains("status=403") && plain.contains("reason=company_network"),
+        plain.contains("status=403") && plain.contains("reason=toggle:company_network"),
         "plain HTTP with the toggle off: {plain}"
     );
     let tls = lab.guest(TLS, limit).await;
     assert!(
         tls.to_ascii_lowercase()
-            .contains("x-puddle-blocked: company_network")
+            .contains("x-puddle-blocked: toggle:company_network")
             && tls.contains("403"),
         "HTTPS with the toggle off: {tls}"
     );

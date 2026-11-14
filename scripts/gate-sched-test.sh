@@ -40,6 +40,7 @@ scenario() {
             echo "==> $1"
             read -r secs rc meet <"$d/spec/$1"
             date +%s >"$d/start.$1"
+            printf '%s' "${CHECK_GATE_DONE_DIR:-unset}" >"$d/env.$1"
             echo "$1 begins"
             tries=0
             while [ -n "${meet:-}" ] && [ "$(find "$d" -name 'start.*' | wc -l)" -lt "$meet" ]; do
@@ -108,6 +109,10 @@ grep -q '^check: 3 streams' "$tmp/s1/out" || fail "s1: no summary line"
 
 for g in clippy ui notices; do
     [ -e "$tmp/s1/done/$g" ] || fail "s1: no gate-done marker for $g"
+done
+# A gate's own processes never see the marker directory: a check.sh that a gate starts would write markers for gates that are not done.
+for g in clippy ui notices; do
+    [ "$(cat "$tmp/s1/env.$g")" = unset ] || fail "s1: gate $g saw CHECK_GATE_DONE_DIR ($(cat "$tmp/s1/env.$g"))"
 done
 
 # S2

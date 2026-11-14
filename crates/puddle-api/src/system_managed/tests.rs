@@ -20,7 +20,7 @@ fn microsoft(consent: bool) -> GlobalSettings {
 
 #[test]
 fn r41_code_server_by_default_gives_open_vsx_only() {
-    let plan = plan(&GlobalSettings::default(), &[]);
+    let plan = plan(&GlobalSettings::default(), &[], &[]);
     assert_eq!(
         plan.everywhere.into_iter().collect::<Vec<_>>(),
         [SystemReason::CodeServer]
@@ -30,15 +30,15 @@ fn r41_code_server_by_default_gives_open_vsx_only() {
 
 #[test]
 fn r41_microsoft_server_needs_the_consent() {
-    let with = plan(&microsoft(true), &[]);
+    let with = plan(&microsoft(true), &[], &[]);
     assert_eq!(
         with.everywhere.into_iter().collect::<Vec<_>>(),
         [SystemReason::MicrosoftServer]
     );
     // Chosen without a consent: the editor runs code-server, so that is what is allowed.
     assert_eq!(
-        plan(&microsoft(false), &[]),
-        plan(&GlobalSettings::default(), &[])
+        plan(&microsoft(false), &[], &[]),
+        plan(&GlobalSettings::default(), &[], &[])
     );
 }
 
@@ -52,7 +52,7 @@ fn r41_a_consent_to_other_terms_does_not_open_microsofts_hosts() {
             terms_version: TermsVersion::new("https://example.test/older-terms").unwrap(),
         },
     );
-    let plan = plan(&global, &[]);
+    let plan = plan(&global, &[], &[]);
     assert!(!plan.everywhere.contains(&SystemReason::MicrosoftServer));
     assert!(plan.everywhere.contains(&SystemReason::CodeServer));
 }
@@ -60,7 +60,7 @@ fn r41_a_consent_to_other_terms_does_not_open_microsofts_hosts() {
 #[test]
 fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
     let ssh = WorkspaceId::new("ssh").unwrap();
-    let plan = plan(&GlobalSettings::default(), std::slice::from_ref(&ssh));
+    let plan = plan(&GlobalSettings::default(), std::slice::from_ref(&ssh), &[]);
     assert_eq!(
         plan.workspaces
             .get(&ssh)
@@ -68,4 +68,30 @@ fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
         Some(DIRECT_SSH_REASONS.to_vec())
     );
     assert!(!plan.everywhere.contains(&SystemReason::DirectSsh));
+}
+
+#[test]
+fn mise_hosts_go_to_the_workspaces_with_mise_on_only() {
+    let on = WorkspaceId::new("tools").unwrap();
+    let plan = plan(&GlobalSettings::default(), &[], std::slice::from_ref(&on));
+    assert_eq!(
+        plan.workspaces
+            .get(&on)
+            .map(|r| r.iter().copied().collect::<Vec<_>>()),
+        Some(vec![SystemReason::Mise])
+    );
+    assert!(!plan.everywhere.contains(&SystemReason::Mise));
+    assert_eq!(plan.workspaces.len(), 1);
+}
+
+#[test]
+fn the_switches_decide_who_has_mise_on() {
+    let mut global = GlobalSettings::default();
+    let mut own = WorkspaceSettings::default();
+    assert!(mise_on(&global, &own), "on by default");
+    own.tools.mise = Some(false);
+    assert!(!mise_on(&global, &own), "the workspace's own switch");
+    own.tools.mise = Some(true);
+    global.tools.mise = Some(false);
+    assert!(!mise_on(&global, &own), "the global switch wins");
 }

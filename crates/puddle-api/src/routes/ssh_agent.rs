@@ -21,7 +21,13 @@ use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{SshAgentHostRequest, SshAgentHostView, SshAgentView};
+use puddle_store::Actor;
+
+use crate::authz::Principal;
+use crate::wire::{
+    SshAgentAnswerRequest, SshAgentAskList, SshAgentAskView, SshAgentHostRequest, SshAgentHostView,
+    SshAgentView,
+};
 
 /// Base64 characters in a SHA-256 fingerprint (`ssh-keygen -l` leaves the padding off).
 const FINGERPRINT_CHARS: usize = 43;
@@ -172,6 +178,65 @@ pub(crate) async fn delete_ssh_agent_host(
                 "the SSH agent is not on for {host} in {name}"
             )))
         }
+    })
+    .await
+}
+
+/// The first-use questions of the filtered agent that wait for the user, most recent first: a
+/// workspace's `ssh` is logging in to a host the agent is on for, with a key no answer covers yet.
+/// Only the caller's own workspaces' questions are listed.
+#[utoipa::path(
+    get,
+    path = "/api/ssh-agent-asks",
+    tag = "ssh-agent",
+    responses((status = OK, description = "the open questions", body = SshAgentAskList))
+)]
+pub(crate) async fn list_asks(
+    State(state): State<AppState>,
+    principal: Principal,
+) -> Result<Json<SshAgentAskList>, ApiError> {
+    blocking(move || {
+        let asks = state
+            .store
+            .open_ssh_agent_asks(Some(principal.user), None)?
+            .into_iter()
+            .map(SshAgentAskView::from)
+            .collect();
+        Ok(SshAgentAskList { asks })
+    })
+    .await
+    .map(Json)
+}
+
+/// Answers a first-use question: sign this once (for the logins waiting now), until the workspace
+/// stops, or until the agent is turned off for the host; or do not sign. The workspace's `ssh`,
+/// which waits, goes on at once.
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{id}/ssh-agent-asks/{ask}/answer",
+    tag = "ssh-agent",
+    params(
+        ("id" = String, Path, description = "workspace id"),
+        ("ask" = i64, Path, description = "question id")
+    ),
+    request_body = SshAgentAnswerRequest,
+    responses(
+        (status = NO_CONTENT, description = "answered"),
+        (status = NOT_FOUND, description = "no such workspace, or no such question in it (one dropped as the workspace stopped, or answered long ago, is gone)", body = ApiErrorBody),
+        (status = CONFLICT, description = "already answered", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn answer_ask(
+    State(state): State<AppState>,
+    Path((id, ask)): Path<(String, i64)>,
+    crate::extract::Json(body): crate::extract::Json<SshAgentAnswerRequest>,
+) -> Result<StatusCode, ApiError> {
+    let name = named(&state, &id).await?;
+    blocking(move || {
+        state
+            .store
+            .answer_ssh_agent_ask(&name, ask, body.answer.into(), Actor::Api)?;
+        Ok(StatusCode::NO_CONTENT)
     })
     .await
 }

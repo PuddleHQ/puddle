@@ -14,6 +14,7 @@ export const TABS: readonly Tab[] = [
   { slug: "git", label: "Git" },
   { slug: "environment", label: "Environment" },
   { slug: "shell-init", label: "Shell init" },
+  { slug: "ssh-agent", label: "SSH agent" },
   { slug: "ports", label: "Ports" },
   { slug: "settings", label: "Settings" },
 ];

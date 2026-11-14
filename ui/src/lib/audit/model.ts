@@ -416,6 +416,18 @@ const WORKSPACE_OPS: Record<
     done: "Root disk made bigger",
     failed: "Making the root disk bigger failed",
   },
+  ssh_agent_signed: {
+    done: "SSH agent signed a login",
+    failed: "SSH agent signing failed",
+  },
+  ssh_agent_refused: {
+    done: "SSH agent request refused",
+    failed: "SSH agent request refused",
+  },
+  ssh_agent_answered: {
+    done: "SSH agent question answered",
+    failed: "Answering the SSH agent question failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",

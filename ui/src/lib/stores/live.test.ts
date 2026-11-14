@@ -4,7 +4,7 @@ import type { EventStreamOptions } from "../api/sse.ts";
 import { LiveState } from "./live.svelte.ts";
 
 function fakeApi(result: () => unknown) {
-  return { GET: vi.fn(async () => result()) } as never;
+  return { GET: vi.fn(async (_path?: string) => result()) } as never;
 }
 
 const ok = (n: number) => ({
@@ -55,6 +55,11 @@ describe("LiveState.start", () => {
     vi.useFakeTimers();
     try {
       const api = fakeApi(() => ok(1));
+      // The count of requests; the SSH agent questions are read beside it.
+      const pendingReads = () =>
+        (api as { GET: ReturnType<typeof vi.fn> }).GET.mock.calls.filter(
+          (call) => call[0] === "/api/pending",
+        ).length;
       let options: EventStreamOptions | undefined;
       const live = new LiveState({
         api,
@@ -68,15 +73,11 @@ describe("LiveState.start", () => {
       });
       const stop = live.start();
       await vi.advanceTimersByTimeAsync(0);
-      expect(
-        (api as { GET: ReturnType<typeof vi.fn> }).GET,
-      ).toHaveBeenCalledTimes(1);
+      expect(pendingReads()).toBe(1);
       expect(live.pending).toBe(1);
 
       await vi.advanceTimersByTimeAsync(1000);
-      expect(
-        (api as { GET: ReturnType<typeof vi.fn> }).GET,
-      ).toHaveBeenCalledTimes(2);
+      expect(pendingReads()).toBe(2);
 
       options?.onState?.("reconnecting");
       expect(live.stream).toBe("reconnecting");
@@ -86,16 +87,12 @@ describe("LiveState.start", () => {
       expect(live.streamError).toBeNull();
       options?.onResync?.("lagged");
       await vi.advanceTimersByTimeAsync(0);
-      expect(
-        (api as { GET: ReturnType<typeof vi.fn> }).GET,
-      ).toHaveBeenCalledTimes(3);
+      expect(pendingReads()).toBe(3);
 
       stop();
       expect(options?.signal.aborted).toBe(true);
       await vi.advanceTimersByTimeAsync(5000);
-      expect(
-        (api as { GET: ReturnType<typeof vi.fn> }).GET,
-      ).toHaveBeenCalledTimes(3);
+      expect(pendingReads()).toBe(3);
     } finally {
       vi.useRealTimers();
     }
@@ -209,5 +206,59 @@ describe("LiveState.subscribe", () => {
     const live = new LiveState({ api: fakeApi(() => ok(0)) });
     live.setPending(7);
     expect(live.pending).toBe(7);
+  });
+});
+
+describe("the SSH agent questions in the badge", () => {
+  const routed = (asks: () => unknown) =>
+    ({
+      GET: vi.fn(async (path: string) =>
+        path === "/api/ssh-agent-asks" ? asks() : ok(2),
+      ),
+    }) as never;
+  const some = (n: number) => ({
+    data: { asks: Array.from({ length: n }, () => ({})) },
+    response: { status: 200 },
+  });
+
+  it("adds the waiting questions to the requests", async () => {
+    const live = new LiveState({ api: routed(() => some(3)) });
+    await live.refresh();
+    await vi.waitFor(() => expect(live.asks).toBe(3));
+    expect(live.pending).toBe(2);
+    expect(live.open).toBe(5);
+    live.setAsks(1);
+    expect(live.open).toBe(3);
+  });
+
+  it("keeps the last count when the questions cannot be read", async () => {
+    let answer: unknown = some(4);
+    const live = new LiveState({ api: routed(() => answer) });
+    await live.refreshAsks();
+    expect(live.asks).toBe(4);
+    answer = { error: {}, response: { status: 500 } };
+    await live.refreshAsks();
+    answer = undefined;
+    await live.refreshAsks();
+    expect(live.asks).toBe(4);
+  });
+
+  it("reads them again when the stream says they changed, and for nothing else", async () => {
+    let n = 1;
+    const api = routed(() => some(n));
+    const live = new LiveState({
+      api,
+      pollMs: 60_000,
+      events: () =>
+        (async function* () {
+          yield { type: "status_changed" };
+          yield null;
+          n = 2;
+          yield { type: "ssh_agent_asks_changed", workspace: "demo" };
+        })(),
+    });
+    const stop = live.start();
+    await vi.waitFor(() => expect(live.asks).toBe(2));
+    stop();
   });
 });

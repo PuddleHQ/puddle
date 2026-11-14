@@ -122,7 +122,10 @@ pub use settings_view::{
     WorkspaceSettingsView, WorkspaceTools,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
-pub use ssh_agent::{SshAgentHostRequest, SshAgentHostView, SshAgentView};
+pub use ssh_agent::{
+    SshAgentAnswerKind, SshAgentAnswerRequest, SshAgentAskList, SshAgentAskView,
+    SshAgentHostRequest, SshAgentHostView, SshAgentView,
+};
 pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{

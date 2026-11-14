@@ -377,6 +377,12 @@ pub enum WorkspaceOpKind {
     /// A workspace's root disk made bigger (or the attempt failed; the detail says from what
     /// size to what size and how it took effect).
     RootDiskGrown,
+    /// The filtered SSH agent signed a login for the workspace.
+    SshAgentSigned,
+    /// The filtered SSH agent refused a request of the workspace.
+    SshAgentRefused,
+    /// The user answered the filtered SSH agent's first-use question.
+    SshAgentAnswered,
 }
 
 impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
@@ -399,6 +405,9 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::RepoRemoved => Self::RepoRemoved,
             K::GitRepaired => Self::GitRepaired,
             K::RootDiskGrown => Self::RootDiskGrown,
+            K::SshAgentSigned => Self::SshAgentSigned,
+            K::SshAgentRefused => Self::SshAgentRefused,
+            K::SshAgentAnswered => Self::SshAgentAnswered,
         }
     }
 }

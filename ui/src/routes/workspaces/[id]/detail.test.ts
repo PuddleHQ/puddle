@@ -213,6 +213,7 @@ describe("the detail layout", () => {
         "Git",
         "Environment",
         "Shell init",
+        "SSH agent",
         "Ports",
         "Settings",
       ],

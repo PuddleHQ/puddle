@@ -824,9 +824,9 @@ mod filtered_agent {
 
     use puddle_agent_proto::kind::StreamKind;
     use puddle_ca::CaBuilder;
-    use puddle_proxy::ssh_agent::{HostAgent, SshAgents};
+    use puddle_proxy::ssh_agent::{AgentGate, ApproveEverything, HostAgent, SshAgents};
     use puddle_proxy::{NoInjection, Termination, TerminationSet, Terminations};
-    use puddle_ssh_agent::filter::AllowedKeys;
+    use puddle_ssh_agent::filter::{AllowedKeys, Disapproval, Outcome};
     use puddle_ssh_agent::request;
     use puddle_ssh_agent::testing::{
         TestKey, bind, framed, login, packet, server_kex, sign_request, string,
@@ -895,6 +895,25 @@ mod filtered_agent {
     }
 
     async fn agent_rig_allowing(config: &puddle_proxy::ProxyConfig, keys: AllowedKeys) -> AgentRig {
+        agent_rig_gated(config, keys, Arc::new(ApproveEverything)).await
+    }
+
+    /// The user's answer to the first-use question, fixed: no, or no answer in time.
+    struct Unapproved(Disapproval);
+
+    impl AgentGate for Unapproved {
+        fn approve(&self, _: &WorkspaceId, _: &str, _: &[u8]) -> Result<(), Disapproval> {
+            Err(self.0)
+        }
+
+        fn record(&self, _: &WorkspaceId, _: Option<&str>, _: &Outcome) {}
+    }
+
+    async fn agent_rig_gated(
+        config: &puddle_proxy::ProxyConfig,
+        keys: AllowedKeys,
+        gate: Arc<dyn AgentGate>,
+    ) -> AgentRig {
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("nas.test"));
         let user = TestKey::ed25519(2);
@@ -902,7 +921,7 @@ mod filtered_agent {
             user: user.blob(),
             signed: Mutex::new(Vec::new()),
         });
-        let agents = Arc::new(SshAgents::new(agent.clone()));
+        let agents = Arc::new(SshAgents::new(agent.clone(), gate));
         let terminations = Arc::new(Terminations::new());
         let ca = Arc::new(CaBuilder::new("test").build().unwrap());
         terminations.insert(
@@ -1058,6 +1077,46 @@ mod filtered_agent {
         .await;
         let mut late = rig.agent_stream().await;
         assert_eq!(ask(&mut late, &the_bind).await, request::failure());
+    }
+
+    #[tokio::test]
+    async fn hostile_hg52_a_first_use_the_user_has_not_approved_signs_nothing() {
+        for why in [Disapproval::Denied, Disapproval::Unanswered] {
+            let server = TestKey::ed25519(1);
+            let kex = server_kex(&server, &server.sign(&SESSION));
+            let addr = kex_server(kex.clone()).await;
+            let mut rig = agent_rig_gated(
+                &puddle_proxy::ProxyConfig::default(),
+                AllowedKeys::All,
+                Arc::new(Unapproved(why)),
+            )
+            .await;
+            let _tunnel = rig.spliced(addr, &kex).await;
+            let mut agent = rig.agent_stream().await;
+            let the_bind = bind(&server.blob(), &SESSION, &server.sign(&SESSION), false);
+            assert_eq!(ask(&mut agent, &the_bind).await, request::success());
+            let key = rig.user.blob();
+            // Listing keys is no use of a key: only a signature waits for the user.
+            let listed = Identity::new(key.clone(), String::new());
+            assert_eq!(
+                ask(&mut agent, &[11]).await,
+                request::identities(&[&listed])
+            );
+            let data = login(&SESSION, &key, Some(&server.blob()));
+            assert_eq!(
+                ask(&mut agent, &sign_request(&key, &data, 0)).await,
+                request::failure(),
+                "{why:?}"
+            );
+            assert!(
+                rig.agent
+                    .signed
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_empty(),
+                "{why:?}: the user's agent signed without an approval"
+            );
+        }
     }
 
     #[tokio::test]

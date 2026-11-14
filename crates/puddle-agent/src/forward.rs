@@ -114,6 +114,7 @@ pub(crate) async fn answer(stream: &mut StreamHandle, answer: &Answer) -> bool {
         return false;
     }
     if matches!(answer, Answer::Refused(_)) {
+        // the refused stream is dropped next; a failed shutdown changes nothing
         let _ = stream.shutdown().await;
     }
     true

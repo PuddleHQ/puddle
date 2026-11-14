@@ -119,6 +119,7 @@ pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
     }
     if cause.is_deadline() {
         let exited = front.exited.lock().unwrap_or_else(PoisonError::into_inner);
+        // a timeout here just ends the wait; the shutdown goes on either way
         let _ = front
             .exited_cv
             .wait_timeout_while(exited, DEADLINE_WAIT, |exited| !*exited);

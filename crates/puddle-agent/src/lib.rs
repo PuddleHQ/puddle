@@ -55,6 +55,7 @@ mod ifaddrs;
 pub mod merge_file;
 pub mod microsoft;
 pub mod mise;
+pub mod mise_install;
 pub mod oom;
 #[cfg(target_os = "linux")]
 pub mod origin;

@@ -125,6 +125,16 @@ pub enum Event {
         #[cfg_attr(feature = "openapi", schema(required = true))]
         repository: Option<CheckoutDir>,
     },
+    /// Puddle's install of a workspace's managed tools (mise) moved on. It runs in the background
+    /// after a start, after a clone into the running workspace, and once more when the user allows
+    /// a host the install was waiting on; the start never waits for it. Never sent while the layer is
+    /// off.
+    WorkspaceTools {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// Where the install stands.
+        state: ToolsState,
+    },
     /// A new open pending request (a workspace asked for a host:port no rule decides).
     PendingOpened {
         /// The request, as `GET /api/pending` shows it.
@@ -564,6 +574,36 @@ pub enum DiskKind {
     Volume,
 }
 
+/// Where the install of a workspace's managed tools stands, as [`Event::WorkspaceTools`] reports
+/// it. Tool names are `<name>@<version>` as mise reports them from the guest: escape them when
+/// rendering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum ToolsState {
+    /// Tools are being installed: `done` of `total` are in place, `tools` are the ones still
+    /// missing.
+    Installing {
+        /// The tools still missing.
+        tools: Vec<String>,
+        /// How many of the missing ones are in place since the install began.
+        done: u32,
+        /// How many were missing when it began.
+        total: u32,
+    },
+    /// Every tool the workspace's mise files ask for is installed.
+    Ready,
+    /// The install ended with tools still missing. The problem `tools:<workspace>` says why.
+    Failed {
+        /// The tools still missing.
+        tools: Vec<String>,
+        /// Hosts the install asked for that wait for a decision (pending requests opened or seen
+        /// again while it ran). Puddle runs the install once more when the user allows one; empty
+        /// when the failure had another cause.
+        waiting_on: Vec<String>,
+    },
+}
+
 /// Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -634,6 +674,7 @@ impl Event {
             | Self::OomKill { workspace, .. }
             | Self::DiskNearlyFull { workspace, .. }
             | Self::WorkspaceProgress { workspace, .. }
+            | Self::WorkspaceTools { workspace, .. }
             | Self::PendingUpdated { workspace, .. }
             | Self::PendingClosed { workspace, .. }
             | Self::GitAccessDenied { workspace, .. }

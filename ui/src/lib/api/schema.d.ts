@@ -3540,6 +3540,13 @@ export interface components {
             /** @description The workspace's workspace. */
             workspace: components["schemas"]["WorkspaceId"];
         } | {
+            /** @description Where the install stands. */
+            state: components["schemas"]["ToolsState"];
+            /** @enum {string} */
+            type: "workspace_tools";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceId"];
+        } | {
             /** @description The request, as `GET /api/pending` shows it. */
             request: components["schemas"]["PendingSummary"];
             /** @enum {string} */
@@ -5715,6 +5722,41 @@ export interface components {
             id: string;
             /** @description The organisation, for tokens that belong to one (Azure DevOps). */
             org: string | null;
+        };
+        /**
+         * @description Where the install of a workspace's managed tools stands, as [`Event::WorkspaceTools`] reports
+         *     it. Tool names are `<name>@<version>` as mise reports them from the guest: escape them when
+         *     rendering.
+         */
+        ToolsState: {
+            /**
+             * Format: int32
+             * @description How many of the missing ones are in place since the install began.
+             */
+            done: number;
+            /** @enum {string} */
+            phase: "installing";
+            /** @description The tools still missing. */
+            tools: string[];
+            /**
+             * Format: int32
+             * @description How many were missing when it began.
+             */
+            total: number;
+        } | {
+            /** @enum {string} */
+            phase: "ready";
+        } | {
+            /** @enum {string} */
+            phase: "failed";
+            /** @description The tools still missing. */
+            tools: string[];
+            /**
+             * @description Hosts the install asked for that wait for a decision (pending requests opened or seen
+             *     again while it ran). Puddle runs the install once more when the user allows one; empty
+             *     when the failure had another cause.
+             */
+            waiting_on: string[];
         };
         /** @description Preferences for Puddle's own window. `null` means Puddle's default. */
         UiPrefs: {

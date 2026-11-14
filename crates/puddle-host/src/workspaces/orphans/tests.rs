@@ -121,3 +121,36 @@ fn an_unreadable_checkout_gives_no_entry_even_with_a_remote_and_is_never_the_nam
     assert_eq!(beside.len(), 1);
     assert_eq!(beside[0].directory.to_string(), "bare");
 }
+
+#[test]
+fn a_disk_held_by_a_sandbox_is_a_conflict_a_missing_one_not_found_and_any_other_failure_unavailable()
+ {
+    let id = WorkspaceId::new("a0k3x9zq").unwrap();
+    let volume = id.volume_name();
+    let held = puddle_workspace::WorkspaceError::InUse {
+        workspace: id.to_string(),
+        holder: "shop".to_owned(),
+    };
+    let held_text = held.to_string();
+    assert_eq!(
+        listing_error(held, &volume),
+        WorkspaceError::Conflict(held_text)
+    );
+    let gone = puddle_workspace::WorkspaceError::NotFound {
+        workspace: id.to_string(),
+    };
+    assert_eq!(
+        listing_error(gone, &volume),
+        WorkspaceError::NotFound(format!("no workspace disk {volume}"))
+    );
+    let other = puddle_workspace::WorkspaceError::Layout {
+        reason: "boom".to_owned(),
+    };
+    let WorkspaceError::Unavailable(text) = listing_error(other, &volume) else {
+        panic!("not unavailable");
+    };
+    assert!(
+        text.starts_with(&format!("Puddle could not read {volume}")),
+        "{text}"
+    );
+}

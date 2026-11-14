@@ -208,17 +208,21 @@ impl Inventory {
             self.groups.len()
         );
         for g in &self.groups {
+            // writing into a `String` cannot fail
             let _ = write!(out, "\n{rule}\n{} ({})\n\nUsed by:\n", g.name, g.id);
             for (p, repo) in &g.used_by {
                 match repo {
                     Some(r) => {
+                        // writing into a `String` cannot fail
                         let _ = writeln!(out, "  - {p} <{r}>");
                     }
                     None => {
+                        // writing into a `String` cannot fail
                         let _ = writeln!(out, "  - {p}");
                     }
                 }
             }
+            // writing into a `String` cannot fail
             let _ = write!(out, "\n{}\n", g.text.trim_end());
         }
         out

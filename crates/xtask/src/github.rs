@@ -89,6 +89,7 @@ impl GitHub {
             self.web
         )));
         if result.is_err() {
+            // best-effort removal of the partial download; the download error is what the caller gets
             let _ = std::fs::remove_file(&target);
         }
         result.map(|_| target)

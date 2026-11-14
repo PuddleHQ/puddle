@@ -17,6 +17,9 @@ pub const APT_CONF_GUEST: &str = "/etc/apt/apt.conf.d/99puddle-proxy";
 /// requires.
 pub const SUDOERS_GUEST: &str = "/etc/sudoers.d/puddle-proxy";
 
+/// Keeps mise's variables and `PATH` under `sudo`; written only where the managed mise layer is on.
+pub const SUDOERS_MISE_GUEST: &str = "/etc/sudoers.d/puddle-mise";
+
 /// `ssh`'s system-wide drop-in (`/etc/ssh/ssh_config.d` is included by the distributions'
 /// `ssh_config`). It comes before the rest of the system config, and a user's own `~/.ssh/config`
 /// before it, so a `ProxyCommand` or `ProxyJump` the user sets wins.
@@ -375,6 +378,7 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
     let mut command = format!("'{}' connect", agent.replace('\'', "'\\''"));
     if let Some(SocketAddr::V4(bridge)) = settings.container_proxy {
         let [a, b, ..] = bridge.ip().octets();
+        // writing into a `String` cannot fail
         let _ = write!(command, " --local-net {a}.{b}.0.0/16");
     }
     let mut config = format!(

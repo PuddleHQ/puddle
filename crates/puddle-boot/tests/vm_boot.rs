@@ -172,15 +172,15 @@ async fn check_boot<S: Sandbox>(
     )
     .await;
     if code == 0 {
-        assert_eq!(fsync, "committed");
+        assert_eq!(fsync, "added");
+        assert_eq!(
+            sh(sb, "git config --system core.fsyncMethod").await.1,
+            "batch"
+        );
         assert_eq!(sh(sb, "git config user.email").await.1, "vm@example.org");
     } else {
-        assert!(
-            sh(sb, "cat /etc/puddle/gitconfig")
-                .await
-                .1
-                .contains("fsync = committed")
-        );
+        let file = sh(sb, "cat /etc/puddle/gitconfig").await.1;
+        assert!(file.contains("fsync = added") && file.contains("fsyncMethod = batch"));
     }
     // Machine settings, and no credential helper anywhere Puddle writes.
     let (_, ms) = sh(sb, "cat /root/.vscode-server/data/Machine/settings.json").await;

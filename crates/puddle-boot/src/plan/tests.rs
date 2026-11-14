@@ -129,7 +129,7 @@ fn git_config_has_fsync_identity_and_no_credential_helper() {
     let without_id = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert_eq!(
         text(&without_id, GIT_CONFIG_GUEST),
-        format!("{GENERATED}[core]\n\tfsync = committed\n")
+        format!("{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n")
     );
     let as_agent = BootPlan::builder(&ImageConfig::default())
         .session_user(SessionUser::Agent)
@@ -137,7 +137,9 @@ fn git_config_has_fsync_identity_and_no_credential_helper() {
         .unwrap();
     assert_eq!(
         text(&as_agent, GIT_CONFIG_GUEST),
-        format!("{GENERATED}[core]\n\tfsync = committed\n[safe]\n\tdirectory = *\n"),
+        format!(
+            "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n[safe]\n\tdirectory = *\n"
+        ),
         "root may work in the session user's checkouts"
     );
     let id = GitIdentity::new(r#"Ada "the" \Countess"#, "ada@example.org").unwrap();
@@ -183,7 +185,7 @@ fn author_rules_become_include_if_blocks_in_order_each_with_its_own_file() {
     assert_eq!(
         text(&plan, GIT_CONFIG_GUEST),
         format!(
-            "{GENERATED}[core]\n\tfsync = committed\n\
+            "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n\
                  [user]\n\tname = \"Ada\"\n\temail = \"ada@example.org\"\n\
                  [includeIf \"hasconfig:remote.*.url:https://github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
                  [includeIf \"hasconfig:remote.*.url:https://*@github.com/**\"]\n\tpath = git-author-1.gitconfig\n\

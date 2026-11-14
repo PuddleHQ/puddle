@@ -91,3 +91,10 @@ fn the_markers_differ_from_the_known_hosts_ones_so_both_engines_leave_each_other
     let out = written(Some(&hosts), BODY);
     assert!(out.starts_with(&hosts), "{out}");
 }
+
+#[test]
+fn only_the_puddle_key_is_owned() {
+    let other = MergeEntry::json(&["other"], &serde_json::json!("export A=1"));
+    let err = MergeSpec::new(MergeFormat::ShellBlock, vec![other]).unwrap_err();
+    assert!(err.to_string().contains("only Puddle is owned"), "{err}");
+}

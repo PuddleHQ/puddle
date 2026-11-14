@@ -574,3 +574,16 @@ fn an_empty_environment_writes_no_sudo_or_shell_files() {
         assert!(plan.files().iter().all(|f| f.path().as_str() != path));
     }
 }
+
+#[test]
+fn an_environment_too_large_for_the_shell_files_is_refused_by_name() {
+    let env = env_of(&[("HUGE", &"x".repeat(300 << 10))]);
+    let err = BootPlan::builder(&ImageConfig::default())
+        .env(&env)
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(&err, PlanError::ShellEnv { reason } if reason.contains("too large")),
+        "{err}"
+    );
+}

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! `puddle user reset [--config <path>] [--data-dir <path>] <name>`: gives a user back their way
-//! in. It takes the user's password away, signs every one of their browsers out, and prints a
-//! one-time invite link that sets a new password. It never prints or sets a password.
+//! `puddle user add|list|remove|reset [--config <path>] [--data-dir <path>] [<name>]`: the
+//! operator's way to manage accounts on the server. `add` makes a user and prints a one-time
+//! invite link; `reset` takes a user's password away, signs every browser out and prints a link;
+//! `remove` starts deleting a user; `list` shows who is there. None of them prints or sets a
+//! password.
 //!
 //! It reads the same options as `puddle serve` (flags, environment, the config file) to know the
 //! data folder and the public address the link points at, and works on the database while the
@@ -17,32 +19,69 @@ use crate::cmd::data_folder;
 use crate::cmd::serve::options::{Effective, Flags};
 use crate::cmd::serve::{ServeArgs, effective};
 
-/// How `puddle user reset` should run.
+/// What `puddle user` should do.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResetArgs {
-    /// The user to reset.
-    pub name: String,
+pub enum Action {
+    /// Make a user and print their invite link.
+    Add(String),
+    /// Show every user.
+    List,
+    /// Delete a user and everything of theirs.
+    Remove(String),
+    /// Take a user's password away and print an invite link.
+    Reset(String),
+}
+
+/// How `puddle user` should run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserArgs {
+    /// What to do.
+    pub action: Action,
     /// `--config` and `--data-dir`, as given (the options `puddle serve` reads, by key).
     pub flags: Flags,
 }
+
+const USAGE_ADD: &str = "user add <name>";
+const USAGE_LIST: &str = "user list";
+const USAGE_REMOVE: &str = "user remove <name>";
+const USAGE_RESET: &str = "user reset <name>";
+const USAGE_ANY: &str = "user add|list|remove|reset";
 
 /// Parses the arguments after `user`.
 ///
 /// # Errors
 ///
-/// [`UsageError`] for anything but `reset`, a name, and at most one `--config` and one
-/// `--data-dir`.
+/// [`UsageError`] for anything but `add`, `remove` or `reset` with a name, or `list`, and at most
+/// one `--config` and one `--data-dir`.
 pub fn parse<I, S>(args: I) -> Result<Command, UsageError>
 where
     I: Iterator<Item = S>,
     S: AsRef<str>,
 {
     let mut args = args;
-    match args.next() {
-        Some(word) if word.as_ref() == "reset" => {}
-        Some(other) => return Err(UsageError::UnknownArgument(other.as_ref().to_owned())),
-        None => return Err(UsageError::MissingArgument("user reset <name>")),
-    }
+    let (make, usage): (fn(String) -> Action, &'static str) = match args.next() {
+        Some(word) => match word.as_ref() {
+            "add" => (Action::Add, USAGE_ADD),
+            "remove" => (Action::Remove, USAGE_REMOVE),
+            "reset" => (Action::Reset, USAGE_RESET),
+            "list" => return rest(args, None, USAGE_LIST),
+            other => return Err(UsageError::UnknownArgument(other.to_owned())),
+        },
+        None => return Err(UsageError::MissingArgument(USAGE_ANY)),
+    };
+    rest(args, Some(make), usage)
+}
+
+/// The name (for the actions that take one) and the options.
+fn rest<I, S>(
+    mut args: I,
+    make: Option<fn(String) -> Action>,
+    usage: &'static str,
+) -> Result<Command, UsageError>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
     let mut name = None;
     let mut flags = Flags::new();
     while let Some(arg) = args.next() {
@@ -50,32 +89,41 @@ where
         if data_folder::take_option(arg, &mut args, &mut flags)? {
             continue;
         }
-        if arg.starts_with('-') || name.is_some() {
+        if arg.starts_with('-') || make.is_none() || name.is_some() {
             return Err(UsageError::UnknownArgument(arg.to_owned()));
         }
         name = Some(arg.to_owned());
     }
-    let name = name.ok_or(UsageError::MissingArgument("user reset <name>"))?;
-    Ok(Command::UserReset(ResetArgs { name, flags }))
+    let action = match make {
+        Some(make) => make(name.ok_or(UsageError::MissingArgument(usage))?),
+        None => Action::List,
+    };
+    Ok(Command::User(UserArgs { action, flags }))
 }
 
-/// What the operator is told: the link on its own line (so it can be piped), the rest on stderr.
+/// What a finished action has to say: `notice` for the person at the terminal (stderr) and
+/// `result` for a pipe (stdout).
+#[derive(Debug, PartialEq, Eq)]
+struct Output {
+    notice: String,
+    result: String,
+}
+
+/// What the operator is told: the result on its own (so it can be piped), the rest on stderr.
 #[expect(
     clippy::print_stderr,
     reason = "a CLI's user-facing output goes to stdout/stderr, not to tracing"
 )]
 #[must_use]
-pub fn run(args: &ResetArgs) -> ExitCode {
+pub fn run(args: &UserArgs) -> ExitCode {
     match execute(args) {
-        Ok(link) => {
-            eprintln!(
-                "{}'s password is removed and every browser they were signed in on is signed out.\n\
-                 Open this link in a browser within 24 hours to set a new password; it works once:",
-                args.name
-            );
-            // The link is the command's result, not a log line, so it is written to stdout
-            // directly: a print macro is a logging sink and this carries a one-time secret.
-            print_link(&mut std::io::stdout().lock(), &link)
+        Ok(out) => {
+            if !out.notice.is_empty() {
+                eprintln!("{}", out.notice);
+            }
+            // The result is the command's output, not a log line, so it is written to stdout
+            // directly: a print macro is a logging sink and an invite link is a one-time secret.
+            write_result(&mut std::io::stdout().lock(), &out.result)
         }
         Err(message) => {
             eprintln!("puddle: {message}");
@@ -84,33 +132,125 @@ pub fn run(args: &ResetArgs) -> ExitCode {
     }
 }
 
-/// Writes the link and says so when it cannot: a reset whose link got lost is a failure.
+/// Writes the result and says so when it cannot: an add whose link got lost is a failure.
 #[expect(clippy::print_stderr, reason = "a CLI's user-facing output")]
-fn print_link(out: &mut impl Write, link: &str) -> ExitCode {
-    match writeln!(out, "{link}") {
+fn write_result(out: &mut impl Write, result: &str) -> ExitCode {
+    if result.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    match writeln!(out, "{result}") {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("puddle: could not write the link: {e}");
+            eprintln!("puddle: could not write the result: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-/// Resets the user and returns the invite link.
-fn execute(args: &ResetArgs) -> Result<String, String> {
+fn execute(args: &UserArgs) -> Result<Output, String> {
     let options = effective(&ServeArgs {
         flags: args.flags.clone(),
         print_config: false,
     })
     .map_err(|e| e.to_string())?;
-    let origin = invite_origin(&options)?;
     let data = match options.path("data_dir") {
         Some(dir) => dir.to_path_buf(),
         None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
     };
-    let invite =
-        puddle_host::reset_user(&HostPaths::new(data), &args.name).map_err(|e| e.to_string())?;
-    Ok(format!("{origin}/invite#{}", invite.secret.as_str()))
+    let paths = HostPaths::new(data);
+    match &args.action {
+        Action::Reset(name) => {
+            let origin = invite_origin(&options)?;
+            let invite = puddle_host::reset_user(&paths, name).map_err(|e| e.to_string())?;
+            Ok(Output {
+                notice: format!(
+                    "{name}'s password is removed and every browser they were signed in on is \
+                     signed out.\nOpen this link in a browser within 24 hours to set a new \
+                     password; it works once:"
+                ),
+                result: format!("{origin}/invite#{}", invite.secret.as_str()),
+            })
+        }
+        Action::Add(name) => {
+            let origin = invite_origin(&options)?;
+            let invite = puddle_host::add_user(&paths, name).map_err(|e| e.to_string())?;
+            Ok(Output {
+                notice: format!(
+                    "{name} is added. Give them this link; they open it within 24 hours and \
+                     choose their own password. It works once:"
+                ),
+                result: format!("{origin}/invite#{}", invite.secret.as_str()),
+            })
+        }
+        Action::Remove(name) => {
+            puddle_host::remove_user(&paths, name).map_err(|e| e.to_string())?;
+            Ok(Output {
+                notice: format!(
+                    "{name} can no longer sign in. Their workspaces and everything else of \
+                     theirs are stopped and deleted by the running server within moments (or \
+                     when it next starts). This cannot be undone."
+                ),
+                result: String::new(),
+            })
+        }
+        Action::List => {
+            let rows = puddle_host::list_users(&paths).map_err(|e| e.to_string())?;
+            Ok(Output {
+                notice: String::new(),
+                result: table(&rows, now_ms()),
+            })
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// One line per user: name, role, state, browsers signed in, last sign-in.
+fn table(rows: &[puddle_host::UserRow], now: u64) -> String {
+    let width = rows
+        .iter()
+        .map(|r| r.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(4);
+    let mut lines = vec![format!(
+        "{:<width$}  {:<5}  {:<8}  {:>7}  last sign-in",
+        "name", "role", "state", "devices"
+    )];
+    for r in rows {
+        let state = match r.state {
+            puddle_host::UserState::Invited => "invited",
+            puddle_host::UserState::Active => "active",
+            puddle_host::UserState::Deleting => "deleting",
+        };
+        lines.push(format!(
+            "{:<width$}  {:<5}  {:<8}  {:>7}  {}",
+            r.name,
+            if r.owner { "owner" } else { "user" },
+            state,
+            r.devices,
+            ago(now, r.last_sign_in)
+        ));
+    }
+    lines.join("\n")
+}
+
+/// How long ago `then` was, in the largest whole unit.
+fn ago(now: u64, then: Option<u64>) -> String {
+    let Some(then) = then else {
+        return "never".to_owned();
+    };
+    let secs = now.saturating_sub(then) / 1000;
+    match secs {
+        0..60 => "just now".to_owned(),
+        60..3600 => format!("{} min ago", secs / 60),
+        3600..86_400 => format!("{} h ago", secs / 3600),
+        _ => format!("{} d ago", secs / 86_400),
+    }
 }
 
 /// The address an invite link points at: the first public host. Checked before anything is

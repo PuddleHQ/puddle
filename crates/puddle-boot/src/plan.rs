@@ -783,8 +783,8 @@ fn git_author_name(n: usize) -> String {
     format!("git-author-{n}.gitconfig")
 }
 
-/// Puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
-/// kill), the identity when set, then one `includeIf` per remote glob of each author rule, in
+/// Puddle's git settings: `core.fsync=added` and `core.fsyncMethod=batch` always (ADR 0006: no
+/// lost commits on a VM kill or a power cut, and the index is synced too), the identity when set, then one `includeIf` per remote glob of each author rule, in
 /// order (git lets the last match win), each pointing at that rule's author file. Never a
 /// credential helper. With a session user other than root, `safe.directory = *`: the checkouts
 /// belong to that user, and a root shell (`sudo -i`) would otherwise find every one refused as
@@ -792,7 +792,7 @@ fn git_author_name(n: usize) -> String {
 /// whose only user becomes root at will there is no other user to guard.
 fn git_config(plan: &BootPlanBuilder) -> GuestFile {
     let mut text = String::from(GENERATED);
-    text.push_str("[core]\n\tfsync = committed\n");
+    text.push_str("[core]\n\tfsync = added\n\tfsyncMethod = batch\n");
     if !plan.session_user.is_root() {
         text.push_str("[safe]\n\tdirectory = *\n");
     }

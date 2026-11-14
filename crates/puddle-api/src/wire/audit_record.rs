@@ -567,3 +567,6 @@ impl From<store::AuditRecord> for AuditRecord {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

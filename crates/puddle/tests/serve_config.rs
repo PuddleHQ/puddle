@@ -20,6 +20,19 @@ use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+/// Options that never reach this machine's resolver or its `az`: a started host looks up the names
+/// of its front, and a resolver that is slow or down must not decide how long a test takes.
+fn hermetic_options() -> HostOptions {
+    let mut options = HostOptions::default();
+    options.secret_store = Some(Arc::new(MemoryStore::new()));
+    options.front_resolver = Some(Arc::new(puddle_api::NoNames));
+    options.host_lookup = Some(puddle_upstream::HostLookup::new(|_, _| async {
+        Err(std::io::Error::other("no names resolve in a hermetic host"))
+    }));
+    options.az_search_path = Some(std::ffi::OsString::new());
+    options
+}
+
 /// Runs the binary with no `PUDDLE_` variable of the test run's environment.
 fn puddle(args: &[&str], env: &[(&str, &str)], cwd: &Path) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_puddle"));
@@ -228,8 +241,7 @@ async fn start_fake_host(dir: &Path) -> (Host<FakeRuntime>, u16) {
     std::fs::write(&agent, b"#!agent\n").unwrap();
     config.guest.agent_binary = agent;
     let prepared = prepare(config, &QuietPlatform).unwrap();
-    let mut host_options = HostOptions::default();
-    host_options.secret_store = Some(Arc::new(MemoryStore::new()));
+    let host_options = hermetic_options();
     let host = Host::start(prepared, &FakeFactory, host_options)
         .await
         .unwrap();
@@ -422,8 +434,7 @@ async fn a_host_started_with_remote_serving_answers_a_proxy_over_tls_and_a_loopb
     std::fs::write(&agent, b"#!agent\n").unwrap();
     config.guest.agent_binary = agent;
     let prepared = prepare(config, &QuietPlatform).unwrap();
-    let mut host_options = HostOptions::default();
-    host_options.secret_store = Some(Arc::new(MemoryStore::new()));
+    let host_options = hermetic_options();
     let host = Host::start(prepared, &FakeFactory, host_options)
         .await
         .unwrap();
@@ -536,8 +547,7 @@ async fn a_listener_certificate_that_cannot_be_kept_stops_the_start_and_says_so(
     std::fs::write(&agent, b"#!agent\n").unwrap();
     config.guest.agent_binary = agent;
     let prepared = prepare(config, &QuietPlatform).unwrap();
-    let mut host_options = HostOptions::default();
-    host_options.secret_store = Some(Arc::new(MemoryStore::new()));
+    let host_options = hermetic_options();
     let Err(err) = Host::start(prepared, &FakeFactory, host_options).await else {
         panic!("the start should fail");
     };

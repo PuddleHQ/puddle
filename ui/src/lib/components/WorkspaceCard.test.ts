@@ -160,6 +160,57 @@ describe("WorkspaceCard", () => {
     );
   });
 
+  it("says nothing about tools before an install ran", () => {
+    mount();
+    expect(screen.getByRole("article")).not.toHaveTextContent("Tools:");
+  });
+
+  it("counts the tools of a running install", () => {
+    mount({
+      tools: {
+        phase: "installing",
+        done: 1,
+        total: 3,
+        tools: ["node", "java"],
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Tools: installing 1 of 3 (node, java)",
+    );
+  });
+
+  it("says when the tools are ready", () => {
+    mount({ tools: { phase: "ready" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Tools: ready");
+  });
+
+  it("names the tools that failed and links the hosts it waits on to the Network tab", () => {
+    mount(
+      {
+        tools: {
+          phase: "failed",
+          tools: ["node"],
+          waiting_on: ["nodejs.org", "registry.npmjs.org"],
+        },
+      },
+      workspace("demo", { id: "my site" }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Tools: failed to install node",
+    );
+    expect(
+      screen.getByRole("link", {
+        name: "Waiting for you to allow nodejs.org, registry.npmjs.org",
+      }),
+    ).toHaveAttribute("href", "/workspaces/my%20site/network");
+  });
+
+  it("shows a failure with another cause without a waiting link", () => {
+    mount({ tools: { phase: "failed", tools: ["node"], waiting_on: [] } });
+    expect(screen.getByRole("status")).toHaveTextContent("failed to install");
+    expect(screen.queryByRole("link", { name: /Waiting/ })).toBeNull();
+  });
+
   it("shows progress and a failure the user can dismiss", async () => {
     const calls = mount(
       {

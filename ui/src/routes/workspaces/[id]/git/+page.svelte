@@ -298,7 +298,7 @@
         </label>
         <p class="muted">
           {git.only_push_listed
-            ? "A push is allowed only to a repository whose Push box is ticked."
+            ? "A push is allowed only to a repository whose Push box is ticked. This checks Git pushes only: a token in the workspace can still change a repository through the GitHub API."
             : "Off: a push may go to any repository the credential can write to, and the Push boxes change nothing."}
           {#if git.push_from === "default"}
             It follows the default for new workspaces.

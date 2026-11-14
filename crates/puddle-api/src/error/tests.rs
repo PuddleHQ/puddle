@@ -56,6 +56,10 @@ fn store_errors_map_to_client_statuses() {
             },
             StatusCode::CONFLICT,
         ),
+        (
+            StoreError::RuleSetHidden("builtin:x".into()),
+            StatusCode::CONFLICT,
+        ),
         (StoreError::NotSwitchable, StatusCode::UNPROCESSABLE_ENTITY),
         (
             StoreError::RuleSetName("taken".into()),

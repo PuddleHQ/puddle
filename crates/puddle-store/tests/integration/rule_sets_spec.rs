@@ -97,6 +97,7 @@ fn plan(everywhere: &[SystemReason], per: &[(&str, &[SystemReason])]) -> SystemP
             .iter()
             .map(|(s, r)| (sb(s), r.iter().copied().collect::<BTreeSet<_>>()))
             .collect::<BTreeMap<_, _>>(),
+        ..SystemPlan::default()
     }
 }
 
@@ -898,4 +899,149 @@ fn every_built_in_set_shows_its_catalogue_colour() {
             .unwrap();
         assert_eq!(shown.fill, built.fill, "{}", built.slug);
     }
+}
+
+fn hide_mise() -> SystemPlan {
+    SystemPlan {
+        hidden_sets: [puddle_store::MISE_TOOLS_SLUG].into(),
+        ..SystemPlan::default()
+    }
+}
+
+fn mise_set() -> RuleSetId {
+    RuleSetId::BuiltIn(puddle_store::MISE_TOOLS_SLUG)
+}
+
+#[test]
+fn m8_the_mise_tools_set_ships_off_with_the_measured_hosts() {
+    let (_, store) = fixture();
+    let sets = store.rule_sets(OWNER).unwrap();
+    let set = sets.iter().find(|s| s.id == mise_set()).unwrap();
+    assert!(!set.on_by_default());
+    let mut hosts: Vec<&str> = set.entries.iter().map(|e| e.pattern.as_str()).collect();
+    hosts.sort_unstable();
+    assert_eq!(
+        hosts,
+        [
+            "dl.google.com",
+            "github.com",
+            "mise-java.jdx.dev",
+            "mise-versions.jdx.dev",
+            "mise.jdx.dev",
+            "nodejs.org",
+            "release-assets.githubusercontent.com",
+            "tuf-repo-cdn.sigstore.dev",
+        ]
+    );
+    assert!(matches!(
+        decide(&store, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    for host in ["mise.jdx.dev", "nodejs.org", "dl.google.com"] {
+        assert!(decide(&store, "a", host).is_allow(), "{host}");
+    }
+}
+
+#[test]
+fn m8_a_hidden_set_decides_nothing_and_is_not_listed() {
+    let (_, store) = fixture();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    assert!(decide(&store, "a", "nodejs.org").is_allow());
+    store.set_system_managed(&hide_mise()).unwrap();
+    assert!(matches!(
+        decide(&store, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+    let sets = store.rule_sets(OWNER).unwrap();
+    assert_eq!(sets.len(), BUILT_IN_SETS.len() - 1);
+    assert!(sets.iter().all(|s| s.id != mise_set()));
+    assert!(matches!(
+        store.rule_set(OWNER, mise_set()),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    // Another built-in set that shares a host still decides: only the hidden set's own entries go.
+    store
+        .switch_rule_set(
+            OWNER,
+            RuleSetId::BuiltIn("github"),
+            None,
+            Some(true),
+            Actor::Ui,
+        )
+        .unwrap();
+    assert!(decide(&store, "a", "github.com").is_allow());
+}
+
+#[test]
+fn m8_a_hidden_set_cannot_be_switched_and_its_stored_switch_survives() {
+    let (_, store) = fixture();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    store
+        .switch_rule_set(OWNER, mise_set(), Some(&sb("a")), Some(false), Actor::Ui)
+        .unwrap();
+    store.set_system_managed(&hide_mise()).unwrap();
+    assert!(matches!(
+        store.switch_rule_set(OWNER, mise_set(), None, Some(false), Actor::Ui),
+        Err(StoreError::RuleSetHidden(id)) if id == "builtin:mise-tools"
+    ));
+    // Showing it again returns the set as the user left it: on everywhere, off in "a".
+    store.set_system_managed(&SystemPlan::default()).unwrap();
+    let sets = store.rule_sets(OWNER).unwrap();
+    let set = sets.iter().find(|s| s.id == mise_set()).unwrap();
+    assert_eq!(set.global, Some(true));
+    assert_eq!(set.overrides, [(sb("a"), false)]);
+    assert!(decide(&store, "b", "nodejs.org").is_allow());
+    assert!(matches!(
+        decide(&store, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+}
+
+#[test]
+fn m8_showing_a_switched_on_set_again_closes_the_requests_it_now_allows() {
+    let (_, store) = fixture();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    store.set_system_managed(&hide_mise()).unwrap();
+    let waiting = pending(decide(&store, "a", "nodejs.org"));
+    let closed = store.set_system_managed(&SystemPlan::default()).unwrap();
+    assert_eq!(closed, [waiting]);
+}
+
+#[test]
+fn m8_the_hidden_state_is_stored_and_a_repeated_plan_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let clock = Arc::new(ManualClock::new(T0));
+    let store = Store::open(&path, clock.clone(), Limits::default()).unwrap();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    store.set_system_managed(&hide_mise()).unwrap();
+    drop(store);
+    let reopened = Store::open(&path, clock, Limits::default()).unwrap();
+    assert!(matches!(
+        decide(&reopened, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+    let closed = reopened.set_system_managed(&hide_mise()).unwrap();
+    assert_eq!(closed.len(), 0);
+    // A slug this version doesn't ship is not stored.
+    let plan = SystemPlan {
+        hidden_sets: ["nope"].into(),
+        ..SystemPlan::default()
+    };
+    reopened.set_system_managed(&plan).unwrap();
+    assert_eq!(
+        reopened.rule_sets(OWNER).unwrap().len(),
+        BUILT_IN_SETS.len()
+    );
 }

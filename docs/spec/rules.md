@@ -437,7 +437,7 @@ the API. *Added 2026-10-08.*
   that one entry off (R-65) or the group. A built-in entry decides at the fixed lowest precedence
   (R-59), so an own rule that matches the host always beats it. When an update changes a group's
   entries, the store writes one `rule_set_changed` record (`added`, `removed`) when it opens, and
-  the group shows when it changed. *Reworded 2026-11-14: the earlier text said built-in entries
+  the group shows when it changed. A built-in group can be *hidden* while the feature it serves is off (the "mise tools" group, while the global tools switch is off): a hidden group decides nothing, is left out of the list and answers `409` to a switch; the switches stored for it are kept, so it returns as the user left it. *Reworded 2026-11-14: the earlier text said built-in entries
   only allow.*
 - **R-37 Switches.** Every set has a switch for every workspace and an override per workspace, each
   on, off or unset; unset passes to the next level (the workspace's, then every workspace's, then the

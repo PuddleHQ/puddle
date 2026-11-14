@@ -76,6 +76,31 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
 }
 
 #[tokio::test]
+async fn settings_of_a_workspace_that_does_not_exist_are_404_and_store_nothing() {
+    let api = start().await;
+    let ghost = WorkspaceId::new("ghost").unwrap();
+    let body = json!({"overrides": {"direct_ssh": true}});
+    let put = api
+        .send("PUT", "/api/settings/workspaces/ghost", Some(&body))
+        .await;
+    assert_eq!(put.status, 404, "{}", put.body);
+    assert_eq!(put.error(), "not_found");
+    let get = api.get("/api/settings/workspaces/ghost").await;
+    assert_eq!(get.status, 404, "{}", get.body);
+    assert_eq!(api.settings.load_workspace(&ghost).unwrap(), None);
+
+    // Once the workspace exists the same PUT is accepted and stored.
+    api.own("ghost");
+    let put = api
+        .send("PUT", "/api/settings/workspaces/ghost", Some(&body))
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(put.json()["overrides"]["direct_ssh"], true);
+    assert!(api.settings.load_workspace(&ghost).unwrap().is_some());
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_global_mise_switch_is_stored_globally_and_never_per_workspace() {
     let api = start().await;
     api.own("w");

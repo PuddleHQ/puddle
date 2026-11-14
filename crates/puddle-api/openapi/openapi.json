@@ -6860,6 +6860,16 @@
               }
             }
           },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "409": {
             "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
@@ -6952,6 +6962,16 @@
           },
           "403": {
             "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace; settings are never stored ahead of a create",
             "content": {
               "application/json": {
                 "schema": {

@@ -19,9 +19,20 @@ struct Admin {
 }
 
 async fn admin_site(multi_user: bool) -> Admin {
+    admin_site_slow(multi_user, Duration::ZERO).await
+}
+
+/// Like [`admin_site`], with a pause between the steps of a workspace operation so that an
+/// operation is still under way when the next look comes.
+async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
     let made: std::sync::Mutex<Option<Arc<FakeWorkspaces>>> = std::sync::Mutex::new(None);
     let site = site_built(multi_user, |events, clock| {
-        let fake = Arc::new(FakeWorkspaces::new(events.clone(), clock.clone()));
+        let fake = Arc::new(FakeWorkspaces::with_options(
+            events.clone(),
+            clock.clone(),
+            Arc::new(puddle_api::FakeLauncher::new()),
+            step_delay,
+        ));
         *made.lock().unwrap() = Some(fake.clone());
         Some(fake as Arc<dyn WorkspaceService>)
     })
@@ -443,5 +454,78 @@ async fn no_admin_answer_but_the_new_invite_carries_a_secret() {
             );
         }
     }
+    admin.site.running.shutdown().await;
+}
+
+async fn make_box(admin: &Admin, token: &str, name: &str) {
+    let made = admin
+        .site
+        .send(
+            "POST",
+            "/api/workspaces",
+            &Req::bearer(token),
+            Some(&json!({"name": name, "repositories": [{"url": REPO}]})),
+        )
+        .await;
+    assert_eq!(made.status, 202, "{made:?}");
+    admin.workspaces.idle().await;
+}
+
+async fn start_delete(admin: &Admin, id: i64, name: &str) {
+    let done = admin
+        .owner(
+            "DELETE",
+            &format!("/api/admin/users/{id}?confirm={name}"),
+            None,
+        )
+        .await;
+    assert_eq!(done.status, 202, "{done:?}");
+}
+
+#[tokio::test]
+async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
+    let admin = admin_site(true).await;
+    admin.site.setup().await;
+    let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
+    make_box(&admin, &ann, "ann-box").await;
+    let mut others = Vec::new();
+    for name in ["Bob", "Cy", "Dee"] {
+        others.push((name, admin.user(name, pw("other password three")).await.1));
+    }
+
+    // The stop fails and later the delete fails: Ann stays as long as her box is left.
+    admin
+        .workspaces
+        .fail_next(puddle_api::Operation::Stopping, "the sandbox hangs");
+    start_delete(&admin, ann_id, "Ann").await;
+    admin.workspaces.idle().await;
+    admin
+        .workspaces
+        .fail_next(puddle_api::Operation::Deleting, "the volume is locked");
+    // Each further deletion makes the reaper look again (it also looks every few seconds).
+    for (name, id) in others {
+        start_delete(&admin, id, name).await;
+        admin.workspaces.idle().await;
+    }
+    admin.gone("Ann").await;
+    assert!(admin.workspaces.list().await.unwrap().is_empty());
+    admin.site.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_workspace_still_busy_is_left_alone_until_it_is_idle() {
+    let admin = admin_site_slow(true, Duration::from_millis(300)).await;
+    admin.site.setup().await;
+    let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
+    let (_bob, bob_id) = admin.user("Bob", pw("bob password three")).await;
+    make_box(&admin, &ann, "ann-box").await;
+
+    start_delete(&admin, ann_id, "Ann").await;
+    // The stop is under way (the box is busy); this second look must leave it alone.
+    start_delete(&admin, bob_id, "Bob").await;
+    admin.gone("Ann").await;
+    admin.gone("Bob").await;
+    admin.workspaces.idle().await;
+    assert!(admin.workspaces.list().await.unwrap().is_empty());
     admin.site.running.shutdown().await;
 }

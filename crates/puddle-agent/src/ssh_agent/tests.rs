@@ -111,3 +111,57 @@ async fn a_socket_that_cannot_be_made_ends_the_service_without_one() {
         .await
         .expect("serve returns at once");
 }
+
+/// A stream to the host that breaks: its writes fail, or its reads do once the preamble went in.
+struct Broken {
+    fail_writes: bool,
+}
+
+impl AsyncRead for Broken {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Err(io::ErrorKind::ConnectionReset.into()))
+    }
+}
+
+impl AsyncWrite for Broken {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::task::Poll::Ready(if self.fail_writes {
+            Err(io::ErrorKind::BrokenPipe.into())
+        } else {
+            Ok(buf.len())
+        })
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn a_host_session_that_breaks_before_or_after_the_first_write_closes_the_client() {
+    for fail_writes in [true, false] {
+        let (client, mut far) = UnixStream::pair().unwrap();
+        relay_over(client, Broken { fail_writes }).await;
+        let mut rest = Vec::new();
+        let read = tokio::io::AsyncReadExt::read_to_end(&mut far, &mut rest).await;
+        assert!(read.is_err() || rest.is_empty(), "{read:?} {rest:?}");
+    }
+}

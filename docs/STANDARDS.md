@@ -247,9 +247,12 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   clean `HEAD` is not scanned, and a secret already in the base is the CI scan's to catch. Test credentials are made-up values, kept
   recognisable (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags
   them. A flagged fake gets an allowlist entry that fits its exact path and value, with the reason in
-  the entry; the fixture itself stays as it is. The gate's self-test
+  the entry; the fixture itself stays as it is. A canary token and its allowlist entry land in one
+  commit: the full scan reads every ref, and a commit that has the token without the entry fails on
+  its own (bisect, cherry-picks, a branch cut before the entry). The gate's self-test
   (`scripts/check-secrets.sh --self-test`) proves a real-shaped token fails, a listed fake passes, and
-  each scope sees the commits it should (a dirty side branch fails `all`, passes `head`). External scanners (GitGuardian on the public
+  each scope sees the commits it should (a dirty side branch fails `all`, passes `head`), and a commit
+  with only the canary fails while one with both the canary and its entry passes. External scanners (GitGuardian on the public
   repository) may flag fakes the gate doesn't; dismiss those as false positives, don't rewrite the test.
   A real secret that reached a commit is rotated first, then removed.
 

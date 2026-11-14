@@ -78,25 +78,31 @@ impl DataLock {
         private::create_dir(dir).map_err(io_err(dir))?;
         let lock_path = dir.join(LOCK_FILE);
         let file = open_lock_file(&lock_path).map_err(io_err(&lock_path))?;
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => {
-                return Err(LockError::Held {
-                    dir: dir.to_path_buf(),
-                    holder: read_holder(&dir.join(HOLDER_FILE)),
-                });
-            }
-            Err(TryLockError::Error(source)) => {
-                return Err(LockError::Io {
-                    path: lock_path,
-                    source,
-                });
-            }
-        }
+        lock_outcome(file.try_lock(), dir, &lock_path)?;
         // Only a hint for the next refusal, so a failure to write it never fails the start.
         let note = format!("{}\n", std::process::id());
         let _ = private::write_atomic(&dir.join(HOLDER_FILE), note.as_bytes());
         Ok(Self { _file: file })
+    }
+}
+
+/// What the operating system's answer to the lock call means for [`DataLock::acquire`]: held by
+/// another process, or refused for another reason (a file system with no locks).
+fn lock_outcome(
+    answer: Result<(), TryLockError>,
+    dir: &Path,
+    lock_path: &Path,
+) -> Result<(), LockError> {
+    match answer {
+        Ok(()) => Ok(()),
+        Err(TryLockError::WouldBlock) => Err(LockError::Held {
+            dir: dir.to_path_buf(),
+            holder: read_holder(&dir.join(HOLDER_FILE)),
+        }),
+        Err(TryLockError::Error(source)) => Err(LockError::Io {
+            path: lock_path.to_path_buf(),
+            source,
+        }),
     }
 }
 

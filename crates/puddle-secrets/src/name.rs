@@ -76,6 +76,26 @@ fn host_chars(s: &str) -> bool {
         && !s.starts_with('.')
 }
 
+/// [`HostName::new`]'s rule as a `const fn`, so a literal is checked at build time. A unit test
+/// compares it with the runtime rule.
+const fn is_valid_host(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let [first, ..] = bytes else {
+        return false;
+    };
+    if bytes.len() > 256 || *first == b'-' || *first == b'.' {
+        return false;
+    }
+    let mut rest = bytes;
+    while let [byte, tail @ ..] = rest {
+        if !(byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'.' | b':')) {
+            return false;
+        }
+        rest = tail;
+    }
+    true
+}
+
 fn path_chars(s: &str) -> bool {
     s.chars().all(|c| {
         c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~' | '%' | '@' | '+' | '/')
@@ -105,6 +125,51 @@ name_type!(
     /// A Git host name (`github.com`, `dev.azure.com`), with an optional port.
     HostName, "host name", host_chars
 );
+
+/// A host name written in the source and checked when the crate is built.
+///
+/// Use [`host_name!`](crate::host_name) for a constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostNameLit(&'static str);
+
+impl HostNameLit {
+    /// Checks `value`.
+    ///
+    /// # Panics
+    ///
+    /// When `value` is not a valid [`HostName`]. In a `const` context that is a build error.
+    #[must_use]
+    pub const fn new(value: &'static str) -> Self {
+        assert!(is_valid_host(value), "not a valid host name");
+        Self(value)
+    }
+}
+
+impl From<HostNameLit> for HostName {
+    fn from(lit: HostNameLit) -> Self {
+        Self(lit.0.to_owned())
+    }
+}
+
+/// A [`HostName`] from a constant string, checked at build time: no `Result`, no `expect`.
+///
+/// ```
+/// use puddle_secrets::{HostName, host_name};
+/// let host: HostName = host_name!("github.com");
+/// assert_eq!(host.as_str(), "github.com");
+/// ```
+///
+/// ```compile_fail
+/// use puddle_secrets::host_name;
+/// let _ = host_name!("-option");
+/// ```
+#[macro_export]
+macro_rules! host_name {
+    ($value:expr) => {
+        $crate::HostName::from(const { $crate::HostNameLit::new($value) })
+    };
+}
+
 name_type!(
     /// The path of a repository URL without the host (`org`, `org/project/_git/repo`): it selects
     /// the credential, so it is never empty.

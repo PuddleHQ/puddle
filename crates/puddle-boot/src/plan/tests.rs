@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 use crate::machine::MACHINE_SETTINGS_GUEST;
+use puddle_types::FileMode;
 
 fn image(entrypoint: &[&str], cmd: &[&str], path: Option<&str>) -> ImageConfig {
     ImageConfig {
@@ -128,7 +129,7 @@ fn git_config_has_fsync_identity_and_no_credential_helper() {
     let without_id = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert_eq!(
         text(&without_id, GIT_CONFIG_GUEST),
-        format!("{GENERATED}[core]\n\tfsync = committed\n")
+        format!("{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n")
     );
     let as_agent = BootPlan::builder(&ImageConfig::default())
         .session_user(SessionUser::Agent)
@@ -136,7 +137,9 @@ fn git_config_has_fsync_identity_and_no_credential_helper() {
         .unwrap();
     assert_eq!(
         text(&as_agent, GIT_CONFIG_GUEST),
-        format!("{GENERATED}[core]\n\tfsync = committed\n[safe]\n\tdirectory = *\n"),
+        format!(
+            "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n[safe]\n\tdirectory = *\n"
+        ),
         "root may work in the session user's checkouts"
     );
     let id = GitIdentity::new(r#"Ada "the" \Countess"#, "ada@example.org").unwrap();
@@ -182,7 +185,7 @@ fn author_rules_become_include_if_blocks_in_order_each_with_its_own_file() {
     assert_eq!(
         text(&plan, GIT_CONFIG_GUEST),
         format!(
-            "{GENERATED}[core]\n\tfsync = committed\n\
+            "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n\
                  [user]\n\tname = \"Ada\"\n\temail = \"ada@example.org\"\n\
                  [includeIf \"hasconfig:remote.*.url:https://github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
                  [includeIf \"hasconfig:remote.*.url:https://*@github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
@@ -343,7 +346,7 @@ fn capture_is_on_unless_switched_off_or_there_is_no_agent() {
 #[test]
 fn render_has_header_files_steps_and_end_marker() {
     let plan = BootPlan::builder(&image(&["e"], &[], Some("/bin")))
-        .file(file("/etc/it's", "50%\n").with_mode(0o600).unwrap())
+        .file(file("/etc/it's", "50%\n").with_mode(FileMode::new(0o600)))
         .agent(AgentConfig {
             binary: GuestPath::new("/opt/agent").unwrap(),
             port: 4000,
@@ -480,8 +483,7 @@ fn merged_files_render_their_spec_and_are_counted() {
     )
     .unwrap();
     let merged = GuestFile::merged(GuestPath::new("/root/c.json").unwrap(), spec)
-        .with_mode(0o600)
-        .unwrap();
+        .with_mode(FileMode::new(0o600));
     // Every plan merges VS Code's Machine settings.
     let without = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert!(without.has_merged_files());

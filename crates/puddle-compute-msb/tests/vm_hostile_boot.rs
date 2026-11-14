@@ -231,6 +231,7 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
 
     let rig = host_rig(endpoints);
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("127.0.0.1").unwrap(),

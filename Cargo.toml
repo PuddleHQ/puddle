@@ -71,7 +71,7 @@ microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.1
 microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.3", default-features = false }
 # Only for building the SDK's boot error in tests.
 microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.3", default-features = false }
-object = { version = "0.40", default-features = false }
+object = { version = "0.41", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
 # The `puddle serve` config file, read with its spans so an error names the line (already in the tree for the Windows resource build).

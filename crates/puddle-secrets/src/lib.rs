@@ -28,6 +28,7 @@ mod chunked;
 mod discovery;
 mod error;
 mod file_vault;
+mod health;
 mod indexed;
 mod keyring_store;
 mod name;
@@ -46,9 +47,12 @@ pub use chunked::{CHUNK_UNITS, ChunkedStore};
 pub use discovery::{DiscoveredAccount, Discovery, Listing, discover};
 pub use error::{Refusal, SourceError, Tool};
 pub use file_vault::{FileVault, KeySourceTag, VaultError, VaultKey};
+pub use health::{StoreAdvice, StoreHealth, probe_os_store, probe_store};
 pub use indexed::IndexedStore;
 pub use keyring_store::{KeyringStore, keyring_available};
-pub use name::{AccountName, HostName, NameError, OrgName, StoredId, TenantId, UrlPath};
+pub use name::{
+    AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
+};
 pub use readlog::{LastRead, ReadLog, ReadUse};
 pub use run::ToolPaths;
 pub use scheme::{TokenScheme, azure_devops_scheme};

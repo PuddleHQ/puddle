@@ -231,22 +231,14 @@ impl Store {
         Ok(user.map(UserId::from_stored))
     }
 
-    /// Makes a rule of the owner (see [`Store::add_request_rule_as`]) and tells running
-    /// workspaces to read their rules again.
-    ///
-    /// # Errors
-    /// As [`Store::add_request_rule_as`].
-    pub fn add_request_rule(&self, new: &NewRequestRule) -> Result<RequestRule, StoreError> {
-        self.add_request_rule_as(UserId::OWNER, new)
-    }
-
-    /// Makes a rule of `user`: global for their workspaces, or for one of them.
+    /// Makes a rule of `user`: global for their workspaces, or for one of them. Reached through
+    /// [`Store::as_user`].
     ///
     /// # Errors
     /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit
     /// or an empty host, [`StoreError::UnknownWorkspace`] for a workspace that is not `user`'s,
     /// or a database error.
-    pub fn add_request_rule_as(
+    pub(super) fn add_request_rule_by(
         &self,
         user: UserId,
         new: &NewRequestRule,

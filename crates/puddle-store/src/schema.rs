@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23,
+    V22, V23, V24,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 23;
+pub const SCHEMA_VERSION: u32 = 24;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -711,6 +711,184 @@ CREATE TABLE ssh_agent_hosts (
     changed_at   INTEGER NOT NULL,
     PRIMARY KEY (workspace_id, host)
 ) STRICT;
+";
+
+/// Drops `DEFAULT 1` from the `user_id` columns V20 added. A default made an insert that forgot
+/// the column write as the owner; now it fails (`NOT NULL`) and every write names its user. SQLite
+/// cannot drop a default in place (rows written before `ADD COLUMN` read it from the schema), so
+/// each table is rebuilt: new table, copy with every id, drop, rename, and the `AUTOINCREMENT`
+/// high-water mark, indexes and triggers carried over. The runner runs this with foreign keys off.
+const V24: &str = r"
+CREATE TABLE rules_v24 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
+    workspace_id      TEXT,
+    set_id            INTEGER REFERENCES rule_sets (id),
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api', 'workspace_create')),
+    source_pending_id INTEGER,
+    user_id           INTEGER NOT NULL,
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL)),
+    CHECK ((scope = 'set') = (set_id IS NOT NULL))
+) STRICT;
+INSERT INTO rules_v24 (id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+                       created_at, created_by, source_pending_id, user_id)
+    SELECT id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+           created_at, created_by, source_pending_id, user_id
+    FROM rules;
+DELETE FROM sqlite_sequence WHERE name = 'rules_v24';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'rules_v24', seq FROM sqlite_sequence WHERE name = 'rules';
+DROP TABLE rules;
+ALTER TABLE rules_v24 RENAME TO rules;
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
+CREATE INDEX rules_workspace ON rules (workspace_id);
+
+CREATE TABLE request_rules_v24 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope        TEXT    NOT NULL CHECK (scope IN ('global', 'workspace')),
+    workspace_id TEXT,
+    host         TEXT    NOT NULL,
+    methods      TEXT    NOT NULL,
+    path         TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    created_by   TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    user_id      INTEGER NOT NULL,
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL))
+) STRICT;
+INSERT INTO request_rules_v24 (id, scope, workspace_id, host, methods, path, created_at,
+                               created_by, user_id)
+    SELECT id, scope, workspace_id, host, methods, path, created_at, created_by, user_id
+    FROM request_rules;
+DELETE FROM sqlite_sequence WHERE name = 'request_rules_v24';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'request_rules_v24', seq FROM sqlite_sequence WHERE name = 'request_rules';
+DROP TABLE request_rules;
+ALTER TABLE request_rules_v24 RENAME TO request_rules;
+CREATE INDEX request_rules_workspace ON request_rules (workspace_id);
+
+CREATE TABLE audit_v24 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           INTEGER NOT NULL,
+    type         TEXT    NOT NULL,
+    workspace_id TEXT,
+    line         TEXT    NOT NULL CHECK (length(CAST(line AS BLOB)) <= 4096),
+    host         TEXT,
+    outcome      TEXT,
+    search       TEXT,
+    workspace_name TEXT,
+    user_id      INTEGER NOT NULL
+) STRICT;
+INSERT INTO audit_v24 (id, ts, type, workspace_id, line, host, outcome, search, workspace_name,
+                       user_id)
+    SELECT id, ts, type, workspace_id, line, host, outcome, search, workspace_name, user_id
+    FROM audit;
+DELETE FROM sqlite_sequence WHERE name = 'audit_v24';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'audit_v24', seq FROM sqlite_sequence WHERE name = 'audit';
+DROP TABLE audit;
+ALTER TABLE audit_v24 RENAME TO audit;
+CREATE INDEX audit_outcome ON audit (outcome, id) WHERE outcome IS NOT NULL;
+CREATE INDEX audit_ts ON audit (ts);
+CREATE INDEX audit_type ON audit (type, id);
+CREATE INDEX audit_workspace ON audit (workspace_id, id);
+CREATE TRIGGER audit_size_insert AFTER INSERT ON audit
+BEGIN
+    UPDATE audit_size SET bytes = bytes + length(CAST(NEW.line AS BLOB)) WHERE id = 1;
+END;
+CREATE TRIGGER audit_size_delete AFTER DELETE ON audit
+BEGIN
+    UPDATE audit_size SET bytes = bytes - length(CAST(OLD.line AS BLOB)) WHERE id = 1;
+END;
+
+CREATE TABLE rule_sets_v24 (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+    description TEXT    NOT NULL DEFAULT '' CHECK (length(description) <= 500),
+    created_at  INTEGER NOT NULL,
+    created_by  TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    fill        TEXT,
+    user_id     INTEGER NOT NULL
+) STRICT;
+INSERT INTO rule_sets_v24 (id, name, description, created_at, created_by, fill, user_id)
+    SELECT id, name, description, created_at, created_by, fill, user_id FROM rule_sets;
+DELETE FROM sqlite_sequence WHERE name = 'rule_sets_v24';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'rule_sets_v24', seq FROM sqlite_sequence WHERE name = 'rule_sets';
+DROP TABLE rule_sets;
+ALTER TABLE rule_sets_v24 RENAME TO rule_sets;
+CREATE UNIQUE INDEX rule_sets_name ON rule_sets (user_id, name COLLATE NOCASE);
+
+CREATE TABLE rule_set_switches_v24 (
+    rule_set     TEXT    NOT NULL,
+    workspace_id TEXT,
+    enabled      INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    changed_at   INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL
+) STRICT;
+INSERT INTO rule_set_switches_v24 (rule_set, workspace_id, enabled, changed_at, user_id)
+    SELECT rule_set, workspace_id, enabled, changed_at, user_id FROM rule_set_switches;
+DROP TABLE rule_set_switches;
+ALTER TABLE rule_set_switches_v24 RENAME TO rule_set_switches;
+CREATE UNIQUE INDEX rule_set_switches_key
+    ON rule_set_switches (user_id, rule_set, ifnull(workspace_id, ''));
+
+CREATE TABLE env_vars_v24 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT,
+    name         TEXT    NOT NULL,
+    kind         TEXT    NOT NULL CHECK (kind IN ('plain', 'secret')),
+    value        TEXT,
+    secret_id    TEXT,
+    hosts        TEXT,
+    changed_at   INTEGER NOT NULL,
+    place        TEXT CHECK (place IS NULL OR kind = 'secret'),
+    user_id      INTEGER NOT NULL,
+    CHECK ((kind = 'plain') = (value IS NOT NULL)),
+    CHECK ((kind = 'secret') = (secret_id IS NOT NULL)),
+    CHECK ((kind = 'secret') = (hosts IS NOT NULL))
+) STRICT;
+INSERT INTO env_vars_v24 (id, workspace_id, name, kind, value, secret_id, hosts, changed_at, place,
+                          user_id)
+    SELECT id, workspace_id, name, kind, value, secret_id, hosts, changed_at, place, user_id
+    FROM env_vars;
+DELETE FROM sqlite_sequence WHERE name = 'env_vars_v24';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'env_vars_v24', seq FROM sqlite_sequence WHERE name = 'env_vars';
+DROP TABLE env_vars;
+ALTER TABLE env_vars_v24 RENAME TO env_vars;
+CREATE UNIQUE INDEX env_vars_key ON env_vars (user_id, ifnull(workspace_id, ''), name);
+
+CREATE TABLE identities_v24 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users (id),
+    label        TEXT    NOT NULL COLLATE NOCASE,
+    author_name  TEXT    NOT NULL,
+    author_email TEXT    NOT NULL,
+    credentials  TEXT    NOT NULL,
+    signing      TEXT    NOT NULL DEFAULT 'none' CHECK (signing IN ('none')),
+    position     INTEGER NOT NULL,
+    is_default   INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at   INTEGER NOT NULL,
+    changed_at   INTEGER NOT NULL,
+    UNIQUE (user_id, label)
+) STRICT;
+INSERT INTO identities_v24 (id, user_id, label, author_name, author_email, credentials, signing,
+                            position, is_default, created_at, changed_at)
+    SELECT id, user_id, label, author_name, author_email, credentials, signing, position,
+           is_default, created_at, changed_at
+    FROM identities;
+DELETE FROM sqlite_sequence WHERE name = 'identities_v24';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'identities_v24', seq FROM sqlite_sequence WHERE name = 'identities';
+DROP TABLE identities;
+ALTER TABLE identities_v24 RENAME TO identities;
+CREATE UNIQUE INDEX identities_one_default ON identities (user_id) WHERE is_default = 1;
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

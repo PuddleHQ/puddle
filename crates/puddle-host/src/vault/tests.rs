@@ -234,6 +234,53 @@ fn a_sweep_that_cannot_run_raises_a_problem_naming_why_and_a_clean_one_raises_no
     assert_eq!(list.list(), Vec::new());
 }
 
+#[test]
+fn a_store_that_refuses_a_write_raises_one_problem_naming_the_cause_and_the_restart() {
+    let list = problems();
+    for (health, title) in [
+        (StoreHealth::NoProvider, "no credential store is running"),
+        (StoreHealth::Locked, "the credential store is locked"),
+    ] {
+        report_health(health, true, &list);
+        let raised = list.list();
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_eq!(raised[0].key, STORE_PROBLEM);
+        assert!(raised[0].title.contains(title), "{}", raised[0].title);
+        assert!(raised[0].detail.contains("restart Puddle"));
+    }
+    assert!(list.list()[0].detail.contains("gnome-keyring-daemon"));
+}
+
+#[test]
+fn a_working_store_raises_no_problem_and_clears_a_standing_one() {
+    let list = problems();
+    report_health(StoreHealth::Locked, false, &list);
+    assert_eq!(list.list().len(), 1);
+    report_health(StoreHealth::Working, false, &list);
+    assert_eq!(list.list(), Vec::new());
+}
+
+#[tokio::test]
+async fn the_startup_check_raises_for_a_locked_store_and_stays_quiet_for_a_healthy_one() {
+    let locked = Arc::new(MemoryStore::new());
+    locked.break_it();
+    let list = Arc::new(problems());
+    check_in_background(Some(locked), list.clone())
+        .await
+        .unwrap();
+    let raised = list.list();
+    assert_eq!(raised.len(), 1);
+    assert_eq!(raised[0].key, STORE_PROBLEM);
+
+    let healthy = Arc::new(MemoryStore::new());
+    let quiet = Arc::new(problems());
+    check_in_background(Some(healthy.clone()), quiet.clone())
+        .await
+        .unwrap();
+    assert_eq!(quiet.list(), Vec::new());
+    assert_eq!(healthy.ids(), Vec::<String>::new());
+}
+
 #[tokio::test]
 async fn shutdown_does_not_wait_for_ever_for_a_sweep_the_keyring_holds_up() {
     let (release, held) = std::sync::mpsc::channel::<()>();

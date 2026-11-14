@@ -340,6 +340,28 @@ async fn an_abort_removes_the_record_a_refused_attach_leaves_and_keeps_an_old_vo
 }
 
 #[tokio::test]
+async fn an_abort_names_the_cleanup_step_that_failed_and_still_releases_the_workspace() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let att = w.prepare(&rt, &id, &name("box"), None).await.unwrap();
+    assert_eq!(att.workspace(), &id);
+    rt.inject(
+        Op::List,
+        Fault::once(ComputeError::Runtime {
+            op: "x",
+            message: "down".into(),
+        }),
+    );
+    let err = att.abort(&rt).await.unwrap_err();
+    assert!(
+        matches!(&err, WorkspaceError::Runtime { op, .. } if *op == "clean up after a failed create"),
+        "{err}"
+    );
+    assert_eq!(w.holder(&id), None);
+}
+
+#[tokio::test]
 async fn an_abort_removes_a_sandbox_whose_boot_hook_failed() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();

@@ -31,20 +31,22 @@ pub struct RuntimeVersion {
 }
 
 impl RuntimeVersion {
-    /// The version this build was made for ([`BUILT_FOR`]).
-    ///
-    /// # Panics
-    ///
-    /// Never: a unit test parses [`BUILT_FOR`].
+    /// The version this build was made for ([`BUILT_FOR`]), written by the build script as a
+    /// constant: it is the parsed, checked number, so there is no parse to fail here.
     #[must_use]
-    #[expect(
-        clippy::expect_used,
-        reason = "BUILT_FOR is a constant that a unit test parses"
-    )]
-    pub fn built_for() -> Self {
-        BUILT_FOR
-            .parse()
-            .expect("BUILT_FOR is a valid <release>-puddle.N version")
+    pub const fn built_for() -> Self {
+        include!(concat!(env!("OUT_DIR"), "/built_for_version.rs"))
+    }
+
+    /// Only for the build script's generated constant, which writes the numbers its own check
+    /// accepted.
+    const fn from_parts(major: u64, minor: u64, patch: u64, puddle: u32) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+            puddle,
+        }
     }
 
     /// The upstream msb release, `MAJOR.MINOR.PATCH` (the fork's base tag without the `v`).

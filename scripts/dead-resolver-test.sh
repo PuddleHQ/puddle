@@ -33,6 +33,9 @@ grep -q 'no-such-name.example.org' "$tmp/stderr" || fail "the name asked is not 
 
 "$here/dead-resolver.sh" sh -c 'getent hosts localhost >/dev/null' 2>"$tmp/stderr" || fail "localhost alone failed: $(cat "$tmp/stderr")"
 [ ! -s "$tmp/stderr" ] || fail "localhost alone was reported: $(cat "$tmp/stderr")"
+# shellcheck disable=SC2016 # the command's text is for the inner shell
+"$here/dead-resolver.sh" sh -c 'getent hosts "$(hostname)" >/dev/null' 2>"$tmp/stderr" || fail "the machine's own name was not resolved: $(cat "$tmp/stderr")"
+[ ! -s "$tmp/stderr" ] || fail "the machine's own name was reported: $(cat "$tmp/stderr")"
 "$here/dead-resolver.sh" sh -c 'exit 7' 2>/dev/null
 [ "$?" = 7 ] || fail "the command's exit status did not come through"
 

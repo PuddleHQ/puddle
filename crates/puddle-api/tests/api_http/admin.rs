@@ -86,13 +86,13 @@ impl Admin {
 
     /// Waits until the background deletion has removed the user.
     async fn gone(&self, name: &str) {
-        for _ in 0..200 {
-            if !self.listed().await.iter().any(|u| u["name"] == name) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        panic!("{name} was never removed");
+        // The reaper also looks on a 10 s timer, so a missed notice costs up to that.
+        puddle_test_kit::eventually_async(
+            &format!("{name} is removed"),
+            Duration::from_secs(30),
+            || async { !self.listed().await.iter().any(|u| u["name"] == name) },
+        )
+        .await;
     }
 }
 
@@ -538,6 +538,36 @@ async fn a_workspace_still_busy_is_left_alone_until_it_is_idle() {
         .await;
     assert_eq!(again.status, 409, "{again:?}");
     // The stop is under way (the box is busy); this second look must leave it alone.
+    start_delete(&admin, bob_id, "Bob").await;
+    admin.gone("Ann").await;
+    admin.gone("Bob").await;
+    admin.workspaces.idle().await;
+    assert_eq!(admin.workspaces.list().await.unwrap(), Vec::new());
+    admin.site.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
+    let admin = admin_site(true).await;
+    admin.site.setup().await;
+    let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
+    let (_bob, bob_id) = admin.user("Bob", pw("bob password three")).await;
+    make_box(&admin, &ann, "ann-box").await;
+    // A paused box counts as up but cannot be stopped: the stop is refused at once.
+    let mut record = admin.workspaces.list().await.unwrap().remove(0);
+    record.status = puddle_types::WorkspaceStatus::Paused;
+    admin
+        .workspaces
+        .seed(record.clone(), puddle_api::Unsaved::default());
+
+    start_delete(&admin, ann_id, "Ann").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(admin.listed().await.iter().any(|u| u["name"] == "Ann"));
+
+    record.status = puddle_types::WorkspaceStatus::Stopped;
+    admin
+        .workspaces
+        .seed(record, puddle_api::Unsaved::default());
     start_delete(&admin, bob_id, "Bob").await;
     admin.gone("Ann").await;
     admin.gone("Bob").await;

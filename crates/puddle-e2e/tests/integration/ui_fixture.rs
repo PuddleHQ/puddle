@@ -168,6 +168,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("unmanaged-checkouts", 0, 0),
         ("start-folder-missing", 0, 0),
         ("environment", 0, 1),
+        ("multi-user", 0, 0),
         ("request-rules", 0, 1),
     ];
     for (name, pending, rules_min) in counts {
@@ -202,6 +203,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "unmanaged-checkouts",
             "start-folder-missing",
             "environment",
+            "multi-user",
             "request-rules"
         ]
     );

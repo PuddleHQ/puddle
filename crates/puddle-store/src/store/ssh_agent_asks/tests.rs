@@ -327,3 +327,47 @@ fn every_state_round_trips_through_its_text_and_unknown_text_is_none() {
     }
     assert_eq!(SshAgentAskState::parse("maybe"), None);
 }
+
+#[test]
+fn an_answer_whose_audit_record_cannot_be_written_is_not_given() {
+    let (_, store, _) = store();
+    let id = open(&store, "a", "h.example.com");
+    store.fail_audit_writes("workspace_op");
+
+    let failed = store.answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Always, Actor::Ui);
+
+    assert!(matches!(failed, Err(StoreError::Database(_))), "{failed:?}");
+    store.audit_writes_work_again();
+    let ask = store.ssh_agent_ask(id).unwrap().unwrap();
+    assert_eq!(
+        ask.state,
+        SshAgentAskState::Requested,
+        "the transaction rolled back"
+    );
+    assert!(
+        store
+            .audit_lines(0, 10)
+            .unwrap()
+            .iter()
+            .all(|(_, l)| !l.contains("ssh_agent_answered"))
+    );
+}
+
+#[test]
+fn a_request_that_cannot_be_counted_on_its_open_question_fails_and_changes_nothing() {
+    let (_, store, _) = store();
+    let id = open(&store, "a", "h.example.com");
+    store.break_database(
+        "CREATE TRIGGER asks_update_fails BEFORE UPDATE ON ssh_agent_asks
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    let failed = store.start_ssh_agent_ask(&ws("a"), "h.example.com", KEY, "ssh-ed25519");
+
+    assert!(matches!(failed, Err(StoreError::Database(_))), "{failed:?}");
+    store.break_database("DROP TRIGGER asks_update_fails");
+    let joined = store
+        .start_ssh_agent_ask(&ws("a"), "h.example.com", KEY, "ssh-ed25519")
+        .unwrap();
+    assert!(matches!(joined, SshAgentAskStart::Open(n) if n == id));
+}

@@ -761,7 +761,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         self.audit_operation(&name, op, &result, delete_note);
         match result {
-            Ok(()) => self.progress(&name, WorkspaceStep::Done, None),
+            Ok(()) => {
+                self.progress(&name, WorkspaceStep::Done, None);
+                // After `done`, in the background: the start is done whatever mise does, and a
+                // create's clones are on the volume by now.
+                if matches!(op, Operation::Creating | Operation::Starting) {
+                    self.set_up_tools_later(&name);
+                }
+            }
             Err(reason) => {
                 tracing::warn!(workspace = %id, %op, %reason, "workspace operation failed");
                 self.progress(&name, WorkspaceStep::Failed, Some(reason.to_string()));

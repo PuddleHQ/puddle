@@ -14321,6 +14321,31 @@
           },
           {
             "type": "object",
+            "description": "Puddle's install of a workspace's managed tools (mise) moved on. It runs in the background\nafter a start, after a clone into the running workspace, and once more when the user allows\na host the install was waiting on; the start never waits for it. Never sent while the layer is\noff.",
+            "required": [
+              "workspace",
+              "state",
+              "type"
+            ],
+            "properties": {
+              "state": {
+                "$ref": "#/components/schemas/ToolsState",
+                "description": "Where the install stands."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_tools"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A new open pending request (a workspace asked for a host:port no rule decides).",
             "required": [
               "request",
@@ -19289,6 +19314,94 @@
             "description": "The organisation, for tokens that belong to one (Azure DevOps)."
           }
         }
+      },
+      "ToolsState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Tools are being installed: `done` of `total` are in place, `tools` are the ones still\nmissing.",
+            "required": [
+              "tools",
+              "done",
+              "total",
+              "phase"
+            ],
+            "properties": {
+              "done": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How many of the missing ones are in place since the install began.",
+                "minimum": 0
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "installing"
+                ]
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The tools still missing."
+              },
+              "total": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How many were missing when it began.",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Every tool the workspace's mise files ask for is installed.",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "ready"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The install ended with tools still missing. The problem `tools:<workspace>` says why.",
+            "required": [
+              "tools",
+              "waiting_on",
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The tools still missing."
+              },
+              "waiting_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Hosts the install asked for that wait for a decision (pending requests opened or seen\nagain while it ran). Puddle runs the install once more when the user allows one; empty\nwhen the failure had another cause."
+              }
+            }
+          }
+        ],
+        "description": "Where the install of a workspace's managed tools stands, as [`Event::WorkspaceTools`] reports\nit. Tool names are `<name>@<version>` as mise reports them from the guest: escape them when\nrendering."
       },
       "UiPrefs": {
         "type": "object",

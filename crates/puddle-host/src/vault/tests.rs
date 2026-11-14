@@ -282,6 +282,25 @@ async fn the_startup_check_raises_for_a_locked_store_and_stays_quiet_for_a_healt
 }
 
 #[tokio::test]
+async fn a_decision_that_cannot_be_written_does_not_fail_the_check_or_raise_a_problem() {
+    let data = tempfile::NamedTempFile::new().unwrap();
+    let decision = WriteWhenWorking {
+        data: data.path().to_path_buf(),
+        rule: puddle_secrets::Rule::Headless,
+    };
+    let list = Arc::new(problems());
+    run_check(
+        Probe::Store(Arc::new(MemoryStore::new())),
+        Some(decision),
+        None,
+        list.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.list(), Vec::new());
+}
+
+#[tokio::test]
 async fn shutdown_does_not_wait_for_ever_for_a_sweep_the_keyring_holds_up() {
     let (release, held) = std::sync::mpsc::channel::<()>();
     let sweep = tokio::task::spawn_blocking(move || {

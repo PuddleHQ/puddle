@@ -498,6 +498,7 @@ fn each_kind_names_what_it_expects_and_refuses_the_rest() {
             Kind::SecretStore.parse_text(text),
             Ok(Value::SecretStore(store))
         );
+        assert_eq!(Value::SecretStore(store).to_string(), text);
     }
     assert_eq!(
         Kind::Ip.parse_text("2001:db8::1"),

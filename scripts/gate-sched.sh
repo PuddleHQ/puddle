@@ -52,8 +52,13 @@ gate_in() {
 # A gate that ended (any status but skipped) leaves an empty file `$CHECK_GATE_DONE_DIR/<gate>` when that variable names a directory. The
 # host's disk guard (remote-check-host.sh) reads these to trim the target dirs that only finished gates used while the rest of the run goes on.
 # Best effort: a directory that cannot be written costs the guard its information, never the run.
+# Only this scheduler may write them: the variable is read once here and removed from the environment, so a check.sh that a gate starts (the
+# self-tests of the coverage and tmp gates run the real script in a scratch repository) leaves no marker for a gate of the outer run that is
+# still running. A marker written that way made the guard wipe llvm-cov-target under a running coverage gate.
+gate_done_dir=${CHECK_GATE_DONE_DIR:-}
+unset CHECK_GATE_DONE_DIR
 gate_mark() {
-    [ -z "${CHECK_GATE_DONE_DIR:-}" ] || { mkdir -p "$CHECK_GATE_DONE_DIR" && : >"$CHECK_GATE_DONE_DIR/$1"; } 2>/dev/null || true
+    [ -z "$gate_done_dir" ] || { mkdir -p "$gate_done_dir" && : >"$gate_done_dir/$1"; } 2>/dev/null || true
 }
 
 # A gate run in this shell (the serial prefix, a single stream): its marker follows when it passed (a failure ends the run, `set -e`).

@@ -58,6 +58,39 @@ describe("judgeLink", () => {
     expect(judgeLink("http://LOCALHOST:6000", []).kind).toBe("forward");
   });
 
+  it("treats every loopback and unspecified spelling as this computer", () => {
+    for (const text of [
+      "http://0.0.0.0:3000/",
+      "http://127.0.0.2:3000/",
+      "http://127.255.255.254:3000/",
+      "http://0x7f000001:3000/",
+      "http://localhost.:3000/",
+      "http://x.localhost:3000/",
+      "http://[::]:3000/",
+      "http://[::ffff:127.0.0.1]:3000/",
+      "http://[::ffff:0.0.0.0]:3000/",
+    ]) {
+      expect(judgeLink(text, []), text).toEqual({
+        kind: "forward",
+        port: 3000,
+        url: new URL(text).href,
+      });
+      expect(judgeLink(text, [port(3000, 3000)]).kind, text).toBe("open");
+    }
+  });
+
+  it("treats names and addresses that only look local as outside", () => {
+    for (const text of [
+      "http://127.example.com/",
+      "http://localhost.example.com/",
+      "http://10.0.0.1/",
+      "http://[::ffff:10.0.0.1]/",
+      "http://[::ffff:128.0.0.1]/",
+    ]) {
+      expect(judgeLink(text, []).kind, text).toBe("open");
+    }
+  });
+
   it("reads a missing port as the scheme's own", () => {
     expect(judgeLink("http://localhost/", [port(80, 80)]).kind).toBe("open");
     expect(judgeLink("https://localhost/", [port(80, 80)])).toEqual({

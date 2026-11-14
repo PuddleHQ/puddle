@@ -217,9 +217,9 @@ fn an_add_prints_a_link_the_server_redeems_and_a_list_and_remove_follow_it() {
 
     let list = execute(&config_with(dir.path(), REMOTE, Action::List)).unwrap();
     assert_eq!(list.notice, "");
-    assert!(list.result.starts_with("name"), "{}", list.result);
-    assert!(list.result.contains("Ann"), "{}", list.result);
-    assert!(list.result.contains("invited"), "{}", list.result);
+    assert!(list.result.starts_with("name"));
+    assert!(list.result.contains("Ann"));
+    assert!(list.result.contains("invited"));
     assert!(!list.result.contains(secret));
 
     let removed = execute(&config_with(
@@ -231,7 +231,7 @@ fn an_add_prints_a_link_the_server_redeems_and_a_list_and_remove_follow_it() {
     assert_eq!(removed.result, "");
     assert!(removed.notice.contains("cannot be undone"), "{removed:?}");
     let list = execute(&config_with(dir.path(), REMOTE, Action::List)).unwrap();
-    assert!(list.result.contains("deleting"), "{}", list.result);
+    assert!(list.result.contains("deleting"));
 }
 
 #[test]
@@ -283,5 +283,5 @@ fn a_user_who_chose_a_password_shows_as_active_in_the_list() {
     drop(store);
     let list = execute(&config_with(dir.path(), REMOTE, Action::List)).unwrap();
     let ann_line = list.result.lines().find(|l| l.starts_with("Ann")).unwrap();
-    assert!(ann_line.contains("active"), "{}", list.result);
+    assert!(ann_line.contains("active"));
 }

@@ -10,6 +10,7 @@ use tokio_yamux::{Control, Session};
 
 use super::*;
 use crate::control::{PREAMBLE, PROTOCOL_VERSION};
+use crate::forward::{Answer, OpenError, read_line_exact};
 use crate::kind::StreamKind;
 use crate::resolve::{self, RecordType};
 use crate::yamux::client_config;
@@ -1166,4 +1167,69 @@ async fn a_handler_without_an_ssh_agent_closes_its_streams() {
     let read = tokio::time::timeout(WAIT, s.read(&mut buf)).await.unwrap();
     assert!(matches!(read, Err(_) | Ok(0)), "{read:?}");
     h.close().await.unwrap();
+}
+
+/// Starts a host session, waits for its `GuestLink`, and runs a fake agent that answers the
+/// editor stream's one request line with `answer`; the request it read goes down `seen`.
+async fn editor_link_answered_with(
+    answer: Vec<u8>,
+) -> (GuestLink, mpsc::UnboundedReceiver<Vec<u8>>, Harness) {
+    let reach = Arc::new(Reach::default());
+    let mut h = start_handler(
+        Arc::new(Reaching(Arc::clone(&reach))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(&mut c, &AgentMessage::hello()).await;
+    let link = eventually("the handler gets the link at hello", WAIT, || {
+        reach.link.lock().unwrap().clone()
+    })
+    .await;
+    let mut inbound = std::mem::replace(&mut h.inbound, mpsc::unbounded_channel().1);
+    let (seen, requests) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let _control = c;
+        while let Some(mut stream) = inbound.recv().await {
+            let answer = answer.clone();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let preamble = read_line_exact(&mut stream, MAX_PREAMBLE).await.unwrap();
+                assert_eq!(parse_preamble(&preamble), Ok((StreamKind::Editor, 1)));
+                let word = read_line_exact(&mut stream, 16).await.unwrap();
+                seen.send(word).unwrap();
+                stream.write_all(&answer).await.unwrap();
+                let mut rest = Vec::new();
+                let _ = stream.read_to_end(&mut rest).await;
+            });
+        }
+    });
+    (link, requests, h)
+}
+
+#[tokio::test]
+async fn open_editor_sends_connect_and_hands_back_the_stream_on_an_ok_answer() {
+    let (link, mut requests, _h) = editor_link_answered_with(Answer::Ok.to_line()).await;
+    let stream = link.open_editor().await;
+    assert!(stream.is_ok());
+    assert_eq!(requests.recv().await.unwrap(), b"connect\n");
+}
+
+#[tokio::test]
+async fn open_editor_reports_a_refusal_with_its_reason() {
+    let (link, _requests, _h) =
+        editor_link_answered_with(Answer::refused("no server yet").to_line()).await;
+    let err = link.open_editor().await.unwrap_err();
+    assert!(
+        matches!(&err, OpenError::Refused(why) if why == "no server yet"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn editor_password_sends_password_and_returns_the_agents_answer() {
+    let hex = "0123456789abcdef".repeat(2);
+    let (link, mut requests, _h) =
+        editor_link_answered_with(crate::editor_stream::password_line(&hex)).await;
+    assert_eq!(link.editor_password().await.unwrap(), hex);
+    assert_eq!(requests.recv().await.unwrap(), b"password\n");
 }

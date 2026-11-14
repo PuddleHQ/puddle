@@ -120,11 +120,8 @@ impl GuestLink {
     /// [`OpenError`] says whether the agent is gone, silent, or has no server to connect to.
     pub async fn open_editor(&self) -> Result<StreamHandle, OpenError> {
         let (stream, line) = self.open_editor_stream(Request::Connect).await?;
-        match Answer::from_line(&line) {
-            Ok(Answer::Ok) => Ok(stream),
-            Ok(Answer::Refused(reason)) => Err(OpenError::Refused(reason)),
-            Err(e) => Err(OpenError::Io(e.to_string())),
-        }
+        connect_answer(&line)?;
+        Ok(stream)
     }
 
     /// The editor server's password for this boot of the sandbox.
@@ -135,22 +132,38 @@ impl GuestLink {
     /// something that is not a password.
     pub async fn editor_password(&self) -> Result<String, OpenError> {
         let (_stream, line) = self.open_editor_stream(Request::Password).await?;
-        let text = std::str::from_utf8(&line)
-            .map_err(|_| OpenError::Io("the answer is not text".into()))?
-            .trim_end_matches('\n');
-        if let Some(password) = text.strip_prefix("password ") {
-            return if is_password(password) {
-                Ok(password.to_owned())
-            } else {
-                Err(OpenError::Io(
-                    "the password is not one the agent makes".into(),
-                ))
-            };
-        }
-        match Answer::from_line(&line) {
-            Ok(Answer::Refused(reason)) => Err(OpenError::Refused(reason)),
-            _ => Err(OpenError::Io("not an answer to a password request".into())),
-        }
+        password_answer(&line)
+    }
+}
+
+/// What the agent's answer line to a connect request means: the stream is the connection, or
+/// the agent refused, or the line is not an answer.
+fn connect_answer(line: &[u8]) -> Result<(), OpenError> {
+    match Answer::from_line(line) {
+        Ok(Answer::Ok) => Ok(()),
+        Ok(Answer::Refused(reason)) => Err(OpenError::Refused(reason)),
+        Err(e) => Err(OpenError::Io(e.to_string())),
+    }
+}
+
+/// What the agent's answer line to a password request means: the password, a refusal, or a line
+/// that is not an answer to the question.
+fn password_answer(line: &[u8]) -> Result<String, OpenError> {
+    let text = std::str::from_utf8(line)
+        .map_err(|_| OpenError::Io("the answer is not text".into()))?
+        .trim_end_matches('\n');
+    if let Some(password) = text.strip_prefix("password ") {
+        return if is_password(password) {
+            Ok(password.to_owned())
+        } else {
+            Err(OpenError::Io(
+                "the password is not one the agent makes".into(),
+            ))
+        };
+    }
+    match Answer::from_line(line) {
+        Ok(Answer::Refused(reason)) => Err(OpenError::Refused(reason)),
+        _ => Err(OpenError::Io("not an answer to a password request".into())),
     }
 }
 

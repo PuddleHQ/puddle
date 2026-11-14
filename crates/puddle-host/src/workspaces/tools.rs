@@ -113,10 +113,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // `None`: the workspace was not running before or after the fetch, which says nothing
         // about mise.
-        let Some(outcome) = self.run_mise_fetch(name).await else {
-            return;
-        };
-        if self.record_mise_outcome(name, outcome) {
+        if let Some(outcome) = self.run_mise_fetch(name).await
+            && self.record_mise_outcome(name, outcome)
+        {
             self.install_tools(name).await;
         }
     }

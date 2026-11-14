@@ -92,3 +92,84 @@ fn counts_beyond_u32_are_capped() {
     assert_eq!(count(3), 3);
     assert_eq!(count(usize::MAX), u32::MAX);
 }
+
+#[test]
+fn a_guest_commands_outcome_reads_as_its_code_and_output_or_its_error() {
+    let out = ExecOutput::new(1, "half\n", "keytool: permission denied\n");
+    assert_eq!(
+        exec_said(&Ok(out)),
+        "exit code 1: half keytool: permission denied"
+    );
+    let gone = ComputeError::Runtime {
+        op: "exec",
+        message: "the sandbox stopped".into(),
+    };
+    assert!(exec_said(&Err(gone)).contains("the sandbox stopped"));
+}
+
+#[test]
+fn the_problem_names_the_tools_mise_left_or_says_the_install_failed() {
+    assert_eq!(
+        failed_what(&set(&["node@22.11.0", "go@1.23.0"])),
+        "mise did not install go@1.23.0, node@22.11.0"
+    );
+    assert_eq!(failed_what(&set(&[])), "The tool install failed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn progress_is_sent_each_time_the_count_in_place_changes_and_an_unreadable_poll_is_skipped() {
+    let missing = |tools: &[&str]| {
+        Some(Report {
+            missing: set(tools),
+            ..Report::default()
+        })
+    };
+    // One poll per tick: unreadable, two of three still missing, the same again, none missing.
+    let polls = std::sync::Mutex::new(
+        vec![
+            None,
+            missing(&["go@1.23.0", "node@22.11.0"]),
+            missing(&["go@1.23.0", "node@22.11.0"]),
+            missing(&[]),
+        ]
+        .into_iter(),
+    );
+    let sent = std::sync::Mutex::new(Vec::new());
+    let started = tokio::time::Instant::now();
+    let run = report_progress(
+        Duration::from_secs(2),
+        3,
+        || {
+            let next = polls.lock().unwrap().next().flatten();
+            async move { next }
+        },
+        |state| sent.lock().unwrap().push((started.elapsed(), state)),
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(60), run)
+            .await
+            .is_err(),
+        "it never ends by itself"
+    );
+    assert_eq!(
+        sent.into_inner().unwrap(),
+        [
+            (
+                Duration::from_secs(4),
+                ToolsState::Installing {
+                    tools: vec!["go@1.23.0".into(), "node@22.11.0".into()],
+                    done: 1,
+                    total: 3,
+                }
+            ),
+            (
+                Duration::from_secs(8),
+                ToolsState::Installing {
+                    tools: vec![],
+                    done: 3,
+                    total: 3,
+                }
+            ),
+        ]
+    );
+}

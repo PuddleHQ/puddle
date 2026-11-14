@@ -255,6 +255,50 @@ async fn a_new_jdk_gets_puddles_cas() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_jdk_whose_trust_step_fails_is_still_ready() {
+    let rig = rig_missing(&["java@temurin-21.0.5+11.0.LTS"]);
+    rig.guest.java_trust_fails.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    events
+        .until(tools_in("ready"), Duration::from_secs(20))
+        .await;
+    assert_eq!(rig.guest.java_trusts.lock().unwrap().len(), 1);
+    assert!(
+        !has_tools_problem(&host),
+        "the JDK is installed; only its trust store is not updated"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_report_installs_nothing_and_sends_nothing() {
+    let rig = rig_missing(&[NODE]);
+    rig.guest.tools_report_garbled.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    eventually("the report is asked for", APPLY, || {
+        !rig.guest.tools_runs.lock().unwrap().is_empty()
+    })
+    .await;
+    no_install_for(&rig, 0).await;
+    // Reading up to the stop's end reads every event sent before it.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        !events.seen.iter().any(|e| e["type"] == "workspace_tools"),
+        "{:?}",
+        events.seen
+    );
+    assert!(!has_tools_problem(&host));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn with_the_layer_off_nothing_is_installed() {
     let rig = Rig::named_ids();
     *rig.guest.tools_missing.lock().unwrap() = vec![NODE.to_owned()];

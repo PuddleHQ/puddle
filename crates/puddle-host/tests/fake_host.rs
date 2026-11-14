@@ -207,8 +207,12 @@ struct Guest {
     at_install: Mutex<Option<Box<dyn Fn() + Send>>>,
     /// Every `puddle-agent mise-install` as (arguments, user), reports included.
     tools_runs: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// A report (`--missing`) answers with lines that are not the agent's.
+    tools_report_garbled: AtomicBool,
     /// How often the trust step for a new JDK ran, and as whom.
     java_trusts: Mutex<Vec<Option<String>>>,
+    /// The trust step for a new JDK fails.
+    java_trust_fails: AtomicBool,
     /// The script (stdin) of every shell-init check, and what the guest saw at the mounted file
     /// while it ran.
     checks: Mutex<Vec<(String, Option<String>)>>,
@@ -365,7 +369,11 @@ impl Guest {
                 ("/puddle/puddle-agent", Some("mise-install")) => self.answer_mise_install(r),
                 ("sh", Some(puddle_certs::JAVA_STEP_PATH)) => {
                     self.java_trusts.lock().unwrap().push(r.user.clone());
-                    ExecOutput::new(0, "java-trust: 1 store updated\n", "")
+                    if self.java_trust_fails.load(Ordering::SeqCst) {
+                        ExecOutput::new(1, "", "keytool: permission denied")
+                    } else {
+                        ExecOutput::new(0, "java-trust: 1 store updated\n", "")
+                    }
                 }
                 _ => return None,
             },
@@ -392,6 +400,9 @@ impl Guest {
             .unwrap()
             .push((r.args.clone(), r.user.clone()));
         let report_only = r.args.get(2).map(String::as_str) == Some("--missing");
+        if report_only && self.tools_report_garbled.load(Ordering::SeqCst) {
+            return ExecOutput::new(0, "Segmentation fault\n", "");
+        }
         let before = self.tools_missing.lock().unwrap().clone();
         let mut out = String::new();
         for tool in &before {

@@ -120,37 +120,91 @@ fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+/// What a guest command's outcome says, for a log line: its exit code and output, or the error.
+fn exec_said(outcome: &Result<ExecOutput, ComputeError>) -> String {
+    match outcome {
+        Ok(out) => format!(
+            "exit code {}: {} {}",
+            out.status.code,
+            out.stdout_text().trim(),
+            out.stderr_text().trim()
+        ),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// The opening of the problem's text: which tools mise did not install, or that the install
+/// failed before it named one.
+fn failed_what(failed: &BTreeSet<String>) -> String {
+    if failed.is_empty() {
+        return "The tool install failed".to_owned();
+    }
+    format!(
+        "mise did not install {}",
+        failed.iter().cloned().collect::<Vec<_>>().join(", ")
+    )
+}
+
+/// Asks `missing` every `every` while the install runs and `send`s `Installing` each time the
+/// number of the `total` tools in place changed. It never ends: the caller races it against the
+/// install. A poll that could not be read is skipped.
+async fn report_progress<F>(
+    every: Duration,
+    total: usize,
+    missing: impl Fn() -> F,
+    send: impl Fn(ToolsState),
+) where
+    F: Future<Output = Option<Report>>,
+{
+    let mut last = 0;
+    loop {
+        tokio::time::sleep(every).await;
+        let Some(now) = missing().await else {
+            continue;
+        };
+        let done = total.saturating_sub(now.missing.len());
+        if done != last {
+            last = done;
+            send(ToolsState::Installing {
+                tools: now.missing.into_iter().collect(),
+                done: count(done),
+                total: count(total),
+            });
+        }
+    }
+}
+
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Installs what the workspace's mise files ask for, reporting progress, and clears or raises
     /// the problem. The caller holds the workspace's tool-run lock and has put mise on the volume.
-    pub(super) async fn install_tools(&self, name: &WorkspaceId) {
+    /// `None` when the workspace stopped or the guest's report was unreadable: nothing to say.
+    pub(super) async fn install_tools(&self, name: &WorkspaceId) -> Option<()> {
+        let missing = || self.missing_tools(name);
+        let send = |state| self.tools_event(name, state);
         let pending_before = self.open_pending_attempts(name);
-        let Some(before) = self.missing_tools(name).await else {
-            return;
-        };
+        let before = missing().await?;
         if before.missing.is_empty() {
             self.tools_ready(name);
-            return;
+            return Some(());
         }
         let total = before.missing.len();
-        self.tools_event(
-            name,
-            ToolsState::Installing {
-                tools: before.missing.iter().cloned().collect(),
-                done: 0,
-                total: count(total),
-            },
-        );
-        let Some(outcome) = self.run_install(name, total).await else {
-            return;
-        };
+        send(ToolsState::Installing {
+            tools: before.missing.iter().cloned().collect(),
+            done: 0,
+            total: count(total),
+        });
+        let install = self.mise_install(name, false, INSTALL_TIMEOUT);
+        let outcome = tokio::select! {
+            outcome = install => outcome,
+            () = report_progress(PROGRESS_EVERY, total, missing, send) => None,
+        }?;
         let (report, reason) = read_install(outcome);
         if has_java(&report.installed) {
             self.trust_new_jdk(name).await;
         }
         let Some(reason) = reason else {
             self.tools_ready(name);
-            return;
+            return Some(());
         };
         let waiting = self.waited_on(name, &pending_before);
         let hosts: Vec<String> = waiting
@@ -166,13 +220,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner
             .problems
             .raise(self.install_problem(name, &report.failed, &reason, &hosts));
-        self.tools_event(
-            name,
-            ToolsState::Failed {
-                tools: report.failed.into_iter().collect(),
-                waiting_on: hosts,
-            },
-        );
+        send(ToolsState::Failed {
+            tools: report.failed.into_iter().collect(),
+            waiting_on: hosts,
+        });
+        Some(())
     }
 
     /// Every tool is in place: the problem goes, nothing is waited on.
@@ -182,58 +234,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.tools_event(name, ToolsState::Ready);
     }
 
-    /// Runs the install, and while it runs reports progress against the `total` tools that were
-    /// missing. `None` when the workspace is not running at the start or the end.
-    async fn run_install(
-        &self,
-        name: &WorkspaceId,
-        total: usize,
-    ) -> Option<Result<ExecOutput, ComputeError>> {
-        let install = self.mise_install(name, false, INSTALL_TIMEOUT);
-        let progress = async {
-            let mut last = 0;
-            loop {
-                tokio::time::sleep(PROGRESS_EVERY).await;
-                let Some(now) = self.missing_tools(name).await else {
-                    continue;
-                };
-                let done = total.saturating_sub(now.missing.len());
-                if done != last {
-                    last = done;
-                    self.tools_event(
-                        name,
-                        ToolsState::Installing {
-                            tools: now.missing.into_iter().collect(),
-                            done: count(done),
-                            total: count(total),
-                        },
-                    );
-                }
-            }
-        };
-        tokio::select! {
-            outcome = install => outcome,
-            () = progress => None,
-        }
-    }
-
     /// What is missing now, from `mise-install --missing`. `None` when the workspace is not
     /// running or the report could not be read (which is logged).
     async fn missing_tools(&self, name: &WorkspaceId) -> Option<Report> {
         let outcome = self.mise_install(name, true, REPORT_TIMEOUT).await?;
-        match outcome {
-            Ok(out) => {
-                let report = parse_report(&out.stdout_text());
-                if report.is_none() {
-                    tracing::warn!(workspace = %name, code = out.status.code, stderr = %out.stderr_text().trim(), "the guest's report of missing tools was not readable");
-                }
-                report
-            }
-            Err(e) => {
-                tracing::warn!(workspace = %name, error = %e, "the guest was not asked which tools are missing");
-                None
-            }
+        let report = outcome
+            .as_ref()
+            .ok()
+            .and_then(|out| parse_report(&out.stdout_text()));
+        if report.is_none() {
+            tracing::warn!(workspace = %name, said = %exec_said(&outcome), "the guest's report of missing tools was not readable");
         }
+        report
     }
 
     /// Runs `puddle-agent mise-install <workspace-dir>` (with `--missing` when `report_only`) as
@@ -270,23 +282,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Imports Puddle's CAs into the JDK mise just installed: the boot ran the same step before
     /// the JDK existed.
     async fn trust_new_jdk(&self, name: &WorkspaceId) {
-        let gated = match self.inner.live.lock().await.get(name) {
-            Some(live) => live.gated.clone(),
-            None => None,
-        };
+        let gated = self
+            .inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .and_then(|live| live.gated.clone());
         let Some(gated) = gated else { return };
         let request =
             ExecRequest::new("sh", [puddle_certs::JAVA_STEP_PATH]).with_timeout(JAVA_TRUST_TIMEOUT);
-        match gated.ungated().exec(request).await {
-            Ok(out) if out.status.code == 0 => {
-                tracing::info!(workspace = %name, said = %out.stdout_text().trim(), "the new JDK trusts Puddle's CAs");
-            }
-            Ok(out) => {
-                tracing::warn!(workspace = %name, code = out.status.code, said = %out.stdout_text().trim(), "the new JDK's trust store was not updated");
-            }
-            Err(e) => {
-                tracing::warn!(workspace = %name, error = %e, "the new JDK's trust store was not updated");
-            }
+        let outcome = gated.ungated().exec(request).await;
+        if outcome.as_ref().is_ok_and(|out| out.status.code == 0) {
+            tracing::info!(workspace = %name, said = %exec_said(&outcome), "the new JDK trusts Puddle's CAs");
+        } else {
+            tracing::warn!(workspace = %name, said = %exec_said(&outcome), "the new JDK's trust store was not updated");
         }
     }
 
@@ -322,14 +332,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         reason: &str,
         hosts: &[String],
     ) -> Problem {
-        let what = if failed.is_empty() {
-            "The tool install failed".to_owned()
-        } else {
-            format!(
-                "mise did not install {}",
-                failed.iter().cloned().collect::<Vec<_>>().join(", ")
-            )
-        };
+        let what = failed_what(failed);
         let mut detail = format!(
             "{what}: {reason}. The workspace works without them; run `mise install` in a terminal \
              in the workspace to see the whole output."

@@ -10,8 +10,8 @@ use std::time::Duration;
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
     FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeProxySignIns, FakeRepos,
-    FakeTerminals, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RepoService,
-    RunningApi, Services, SettingsRepo,
+    FakeTerminals, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, NoNames,
+    RepoService, RunningApi, Services, SettingsRepo,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
@@ -204,7 +204,8 @@ async fn start_inner_with(
         settings.clone() as Arc<dyn SettingsRepo>,
         events.clone(),
         clock.clone(),
-    );
+    )
+    .with_front_resolver(Arc::new(NoNames));
     let services = if with_workspaces {
         services.with_workspaces(Arc::new(workspaces.clone()))
     } else {

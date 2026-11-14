@@ -23,13 +23,15 @@ pub(crate) fn system_doctor(
     paths: &HostPaths,
     expected: &RuntimeVersion,
     settings: Arc<dyn SettingsRepo>,
+    az_search_path: Option<std::ffi::OsString>,
 ) -> Arc<HostDoctor> {
     let dir = layout.runtime_dir().to_path_buf();
     let data = paths.data().to_path_buf();
     let expected = *expected;
     Arc::new(HostDoctor::new(Arc::new(move |boot| {
-        let probe =
-            probe(&dir, expected, &data).with_ssh_agent_pipe(ssh_agent_pipe(settings.as_ref()));
+        let probe = probe(&dir, expected, &data)
+            .with_ssh_agent_pipe(ssh_agent_pipe(settings.as_ref()))
+            .with_az_search_path(az_search_path.clone());
         let limits = disk_limits(settings.as_ref());
         let options = Options {
             boot,

@@ -89,6 +89,7 @@ pub(crate) fn log_proxy_to_stderr() {
 
 pub(crate) fn allow(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),

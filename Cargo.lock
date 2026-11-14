@@ -6302,6 +6302,7 @@ dependencies = [
  "object 0.41.0",
  "puddle-fs",
  "puddle-runtime",
+ "puddle-secrets",
  "puddle-ssh-agent",
  "puddle-test-kit",
  "rustix",

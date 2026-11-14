@@ -308,6 +308,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
     for site in [NPM, NUGET, PIP, MAVEN].iter().chain(extra) {
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(workspace.clone()),
                 pattern: Pattern::parse(site).unwrap(),

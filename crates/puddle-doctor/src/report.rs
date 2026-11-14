@@ -70,6 +70,8 @@ pub enum CheckId {
     GuestKernel,
     /// The Azure CLI (`az`), needed only for Azure DevOps sources.
     AzCli,
+    /// Whether the credential store takes a write.
+    CredentialStore,
 }
 
 impl CheckId {
@@ -91,6 +93,7 @@ impl CheckId {
             Self::SshAgent => "SSH agent",
             Self::GuestKernel => "Guest kernel",
             Self::AzCli => "Azure CLI (az)",
+            Self::CredentialStore => "Credential store",
         }
     }
 }
@@ -194,6 +197,10 @@ pub enum Finding {
     GuestDevMemPresent,
     /// No Azure CLI (`az`) is on the search path.
     AzCliMissing,
+    /// No credential store answers where Puddle keeps its secrets.
+    CredentialStoreMissing,
+    /// The credential store answers and refuses a write: it is locked.
+    CredentialStoreLocked,
 }
 
 /// One line of the report.

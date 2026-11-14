@@ -234,14 +234,17 @@ function Assert-DoctorGreen($Report, [string]$Source, [bool]$RequireBoot = $fals
     Write-Host "${Source}: ok=$($Report.ok), checks: $(($Report.checks | ForEach-Object { "$($_.id)=$($_.status)" }) -join ', ')"
 }
 
-function Assert-InstalledLayout {
+# $Baseline: the older release being upgraded from. It predates some of today's files (the
+# licence texts), so only the files every release shipped are required of it.
+function Assert-InstalledLayout([switch]$Baseline) {
     $required = @(
         'puddle-app.exe', 'puddle.exe',
         'runtime\msb.exe', 'runtime\libkrunfw.dll', 'runtime\runtime.json', 'runtime\puddle-agent',
-        'runtime\code-server\bin\code-server', 'runtime\code-server\package.json',
+        'runtime\code-server\bin\code-server', 'runtime\code-server\package.json')
+    if (-not $Baseline) { $required += @(
         'runtime\licenses\NOTICE.txt', 'runtime\licenses\AGPL-3.0.txt',
         'runtime\licenses\THIRD-PARTY-msb.txt', 'runtime\licenses\THIRD-PARTY-puddle.txt',
-        'runtime\licenses\THIRD-PARTY-ui.txt', 'runtime\licenses\code-server\LICENSE')
+        'runtime\licenses\THIRD-PARTY-ui.txt', 'runtime\licenses\code-server\LICENSE') }
     foreach ($name in $required) {
         Expect (Test-Path -LiteralPath (Join-Path $InstallDir $name) -PathType Leaf) "the install has no $name"
     }
@@ -337,7 +340,10 @@ function Stop-Workspace($Conn, [string]$Id, [string]$Name) {
 
 # Deletes a stopped workspace and checks that nothing of it runs or stays in the runtime.
 function Remove-Workspace($Conn, [string]$Id, [string]$Name) {
-    Invoke-PuddleApi $Conn 'Delete' "/api/workspaces/$Id" @{ confirm = $true } | Out-Null
+    # The delete check's fingerprint is the user's "I reviewed this": a workspace holding data
+    # outside a checkout (the upgrade test's files) is refused without it.
+    $check = Invoke-PuddleApi $Conn 'Get' "/api/workspaces/$Id/delete-check" -TimeoutSec 120
+    Invoke-PuddleApi $Conn 'Delete' "/api/workspaces/$Id" @{ confirm = $true; fingerprint = $check.fingerprint } | Out-Null
     Wait-Until "workspace $Name ($Id) is still listed after the delete" 120 { $null -eq (Get-WorkspaceNow $Conn $Id) } | Out-Null
     Wait-Until 'a runtime process is still running after the workspace was deleted' 60 {
         @(Get-RuntimeProcesses).Count -eq 0
@@ -422,7 +428,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         return
     }
     Invoke-Msiexec @('/i', "`"$Baseline`"") 'msi-baseline-install.log'
-    $first = Assert-InstalledLayout
+    $first = Assert-InstalledLayout -Baseline
     Write-Host "installed the baseline, version $($first.Version)"
 
     Step 'the older build makes a workspace and writes files to its volume, then stops it'

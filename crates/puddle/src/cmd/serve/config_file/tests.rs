@@ -53,7 +53,7 @@ fn an_unknown_key_names_the_file_the_line_and_the_keys() {
     assert_eq!(
         err.to_string(),
         format!(
-            "{}:3: unknown key `prot`; the keys are port, connection_file, data_dir, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies, multi_user; fix the spelling or remove the line",
+            "{}:3: unknown key `prot`; the keys are port, connection_file, data_dir, secret_store, headless, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies, multi_user; fix the spelling or remove the line",
             file.display()
         )
     );

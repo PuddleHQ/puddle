@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use puddle_api::{NetworkEndpoint, PublicHost, RemoteServing};
 use puddle_host::RemoteSettings;
+use puddle_secrets::StoreOption;
 use puddle_types::DomainName;
 
 use puddle_log::ScopedFilter;
@@ -43,6 +44,11 @@ pub enum Kind {
     HostList,
     /// A domain name.
     Domain,
+    /// Like [`Kind::Bool`], and the environment variable also reads `1` and `0` (the spelling a
+    /// service manager's `Environment=` line usually has).
+    Toggle,
+    /// The `secret_store` values: `auto`, `os` or `file`.
+    SecretStore,
 }
 
 impl Kind {
@@ -55,13 +61,14 @@ impl Kind {
             Self::Log => {
                 "error, warn, info, debug or trace, optionally followed by crate=level entries"
             }
-            Self::Bool => "true or false",
+            Self::Bool | Self::Toggle => "true or false",
             Self::Ip => "an IP address",
             Self::IpList => "a comma-separated list of IP addresses",
             Self::HostList => {
                 "a comma-separated list of host names, each with an optional port, such as puddle.example.org or puddle.example.org:8443"
             }
             Self::Domain => "a domain name such as ws.example.org",
+            Self::SecretStore => "auto, os or file",
         }
     }
 
@@ -74,7 +81,7 @@ impl Kind {
     /// Whether the option is a flag without a value (`--name`, `--no-name`).
     #[must_use]
     pub const fn is_switch(self) -> bool {
-        matches!(self, Self::Bool)
+        matches!(self, Self::Bool | Self::Toggle)
     }
 
     /// The value made of separate items (the entries of a file's array).
@@ -124,6 +131,14 @@ impl Kind {
                 "false" => Ok(Value::Bool(false)),
                 _ => Err(self.expects()),
             },
+            Self::Toggle => match text {
+                "true" | "1" => Ok(Value::Bool(true)),
+                "false" | "0" => Ok(Value::Bool(false)),
+                _ => Err(self.expects()),
+            },
+            Self::SecretStore => StoreOption::parse(text)
+                .map(Value::SecretStore)
+                .ok_or_else(|| self.expects()),
             Self::Ip => text.parse().map(Value::Ip).map_err(|_| self.expects()),
             Self::IpList | Self::HostList => {
                 let items: Vec<&str> = text.split(',').collect();
@@ -176,7 +191,7 @@ impl Spec {
 }
 
 /// Every option of `puddle serve`, in the order `--print-config` lists them.
-pub const OPTIONS: [Spec; 12] = [
+pub const OPTIONS: [Spec; 14] = [
     Spec {
         key: "config",
         usage: "--config <path>",
@@ -212,6 +227,24 @@ pub const OPTIONS: [Spec; 12] = [
         in_file: true,
         example: "\"/srv/puddle\"",
         default: "the per-user data folder",
+    },
+    Spec {
+        key: "secret_store",
+        usage: "--secret-store <store>",
+        env: "PUDDLE_SECRET_STORE",
+        kind: Kind::SecretStore,
+        in_file: true,
+        example: "\"file\"",
+        default: "auto",
+    },
+    Spec {
+        key: "headless",
+        usage: "--headless",
+        env: "PUDDLE_HEADLESS",
+        kind: Kind::Toggle,
+        in_file: true,
+        example: "true",
+        default: "off",
     },
     Spec {
         key: "log",
@@ -326,6 +359,8 @@ pub enum Value {
     Hosts(Vec<String>),
     /// A domain name, lower case.
     Domain(String),
+    /// The `secret_store` option.
+    SecretStore(StoreOption),
 }
 
 impl std::fmt::Display for Value {
@@ -341,6 +376,7 @@ impl std::fmt::Display for Value {
                 f.write_str(&ips.join(","))
             }
             Self::Hosts(hosts) => f.write_str(&hosts.join(",")),
+            Self::SecretStore(store) => f.write_str(store.as_str()),
         }
     }
 }
@@ -465,6 +501,21 @@ impl Effective {
             None
         };
         Ok(Some(RemoteSettings { serving, network }))
+    }
+
+    /// The `secret_store` option, `auto` when none was set.
+    #[must_use]
+    pub fn secret_store(&self) -> StoreOption {
+        match self.values.get("secret_store") {
+            Some((Value::SecretStore(store), _)) => *store,
+            _ => StoreOption::Auto,
+        }
+    }
+
+    /// Whether this start is headless: a server with nobody at a screen.
+    #[must_use]
+    pub fn headless(&self) -> bool {
+        self.switch("headless") == Some(true)
     }
 
     /// The log filter, `info` when none was set.

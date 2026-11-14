@@ -4201,7 +4201,7 @@ dependencies = [
  "microsandbox-utils",
  "nix 0.31.3",
  "notify",
- "object",
+ "object 0.40.0",
  "rand 0.10.3",
  "rayon",
  "reqwest",
@@ -5221,6 +5221,15 @@ name = "object"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11dbdb66876026054e4ffc8d757d862bdf5df5aebd5c0b95a41f17832a94f7d2"
 dependencies = [
  "crc32fast",
  "hashbrown 0.17.1",
@@ -6290,7 +6299,7 @@ dependencies = [
 name = "puddle-doctor"
 version = "0.0.0"
 dependencies = [
- "object",
+ "object 0.41.0",
  "puddle-fs",
  "puddle-runtime",
  "puddle-ssh-agent",
@@ -6674,7 +6683,7 @@ dependencies = [
 name = "puddle-runtime"
 version = "0.0.0"
 dependencies = [
- "object",
+ "object 0.41.0",
  "puddle-fs",
  "puddle-test-kit",
  "serde_json",
@@ -10960,7 +10969,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "flate2",
- "object",
+ "object 0.41.0",
  "puddle-api",
  "puddle-runtime",
  "puddle-test-kit",

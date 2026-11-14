@@ -4658,6 +4658,9 @@ async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later
             .unwrap(),
         Some(puddle_store::UserId::OWNER)
     );
+    // The host took the reach across every user before it served anything, so nothing the API
+    // is handed can take it after.
+    assert!(host.store().take_all_users().is_none());
     let listed = api(&host).get("/api/workspaces").await.json();
     assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
     host.shutdown().await;
@@ -9499,7 +9502,9 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
         1
     );
     assert!(
-        host.store().rules_every_user().is_empty(),
+        host.store()
+            .rules_every_user(&puddle_store::testing::all_users())
+            .is_empty(),
         "its rules went with it"
     );
 
@@ -13623,6 +13628,7 @@ async fn a_failed_mise_fetch_is_a_problem_with_the_blocking_rule_and_the_start_s
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
+    puddle_store::testing::own(host.store(), &name("acme"));
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {

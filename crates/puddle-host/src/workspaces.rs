@@ -43,7 +43,7 @@ use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
 use puddle_ssh::SshEndpoint;
-use puddle_store::{Clock, Store};
+use puddle_store::{AllUsers, Clock, Store};
 use puddle_types::{
     CheckoutDir, DiskKind, EntryId, Event, EventSink, GuestEnv, GuestFile, GuestPath, Problem,
     Problems, SessionUser, WorkspaceId, WorkspaceStatus,
@@ -163,6 +163,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
     /// Where the audit log is written.
     pub(crate) store: Arc<Store>,
+    /// The reach across every user's data, for recording the owner of the workspaces made before
+    /// every create recorded its user.
+    pub(crate) all_users: AllUsers,
     pub(crate) launcher: Arc<dyn Launcher>,
     /// The login key and ssh config of direct SSH.
     pub(crate) ssh: Arc<SshSetup>,

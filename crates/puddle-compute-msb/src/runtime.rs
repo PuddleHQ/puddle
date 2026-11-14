@@ -402,6 +402,7 @@ pub(crate) fn log_tail(dir: &Path, max: usize) -> String {
             .file_name()
             .map(|n| n.to_string_lossy())
             .unwrap_or_default();
+        // writing into a `String` cannot fail
         let _ = writeln!(out, "--- {name}\n{}", String::from_utf8_lossy(tail));
     }
     out

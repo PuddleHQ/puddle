@@ -226,6 +226,7 @@ impl<R: Runtime> Tray<R> {
         let _ = self
             .icon
             .set_tooltip(Some(badge::tooltip(waiting, badge_on)));
+        // the tray icon is cosmetic; a failed update keeps the previous image
         let _ = self.icon.set_icon(Some(image));
     }
 

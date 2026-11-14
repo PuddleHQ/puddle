@@ -18,13 +18,13 @@
 // Environment: PUDDLE_APP_EXE (a debug build with all features: the in-memory fixture backend),
 // CDP_PORT (default 9340; sessions 2 and 3 use the next two). Plain Node 24, no packages.
 import { spawn, spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { connect } from "./cdp.mjs";
 import { onChildEnd } from "./child-end.mjs";
+import { probeHandler } from "./key-probe-page.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -95,11 +95,7 @@ async function clickIn(page, state, selector) {
   return focused;
 }
 
-const scratchPage = await readFile(new URL("./terminal-keys.html", import.meta.url));
-const server = createServer((_req, res) => {
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(scratchPage);
-});
+const server = createServer(probeHandler);
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const sitePort = server.address().port;
 const workspaceId = `k${randomBytes(5).toString("hex").slice(0, 7)}`;

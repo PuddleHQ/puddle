@@ -170,6 +170,7 @@ pub(crate) fn workspace_hash(workspace: &str) -> String {
     let digest = Sha256::digest(workspace.as_bytes());
     let mut hex = String::with_capacity(16);
     for byte in digest.iter().take(8) {
+        // writing into a `String` cannot fail
         let _ = write!(hex, "{byte:02x}");
     }
     hex

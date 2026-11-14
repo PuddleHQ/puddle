@@ -13,45 +13,21 @@
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
-use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 
 use puddle_compute::{ComputeError, Runtime};
-use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_e2e::lab::{BASIC_USER, Squid, SquidOptions, basic_password};
-use puddle_netpolicy::PuddleEndpoints;
-use puddle_proxy::{PullProxy, PullRoute, Upstream};
-use puddle_store::{Clock, Limits, Store, SystemClock};
-use puddle_types::ImageRef;
-use puddle_upstream::{
-    Chain, Config as DiscoveryConfig, Discovery, FakeOs, Hop, ProxyAddr, ProxyConfig,
-};
-use tokio::net::TcpListener;
+use puddle_upstream::{Hop, ProxyAddr};
 
-use crate::lab::registry::{REPO, Seen, registry};
-use crate::lab::{self, REGISTRY};
+use crate::lab::REGISTRY;
+use crate::lab::pull::{Pull, registry_socket};
 use crate::rig::{basic, connection_records};
 
-/// What one test runs against: the pull runtime, the registry and what each saw.
+/// What one test runs against: Squid and the pull world behind it.
 struct World {
     squid: Squid,
-    runtime: MsbRuntime,
-    image: ImageRef,
-    registry_port: u16,
-    seen: Arc<Seen>,
-    store: Arc<Store>,
-    token: String,
-    _home: tempfile::TempDir,
-    _route: PullRoute,
-}
-
-/// Where the registry will listen, taken before Squid starts: Squid lets a tunnel reach only this port.
-fn registry_socket() -> (std::net::TcpListener, SocketAddr) {
-    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let addr = listener.local_addr().unwrap();
-    listener.set_nonblocking(true).unwrap();
-    (listener, addr)
+    pull: Pull,
 }
 
 /// Squid with Basic authentication that resolves only the registry's name, to loopback.
@@ -69,56 +45,12 @@ async fn world(
     addr: SocketAddr,
     password: &str,
 ) -> World {
-    let (root, tls) = lab::lab_pki();
-    let seen = Arc::new(Seen::default());
-    tokio::spawn(registry(
-        TcpListener::from_std(listener).unwrap(),
-        Arc::new(tls),
-        Arc::clone(&seen),
-    ));
-
-    let os = FakeOs::new(ProxyConfig {
-        pac_url: Some("http://pac.corp/proxy.pac".into()),
-        ..ProxyConfig::default()
-    });
     let hop = Hop::Proxy(ProxyAddr::new("127.0.0.1", squid.port()));
-    os.set_pac(move |_| Ok(vec![hop.clone()]));
-    let chain = Chain::new(
-        Discovery::new(os, DiscoveryConfig::default()),
-        basic(BASIC_USER, password),
-    );
-    let store = Arc::new(
-        Store::open_in_memory(Arc::new(SystemClock) as Arc<dyn Clock>, Limits::default()).unwrap(),
-    );
-    let proxy = PullProxy::bind(&PuddleEndpoints::new())
-        .unwrap()
-        .with_resolver(Arc::new(lab::LabResolver(addr)))
-        .with_upstream(Upstream::new(chain))
-        .with_connection_log(store.clone());
-    let token = proxy.token().expose().to_owned();
-    let proxy_url = proxy.proxy_url().expose().to_owned();
-    let route = proxy.serve().unwrap();
-    let home = puddle_test_kit::private_tempdir();
-    // Pulling needs no msb binary: the paths only go into msb's config.json.
-    let config = MsbConfig::new(
-        home.path().join("msb-home"),
-        home.path().join("runtime/msb"),
-        home.path().join("runtime/libkrunfw"),
-        home.path().join("guest-share"),
-    )
-    .with_registry_proxy(proxy_url)
-    .with_registry_roots([root]);
-    World {
-        squid,
-        runtime: MsbRuntime::open(config).await.unwrap(),
-        image: ImageRef::new(&format!("{REGISTRY}:{}/{REPO}:1", addr.port())).unwrap(),
-        registry_port: addr.port(),
-        seen,
-        store,
-        token,
-        _home: home,
-        _route: route,
-    }
+    let pull = Pull::start(hop, basic(BASIC_USER, password), listener, addr, |root| {
+        vec![root]
+    })
+    .await;
+    World { squid, pull }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -128,17 +60,21 @@ async fn an_image_pull_goes_through_the_company_proxy_as_the_configured_user() {
         return;
     };
     let w = world(squid, listener, addr, &basic_password()).await;
-    let pulled = w.runtime.pull_image(&w.image).await.unwrap();
+    let pulled = w.pull.runtime.pull_image(&w.pull.image).await.unwrap();
     assert_eq!(pulled.env_var("PUDDLE_LAB"), Some("1"));
     assert_eq!(pulled.cmd, ["/hello"]);
-    assert_eq!(w.seen.handshakes_failed.load(Ordering::SeqCst), 0);
+    assert_eq!(w.pull.seen.handshakes_failed.load(Ordering::SeqCst), 0);
     assert!(
-        w.seen.requests().iter().any(|r| r.contains("/manifests/")),
+        w.pull
+            .seen
+            .requests()
+            .iter()
+            .any(|r| r.contains("/manifests/")),
         "{:?}",
-        w.seen.requests()
+        w.pull.seen.requests()
     );
 
-    let authority = format!("{REGISTRY}:{}", w.registry_port);
+    let authority = format!("{REGISTRY}:{}", w.pull.registry_port);
     let log = w.squid.access_log_with("TCP_TUNNEL/200");
     assert!(
         log.contains(&format!("{BASIC_USER} ")) && log.contains(&authority),
@@ -149,7 +85,7 @@ async fn an_image_pull_goes_through_the_company_proxy_as_the_configured_user() {
         "the 407 round trip happened:\n{log}"
     );
 
-    let records = connection_records(&w.store, 1).await;
+    let records = connection_records(&w.pull.store, 1).await;
     for record in &records {
         assert_eq!(record["origin"], "puddle", "{record}");
         assert_eq!(record["decision"], "allow", "{record}");
@@ -158,7 +94,7 @@ async fn an_image_pull_goes_through_the_company_proxy_as_the_configured_user() {
             format!("PROXY 127.0.0.1:{}", w.squid.port()),
             "{record}"
         );
-        assert!(!record.to_string().contains(&w.token));
+        assert!(!record.to_string().contains(&w.pull.token));
         assert!(!record.to_string().contains(&basic_password()));
     }
 }
@@ -176,15 +112,19 @@ async fn a_wrong_proxy_password_fails_the_pull_before_the_registry_sees_a_reques
         &format!("{}-but-wrong", basic_password()),
     )
     .await;
-    let err = w.runtime.pull_image(&w.image).await.unwrap_err();
+    let err = w.pull.runtime.pull_image(&w.pull.image).await.unwrap_err();
     assert!(matches!(err, ComputeError::ImagePull { .. }), "{err:?}");
-    assert!(w.seen.requests().is_empty(), "{:?}", w.seen.requests());
-    assert_eq!(w.seen.handshakes_failed.load(Ordering::SeqCst), 0);
+    assert!(
+        w.pull.seen.requests().is_empty(),
+        "{:?}",
+        w.pull.seen.requests()
+    );
+    assert_eq!(w.pull.seen.handshakes_failed.load(Ordering::SeqCst), 0);
     let log = w.squid.access_log_with("TCP_DENIED/407");
     assert!(log.contains("TCP_DENIED/407"), "{log}");
     assert!(
         !log.contains("TCP_TUNNEL/200"),
         "no tunnel was opened:\n{log}"
     );
-    assert!(!format!("{err:?}").contains(&w.token));
+    assert!(!format!("{err:?}").contains(&w.pull.token));
 }

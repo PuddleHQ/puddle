@@ -143,6 +143,7 @@ impl GitRig {
         world.list("bound.test/acme/readonly", true, false);
         world
             .store
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(world.workspace.clone()),
                 pattern: Pattern::parse(NAME).unwrap(),

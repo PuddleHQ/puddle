@@ -8,6 +8,7 @@ use puddle_types::{ConnectionEvent, ConnectionLog};
 
 use super::*;
 use crate::clock::ManualClock;
+use crate::rule::Effect;
 use crate::test_support::Logs;
 
 const DISK_FULL: &str = "database error: disk full";
@@ -82,7 +83,10 @@ fn the_open_row_cap_is_the_one_the_store_was_opened_with() {
 fn a_rule_that_arrived_while_a_request_waited_for_the_database_decides_it() {
     let (_, waiting) = store_with(Limits::default());
     let (_, committed) = store_with(Limits::default());
-    let rule = committed.add_rule(&workspace_rule("x.example")).unwrap();
+    let rule = committed
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     // The snapshot the waiting request finds once it has the lock.
     *waiting.rules.write().unwrap() = committed.snapshot();
 
@@ -161,7 +165,10 @@ fn a_rule_that_cannot_be_inserted_is_not_made() {
          BEGIN SELECT RAISE(ABORT, 'disk full'); END",
     );
 
-    let err = store.add_rule(&workspace_rule("x.example")).unwrap_err();
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
     assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
@@ -172,7 +179,10 @@ fn a_rule_whose_record_cannot_be_written_is_not_made() {
     let store = store();
     store.fail_audit_writes("rule_created");
 
-    let err = store.add_rule(&workspace_rule("x.example")).unwrap_err();
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
     assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
@@ -181,7 +191,10 @@ fn a_rule_whose_record_cannot_be_written_is_not_made() {
 #[test]
 fn a_rule_whose_deletion_cannot_be_recorded_stays() {
     let store = store();
-    let rule = store.add_rule(&workspace_rule("x.example")).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     store.fail_audit_writes("rule_deleted");
 
     let err = store.delete_rule(rule.id, Actor::Cli).unwrap_err();
@@ -193,7 +206,10 @@ fn a_rule_whose_deletion_cannot_be_recorded_stays() {
 #[test]
 fn a_rule_whose_expiry_change_cannot_be_recorded_keeps_its_expiry() {
     let store = store();
-    let rule = store.add_rule(&workspace_rule("x.example")).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     store.fail_audit_writes("rule_updated");
 
     let err = store
@@ -272,6 +288,7 @@ fn a_rule_in_a_set_that_is_off_leaves_the_open_requests_it_matches_open() {
     let id = new_pending(&store, "x.example");
 
     store
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Set(set),
             ..workspace_rule("x.example")
@@ -284,7 +301,10 @@ fn a_rule_in_a_set_that_is_off_leaves_the_open_requests_it_matches_open() {
 #[test]
 fn a_workspace_whose_rule_deletion_cannot_be_recorded_keeps_everything() {
     let store = store();
-    let rule = store.add_rule(&workspace_rule("x.example")).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     store.fail_audit_writes("rule_deleted");
 
     let err = store.delete_workspace(&workspace()).unwrap_err();
@@ -296,7 +316,10 @@ fn a_workspace_whose_rule_deletion_cannot_be_recorded_keeps_everything() {
 #[test]
 fn a_workspace_whose_open_requests_cannot_be_expired_keeps_everything() {
     let store = store();
-    let rule = store.add_rule(&workspace_rule("x.example")).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     let id = new_pending(&store, "y.example");
     store.fail_audit_writes("pending_expired");
 
@@ -310,7 +333,10 @@ fn a_workspace_whose_open_requests_cannot_be_expired_keeps_everything() {
 #[test]
 fn a_workspace_whose_pinned_ports_cannot_be_removed_keeps_everything() {
     let store = store();
-    let rule = store.add_rule(&workspace_rule("x.example")).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     let pin = PinnedPort {
         guest_port: 3000,
         host_port: 3000,
@@ -362,7 +388,10 @@ fn an_audit_trim_whose_record_cannot_be_written_still_trimmed() {
         audit_trim_to_bytes: 0,
         ..Limits::default()
     });
-    store.add_rule(&workspace_rule("x.example")).unwrap();
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
     store.fail_audit_writes("audit_trimmed");
 
     let err = store.sweep().unwrap_err();
@@ -432,7 +461,10 @@ fn a_request_rule_whose_scope_cannot_be_counted_is_not_made() {
     let store = store();
     store.refuse_sql_function("count");
 
-    let err = store.add_request_rule(&request_rule()).unwrap_err();
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap_err();
 
     assert!(
         err.to_string()
@@ -450,7 +482,10 @@ fn a_request_rule_that_cannot_be_inserted_is_not_made() {
          BEGIN SELECT RAISE(ABORT, 'disk full'); END",
     );
 
-    let err = store.add_request_rule(&request_rule()).unwrap_err();
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
     assert_eq!(store.request_rules_every_user().unwrap(), []);
@@ -461,7 +496,10 @@ fn a_request_rule_whose_record_cannot_be_written_is_not_made() {
     let store = store();
     store.fail_audit_writes("request_rule_created");
 
-    let err = store.add_request_rule(&request_rule()).unwrap_err();
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
     assert_eq!(store.request_rules_every_user().unwrap(), []);
@@ -471,7 +509,10 @@ fn a_request_rule_whose_record_cannot_be_written_is_not_made() {
 #[test]
 fn a_request_rule_whose_deletion_cannot_be_recorded_stays() {
     let store = store();
-    let rule = store.add_request_rule(&request_rule()).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap();
     store.fail_audit_writes("request_rule_deleted");
 
     let err = store.delete_request_rule(rule.id, Actor::Cli).unwrap_err();
@@ -483,7 +524,10 @@ fn a_request_rule_whose_deletion_cannot_be_recorded_stays() {
 #[test]
 fn a_workspace_whose_request_rule_deletion_cannot_be_recorded_keeps_its_request_rules() {
     let store = store();
-    let rule = store.add_request_rule(&request_rule()).unwrap();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap();
     store.fail_audit_writes("request_rule_deleted");
 
     let err = store.delete_workspace(&workspace()).unwrap_err();

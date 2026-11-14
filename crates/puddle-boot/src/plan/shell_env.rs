@@ -9,10 +9,11 @@
 //! writes a `sudo` keep list and the same exports into the startup files of bash and zsh, in a
 //! block between two markers (the files belong to the image, see [`puddle_types::MergeFormat`]).
 
-use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
+use puddle_types::{
+    FileMode, GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, guest_path,
+};
 
 use super::{GENERATED, PlanError};
-use crate::assets::guest_path;
 use crate::quote::sh_word;
 
 /// The `sudo` rule that keeps every variable of the plan.
@@ -24,7 +25,7 @@ pub const BASH_RC_GUEST: &str = "/etc/bash.bashrc";
 /// zsh's system-wide startup file, read by every zsh.
 pub const ZSH_ENV_GUEST: &str = "/etc/zsh/zshenv";
 
-const SUDOERS_MODE: u32 = 0o440;
+const SUDOERS_MODE: FileMode = FileMode::new(0o440);
 
 /// The files for `env`: none when it is empty.
 pub(super) fn files(env: &GuestEnv) -> Result<Vec<GuestFile>, PlanError> {
@@ -37,11 +38,10 @@ pub(super) fn files(env: &GuestEnv) -> Result<Vec<GuestFile>, PlanError> {
         .collect::<Vec<_>>()
         .join(" ");
     let sudoers = GuestFile::new(
-        guest_path(SUDOERS_ENV_GUEST),
+        guest_path!(SUDOERS_ENV_GUEST),
         format!("{GENERATED}Defaults env_keep += \"{names}\"\n").into_bytes(),
     )
-    .with_mode(SUDOERS_MODE)
-    .map_err(|e| shell_error(&e))?;
+    .with_mode(SUDOERS_MODE);
     let exports = env
         .iter()
         .map(|(name, value)| format!("export {name}={}", sh_word(value)))

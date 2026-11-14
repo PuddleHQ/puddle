@@ -48,6 +48,7 @@ mod kubernetes;
 mod learned;
 mod logins;
 mod merge_notice;
+mod op_error;
 mod paths;
 mod platform;
 mod ports;

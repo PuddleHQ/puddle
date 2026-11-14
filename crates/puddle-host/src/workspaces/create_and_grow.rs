@@ -16,16 +16,17 @@ use puddle_types::{
 use puddle_workspace::Import;
 
 use super::{
-    Grown, HostWorkspaces, Room, SAVE_HINT, TERMINAL_BOOT_POLL, TERMINAL_BOOT_WAIT,
-    clone_problem_key, problem_key, with_leftovers,
+    Grown, HostWorkspaces, Room, TERMINAL_BOOT_POLL, TERMINAL_BOOT_WAIT, clone_problem_key,
+    problem_key, with_leftovers,
 };
+use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn create_work(
         &self,
         record: WorkspaceRecord,
         imports: Vec<Import>,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         self.inner.reports.begin(&record.id, &record.name);
         let (imported, mut created_volume) = self.import_all(&record, &imports).await?;
         let mut created_by_boot = false;
@@ -49,8 +50,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
         // a workspace the next start takes for an unfinished create.
-        if let Err(e) = self.mark_created(&record.id) {
-            let reason = format!("{e}; the new workspace was removed again; {SAVE_HINT}");
+        if let Err(reason) = self.mark_created(&record.id) {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         self.refresh_checkouts_later(&record.id);
@@ -65,11 +65,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         imports: &[Import],
-    ) -> Result<(BTreeSet<CheckoutDir>, bool), String> {
+    ) -> Result<(BTreeSet<CheckoutDir>, bool), OpError> {
         if imports.is_empty() {
             return Ok((BTreeSet::new(), false));
         }
-        let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
+        let image = ImageRef::new(&record.image)?;
         let size = DiskSize::mib(u32::try_from(record.disk_size_mib).unwrap_or(u32::MAX));
         for import in imports {
             if let Some(repository) = record
@@ -84,8 +84,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .inner
             .workspaces
             .import(&self.inner.runtime, &record.id, &image, size, imports)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         for (directory, reason) in &report.failed {
             if let Some(repository) = record
                 .repositories
@@ -107,8 +106,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn remove_new_volume(
         &self,
         record: &WorkspaceRecord,
-        reason: String,
-    ) -> String {
+        reason: OpError,
+    ) -> OpError {
         match self
             .inner
             .runtime
@@ -138,7 +137,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: &WorkspaceRecord,
         sandbox: &R::Sandbox,
         imported: &BTreeSet<CheckoutDir>,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         let workspaces = &self.inner.workspaces;
         let mut any_cloned = false;
         for repository in &record.repositories {
@@ -163,16 +162,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     tracing::warn!(workspace = %record.id, url = %repository.url, %reason, "a repository of a new workspace was not cloned");
                     self.raise_clone_problem(record, repository, &reason, true);
                 }
-                Err(other) => return Err(other.to_string()),
+                Err(other) => return Err(other.into()),
             }
         }
         if !any_cloned {
             return Ok(());
         }
-        workspaces
-            .sync(sandbox, &record.id)
-            .await
-            .map_err(|e| e.to_string())
+        Ok(workspaces.sync(sandbox, &record.id).await?)
     }
 
     /// The user the running guest of `name` started with, which its clones and checks run as
@@ -190,14 +186,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn gated(
         &self,
         name: &WorkspaceId,
-    ) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
+    ) -> Result<Arc<GatedSandbox<R::Sandbox>>, OpError> {
         self.inner
             .live
             .lock()
             .await
             .get(name)
             .and_then(|l| l.gated.clone())
-            .ok_or_else(|| format!("{name} is not running"))
+            .ok_or_else(|| OpError::NotRunning(name.clone()))
     }
 
     /// Why a terminal's connection that ended without an exit status did: the workspace crashed,
@@ -238,22 +234,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Removes the workspace's sandbox, if it has one: the root disk goes with it, the volume
     /// stays, and the next start makes both again from the image.
-    pub(super) async fn reset_root_disk_work(&self, name: &WorkspaceId) -> Result<(), String> {
+    pub(super) async fn reset_root_disk_work(&self, name: &WorkspaceId) -> Result<(), OpError> {
         let sandbox = name.sandbox_name();
         let exists = self
             .inner
             .runtime
             .list()
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .iter()
             .any(|s| s.name == sandbox.as_str());
         if exists {
-            self.inner
-                .runtime
-                .remove(&sandbox)
-                .await
-                .map_err(|e| e.to_string())?;
+            self.inner.runtime.remove(&sandbox).await?;
             self.inner.workspaces.sandbox_removed(&sandbox);
         }
         self.inner.problems.clear(&problem_key("root-copy", name));
@@ -283,7 +274,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         from_mib: u64,
         size: DiskSize,
         room: Room,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         let result = self.grow_root_disk_steps(&record, size).await;
         // The grown size is saved and the runtime has accepted it, so the grow is done even when
         // the restart that applies it failed; that failure is reported on its own.
@@ -347,7 +338,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         size: DiskSize,
-    ) -> Result<Grown, String> {
+    ) -> Result<Grown, OpError> {
         let inner = &self.inner;
         let name = &record.id;
         self.progress(name, WorkspaceStep::GrowingRootDisk, None);
@@ -355,18 +346,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let exists = inner
             .runtime
             .list()
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .iter()
             .any(|s| s.name == sandbox.as_str());
         let growth = if exists {
-            Some(
-                inner
-                    .runtime
-                    .grow_root_disk(&sandbox, size)
-                    .await
-                    .map_err(|e| e.to_string())?,
-            )
+            Some(inner.runtime.grow_root_disk(&sandbox, size).await?)
         } else {
             None
         };
@@ -378,7 +362,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 slot.record.root_disk_grown_mib = Some(size.as_mib());
             }
             self.persist(&state)
-                .map_err(|e| format!("{e}; {SAVE_HINT}"))?;
+                .map_err(|source| OpError::SaveFailed { source })?;
         }
         match growth {
             None => Ok(Grown::done("for the first start")),

@@ -11,9 +11,9 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use puddle_compute::{ExecRequest, ImageConfig};
-use puddle_types::{ApplyKind, GuestEnv, GuestFile, GuestPath, SessionUser};
+use puddle_types::{ApplyKind, FileMode, GuestEnv, GuestFile, GuestPath, SessionUser, guest_path};
 
-use crate::assets::{AGENT_GUEST, BOOT_SH_GUEST, MOUNT_DIR_GUEST, guest_path};
+use crate::assets::{AGENT_GUEST, BOOT_SH_GUEST, MOUNT_DIR_GUEST};
 use crate::machine::machine_settings;
 use crate::quote::{printf_format, sh_word};
 
@@ -35,6 +35,9 @@ pub const START_FOLDER_FILE_GUEST: &str = "/etc/profile.d/03-puddle-start-folder
 
 /// The sudo rule that gives a non-root session user root without a password.
 pub const SUDOERS_SESSION_GUEST: &str = "/etc/sudoers.d/puddle-session";
+
+/// sudo refuses a sudoers file others can write; `0440` is what it expects.
+const SUDOERS_MODE: FileMode = FileMode::new(0o440);
 
 /// Puddle's git settings, included from `/etc/gitconfig`.
 pub const GIT_CONFIG_GUEST: &str = "/etc/puddle/gitconfig";
@@ -122,6 +125,12 @@ pub enum PlanError {
         name: String,
         /// What is wrong.
         reason: &'static str,
+    },
+    /// The VS Code Machine settings can't be written as a merge.
+    #[error("the VS Code Machine settings: {reason}")]
+    MachineSettings {
+        /// What is wrong.
+        reason: String,
     },
     /// The environment can't be written to the `sudo` and shell files.
     #[error("the environment can't be written to the sudo and shell files: {reason}")]
@@ -254,7 +263,7 @@ impl Default for AgentConfig {
     /// [`AGENT_GUEST`] on [`DEFAULT_AGENT_PORT`].
     fn default() -> Self {
         Self {
-            binary: guest_path(AGENT_GUEST),
+            binary: guest_path!(AGENT_GUEST),
             port: DEFAULT_AGENT_PORT,
         }
     }
@@ -385,7 +394,7 @@ impl BootPlan {
     pub fn merge_tool(&self) -> GuestPath {
         self.agent
             .as_ref()
-            .map_or_else(|| guest_path(AGENT_GUEST), |a| a.binary.clone())
+            .map_or_else(|| guest_path!(AGENT_GUEST), |a| a.binary.clone())
     }
 
     /// Whether any file is applied with [`ApplyKind::Merge`].
@@ -590,17 +599,17 @@ impl BootPlanBuilder {
         }
 
         let mut files = Vec::new();
-        let mut entry_env = vec![guest_path(ENV_FILE_GUEST)];
+        let mut entry_env = vec![guest_path!(ENV_FILE_GUEST)];
         files.push(env_file(&self.env));
         if let Some(path) = self.image.env_var("PATH") {
             if path.contains(['\0', '\n']) {
                 return Err(PlanError::ImageValue { what: "ENV PATH" });
             }
             files.push(GuestFile::new(
-                guest_path(PATH_FILE_GUEST),
+                guest_path!(PATH_FILE_GUEST),
                 format!("{GENERATED}export PATH={}\n", sh_word(path)).into_bytes(),
             ));
-            entry_env.push(guest_path(PATH_FILE_GUEST));
+            entry_env.push(guest_path!(PATH_FILE_GUEST));
         }
         if self.git_rules.len() > MAX_GIT_AUTHOR_RULES {
             return Err(PlanError::GitAuthorRule {
@@ -608,13 +617,13 @@ impl BootPlanBuilder {
             });
         }
         files.push(git_config(&self));
-        files.extend(git_author_files(&self.git_rules));
+        files.extend(git_author_files(&self.git_rules)?);
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
-        files.extend(session_files(port, self.session_user));
+        files.extend(session_files(port, self.session_user)?);
         files.extend(shell_env::files(&self.env)?);
         files.extend(self.files);
 
-        let mounts = guest_path(MOUNT_DIR_GUEST);
+        let mounts = guest_path!(MOUNT_DIR_GUEST);
         let mut seen = BTreeSet::new();
         for f in &files {
             let path = f.path();
@@ -691,20 +700,19 @@ impl BootPlanBuilder {
 
 /// The session user's own files: VS Code's Machine settings in its home and, for a user other
 /// than root, [`SUDOERS_SESSION_GUEST`] (every command as any user, no password).
-fn session_files(agent_port: u16, user: SessionUser) -> Vec<GuestFile> {
-    let mut files = vec![machine_settings(agent_port, user)];
+fn session_files(agent_port: u16, user: SessionUser) -> Result<Vec<GuestFile>, PlanError> {
+    let machine = machine_settings(agent_port, user).map_err(|e| PlanError::MachineSettings {
+        reason: e.to_string(),
+    })?;
+    let mut files = vec![machine];
     if !user.is_root() {
         let text = format!("{GENERATED}{} ALL=(ALL:ALL) NOPASSWD: ALL\n", user.name());
-        #[expect(
-            clippy::expect_used,
-            reason = "invariant: 0o440 is a valid file mode (the boot tests write it)"
-        )]
-        let sudoers = GuestFile::new(guest_path(SUDOERS_SESSION_GUEST), text.into_bytes())
-            .with_mode(0o440)
-            .expect("0o440 is a valid mode");
-        files.push(sudoers);
+        files.push(
+            GuestFile::new(guest_path!(SUDOERS_SESSION_GUEST), text.into_bytes())
+                .with_mode(SUDOERS_MODE),
+        );
     }
-    files
+    Ok(files)
 }
 
 /// Refuses settings the agent can't take: none without an agent, names outside `PUDDLE_AGENT_`,
@@ -746,7 +754,7 @@ fn env_file(env: &GuestEnv) -> GuestFile {
     for (name, value) in env.iter() {
         text.extend(["export ", name, "=", &sh_word(value), "\n"]);
     }
-    GuestFile::new(guest_path(ENV_FILE_GUEST), text.into_bytes())
+    GuestFile::new(guest_path!(ENV_FILE_GUEST), text.into_bytes())
 }
 
 /// The login-shell file that opens terminals in `folder`, the start folder inside the workspace's
@@ -762,7 +770,7 @@ pub fn start_folder_file(root: &GuestPath, folder: &GuestPath) -> GuestFile {
         folder = sh_word(folder.as_str()),
         root = sh_word(root.as_str()),
     );
-    GuestFile::new(guest_path(START_FOLDER_FILE_GUEST), text.into_bytes())
+    GuestFile::new(guest_path!(START_FOLDER_FILE_GUEST), text.into_bytes())
 }
 
 /// A quoted git config value.
@@ -812,23 +820,22 @@ fn git_config(plan: &BootPlanBuilder) -> GuestFile {
             ]);
         }
     }
-    GuestFile::new(guest_path(GIT_CONFIG_GUEST), text.into_bytes())
+    GuestFile::new(guest_path!(GIT_CONFIG_GUEST), text.into_bytes())
 }
 
 /// The author file of each rule: only a `[user]` section (an included file may not define
 /// remotes, and needs nothing else).
-fn git_author_files(rules: &[GitAuthorRule]) -> Vec<GuestFile> {
+fn git_author_files(rules: &[GitAuthorRule]) -> Result<Vec<GuestFile>, PlanError> {
     rules
         .iter()
         .enumerate()
         .map(|(i, rule)| {
-            GuestFile::new(
-                guest_path(&format!(
-                    "{GIT_AUTHOR_DIR_GUEST}/{}",
-                    git_author_name(i + 1)
-                )),
+            let path = format!("{GIT_AUTHOR_DIR_GUEST}/{}", git_author_name(i + 1));
+            let path = GuestPath::new(&path).map_err(|_| PlanError::UnsafePath { path })?;
+            Ok(GuestFile::new(
+                path,
                 format!("{GENERATED}{}", git_user(&rule.author)).into_bytes(),
-            )
+            ))
         })
         .collect()
 }

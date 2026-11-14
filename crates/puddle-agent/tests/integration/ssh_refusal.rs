@@ -379,10 +379,9 @@ async fn what_is_inside_the_workspace_stays_direct_and_the_users_own_proxy_comma
     }
     // A closed port on loopback: the connection is the agent's own, refused by the kernel and
     // said so; the proxy never heard of it.
-    let closed = {
-        let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
-        listener.local_addr().unwrap().port().to_string()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = held.port().to_string();
     for target in ["me@localhost", "me@127.0.0.1"] {
         let out = rig.ssh(&config, &["-p", &closed, target]).await;
         assert!(
@@ -540,10 +539,9 @@ fn the_connect_command_with_a_bad_environment_says_so() {
 
 #[test]
 fn the_connect_command_with_no_agent_listening_says_so() {
-    let closed = {
-        let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
-        listener.local_addr().unwrap()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let out = Command::new(AGENT)
         .args(["connect", "github.com", "22"])
         .env("PUDDLE_AGENT_LISTEN", closed.to_string())

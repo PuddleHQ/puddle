@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod account_secrets;
+mod admin;
 mod audit;
 mod backup;
 mod catalogue;
@@ -25,10 +26,13 @@ mod store;
 mod sweeper;
 #[cfg(test)]
 mod test_support;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod users;
 mod workspace_git;
 
 pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
+pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
     PendingExpiryReason, PendingWire, RequestRuleWire, RuleDeleteReason, RuleSetWire, RuleWire,
@@ -60,12 +64,12 @@ pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use store::{
-    AuditCursor, AuditFilter, DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings,
-    LearnedLimits, LearnedRow, Limits, MAX_OPEN_SSH_AGENT_ASKS, MAX_REQUEST_RULES,
-    MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, NewRequestRule, NewWorkspaceOp, PinnedPort,
-    RequestRule, RuleSetEntryInfo, RuleSetInfo, SshAgentAnswer, SshAgentAsk, SshAgentAskStart,
-    SshAgentAskState, SshAgentHost, Store, SweepReport, SystemHost, SystemPlan, UserStore,
-    WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
+    AllUsers, AuditCursor, AuditFilter, DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS,
+    InterceptionSettings, LearnedLimits, LearnedRow, Limits, MAX_OPEN_SSH_AGENT_ASKS,
+    MAX_REQUEST_RULES, MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, NewRequestRule, NewWorkspaceOp,
+    PinnedPort, RequestRule, RuleSetEntryInfo, RuleSetInfo, SshAgentAnswer, SshAgentAsk,
+    SshAgentAskStart, SshAgentAskState, SshAgentHost, Store, SweepReport, SystemHost, SystemPlan,
+    UserStore, WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use users::{

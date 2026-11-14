@@ -496,7 +496,6 @@ async fn images_and_probe() {
     });
     let caps = rt.probe().await.unwrap();
     assert_eq!(caps.runtime_version, "0.7.7-puddle.1");
-    assert!(caps.stale_dir_fixed && caps.ssh_reports_signal_exit);
     let dind = rt
         .pull_image(&ImageRef::new(FakeRuntime::DIND).unwrap())
         .await

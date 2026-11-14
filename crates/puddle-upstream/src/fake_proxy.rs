@@ -217,10 +217,85 @@ fn response(status: &str, headers: &[(&str, &str)], body: &str, head_only: bool)
     out.into_bytes()
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one scripted state machine, clearer in one place"
-)]
+/// What a scripted proxy remembers of one NTLM handshake on one connection.
+#[derive(Default)]
+struct Ntlm {
+    authed: bool,
+    t1_seen: bool,
+}
+
+/// The 407 a scripted proxy sends for `scheme`.
+fn challenge(scheme: &str, head_only: bool) -> Vec<u8> {
+    // Real proxies send the length of the body a GET would have had, even for HEAD.
+    let mut out = format!(
+        "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {scheme}\r\nContent-Length: 6\r\n\r\n"
+    );
+    if !head_only {
+        out.push_str("denied");
+    }
+    out.into_bytes()
+}
+
+/// What the scripted behaviour answers to this request instead of serving it; `None` lets it
+/// through.
+fn scripted_reply(
+    behaviour: &Behaviour,
+    req: &Req,
+    authorization: Option<&str>,
+    ntlm: &mut Ntlm,
+) -> Option<Vec<u8>> {
+    let head_only = req.method == "HEAD";
+    match behaviour {
+        Behaviour::Basic { user, password } => {
+            let expected = format!("Basic {}", BASE64.encode(format!("{user}:{password}")));
+            (authorization != Some(expected.as_str()))
+                .then(|| challenge("Basic realm=\"fake\"", head_only))
+        }
+        Behaviour::Ntlm | Behaviour::NtlmClosing => match authorization {
+            // The last token only counts on the connection that saw the first.
+            Some("NTLM T3") if ntlm.t1_seen => {
+                ntlm.authed = true;
+                None
+            }
+            Some("NTLM T1") => {
+                ntlm.t1_seen = true;
+                Some(challenge("NTLM CHALLENGE", head_only))
+            }
+            _ if ntlm.authed => None,
+            _ => Some(challenge("NTLM", head_only)),
+        },
+        Behaviour::Always407 => Some(challenge("Basic realm=\"fake\"", head_only)),
+        Behaviour::Refuse(status) => Some(response(
+            &format!("{status} Refused"),
+            &[("Connection", "close")],
+            "refused",
+            false,
+        )),
+        Behaviour::Garbage => Some(b"\x00\x01 this is not http\r\n\r\n".to_vec()),
+        Behaviour::Open | Behaviour::Silent => None,
+    }
+}
+
+/// Writes a scripted reply; `false` when the connection is done afterwards.
+async fn send_scripted(shared: &Shared, stream: &mut TcpStream, bytes: &[u8]) -> bool {
+    let closing = matches!(
+        shared.behaviour,
+        Behaviour::NtlmClosing | Behaviour::Refuse(_) | Behaviour::Garbage
+    );
+    if matches!(shared.behaviour, Behaviour::NtlmClosing) {
+        let text =
+            String::from_utf8_lossy(bytes).replace("\r\n\r\n", "\r\nConnection: close\r\n\r\n");
+        let _ = stream.write_all(text.as_bytes()).await;
+    } else {
+        let _ = stream.write_all(bytes).await;
+    }
+    let _ = stream.flush().await;
+    if closing {
+        let _ = stream.shutdown().await;
+    }
+    !closing
+}
+
 async fn serve(shared: Shared, stream: TcpStream, number: usize) {
     if matches!(shared.behaviour, Behaviour::Silent) {
         // Hold the connection open without a word.
@@ -230,8 +305,7 @@ async fn serve(shared: Shared, stream: TcpStream, number: usize) {
         return;
     }
     let mut reader = BufReader::new(stream);
-    let mut ntlm_authed = false;
-    let mut t1_seen = false;
+    let mut ntlm = Ntlm::default();
     while let Some(req) = read_req(&mut reader).await {
         let authorization = req.header("proxy-authorization").map(ToOwned::to_owned);
         shared
@@ -245,65 +319,13 @@ async fn serve(shared: Shared, stream: TcpStream, number: usize) {
                 proxy_authorization: authorization.clone(),
                 headers: req.headers.clone(),
             });
-        let head_only = req.method == "HEAD";
-        let challenge = |scheme: &str| {
-            // Real proxies send the length of the body a GET would have had, even for HEAD.
-            let mut out = format!(
-                "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {scheme}\r\nContent-Length: 6\r\n\r\n"
-            );
-            if !head_only {
-                out.push_str("denied");
+        if let Some(bytes) =
+            scripted_reply(&shared.behaviour, &req, authorization.as_deref(), &mut ntlm)
+        {
+            if send_scripted(&shared, reader.get_mut(), &bytes).await {
+                continue;
             }
-            out.into_bytes()
-        };
-        let reply: Option<Vec<u8>> = match &shared.behaviour {
-            Behaviour::Basic { user, password } => {
-                let expected = format!("Basic {}", BASE64.encode(format!("{user}:{password}")));
-                (authorization.as_deref() != Some(expected.as_str()))
-                    .then(|| challenge("Basic realm=\"fake\""))
-            }
-            Behaviour::Ntlm | Behaviour::NtlmClosing => match authorization.as_deref() {
-                // The last token only counts on the connection that saw the first.
-                Some("NTLM T3") if t1_seen => {
-                    ntlm_authed = true;
-                    None
-                }
-                Some("NTLM T1") => {
-                    t1_seen = true;
-                    Some(challenge("NTLM CHALLENGE"))
-                }
-                _ if ntlm_authed => None,
-                _ => Some(challenge("NTLM")),
-            },
-            Behaviour::Always407 => Some(challenge("Basic realm=\"fake\"")),
-            Behaviour::Refuse(status) => Some(response(
-                &format!("{status} Refused"),
-                &[("Connection", "close")],
-                "refused",
-                false,
-            )),
-            Behaviour::Garbage => Some(b"\x00\x01 this is not http\r\n\r\n".to_vec()),
-            Behaviour::Open | Behaviour::Silent => None,
-        };
-        if let Some(bytes) = reply {
-            let closing = matches!(
-                shared.behaviour,
-                Behaviour::NtlmClosing | Behaviour::Refuse(_) | Behaviour::Garbage
-            );
-            let stream = reader.get_mut();
-            if closing && matches!(shared.behaviour, Behaviour::NtlmClosing) {
-                let text = String::from_utf8_lossy(&bytes)
-                    .replace("\r\n\r\n", "\r\nConnection: close\r\n\r\n");
-                let _ = stream.write_all(text.as_bytes()).await;
-            } else {
-                let _ = stream.write_all(&bytes).await;
-            }
-            let _ = stream.flush().await;
-            if closing {
-                let _ = stream.shutdown().await;
-                return;
-            }
-            continue;
+            return;
         }
         if req.method == "CONNECT" {
             tunnel(&shared, reader, &req.target).await;

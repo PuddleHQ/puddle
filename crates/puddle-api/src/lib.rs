@@ -46,6 +46,7 @@
 //! [`puddle_types::EventSink`]: hand the same hub to the components that emit events.
 #![forbid(unsafe_code)]
 
+mod admin;
 mod auth;
 mod authz;
 mod checkouts;
@@ -89,7 +90,7 @@ pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, R
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
-pub use front::{NameResolver, SystemResolver};
+pub use front::{NameResolver, NoNames, SystemResolver};
 pub use learned::{FakeLearned, LearnedService, NoLearned};
 pub use network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
@@ -105,7 +106,7 @@ pub use remote::{
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
-pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account};
+pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};
 pub use terminals::{
     EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
     SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,

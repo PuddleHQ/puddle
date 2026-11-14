@@ -29,7 +29,7 @@ fetch)
     echo "check $*" >>"$STATE/calls"
     status=0
     while read -r name ver; do
-        if grep -A1 "^name = \"$name\"\$" "$LOCK" | grep -q "^version = \"$ver\"\$"; then
+        if awk -v n="$name" -v v="$ver" '$0 == "name = \"" n "\"" { getline; if ($0 == "version = \"" v "\"") f = 1 } END { exit !f }' "$LOCK"; then
             echo "error[yanked]: detected yanked crate $name $ver"
             status=1
         fi
@@ -53,24 +53,24 @@ reset
 
 reset
 if out=$(run); then fail "after a fetch the yanked crate must fail the check: $out"; fi
-printf '%s\n' "$out" | grep -q 'yanked crate async-executor 1.14.0' || fail "no yanked report: $out"
+grep -q 'yanked crate async-executor 1.14.0' <<<"$out" || fail "no yanked report: $out"
 [ "$(head -n1 "$tmp/calls")" = "fetch fetch all" ] || fail "the fetch did not come first: $(cat "$tmp/calls")"
-if printf '%s\n' "$out" | grep -q 'hours ago'; then fail "a database fetched just now printed an age: $out"; fi
+if grep -q 'hours ago' <<<"$out"; then fail "a database fetched just now printed an age: $out"; fi
 
 touch -d '3 days ago' "$db/advisory-db-x/.git/FETCH_HEAD"
 reset
 out=$(run) || true
-printf '%s\n' "$out" | grep -q 'last fetched 72 hours ago' || fail "no age for an old database: $out"
+grep -q 'last fetched 72 hours ago' <<<"$out" || fail "no age for an old database: $out"
 
 mv "$db" "$tmp/dbs-gone"
 reset
 out=$(run) || true
-printf '%s\n' "$out" | grep -q 'no advisory database fetched yet' || fail "no notice for a missing database: $out"
+grep -q 'no advisory database fetched yet' <<<"$out" || fail "no notice for a missing database: $out"
 
 # Offline: the fetch fails, the script says so and still runs the check (on an empty index, which passes).
 reset
 out=$(FETCH_FAILS=1 run) || fail "a failed fetch must still run the check on the old copy: $out"
-printf '%s\n' "$out" | grep -q 'warning: the fetch failed' || fail "no warning for a failed fetch: $out"
+grep -q 'warning: the fetch failed' <<<"$out" || fail "no warning for a failed fetch: $out"
 grep -q '^check ' "$tmp/calls" || fail "the check did not run after a failed fetch"
 
 reset

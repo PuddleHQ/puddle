@@ -59,6 +59,8 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 h2 = { workspace = true }
 http = { workspace = true }
 puddle-agent = { workspace = true }

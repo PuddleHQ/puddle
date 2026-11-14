@@ -35,6 +35,11 @@ fn puddle_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
     for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("PUDDLE_")) {
         command.env_remove(name);
     }
+    // A `PATH` of the folder holding only the copied `puddle`: the check for the Azure CLI finds
+    // no `az`, so it never runs the machine's real one, which waits on the network (an update
+    // check and telemetry) for as long as that network answers slowly.
+    #[cfg(unix)]
+    command.env("PATH", dir);
     let child = command
         .envs(env.iter().copied())
         .stdout(std::process::Stdio::piped())

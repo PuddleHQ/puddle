@@ -6,7 +6,11 @@ use crate::clock::ManualClock;
 use crate::store::Limits;
 
 fn store() -> Store {
-    Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    for name in ["blog", "shop"] {
+        crate::testing::own(&store, &ws(name));
+    }
+    store
 }
 
 fn ws(text: &str) -> WorkspaceId {

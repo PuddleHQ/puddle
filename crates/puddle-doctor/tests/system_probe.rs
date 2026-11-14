@@ -23,6 +23,17 @@ use puddle_runtime::{
 
 const EXPECTED: &str = "0.7.7-puddle.2";
 
+/// A probe that never runs this machine's `az`: it can wait on the network (an update check and
+/// telemetry), and a test of the runtime check should not depend on that.
+fn new_probe(
+    runtime_dir: std::path::PathBuf,
+    expected: RuntimeVersion,
+    dev: DevOverride,
+) -> SystemProbe {
+    SystemProbe::new(runtime_dir, expected, dev)
+        .with_az_search_path(Some(std::ffi::OsString::new()))
+}
+
 fn expected() -> RuntimeVersion {
     EXPECTED.parse().unwrap()
 }
@@ -89,7 +100,7 @@ fn installed_looks_for_the_runtime_next_to_the_program() {
 #[test]
 fn a_missing_runtime_is_reported_and_msb_never_started() {
     let root = tempfile::tempdir().unwrap();
-    let probe = SystemProbe::new(root.path().join("runtime"), expected(), DevOverride::none());
+    let probe = new_probe(root.path().join("runtime"), expected(), DevOverride::none());
     let report = diagnose(&probe, &no_boot(), "0.1.0");
     let runtime = report.check(CheckId::Runtime).unwrap();
     assert_eq!(
@@ -106,7 +117,7 @@ fn a_missing_runtime_is_reported_and_msb_never_started() {
 
 #[test]
 fn a_relative_runtime_folder_is_unusable() {
-    let probe = SystemProbe::new("runtime".into(), expected(), DevOverride::none());
+    let probe = new_probe("runtime".into(), expected(), DevOverride::none());
     assert!(matches!(
         probe.runtime().state,
         RuntimeState::Unusable(RuntimeError::RelativePath { .. })
@@ -117,7 +128,7 @@ fn a_relative_runtime_folder_is_unusable() {
 fn another_version_is_a_mismatch_naming_both() {
     let root = tempfile::tempdir().unwrap();
     let dir = runtime_dir(root.path(), "0.7.7");
-    let probe = SystemProbe::new(dir, expected(), DevOverride::none());
+    let probe = new_probe(dir, expected(), DevOverride::none());
     let report = diagnose(&probe, &no_boot(), "0.1.0");
     let runtime = report.check(CheckId::Runtime).unwrap();
     assert_eq!(runtime.finding, Some(Finding::RuntimeVersionMismatch));
@@ -129,8 +140,8 @@ fn another_version_is_a_mismatch_naming_both() {
 fn the_right_version_is_ready_and_then_started() {
     let root = tempfile::tempdir().unwrap();
     let dir = runtime_dir(root.path(), EXPECTED);
-    let probe = SystemProbe::new(dir.clone(), expected(), DevOverride::none())
-        .with_digests(digests_of(&dir));
+    let probe =
+        new_probe(dir.clone(), expected(), DevOverride::none()).with_digests(digests_of(&dir));
     // Before the runtime check, nothing may run.
     assert!(matches!(
         probe.launch(Duration::from_secs(5)),
@@ -154,7 +165,7 @@ fn the_dev_override_counts_only_when_compiled_in() {
     // puddle-doctor never enables puddle-runtime's `dev-override` feature; `--all-features` does.
     let root = tempfile::tempdir().unwrap();
     let dir = runtime_dir(root.path(), "0.7.8");
-    let probe = SystemProbe::new(dir, expected(), DevOverride::requested());
+    let probe = new_probe(dir, expected(), DevOverride::requested());
     let state = probe.runtime().state;
     if puddle_runtime::DEV_OVERRIDE_COMPILED {
         assert_eq!(
@@ -181,7 +192,7 @@ fn a_swapped_firmware_is_a_digest_finding_naming_the_file_and_both_hashes() {
     let expected_hash = sha256_file(&firmware).unwrap();
     std::fs::write(&firmware, b"swapped").unwrap();
     let found_hash = sha256_file(&firmware).unwrap();
-    let probe = SystemProbe::new(dir, expected(), DevOverride::none()).with_digests(digests);
+    let probe = new_probe(dir, expected(), DevOverride::none()).with_digests(digests);
     let report = diagnose(&probe, &no_boot(), "0.1.0");
     let runtime = report.check(CheckId::Runtime).unwrap();
     assert_eq!(
@@ -205,7 +216,7 @@ fn the_dev_override_accepts_swapped_files_and_says_so() {
     let dir = runtime_dir(root.path(), EXPECTED);
     let digests = digests_of(&dir);
     std::fs::write(dir.join(LIBKRUNFW_FILE_NAME), b"swapped").unwrap();
-    let probe = SystemProbe::new(dir, expected(), DevOverride::requested()).with_digests(digests);
+    let probe = new_probe(dir, expected(), DevOverride::requested()).with_digests(digests);
     let state = probe.runtime().state;
     if puddle_runtime::DEV_OVERRIDE_COMPILED {
         assert_eq!(
@@ -231,7 +242,7 @@ fn an_unexecutable_msb_is_a_permissions_finding() {
     let dir = runtime_dir(root.path(), EXPECTED);
     let msb = dir.join(MSB_FILE_NAME);
     std::fs::set_permissions(&msb, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let probe = SystemProbe::new(dir, expected(), DevOverride::none());
+    let probe = new_probe(dir, expected(), DevOverride::none());
     let report = diagnose(&probe, &no_boot(), "0.1.0");
     let runtime = report.check(CheckId::Runtime).unwrap();
     assert_eq!(
@@ -254,7 +265,7 @@ fn an_unexecutable_msb_is_a_permissions_finding() {
 
 #[test]
 fn the_machine_probes_answer() {
-    let probe = SystemProbe::new(
+    let probe = new_probe(
         std::path::absolute("runtime").unwrap(),
         expected(),
         DevOverride::none(),
@@ -270,7 +281,7 @@ fn the_machine_probes_answer() {
 fn boot_uses_the_probes_runtime_folder() {
     // A runtime folder without msb: the test boot starts nothing and says why.
     let root = tempfile::tempdir().unwrap();
-    let probe = SystemProbe::new(root.path().to_path_buf(), expected(), DevOverride::none());
+    let probe = new_probe(root.path().to_path_buf(), expected(), DevOverride::none());
     let facts = probe.boot(Duration::from_secs(5));
     if std::env::consts::ARCH == "x86_64" {
         let puddle_doctor::BootFacts::Ran {
@@ -288,7 +299,7 @@ fn boot_uses_the_probes_runtime_folder() {
 fn the_real_probe_measures_the_drive_of_the_data_folder_even_before_the_folder_exists() {
     let root = tempfile::tempdir().unwrap();
     let data = root.path().join("not-yet").join("puddle");
-    let probe = SystemProbe::new(root.path().join("runtime"), expected(), DevOverride::none())
+    let probe = new_probe(root.path().join("runtime"), expected(), DevOverride::none())
         .with_data_dir(&data);
     let DiskFacts::Read { dir, free_bytes } = probe.disk_space() else {
         panic!("a temp folder's drive can be measured");
@@ -306,14 +317,13 @@ fn the_real_probe_measures_the_drive_of_the_data_folder_even_before_the_folder_e
 
 #[test]
 fn a_probe_without_a_data_folder_has_nothing_to_measure() {
-    let probe = SystemProbe::new("runtime".into(), expected(), DevOverride::none());
+    let probe = new_probe("runtime".into(), expected(), DevOverride::none());
     assert_eq!(probe.disk_space(), DiskFacts::NoFolder);
 }
 
 #[test]
 fn a_data_folder_the_os_cannot_measure_is_unreadable_not_a_failure() {
-    let probe =
-        SystemProbe::new("runtime".into(), expected(), DevOverride::none()).with_data_dir("");
+    let probe = new_probe("runtime".into(), expected(), DevOverride::none()).with_data_dir("");
     let DiskFacts::Unreadable { detail, .. } = probe.disk_space() else {
         panic!("an empty path has no drive");
     };
@@ -324,7 +334,7 @@ fn a_data_folder_the_os_cannot_measure_is_unreadable_not_a_failure() {
 fn the_real_probe_reports_encryption_for_the_data_folder_without_failing() {
     let root = tempfile::tempdir().unwrap();
     let data = root.path().join("not-yet").join("puddle");
-    let probe = SystemProbe::new(root.path().join("runtime"), expected(), DevOverride::none())
+    let probe = new_probe(root.path().join("runtime"), expected(), DevOverride::none())
         .with_data_dir(&data);
     let DataEncryption::Volume { dir, .. } = probe.disk_encryption().data else {
         panic!("a folder was named");
@@ -334,7 +344,7 @@ fn the_real_probe_reports_encryption_for_the_data_folder_without_failing() {
     let check = report.check(CheckId::DiskEncryption).unwrap();
     assert_ne!(check.status, Status::Fail, "{check:?}");
     assert_eq!(
-        SystemProbe::new("runtime".into(), expected(), DevOverride::none())
+        new_probe("runtime".into(), expected(), DevOverride::none())
             .disk_encryption()
             .data,
         DataEncryption::NoFolder

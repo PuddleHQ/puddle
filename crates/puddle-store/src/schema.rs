@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26,
+    V22, V23, V24, V25, V26, V27,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 26;
+pub const SCHEMA_VERSION: u32 = 27;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -900,11 +900,28 @@ CREATE TABLE hidden_builtin_sets (
 ) STRICT;
 ";
 
+/// The admin screen: a user the owner is deleting stays listed as `deleting` until their
+/// workspaces are gone, and every user-management action is written to an audit that outlives the
+/// user it names. The audit has no foreign key and holds names, never a credential.
+const V26: &str = r"
+ALTER TABLE users ADD COLUMN deleting_at INTEGER;
+CREATE TABLE admin_audit (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    at             INTEGER NOT NULL,
+    actor_user_id  INTEGER NOT NULL,
+    actor_name     TEXT    NOT NULL,
+    action         TEXT    NOT NULL CHECK (action IN
+        ('user_created', 'invite_reissued', 'user_delete_started', 'user_deleted')),
+    target_user_id INTEGER NOT NULL,
+    target_name    TEXT    NOT NULL
+) STRICT;
+";
+
 /// The filtered SSH agent's first-use question. An `ssh_agent_asks` row is one question for a
 /// workspace, host and key (one open at a time, `requested`) and what the user answered. An
 /// `ssh_agent_grants` row is a standing yes for that triple: `run` ones last until the workspace
 /// stops, the others until the user turns the agent off for the host.
-const V26: &str = r"
+const V27: &str = r"
 CREATE TABLE ssh_agent_asks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id TEXT    NOT NULL,

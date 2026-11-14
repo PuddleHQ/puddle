@@ -176,6 +176,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
         let name = format!("{}-{tag}-{suffix}", vm.settings.prefix.as_str());
         let workspace = WorkspaceId::new(&name).unwrap();
         for site in SITES {
+            puddle_store::testing::own(vm.host.store(), &workspace);
             vm.host
                 .store()
                 .as_user(puddle_store::UserId::OWNER)

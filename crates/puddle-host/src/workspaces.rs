@@ -9,10 +9,12 @@
 //! and stopped when the host exits.
 //!
 //! A sandbox boots from the spec it was created with, and that spec holds the endpoint of its
-//! egress route, which only lives as long as this process. So a stopped workspace starts again in
-//! the same sandbox only while this process still serves that route; otherwise (after a restart
-//! of the host) its sandbox is rebuilt on the same volume. Everything on the volume survives,
-//! the root disk does not (ADR 0006, point 3).
+//! egress route. The endpoint of a workspace is the same at every run of Puddle (`IpcRoot::stable`),
+//! so a stopped workspace starts again in the same sandbox, with its root disk, after a restart of
+//! the host too: the new run takes the sandbox over when the route the runtime lists for it is the
+//! one it serves. A sandbox made with another route (before routes were stable, or a name another
+//! process holds) is rebuilt on the same volume: everything on the volume survives, the root disk
+//! does not (ADR 0006, point 3).
 //!
 //! The workspace list on disk is what the next start keeps volumes for, so it is saved before
 //! anything it must cover exists or goes: a create is refused when its entry can't be written,
@@ -41,7 +43,7 @@ use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
 use puddle_ssh::SshEndpoint;
-use puddle_store::{Clock, Store};
+use puddle_store::{AllUsers, Clock, Store};
 use puddle_types::{
     CheckoutDir, DiskKind, EntryId, Event, EventSink, GuestEnv, GuestFile, GuestPath, Problem,
     Problems, SessionUser, WorkspaceId, WorkspaceStatus,
@@ -126,6 +128,10 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         std::future::ready(())
     }
 
+    fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool) {
+        self.tools_pending_closed(workspace, id, allowed);
+    }
+
     fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
         let names: Vec<WorkspaceId> = self
             .state()
@@ -157,6 +163,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
     /// Where the audit log is written.
     pub(crate) store: Arc<Store>,
+    /// The reach across every user's data, for recording the owner of the workspaces made before
+    /// every create recorded its user.
+    pub(crate) all_users: AllUsers,
     pub(crate) launcher: Arc<dyn Launcher>,
     /// The login key and ssh config of direct SSH.
     pub(crate) ssh: Arc<SshSetup>,
@@ -335,6 +344,9 @@ struct Inner<R: Runtime + Clone> {
     /// between a settings change's read and its write.
     settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
+    /// The install's reach across every user's data, for the tool install's look at a
+    /// workspace's pending requests whoever owns it.
+    all_users: AllUsers,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
     /// The terminals open now, ended with their reason when the workspace stops.
@@ -375,6 +387,8 @@ struct Inner<R: Runtime + Clone> {
     listings: Mutex<BTreeMap<WorkspaceId, repositories::CachedListing>>,
     /// The disks the host has already warned about, until they drop below the threshold again.
     disk_warned: Mutex<BTreeSet<(WorkspaceId, DiskKind)>>,
+    /// The managed tools runs; see [`tools::ToolRuns`].
+    tools: tools::ToolRuns,
 }
 
 /// Why [`HostWorkspaces::end_extension_hosts`] did not reach the guest.
@@ -744,3 +758,6 @@ mod name_or_id_tests;
 
 #[cfg(test)]
 mod checkout_refusal_tests;
+
+#[cfg(test)]
+mod workspace_error_tests;

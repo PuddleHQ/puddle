@@ -25,6 +25,15 @@ pub enum IpcError {
         /// The root it was passed to.
         root: PathBuf,
     },
+    /// A name for a stable endpoint that is not a workspace-id-shaped label.
+    #[error("{name:?} is not a valid endpoint name: use 1 to 63 characters of a-z, 0-9 and -")]
+    InvalidName {
+        /// The name that was refused.
+        name: String,
+    },
+    /// A stable name was asked of a root that was not made with `IpcRoot::stable`.
+    #[error("this ipc root has no stable names; make it with IpcRoot::stable")]
+    NotStable,
     /// A Unix socket path is longer than the OS allows.
     #[error("socket path {path} is {len} bytes; the limit is {max}")]
     PathTooLong {

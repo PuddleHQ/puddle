@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::admin::AdminService;
 use crate::authz::Authorizer;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
@@ -28,6 +29,7 @@ use crate::signin::SignIn;
 use crate::terminals::{Registry, TerminalService};
 use crate::workspaces::WorkspaceService;
 
+mod admin;
 mod app_icon;
 mod audit;
 pub(crate) mod auth;
@@ -111,6 +113,8 @@ pub(crate) struct AppState {
     pub(crate) company_signals: Arc<dyn CompanySignals>,
     /// Browser sign-in; `None` when the host gave the API no accounts to sign in to.
     pub(crate) sign_in: Option<Arc<SignIn>>,
+    /// The owner's admin screen; `None` unless several users are on and sign-in is.
+    pub(crate) admin: Option<Arc<AdminService>>,
     /// The build of the app this server serves (`GET /api/health`), `None` when it serves none.
     pub(crate) ui_build_id: Option<String>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
@@ -136,6 +140,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(pending::deny))
         .merge(rules_router())
         .merge(auth_router())
+        .merge(admin_router())
         .routes(routes!(audit::audit))
         .routes(routes!(settings::get_global, settings::put_global))
         .routes(routes!(
@@ -229,6 +234,17 @@ fn auth_router() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::list_devices))
         .routes(routes!(auth::revoke_device))
         .routes(routes!(auth::get_methods, auth::put_methods))
+}
+
+/// The owner's admin screen, in a router of its own like the rules.
+#[inline(never)]
+fn admin_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(admin::list_users, admin::create_user))
+        .routes(routes!(admin::admin_stats))
+        .routes(routes!(admin::reissue_invite))
+        .routes(routes!(admin::delete_user))
+        .routes(routes!(admin::admin_audit))
 }
 
 /// The terminals, in a router of their own like the rules.

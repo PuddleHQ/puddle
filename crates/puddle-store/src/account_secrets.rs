@@ -218,6 +218,18 @@ impl AccountSecrets {
         Ok(())
     }
 
+    /// Removes `user`'s open invite, if any (an account being deleted has no way in).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn clear_invite(&self, user: UserId) -> Result<(), StoreError> {
+        lock(&self.conn).execute(
+            "DELETE FROM account_invites WHERE user_id = ?1",
+            [user.get()],
+        )?;
+        Ok(())
+    }
+
     /// Uses up the invite `digest`: the user it was for, if it exists and has not expired. An
     /// invite works once; an expired one is removed and answers `None`.
     ///

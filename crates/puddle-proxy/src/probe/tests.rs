@@ -34,8 +34,17 @@ async fn an_answer_is_remembered_until_exactly_its_time_is_up() {
     assert!(probe.reachable("127.0.0.1", port).await);
 }
 
-#[tokio::test]
-async fn a_name_that_does_not_resolve_is_not_reachable() {
-    let probe = TcpPortProbe::default();
-    assert!(!probe.reachable("nothing.invalid", 22).await);
+#[test]
+fn a_name_that_does_not_resolve_is_not_reachable() {
+    // The probe's own time limit is 300 ms, so a resolver that is slow to say "no such name" (or
+    // never does) costs the test that, not the resolver's retry time. The runtime is not dropped
+    // by waiting for its blocking pool: the stuck system lookup runs there until it gives up.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let probe = TcpPortProbe::new(Duration::from_millis(300), Duration::from_secs(60));
+    let reachable = runtime.block_on(probe.reachable("nothing.invalid", 22));
+    runtime.shutdown_background();
+    assert!(!reachable);
 }

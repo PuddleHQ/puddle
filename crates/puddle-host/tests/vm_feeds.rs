@@ -306,6 +306,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
     let name = format!("{}-feed", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in [NPM, NUGET, PIP, MAVEN].iter().chain(extra) {
+        puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
             .as_user(puddle_store::UserId::OWNER)

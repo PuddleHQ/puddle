@@ -76,7 +76,7 @@ mod story {
     use std::time::Duration;
 
     use puddle_compute_msb::MsbRuntime;
-    use puddle_host::{HostOptions, VsCodeLauncher};
+    use puddle_host::{Host, HostOptions, VsCodeLauncher};
     use puddle_test_kit::eventually_async;
     use puddle_types::WorkspaceId;
     use puddle_vm_tests::{
@@ -84,7 +84,7 @@ mod story {
     };
     use serde_json::json;
 
-    use crate::support::{Api, ended, named_id_options};
+    use crate::support::{Api, Events, ended, named_id_options};
     use crate::vm_support::{VmHost, guest, start_vm_host_config};
 
     /// Not a credential: the token the test extension answers with, so a `gho_` in a guest is this
@@ -286,11 +286,97 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         who
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one VM, one story, read top to bottom"
-    )]
+    /// The one booted VM and everything the phases share.
+    struct Story {
+        release: VsCodeRelease,
+        modules: PathBuf,
+        node: Node,
+        scratch: tempfile::TempDir,
+        out: PathBuf,
+        // Kept alive for the whole story.
+        _host: Host<MsbRuntime>,
+        runtime: MsbRuntime,
+        api: Api,
+        events: Events,
+        name: String,
+        name_static: &'static str,
+        sandbox: WorkspaceId,
+        root: PathBuf,
+        alias: String,
+        args: Vec<String>,
+        canary_log: PathBuf,
+        probe: PathBuf,
+    }
+
+    impl Story {
+        fn launch(&self, profile: Option<&str>, canary: bool) -> VsCodeLaunch {
+            VsCodeLaunch {
+                user_data: self.scratch.path().join("vsc-user"),
+                extensions: self.scratch.path().join("vsc-ext"),
+                ssh_config: self.root.join("ssh").join("config"),
+                ssh: ssh_exe(),
+                alias: self.alias.clone(),
+                use_local_server: None,
+                port: PORT,
+                open: self.args.clone(),
+                dev_extension: canary.then(|| {
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests")
+                        .join("fixtures")
+                        .join("canary-github-auth")
+                }),
+                profile: profile.map(str::to_owned),
+                env: if canary {
+                    vec![
+                        ("PUDDLE_CANARY_TOKEN".to_owned(), CANARY.to_owned()),
+                        (
+                            "PUDDLE_CANARY_LOG".to_owned(),
+                            self.canary_log.display().to_string(),
+                        ),
+                    ]
+                } else {
+                    Vec::new()
+                },
+            }
+        }
+
+        async fn shell(&self, script: &str) -> String {
+            shell(&self.runtime, &self.sandbox, script).await
+        }
+
+        async fn alive(&self, pid: u32) -> bool {
+            let script = format!("kill -0 {pid} 2>/dev/null && echo alive || echo dead");
+            self.shell(&script).await.trim() == "alive"
+        }
+
+        async fn wait_for_git_socket(&self, script: &'static str) {
+            eventually_async("the git extension's socket is up", SHOWS, || async {
+                let said = self.shell(script).await;
+                (!said.trim().is_empty()).then_some(())
+            })
+            .await;
+        }
+    }
+
     async fn run() {
+        let mut story = boot().await;
+        let mut window = phase_attach(&story).await;
+        phase_guard_on(&story, &mut window).await;
+        phase_trusted_mode(&story, &mut window).await;
+        phase_reload_ends_terminal(&story, &mut window).await;
+        let who = phase_hostile_code(&story, window).await;
+        phase_profile_without_sign_in(&story, &who).await;
+        story
+            .api
+            .post(&format!("/api/workspaces/{}/stop", story.name), "")
+            .await;
+        story
+            .events
+            .until(ended(story.name_static), Duration::from_secs(120))
+            .await;
+    }
+
+    async fn boot() -> Story {
         let release = VsCodeRelease::from_env().expect("PUDDLE_VSCODE_DIR: ci/fetch-vscode.sh");
         let modules = PathBuf::from(
             std::env::var_os(BROWSER_MODULES_VAR)
@@ -367,47 +453,45 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 && args[1].ends_with(".code-workspace"),
             "{args:?}"
         );
-
         let canary_log = out.join("canary-asked.log");
         let probe = scratch.path().join("u7c-probe.txt");
-        let launch = |profile: Option<&str>, canary: bool| VsCodeLaunch {
-            user_data: scratch.path().join("vsc-user"),
-            extensions: scratch.path().join("vsc-ext"),
-            ssh_config: root.join("ssh").join("config"),
-            ssh: ssh_exe(),
-            alias: alias.clone(),
-            use_local_server: None,
-            port: PORT,
-            open: args.clone(),
-            dev_extension: canary.then(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests")
-                    .join("fixtures")
-                    .join("canary-github-auth")
-            }),
-            profile: profile.map(str::to_owned),
-            env: if canary {
-                vec![
-                    ("PUDDLE_CANARY_TOKEN".to_owned(), CANARY.to_owned()),
-                    (
-                        "PUDDLE_CANARY_LOG".to_owned(),
-                        canary_log.display().to_string(),
-                    ),
-                ]
-            } else {
-                Vec::new()
-            },
-        };
+        Story {
+            release,
+            modules,
+            node,
+            scratch,
+            out,
+            _host: host,
+            runtime,
+            api,
+            events,
+            name,
+            name_static,
+            sandbox,
+            root,
+            alias,
+            args,
+            canary_log,
+            probe,
+        }
+    }
 
-        // The window attaches, and the explorer shows one root per checkout.
-        let first = launch(None, true);
-        first.prepare(&release).await.expect("Remote-SSH installs");
+    /// The window attaches, and the explorer shows one root per checkout.
+    async fn phase_attach(s: &Story) -> VsCodeWindow {
+        let first = s.launch(None, true);
+        first
+            .prepare(&s.release)
+            .await
+            .expect("Remote-SSH installs");
         let mut window = first
-            .start(&release, &node, &modules, &out.join("code.log"))
+            .start(&s.release, &s.node, &s.modules, &s.out.join("code.log"))
             .await
             .expect("VS Code starts");
         let up = window.attached(UP).await.expect("attached");
-        window.screenshot(&out.join("attached.png")).await.unwrap();
+        window
+            .screenshot(&s.out.join("attached.png"))
+            .await
+            .unwrap();
         assert!(up.remote.contains("SSH:"), "{up:?}");
         for folder in ["api", "web"] {
             assert!(
@@ -417,20 +501,15 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         }
         assert!(up.title.contains("(Workspace)"), "{up:?}");
 
-        eventually_async("the git extension's socket exists", SHOWS, || async {
-            let said = shell(
-                &runtime,
-                &sandbox,
-                "ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1",
-            )
+        s.wait_for_git_socket("ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1")
             .await;
-            (!said.trim().is_empty()).then_some(())
-        })
-        .await;
+        window
+    }
 
-        // U7b, the guard: Puddle's Machine settings turn the git extension's GitHub sign-in off, so the
-        // guest's askpass gets no token. The extension asks the person in the window instead.
-        let guarded = shell(&runtime, &sandbox, ASKPASS).await;
+    /// U7b, the guard: Puddle's Machine settings turn the git extension's GitHub sign-in off, so the
+    /// guest's askpass gets no token. The extension asks the person in the window instead.
+    async fn phase_guard_on(s: &Story, window: &mut VsCodeWindow) {
+        let guarded = s.shell(ASKPASS).await;
         let asked = window.dismiss_prompt(SHOWS).await.expect("the input box");
         assert!(
             !has_password(&guarded),
@@ -441,26 +520,25 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 .as_deref()
                 .is_some_and(|a| a.contains("Git: https://github.com")),
             "the git extension did not ask the person for github.com: {asked:?}; the window shows {}",
-            window_shows(&mut window).await
+            window_shows(window).await
         );
         assert!(
-            !std::fs::read_to_string(&canary_log)
+            !std::fs::read_to_string(&s.canary_log)
                 .unwrap()
                 .contains(GIT_ASK),
             "the window's provider was asked for the git extension's token with the guard on"
         );
+    }
 
-        // U7b, the trusted mode: the guard is only an accident guard. The guest reads the setting, so
-        // its root can turn it back on, and the next ask gets the token of the window's `github`
-        // provider: the canary here, a signed-in person's real token in use.
-        let flipped = shell(
-            &runtime,
-            &sandbox,
-            &format!(
+    /// U7b, the trusted mode: the guard is only an accident guard. The guest reads the setting, so
+    /// its root can turn it back on, and the next ask gets the token of the window's `github`
+    /// provider: the canary here, a signed-in person's real token in use.
+    async fn phase_trusted_mode(s: &Story, window: &mut VsCodeWindow) {
+        let flipped = s
+            .shell(&format!(
                 "sed -i -E 's/(\"github\\.gitAuthentication\"[[:space:]]*:[[:space:]]*)false/\\1true/' {MACHINE} && grep -c '\"github.gitAuthentication\": true' {MACHINE}"
-            ),
-        )
-        .await;
+            ))
+            .await;
         assert_eq!(
             flipped.trim(),
             "1",
@@ -469,7 +547,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         let mut token = String::new();
         let until = std::time::Instant::now() + SHOWS;
         while std::time::Instant::now() < until {
-            token = shell(&runtime, &sandbox, ASKPASS).await;
+            token = s.shell(ASKPASS).await;
             if has_password(&token) {
                 break;
             }
@@ -482,37 +560,39 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         assert!(
             token.lines().any(|l| l == format!("password={CANARY}")),
             "the guest's askpass did not get the canary: {token}; the window shows {}",
-            window_shows(&mut window).await
+            window_shows(window).await
         );
         assert!(
-            std::fs::read_to_string(&canary_log)
+            std::fs::read_to_string(&s.canary_log)
                 .unwrap()
                 .contains(GIT_ASK),
             "the canary came without the window's provider being asked for the git extension's scopes"
         );
         // The window's own logs go into the artifact: they say why a window never attached or asked.
         copy_tree(
-            &scratch.path().join("vsc-user").join("logs"),
-            &out.join("vsc-logs"),
+            &s.scratch.path().join("vsc-user").join("logs"),
+            &s.out.join("vsc-logs"),
         );
+    }
 
-        // U8: Reload Window ends a terminal, because the reload replaces the guest's server.
+    /// U8: Reload Window ends a terminal, because the reload replaces the guest's server.
+    async fn phase_reload_ends_terminal(s: &Story, window: &mut VsCodeWindow) {
         let opened = window
             .terminal("echo $$ > /tmp/u8.pid; exec sleep 100000")
             .await;
         if opened.is_err() {
-            window.screenshot(&out.join("u8.png")).await.unwrap();
+            window.screenshot(&s.out.join("u8.png")).await.unwrap();
         }
         assert!(
             opened.is_ok(),
             "no terminal opened: {opened:?}; the window shows {}",
-            window_shows(&mut window).await
+            window_shows(window).await
         );
         let pid = eventually_async(
             "the terminal ran its command in the guest",
             SHOWS,
             || async {
-                shell(&runtime, &sandbox, "cat /tmp/u8.pid 2>/dev/null || true")
+                s.shell("cat /tmp/u8.pid 2>/dev/null || true")
                     .await
                     .trim()
                     .parse::<u32>()
@@ -520,43 +600,50 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             },
         )
         .await;
-        let alive = |pid: u32| {
-            let script = format!("kill -0 {pid} 2>/dev/null && echo alive || echo dead");
-            let (runtime, sandbox) = (&runtime, &sandbox);
-            async move { shell(runtime, sandbox, &script).await.trim() == "alive" }
-        };
         assert!(
-            alive(pid).await,
+            s.alive(pid).await,
             "the terminal's process {pid} is not running before the reload"
         );
-        let before = shell(&runtime, &sandbox, SERVER_PIDS).await;
+        let before = s.shell(SERVER_PIDS).await;
         window
-            .reload(UP, &out.join("u8-reload.png"))
+            .reload(UP, &s.out.join("u8-reload.png"))
             .await
             .expect("the window comes back");
-        let after = shell(&runtime, &sandbox, SERVER_PIDS).await;
+        let after = s.shell(SERVER_PIDS).await;
         assert!(
-            !alive(pid).await,
+            !s.alive(pid).await,
             "the terminal's process {pid} survived the reload (servers before [{before}], after [{after}]): with the default settings a reload used to replace the server and end it; the notes on Reload Window need the new fact"
         );
+    }
 
-        // U7c: guest code makes the window run a command on this computer (the documented trust).
-        let who = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe, &out).await;
-        window.screenshot(&out.join("u7c.png")).await.unwrap();
+    /// U7c: guest code makes the window run a command on this computer (the documented trust).
+    /// Closes the window and returns who ran it.
+    async fn phase_hostile_code(s: &Story, mut window: VsCodeWindow) -> String {
+        let who =
+            hostile_code_runs_here(&mut window, &s.runtime, &s.sandbox, &s.probe, &s.out).await;
+        window.screenshot(&s.out.join("u7c.png")).await.unwrap();
         assert!(!who.is_empty(), "the probe file is empty");
         window.close().await.expect("the window closes");
+        who
+    }
 
-        // U7d: in a profile with the GitHub sign-in off and nothing in its place, the guest gets no token,
-        // with the guard setting still turned on by the guest above: the profile alone keeps it out. Its
-        // code still runs here.
-        let second = launch(Some("puddle-test"), false);
+    /// U7d: in a profile with the GitHub sign-in off and nothing in its place, the guest gets no
+    /// token, with the guard setting still turned on by the guest above: the profile alone keeps it
+    /// out. Its code still runs here.
+    async fn phase_profile_without_sign_in(s: &Story, who: &str) {
+        let second = s.launch(Some("puddle-test"), false);
         // A profile starts empty and exists only once a window has opened it: open it, close it, then
         // give it Remote-SSH, which it does not inherit.
         let first_open = VsCodeLaunch {
             open: Vec::new(),
             ..second.clone()
         }
-        .start(&release, &node, &modules, &out.join("code-profile-new.log"))
+        .start(
+            &s.release,
+            &s.node,
+            &s.modules,
+            &s.out.join("code-profile-new.log"),
+        )
         .await
         .expect("VS Code makes the profile");
         first_open
@@ -564,31 +651,28 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             .await
             .expect("the profile's first window closes");
         second
-            .prepare_profile(&release)
+            .prepare_profile(&s.release)
             .await
             .expect("Remote-SSH installs in the profile");
         let mut window = second
-            .start(&release, &node, &modules, &out.join("code-profile.log"))
+            .start(
+                &s.release,
+                &s.node,
+                &s.modules,
+                &s.out.join("code-profile.log"),
+            )
             .await
             .expect("VS Code starts in the profile");
         window.attached(UP).await.expect("attached again");
-        eventually_async("the git extension's socket is up", SHOWS, || async {
-            let said = shell(
-                &runtime,
-                &sandbox,
-                "ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1 || true",
-            )
+        s.wait_for_git_socket("ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1 || true")
             .await;
-            (!said.trim().is_empty()).then_some(())
-        })
-        .await;
         // The first window's server may have left its socket behind, so ask until the live extension
         // answers by asking the person.
         let mut asked = None;
         let mut said = String::new();
         let until = std::time::Instant::now() + SHOWS;
         while asked.is_none() && std::time::Instant::now() < until {
-            said = shell(&runtime, &sandbox, ASKPASS).await;
+            said = s.shell(ASKPASS).await;
             assert!(
                 !said.contains("gho_") && !has_password(&said),
                 "a token reached the guest with no GitHub provider on this side: {said}"
@@ -604,17 +688,13 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 .is_some_and(|a| a.contains("Git: https://github.com")),
             "the git extension in the profile's window never asked the person for github.com: {asked:?}, askpass said {said}"
         );
-        let who_again = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe, &out).await;
+        let who_again =
+            hostile_code_runs_here(&mut window, &s.runtime, &s.sandbox, &s.probe, &s.out).await;
         assert_eq!(
             who_again, who,
             "the same user runs the command in the profile"
         );
-        window.screenshot(&out.join("u7d.png")).await.unwrap();
+        window.screenshot(&s.out.join("u7d.png")).await.unwrap();
         window.close().await.expect("the window closes");
-
-        api.post(&format!("/api/workspaces/{name}/stop"), "").await;
-        events
-            .until(ended(name_static), Duration::from_secs(120))
-            .await;
     }
 }

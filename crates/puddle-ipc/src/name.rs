@@ -19,6 +19,34 @@ pub(crate) fn random_name<const N: usize>() -> Result<String, IpcError> {
     Ok(hex(&bytes))
 }
 
+/// The longest endpoint name: a workspace id.
+const MAX_NAME_LEN: usize = 63;
+
+/// Whether `name` is 1 to [`MAX_NAME_LEN`] characters of `a-z`, `0-9` and `-`: a name that is safe
+/// in a file name and a pipe name on every OS.
+pub(crate) fn check_name(name: &str) -> Result<(), IpcError> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_NAME_LEN
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    if ok {
+        Ok(())
+    } else {
+        Err(IpcError::InvalidName {
+            name: name.to_owned(),
+        })
+    }
+}
+
+/// Whether `id` is what `random_name::<16>` makes: 32 lowercase hex digits.
+pub(crate) fn is_install_id(id: &str) -> bool {
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes

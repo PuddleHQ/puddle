@@ -97,7 +97,7 @@ GITHUB_EVENT_NAME=merge_group "$part" args 1 3 "$tmp/list" "$tmp/timings" "$FILT
 
 # 6. more partitions than tests: an empty one matches nothing
 printf 'crate-a::vm_one case_1\n' >"$tmp/one"
-"$part" args 2 2 "$tmp/one" "$tmp/timings" "$FILTER" 2>/dev/null | grep -q 'none()' || bad "an empty partition does not select nothing"
+grep -q 'none()' <<<"$("$part" args 2 2 "$tmp/one" "$tmp/timings" "$FILTER" 2>/dev/null)" || bad "an empty partition does not select nothing"
 "$part" args 4 3 "$tmp/list" "$tmp/timings" "$FILTER" >/dev/null 2>&1; [ $? = 2 ] || bad "index over count is not a usage error"
 
 # 7. the refresh: median of passing seconds, a failed test and an escaped name left out
@@ -121,13 +121,13 @@ mk "$tmp/j1.xml" 10.000 99.000; mk "$tmp/j2.xml" 30.000 99.000; mk "$tmp/j3.xml"
 "$refresh" "$tmp/out2.tsv" "$tmp/none.xml" >/dev/null 2>&1; [ $? = 2 ] || bad "refresh accepted a missing junit file"
 
 # 8. the filterset: the soak and the performance bars run on the nightly and on a dispatch only
-for ev in pull_request merge_group push ""; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q vm_soak_ || bad "soak is not excluded on '$ev'"; done
-for ev in schedule workflow_dispatch; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q vm_soak_ && bad "soak is excluded on $ev"; done
+for ev in pull_request merge_group push ""; do grep -q vm_soak_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "soak is not excluded on '$ev'"; done
+for ev in schedule workflow_dispatch; do grep -q vm_soak_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" && bad "soak is excluded on $ev"; done
 # The desktop VS Code tests are in no partition on any event, and the job that runs them selects exactly them.
-for ev in schedule workflow_dispatch pull_request merge_group push ""; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q 'not (.*vm_vscode_' || bad "vscode tests are not excluded on '$ev'"; done
+for ev in schedule workflow_dispatch pull_request merge_group push ""; do grep -q 'not (.*vm_vscode_' <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "vscode tests are not excluded on '$ev'"; done
 [ "$("$here/vm-filter.sh" vscode)" = 'test(/(^|::)vm_vscode_/)' ] || bad "the vscode job's filter is not just the vscode tests"
-for ev in pull_request merge_group push ""; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q vm_perf_ || bad "perf bars are not excluded on '$ev'"; done
-for ev in schedule workflow_dispatch; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q vm_perf_ && bad "perf bars are excluded on $ev"; done
+for ev in pull_request merge_group push ""; do grep -q vm_perf_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "perf bars are not excluded on '$ev'"; done
+for ev in schedule workflow_dispatch; do grep -q vm_perf_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" && bad "perf bars are excluded on $ev"; done
 
 # 9. the committed timing files are usable: every line parses and the file is not empty
 for os in linux windows; do

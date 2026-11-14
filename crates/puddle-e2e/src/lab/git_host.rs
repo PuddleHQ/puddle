@@ -757,6 +757,19 @@ fn without_proxy_headers(head: &[u8]) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// Whether the host of `authority` (`host:port`) is under a top-level name that RFC 6761
+/// reserves and never resolves: `.test` and `.invalid`.
+fn is_reserved_name(authority: &str) -> bool {
+    let host = authority
+        .rsplit_once(':')
+        .map_or(authority, |(host, _)| host);
+    let top = host
+        .trim_end_matches('.')
+        .rsplit_once('.')
+        .map(|(_, top)| top);
+    top.is_some_and(|top| top.eq_ignore_ascii_case("test") || top.eq_ignore_ascii_case("invalid"))
+}
+
 /// The `host:port` an absolute `http://` URI names (port 80 when it has none); the text itself
 /// when it is no such URI.
 fn plain_authority(target: &str) -> String {
@@ -828,6 +841,12 @@ impl NameProxy {
                     // open company proxy (the image pull goes through the same chain).
                     let connected = match target {
                         Some(target) => TcpStream::connect(target).await,
+                        // Names under `.test` and `.invalid` never resolve (RFC 6761), so the
+                        // answer is known without asking the machine's resolver, which on a
+                        // host with a dead or slow DNS takes seconds to say the same.
+                        None if is_reserved_name(&authority) => {
+                            Err(std::io::Error::other("a reserved name does not resolve"))
+                        }
                         None => TcpStream::connect(authority.as_str()).await,
                     };
                     let Ok(mut upstream) = connected else {

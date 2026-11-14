@@ -64,7 +64,12 @@ fn the_owner_adopts_the_listed_workspaces_once() {
     let ann = store.add_user(&name("ann")).unwrap().id;
     store.set_workspace_owner(&ws("anns"), ann).unwrap();
     let listed = [ws("old"), ws("anns")];
-    assert_eq!(store.adopt_unowned_workspaces(&listed).unwrap(), 1);
+    assert_eq!(
+        store
+            .adopt_unowned_workspaces(&crate::testing::all_users(), &listed)
+            .unwrap(),
+        1
+    );
     assert_eq!(
         (
             store.workspace_owner(&ws("old")).unwrap(),
@@ -72,7 +77,12 @@ fn the_owner_adopts_the_listed_workspaces_once() {
         ),
         (Some(UserId::OWNER), Some(ann))
     );
-    assert_eq!(store.adopt_unowned_workspaces(&[ws("later")]).unwrap(), 0);
+    assert_eq!(
+        store
+            .adopt_unowned_workspaces(&crate::testing::all_users(), &[ws("later")])
+            .unwrap(),
+        0
+    );
     assert_eq!(store.workspace_owner(&ws("later")).unwrap(), None);
 }
 
@@ -84,9 +94,18 @@ fn an_adoption_that_fails_is_tried_again() {
         "CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
          BEGIN SELECT RAISE(ABORT, 'refused'); END;",
     );
-    assert!(store.adopt_unowned_workspaces(&[ws("old")]).is_err());
+    assert!(
+        store
+            .adopt_unowned_workspaces(&crate::testing::all_users(), &[ws("old")])
+            .is_err()
+    );
     store.break_database("DROP TRIGGER no_owner");
-    assert_eq!(store.adopt_unowned_workspaces(&[ws("old")]).unwrap(), 1);
+    assert_eq!(
+        store
+            .adopt_unowned_workspaces(&crate::testing::all_users(), &[ws("old")])
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -146,7 +165,12 @@ fn an_audit_record_carries_its_workspaces_user_and_a_filter_keeps_to_one_user() 
             ..AuditFilter::default()
         };
         store
-            .audit_query_every_user(&filter, AuditCursor::After(0), 10)
+            .audit_query_every_user(
+                &crate::testing::all_users(),
+                &filter,
+                AuditCursor::After(0),
+                10,
+            )
             .unwrap()
             .into_iter()
             .map(|(_, line)| line)

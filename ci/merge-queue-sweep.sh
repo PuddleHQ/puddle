@@ -41,7 +41,7 @@ enqueue='mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pul
 readback='query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { state } } } }'
 queued() {
     sleep "$wait"
-    gh api graphql -F id="$1" -f query="$readback" --jq '.data.node.mergeQueueEntry != null' 2>/dev/null | grep -qx true
+    grep -qx true <<<"$(gh api graphql -F id="$1" -f query="$readback" --jq '.data.node.mergeQueueEntry != null' 2>/dev/null)"
 }
 
 rc=0

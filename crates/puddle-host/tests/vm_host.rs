@@ -17,6 +17,7 @@ mod support;
 mod vm_support;
 
 use std::collections::BTreeSet;
+use std::io::Write as _;
 use std::time::Duration;
 
 use puddle_compute::{ExecRequest, Runtime, Sandbox};
@@ -64,6 +65,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     // The workspace's sandbox may reach the repository host, and nothing else.
     let name = format!("{}-host", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -554,6 +556,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
     let name = format!("{}-repos", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     for allowed in [REPO_HOST, UNREACHABLE_HOST] {
+        puddle_store::testing::own(host.store(), &sandbox);
         host.store()
             .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
@@ -977,6 +980,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     ) = start_vm_host_github("manage").await;
     let name = format!("{}-manage", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -1175,6 +1179,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
     } = start_vm_host_platform("anon", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-anon", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -1264,6 +1269,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     let name = format!("{}-ca", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in ["github.com", SECOND, SITE] {
+        puddle_store::testing::own(host.store(), &sandbox);
         host.store()
             .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
@@ -1446,6 +1452,7 @@ async fn vm_host_decrypts_an_unlisted_host_in_the_curated_mode_and_follows_the_g
     } = start_vm_host_platform("curated", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-curated", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -1620,6 +1627,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     } = start_vm_host_platform("quic", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-quic", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -1865,9 +1873,75 @@ async fn connections(api: &Api, workspace: &str, host: &str) -> Vec<serde_json::
 /// proxy swaps the real value in toward the secret's own hosts only; a stand-in toward another
 /// decrypted host is flagged; and a secret added to the running workspace makes its host
 /// decrypted from the next connection with no restart.
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own_hosts() {
+    let mut story = boot_env_story().await;
+    phase_env_guest_has_stand_ins(&story).await;
+    phase_env_real_values_nowhere_in_guest(&story).await;
+    phase_env_only_named_hosts_decrypted(&story).await;
+    phase_env_swap_toward_own_host(&story).await;
+    phase_env_stand_in_toward_other_host_flagged(&story).await;
+    phase_env_stand_in_in_url_never_swapped(&story).await;
+    phase_env_foreign_stand_in_untouched(&story).await;
+    phase_env_secret_added_while_running(&story).await;
+    phase_env_secret_removed(&story).await;
+    let down = finish_env_story(&mut story).await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The one booted VM of the stand-in story and what its phases share.
+struct EnvStory {
+    web: puddle_e2e::lab::WebHost,
+    // Kept alive for the whole story: the company proxy and the fake `github.com` behind it.
+    _proxy: puddle_e2e::lab::NameProxy,
+    _git: Option<puddle_e2e::lab::GitHost>,
+    host: Host<MsbRuntime>,
+    runtime: MsbRuntime,
+    secrets: std::sync::Arc<puddle_secrets::MemoryStore>,
+    name: String,
+    name_static: &'static str,
+    sandbox: WorkspaceId,
+    api: Api,
+    events: support::Events,
+    stand_a: String,
+    stand_b: String,
+    ca_name: String,
+}
+
+impl EnvStory {
+    async fn put(&self, path: &str, body: serde_json::Value) {
+        let reply = self.api.put(path, &body.to_string()).await;
+        assert_eq!(reply.status, 200, "{path}: {}", reply.body);
+    }
+
+    async fn guest(&self, script: &str) -> String {
+        guest(&self.runtime, &self.sandbox, script).await
+    }
+
+    /// The requests the fake site has seen, and the same listed by method and target (a failure
+    /// lists these: their headers hold the secret).
+    fn requests(&self) -> (Vec<puddle_e2e::lab::Seen>, Vec<String>) {
+        let seen = self.web.seen();
+        let listed: Vec<String> = seen
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.target))
+            .collect();
+        (seen, listed)
+    }
+}
+
+/// Asserts that a JSON object has `key` set to `want`.
+fn assert_field(value: &serde_json::Value, key: &str, want: &serde_json::Value) {
+    assert_eq!(value.get(key), Some(want), "{key} in {value}");
+}
+
+fn env_curl(site: &str, header: &str, value: &str) -> String {
+    format!(
+        "curl -s -o /dev/null -w '%{{http_code}}' --max-time 60 -H \"{header}: {value}\" https://{site}/"
+    )
+}
+
+async fn boot_env_story() -> EnvStory {
     let internet = web_internet(
         &[ALPHA, BETA, GAMMA],
         WebOptions::default(),
@@ -1884,6 +1958,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let name = format!("{}-env", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in [ALPHA, BETA, GAMMA] {
+        puddle_store::testing::own(host.store(), &sandbox);
         host.store()
             .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
@@ -1896,24 +1971,24 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
             .unwrap();
     }
     let api = Api::new(host.url(), host.token());
-    let put = |path: &str, body: serde_json::Value| {
-        let (api, path) = (&api, path.to_owned());
+    let story_put = |path: &'static str, body: serde_json::Value| {
+        let api = &api;
         async move {
-            let reply = api.put(&path, &body.to_string()).await;
+            let reply = api.put(path, &body.to_string()).await;
             assert_eq!(reply.status, 200, "{path}: {}", reply.body);
         }
     };
-    put(
+    story_put(
         "/api/env/PROBE_PLAIN",
         json!({"kind": "plain", "value": "plain value 'quoted' $HOME"}),
     )
     .await;
-    put(
+    story_put(
         "/api/env/PROBE_A",
         json!({"kind": "secret", "value": SECRET_A, "hosts": [ALPHA]}),
     )
     .await;
-    put(
+    story_put(
         "/api/env/PROBE_B",
         json!({"kind": "secret", "value": SECRET_B, "hosts": [BETA]}),
     )
@@ -1932,157 +2007,157 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let end = events
         .until(ended(name_static), Duration::from_secs(600))
         .await;
-    assert_eq!(end["step"], "done", "{end}");
-
-    // The guest has the plain variable as it was written and a stand-in under each secret's name,
-    // for a process started directly and for a login shell.
+    assert_field(&end, "step", &json!("done"));
     let stand_a = stand_in_of(&host, &sandbox, "PROBE_A");
     let stand_b = stand_in_of(&host, &sandbox, "PROBE_B");
-    assert!(stand_a.starts_with("puddle-secret-PROBE_A-"), "{stand_a}");
+    let ca_name = format!("Puddle CA for {name}");
+    EnvStory {
+        web: internet.web,
+        _proxy: internet.proxy,
+        _git: internet.git,
+        host,
+        runtime,
+        secrets,
+        name,
+        name_static,
+        sandbox,
+        api,
+        events,
+        stand_a,
+        stand_b,
+        ca_name,
+    }
+}
+
+/// The guest has the plain variable as it was written and a stand-in under each secret's name, for
+/// a process started directly and for a login shell.
+async fn phase_env_guest_has_stand_ins(s: &EnvStory) {
+    assert!(
+        s.stand_a.starts_with("puddle-secret-PROBE_A-"),
+        "{}",
+        s.stand_a
+    );
     assert_eq!(
-        guest(&runtime, &sandbox, "printenv PROBE_PLAIN")
-            .await
-            .trim(),
+        s.guest("printenv PROBE_PLAIN").await.trim(),
         "plain value 'quoted' $HOME"
     );
-    assert_eq!(
-        guest(&runtime, &sandbox, "printenv PROBE_A").await.trim(),
-        stand_a
-    );
-    assert_eq!(
-        guest(&runtime, &sandbox, "printenv PROBE_B").await.trim(),
-        stand_b
-    );
-    assert_eq!(
-        guest(&runtime, &sandbox, "sh -lc 'printenv PROBE_A'")
-            .await
-            .trim(),
-        stand_a
-    );
+    assert_eq!(s.guest("printenv PROBE_A").await.trim(), s.stand_a);
+    assert_eq!(s.guest("printenv PROBE_B").await.trim(), s.stand_b);
+    assert_eq!(s.guest("sh -lc 'printenv PROBE_A'").await.trim(), s.stand_a);
+}
 
-    // The real values are nowhere in the guest: no file on the disk, no running process's
-    // environment.
+/// The real values are nowhere in the guest: no file on the disk, no running process's environment.
+async fn phase_env_real_values_nowhere_in_guest(s: &EnvStory) {
     let (a, b) = (split(SECRET_A), split(SECRET_B));
-    let search = guest(
-        &runtime,
-        &sandbox,
-        &format!(
+    let search = s
+        .guest(&format!(
             "files=$(grep -rla -e {a} -e {b} / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null); \
              live=$(cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c -e {a} -e {b}); \
              echo \"files=[$files] processes=[$live]\""
-        ),
-    )
-    .await;
+        ))
+        .await;
     assert_eq!(search.trim(), "files=[] processes=[0]", "{search}");
+}
 
-    // Only the hosts the secrets name are decrypted; the rest keep their real certificate.
-    let ca_name = format!("Puddle CA for {name}");
+/// Only the hosts the secrets name are decrypted; the rest keep their real certificate.
+async fn phase_env_only_named_hosts_decrypted(s: &EnvStory) {
     for site in [ALPHA, BETA] {
-        let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
-        assert!(issuer.contains(&ca_name), "{site}: {issuer}");
+        let issuer = s.guest(&issuer_script(site)).await;
+        assert!(issuer.contains(&s.ca_name), "{site}: {issuer}");
     }
-    let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
+    let net = s.guest(&issuer_script(GAMMA)).await;
     assert!(!net.to_lowercase().contains("puddle"), "{net}");
+}
 
-    // A request toward a secret's own host with its stand-in: the proxy swaps the real value in
-    // (the record says a credential was added, by name), and the guest still sees only the stand-in.
-    let curl = |site: &str, header: &str, value: &str| {
-        format!(
-            "curl -s -o /dev/null -w '%{{http_code}}' --max-time 60 -H \"{header}: {value}\" https://{site}/"
-        )
-    };
-    let code = guest(
-        &runtime,
-        &sandbox,
-        &curl(ALPHA, "Authorization", "Bearer $PROBE_A"),
-    )
-    .await;
+/// A request toward a secret's own host with its stand-in: the proxy swaps the real value in (the
+/// record says a credential was added, by name), and the guest still sees only the stand-in.
+async fn phase_env_swap_toward_own_host(s: &EnvStory) {
+    let code = s
+        .guest(&env_curl(ALPHA, "Authorization", "Bearer $PROBE_A"))
+        .await;
     assert!(
         code.trim().starts_with('2') || code.trim().starts_with('4'),
         "{code}"
     );
-    let swapped = record_where(&api, &name, ALPHA, |r| r["injected"] == true).await;
-    assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_A");
-    assert_eq!(swapped["unswapped_stand_ins"], serde_json::json!([]));
-    // The site was sent the real value, which only the proxy had. (A failure lists the requests
-    // by method and target: their headers hold the secret.)
-    let requests = || {
-        let seen = internet.web.seen();
-        let listed: Vec<String> = seen
-            .iter()
-            .map(|r| format!("{} {}", r.method, r.target))
-            .collect();
-        (seen, listed)
-    };
-    let (seen, listed) = requests();
+    let swapped = record_where(&s.api, &s.name, ALPHA, |r| r["injected"] == true).await;
+    assert_field(&swapped, "binding_id", &json!("stand-in:secret:PROBE_A"));
+    assert_field(&swapped, "unswapped_stand_ins", &json!([]));
+    // The site was sent the real value, which only the proxy had.
+    let (seen, listed) = s.requests();
     assert!(
         seen.iter().any(|r| r.headers_named("host") == [ALPHA]
             && r.headers_named("authorization") == [format!("Bearer {SECRET_A}")]),
         "{ALPHA} was not sent the real value; requests seen: {listed:?}"
     );
+}
 
-    // The same stand-in toward another decrypted host goes out unchanged and is flagged.
-    guest(&runtime, &sandbox, &curl(BETA, "X-Probe", "$PROBE_A")).await;
-    let flagged = record_where(&api, &name, BETA, |r| {
+/// The same stand-in toward another decrypted host goes out unchanged and is flagged.
+async fn phase_env_stand_in_toward_other_host_flagged(s: &EnvStory) {
+    s.guest(&env_curl(BETA, "X-Probe", "$PROBE_A")).await;
+    let flagged = record_where(&s.api, &s.name, BETA, |r| {
         r["unswapped_stand_ins"] == serde_json::json!(["stand-in:secret:PROBE_A"])
     })
     .await;
-    assert_eq!(flagged["injected"], false);
-    let (seen, listed) = requests();
+    assert_field(&flagged, "injected", &json!(false));
+    let (seen, listed) = s.requests();
     assert!(
         seen.iter().any(|r| r.headers_named("host") == [BETA]
-            && r.headers_named("x-probe") == [stand_a.as_str()]),
+            && r.headers_named("x-probe") == [s.stand_a.as_str()]),
         "{BETA} was not sent the stand-in unchanged; requests seen: {listed:?}"
     );
+}
 
-    // A stand-in in the URL is never swapped, even toward its own host: the site gets it as it
-    // came and the record names the secret.
-    guest(
-        &runtime,
-        &sandbox,
-        &format!(
-            "curl -s -o /dev/null --max-time 60 \"https://{ALPHA}/in-the-url/$PROBE_A?k=$PROBE_A\""
-        ),
-    )
+/// A stand-in in the URL is never swapped, even toward its own host: the site gets it as it came
+/// and the record names the secret.
+async fn phase_env_stand_in_in_url_never_swapped(s: &EnvStory) {
+    s.guest(&format!(
+        "curl -s -o /dev/null --max-time 60 \"https://{ALPHA}/in-the-url/$PROBE_A?k=$PROBE_A\""
+    ))
     .await;
-    let in_url = record_where(&api, &name, ALPHA, |r| {
+    let in_url = record_where(&s.api, &s.name, ALPHA, |r| {
         r["unswapped_stand_ins"] == serde_json::json!(["stand-in:secret:PROBE_A"])
     })
     .await;
-    assert_eq!(in_url["injected"], false);
-    let (seen, listed) = requests();
+    assert_field(&in_url, "injected", &json!(false));
+    let (seen, listed) = s.requests();
+    let stand_a = &s.stand_a;
     assert!(
         seen.iter()
             .any(|r| r.target == format!("/in-the-url/{stand_a}?k={stand_a}")),
         "{ALPHA} was not sent the URL as it came; requests seen: {listed:?}"
     );
+}
 
-    // A stand-in this workspace's proxy does not hold (another workspace's has other random
-    // bytes) is only a string: not swapped, not flagged.
+/// A stand-in this workspace's proxy does not hold (another workspace's has other random bytes) is
+/// only a string: not swapped, not flagged.
+async fn phase_env_foreign_stand_in_untouched(s: &EnvStory) {
     let foreign = format!("puddle-secret-PROBE_A-{}", "0123456789abcdef".repeat(2));
-    assert_ne!(foreign, stand_a);
-    guest(&runtime, &sandbox, &curl(ALPHA, "X-Foreign", &foreign)).await;
+    assert_ne!(foreign, s.stand_a);
+    s.guest(&env_curl(ALPHA, "X-Foreign", &foreign)).await;
     puddle_test_kit::eventually_async(
         &format!("{ALPHA} got the foreign stand-in as it came"),
         Duration::from_secs(30),
         || async {
-            let (seen, _) = requests();
+            let (seen, _) = s.requests();
             seen.iter()
                 .any(|r| r.headers_named("x-foreign") == [foreign.as_str()])
         },
     )
     .await;
+}
 
-    // A secret added to the running workspace: its host is decrypted from the next connection,
-    // with the same CA and no restart.
+/// A secret added to the running workspace: its host is decrypted from the next connection, with
+/// the same CA and no restart.
+async fn phase_env_secret_added_while_running(s: &EnvStory) {
+    let host = &s.host;
     let ca_before = host
         .workspaces()
-        .termination(&sandbox)
+        .termination(&s.sandbox)
         .unwrap()
         .ca()
         .certificate()
         .clone();
-    put(
+    s.put(
         "/api/env/PROBE_C",
         json!({"kind": "secret", "value": SECRET_C, "hosts": [GAMMA]}),
     )
@@ -2092,7 +2167,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         Duration::from_secs(10),
         || async {
             host.workspaces()
-                .termination(&sandbox)
+                .termination(&s.sandbox)
                 .unwrap()
                 .set()
                 .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
@@ -2101,48 +2176,55 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     .await;
     assert_eq!(
         host.workspaces()
-            .termination(&sandbox)
+            .termination(&s.sandbox)
             .unwrap()
             .ca()
             .certificate(),
         &ca_before
     );
-    let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
-    assert!(net.contains(&ca_name), "{net}");
+    let net = s.guest(&issuer_script(GAMMA)).await;
+    assert!(net.contains(&s.ca_name), "{net}");
     // Its stand-in is not in the running guest's environment (that is read at the next start),
     // but the proxy already knows it: a request that carries it is swapped.
-    let stand_c = stand_in_of(&host, &sandbox, "PROBE_C");
-    guest(&runtime, &sandbox, &curl(GAMMA, "X-Probe", &stand_c)).await;
-    let swapped = record_where(&api, &name, GAMMA, |r| r["injected"] == true).await;
-    assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_C");
+    let stand_c = stand_in_of(host, &s.sandbox, "PROBE_C");
+    s.guest(&env_curl(GAMMA, "X-Probe", &stand_c)).await;
+    let swapped = record_where(&s.api, &s.name, GAMMA, |r| r["injected"] == true).await;
+    assert_field(&swapped, "binding_id", &json!("stand-in:secret:PROBE_C"));
+}
 
-    // Removing it takes the host out again, and its value out of the credential store.
-    assert_eq!(api.delete("/api/env/PROBE_C", None).await.status, 204);
+/// Removing it takes the host out again, and its value out of the credential store.
+async fn phase_env_secret_removed(s: &EnvStory) {
+    assert_eq!(s.api.delete("/api/env/PROBE_C", None).await.status, 204);
     puddle_test_kit::eventually_async(
         "gamma.invalid left the decrypt set",
         Duration::from_secs(10),
         || async {
-            !host
+            !s.host
                 .workspaces()
-                .termination(&sandbox)
+                .termination(&s.sandbox)
                 .unwrap()
                 .set()
                 .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
         },
     )
     .await;
-    assert_eq!(secrets.ids().len(), 2);
-    let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
+    assert_eq!(s.secrets.ids().len(), 2);
+    let net = s.guest(&issuer_script(GAMMA)).await;
     assert!(!net.to_lowercase().contains("puddle"), "{net}");
+}
 
-    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
-    assert_eq!(stop.status, 202, "{}", stop.body);
-    let end = events
-        .until(ended(name_static), Duration::from_secs(120))
+async fn finish_env_story(s: &mut EnvStory) -> puddle_host::HostShutdown {
+    let stop = s
+        .api
+        .post(&format!("/api/workspaces/{}/stop", s.name), "")
         .await;
-    assert_eq!(end["step"], "done", "{end}");
-    let down = host.shutdown().await;
-    assert!(down.sandboxes.all_stopped(), "{down:?}");
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = s
+        .events
+        .until(ended(s.name_static), Duration::from_secs(120))
+        .await;
+    assert_field(&end, "step", &json!("done"));
+    s.host.shutdown().await
 }
 
 /// The login hosts of the capture test below.
@@ -2213,6 +2295,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     let name = format!("{}-login", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in names {
+        puddle_store::testing::own(host.store(), &sandbox);
         host.store()
             .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
@@ -2432,6 +2515,7 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
     let name = format!("{}-held", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     // The repository host for the clone, and the host's own address for the connections.
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -2500,13 +2584,7 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
 /// A small HTTP/1.1 server on the host for the transparency bar (keep-alive):
 /// `GET /ping` answers `pong`; `GET /bytes/<n>` sends `n` bytes; `PUT /sink` with a
 /// `Content-Length` reads that many bytes and answers `received=<n>`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one connection loop, read top to bottom"
-)]
 async fn transparency_fixture() -> u16 {
-    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-
     let server = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
@@ -2516,96 +2594,152 @@ async fn transparency_fixture() -> u16 {
             let Ok((conn, _)) = server.accept().await else {
                 return;
             };
-            tokio::spawn(async move {
-                let mut conn = BufReader::new(conn);
-                loop {
-                    let mut line = String::new();
-                    if conn.read_line(&mut line).await.is_ok_and(|n| n == 0) || line.is_empty() {
-                        return;
-                    }
-                    let request = line.trim_end().to_owned();
-                    let mut length = 0u64;
-                    let mut close = false;
-                    loop {
-                        let mut header = String::new();
-                        if conn.read_line(&mut header).await.is_ok_and(|n| n == 0) {
-                            return;
-                        }
-                        if header == "\r\n" {
-                            break;
-                        }
-                        let header = header.to_ascii_lowercase();
-                        if let Some(value) = header.strip_prefix("content-length:") {
-                            length = value.trim().parse().unwrap_or(0);
-                        }
-                        close |= header.trim_end() == "connection: close";
-                    }
-                    let mut parts = request.split(' ');
-                    let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-                    let path = path.split('?').next().unwrap_or("");
-                    let mut buf = vec![0u8; 1 << 20];
-                    let ok = if method == "PUT" {
-                        let mut left = length;
-                        while left > 0 {
-                            let want = usize::try_from(left.min(buf.len() as u64)).unwrap();
-                            match conn
-                                .read(buf.get_mut(..want).expect("within the buffer"))
-                                .await
-                            {
-                                Ok(0) | Err(_) => return,
-                                Ok(n) => left -= n as u64,
-                            }
-                        }
-                        let body = format!("received={length}");
-                        conn.get_mut()
-                            .write_all(
-                                format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
-                                    body.len()
-                                )
-                                .as_bytes(),
-                            )
-                            .await
-                            .is_ok()
-                    } else if let Some(n) = path.strip_prefix("/bytes/") {
-                        let total: u64 = n.parse().unwrap_or(0);
-                        if conn
-                            .get_mut()
-                            .write_all(
-                                format!("HTTP/1.1 200 OK\r\nContent-Length: {total}\r\n\r\n")
-                                    .as_bytes(),
-                            )
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                        let mut left = total;
-                        let mut ok = true;
-                        while left > 0 && ok {
-                            let n = usize::try_from(left.min(buf.len() as u64)).unwrap();
-                            ok = conn
-                                .get_mut()
-                                .write_all(buf.get(..n).expect("within the buffer"))
-                                .await
-                                .is_ok();
-                            left -= n as u64;
-                        }
-                        ok
-                    } else {
-                        conn.get_mut()
-                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\npong")
-                            .await
-                            .is_ok()
-                    };
-                    if !ok || close {
-                        return;
-                    }
-                }
-            });
+            tokio::spawn(transparency_connection(tokio::io::BufReader::new(conn)));
         }
     });
     port
+}
+
+/// The parts of a request the transparency fixture looks at.
+struct TransparencyRequest {
+    method: String,
+    path: String,
+    length: u64,
+    close: bool,
+}
+
+/// Reads one request's head; `None` when the peer is gone.
+async fn read_transparency_request(
+    conn: &mut tokio::io::BufReader<tokio::net::TcpStream>,
+) -> Option<TransparencyRequest> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut line = String::new();
+    if conn.read_line(&mut line).await.is_ok_and(|n| n == 0) || line.is_empty() {
+        return None;
+    }
+    let request = line.trim_end().to_owned();
+    let mut length = 0u64;
+    let mut close = false;
+    loop {
+        let mut header = String::new();
+        if conn.read_line(&mut header).await.is_ok_and(|n| n == 0) {
+            return None;
+        }
+        if header == "\r\n" {
+            break;
+        }
+        let header = header.to_ascii_lowercase();
+        if let Some(value) = header.strip_prefix("content-length:") {
+            length = value.trim().parse().unwrap_or(0);
+        }
+        close |= header.trim_end() == "connection: close";
+    }
+    let mut parts = request.split(' ');
+    let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    let path = path.split('?').next().unwrap_or("");
+    Some(TransparencyRequest {
+        method: method.to_owned(),
+        path: path.to_owned(),
+        length,
+        close,
+    })
+}
+
+/// One keep-alive connection: answers requests until the peer or a `Connection: close` ends it.
+async fn transparency_connection(mut conn: tokio::io::BufReader<tokio::net::TcpStream>) {
+    loop {
+        let Some(request) = read_transparency_request(&mut conn).await else {
+            return;
+        };
+        let mut buf = vec![0u8; 1 << 20];
+        let ok = if request.method == "PUT" {
+            let Some(ok) = answer_transparency_put(&mut conn, request.length, &mut buf).await
+            else {
+                return;
+            };
+            ok
+        } else if let Some(n) = request.path.strip_prefix("/bytes/") {
+            let Some(ok) = answer_transparency_bytes(&mut conn, n, &buf).await else {
+                return;
+            };
+            ok
+        } else {
+            use tokio::io::AsyncWriteExt;
+            conn.get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\npong")
+                .await
+                .is_ok()
+        };
+        if !ok || request.close {
+            return;
+        }
+    }
+}
+
+/// `PUT /sink`: reads `length` bytes and answers `received=<length>`. `None` when the peer is gone.
+async fn answer_transparency_put(
+    conn: &mut tokio::io::BufReader<tokio::net::TcpStream>,
+    length: u64,
+    buf: &mut [u8],
+) -> Option<bool> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut left = length;
+    while left > 0 {
+        let want = usize::try_from(left.min(buf.len() as u64)).unwrap();
+        match conn
+            .read(buf.get_mut(..want).expect("within the buffer"))
+            .await
+        {
+            Ok(0) | Err(_) => return None,
+            Ok(n) => left -= n as u64,
+        }
+    }
+    let body = format!("received={length}");
+    Some(
+        conn.get_mut()
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .is_ok(),
+    )
+}
+
+/// `GET /bytes/<n>`: sends `n` bytes. `None` when the head could not be written.
+async fn answer_transparency_bytes(
+    conn: &mut tokio::io::BufReader<tokio::net::TcpStream>,
+    n: &str,
+    buf: &[u8],
+) -> Option<bool> {
+    use tokio::io::AsyncWriteExt;
+
+    let total: u64 = n.parse().unwrap_or(0);
+    if conn
+        .get_mut()
+        .write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {total}\r\n\r\n").as_bytes())
+        .await
+        .is_err()
+    {
+        return None;
+    }
+    let mut left = total;
+    let mut ok = true;
+    while left > 0 && ok {
+        let n = usize::try_from(left.min(buf.len() as u64)).unwrap();
+        ok = conn
+            .get_mut()
+            .write_all(buf.get(..n).expect("within the buffer"))
+            .await
+            .is_ok();
+        left -= n as u64;
+    }
+    Some(ok)
 }
 
 /// What every part of [`TRANSPARENCY_PARTS`] starts with.
@@ -2729,6 +2863,7 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     let port = transparency_fixture().await;
     let name = format!("{}-transp", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -2872,6 +3007,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Ap
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in RADAR_HOSTS {
+        puddle_store::testing::own(vm.host.store(), &sandbox);
         vm.host
             .store()
             .as_user(puddle_store::UserId::OWNER)
@@ -4189,6 +4325,7 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
         .map(str::to_owned)
         .chain([format!("{name}.localhost")])
     {
+        puddle_store::testing::own(host.store(), &sandbox);
         host.store()
             .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
@@ -4328,10 +4465,95 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
 /// The second half tries what a root process in the guest can try against the mount itself
 /// (remounting it writable, writing a file in it). Whatever the VM allows, the host's folder is
 /// back to the saved text at the next start, and the user is told when the guest changed it.
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_restored_after_tampering()
  {
+    let mut story = boot_shell_init_story().await;
+    phase_shi_loud_and_broken_scripts_refused(&story).await;
+    phase_shi_quiet_script_saved_and_sourced(&story).await;
+    phase_shi_live_variable_reaches_login_shells(&story).await;
+    phase_shi_guest_cannot_change_the_folder(&story).await;
+    phase_shi_replaced_loader_restored(&mut story).await;
+    phase_shi_mount_tampering_put_right(&mut story).await;
+    let stop = story
+        .api
+        .post(&format!("/api/workspaces/{}/stop", story.name), "")
+        .await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    story
+        .events
+        .until(ended(story.name_static), Duration::from_secs(120))
+        .await;
+    let down = story.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The shell init the story saves.
+const SHI_SAVED: &str =
+    "export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n";
+
+/// The one booted VM of the shell-init story and what its phases share.
+struct ShellInitStory {
+    host: Host<MsbRuntime>,
+    runtime: MsbRuntime,
+    name: String,
+    name_static: &'static str,
+    sandbox: WorkspaceId,
+    api: Api,
+    events: support::Events,
+    path: String,
+    /// The host's folder for this workspace's shell init.
+    folder: std::path::PathBuf,
+    /// What a login shell prints with no shell init (an image may print its own banner).
+    quiet_before: String,
+}
+
+impl ShellInitStory {
+    async fn save(&self, content: &str) -> support::Reply {
+        self.api
+            .put(&self.path, &json!({ "content": content }).to_string())
+            .await
+    }
+
+    async fn guest(&self, script: &str) -> String {
+        guest(&self.runtime, &self.sandbox, script).await
+    }
+
+    async fn stop_and_start(&mut self) -> serde_json::Value {
+        self.api
+            .post(&format!("/api/workspaces/{}/stop", self.name), "")
+            .await;
+        self.events
+            .until(ended(self.name_static), Duration::from_secs(120))
+            .await;
+        self.api
+            .post(&format!("/api/workspaces/{}/start", self.name), "")
+            .await;
+        self.events
+            .until(ended(self.name_static), Duration::from_secs(300))
+            .await
+    }
+
+    async fn live(&self, wanted: &'static str) {
+        puddle_test_kit::eventually_async(
+            &format!("a new login shell sees {wanted}"),
+            Duration::from_secs(10),
+            || async {
+                let now = self
+                    .guest("bash -lc 'echo \"[${SHELL_INIT_LIVE_PROBE-unset}]\"'")
+                    .await;
+                if now.trim() == wanted {
+                    Ok(())
+                } else {
+                    Err(format!("saw {now:?}"))
+                }
+            },
+        )
+        .await;
+    }
+}
+
+async fn boot_shell_init_story() -> ShellInitStory {
     let VmHost {
         host,
         runtime,
@@ -4354,48 +4576,53 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     let end = events
         .until(ended(name_static), Duration::from_secs(600))
         .await;
-    assert_eq!(end["step"], "done", "{end}");
+    assert_field(&end, "step", &json!("done"));
 
     let path = format!("/api/workspaces/{name}/shell-init");
-    let save = |content: &str| {
-        let (api, path, content) = (&api, path.clone(), content.to_owned());
-        async move {
-            api.put(&path, &json!({ "content": content }).to_string())
-                .await
-        }
-    };
-
-    // What a login shell prints with no shell init (an image may print its own banner).
+    let folder = root.join("guest-share").join("shell-init").join(&name);
     let quiet_before = guest(&runtime, &sandbox, "bash -lc true 2>&1; echo end").await;
+    ShellInitStory {
+        host,
+        runtime,
+        name,
+        name_static,
+        sandbox,
+        api,
+        events,
+        path,
+        folder,
+        quiet_before,
+    }
+}
 
-    // A script that prints, and one that does not parse, are refused by the guest's own shell and
-    // nothing is saved.
-    let loud = save("echo hello from my init\n").await;
+/// A script that prints, and one that does not parse, are refused by the guest's own shell and
+/// nothing is saved.
+async fn phase_shi_loud_and_broken_scripts_refused(s: &ShellInitStory) {
+    let loud = s.save("echo hello from my init\n").await;
     assert_eq!(loud.status, 422, "{}", loud.body);
     assert!(
         loud.body.contains("It printed: hello from my init"),
         "{}",
         loud.body
     );
-    let broken = save("if then\n").await;
+    let broken = s.save("if then\n").await;
     assert_eq!(broken.status, 422, "{}", broken.body);
     assert!(broken.body.contains("does not parse"), "{}", broken.body);
-    assert_eq!(api.get(&path).await.json()["saved"], false);
+    assert_field(&s.api.get(&s.path).await.json(), "saved", &json!(false));
+}
 
-    // A quiet one is saved, and a login shell sources it, for a variable and for a function.
-    let saved = save("export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n").await;
+/// A quiet one is saved, and a login shell sources it, for a variable and for a function.
+async fn phase_shi_quiet_script_saved_and_sourced(s: &ShellInitStory) {
+    let saved = s.save(SHI_SAVED).await;
     assert_eq!(saved.status, 200, "{}", saved.body);
-    assert_eq!(saved.json()["checked"], true, "{}", saved.body);
+    assert_field(&saved.json(), "checked", &json!(true));
     let seen = puddle_test_kit::eventually_async(
         "a login shell sourced the saved script",
         Duration::from_secs(10),
         || async {
-            let seen = guest(
-                &runtime,
-                &sandbox,
-                "bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE; shell_init_probe' 2>&1 || true",
-            )
-            .await;
+            let seen = s
+                .guest("bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE; shell_init_probe' 2>&1 || true")
+                .await;
             if seen.contains("from the shell init") {
                 Ok(seen)
             } else {
@@ -4406,83 +4633,59 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     .await;
     assert!(seen.contains("probed"), "{seen}");
     // The shell's output stays clean, which is what the check protects.
-    let clean = guest(&runtime, &sandbox, "bash -lc true 2>&1; echo end").await;
+    let clean = s.guest("bash -lc true 2>&1; echo end").await;
     assert_eq!(
-        clean, quiet_before,
+        clean, s.quiet_before,
         "the image's login shell said something new"
     );
+}
 
-    // A variable added while the workspace runs reaches the login shells opened from then on, with
-    // no restart (the login-shell file is rewritten); one removed leaves them again.
-    let reply = api
+/// A variable added while the workspace runs reaches the login shells opened from then on, with no
+/// restart (the login-shell file is rewritten); one removed leaves them again.
+async fn phase_shi_live_variable_reaches_login_shells(s: &ShellInitStory) {
+    let reply = s
+        .api
         .put(
-            &format!("/api/workspaces/{name}/env/SHELL_INIT_LIVE_PROBE"),
+            &format!("/api/workspaces/{}/env/SHELL_INIT_LIVE_PROBE", s.name),
             &json!({"kind": "plain", "value": "added while running"}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    let live = |wanted: &'static str| {
-        let (runtime, sandbox) = (&runtime, &sandbox);
-        async move {
-            puddle_test_kit::eventually_async(
-                &format!("a new login shell sees {wanted}"),
-                Duration::from_secs(10),
-                || async {
-                    let now = guest(
-                        runtime,
-                        sandbox,
-                        "bash -lc 'echo \"[${SHELL_INIT_LIVE_PROBE-unset}]\"'",
-                    )
-                    .await;
-                    if now.trim() == wanted {
-                        Ok(())
-                    } else {
-                        Err(format!("saw {now:?}"))
-                    }
-                },
-            )
-            .await;
-        }
-    };
-    live("[added while running]").await;
+    s.live("[added while running]").await;
     assert_eq!(
-        api.delete(
-            &format!("/api/workspaces/{name}/env/SHELL_INIT_LIVE_PROBE"),
-            None
-        )
-        .await
-        .status,
+        s.api
+            .delete(
+                &format!("/api/workspaces/{}/env/SHELL_INIT_LIVE_PROBE", s.name),
+                None
+            )
+            .await
+            .status,
         204
     );
-    live("[unset]").await;
+    s.live("[unset]").await;
+}
 
-    // The guest cannot change it: not the file, not a new file beside it.
-    let attempt = guest(
-        &runtime,
-        &sandbox,
-        "echo evil >/puddle/shell-init/init.sh 2>/dev/null; echo \"write=$?\"; \
-         touch /puddle/shell-init/new.sh 2>/dev/null; echo \"create=$?\"",
-    )
-    .await;
+/// The guest cannot change it: not the file, not a new file beside it.
+async fn phase_shi_guest_cannot_change_the_folder(s: &ShellInitStory) {
+    let attempt = s
+        .guest(
+            "echo evil >/puddle/shell-init/init.sh 2>/dev/null; echo \"write=$?\"; \
+             touch /puddle/shell-init/new.sh 2>/dev/null; echo \"create=$?\"",
+        )
+        .await;
     assert!(
         !attempt.contains("write=0") && !attempt.contains("create=0"),
         "the guest changed the read-only folder: {attempt}"
     );
-    assert!(
-        !root
-            .join("guest-share")
-            .join("shell-init")
-            .join(&name)
-            .join("new.sh")
-            .exists()
-    );
-    let folder = root.join("guest-share").join("shell-init").join(&name);
+    assert!(!s.folder.join("new.sh").exists());
     assert_eq!(
-        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
-        "export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n"
+        std::fs::read_to_string(s.folder.join("init.sh")).unwrap(),
+        SHI_SAVED
     );
+}
 
-    // The file that loads it is replaced from inside, and the next start says so and puts it back.
+/// The file that loads it is replaced from inside, and the next start says so and puts it back.
+async fn phase_shi_replaced_loader_restored(s: &mut ShellInitStory) {
     // The variable change above runs the boot plan again in the guest, and that run is still
     // writing Puddle's files when the new value is first visible: it would put the loader back
     // over the replacement. The hook writes `boot.done` last, so wait for it.
@@ -4490,110 +4693,78 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
         "the boot plan finished",
         Duration::from_secs(10),
         || async {
-            guest(
-                &runtime,
-                &sandbox,
-                "if [ -f /run/puddle/boot.done ]; then echo settled; else echo running; fi",
-            )
-            .await
-            .trim()
+            s.guest("if [ -f /run/puddle/boot.done ]; then echo settled; else echo running; fi")
+                .await
+                .trim()
                 == "settled"
         },
     )
     .await;
-    guest(
-        &runtime,
-        &sandbox,
-        "echo '# nothing to see' >/etc/profile.d/02-puddle-shell-init.sh",
-    )
-    .await;
-    let replaced = guest(
-        &runtime,
-        &sandbox,
-        "cat /etc/profile.d/02-puddle-shell-init.sh",
-    )
-    .await;
+    s.guest("echo '# nothing to see' >/etc/profile.d/02-puddle-shell-init.sh")
+        .await;
+    let replaced = s.guest("cat /etc/profile.d/02-puddle-shell-init.sh").await;
     assert_eq!(
         replaced.trim(),
         "# nothing to see",
         "the replacement did not stay"
     );
-    let before_start = events.seen.len();
-    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
-    events
-        .until(ended(name_static), Duration::from_secs(120))
-        .await;
-    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let before_start = s.events.seen.len();
     // Wait for the end of the start, not for the notice: a notice that never comes must fail here
     // with what the hook said, not after the wait for a second event that it swallowed.
-    let end = events
-        .until(ended(name_static), Duration::from_secs(300))
-        .await;
-    assert_eq!(end["step"], "done", "{end}");
-    let boot_log = guest(&runtime, &sandbox, "cat /run/puddle/boot.log").await;
+    let end = s.stop_and_start().await;
+    assert_field(&end, "step", &json!("done"));
+    let boot_log = s.guest("cat /run/puddle/boot.log").await;
     assert!(
-        events.seen[before_start..]
+        s.events
+            .seen
             .iter()
-            .any(|e| e["type"] == "workspace_shell_init_restored" && e["workspace"] == name_static),
+            .skip(before_start)
+            .any(
+                |e| e.get("type") == Some(&json!("workspace_shell_init_restored"))
+                    && e.get("workspace") == Some(&json!(s.name_static))
+            ),
         "no notice that the guest replaced the file that loads the shell init; the hook said:\n{boot_log}"
     );
-    let loader = guest(
-        &runtime,
-        &sandbox,
-        "cat /etc/profile.d/02-puddle-shell-init.sh",
-    )
-    .await;
+    let loader = s.guest("cat /etc/profile.d/02-puddle-shell-init.sh").await;
     assert!(loader.contains(". /puddle/shell-init/init.sh"), "{loader}");
     assert!(
-        guest(
-            &runtime,
-            &sandbox,
-            "bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE'"
-        )
-        .await
-        .contains("from the shell init")
+        s.guest("bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE'")
+            .await
+            .contains("from the shell init")
     );
+}
 
-    // What a root process can try against the mount itself. Not an assertion about the VM: the
-    // host's folder is what counts, and it is put right at the next start whatever happened.
-    let tried = guest(
-        &runtime,
-        &sandbox,
-        "(mount -o remount,rw /puddle/shell-init) 2>&1; (echo evil >/puddle/shell-init/evil.sh) 2>&1; echo end",
-    )
-    .await;
-    let wrote = folder.join("evil.sh").exists();
-    eprintln!("remount and write inside the guest: wrote to the host folder = {wrote}: {tried}");
-    let from = events.seen.len();
-    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
-    events
-        .until(ended(name_static), Duration::from_secs(120))
+/// What a root process can try against the mount itself. Not an assertion about the VM: the host's
+/// folder is what counts, and it is put right at the next start whatever happened.
+async fn phase_shi_mount_tampering_put_right(s: &mut ShellInitStory) {
+    let tried = s
+        .guest(
+            "(mount -o remount,rw /puddle/shell-init) 2>&1; (echo evil >/puddle/shell-init/evil.sh) 2>&1; echo end",
+        )
         .await;
-    api.post(&format!("/api/workspaces/{name}/start"), "").await;
-    let end = events
-        .until(ended(name_static), Duration::from_secs(300))
-        .await;
-    assert_eq!(end["step"], "done", "{end}");
-    assert!(!folder.join("evil.sh").exists());
-    assert_eq!(
-        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
-        "export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n"
+    let wrote = s.folder.join("evil.sh").exists();
+    let _ = writeln!(
+        std::io::stderr(),
+        "remount and write inside the guest: wrote to the host folder = {wrote}: {tried}"
     );
-    let told = events.seen[from..]
+    let from = s.events.seen.len();
+    let end = s.stop_and_start().await;
+    assert_field(&end, "step", &json!("done"));
+    assert!(!s.folder.join("evil.sh").exists());
+    assert_eq!(
+        std::fs::read_to_string(s.folder.join("init.sh")).unwrap(),
+        SHI_SAVED
+    );
+    let told = s
+        .events
+        .seen
         .iter()
-        .any(|e| e["type"] == "workspace_shell_init_restored");
+        .skip(from)
+        .any(|e| e.get("type") == Some(&json!("workspace_shell_init_restored")));
     assert_eq!(
         told, wrote,
         "the user is told exactly when the guest changed the folder"
     );
-
-    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
-    assert_eq!(stop.status, 202, "{}", stop.body);
-    events
-        .until(ended(name_static), Duration::from_secs(120))
-        .await;
-    let down = host.shutdown().await;
-    assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -5210,6 +5381,46 @@ async fn vm_host_a_deleted_workspaces_id_is_never_reused_and_a_version_2_list_ke
     host.shutdown().await;
 }
 
+/// Puts something on the root disk that a new sandbox would not have: a package installed with
+/// apt and a file in the home directory. The package is built in the guest and installed from the
+/// file, so apt does the install and no third-party mirror is involved.
+async fn install_root_disk_probe(runtime: &MsbRuntime, sandbox: &WorkspaceId) {
+    guest_within(
+        runtime,
+        sandbox,
+        "set -e; d=$(mktemp -d); mkdir -p $d/pkg/DEBIAN $d/pkg/usr/local/bin; \
+         printf 'Package: puddle-keep-probe\nVersion: 1\nArchitecture: all\nMaintainer: t <t@example.invalid>\nDescription: probe\n' > $d/pkg/DEBIAN/control; \
+         printf '#!/bin/sh\necho installed\n' > $d/pkg/usr/local/bin/puddle-keep-probe; \
+         chmod 755 $d/pkg/usr/local/bin/puddle-keep-probe; \
+         dpkg-deb --build $d/pkg $d/probe.deb >/dev/null; \
+         apt-get install -y $d/probe.deb >/dev/null; \
+         echo kept > \"$HOME/keep-probe-file\"; sync",
+        Duration::from_secs(180),
+    )
+    .await;
+}
+
+/// The guest kernel's boot id: new after every start of the VM.
+async fn boot_id_of(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> String {
+    guest(runtime, sandbox, "cat /proc/sys/kernel/random/boot_id")
+        .await
+        .trim()
+        .to_owned()
+}
+
+/// What [`install_root_disk_probe`] left, as the guest reports it now (the probe's output, the
+/// package's status and the home file).
+async fn root_disk_probe(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> String {
+    guest(
+        runtime,
+        sandbox,
+        "puddle-keep-probe; dpkg-query -W -f='${Status}\n' puddle-keep-probe; cat \"$HOME/keep-probe-file\"",
+    )
+    .await
+    .trim()
+    .to_owned()
+}
+
 /// A changed variable keeps the root disk: a package installed with apt and a file in the home
 /// directory are still there after a stop, a variable change and a start, the guest sees the new
 /// value, and the guest's boot id is new (so the start really was a start, not a no-op). The
@@ -5260,19 +5471,7 @@ async fn vm_host_a_changed_variable_keeps_the_root_disk_across_the_next_start() 
     );
 
     // A package installed through apt and a file in the home directory, both on the root disk.
-    guest_within(
-        &runtime,
-        &sandbox,
-        "set -e; d=$(mktemp -d); mkdir -p $d/pkg/DEBIAN $d/pkg/usr/local/bin; \
-         printf 'Package: puddle-keep-probe\nVersion: 1\nArchitecture: all\nMaintainer: t <t@example.invalid>\nDescription: probe\n' > $d/pkg/DEBIAN/control; \
-         printf '#!/bin/sh\necho installed\n' > $d/pkg/usr/local/bin/puddle-keep-probe; \
-         chmod 755 $d/pkg/usr/local/bin/puddle-keep-probe; \
-         dpkg-deb --build $d/pkg $d/probe.deb >/dev/null; \
-         apt-get install -y $d/probe.deb >/dev/null; \
-         echo kept > \"$HOME/keep-probe-file\"; sync",
-        Duration::from_secs(180),
-    )
-    .await;
+    install_root_disk_probe(&runtime, &sandbox).await;
     let boot_id = || guest(&runtime, &sandbox, "cat /proc/sys/kernel/random/boot_id");
     let boot_before = boot_id().await.trim().to_owned();
     assert!(!boot_before.is_empty(), "no boot id");
@@ -5297,14 +5496,8 @@ async fn vm_host_a_changed_variable_keeps_the_root_disk_across_the_next_start() 
         "after",
         "the guest has the new value"
     );
-    let kept = guest(
-        &runtime,
-        &sandbox,
-        "puddle-keep-probe; dpkg-query -W -f='${Status}\\n' puddle-keep-probe; cat \"$HOME/keep-probe-file\"",
-    )
-    .await;
     assert_eq!(
-        kept.trim(),
+        root_disk_probe(&runtime, &sandbox).await,
         "installed\ninstall ok installed\nkept",
         "the package and the home file survive a variable change"
     );
@@ -5318,5 +5511,71 @@ async fn vm_host_a_changed_variable_keeps_the_root_disk_across_the_next_start() 
     assert!(!seen_notice, "a kept root disk needs no reset notice");
 
     let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// A restart of Puddle keeps the sandbox and its root disk: a package installed with apt and a
+/// file in the home directory are still there after the host quits and a new one starts and
+/// starts the workspace, the guest is a fresh boot, and the user is told of no reset. The new run
+/// serves the same route, so the agent of the kept sandbox reaches it (the start finishes), and
+/// the sandbox is the one the first run made (its root disk has the probe).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_restart_of_puddle_keeps_the_sandbox_and_its_root_disk() {
+    let vm = start_vm_host("restartkeep").await;
+    let name = format!("{}-restartkeep", vm.settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    install_root_disk_probe(&vm.runtime, &sandbox).await;
+    let boot_before = boot_id_of(&vm.runtime, &sandbox).await;
+    assert!(!boot_before.is_empty(), "no boot id");
+    drop(events);
+
+    let vm = vm_support::restart_vm_host(vm).await;
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let mut events = api.events().await;
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        root_disk_probe(&vm.runtime, &sandbox).await,
+        "installed\ninstall ok installed\nkept",
+        "the package and the home file survive a restart of Puddle"
+    );
+    assert_ne!(
+        boot_id_of(&vm.runtime, &sandbox).await,
+        boot_before,
+        "the guest restarted"
+    );
+    let seen_notice = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again"))
+    });
+    assert!(!seen_notice, "a kept root disk needs no reset notice");
+    // The route works for the guest: the agent is up, so a command through the host's own
+    // connection runs.
+    assert_eq!(
+        guest(&vm.runtime, &sandbox, "echo alive").await.trim(),
+        "alive"
+    );
+
+    let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }

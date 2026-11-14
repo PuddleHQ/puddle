@@ -10,6 +10,20 @@
 //! | Another user or a restricted process opens the endpoint | explicit DACL granting the current user's SID only (no Everyone/anonymous read); remote clients rejected | socket file `0600` inside a fresh `0700` directory |
 //! | A process creates the name first (squatting) | 128-bit random name; the first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; an existing name is refused ([`IpcError::NameTaken`]); one of Puddle's instances exists for as long as the [`Listener`] lives | a fresh directory with a random name that only Puddle can write; `bind` fails on an existing path |
 //!
+//! # Stable endpoints
+//!
+//! A sandbox keeps the endpoint of its route in its own spec, so a route that changes with every
+//! run of Puddle makes every restart rebuild the sandbox and lose its root disk. [`IpcRoot::stable`]
+//! gives each workspace the same endpoint on every run, without giving up the table above:
+//!
+//! | Threat to a stable name | Windows | Linux |
+//! |---|---|---|
+//! | Someone learns the name | the name is `puddle-<install id>-<workspace>`; the install id is 128 random bits kept in an owner-only file of Puddle's data folder, made once, so another user cannot compute the name while Puddle is not running (the pipe namespace shows a name only while Puddle serves it) | the socket sits in a `0700` folder that only the owner can enter, so the name needs no secrecy |
+//! | Someone creates the name before Puddle starts | the first instance of the pipe is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; a taken name is refused ([`IpcError::NameTaken`]) and the workspace gets a sandbox with a random route instead of the old one | a folder of another user, a symlink or a folder that is not mode `0700` is refused ([`IpcError::Root`]) |
+//! | A dead Puddle left the name behind | nothing: a pipe goes with its process | a socket file whose listener is gone is replaced; a socket that still answers is another process and is refused ([`IpcError::NameTaken`]) |
+//! | Another Puddle of the same user serves it | refused, as a squatter | refused, as a live socket |
+//! | A guest reaches another workspace's endpoint | no: msb connects a guest only to the routes of its own spec, and the host tells workspaces apart by the endpoint a connection arrived on, as before | the same |
+//!
 //! # Use
 //!
 //! ```no_run
@@ -84,6 +98,46 @@ impl IpcRoot {
         })
     }
 
+    /// A root whose endpoints keep their names from one run of Puddle to the next
+    /// ([`IpcRoot::endpoint_named`]). `state_dir` is a folder of Puddle's own data: it holds the
+    /// owner-only `ipc-id` file with the install's random id (made here when missing), which
+    /// is part of every name on Windows and of the socket folder's name on Unix.
+    ///
+    /// # Errors
+    ///
+    /// [`IpcError::Root`] when the id file or the socket folder can't be read, made or trusted
+    /// (a folder that is not ours, not mode `0700` or a symlink), or (Windows) the current
+    /// user's SID can't be read; [`IpcError::Random`] when the system random source fails.
+    pub fn stable(state_dir: &Path) -> Result<Self, IpcError> {
+        let id = install_id(state_dir)?;
+        Ok(Self {
+            inner: sys::Root::stable(&id)?,
+        })
+    }
+
+    /// The endpoint of `name` in a stable root: the same on every run of Puddle for the same
+    /// install, and different for another install.
+    ///
+    /// # Errors
+    ///
+    /// [`IpcError::InvalidName`] when `name` is not 1 to 63 characters of `a-z`, `0-9` and `-`;
+    /// [`IpcError::NotStable`] on a root made by [`IpcRoot::new`].
+    pub fn endpoint_named(&self, name: &str) -> Result<Endpoint, IpcError> {
+        name::check_name(name)?;
+        Ok(Endpoint {
+            path: self.inner.named_path(name)?,
+        })
+    }
+
+    /// Binds the stable endpoint of `name` ([`IpcRoot::endpoint_named`], then [`IpcRoot::bind`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`IpcRoot::endpoint_named`] and [`IpcRoot::bind`].
+    pub fn listen_named(&self, name: &str) -> Result<Listener, IpcError> {
+        self.bind(&self.endpoint_named(name)?)
+    }
+
     /// A fresh, unbound endpoint with a random name in this root.
     ///
     /// Callers normally use [`IpcRoot::listen`]; this exists so a caller can see the name before
@@ -131,6 +185,19 @@ impl IpcRoot {
 
 #[cfg(unix)]
 impl IpcRoot {
+    /// [`IpcRoot::stable`] with the socket folder below `parent` (which must exist) instead of
+    /// the runtime directory.
+    ///
+    /// # Errors
+    ///
+    /// As [`IpcRoot::stable`].
+    pub fn stable_in(parent: &Path, state_dir: &Path) -> Result<Self, IpcError> {
+        let id = install_id(state_dir)?;
+        Ok(Self {
+            inner: sys::Root::stable_in(parent, &id)?,
+        })
+    }
+
     /// A root in a new private directory under `parent` (which must exist).
     ///
     /// # Errors
@@ -148,6 +215,27 @@ impl IpcRoot {
         self.inner.dir()
     }
 }
+
+/// The install's random id, 32 lowercase hex digits: read from `<state_dir>/ipc-id`, or made and
+/// written there (owner-only, atomically) when the file is missing or holds anything else.
+fn install_id(state_dir: &Path) -> Result<String, IpcError> {
+    let file = state_dir.join(INSTALL_ID_FILE);
+    if let Ok(text) = std::fs::read_to_string(&file) {
+        let id = text.trim();
+        if name::is_install_id(id) {
+            return Ok(id.to_owned());
+        }
+    }
+    let id = name::random_name::<16>()?;
+    puddle_fs::private::write_atomic(&file, id.as_bytes()).map_err(|source| IpcError::Root {
+        path: file.clone(),
+        source,
+    })?;
+    Ok(id)
+}
+
+/// The file in the state folder that holds the install's id.
+const INSTALL_ID_FILE: &str = "ipc-id";
 
 /// The name of one endpoint: a pipe path (`\\.\pipe\puddle-<32 hex>`) on Windows, a socket path
 /// (`<root dir>/<16 hex>.sock`) on Unix. This is what goes into the workspace's vsock route.

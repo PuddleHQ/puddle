@@ -20,7 +20,8 @@ use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::h2_rig::{H2Server, Reply as H2Reply, Script, full};
 use terminate_support::{
-    FakeServer, Flaw, Handler, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector, captured_logs,
+    Client, FakeServer, Flaw, Handler, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector,
+    captured_logs,
 };
 
 pub(crate) const TOKEN_HOST: &str = "platform.claude.com";
@@ -751,9 +752,19 @@ async fn the_api_key_a_login_creates_is_swapped_in_x_api_key_toward_the_api_host
 // ------------------------------------------------------------------------------------------
 // GitHub: a form answer for `gh`, a JSON answer for Copilot CLI, Git's Basic credentials.
 
-#[tokio::test]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_git_and_copilot() {
+const DEVICE_POLL: &str = "client_id=178c&device_code=d&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code";
+
+/// A proxy in front of GitHub's three host groups, with logins on.
+struct GithubRig {
+    github: FakeServer,
+    git_and_api: FakeServer,
+    copilot: FakeServer,
+    rig: Rig,
+    notices: Arc<Notices>,
+    _registry: Arc<StandIns>,
+}
+
+async fn github_rig() -> GithubRig {
     let pki = Pki::new();
     // The server answers in the format the request's `Accept` asks for, as GitHub does, and says
     // the user has not approved yet for the first poll of each.
@@ -802,37 +813,67 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
         .stand_ins(&registry)
         .exchanges(Arc::new(logins))
         .build();
-    let mut guest = rig.guest();
-    let mut client = guest.tls("github.com:443", None).await.unwrap();
-    let device = "client_id=178c&device_code=d&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code";
-
-    // gh: no `Accept`, a form answer; the first poll is "pending" and says nothing.
-    for _ in 0..2 {
-        client
-            .send(&request(
-                "POST",
-                "github.com",
-                "/login/oauth/access_token",
-                "Content-Type: application/x-www-form-urlencoded\r\n",
-                device,
-            ))
-            .await;
+    GithubRig {
+        github,
+        git_and_api,
+        copilot,
+        rig,
+        notices,
+        _registry: registry,
     }
-    let pending = client.response("POST").await;
-    assert_eq!(pending.text(), "error=authorization_pending&interval=5");
-    assert!(notices.0.lock().unwrap().is_empty());
-    let done = client.response("POST").await;
-    let text = done.text();
-    assert_no_real_token(&text);
-    let (first, rest) = text.split_once('&').unwrap();
-    assert_eq!(rest, "scope=repo%2Cgist&token_type=bearer");
-    let stand_in = first.strip_prefix("access_token=").unwrap().to_owned();
-    assert!(stand_in.starts_with("gho_") && stand_in.len() == GH_TOKEN.len());
-    assert!(
-        done.header("content-type")
-            .unwrap()
-            .starts_with("application/x-www-form-urlencoded")
-    );
+}
+
+impl GithubRig {
+    /// gh: no `Accept`, a form answer; the first poll is "pending" and says nothing. Returns the
+    /// stand-in the workspace was given.
+    async fn gh_form_login(&self, client: &mut Client) -> String {
+        for _ in 0..2 {
+            client
+                .send(&request(
+                    "POST",
+                    "github.com",
+                    "/login/oauth/access_token",
+                    "Content-Type: application/x-www-form-urlencoded\r\n",
+                    DEVICE_POLL,
+                ))
+                .await;
+        }
+        let pending = client.response("POST").await;
+        assert_eq!(pending.text(), "error=authorization_pending&interval=5");
+        assert!(self.notices.0.lock().unwrap().is_empty());
+        let done = client.response("POST").await;
+        let text = done.text();
+        assert_no_real_token(&text);
+        let (first, rest) = text.split_once('&').unwrap();
+        assert_eq!(rest, "scope=repo%2Cgist&token_type=bearer");
+        let stand_in = first.strip_prefix("access_token=").unwrap().to_owned();
+        assert!(stand_in.starts_with("gho_") && stand_in.len() == GH_TOKEN.len());
+        assert!(
+            done.header("content-type")
+                .unwrap()
+                .starts_with("application/x-www-form-urlencoded")
+        );
+        stand_in
+    }
+}
+
+#[tokio::test]
+async fn a_github_login_in_the_form_format_for_gh_is_captured() {
+    let g = github_rig().await;
+    let mut guest = g.rig.guest();
+    let mut client = guest.tls("github.com:443", None).await.unwrap();
+
+    g.gh_form_login(&mut client).await;
+
+    assert_no_real_token(&captured_logs());
+}
+
+#[tokio::test]
+async fn a_github_login_in_the_json_format_for_copilot_cli_is_captured_behind_the_same_stand_in() {
+    let g = github_rig().await;
+    let mut guest = g.rig.guest();
+    let mut client = guest.tls("github.com:443", None).await.unwrap();
+    let stand_in = g.gh_form_login(&mut client).await;
 
     // Copilot CLI: asks for JSON and gets JSON, behind the same stand-in.
     for _ in 0..2 {
@@ -842,7 +883,7 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
                 "github.com",
                 "/login/oauth/access_token",
                 "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n",
-                device,
+                DEVICE_POLL,
             ))
             .await;
     }
@@ -851,7 +892,17 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
     assert_eq!(json_done["access_token"], stand_in.as_str());
     assert_eq!(json_done["scope"], "repo,gist");
 
-    // The stand-in as the API's Bearer, as Git's Basic password, and on a Copilot host.
+    assert_no_real_token(&captured_logs());
+}
+
+#[tokio::test]
+async fn a_captured_github_stand_in_is_swapped_for_the_api_bearer() {
+    let g = github_rig().await;
+    let mut guest = g.rig.guest();
+    let mut client = guest.tls("github.com:443", None).await.unwrap();
+    let stand_in = g.gh_form_login(&mut client).await;
+
+    // The stand-in as the API's token.
     let mut api = guest.tls("api.github.com:443", None).await.unwrap();
     api.send(&request(
         "GET",
@@ -863,9 +914,21 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
     .await;
     assert_eq!(api.response("GET").await.status, 200);
     assert_eq!(
-        git_and_api.recorded()[0].header("authorization"),
+        g.git_and_api.recorded()[0].header("authorization"),
         Some(format!("token {GH_TOKEN}").as_str())
     );
+
+    assert_no_real_token(&captured_logs());
+}
+
+#[tokio::test]
+async fn a_captured_github_stand_in_is_swapped_for_gits_basic_password() {
+    let g = github_rig().await;
+    let mut guest = g.rig.guest();
+    let mut client = guest.tls("github.com:443", None).await.unwrap();
+    let stand_in = g.gh_form_login(&mut client).await;
+
+    // The stand-in as Git's Basic password.
     let mut gh = guest.tls("github.com:443", None).await.unwrap();
     let basic = {
         use base64::Engine as _;
@@ -880,7 +943,8 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
     ))
     .await;
     assert_eq!(gh.response("GET").await.status, 200);
-    let sent = github
+    let sent = g
+        .github
         .recorded()
         .last()
         .unwrap()
@@ -897,6 +961,18 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
         .unwrap()
     };
     assert_eq!(decoded, format!("x-access-token:{GH_TOKEN}"));
+
+    assert_no_real_token(&captured_logs());
+}
+
+#[tokio::test]
+async fn a_captured_github_stand_in_is_swapped_on_a_copilot_host() {
+    let g = github_rig().await;
+    let mut guest = g.rig.guest();
+    let mut client = guest.tls("github.com:443", None).await.unwrap();
+    let stand_in = g.gh_form_login(&mut client).await;
+
+    // The stand-in on a Copilot host.
     let mut cp = guest
         .tls("api.individual.githubcopilot.com:443", None)
         .await
@@ -911,9 +987,10 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
     .await;
     assert_eq!(cp.response("GET").await.status, 200);
     assert_eq!(
-        copilot.recorded()[0].header("authorization"),
+        g.copilot.recorded()[0].header("authorization"),
         Some(format!("Bearer {GH_TOKEN}").as_str())
     );
+
     assert_no_real_token(&captured_logs());
 }
 

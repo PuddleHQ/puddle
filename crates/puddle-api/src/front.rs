@@ -50,6 +50,20 @@ impl NameResolver for SystemResolver {
     }
 }
 
+/// A resolver that answers no name: every lookup fails at once, never reaching the machine's
+/// resolver. For tests that serve under a public name but do not care what it resolves to.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoNames;
+
+impl NameResolver for NoNames {
+    fn resolve<'a>(
+        &'a self,
+        _name: &'a str,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>> {
+        Box::pin(async { Err(io::Error::other("no names resolve")) })
+    }
+}
+
 /// The names to resolve and the registrations they hold.
 pub(crate) struct FrontAddresses {
     endpoints: PuddleEndpoints,

@@ -11,7 +11,7 @@ use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
 use puddle_compute::{ImageConfig, Runtime};
 use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, resolve};
-use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{Actor, AllUsers, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceStatus,
     WorkspaceStep,
@@ -97,6 +97,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 settings: parts.settings,
                 settings_lock: Arc::default(),
                 store: parts.store,
+                all_users: parts.all_users,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
                 terminals: Arc::default(),
@@ -128,10 +129,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
                 disk_warned: Mutex::new(BTreeSet::new()),
+                tools: super::tools::ToolRuns::default(),
             }),
         };
         service.note_names(&service.state());
-        service.adopt_listed()?;
+        service.adopt_listed(&service.inner.all_users)?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
@@ -143,11 +145,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// On the first start of this build, records the owner as the user of every listed workspace
     /// that has none: they were made before every create recorded its user. Before anything serves
     /// them, or no user would reach them; later starts change nothing.
-    pub(super) fn adopt_listed(&self) -> Result<(), HostError> {
+    pub(super) fn adopt_listed(&self, all_users: &AllUsers) -> Result<(), HostError> {
         let adopted = self
             .inner
             .store
-            .adopt_unowned_workspaces(self.state().slots.keys())
+            .adopt_unowned_workspaces(all_users, self.state().slots.keys())
             .map_err(|e| HostError::State {
                 what: "the database",
                 reason: format!("whose the listed workspaces are could not be recorded: {e}"),
@@ -759,11 +761,23 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.status_event(record);
         }
         self.audit_operation(&name, op, &result, delete_note);
+        self.last_step(&name, op, result);
+    }
+
+    /// The event that ends an operation, `done` or `failed`. A create or a start that worked then
+    /// sets up the managed tools in the background: the start is done whatever mise does, and a
+    /// create's clones are on the volume by now.
+    fn last_step(&self, name: &WorkspaceId, op: Operation, result: Result<(), OpError>) {
         match result {
-            Ok(()) => self.progress(&name, WorkspaceStep::Done, None),
+            Ok(()) => {
+                self.progress(name, WorkspaceStep::Done, None);
+                if matches!(op, Operation::Creating | Operation::Starting) {
+                    self.set_up_tools_later(name);
+                }
+            }
             Err(reason) => {
-                tracing::warn!(workspace = %id, %op, %reason, "workspace operation failed");
-                self.progress(&name, WorkspaceStep::Failed, Some(reason.to_string()));
+                tracing::warn!(workspace = %name, %op, %reason, "workspace operation failed");
+                self.progress(name, WorkspaceStep::Failed, Some(reason.to_string()));
             }
         }
     }

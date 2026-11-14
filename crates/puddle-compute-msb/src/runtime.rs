@@ -436,14 +436,6 @@ impl Runtime for MsbRuntime {
                 })?;
             Ok(Capabilities {
                 runtime_version: version,
-                // msb removes what a failed create leaves (upstream
-                // `superradcompany/microsandbox#1929`, since v0.7.12); the contract suite's
-                // volume-mismatch case checks it on every VM run.
-                stale_dir_fixed: true,
-                // msb's SSH server sends exit status 1 for a signal-killed command (upstream
-                // `superradcompany/microsandbox#2011`, carried by the fork; stock 0.7.7 sent 0).
-                // `vm_ssh_reports_a_signal_killed_command_as_a_failure` checks it.
-                ssh_reports_signal_exit: true,
             })
         })
     }

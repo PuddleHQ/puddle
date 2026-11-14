@@ -10,7 +10,7 @@ use puddle_types::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
+use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec, VsockRoute};
 
 /// What a runtime can do, from [`Runtime::probe`]. Code that works around a runtime bug checks
 /// the matching flag instead of the version.
@@ -37,6 +37,10 @@ pub struct SandboxInfo {
     pub puddle_owned: bool,
     /// How full its root disk is, when the runtime can tell.
     pub root_disk: Option<RootDiskUse>,
+    /// The vsock routes it was made with, which it starts with whatever the host serves now: a
+    /// host can start it again only when it serves each of them. Empty when the runtime can't
+    /// tell.
+    pub routes: Vec<VsockRoute>,
 }
 
 /// The root disk of a sandbox (home directory, tool caches, installed packages): its capacity and

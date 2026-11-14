@@ -13,7 +13,7 @@ use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
     Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
-    VolumeInfo, VolumeSpec,
+    VolumeInfo, VolumeSpec, VsockRoute,
 };
 use puddle_types::{
     CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
@@ -686,6 +686,17 @@ impl Runtime for MsbRuntime {
                     name: h.name().to_owned(),
                     status: status(h.status_snapshot()),
                     root_disk: root_disk::usage(&self.sandbox_dir(h.name())),
+                    routes: h.config().map_or_else(
+                        |_| Vec::new(),
+                        |c| {
+                            c.spec
+                                .vsock
+                                .routes
+                                .iter()
+                                .map(|r| VsockRoute::new(r.port, &r.host_socket))
+                                .collect()
+                        },
+                    ),
                     // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)

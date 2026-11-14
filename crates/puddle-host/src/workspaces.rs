@@ -9,10 +9,12 @@
 //! and stopped when the host exits.
 //!
 //! A sandbox boots from the spec it was created with, and that spec holds the endpoint of its
-//! egress route, which only lives as long as this process. So a stopped workspace starts again in
-//! the same sandbox only while this process still serves that route; otherwise (after a restart
-//! of the host) its sandbox is rebuilt on the same volume. Everything on the volume survives,
-//! the root disk does not (ADR 0006, point 3).
+//! egress route. The endpoint of a workspace is the same at every run of Puddle (`IpcRoot::stable`),
+//! so a stopped workspace starts again in the same sandbox, with its root disk, after a restart of
+//! the host too: the new run takes the sandbox over when the route the runtime lists for it is the
+//! one it serves. A sandbox made with another route (before routes were stable, or a name another
+//! process holds) is rebuilt on the same volume: everything on the volume survives, the root disk
+//! does not (ADR 0006, point 3).
 //!
 //! The workspace list on disk is what the next start keeps volumes for, so it is saved before
 //! anything it must cover exists or goes: a create is refused when its entry can't be written,

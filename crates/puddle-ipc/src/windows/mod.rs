@@ -38,6 +38,8 @@ const BUSY_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 pub(crate) struct Root {
     /// The owner-only security descriptor, as SDDL.
     sddl: Arc<str>,
+    /// The install's id, in every name this root makes by name; `None` for a root of random names.
+    install: Option<Arc<str>>,
 }
 
 impl Root {
@@ -48,7 +50,22 @@ impl Root {
         })?;
         Ok(Self {
             sddl: puddle_fs::win::owner_only_sddl(&sid, "GA", false).into(),
+            install: None,
         })
+    }
+
+    pub(crate) fn stable(install_id: &str) -> Result<Self, IpcError> {
+        Ok(Self {
+            install: Some(install_id.into()),
+            ..Self::new()?
+        })
+    }
+
+    /// The pipe `puddle-<install id>-<name>`. The id is what another user cannot guess before
+    /// Puddle serves the name; the first-instance flag catches a user who does.
+    pub(crate) fn named_path(&self, name: &str) -> Result<PathBuf, IpcError> {
+        let install = self.install.as_deref().ok_or(IpcError::NotStable)?;
+        Ok(PathBuf::from(format!("{PIPE_PREFIX}{install}-{name}")))
     }
 
     #[expect(

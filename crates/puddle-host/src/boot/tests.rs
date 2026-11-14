@@ -29,74 +29,65 @@ fn dockers_disk_is_20_gib_at_var_lib_docker() {
 }
 
 #[test]
-fn the_release_is_installed_under_its_version_and_reused_when_complete() {
+fn the_release_is_installed_at_one_stable_path_and_reused_when_complete() {
     let tmp = tempfile::tempdir().unwrap();
     let share = tmp.path().join("share");
     std::fs::create_dir(&share).unwrap();
     let release = release(tmp.path(), "4.1.0");
     let target = install_code_server(&release, &share).unwrap();
-    assert_eq!(target, share.join("code-server-4.1.0"));
+    assert_eq!(target, share.join("code-server"));
     assert!(target.join("bin/code-server").is_file());
     assert!(target.join(INSTALLED_MARKER).is_file());
     // A second start finds it complete and leaves it alone.
     std::fs::write(target.join("sentinel"), "x").unwrap();
     assert_eq!(install_code_server(&release, &share).unwrap(), target);
     assert!(target.join("sentinel").is_file());
-    // Another version sits beside it.
-    let newer = release.with_file_name("newer");
-    std::fs::create_dir(&newer).unwrap();
-    std::fs::write(newer.join("code-server.json"), r#"{"version":"4.2.0"}"#).unwrap();
-    assert_eq!(
-        install_code_server(&newer, &share).unwrap(),
-        share.join("code-server-4.2.0")
+}
+
+#[test]
+fn another_release_takes_the_same_path_so_sandboxes_of_earlier_runs_still_find_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let share = tmp.path().join("share");
+    std::fs::create_dir(&share).unwrap();
+    let target = install_code_server(&release(tmp.path(), "4.1.0"), &share).unwrap();
+    std::fs::write(target.join("from-the-old-release"), "x").unwrap();
+    let newer = release(&tmp.path().join("newer"), "4.2.0");
+    std::fs::write(newer.join("bin/new-in-4.2"), "x").unwrap();
+    assert_eq!(install_code_server(&newer, &share).unwrap(), target);
+    assert!(target.join("bin/new-in-4.2").is_file());
+    assert!(!target.join("from-the-old-release").exists());
+    assert!(
+        std::fs::read_to_string(target.join(INSTALLED_MARKER))
+            .unwrap()
+            .contains("4.2.0")
     );
+}
+
+#[test]
+fn folders_of_the_old_versioned_layout_go_and_nothing_else() {
+    let tmp = tempfile::tempdir().unwrap();
+    let share = tmp.path().join("share");
+    std::fs::create_dir(&share).unwrap();
+    for name in ["code-server-4.1.0", "code-server-4.2.0.partial"] {
+        std::fs::create_dir_all(share.join(name).join("bin")).unwrap();
+    }
+    std::fs::write(share.join("code-server-1.0.0"), "a file, not a release").unwrap();
+    std::fs::write(share.join("puddle-agent"), "agent").unwrap();
+    let target = install_code_server(&release(tmp.path(), "4.3.0"), &share).unwrap();
+    let mut left: Vec<String> = std::fs::read_dir(&share)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["code-server", "puddle-agent"]);
     assert!(target.is_dir());
 }
 
 #[test]
-fn older_releases_go_except_the_one_before_the_newest() {
+fn cleaning_up_a_missing_folder_does_nothing() {
     let tmp = tempfile::tempdir().unwrap();
-    let share = tmp.path().join("share");
-    std::fs::create_dir(&share).unwrap();
-    let mut installed = Vec::new();
-    for (n, version) in ["4.1.0", "4.2.0", "4.3.0", "4.4.0"].into_iter().enumerate() {
-        let release = release(tmp.path(), version);
-        installed.push(install_code_server(&release, &share).unwrap());
-        // Installed one after the other, as releases are: the marker's time orders them.
-        let marker = installed[n].join(INSTALLED_MARKER);
-        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000 * (n as u64 + 1));
-        std::fs::File::options()
-            .write(true)
-            .open(&marker)
-            .unwrap()
-            .set_modified(at)
-            .unwrap();
-    }
-    // A fifth install drops everything older than the release before it, and only releases.
-    std::fs::write(share.join("puddle-agent"), "agent").unwrap();
-    std::fs::create_dir(share.join("code-server-9.9.9.partial")).unwrap();
-    let fifth = install_code_server(&release(tmp.path(), "4.5.0"), &share).unwrap();
-    assert!(fifth.is_dir());
-    assert!(installed.iter().take(3).all(|old| !old.exists()));
-    assert!(!share.join("code-server-9.9.9.partial").exists());
-    assert!(installed[3].is_dir(), "the release before the newest stays");
-    assert!(share.join("puddle-agent").is_file());
-}
-
-#[test]
-fn cleaning_up_a_missing_folder_does_nothing_and_a_stray_file_is_removed() {
-    let tmp = tempfile::tempdir().unwrap();
-    prune_old_releases(&tmp.path().join("missing"), &tmp.path().join("keep"));
-    std::fs::write(
-        tmp.path().join("code-server-1.0.0"),
-        "a file, not a release",
-    )
-    .unwrap();
-    std::fs::create_dir(tmp.path().join("code-server-2.0.0")).unwrap();
-    prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
-    // The folder without a marker counts as oldest and goes; one old release is kept.
-    let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().flatten().collect();
-    assert_eq!(left.len(), 1, "{left:?}");
+    remove_legacy_releases(&tmp.path().join("missing"));
 }
 
 #[cfg(unix)]
@@ -111,27 +102,25 @@ fn a_release_that_cannot_be_removed_is_left_and_the_others_still_go() {
     std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o555)).unwrap();
     // Root removes it anyway; the test is for a user the folder's mode binds.
     let binds = std::fs::write(stuck.join("inner/probe"), "").is_err();
-    for name in ["code-server-2.0.0", "code-server-3.0.0"] {
-        std::fs::create_dir(tmp.path().join(name)).unwrap();
-    }
-    prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
+    std::fs::create_dir(tmp.path().join("code-server-2.0.0")).unwrap();
+    remove_legacy_releases(tmp.path());
     // flake-ok: a folder's mode, nothing is executed
     std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!binds || stuck.join("inner/file").is_file());
-    assert!(tmp.path().join("code-server-3.0.0").is_dir());
+    assert!(!tmp.path().join("code-server-2.0.0").exists());
 }
 
 #[test]
 fn a_half_installed_folder_is_made_again() {
     let tmp = tempfile::tempdir().unwrap();
     let share = tmp.path().join("share");
-    std::fs::create_dir_all(share.join("code-server-4.1.0.partial")).unwrap();
-    std::fs::create_dir_all(share.join("code-server-4.1.0")).unwrap();
-    std::fs::write(share.join("code-server-4.1.0/stale"), "x").unwrap();
+    std::fs::create_dir_all(share.join("code-server.partial")).unwrap();
+    std::fs::create_dir_all(share.join("code-server")).unwrap();
+    std::fs::write(share.join("code-server/stale"), "x").unwrap();
     let target = install_code_server(&release(tmp.path(), "4.1.0"), &share).unwrap();
     assert!(!target.join("stale").exists());
     assert!(target.join(INSTALLED_MARKER).is_file());
-    assert!(!share.join("code-server-4.1.0.partial").exists());
+    assert!(!share.join("code-server.partial").exists());
 }
 
 #[test]

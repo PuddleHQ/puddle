@@ -495,6 +495,79 @@ impl SignIn {
         })
     }
 
+    /// Whether each of `users` has chosen a password.
+    pub(crate) async fn have_passwords(
+        self: &Arc<Self>,
+        users: Vec<UserId>,
+    ) -> Result<Vec<bool>, ApiError> {
+        let this = self.clone();
+        blocking(move || {
+            users
+                .into_iter()
+                .map(|u| Ok(this.secrets.has_password(u)?))
+                .collect()
+        })
+        .await
+    }
+
+    /// Makes the account `name` for the owner `actor` (audited) with an invite and no password.
+    pub(crate) async fn invite_new_user(
+        self: &Arc<Self>,
+        actor: UserId,
+        name: &str,
+    ) -> Result<(puddle_store::User, ResetInvite), ApiError> {
+        let this = self.clone();
+        let name = UserName::new(name)?;
+        blocking(move || {
+            let user = this.store.admin_add_user(actor, &name)?;
+            let secret = random_secret().map_err(|e| internal(&e))?;
+            let expires_at = this.now().saturating_add(INVITE_TTL_MS);
+            this.secrets
+                .put_invite(user.id, &digest(&secret), expires_at)?;
+            Ok((user, ResetInvite { secret, expires_at }))
+        })
+        .await
+    }
+
+    /// A new invite for `target` (audited): their password and sessions end, and the old invite
+    /// stops working. Nothing about the account is revealed.
+    pub(crate) async fn reissue_invite(
+        self: &Arc<Self>,
+        actor: UserId,
+        target: UserId,
+    ) -> Result<ResetInvite, ApiError> {
+        let this = self.clone();
+        let (invite, ended) = blocking(move || {
+            this.store.user(target)?;
+            let ended: Vec<DeviceId> = this
+                .store
+                .devices(target)?
+                .into_iter()
+                .map(|d| d.id)
+                .collect();
+            let invite = reset_user_account(&this.store, &this.secrets, target, this.now())
+                .map_err(|e| internal(&e))?;
+            this.store.note_invite_reissued(actor, target)?;
+            Ok((invite, ended))
+        })
+        .await?;
+        self.end_devices(&ended);
+        Ok(invite)
+    }
+
+    /// Takes every way in from `user`: password, invite and every browser.
+    pub(crate) async fn lock_out(self: &Arc<Self>, user: UserId) -> Result<(), ApiError> {
+        let this = self.clone();
+        let ended = blocking(move || {
+            this.secrets.clear_password(user)?;
+            this.secrets.clear_invite(user)?;
+            Ok(this.store.revoke_devices_of(user, None)?)
+        })
+        .await?;
+        self.end_devices(&ended);
+        Ok(())
+    }
+
     fn end_devices(&self, devices: &[DeviceId]) {
         for &device in devices {
             self.tokens.revoke(device);
@@ -574,11 +647,25 @@ pub fn reset_account(
     let user = store
         .user_named(name)?
         .ok_or_else(|| ResetError::UnknownUser(name.to_owned()))?;
+    reset_user_account(store, secrets, user.id, now)
+}
+
+/// [`reset_account`] for a user known by id (the admin screen's reissue, `puddle user add`): the
+/// same steps, and the same refusal to show a password.
+///
+/// # Errors
+/// [`ResetError`].
+pub fn reset_user_account(
+    store: &Store,
+    secrets: &AccountSecrets,
+    user: UserId,
+    now: u64,
+) -> Result<ResetInvite, ResetError> {
     let secret = random_secret().map_err(ResetError::Random)?;
     let expires_at = now.saturating_add(INVITE_TTL_MS);
-    secrets.clear_password(user.id)?;
-    store.revoke_devices_of(user.id, None)?;
-    secrets.put_invite(user.id, &digest(&secret), expires_at)?;
+    secrets.clear_password(user)?;
+    store.revoke_devices_of(user, None)?;
+    secrets.put_invite(user, &digest(&secret), expires_at)?;
     Ok(ResetInvite { secret, expires_at })
 }
 

@@ -14,6 +14,506 @@
     "version": "0.31.0"
   },
   "paths": {
+    "/api/admin/audit": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Who made, re-invited or deleted which account, and when: names and dates, never a credential.",
+        "operationId": "admin_audit",
+        "responses": {
+          "200": {
+            "description": "the newest lines first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAuditList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "several users are not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/stats": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The totals of this Puddle: users, workspaces, running sandboxes, disk and memory in use.",
+        "operationId": "admin_stats",
+        "responses": {
+          "200": {
+            "description": "the totals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "several users are not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Every account with counts and sizes: name, role, state, dates, devices, and how many\nworkspaces are running or stopped and what their disks hold. Never a workspace's name,\ncontents, repositories, requests, rules or audit.",
+        "operationId": "list_users",
+        "responses": {
+          "200": {
+            "description": "the accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "several users are not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Makes an account in the invited state and answers with its one-time invite secret, once. The\nowner hands the link `<address>/invite#<secret>` to the person, who chooses their own password.\nThe owner never types, sees or sets a password.",
+        "operationId": "create_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the account and its invite, shown once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteIssued"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "several users are not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the name was refused or is taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Deletes a user: signs them out at once, then stops and deletes their workspaces and volumes\nand removes their devices, sessions, rules, environment, identities and settings. Irreversible.\nThe name must be typed exactly. The owner can't delete themselves. Answers 202: the account\nshows as deleting until the workspaces are gone. Calling it again for a user being deleted is\nharmless.",
+        "operationId": "delete_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "the user",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "description": "the user's name, typed exactly",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "deleting has begun"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such user, or several users are not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the owner, or yourself",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the name does not match",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{id}/invite": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "A new invite for a user (an expired one, or a forgotten password). It ends that user's\npassword and every browser signed in as them, and invalidates the old invite. It reveals\nnothing about the account.",
+        "operationId": "reissue_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "the user",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the new invite, shown once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteIssued"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such user, or several users are not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the owner, or a user being deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/app-icons": {
       "get": {
         "tags": [
@@ -11418,6 +11918,217 @@
         ],
         "description": "`POST /api/workspaces/{id}/repositories`: what to add."
       },
+      "AdminActionKind": {
+        "type": "string",
+        "description": "What the owner did to an account.",
+        "enum": [
+          "user_created",
+          "invite_reissued",
+          "user_delete_started",
+          "user_deleted"
+        ]
+      },
+      "AdminAuditLine": {
+        "type": "object",
+        "description": "One line of the admin audit: who did what to whom, and when.",
+        "required": [
+          "at",
+          "actor",
+          "action",
+          "target_id",
+          "target"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AdminActionKind",
+            "description": "What was done."
+          },
+          "actor": {
+            "type": "string",
+            "description": "The owner who did it."
+          },
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When, epoch ms.",
+            "minimum": 0
+          },
+          "target": {
+            "type": "string",
+            "description": "The account's name when it happened."
+          },
+          "target_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The account's id (never reused)."
+          }
+        }
+      },
+      "AdminAuditList": {
+        "type": "object",
+        "description": "The newest admin audit lines.",
+        "required": [
+          "lines"
+        ],
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAuditLine"
+            },
+            "description": "Newest first."
+          }
+        }
+      },
+      "AdminStats": {
+        "type": "object",
+        "description": "What this Puddle holds in total. There are no per-user limits.",
+        "required": [
+          "users",
+          "workspaces",
+          "running",
+          "disk_used_mib",
+          "memory_mib",
+          "host_cpus"
+        ],
+        "properties": {
+          "disk_used_mib": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What every workspace's disks hold, in MiB.",
+            "minimum": 0
+          },
+          "host_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Logical processors of this computer.",
+            "minimum": 0
+          },
+          "memory_mib": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memory the running workspaces were given, in MiB.",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Running or starting workspaces.",
+            "minimum": 0
+          },
+          "users": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Accounts, the owner included.",
+            "minimum": 0
+          },
+          "workspaces": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Workspaces of every user.",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminUser": {
+        "type": "object",
+        "description": "One account as the owner sees it: counts and sizes, never what is inside.",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "state",
+          "created_at",
+          "last_sign_in",
+          "devices",
+          "workspaces_running",
+          "workspaces_stopped",
+          "disk_used_mib"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the account was made, epoch ms.",
+            "minimum": 0
+          },
+          "devices": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Browsers signed in as them that still work.",
+            "minimum": 0
+          },
+          "disk_used_mib": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What their workspaces' disks hold, in MiB; workspaces whose use is unknown count nothing.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The account's id."
+          },
+          "last_sign_in": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When they last signed in, epoch ms; `null` if they never have.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The name."
+          },
+          "role": {
+            "type": "string",
+            "description": "`owner` or `user`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AdminUserState",
+            "description": "Invited, active or being deleted."
+          },
+          "workspaces_running": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Their workspaces that are running or starting.",
+            "minimum": 0
+          },
+          "workspaces_stopped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Their workspaces that are not running.",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminUserList": {
+        "type": "object",
+        "description": "The accounts.",
+        "required": [
+          "users"
+        ],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminUser"
+            },
+            "description": "The owner first, then by id."
+          }
+        }
+      },
+      "AdminUserState": {
+        "type": "string",
+        "description": "Where an account stands.",
+        "enum": [
+          "invited",
+          "active",
+          "deleting"
+        ]
+      },
       "AllowedHost": {
         "type": "object",
         "description": "A host a create (or adding a repository) allowed for a workspace.",
@@ -13320,6 +14031,20 @@
             "description": "Microsoft's VS Code server and its licence terms."
           }
         }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "description": "The name of the account to make.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The new user's name: 1 to 64 characters, unique ignoring case."
+          }
+        },
+        "additionalProperties": false
       },
       "CredentialCoverage": {
         "type": "object",
@@ -15971,6 +16696,31 @@
           "workspace": {
             "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
+          }
+        }
+      },
+      "InviteIssued": {
+        "type": "object",
+        "description": "A new invite, shown once: the account and the secret that goes after `#` in the link\n`<this address>/invite#<secret>`. It works once and for 24 hours, and nothing can read it\nback afterwards.",
+        "required": [
+          "user",
+          "invite_secret",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the invite stops working, epoch ms.",
+            "minimum": 0
+          },
+          "invite_secret": {
+            "type": "string",
+            "description": "The link's secret."
+          },
+          "user": {
+            "$ref": "#/components/schemas/AdminUser",
+            "description": "The account the invite is for."
           }
         }
       },
@@ -20290,6 +21040,10 @@
     {
       "name": "events",
       "description": "The server-sent event stream"
+    },
+    {
+      "name": "admin",
+      "description": "The owner's admin screen: users with counts and sizes, totals, making and deleting users, invites, and their audit. Owner only, and only when several users are on"
     },
     {
       "name": "auth",

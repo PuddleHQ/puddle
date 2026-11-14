@@ -11,12 +11,15 @@
 // - The file may hold at most N places where the text matches (`xN`, default 1). A copy added later
 //   makes the count N+1 and the entry stops excusing anything in that file, visibly.
 // - An entry whose text is gone from every file under its glob fails the gate, named by exclusion file and
-//   line (`staleExclusions`). One whose every place now runs in a test is only reported: whether a racy or
-//   run-dependent line reads covered differs between runs, so failing on it deleted a different entry each round.
+//   line (`staleExclusions`). One whose every place now runs in a test fails only when `--lcov` lists two or
+//   more reports (comma-separated, the coverage reports of separate runs) and EVERY one measured every line
+//   covered; with one report it is only noted. A racy or run-dependent line reads covered in one run and not
+//   in the next, so a single report cannot judge it: one report that misses a line keeps the entry, whatever
+//   the order or number of the others. An added line counts as covered when any of the reports ran it.
 // - A text under 20 characters is refused when the file is parsed. `*` (a whole file, for code that
 //   only another OS or a VM runs) is the one wildcard and stays a reviewed whole-file choice.
 //
-// Usage: node scripts/diff-coverage.ts --base <rev> --lcov <file> --exts .rs[,.ts] [--prefix ui/]
+// Usage: node scripts/diff-coverage.ts --base <rev> --lcov <file>[,<file>...] --exts .rs[,.ts] [--prefix ui/]
 //          [--exclusions <file>] [--label <name>]
 // `--base` is the commit the change is measured from (merge base locally, PR or push base in CI);
 // the diff is that commit against the working tree. `--lcov` is an lcov report whose `SF:` paths
@@ -346,19 +349,41 @@ function ranEveryExecutableLine(
   return measured > 0;
 }
 
+/** The highest count per line over several reports: a line any run executed counts as executed. */
+export function mergeCoverage(reports: Coverage[]): Coverage {
+  const out: Coverage = new Map();
+  for (const r of reports) {
+    for (const [file, lines] of r) {
+      const into = out.get(file) ?? new Map<number, number>();
+      out.set(file, into);
+      for (const [no, hits] of lines) {
+        into.set(no, Math.max(into.get(no) ?? 0, hits));
+      }
+    }
+  }
+  return out;
+}
+
 /** An entry that excuses nothing any more, and why. */
 export interface StaleEntry {
   entry: Exclusion;
   why: string;
-  /** Only the text-gone verdict fails the gate; "a test ran it" is reported, since it varies between runs. */
+  /**
+   * Text gone: always fails, the same in every run. "A test ran it": fails only when two or more reports were
+   * given and all of them measured every line covered; one report only notes it, since a racy line reads
+   * covered in one run and not in the next.
+   */
   fails: boolean;
 }
 
 /**
  * The entries that excuse nothing in the tree as it is now, whatever the diff touches:
  * - no file under the path glob exists, or (for a line-text entry) none of them holds the entry's lines any more;
- * - every place the text sits at is a line this run's coverage report measured as executed (a test now
- *   reaches it, so the excuse is a reason that rotted).
+ * - every place the text sits at is a line that EVERY given report measured as executed (a test now
+ *   reaches it, so the excuse is a reason that rotted). One report cannot tell a rotted excuse from a
+ *   racy line that happened to run, so with one report this is a note (`fails` false); with several
+ *   (the reports of N separate runs) one report that misses a line keeps the entry, whatever the
+ *   order or the number of reports that hit it, so a timing path never flips the verdict.
  * A file the report does not know is only checked for the text (another language's or another crate's
  * run, `cfg` code compiled out): "covered" is judged where a measurement exists, never guessed. A line
  * the report lists as not executable is left alone, since code compiled out of this run reads that way.
@@ -367,9 +392,10 @@ export interface StaleEntry {
 export function staleExclusions(
   exclusions: Exclusion[],
   files: string[],
-  coverage: Coverage,
+  coverage: Coverage | Coverage[],
   source: Source,
 ): StaleEntry[] {
+  const reports = Array.isArray(coverage) ? coverage : [coverage];
   const out: StaleEntry[] = [];
   for (const e of exclusions) {
     const re = globToRegExp(e.glob);
@@ -385,11 +411,13 @@ export function staleExclusions(
     for (const f of matched) {
       const text = source(f);
       if (!text) continue;
-      const hits = coverage.get(f);
       for (let at = lines.length; at <= text.length; at += 1) {
         if (!endsAt(text, at, lines)) continue;
         present = true;
-        if (!ranEveryExecutableLine(hits, at - lines.length + 1, at)) {
+        const first = at - lines.length + 1;
+        if (
+          !reports.every((r) => ranEveryExecutableLine(r.get(f), first, at))
+        ) {
           alive = true;
         }
       }
@@ -403,8 +431,11 @@ export function staleExclusions(
     } else if (!alive) {
       out.push({
         entry: e,
-        why: "a test now runs every line it excuses",
-        fails: false,
+        why:
+          reports.length > 1
+            ? `a test ran every line it excuses in all ${reports.length} reports`
+            : "a test now runs every line it excuses",
+        fails: reports.length > 1,
       });
     }
   }
@@ -504,7 +535,7 @@ function parseArgs(argv: string[]): Options {
   const exts = get("exts");
   if (!base || !lcov || !exts) {
     throw new Error(
-      "usage: diff-coverage.ts --base <rev> --lcov <file> --exts .rs[,.ts] [--prefix dir/] [--exclusions file] [--label name]",
+      "usage: diff-coverage.ts --base <rev> --lcov <file>[,<file>...] --exts .rs[,.ts] [--prefix dir/] [--exclusions file] [--label name]",
     );
   }
   return {
@@ -519,9 +550,11 @@ function parseArgs(argv: string[]): Options {
 
 export function run(opts: Options, cwd: string = process.cwd()): number {
   const repoRoot = git(["rev-parse", "--show-toplevel"], cwd).trim();
-  if (!existsSync(opts.lcov)) {
+  const lcovs = opts.lcov.split(",");
+  const missing = lcovs.find((f) => !existsSync(f));
+  if (missing !== undefined) {
     console.error(
-      `${opts.label}: ${opts.lcov} not found; run the coverage gate first`,
+      `${opts.label}: ${missing} not found; run the coverage gate first`,
     );
     return 1;
   }
@@ -542,11 +575,10 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
       a.path.startsWith(opts.prefix) &&
       opts.exts.some((x) => a.path.endsWith(x)),
   );
-  const coverage = parseLcov(
-    readFileSync(opts.lcov, "utf8"),
-    repoRoot,
-    opts.prefix,
+  const reports = lcovs.map((f) =>
+    parseLcov(readFileSync(f, "utf8"), repoRoot, opts.prefix),
   );
+  const coverage = mergeCoverage(reports);
   const exclusions = opts.exclusions ? readExclusions(opts.exclusions) : [];
   const cache = new Map<string, string[] | undefined>();
   const source: Source = (path) => {
@@ -565,7 +597,7 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
   const stale = staleExclusions(
     exclusions,
     git(["ls-files"], repoRoot).split("\n").filter(Boolean).map(posix),
-    coverage,
+    reports,
     source,
   );
   const report = judge(added, coverage, exclusions, source, notes);
@@ -586,7 +618,7 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
   }
   if (failing.length > 0) {
     console.error(
-      `${opts.label}: ${failing.length} stale exclusion(s); an excuse whose text is gone fails the gate:`,
+      `${opts.label}: ${failing.length} stale exclusion(s); an excuse that excuses nothing fails the gate:`,
     );
     for (const s of failing) console.error(`  ${staleMessage(s)}`);
   }

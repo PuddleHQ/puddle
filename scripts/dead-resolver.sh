@@ -12,7 +12,7 @@
 # module that would bypass the file). It runs as the caller, never as root. When the command ends the script
 # lists the names that were asked and fails if there were any: the test that asked is the one that waits a
 # second or more, so rerun the crate with the same wrapper and look at nextest's SLOW lines. `localhost` and
-# the other names in /etc/hosts never reach a resolver. Exit status: the command's; else 1 for a name asked.
+# the other names in /etc/hosts (and the machine's own hostname) never reach a resolver. Exit status: the command's; else 1 for a name asked.
 #
 # The namespaces need passwordless sudo (then `setpriv` drops back to the caller). An unprivileged user
 # namespace is no substitute: in one, `/` belongs to nobody and the tests that look at who owns a folder fail.
@@ -30,7 +30,13 @@ if [ "${1:-}" = "--inside" ]; then
     dir=$(dirname "$log")
     printf "nameserver %s\noptions timeout:1 attempts:1\n" "$DEAD_RESOLVER_ADDR" >"$dir/resolv.conf"
     printf 'hosts: files dns\n' >"$dir/nsswitch.conf"
+    # sudo looks up the machine's own name on every run (the capture tests start `sudo unshare`), for IPv4 and IPv6
+    # alike: a name /etc/hosts lacks, or lists for IPv4 only, would go to the dead resolver. Both families are added.
+    cp /etc/hosts "$dir/hosts"
+    host=$(hostname)
+    printf '127.0.1.1 %s\n::1 %s\n' "$host" "$host" >>"$dir/hosts"
     mount --bind "$dir/resolv.conf" /etc/resolv.conf || exit 2
+    mount --bind "$dir/hosts" /etc/hosts || exit 2
     mount --bind "$dir/nsswitch.conf" /etc/nsswitch.conf || exit 2
     here=$(cd "$(dirname "$0")" && pwd)
     python3 "$here/dead-resolver-stub.py" "$DEAD_RESOLVER_ADDR" "$log" >"$dir/stub.ready" &

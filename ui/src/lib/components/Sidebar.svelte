@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { APP_NAME, NAV, sectionFor } from "#lib/nav.ts";
   import { session } from "#lib/session/session.svelte.ts";
+  import { admin } from "#lib/stores/admin.svelte.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import DuckMark from "./DuckMark.svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
@@ -17,7 +18,7 @@
   </p>
   <nav aria-label="Main">
     <ul>
-      {#each NAV as item (item.href)}
+      {#each NAV.filter((entry) => !entry.owner || admin.available) as item (item.href)}
         <li>
           <a
             href={item.href}

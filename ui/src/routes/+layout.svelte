@@ -13,6 +13,7 @@
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
   import { session } from "#lib/session/session.svelte.ts";
   import { BuildGuard } from "#lib/stores/build-guard.ts";
+  import { admin } from "#lib/stores/admin.svelte.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import { networkHealth } from "#lib/stores/network-health.svelte.ts";
   import { density } from "#lib/theme/density.svelte.ts";
@@ -42,6 +43,7 @@
     // start them again.
     return untrack(() => {
       theme.init();
+      void admin.probe();
       void theme.sync();
       density.init();
       void density.sync();

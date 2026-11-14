@@ -15,10 +15,23 @@ use super::{MergeEntry, MergeRefusal, Merged, Unmerged, read_text};
 pub(super) const KEY: &str = "Puddle";
 
 /// The line above Puddle's block.
-const BEGIN: &str = "# puddle: begin";
+pub(super) const BEGIN: &str = "# puddle: begin";
 
 /// The line below Puddle's block.
-const END: &str = "# puddle: end";
+pub(super) const END: &str = "# puddle: end";
+
+/// The two lines that fence a block. The engine is the same for every line-based file whose
+/// block is fenced by comment lines; `shellblock` reuses it with `#`-comment markers of its own.
+pub(super) struct Markers {
+    pub(super) begin: &'static str,
+    pub(super) end: &'static str,
+}
+
+/// The markers of `ssh_known_hosts`.
+const HOSTS: Markers = Markers {
+    begin: BEGIN,
+    end: END,
+};
 
 /// The most a block may hold, so a rewrite never nears the file limit by itself.
 pub(super) const MAX_BLOCK: usize = 256 << 10;
@@ -43,41 +56,42 @@ pub(super) fn invalid(value: &str) -> Option<&'static str> {
 }
 
 /// The block with its markers.
-fn block(entries: &[MergeEntry]) -> String {
+fn block(m: &Markers, entries: &[MergeEntry]) -> String {
     let body = entries.first().map_or("", MergeEntry::value);
-    format!("{BEGIN}\n{body}\n{END}\n")
+    format!("{}\n{body}\n{}\n", m.begin, m.end)
 }
 
 /// The indexes of the lines that are one of Puddle's markers.
-fn markers(lines: &[&str]) -> Vec<usize> {
+fn markers(m: &Markers, lines: &[&str]) -> Vec<usize> {
     lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| is_marker(line))
+        .filter(|(_, line)| is_marker(m, line))
         .map(|(i, _)| i)
         .collect()
 }
 
-fn is_marker(line: &str) -> bool {
-    matches!(line.trim_end_matches(['\r', '\n']), BEGIN | END)
+fn is_marker(m: &Markers, line: &str) -> bool {
+    let line = line.trim_end_matches(['\r', '\n']);
+    line == m.begin || line == m.end
 }
 
 /// The file without Puddle's lines, and the byte offset where they were. Puddle's lines are one
 /// begin and one end line in order, with whatever stands between them; with damaged markers they
 /// are every line from the first marker to the last, and a lone marker is a span of one line.
 /// `in_place` says the span is a well-formed block.
-fn without(lines: &[&str]) -> (String, usize, bool) {
-    let found = markers(lines);
+fn without(m: &Markers, lines: &[&str]) -> (String, usize, bool) {
+    let found = markers(m, lines);
     let (Some(&first), Some(&last)) = (found.first(), found.last()) else {
         return (lines.concat(), lines.iter().map(|l| l.len()).sum(), false);
     };
     let well_formed = found.len() == 2
         && lines
             .get(first)
-            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == BEGIN)
+            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == m.begin)
         && lines
             .get(last)
-            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == END);
+            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == m.end);
     let before: String = lines.iter().take(first).copied().collect();
     let at = before.len();
     let after: String = lines.iter().skip(last + 1).copied().collect();
@@ -90,10 +104,19 @@ pub(super) fn apply(
     existing: Option<&[u8]>,
     entries: &[MergeEntry],
 ) -> Result<String, MergeRefusal> {
+    apply_with(&HOSTS, existing, entries)
+}
+
+/// The file with the block fenced by `m` set.
+pub(super) fn apply_with(
+    m: &Markers,
+    existing: Option<&[u8]>,
+    entries: &[MergeEntry],
+) -> Result<String, MergeRefusal> {
     let original = read_text(existing)?.unwrap_or("");
     let lines: Vec<&str> = original.split_inclusive('\n').collect();
-    let (mut out, at, well_formed) = without(&lines);
-    let ours = block(entries);
+    let (mut out, at, well_formed) = without(m, &lines);
+    let ours = block(m, entries);
     if well_formed {
         out.insert_str(at, &ours);
         return Ok(out);
@@ -107,9 +130,14 @@ pub(super) fn apply(
 
 /// Removes Puddle's block; whether the file is empty afterwards.
 pub(super) fn unmerge(existing: &[u8]) -> Result<Unmerged, MergeRefusal> {
+    unmerge_with(&HOSTS, existing)
+}
+
+/// Removes the block fenced by `m`; whether the file is empty afterwards.
+pub(super) fn unmerge_with(m: &Markers, existing: &[u8]) -> Result<Unmerged, MergeRefusal> {
     let original = read_text(Some(existing))?.unwrap_or("");
     let lines: Vec<&str> = original.split_inclusive('\n').collect();
-    let (out, ..) = without(&lines);
+    let (out, ..) = without(m, &lines);
     let empty = out.trim().is_empty();
     let merged = if out == original {
         Merged::Unchanged

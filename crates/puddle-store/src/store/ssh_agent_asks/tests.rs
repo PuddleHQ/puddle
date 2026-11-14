@@ -313,3 +313,17 @@ fn ending_a_run_drops_its_open_questions_and_tells_the_ui_once_per_workspace() {
     store.end_ssh_agent_run(None).unwrap();
     assert_eq!(seen.asks_changed(), 0, "nothing was waiting");
 }
+
+#[test]
+fn every_state_round_trips_through_its_text_and_unknown_text_is_none() {
+    for state in [
+        SshAgentAskState::Requested,
+        SshAgentAskState::AllowedOnce,
+        SshAgentAskState::AllowedRun,
+        SshAgentAskState::AllowedAlways,
+        SshAgentAskState::Denied,
+    ] {
+        assert_eq!(SshAgentAskState::parse(state.as_str()), Some(state));
+    }
+    assert_eq!(SshAgentAskState::parse("maybe"), None);
+}

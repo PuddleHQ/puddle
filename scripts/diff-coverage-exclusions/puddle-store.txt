@@ -2,3 +2,5 @@
 # Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
 # path glob here starts with crates/puddle-store/; the gate refuses another crate's entry, so two pull requests that
 # touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-store/src/store/ssh_agent_asks.rs | None,\n)?; | the error arm of `?` on a statement SQLite fails only on a broken database file; the same transaction is tested through its success path
+crates/puddle-store/src/store/ssh_agent_asks.rs | params![id, now_i],\n)?; | the error arm of `?` on a statement SQLite fails only on a broken database file; the same transaction is tested through its success path

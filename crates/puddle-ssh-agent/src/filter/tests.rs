@@ -501,3 +501,21 @@ fn a_key_blob_names_its_type_and_a_junk_blob_has_none() {
     assert_eq!(key_type(&w.user.blob()).as_deref(), Some("ssh-ed25519"));
     assert_eq!(key_type(b"junk"), None);
 }
+
+#[test]
+fn a_first_use_that_is_not_approved_says_why_in_words() {
+    for (why, words) in [
+        (Disapproval::Denied, "the user said no"),
+        (Disapproval::Unanswered, "the user did not answer in time"),
+        (
+            Disapproval::Unavailable,
+            "the question could not be put to the user",
+        ),
+    ] {
+        assert_eq!(why.to_string(), words);
+        assert_eq!(
+            Refusal::Disapproved(why).to_string(),
+            format!("first use not approved: {words}")
+        );
+    }
+}

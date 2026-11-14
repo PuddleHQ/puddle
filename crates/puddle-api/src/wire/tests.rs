@@ -840,3 +840,20 @@ fn typed_audit_records_serialise_as_stored() {
         own
     );
 }
+
+#[test]
+fn the_ssh_agent_audit_kinds_reach_the_wire_under_their_own_names() {
+    for (from, name) in [
+        (store::WorkspaceOpKind::SshAgentSigned, "ssh_agent_signed"),
+        (store::WorkspaceOpKind::SshAgentRefused, "ssh_agent_refused"),
+        (
+            store::WorkspaceOpKind::SshAgentAnswered,
+            "ssh_agent_answered",
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_value(WorkspaceOpKind::from(from)).unwrap(),
+            name
+        );
+    }
+}

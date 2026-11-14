@@ -5,6 +5,7 @@
   import StatusChip from "./StatusChip.svelte";
   import TrustedBadge from "./TrustedBadge.svelte";
   import VolumeMissingNotice from "./VolumeMissingNotice.svelte";
+  import type { ToolsState } from "#lib/workspaces/events.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
@@ -23,6 +24,7 @@
     waiting = 0,
     progress,
     oom,
+    tools,
     onStart,
     onStop,
     onConnect,
@@ -34,6 +36,8 @@
     waiting?: number;
     progress?: Progress | undefined;
     oom?: OomEvent | undefined;
+    /** What the background tool install last said; nothing before it ran. */
+    tools?: ToolsState | undefined;
     onStart: (w: Workspace) => void;
     onStop: (w: Workspace) => void;
     onConnect: (w: Workspace) => void;
@@ -110,6 +114,26 @@
     repositories={workspace.repositories}
     onDismiss={() => onDismiss(workspace)}
   />
+  {#if tools}
+    <p class="tools" class:failed={tools.phase === "failed"} role="status">
+      <span class="label">Tools:</span>
+      {#if tools.phase === "installing"}
+        installing {tools.done} of {tools.total}
+        <span class="what">({tools.tools.join(", ")})</span>
+      {:else if tools.phase === "ready"}
+        ready
+      {:else}
+        failed to install <span class="what">{tools.tools.join(", ")}</span>
+        {#if tools.waiting_on.length > 0}
+          <a
+            class="flag"
+            href="/workspaces/{encodeURIComponent(workspace.id)}/network"
+            >Waiting for you to allow {tools.waiting_on.join(", ")}</a
+          >
+        {/if}
+      {/if}
+    </p>
+  {/if}
   <div class="acts">
     <AttachButtons {workspace} {onStart} {onStop} {onConnect} />
     <a class="btn details" href="/workspaces/{encodeURIComponent(workspace.id)}"
@@ -180,6 +204,19 @@
   .full {
     color: var(--color-warning);
     font-weight: 600;
+  }
+  .tools {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    overflow-wrap: anywhere;
+  }
+  .tools.failed .label {
+    color: var(--color-warning);
+    font-weight: 600;
+  }
+  .what {
+    font-family: var(--font-mono);
   }
   .acts {
     display: flex;

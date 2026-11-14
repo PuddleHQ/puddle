@@ -31,7 +31,7 @@ async function addUser(page: Page, name: string): Promise<string> {
     .getByRole("dialog")
     .getByRole("button", { name: "Add user" })
     .click();
-  const link = page.getByLabel("Invite link");
+  const link = page.getByRole("textbox", { name: "Invite link" });
   await expect(link).toBeVisible();
   await expect(link).toHaveValue(/\/invite#.+/);
   const value = await link.inputValue();
@@ -115,7 +115,7 @@ test.describe("with several users on", () => {
     const first = await addUser(page, "Kim");
     await page.getByRole("button", { name: "Done" }).click();
     await page.getByRole("button", { name: "New invite link for Kim" }).click();
-    const link = page.getByLabel("Invite link");
+    const link = page.getByRole("textbox", { name: "Invite link" });
     await expect(link).toHaveValue(/\/invite#.+/);
     await expect(link).not.toHaveValue(
       new RegExp(first.replace(/[^\w-]/g, "\\$&")),

@@ -1147,10 +1147,9 @@ fn build_services<R: Runtime + Clone>(
     .with_proxy_sign_ins(outbound.sign_ins.clone())
     .with_company_signals(company_signals(options))
     .with_endpoints(endpoints.clone());
-    let services = match options.front_resolver.clone() {
-        Some(resolver) => services.with_front_resolver(resolver),
-        None => services,
-    };
+    let services = options.front_resolver.iter().fold(services, |s, resolver| {
+        s.with_front_resolver(resolver.clone())
+    });
     // Browsers sign in against the database's secrets, which only the API ever holds.
     match store.take_account_secrets() {
         Some(secrets) => services.with_account_secrets(secrets),

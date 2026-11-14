@@ -19,7 +19,7 @@ FAIL  Data folder path    /srv/team belongs to another user (id 1001); /srv/team
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0
-ok    Credential store    a test write and delete worked
+ok    Credential store    the operating system's credential store: a test write and delete worked
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -87,7 +87,7 @@ ok    Credential store    a test write and delete worked
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked"
     }
   ],
   "elapsed_ms": 1234

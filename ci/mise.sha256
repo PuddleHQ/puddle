@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The mise release Puddle downloads into a workspace: `<version> <release asset> <sha256>`, one line per
+# guest architecture. The first line's version is the one used; `puddle-agent mise-fetch` refuses a
+# download that does not match the line for its architecture. The values are the lines of
+# `https://mise.jdx.dev/v<version>/SHASUMS256.txt` and `https://github.com/jdx/mise/releases/download/v<version>/SHASUMS256.txt`;
+# `ci/check-mise-pin.sh` checks both against this file every night.
+2026.10.21 mise-v2026.10.21-linux-x64-musl.tar.gz 63b5621467b5b9950b99b7333aec1b4a34c5f23a9e464d330357c5b35502e8d7
+2026.10.21 mise-v2026.10.21-linux-arm64-musl.tar.gz 9b44072897d0489d79b8f12de13c3a27342e11f857b614aa58c5f34774c0da75

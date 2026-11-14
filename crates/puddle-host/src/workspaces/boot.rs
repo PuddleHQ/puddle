@@ -151,10 +151,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .kit
             .editor(id, self.reconnection_grace(name), self.editor_kind())?
             .map(|server| server.with_user(session_user));
-        let mise = MiseLayer::of(
-            id,
-            crate::settings_read::mise_or_off(inner.settings.as_ref(), name),
-        )?;
+        let mode = crate::settings_read::mise_or_off(inner.settings.as_ref(), name);
+        let mise = MiseLayer::of(id, mode)?;
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);

@@ -5,7 +5,7 @@
 //! Every setting is an environment variable, so Puddle writes no `/etc/mise` file and an image's
 //! own system config keeps working.
 
-use puddle_types::{FileMode, GuestEnv, GuestFile, GuestPath};
+use puddle_types::{FileMode, GuestEnv, GuestFile, GuestPath, guest_path};
 
 use crate::{ConfigError, SUDOERS_MISE_GUEST};
 
@@ -91,9 +91,7 @@ pub fn mise_config(settings: &MiseSettings) -> Result<MiseConfig, ConfigError> {
     set("PATH", &path)?;
 
     let file = GuestFile::new(
-        GuestPath::new(SUDOERS_MISE_GUEST).map_err(|e| ConfigError::GuestPath {
-            reason: e.to_string(),
-        })?,
+        guest_path!(SUDOERS_MISE_GUEST),
         sudoers(&env, &path).into_bytes(),
     )
     .with_mode(FileMode::new(0o440));

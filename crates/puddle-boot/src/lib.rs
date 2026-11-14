@@ -69,9 +69,10 @@ pub use machine::{
     MACHINE_SETTINGS_GUEST, MACHINE_SETTINGS_RELATIVE, machine_settings, machine_settings_path,
 };
 pub use plan::{
-    AgentConfig, BootPlan, BootPlanBuilder, CA_DIR_GUEST, DEFAULT_AGENT_PORT, ENV_FILE_GUEST,
-    GIT_AUTHOR_DIR_GUEST, GIT_CONFIG_GUEST, GitAuthorRule, GitIdentity, MAX_GIT_AUTHOR_GLOBS,
-    MAX_GIT_AUTHOR_RULES, PATH_FILE_GUEST, PLAN_HEADER, PlanError, START_FOLDER_FILE_GUEST,
-    SUDOERS_SESSION_GUEST, start_folder_file,
+    AgentConfig, BASH_RC_GUEST, BootPlan, BootPlanBuilder, CA_DIR_GUEST, DEFAULT_AGENT_PORT,
+    ENV_FILE_GUEST, GIT_AUTHOR_DIR_GUEST, GIT_CONFIG_GUEST, GitAuthorRule, GitIdentity,
+    MAX_GIT_AUTHOR_GLOBS, MAX_GIT_AUTHOR_RULES, PATH_FILE_GUEST, PLAN_HEADER, PlanError,
+    START_FOLDER_FILE_GUEST, SUDOERS_ENV_GUEST, SUDOERS_SESSION_GUEST, ZSH_ENV_GUEST,
+    start_folder_file,
 };
 pub use puddle_types::ApplyKind;

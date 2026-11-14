@@ -94,8 +94,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// when a rule the user made blocks the download host, which one.
     fn mise_problem(&self, name: &WorkspaceId, reason: &str) -> Problem {
         let mut detail = format!(
-            "{reason}. Tools are not installed; the workspace works without them. Puddle tries \
-             again at the next start."
+            "Setting up mise failed: {reason}. Tools are not installed; the workspace works without them. Puddle \
+             tries again at the next start."
         );
         if let Some(blocker) = self.download_blocker(name) {
             detail.push(' ');

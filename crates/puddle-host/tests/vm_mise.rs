@@ -340,24 +340,24 @@ async fn vm_radar_a_fresh_workspace_gets_the_pinned_mise_without_an_inbox_row() 
     let ws = create_workspace_from(&vm, &api, "misefetch", &[], json!({})).await;
     let want = pinned_version();
     // The download runs in the background after the start: wait for the binary.
-    let mut said = String::new();
-    for _ in 0..60 {
-        let (code, out) = run(
-            &vm,
-            &ws,
-            "version",
-            &format!(
-                "/workspaces/{ws}/.puddle/mise/bin/mise --version 2>&1; \
-                 test -f /workspaces/{ws}/.puddle/mise/bin/.puddle-mise && echo marker"
-            ),
-        )
-        .await;
-        if code == 0 && out.contains("marker") {
-            said = out;
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
+    let said = puddle_test_kit::eventually_async(
+        "the pinned mise on the volume",
+        Duration::from_secs(90),
+        || async {
+            let (code, out) = run(
+                &vm,
+                &ws,
+                "version",
+                &format!(
+                    "/workspaces/{ws}/.puddle/mise/bin/mise --version 2>&1; \
+                     test -f /workspaces/{ws}/.puddle/mise/bin/.puddle-mise && echo marker"
+                ),
+            )
+            .await;
+            (code == 0 && out.contains("marker")).then_some(out)
+        },
+    )
+    .await;
     assert!(
         said.contains(want),
         "mise --version does not print {want}: {said:?}"
@@ -394,15 +394,11 @@ async fn vm_radar_an_own_deny_on_the_mise_host_gives_a_problem_and_a_done_start(
     // `create_workspace_from` returns once the start ended `Done`.
     let ws = create_workspace_from(&vm, &api, "misedeny", &[], json!({})).await;
     assert_eq!(ws, id);
-    let mut detail = None;
-    for _ in 0..60 {
-        detail = tools_problem(&api, &ws).await;
-        if detail.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    let detail = detail.expect("no tools problem was raised");
+    let detail =
+        puddle_test_kit::eventually_async("the tools problem", Duration::from_secs(90), || {
+            tools_problem(&api, &ws)
+        })
+        .await;
     assert!(detail.contains("deny mise.jdx.dev"), "{detail}");
     assert!(detail.contains("works without them"), "{detail}");
     let (_, out) = run(

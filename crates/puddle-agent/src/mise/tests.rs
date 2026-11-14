@@ -276,8 +276,7 @@ async fn a_network_failure_is_a_download_error_that_is_not_a_refusal() {
     assert!(matches!(err, MiseError::Download(_)), "{err}");
     assert!(!err.is_refusal());
     assert!(
-        err.to_string()
-            .starts_with("Puddle could not download mise: "),
+        err.to_string().starts_with("could not download mise: "),
         "{err}"
     );
     assert!(err.to_string().contains("403"), "{err}");

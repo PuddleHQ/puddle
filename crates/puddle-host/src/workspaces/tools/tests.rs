@@ -5,15 +5,8 @@ use super::*;
 
 #[test]
 fn a_failure_says_the_last_line_the_agent_wrote() {
-    let out = ExecOutput::new(
-        1,
-        "",
-        "warning: slow\n\nPuddle could not download mise: 403\n\n",
-    );
-    assert_eq!(
-        failure_reason(Ok(out)),
-        "Puddle could not download mise: 403"
-    );
+    let out = ExecOutput::new(1, "", "warning: slow\n\ncould not download mise: 403\n\n");
+    assert_eq!(failure_reason(Ok(out)), "could not download mise: 403");
 }
 
 #[test]

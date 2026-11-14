@@ -170,7 +170,7 @@ pub enum MiseError {
     #[error("the image has neither curl nor wget, which Puddle needs to download mise")]
     NoDownloader,
     /// The tarball could not be downloaded.
-    #[error("Puddle could not download mise: {0}")]
+    #[error("could not download mise: {0}")]
     Download(String),
     /// The download is not the pinned file.
     #[error("the mise download does not match the checksum Puddle expects")]
@@ -184,7 +184,7 @@ pub enum MiseError {
     #[error("the mise download is not unpackable: {0}")]
     Archive(String),
     /// The volume could not be written.
-    #[error("Puddle could not write mise to the workspace volume: {0}")]
+    #[error("could not write mise to the workspace volume: {0}")]
     Io(#[from] io::Error),
 }
 

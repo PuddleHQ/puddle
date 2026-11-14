@@ -13185,7 +13185,7 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
 
 // ---- mise after a start -----------------------------------------------------------------------
 
-const MISE_FAILURE: &str = "Puddle could not download mise: curl failed (exit status: 56): 403";
+const MISE_FAILURE: &str = "could not download mise: curl failed (exit status: 56): 403";
 
 fn mise_fetches(rig: &Rig) -> Vec<(Vec<String>, Option<String>)> {
     rig.guest.mise_fetches.lock().unwrap().clone()

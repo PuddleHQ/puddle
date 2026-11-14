@@ -8,7 +8,6 @@
     reason = "helpers outside #[test] fns, only in tests"
 )]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -70,12 +69,10 @@ fn a_download_that_is_not_the_pinned_file_is_refused_with_the_reason_on_standard
     std::fs::create_dir(&bin).unwrap();
     let curl = bin.join("curl");
     // Writes something else to the `--output` file.
-    std::fs::write(
+    puddle_test_kit::write_executable(
         &curl,
         "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --output ] && out=$2; shift; done\nprintf 'not mise' > \"$out\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let out = mise_fetch(&dir, &bin);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
@@ -112,7 +109,7 @@ fn a_folder_that_cannot_be_made_is_reported() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(
         String::from_utf8_lossy(&out.stderr)
-            .starts_with("Puddle could not write mise to the workspace volume: "),
+            .starts_with("could not write mise to the workspace volume: "),
         "{out:?}"
     );
 }

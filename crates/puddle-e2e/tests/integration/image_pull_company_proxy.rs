@@ -8,10 +8,6 @@
 //! Squid comes from `PUDDLE_SQUID_BIN` or `PUDDLE_SQUID_DOCKER`; with neither the tests skip,
 //! unless `PUDDLE_REQUIRE_SQUID=1` (CI sets it).
 #![cfg(unix)]
-#![expect(
-    clippy::unwrap_used,
-    reason = "helpers outside #[test] functions fail the test by panicking"
-)]
 
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;

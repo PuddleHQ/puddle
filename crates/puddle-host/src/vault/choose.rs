@@ -249,7 +249,7 @@ fn key_failure(err: &KeyError) -> OpenFailure {
         KeyError::KeyMissing(tag) => (
             "Puddle cannot open its file vault: its key is missing",
             format!(
-                "The vault was sealed with a {} key and that key is not here. Restore it from a copy of your config folder ({KEY_FOLDER}) and restart Puddle. If it is gone, the secrets in the vault cannot be read: stop Puddle, move the `secrets/vault` file in the data folder aside, restart, and enter the secrets again.",
+                "The vault was sealed with a {} key and that key is not here. Restore it from a copy; it is kept in {KEY_FOLDER}. Then restart Puddle. If it is gone, the secrets in the vault cannot be read: stop Puddle, move the `secrets/vault` file in the data folder aside, restart, and enter the secrets again.",
                 tag.as_str()
             ),
         ),

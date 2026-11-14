@@ -183,3 +183,31 @@ fn the_vault_and_the_record_share_one_folder() {
     assert_eq!(vault_path(data), Path::new("/srv/puddle/secrets/vault"));
     assert_eq!(secrets_folder(data), Path::new("/srv/puddle/secrets"));
 }
+
+#[test]
+fn every_rule_and_store_has_the_words_a_record_and_a_message_print() {
+    for (option, text) in [
+        (StoreOption::Auto, "auto"),
+        (StoreOption::Os, "os"),
+        (StoreOption::File, "file"),
+    ] {
+        assert_eq!(option.as_str(), text);
+        assert_eq!(StoreOption::parse(text), Some(option));
+    }
+    let rules = [
+        Rule::Recorded,
+        Rule::Option,
+        Rule::ExistingSecrets,
+        Rule::OtherPlatform,
+        Rule::Headless,
+        Rule::LinuxDefault,
+    ];
+    let whys: std::collections::HashSet<_> = rules.iter().map(|r| r.why()).collect();
+    assert_eq!(
+        whys.len(),
+        rules.len(),
+        "each rule says something of its own"
+    );
+    assert_eq!(StoreKind::Os.to_string(), StoreKind::Os.describe());
+    assert_eq!(StoreKind::File.to_string(), "Puddle's file vault");
+}

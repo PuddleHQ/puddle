@@ -305,3 +305,42 @@ async fn shutdown_reports_a_sweep_that_panicked_and_one_that_finished() {
         SweepEnd::Finished
     );
 }
+
+#[tokio::test]
+async fn a_file_vault_that_takes_no_write_raises_the_vault_problem_and_a_skipped_check_nothing() {
+    let broken = Arc::new(MemoryStore::new());
+    broken.break_it();
+    let list = Arc::new(problems());
+    run_check(Probe::File(broken), None, None, list.clone())
+        .await
+        .unwrap();
+    let raised = list.list();
+    assert_eq!(raised.len(), 1, "{raised:?}");
+    assert!(raised[0].title.contains("file vault does not take a write"));
+
+    let quiet = Arc::new(problems());
+    run_check(Probe::Skip, None, None, quiet.clone())
+        .await
+        .unwrap();
+    assert_eq!(quiet.list(), Vec::new());
+}
+
+#[tokio::test]
+async fn the_warning_path_runs_for_a_start_that_deserves_it_and_raises_no_problem_for_a_working_store()
+ {
+    let healthy = Arc::new(MemoryStore::new());
+    let list = Arc::new(problems());
+    run_check(
+        Probe::Store(healthy),
+        None,
+        Some(LoginSession::NotGraphical),
+        list.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        list.list(),
+        Vec::new(),
+        "a warning is a log line, not a problem"
+    );
+}

@@ -361,6 +361,7 @@ async fn a_vault_whose_key_is_missing_leaves_a_running_host_a_refusing_store_and
             .is_err()
     );
     assert!(chosen.vault.get(&id("tok-a")).is_err());
+    assert!(chosen.vault.delete(&id("tok-a")).is_err());
     let raised = rig.problems.list();
     assert_eq!(raised.len(), 1, "{raised:?}");
     assert_eq!(raised[0].key, STORE_PROBLEM);

@@ -13472,6 +13472,20 @@ async fn a_headless_host_keeps_an_environment_secret_a_pasted_token_and_a_proxy_
     );
     assert!(problems_of(&api(&again)).await.is_empty());
     again.shutdown().await;
+    drop(again);
+
+    // A vault whose key is gone does not stop the host: it starts, says why secrets cannot be
+    // saved, and leaves the vault file as it was.
+    let before = std::fs::read(&vault_file).unwrap();
+    std::fs::remove_file(rig.dir.path().join("config/puddle/vault.key")).unwrap();
+    let keyless = rig.start().await;
+    let problems = problems_of(&api(&keyless)).await;
+    assert!(
+        problems.iter().any(|p| p.0 == "credential-store"),
+        "{problems:?}"
+    );
+    assert_eq!(std::fs::read(&vault_file).unwrap(), before);
+    keyless.shutdown().await;
 }
 
 #[cfg(target_os = "linux")]

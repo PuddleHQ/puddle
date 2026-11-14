@@ -50,6 +50,7 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
     let store = Arc::new(
         Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
     );
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-flood").unwrap());
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
             .with_connection_log(store.clone())
@@ -71,7 +72,9 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
         .await
         .unwrap();
     assert_eq!((code, decision.as_str()), (403, "pending"));
-    let real = store.open_pending_every_user(None).unwrap();
+    let real = store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap();
     assert_eq!(real.len(), 1);
     let real = real[0].id;
 
@@ -96,8 +99,12 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
     let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
     let ((rows, groups), cpu) = cpu_time(|| {
         (
-            store.open_pending_every_user(None).unwrap(),
-            store.inbox_every_user().unwrap(),
+            store
+                .open_pending_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            store
+                .inbox_every_user(&puddle_store::testing::all_users())
+                .unwrap(),
         )
     });
     eprintln!("inbox over the capped open rows: {cpu:?} of CPU");

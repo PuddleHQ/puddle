@@ -70,6 +70,7 @@ async fn rig(tag: &str, gate: usize) -> Rig {
         start_vm_host_platform(tag, internet.options.clone(), &internet.platform, |_| {}).await;
     let name = format!("{}-{tag}", host.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.host.store(), &sandbox);
     host.host
         .store()
         .as_user(puddle_store::UserId::OWNER)

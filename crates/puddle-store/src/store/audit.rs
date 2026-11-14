@@ -12,6 +12,7 @@ use crate::audit::{
 };
 use crate::error::StoreError;
 use crate::rule::Actor;
+use crate::store::AllUsers;
 use crate::users::UserId;
 
 use super::rows::{RULE_COLUMNS, corrupt, expire_rows, raw_rule, rule_from_raw, stored_ts};
@@ -416,6 +417,16 @@ impl Store {
     /// A database error.
     pub fn audit_query_every_user(
         &self,
+        _: &AllUsers,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<Vec<(i64, String)>, StoreError> {
+        self.audit_query_where(filter, cursor, limit)
+    }
+
+    fn audit_query_where(
+        &self,
         filter: &AuditFilter,
         cursor: AuditCursor,
         limit: u32,
@@ -444,7 +455,7 @@ impl Store {
             user: Some(user),
             ..filter.clone()
         };
-        self.audit_query_every_user(&filter, cursor, limit)
+        self.audit_query_where(&filter, cursor, limit)
     }
 
     /// Remembers `name` as the current name of `workspace`; audit records written from now on

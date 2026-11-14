@@ -610,6 +610,7 @@ pub(crate) async fn create_workspace_from(
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in allowed {
+        puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
             .as_user(puddle_store::UserId::OWNER)

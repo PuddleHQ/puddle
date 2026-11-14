@@ -78,7 +78,13 @@ fn peek_records_nothing() {
             .peek(&ws("aaaaaaaa"), &host("github.com")),
         None
     );
-    assert_eq!(store.inbox_every_user().unwrap().len(), 0);
+    assert_eq!(
+        store
+            .inbox_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -93,7 +99,12 @@ fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
     assert_eq!(rule.effect, Effect::Allow);
     assert_eq!(rule.scope, Scope::Workspace(ws("aaaaaaaa")));
     assert_eq!(rule.expires_at, None);
-    assert!(store.rules_every_user().iter().any(|r| r.id == rule.id));
+    assert!(
+        store
+            .rules_every_user(&puddle_store::testing::all_users())
+            .iter()
+            .any(|r| r.id == rule.id)
+    );
     assert!(matches!(
         store
             .as_user(puddle_store::UserId::OWNER)
@@ -174,11 +185,23 @@ fn the_grant_closes_a_pending_request_it_decides() {
         )
         .unwrap();
     assert!(matches!(decision, Decision::Pending(_)));
-    assert_eq!(store.inbox_every_user().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .inbox_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        1
+    );
     store
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
-    assert_eq!(store.inbox_every_user().unwrap().len(), 0);
+    assert_eq!(
+        store
+            .inbox_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -188,5 +211,8 @@ fn a_workspace_with_no_recorded_user_gets_no_rule_from_a_create() {
         .allow_hosts_for_create(&ws("nobodys1"), &[host("github.com")])
         .unwrap_err();
     assert!(matches!(err, puddle_store::StoreError::UnknownWorkspace(w) if w == ws("nobodys1")));
-    assert_eq!(store.rules_every_user(), []);
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        []
+    );
 }

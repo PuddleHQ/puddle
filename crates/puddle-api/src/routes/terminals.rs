@@ -341,8 +341,24 @@ async fn pump(
                 return;
             }
             message = socket.recv() => {
-                let Some(Ok(message)) = message else { return };
+                let message = match message {
+                    Some(Ok(message)) => message,
+                    // A message past the socket's own limit: say so before the connection goes.
+                    Some(Err(_)) => {
+                        let _ = socket
+                            .send(Message::Close(Some(CloseFrame {
+                                code: close_code::SIZE,
+                                reason: "message too big".into(),
+                            })))
+                            .await;
+                        return;
+                    }
+                    None => return,
+                };
                 if matches!(message, Message::Close(_)) {
+                    // The page started the closing handshake. Reading on sends the reply the socket
+                    // queued; without it the page sees the connection reset, not a clean end.
+                    await_close(socket).await;
                     return;
                 }
                 match from_page(message) {

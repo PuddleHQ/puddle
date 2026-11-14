@@ -712,6 +712,22 @@ describe("staleExclusions", () => {
     );
   });
 
+  it("names an entry without a file or a number as line ? of the text", () => {
+    const entry = entries(
+      "src/a.rs | let excused_line = compute_one()?; | why",
+    )[0]!;
+    delete entry.no;
+    expect(staleMessage({ entry, why: "w" })).toBe(
+      'line ?: stale exclusion "src/a.rs | let excused_line = compute_one()?;": w; delete the entry',
+    );
+    expect(staleMessage({ entry: { ...entry, no: 4 }, why: "w" })).toMatch(
+      /^line 4:/,
+    );
+    expect(
+      staleMessage({ entry: { ...entry, file: "ex/c.txt" }, why: "w" }),
+    ).toMatch(/^ex\/c\.txt:\?:/);
+  });
+
   it("flags an entry whose line was rewritten into a different line", () => {
     const e = entries("src/a.rs | let excused_line = compute_one(); | why");
     expect(staleExclusions(e, files, never, source)).toHaveLength(1);

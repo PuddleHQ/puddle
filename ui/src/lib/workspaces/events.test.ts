@@ -28,6 +28,29 @@ describe("asWorkspaceEvent", () => {
     expect(asWorkspaceEvent(progress)).toEqual(progress);
   });
 
+  it("accepts each state of the tool install and rejects a malformed one", () => {
+    const states = [
+      { phase: "installing", done: 0, total: 2, tools: ["node"] },
+      { phase: "ready" },
+      { phase: "failed", tools: ["node"], waiting_on: [] },
+    ];
+    for (const state of states) {
+      const event = { type: "workspace_tools", workspace: "w", state };
+      expect(asWorkspaceEvent(event)).toEqual(event);
+    }
+    for (const state of [
+      null,
+      { phase: "other" },
+      { phase: "installing", done: "1", total: 2, tools: [] },
+      { phase: "installing", done: 1, total: 2, tools: [1] },
+      { phase: "failed", tools: [] },
+    ]) {
+      expect(
+        asWorkspaceEvent({ type: "workspace_tools", workspace: "w", state }),
+      ).toBeNull();
+    }
+  });
+
   it("accepts a change to a workspace's list of repositories", () => {
     const changed = { type: "workspace_repositories_changed", workspace: "w" };
     expect(asWorkspaceEvent(changed)).toEqual(changed);

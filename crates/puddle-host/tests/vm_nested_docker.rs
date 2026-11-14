@@ -233,7 +233,7 @@ async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_prox
     let rows = vm
         .host
         .store()
-        .open_pending_every_user(Some(&workspace))
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(&workspace))
         .unwrap();
     assert!(rows.is_empty(), "inbox rows from nested traffic: {rows:?}");
     let audit = vm.host.store().audit_lines(0, 100_000).unwrap();

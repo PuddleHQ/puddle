@@ -145,6 +145,26 @@ describe("events", () => {
     expect(store.oom["w-a-shop"]).toEqual({ process: "node", pid: 9, at: 777 });
   });
 
+  it("keeps the last tool install state of a workspace and drops it when the workspace goes down", () => {
+    store.handleEvent({
+      type: "workspace_tools",
+      workspace: "w-a-shop",
+      state: { phase: "installing", done: 0, total: 2, tools: ["node"] },
+    });
+    store.handleEvent({
+      type: "workspace_tools",
+      workspace: "w-a-shop",
+      state: { phase: "ready" },
+    });
+    expect(store.tools["w-a-shop"]).toEqual({ phase: "ready" });
+    store.handleEvent({
+      type: "status_changed",
+      workspace: "w-a-shop",
+      status: "stopped",
+    });
+    expect(store.tools["w-a-shop"]).toBeUndefined();
+  });
+
   it("reads the list again when a disk reaches the warning threshold", async () => {
     api.list = api.list.map((w) =>
       w.id === "w-a-shop"

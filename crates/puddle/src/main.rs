@@ -25,7 +25,7 @@ fn main() -> ExitCode {
         Ok(Command::Doctor(args)) => puddle::cmd::doctor::run(&args),
         Ok(Command::Backup(args)) => puddle::cmd::backup::run(&args),
         Ok(Command::Serve(args)) => puddle::cmd::serve::run(&args),
-        Ok(Command::UserReset(args)) => puddle::cmd::user::run(&args),
+        Ok(Command::User(args)) => puddle::cmd::user::run(&args),
         Err(err) => {
             eprintln!("puddle: {err}\n{USAGE}");
             ExitCode::from(2)

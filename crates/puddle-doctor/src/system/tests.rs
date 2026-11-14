@@ -97,6 +97,7 @@ fn a_probe_with_nothing_at_the_named_endpoint_says_unreachable() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("no-agent");
     let probe = SystemProbe::new(
+        // az-ok: only the SSH agent is probed here, never `az`
         dir.path().to_path_buf(),
         RuntimeVersion::built_for(),
         DevOverride::from_env(),

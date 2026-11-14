@@ -195,6 +195,7 @@ fn run_with_store(
     }
     let probe = EncryptedHost(
         SystemProbe::new(dir, expected, DevOverride::none())
+            .with_az_search_path(Some(std::ffi::OsString::new()))
             .with_data_dir(data)
             .with_keep_boot_logs(settings().kept_logs()),
         store,
@@ -380,8 +381,9 @@ fn vm_doctor_names_a_folder_above_the_data_folder_that_another_user_owns() {
     };
     let dir = root.path().join(RUNTIME_DIR_NAME);
     std::fs::create_dir_all(&dir).unwrap();
-    let probe =
-        SystemProbe::new(dir, RuntimeVersion::built_for(), DevOverride::none()).with_data_dir(data);
+    let probe = SystemProbe::new(dir, RuntimeVersion::built_for(), DevOverride::none())
+        .with_az_search_path(Some(std::ffi::OsString::new()))
+        .with_data_dir(data);
     let report = diagnose(&probe, &Options::default(), "vm-test");
     eprintln!("{}", report.to_text());
     let check = report.check(CheckId::DataPath).unwrap();

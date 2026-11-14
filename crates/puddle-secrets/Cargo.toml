@@ -13,7 +13,6 @@ publish.workspace = true
 [dependencies]
 aes-gcm = { workspace = true }
 getrandom = { workspace = true }
-keyring = { workspace = true }
 keyring-core = { workspace = true }
 puddle-fs = { workspace = true }
 serde = { workspace = true }
@@ -22,6 +21,15 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 tracing = { workspace = true }
 zeroize = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = { workspace = true }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+zbus-secret-service-keyring-store = { workspace = true }
 
 [dev-dependencies]
 puddle-test-kit = { workspace = true }

@@ -376,6 +376,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/credential-store/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connects to the credential store again and checks that it takes a write. The
+         *     `credential-store` problem in `GET /api/problems` is raised or cleared to match, and
+         *     `problems_changed` says so.
+         */
+        post: operations["retry_credential_store"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/credentials/check": {
         parameters: {
             query?: never;
@@ -3206,6 +3227,14 @@ export interface components {
             org: string | null;
             /** @description The tenant to ask `az` for: a directory id or a domain such as `contoso.onmicrosoft.com`. */
             tenant: string;
+        };
+        /** @description What the first-run banner's Retry came to. */
+        CredentialStoreRetry: {
+            /**
+             * @description The credential store took a write on this check, so Puddle can save secrets and sign-ins.
+             *     `false` leaves the `credential-store` problem standing with its advice.
+             */
+            working: boolean;
         };
         /** @description The user's own image after it was checked and resized. */
         CustomIcon: {
@@ -7727,6 +7756,71 @@ export interface operations {
             };
             /** @description Puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    retry_credential_store: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description whether the store takes a write now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialStoreRetry"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description this build has no credential store check */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

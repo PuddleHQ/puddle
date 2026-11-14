@@ -325,6 +325,19 @@ async fn shutdown_reports_a_sweep_that_panicked_and_one_that_finished() {
     );
 }
 
+#[test]
+fn a_retry_against_the_real_store_answers_and_leaves_the_problem_matching_it() {
+    // Whatever this computer's credential store does, the problem stands exactly when it refuses.
+    let list = Arc::new(problems());
+    let retry = StoreRetry {
+        probe: Probe::Os,
+        problems: list.clone(),
+    };
+    let working = retry.retry().expect("the host wires a check");
+    let standing = list.list().iter().any(|p| p.key == STORE_PROBLEM);
+    assert_eq!(standing, !working);
+}
+
 #[tokio::test]
 async fn a_file_vault_that_takes_no_write_raises_the_vault_problem_and_a_skipped_check_nothing() {
     let broken = Arc::new(MemoryStore::new());
@@ -362,4 +375,30 @@ async fn the_warning_path_runs_for_a_start_that_deserves_it_and_raises_no_proble
         Vec::new(),
         "a warning is a log line, not a problem"
     );
+}
+
+#[test]
+fn a_retry_with_nothing_to_check_has_no_answer_and_a_file_vault_is_checked_like_the_store() {
+    let skipped = StoreRetry {
+        probe: Probe::Skip,
+        problems: Arc::new(problems()),
+    };
+    assert_eq!(skipped.retry(), None);
+
+    let broken = Arc::new(MemoryStore::new());
+    broken.break_it();
+    let list = Arc::new(problems());
+    let file = StoreRetry {
+        probe: Probe::File(broken),
+        problems: list.clone(),
+    };
+    assert_eq!(file.retry(), Some(false));
+    assert_eq!(list.list().len(), 1);
+
+    let healthy = StoreRetry {
+        probe: Probe::File(Arc::new(MemoryStore::new())),
+        problems: list.clone(),
+    };
+    assert_eq!(healthy.retry(), Some(true));
+    assert_eq!(list.list(), Vec::new(), "a working vault ends the problem");
 }

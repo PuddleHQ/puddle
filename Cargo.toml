@@ -80,10 +80,14 @@ arbitrary = "1.5"
 sha2 = "0.11"
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 # The OS credential store (Credential Manager, Keychain, Secret Service over D-Bus in pure Rust),
-# used only for tokens the user pastes into Puddle.
-keyring = "4.2"
-# The `keyring` wrapper hides the entry modifiers Windows needs (credential persistence).
+# used only for tokens the user pastes into Puddle. `keyring-core` is the entry API (it carries the
+# entry modifiers Windows needs: credential persistence). The store crates are the ones the
+# `keyring` wrapper picks, used directly because the wrapper sets its store up once per process and
+# keeps a failure; connecting here lets Puddle connect again after the user unlocked the store.
 keyring-core = "1"
+apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain"] }
+windows-native-keyring-store = "1"
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 zeroize = "1.9"
 # The encrypted file vault of puddle-secrets (RustCrypto, AES-256-GCM).
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }

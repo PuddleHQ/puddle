@@ -232,13 +232,7 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
     );
     // Only the intranet name counts: the host's own background downloads (mise's setup after
     // the first start) also leave through the client's tunnel while the test runs.
-    let name_prefix = format!("{}:", PrivateAccess::NAME);
-    let reached: Vec<String> = lab
-        .access
-        .carried()
-        .into_iter()
-        .filter(|c| c.starts_with(&name_prefix))
-        .collect();
+    let reached = lab.access.carried_to(PrivateAccess::NAME);
     assert!(
         reached.is_empty()
             && lab
@@ -267,7 +261,7 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
     );
     let tls = lab.guest(TLS, limit).await;
     assert!(tls.contains("final=200"), "HTTPS with the toggle on: {tls}");
-    let carried = lab.access.carried();
+    let carried = lab.access.carried_to(PrivateAccess::NAME);
     assert!(
         // flake-ok: the host answers this name from its own fixed table (`ClientDns`), the machine's resolver is never asked.
         carried.iter().any(|c| c == "intranet.corp.test:80")

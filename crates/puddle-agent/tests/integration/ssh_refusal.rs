@@ -155,6 +155,7 @@ impl Rig {
             Command::new(program)
                 .args(args)
                 .env("PUDDLE_AGENT_LISTEN", listen)
+                .env("PUDDLE_AGENT_TEST_LOOKUP", "hosts-only")
                 .env("HOME", home)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -487,6 +488,7 @@ async fn the_connect_command_carries_what_is_not_ssh() {
     let mut child = tokio::process::Command::new(AGENT)
         .args(["connect", "echo.test", &port.to_string(), "alias"])
         .env("PUDDLE_AGENT_LISTEN", listen)
+        .env("PUDDLE_AGENT_TEST_LOOKUP", "hosts-only")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -545,6 +547,7 @@ fn the_connect_command_with_no_agent_listening_says_so() {
     let out = Command::new(AGENT)
         .args(["connect", "github.com", "22"])
         .env("PUDDLE_AGENT_LISTEN", closed.to_string())
+        .env("PUDDLE_AGENT_TEST_LOOKUP", "hosts-only")
         .stdin(Stdio::null())
         .output()
         .unwrap();

@@ -8843,6 +8843,43 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writes_nothing() {
+    let rig = Rig::named_ids();
+    let held = Arc::new(HeldRewrite::default());
+    *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    let booted = rig.guest.boots();
+
+    // The attach's rewrite starts while the workspace runs and waits at the gate; the workspace
+    // is stopped before it looks at it.
+    held.armed.store(true, Ordering::SeqCst);
+    host.store()
+        .attach_identity(&name("acme"), puddle_store::IdentityId(identity), None)
+        .unwrap();
+    eventually("the attach rewrite waits", APPLY, || {
+        held.arrived.load(Ordering::SeqCst)
+    })
+    .await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    held.release.notify_one();
+    eventually("the attach rewrite ends", APPLY, || {
+        held.ended.load(Ordering::SeqCst)
+    })
+    .await;
+    assert_eq!(rig.guest.boots(), booted, "a stopped guest was written to");
+    assert!(
+        !has_problem(&host, "git-credentials:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test]
 async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_again() {
     // One thread: the host's tasks cannot run while this test emits, so the follower falls

@@ -2,15 +2,18 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- The page behind terminal-keys.mjs and terminal-keys-webkit.mjs: what the terminal screen's key
      rules assume of a webview. Like the terminal's input, a focused textarea.
-     Every key is logged and its default cancelled, except the two paste shortcuts, which must still
-     fire `paste` (the page then reads the text from the event, so no clipboard permission is
-     needed). `window.probe` is what the scripts read. -->
+     Every key is logged, and its default cancelled exactly as the terminal screen cancels it
+     (`keyAction` from ui/src/lib/terminal/keys.ts, loaded from /keys.js; the paste shortcuts must
+     still fire `paste`, and the page then reads the text from the event, so no clipboard
+     permission is needed). `window.probe` is what the scripts read. -->
 <meta charset="utf-8">
 <title>terminal key probe</title>
 <textarea id="input" autofocus rows="3" cols="40"></textarea>
-<script>
-  const PASTE_KEYS = (e) =>
-    (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") || (e.shiftKey && !e.ctrlKey && e.key === "Insert");
+<script type="module">
+  import { keyAction } from "/keys.js";
+  // The terminal screen's rule (ui/src/lib/terminal/keys.ts, served as /keys.js): the keys it
+  // hands to the shell it cancels, except the two paste keys, whose `paste` event must still fire.
+  const CANCELLED = new Set(["copy", "leave", "shell-cancel"]);
   window.probe = {
     // Set once per document: a reload makes a new one, so a changed value means a reload.
     document: Math.random().toString(36).slice(2),
@@ -19,8 +22,17 @@
   };
   const input = document.getElementById("input");
   input.addEventListener("keydown", (e) => {
-    window.probe.keys.push({ key: e.key, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, defaultPrevented: !PASTE_KEYS(e) });
-    if (!PASTE_KEYS(e)) e.preventDefault();
+    const action = keyAction({
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      altGraph: e.getModifierState("AltGraph"),
+    });
+    if (CANCELLED.has(action)) e.preventDefault();
+    // The event's own state after the handler ran, not the rule's answer.
+    window.probe.keys.push({ key: e.key, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, action, defaultPrevented: e.defaultPrevented });
   });
   input.addEventListener("paste", (e) => {
     window.probe.pastes.push(e.clipboardData.getData("text/plain"));

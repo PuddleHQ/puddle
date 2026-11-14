@@ -513,6 +513,9 @@ jobs:
       - name: early-exit pipes (grep -q after a pipe is a SIGPIPE coin toss under pipefail)
         if: ${{ !cancelled() }}
         run: scripts/check.sh early-exit-pipes
+      - name: test hooks (a test-only feature stays out of release builds; a test that starts a doctor sets az_search_path)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh test-hooks
       - name: mutation exclusions (an exclude_re entry that matches no mutant is stale)
         if: ${{ !cancelled() }}
         run: scripts/check.sh mutants-exclusions

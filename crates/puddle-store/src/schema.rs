@@ -19,7 +19,7 @@ const MIGRATIONS: &[&str] = &[
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: u32 = 27;
 
-const V1: &str = r"
+const V1: &str = "
 CREATE TABLE rules (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     scope             TEXT    NOT NULL CHECK (scope IN ('global', 'sandbox')),
@@ -101,7 +101,7 @@ END;
 /// The audit filters: `host` and `outcome` become columns so the API's filters never
 /// parse JSON, and the filtered scans are indexed. Existing rows are backfilled from their
 /// lines; `AuditRecord::host` and `AuditRecord::outcome` must give the same values (tested).
-const V2: &str = r"
+const V2: &str = "
 ALTER TABLE audit ADD COLUMN host TEXT;
 ALTER TABLE audit ADD COLUMN outcome TEXT;
 UPDATE audit SET
@@ -132,7 +132,7 @@ CREATE INDEX audit_ts ON audit (ts);
 /// Rule sets (`docs/spec/rules.md` §7). `rules` is rebuilt because SQLite can't change a
 /// `CHECK`: a rule's scope may now be `set`, with the set in `set_id`. The `AUTOINCREMENT`
 /// high-water mark is carried over, so a deleted rule's id is still never reused.
-const V3: &str = r"
+const V3: &str = "
 CREATE TABLE rule_sets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
@@ -205,7 +205,7 @@ CREATE TABLE builtin_sets_seen (
 /// a `CHECK`; the `AUTOINCREMENT` high-water mark is carried over as in V3. The stored audit
 /// `line`s are not rewritten (the log is append-only and its lines are capped): the reader
 /// accepts the old key names.
-const V4: &str = r"
+const V4: &str = "
 ALTER TABLE pending RENAME COLUMN sandbox_id TO workspace_id;
 ALTER TABLE audit RENAME COLUMN sandbox_id TO workspace_id;
 ALTER TABLE rule_set_switches RENAME COLUMN sandbox_id TO workspace_id;
@@ -242,7 +242,7 @@ CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
 ";
 
-const V5: &str = r"
+const V5: &str = "
 -- Git identities: an author and credential references (never a secret), several per workspace.
 CREATE TABLE identities (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,7 +288,7 @@ CREATE TABLE workspace_repos (
 CREATE UNIQUE INDEX workspace_repos_key ON workspace_repos (workspace_id, host, owner, repo);
 ";
 
-const V6: &str = r"
+const V6: &str = "
 -- Environment variables and secrets: one row per name in a scope (workspace_id NULL = every
 -- workspace). A plain variable keeps its value here. A secret keeps only `secret_id`, the id of
 -- its value in the operating system's credential store, and the hosts it may be sent to (a JSON
@@ -319,7 +319,7 @@ CREATE TABLE env_stand_ins (
 ) STRICT;
 ";
 
-const V7: &str = r"
+const V7: &str = "
 -- The two switches become overrides: NULL follows the default for new workspaces (below). Rows
 -- written before this stay as explicit values.
 CREATE TABLE workspace_git_v7 (
@@ -340,7 +340,7 @@ CREATE TABLE git_defaults (
 ) STRICT;
 ";
 
-const V8: &str = r"
+const V8: &str = "
 -- The shell init of a workspace: a script its login shells source, written by the user in the UI.
 -- This row is the only source of truth; the workspace sees a read-only copy of it. A workspace
 -- with no script has no row.
@@ -351,7 +351,7 @@ CREATE TABLE shell_init (
 ) STRICT;
 ";
 
-const V9: &str = r"
+const V9: &str = "
 -- Pinned port forwards: a port in a workspace that comes back on the same port of this computer
 -- every time the workspace starts. One row per workspace and guest port; the host port is the one
 -- the user chose (or the guest's own number). Rows go with the workspace.
@@ -363,7 +363,7 @@ CREATE TABLE pinned_ports (
 ) STRICT;
 ";
 
-const V10: &str = r"
+const V10: &str = "
 -- Decrypting every host: a per-workspace switch (off unless a row says on) and the names that are
 -- never decrypted while it is on, for one workspace or for every workspace. Rows go with the
 -- workspace; the global list stays.
@@ -381,7 +381,7 @@ CREATE TABLE never_decrypt_global (
 ) STRICT;
 ";
 
-const V11: &str = r"
+const V11: &str = "
 -- How long Puddle leaves a host alone after a tool refused its certificate, and how many such
 -- hosts a workspace remembers. One row for every workspace; no row means the built-in values.
 CREATE TABLE learned_limits (
@@ -391,7 +391,7 @@ CREATE TABLE learned_limits (
 ) STRICT;
 ";
 
-const V12: &str = r"
+const V12: &str = "
 -- Rules on the method and path of a request (R-49): they only ever refuse. A global rule applies
 -- to every workspace, a workspace rule to its own; rows of a workspace go with it. `methods` is
 -- the upper-case names separated by commas (empty: every method); `path` is a canonical path
@@ -412,11 +412,11 @@ CREATE INDEX request_rules_workspace ON request_rules (workspace_id);
 
 /// The colour of a rule set the user made: a JSON `Fill` (`{"kind":"solid","color":"#rrggbb"}`),
 /// or `NULL` for the default of its number. Sets written before this column have `NULL`.
-const V13: &str = r"
+const V13: &str = "
 ALTER TABLE rule_sets ADD COLUMN fill TEXT;
 ";
 
-const V14: &str = r"
+const V14: &str = "
 -- Where in a request a secret's stand-in is swapped: NULL for header values, `path`, or
 -- `query:<name>`. Only a secret has a place.
 ALTER TABLE env_vars ADD COLUMN place TEXT CHECK (place IS NULL OR kind = 'secret');
@@ -426,7 +426,7 @@ ALTER TABLE env_vars ADD COLUMN place TEXT CHECK (place IS NULL OR kind = 'secre
 /// case (ASCII), one part per line: host (a rule's pattern), method, path and reason of a
 /// connection, host and path of a rule on method and path. Existing rows are backfilled from
 /// their lines; `AuditRecord::search_text` must give the same values (tested).
-const V15: &str = r"
+const V15: &str = "
 ALTER TABLE audit ADD COLUMN search TEXT;
 UPDATE audit SET search = nullif(lower(
     CASE type
@@ -459,7 +459,7 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<u32, StoreError> {
 /// deleted workspace still reads as the user knew it. `workspace_names` holds the current name
 /// of each workspace (the host keeps it up to date); a new audit row copies it. Rows written
 /// before this column have `NULL`, and a reader shows the id for them.
-const V16: &str = r"
+const V16: &str = "
 CREATE TABLE workspace_names (
     workspace_id TEXT PRIMARY KEY,
     name         TEXT NOT NULL
@@ -470,7 +470,7 @@ ALTER TABLE audit ADD COLUMN workspace_name TEXT;
 /// A rule may be made by a workspace create (`workspace_create`): the create allows the host of a
 /// new workspace's repositories. SQLite cannot change a `CHECK`, so the table is rebuilt (as in
 /// version 4) with the `AUTOINCREMENT` high-water mark carried over.
-const V17: &str = r"
+const V17: &str = "
 CREATE TABLE rules_v17 (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
@@ -504,7 +504,7 @@ CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
 /// (`NULL` until they choose: the install then behaves as before) and the learning switch; a
 /// workspace's own mode is `NULL` to follow it. Each workspace row of the old switch keeps what
 /// it did: on is `all` (every host, learned hosts passed through), off is `known_only`.
-const V18: &str = r"
+const V18: &str = "
 CREATE TABLE interception_settings (
     id          INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
     mode        TEXT CHECK (mode IN ('all', 'all_except_curated', 'known_only')),
@@ -525,7 +525,7 @@ ALTER TABLE workspace_interception_new RENAME TO workspace_interception;
 /// The hosts a workspace's tools refused Puddle's certificate for, kept past the in-memory pass-through
 /// list: when a host was first and last refused and how many times, so a restart or an expired
 /// pass-through does not forget a host that keeps refusing.
-const V19: &str = r"
+const V19: &str = "
 CREATE TABLE learned_hosts (
     workspace_id TEXT    NOT NULL,
     host         TEXT    NOT NULL,
@@ -553,7 +553,7 @@ CREATE TABLE learned_hosts (
 ///   workspace meanwhile). `identities` is rebuilt for that (its label was `UNIQUE` inline); the
 ///   workspaces' identity lists are kept aside meanwhile, because dropping the table would cascade
 ///   into them. `git_defaults` is rebuilt keyed by user.
-const V20: &str = r"
+const V20: &str = "
 CREATE TABLE users (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     role       TEXT    NOT NULL CHECK (role IN ('owner', 'user')),
@@ -673,7 +673,7 @@ ALTER TABLE git_defaults_v20 RENAME TO git_defaults;
 /// - `account_setup`: one row once the first visitor made the owner account, so resetting the
 ///   owner's password never reopens the first-visitor flow.
 /// - `sign_in_methods`: which ways of signing in are switched on. Only passwords exist so far.
-const V21: &str = r"
+const V21: &str = "
 CREATE TABLE account_sessions (
     device_id      INTEGER PRIMARY KEY REFERENCES devices (id) ON DELETE CASCADE,
     refresh_digest BLOB    NOT NULL UNIQUE CHECK (length(refresh_digest) >= 16)
@@ -694,7 +694,7 @@ INSERT INTO sign_in_methods (method, enabled) VALUES ('password', 1);
 /// - `workspace_owners_adoption`: one row until the first start of this build has recorded the
 ///   owner for the workspaces then listed (made before every create recorded its user), none
 ///   after. Taking the row and recording the owners is one transaction, so it happens once.
-const V22: &str = r"
+const V22: &str = "
 CREATE TABLE workspace_owners_adoption (
     id INTEGER PRIMARY KEY CHECK (id = 1)
 ) STRICT;
@@ -703,7 +703,7 @@ INSERT INTO workspace_owners_adoption (id) VALUES (1);
 
 /// The hosts each workspace may use the user's SSH agent for. A row is the user's "on"; `keys`
 /// holds the allowed keys' SHA-256 fingerprints one per line, `NULL` for every key.
-const V23: &str = r"
+const V23: &str = "
 CREATE TABLE ssh_agent_hosts (
     workspace_id TEXT    NOT NULL,
     host         TEXT    NOT NULL CHECK (length(host) BETWEEN 1 AND 253),
@@ -718,7 +718,7 @@ CREATE TABLE ssh_agent_hosts (
 /// cannot drop a default in place (rows written before `ADD COLUMN` read it from the schema), so
 /// each table is rebuilt: new table, copy with every id, drop, rename, and the `AUTOINCREMENT`
 /// high-water mark, indexes and triggers carried over. The runner runs this with foreign keys off.
-const V24: &str = r"
+const V24: &str = "
 CREATE TABLE rules_v24 (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
@@ -894,7 +894,7 @@ CREATE UNIQUE INDEX identities_one_default ON identities (user_id) WHERE is_defa
 /// The built-in rule sets Puddle hides while the feature that needs them is off. Derived from the
 /// settings at start and after every change (`SystemPlan::hidden_sets`); a hidden set decides
 /// nothing and is left out of the list, and the switches stored for it are kept.
-const V25: &str = r"
+const V25: &str = "
 CREATE TABLE hidden_builtin_sets (
     slug TEXT PRIMARY KEY CHECK (length(slug) BETWEEN 1 AND 64)
 ) STRICT;
@@ -903,7 +903,7 @@ CREATE TABLE hidden_builtin_sets (
 /// The admin screen: a user the owner is deleting stays listed as `deleting` until their
 /// workspaces are gone, and every user-management action is written to an audit that outlives the
 /// user it names. The audit has no foreign key and holds names, never a credential.
-const V26: &str = r"
+const V26: &str = "
 ALTER TABLE users ADD COLUMN deleting_at INTEGER;
 CREATE TABLE admin_audit (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -921,7 +921,7 @@ CREATE TABLE admin_audit (
 /// workspace, host and key (one open at a time, `requested`) and what the user answered. An
 /// `ssh_agent_grants` row is a standing yes for that triple: `run` ones last until the workspace
 /// stops, the others until the user turns the agent off for the host.
-const V27: &str = r"
+const V27: &str = "
 CREATE TABLE ssh_agent_asks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id TEXT    NOT NULL,

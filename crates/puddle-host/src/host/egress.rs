@@ -13,9 +13,7 @@ use puddle_netpolicy::{
 };
 use puddle_ports::Ports;
 use puddle_proxy::ssh_agent::SshAgents;
-use puddle_proxy::{
-    GitSsh, GitSshAccounts, GitSshHttps, Proxy, TcpPortProbe, Terminations, Upstream,
-};
+use puddle_proxy::{GitSsh, GitSshHttps, Proxy, TcpPortProbe, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_store::{ConnectionRecorder, Store, SystemClock};
@@ -121,10 +119,7 @@ impl Injecting {
     ) -> (AbortOnDrop, AbortOnDrop) {
         (
             AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone())),
-            AbortOnDrop(forward_sign_in_needed(
-                &self.secrets,
-                events.clone() as Arc<dyn EventSink>,
-            )),
+            AbortOnDrop(forward_sign_in_needed(&self.secrets, events.clone())),
         )
     }
 
@@ -138,7 +133,7 @@ impl Injecting {
         settings: &Arc<dyn SettingsRepo>,
     ) -> Result<Self, HostError> {
         // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
-        let reads = credential_read_log(events.clone() as Arc<dyn EventSink>);
+        let reads = credential_read_log(events.clone());
         let secrets = Arc::new(
             SecretCache::new(Sources::new(ToolPaths::resolve(), Arc::clone(vault)))
                 .with_read_log(Arc::clone(&reads)),
@@ -155,7 +150,7 @@ impl Injecting {
                 InjectorInputs {
                     store: store.clone(),
                     secrets: secrets.clone(),
-                    events: events.clone() as Arc<dyn EventSink>,
+                    events: events.clone(),
                 },
                 options.injector.clone(),
                 Arc::clone(vault),
@@ -296,7 +291,7 @@ impl Egress {
         .with_company_signals(company_signals(options));
         let mut proxy = Proxy::new(
             connections.store().clone(),
-            events.clone() as Arc<dyn EventSink>,
+            events.clone(),
         )
         .with_connection_log(connections.clone())
         .with_address_check(Arc::new(guard))
@@ -323,7 +318,7 @@ impl Egress {
         }
         if let Some(accounts) = git_ssh {
             // Each workspace serves its own start's host keys (`Injection`), so none here.
-            let https = GitSshHttps::new(accounts as Arc<dyn GitSshAccounts>);
+            let https = GitSshHttps::new(accounts);
             proxy = proxy.with_git_ssh(GitSsh::new(Arc::new(https), Vec::new()));
         }
         let proxy = Arc::new(proxy);

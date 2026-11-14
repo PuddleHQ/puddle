@@ -108,6 +108,26 @@ fn path_file_restores_the_image_path_quoted() {
 }
 
 #[test]
+fn a_path_among_the_variables_is_the_one_login_shells_get() {
+    let mut env = GuestEnv::new();
+    env.set("PATH", "/shims:/usr/local/cargo/bin:/bin").unwrap();
+    let plan = BootPlan::builder(&image(&[], &[], Some("/usr/local/cargo/bin:/bin")))
+        .env(&env)
+        .build()
+        .unwrap();
+    assert_eq!(
+        text(&plan, PATH_FILE_GUEST),
+        format!("{GENERATED}export PATH='/shims:/usr/local/cargo/bin:/bin'\n")
+    );
+    // An image that sets none still gets the file once a path is among the variables.
+    let bare = BootPlan::builder(&image(&[], &[], None))
+        .env(&env)
+        .build()
+        .unwrap();
+    assert!(text(&bare, PATH_FILE_GUEST).contains("/shims:"));
+}
+
+#[test]
 fn env_file_exports_every_variable_quoted() {
     let mut env = GuestEnv::new();
     env.set("HTTPS_PROXY", "http://127.0.0.1:3128").unwrap();

@@ -13227,6 +13227,166 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
     host.shutdown().await;
 }
 
+// ---- the managed tools' environment -----------------------------------------------------------
+
+const MISE_SUDOERS: &str = "/etc/sudoers.d/puddle-mise";
+
+/// The variables the latest start gave the sandbox, as (name, value).
+fn last_boot_env(rig: &Rig) -> GuestEnv {
+    rig.guest.boot_envs.lock().unwrap().last().cloned().unwrap()
+}
+
+fn mise_names(env: &GuestEnv) -> Vec<String> {
+    env.iter()
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with("MISE_"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The global switch for managed tools, set before any workspace exists.
+async fn global_mise(api: &Api, on: bool) {
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": on}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
+    api.post(&format!("/api/workspaces/{id}/stop"), "").await;
+    events.until(ended(id), Duration::from_secs(20)).await;
+    api.post(&format!("/api/workspaces/{id}/start"), "").await;
+    events.until(ended(id), Duration::from_secs(20)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_keep_list() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    let env = last_boot_env(&rig);
+    let dir = "/workspaces/acme/.puddle/mise";
+    assert_eq!(
+        env.get("MISE_DATA_DIR"),
+        Some(format!("{dir}/data").as_str())
+    );
+    assert_eq!(
+        env.get("MISE_CACHE_DIR"),
+        Some(format!("{dir}/cache").as_str())
+    );
+    assert_eq!(
+        env.get("MISE_STATE_DIR"),
+        Some(format!("{dir}/state").as_str())
+    );
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(
+        env.get("MISE_TRUSTED_CONFIG_PATHS"),
+        Some("/workspaces/acme"),
+        "the repository's own code is trusted by default"
+    );
+    assert_eq!(env.get("MISE_DISABLE_UPDATE_WARNING"), Some("1"));
+    assert_eq!(env.get("MISE_USE_VERSIONS_HOST_TRACK"), Some("0"));
+    let path = env.get("PATH").unwrap();
+    assert!(path.starts_with(&format!("{dir}/data/shims:")), "{path}");
+    assert!(path.ends_with(&format!(":{dir}/bin")), "{path}");
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let sudoers = pem_of(&files, MISE_SUDOERS);
+    for name in mise_names(&env) {
+        assert!(sudoers.contains(&name), "{name} in {sudoers}");
+    }
+    assert!(
+        sudoers.contains(&format!("secure_path=\"{path}\"")),
+        "{sudoers}"
+    );
+    // Login shells get the same PATH after Debian's /etc/profile reset it.
+    assert!(
+        pem_of(&files, "/etc/profile.d/00-puddle-path.sh").contains(path),
+        "00-puddle-path.sh"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_workspace_follows_at_its_next_start()
+ {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    assert!(
+        last_boot_env(&rig)
+            .get("MISE_TRUSTED_CONFIG_PATHS")
+            .is_some()
+    );
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": true, "repo_code": false}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    let env = last_boot_env(&rig);
+    assert_eq!(env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!pem_of(&files, MISE_SUDOERS).contains("TRUSTED"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the_guest() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, false).await;
+    create(&api, &mut events, "acme").await;
+    let env = last_boot_env(&rig);
+    assert_eq!(mise_names(&env), Vec::<String>::new());
+    assert_eq!(env.get("PATH"), None, "the image's PATH stays as it is");
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!files.contains_key(MISE_SUDOERS));
+    // A workspace's own switch off does the same under a global switch that is on.
+    global_mise(&api, true).await;
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": false, "repo_code": true}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    assert_eq!(mise_names(&last_boot_env(&rig)), Vec::<String>::new());
+    // Switched on, the next start has it.
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": true, "repo_code": true}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    assert!(last_boot_env(&rig).get("MISE_DATA_DIR").is_some());
+    host.shutdown().await;
+}
+
 // ---- mise after a start -----------------------------------------------------------------------
 
 const MISE_FAILURE: &str = "could not download mise: curl failed (exit status: 56): 403";

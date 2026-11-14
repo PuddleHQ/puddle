@@ -483,12 +483,33 @@ async fn a_message_far_over_the_limit_is_cut_off_by_the_socket_itself() {
     let _ = socket
         .send(Message::Binary(vec![b'x'; MAX_MESSAGE_BYTES * 2].into()))
         .await;
-    // The socket drops the connection without the policy close that a message inside its own
-    // limit gets.
+    // Past the socket's own limit there is no policy refusal, but the page still gets a close
+    // frame, with the code for a message that is too big.
     loop {
-        match socket.next().await {
-            Some(Ok(Message::Binary(_))) => {}
-            Some(Err(_)) | None => break,
+        match next(&mut socket).await {
+            Message::Binary(_) => {}
+            Message::Close(frame) => {
+                assert_eq!(frame.map(|f| f.code), Some(CloseCode::Size));
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// A close from the page is answered with a close frame, so the page sees a clean end.
+#[tokio::test]
+async fn a_close_from_the_page_is_answered_with_a_close_frame() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    socket.send(Message::Close(None)).await.unwrap();
+    loop {
+        match next(&mut socket).await {
+            Message::Binary(_) => {}
+            Message::Close(_) => break,
             other => panic!("{other:?}"),
         }
     }
@@ -637,4 +658,5 @@ async fn a_session_that_vanishes_without_an_end_is_a_crash_and_pings_are_ignored
             other => panic!("unexpected {other:?}"),
         }
     }
+    assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }

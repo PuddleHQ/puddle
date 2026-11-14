@@ -57,7 +57,8 @@ done
 
 # Every keytool the image has: the one on PATH, JAVA_HOME's, then the usual JDK folders and the
 # version managers' (SDKMAN, IntelliJ's ~/.jdks, asdf, mise: for root and for each home below
-# /home; only SDKMAN is also looked up under $HOME and SDKMAN_DIR). A JDK unpacked anywhere else, and not on PATH or in
+# /home, and Puddle's managed mise on each workspace volume below /workspaces; only SDKMAN is
+# also looked up under $HOME and SDKMAN_DIR). A JDK unpacked anywhere else, and not on PATH or in
 # JAVA_HOME, is not found.
 keytools=
 for k in "$(command -v keytool 2>/dev/null || true)" "${JAVA_HOME:+$JAVA_HOME/bin/keytool}" \
@@ -73,7 +74,8 @@ for k in "$(command -v keytool 2>/dev/null || true)" "${JAVA_HOME:+$JAVA_HOME/bi
     "$ROOT"/root/.local/share/mise/installs/java/*/bin/keytool \
     "$ROOT"/home/*/.sdkman/candidates/java/*/bin/keytool \
     "$ROOT"/home/*/.jdks/*/bin/keytool "$ROOT"/home/*/.asdf/installs/java/*/bin/keytool \
-    "$ROOT"/home/*/.local/share/mise/installs/java/*/bin/keytool; do
+    "$ROOT"/home/*/.local/share/mise/installs/java/*/bin/keytool \
+    "$ROOT"/workspaces/*/.puddle/mise/data/installs/java/*/bin/keytool; do
     [ -n "$k" ] && [ -x "$k" ] || continue
     # With PUDDLE_ROOT set (tests) a Java outside it is the test host's own: never touch it.
     case "$(readlink -f "$k")" in

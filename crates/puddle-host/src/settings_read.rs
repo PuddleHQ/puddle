@@ -83,5 +83,14 @@ pub(crate) fn mise(
     Ok(mise_mode(&global, Some(&workspace(repo, name)?)))
 }
 
+/// [`mise`] for a start: settings that cannot be read leave the layer off, which is what the
+/// workspace had before it existed, so a damaged file never turns it on.
+pub(crate) fn mise_or_off(repo: &dyn SettingsRepo, name: &WorkspaceId) -> MiseMode {
+    mise(repo, name).unwrap_or_else(|reason| {
+        tracing::warn!(workspace = %name, %reason, "managed tools stay off: the settings cannot be read");
+        MiseMode::Off
+    })
+}
+
 #[cfg(test)]
 mod tests;

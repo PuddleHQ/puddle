@@ -20,6 +20,7 @@
 //! | Cargo git dependencies | `CARGO_NET_GIT_FETCH_WITH_CLI=true` |
 //! | apt | `/etc/apt/apt.conf.d/99puddle-proxy` |
 //! | sudo | `/etc/sudoers.d/puddle-proxy`: `env_keep` for every variable above |
+//! | mise (managed tools) | `MISE_*` and `PATH` from [`mise_config`], and `/etc/sudoers.d/puddle-mise` |
 //! | containers (Docker CLI) | `~/.docker/config.json` `proxies.default`, at the bridge gateway, merged |
 //! | `ssh` (and `git`, `scp`, `rsync` over it) | `/etc/ssh/ssh_config.d/00-puddle.conf`: the agent as `ProxyCommand`, which refuses SSH with a message (not supported yet); loopback and the container bridge stay direct |
 //!
@@ -31,13 +32,16 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod mise;
 mod render;
 mod settings;
 
 pub use error::ConfigError;
+pub use mise::{DEBIAN_PATH, MiseConfig, MiseSettings, mise_config};
 pub use render::{
     APT_CONF_GUEST, GRADLE_INIT_RELATIVE, GuestProxyConfig, MAVEN_SETTINGS_GUEST, SSH_CONFIG_GUEST,
-    SSH_KNOWN_HOSTS_GUEST, SUDOERS_GUEST, guest_proxy_config, ssh_known_hosts_file,
+    SSH_KNOWN_HOSTS_GUEST, SUDOERS_GUEST, SUDOERS_MISE_GUEST, guest_proxy_config,
+    ssh_known_hosts_file,
 };
 pub use settings::{
     DEFAULT_AGENT, DEFAULT_CONTAINER_PROXY, DEFAULT_HOME, DEFAULT_PROXY, NoProxyEntry,

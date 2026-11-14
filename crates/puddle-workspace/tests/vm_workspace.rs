@@ -3,7 +3,7 @@
 //!
 //! - a clone through the route (guest git → `puddle-agent` → vsock route → Puddle's proxy → a
 //!   local git server) survives stop, sandbox removal and a new sandbox on the same workspace;
-//! - a VMM kill during commits, with the boot hook's `core.fsync=committed`, leaves a repository
+//! - a VMM kill during commits, with the boot hook's `core.fsync=added`, leaves a repository
 //!   that passes `git fsck --full`, 5 of 5 times;
 //! - a VMM kill right after `Workspaces::clone_checkout` and `Workspaces::sync` keeps the
 //!   clone;
@@ -506,7 +506,7 @@ async fn wait_for_commits<S: Sandbox>(sb: &S, repo: &str, round: usize, target: 
     }
 }
 
-/// A VMM kill in the middle of a commit loop, five times: with `core.fsync=committed` (written by
+/// A VMM kill in the middle of a commit loop, five times: with `core.fsync=added` and `core.fsyncMethod=batch` (written by
 /// the boot hook) the repository passes `git fsck --full` after every restart.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
@@ -521,7 +521,11 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
     let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
     assert_eq!(
         sh_ok(sb.ungated(), "git config --get core.fsync").await,
-        "committed"
+        "added"
+    );
+    assert_eq!(
+        sh_ok(sb.ungated(), "git config --get core.fsyncMethod").await,
+        "batch"
     );
     sh_ok(
         sb.ungated(),

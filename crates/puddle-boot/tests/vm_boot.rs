@@ -172,15 +172,15 @@ async fn check_boot<S: Sandbox>(
     )
     .await;
     if code == 0 {
-        assert_eq!(fsync, "committed");
+        assert_eq!(fsync, "added");
+        assert_eq!(
+            sh(sb, "git config --system core.fsyncMethod").await.1,
+            "batch"
+        );
         assert_eq!(sh(sb, "git config user.email").await.1, "vm@example.org");
     } else {
-        assert!(
-            sh(sb, "cat /etc/puddle/gitconfig")
-                .await
-                .1
-                .contains("fsync = committed")
-        );
+        let file = sh(sb, "cat /etc/puddle/gitconfig").await.1;
+        assert!(file.contains("fsync = added") && file.contains("fsyncMethod = batch"));
     }
     // Machine settings, and no credential helper anywhere Puddle writes.
     let (_, ms) = sh(sb, "cat /root/.vscode-server/data/Machine/settings.json").await;
@@ -673,6 +673,107 @@ async fn check_agent_boot<S: Sandbox>(sb: &GatedSandbox<S>, uid: &str, has_sudo:
         let (code, said) = as_agent(sb, "sudo -n id -u && sudo -n -i sh -c 'id -un; pwd'").await;
         assert_eq!((code, said.as_str()), (0, "0\nroot\n/root"), "sudo is root");
     }
+}
+
+/// What a variable of the plan reaches: `sudo` (the keep list), a bash that reads no login file
+/// (the block in `/etc/bash.bashrc`) and zsh (`/etc/zsh/zshenv`, only when zsh is installed), and
+/// the same after a restart with a changed value (the block is replaced, never added twice).
+async fn check_variables_survive_sudo_and_new_shells(image: &str, tag: &str) {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let image = ImageRef::new(image).unwrap();
+    let config = rt.pull_image(&image).await.unwrap();
+    let dir = assets_dir(rt, tag);
+    let assets = write_assets(&dir).unwrap();
+    let name = sandbox_name(&settings, tag);
+    let spec_for = |env: &GuestEnv| {
+        with_boot_mounts(
+            SandboxSpec::new(name.clone(), image.clone()).with_env(env),
+            assets.clone(),
+            Some(&agent_binary(&dir)),
+        )
+    };
+    let plan_for = |env: &GuestEnv| {
+        BootPlan::builder(&config)
+            .session_user(SessionUser::Agent)
+            .env(env)
+            .build()
+            .unwrap()
+    };
+    let mut env = GuestEnv::new();
+    env.set("KEPT_T_VAR", "one two 'quoted' $HOME").unwrap();
+    let gate = Gate::new();
+    let hook = BootHook::new();
+    let sb = hook
+        .create(rt, spec_for(&env), &plan_for(&env), &gate)
+        .await
+        .unwrap();
+    check_variable(&sb, "one two 'quoted' $HOME").await;
+    sb.stop().await.unwrap();
+    env.set("KEPT_T_VAR", "three").unwrap();
+    let again = hook.start(rt, &name, &plan_for(&env), &gate).await.unwrap();
+    // The sandbox's own environment is the old value until the host applies it (a different
+    // piece); the files carry the new one, which is what a new terminal reads.
+    let (code, said) = as_agent(
+        &again,
+        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"' 2>/dev/null",
+    )
+    .await;
+    assert_eq!(
+        (code, said.as_str()),
+        (0, "three"),
+        "a new bash after a restart"
+    );
+    let (code, said) = as_agent(&again, "grep -c '>>> Puddle shell >>>' /etc/bash.bashrc").await;
+    assert_eq!((code, said.as_str()), (0, "1"), "one block, replaced");
+    again.stop().await.unwrap();
+    rt.remove(&name).await.unwrap();
+}
+
+async fn check_variable<S: Sandbox>(sb: &GatedSandbox<S>, value: &str) {
+    // `sudo` keeps it (the keep list), where the default drops everything.
+    let (code, said) = as_agent(sb, "sudo -n sh -c 'printf \"%s\" \"$KEPT_T_VAR\"'").await;
+    assert_eq!((code, said.as_str()), (0, value), "sudo keeps the variable");
+    // `sudo -i` and a bash without a login read the files.
+    let (code, said) = as_agent(
+        sb,
+        "echo 'printf \"%s\" \"$KEPT_T_VAR\"' | env -u KEPT_T_VAR sudo -n -i",
+    )
+    .await;
+    assert_eq!(
+        (code, said.as_str()),
+        (0, value),
+        "sudo -i reaches the login files"
+    );
+    let (code, said) = as_agent(
+        sb,
+        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"' 2>/dev/null",
+    )
+    .await;
+    assert_eq!((code, said.as_str()), (0, value), "a bash without a login");
+    // Debian's own text in the file is still there.
+    let (code, said) = as_agent(sb, "grep -c 'System-wide .bashrc' /etc/bash.bashrc").await;
+    assert_eq!((code, said.as_str()), (0, "1"), "the image's lines stay");
+    let (code, said) = as_agent(
+        sb,
+        "if command -v zsh >/dev/null; then env -u KEPT_T_VAR zsh -c 'printf \"%s\" \"$KEPT_T_VAR\"'; \
+         else test -e /etc/zsh/zshenv && echo made-without-zsh || printf '%s' \"$KEPT_T_VAR\"; fi",
+    )
+    .await;
+    assert_eq!(
+        (code, said.as_str()),
+        (0, value),
+        "zsh, or no zsh file without zsh"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_variables_survive_sudo_and_reach_new_bash_and_zsh_shells() {
+    Box::pin(check_variables_survive_sudo_and_new_shells(
+        FakeRuntime::DEBIAN,
+        "varsh",
+    ))
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

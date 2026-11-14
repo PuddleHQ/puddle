@@ -17,6 +17,9 @@ use crate::assets::{AGENT_GUEST, BOOT_SH_GUEST, MOUNT_DIR_GUEST};
 use crate::machine::machine_settings;
 use crate::quote::{printf_format, sh_word};
 
+mod shell_env;
+pub use shell_env::{BASH_RC_GUEST, SUDOERS_ENV_GUEST, ZSH_ENV_GUEST};
+
 /// The plan's first line; `boot.sh` refuses any other.
 pub const PLAN_HEADER: &str = "# puddle-boot-plan 1";
 
@@ -126,6 +129,12 @@ pub enum PlanError {
     /// The VS Code Machine settings can't be written as a merge.
     #[error("the VS Code Machine settings: {reason}")]
     MachineSettings {
+        /// What is wrong.
+        reason: String,
+    },
+    /// The environment can't be written to the `sudo` and shell files.
+    #[error("the environment can't be written to the sudo and shell files: {reason}")]
+    ShellEnv {
         /// What is wrong.
         reason: String,
     },
@@ -611,6 +620,7 @@ impl BootPlanBuilder {
         files.extend(git_author_files(&self.git_rules)?);
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
         files.extend(session_files(port, self.session_user)?);
+        files.extend(shell_env::files(&self.env)?);
         files.extend(self.files);
 
         let mounts = guest_path!(MOUNT_DIR_GUEST);
@@ -783,8 +793,8 @@ fn git_author_name(n: usize) -> String {
     format!("git-author-{n}.gitconfig")
 }
 
-/// Puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
-/// kill), the identity when set, then one `includeIf` per remote glob of each author rule, in
+/// Puddle's git settings: `core.fsync=added` and `core.fsyncMethod=batch` always (ADR 0006: no
+/// lost commits on a VM kill or a power cut, and the index is synced too), the identity when set, then one `includeIf` per remote glob of each author rule, in
 /// order (git lets the last match win), each pointing at that rule's author file. Never a
 /// credential helper. With a session user other than root, `safe.directory = *`: the checkouts
 /// belong to that user, and a root shell (`sudo -i`) would otherwise find every one refused as
@@ -792,7 +802,7 @@ fn git_author_name(n: usize) -> String {
 /// whose only user becomes root at will there is no other user to guard.
 fn git_config(plan: &BootPlanBuilder) -> GuestFile {
     let mut text = String::from(GENERATED);
-    text.push_str("[core]\n\tfsync = committed\n");
+    text.push_str("[core]\n\tfsync = added\n\tfsyncMethod = batch\n");
     if !plan.session_user.is_root() {
         text.push_str("[safe]\n\tdirectory = *\n");
     }

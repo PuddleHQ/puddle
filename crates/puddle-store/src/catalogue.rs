@@ -168,6 +168,9 @@ pub enum SystemReason {
     DirectSshJetBrains,
     /// Direct SSH is on for the workspace: Zed downloads its remote server there.
     DirectSshZed,
+    /// Puddle manages tools with mise in the workspace: it downloads the pinned mise and mise
+    /// reads its version lists there.
+    Mise,
 }
 
 const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
@@ -208,6 +211,11 @@ const ZED_HOSTS: &[CatalogueEntry] = &[
     ),
 ];
 
+const MISE_HOSTS: &[CatalogueEntry] = &[
+    entry!("mise.jdx.dev", "mise downloads"),
+    entry!("mise-versions.jdx.dev", "mise version lists"),
+];
+
 const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
     entry!("open-vsx.org", "Open VSX extensions"),
     entry!("openvsx.eclipsecontent.org", "Open VSX extension files"),
@@ -215,13 +223,14 @@ const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
 
 impl SystemReason {
     /// Every reason.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::MicrosoftServer,
         Self::CodeServer,
         Self::DirectSsh,
         Self::DirectSshCursor,
         Self::DirectSshJetBrains,
         Self::DirectSshZed,
+        Self::Mise,
     ];
 
     /// The stored and wire name.
@@ -234,6 +243,7 @@ impl SystemReason {
             Self::DirectSshCursor => "direct_ssh_cursor",
             Self::DirectSshJetBrains => "direct_ssh_jetbrains",
             Self::DirectSshZed => "direct_ssh_zed",
+            Self::Mise => "mise",
         }
     }
 
@@ -265,6 +275,7 @@ impl SystemReason {
             Self::DirectSshZed => {
                 "Direct SSH is on for this workspace: Zed downloads its remote server there."
             }
+            Self::Mise => "mise manages tools in this workspace.",
         }
     }
 
@@ -277,6 +288,7 @@ impl SystemReason {
             Self::DirectSshCursor => CURSOR_HOSTS,
             Self::DirectSshJetBrains => JETBRAINS_HOSTS,
             Self::DirectSshZed => ZED_HOSTS,
+            Self::Mise => MISE_HOSTS,
         }
     }
 }

@@ -560,9 +560,7 @@ describe("run on a real git repository", () => {
       ['t: note: exclusion "src/zzz.rs | *" matched nothing in this diff'],
     ]);
     expect(err.mock.calls).toEqual([
-      [
-        "t: 1 stale exclusion(s); an excuse that no longer applies fails the gate:",
-      ],
+      ["t: 1 stale exclusion(s); an excuse whose text is gone fails the gate:"],
       [
         `  ${join(dir, "ex.txt")}:2: stale exclusion "src/zzz.rs | *": no file matches its path glob; delete the entry`,
       ],
@@ -717,14 +715,18 @@ describe("staleExclusions", () => {
       "src/a.rs | let excused_line = compute_one()?; | why",
     )[0]!;
     delete entry.no;
-    expect(staleMessage({ entry, why: "w" })).toBe(
+    expect(staleMessage({ entry, why: "w", fails: true })).toBe(
       'line ?: stale exclusion "src/a.rs | let excused_line = compute_one()?;": w; delete the entry',
     );
-    expect(staleMessage({ entry: { ...entry, no: 4 }, why: "w" })).toMatch(
-      /^line 4:/,
-    );
     expect(
-      staleMessage({ entry: { ...entry, file: "ex/c.txt" }, why: "w" }),
+      staleMessage({ entry: { ...entry, no: 4 }, why: "w", fails: true }),
+    ).toMatch(/^line 4:/);
+    expect(
+      staleMessage({
+        entry: { ...entry, file: "ex/c.txt" },
+        why: "w",
+        fails: true,
+      }),
     ).toMatch(/^ex\/c\.txt:\?:/);
   });
 
@@ -867,9 +869,15 @@ describe("run fails a stale exclusion", () => {
     );
   });
 
-  it("fails when a test now runs the excused line", () => {
-    const [code, out] = gate(lcov(4), live);
-    expect(code).toBe(1);
-    expect(out).toContain("a test now runs every line it excuses");
+  it("only reports, and passes, when a test now runs the excused line", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(gate(lcov(4), live)).toEqual([0, ""]);
+      expect(log.mock.calls.flat().join("\n")).toContain(
+        "a test now runs every line it excuses",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 });

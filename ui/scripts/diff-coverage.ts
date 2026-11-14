@@ -10,8 +10,9 @@
 //   the next character, since `|` separates the fields: `\|` is a bar and `\\` a backslash in the code.
 // - The file may hold at most N places where the text matches (`xN`, default 1). A copy added later
 //   makes the count N+1 and the entry stops excusing anything in that file, visibly.
-// - An entry that excuses nothing fails the gate, named by exclusion file and line (`staleExclusions`):
-//   its text is gone from every file under its glob, or every place it sits at now runs in a test.
+// - An entry whose text is gone from every file under its glob fails the gate, named by exclusion file and
+//   line (`staleExclusions`). One whose every place now runs in a test is only reported: whether a racy or
+//   run-dependent line reads covered differs between runs, so failing on it deleted a different entry each round.
 // - A text under 20 characters is refused when the file is parsed. `*` (a whole file, for code that
 //   only another OS or a VM runs) is the one wildcard and stays a reviewed whole-file choice.
 //
@@ -349,6 +350,8 @@ function ranEveryExecutableLine(
 export interface StaleEntry {
   entry: Exclusion;
   why: string;
+  /** Only the text-gone verdict fails the gate; "a test ran it" is reported, since it varies between runs. */
+  fails: boolean;
 }
 
 /**
@@ -372,7 +375,7 @@ export function staleExclusions(
     const re = globToRegExp(e.glob);
     const matched = files.filter((f) => re.test(f));
     if (matched.length === 0) {
-      out.push({ entry: e, why: "no file matches its path glob" });
+      out.push({ entry: e, why: "no file matches its path glob", fails: true });
       continue;
     }
     if (e.lines === "*") continue;
@@ -395,9 +398,14 @@ export function staleExclusions(
       out.push({
         entry: e,
         why: "no file under its path glob holds its text any more",
+        fails: true,
       });
     } else if (!alive) {
-      out.push({ entry: e, why: "a test now runs every line it excuses" });
+      out.push({
+        entry: e,
+        why: "a test now runs every line it excuses",
+        fails: false,
+      });
     }
   }
   return out;
@@ -572,11 +580,15 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
       `${opts.label}: note: exclusion "${e.glob} | ${e.needle}" matched nothing in this diff`,
     );
   }
-  if (stale.length > 0) {
+  const failing = stale.filter((s) => s.fails);
+  for (const s of stale.filter((x) => !x.fails)) {
+    console.log(`${opts.label}: note: ${staleMessage(s)}`);
+  }
+  if (failing.length > 0) {
     console.error(
-      `${opts.label}: ${stale.length} stale exclusion(s); an excuse that no longer applies fails the gate:`,
+      `${opts.label}: ${failing.length} stale exclusion(s); an excuse whose text is gone fails the gate:`,
     );
-    for (const s of stale) console.error(`  ${staleMessage(s)}`);
+    for (const s of failing) console.error(`  ${staleMessage(s)}`);
   }
   if (report.uncovered.length > 0) {
     console.error(
@@ -588,7 +600,7 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
       `  Cover them, or list them with a reason in the exclusion file (reviewed like code).`,
     );
   }
-  if (stale.length > 0 || report.uncovered.length > 0) return 1;
+  if (failing.length > 0 || report.uncovered.length > 0) return 1;
   console.log(
     `${opts.label} ok: ${report.covered} changed executable line(s) covered, ${report.excluded} excluded, since ${opts.base.slice(0, 10)}`,
   );

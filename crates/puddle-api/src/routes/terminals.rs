@@ -131,6 +131,7 @@ fn new_ticket() -> Result<String, ApiError> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| ApiError::internal(&e))?;
     Ok(bytes.iter().fold(String::with_capacity(64), |mut out, b| {
+        // writing into a `String` cannot fail
         let _ = write!(out, "{b:02x}");
         out
     }))
@@ -276,6 +277,7 @@ async fn await_close(socket: &mut WebSocket) {
 }
 
 async fn refuse(socket: &mut WebSocket) {
+    // the page may already be gone; the socket closes after this either way
     let _ = socket
         .send(Message::Close(Some(CloseFrame {
             code: close_code::POLICY,

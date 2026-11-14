@@ -545,6 +545,7 @@ async fn serve_resolve<H: StreamHandler>(
     };
     let stream = reader.get_mut();
     if stream.write_all(&line).await.is_ok() {
+        // the line is already sent; a failed shutdown only means the peer closed first
         let _ = stream.shutdown().await;
     }
 }

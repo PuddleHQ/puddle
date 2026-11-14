@@ -167,6 +167,7 @@ impl DesktopTarget {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
                 path.push(char::from(byte));
             } else {
+                // writing into a `String` cannot fail
                 let _ = write!(path, "%{byte:02X}");
             }
         }

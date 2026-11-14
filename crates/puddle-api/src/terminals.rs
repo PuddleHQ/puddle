@@ -283,6 +283,7 @@ fn fake_shell(mut size: TerminalSize) -> TerminalLink {
                                     status: status.trim().parse().ok(),
                                     message: None,
                                 };
+                                // the page's receiver is gone when this fails, and the session ends with this branch
                                 let _ = to_page.send(TerminalOutput::Bytes(answer)).await;
                                 let _ = to_page.send(TerminalOutput::Ended(end)).await;
                                 return;

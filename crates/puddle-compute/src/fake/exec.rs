@@ -321,6 +321,7 @@ fn cat(ctx: &ExecContext<'_>, paths: &[&str]) -> ExecOutput {
                 let _ = writeln!(stderr, "cat: {path}: {e}");
             }
             _ => {
+                // writing into a `String` cannot fail
                 let _ = writeln!(stderr, "cat: {path}: No such file or directory");
             }
         }

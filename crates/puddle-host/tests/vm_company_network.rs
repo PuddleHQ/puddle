@@ -200,11 +200,13 @@ impl Lab {
 }
 
 /// `curl` to the intranet name over plain HTTP: the status line, and the refusal header.
+// flake-ok: the host answers this name from its own fixed table (`ClientDns`), the machine's resolver is never asked.
 const PLAIN: &str = "curl -s -i --max-time 30 http://intranet.corp.test/ | tr -d '\\r' \
      | awk 'NR==1{s=$2} tolower($1)==\"x-puddle-blocked:\"{r=$2} END{print \"status=\" s \" reason=\" r}'";
 
 /// `curl` to the intranet name over HTTPS: the proxy's answer to the tunnel request, or the
 /// site's. Prints `status=<code>` from curl's own verbose output and the refusal header.
+// flake-ok: the host answers this name from its own fixed table (`ClientDns`), the machine's resolver is never asked.
 const TLS: &str = "o=$(curl -sv --max-time 30 -o /dev/null -w 'final=%{http_code}' https://intranet.corp.test/ 2>&1 | tr -d '\\r'); \
      echo \"$o\" | grep -i 'x-puddle-blocked' | head -1; echo \"$o\" | grep -E 'HTTP/1.1 [0-9]+|final=' | tr '\\n' ' '; echo";
 
@@ -253,6 +255,7 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
     assert!(tls.contains("final=200"), "HTTPS with the toggle on: {tls}");
     let carried = lab.access.carried();
     assert!(
+        // flake-ok: the host answers this name from its own fixed table (`ClientDns`), the machine's resolver is never asked.
         carried.iter().any(|c| c == "intranet.corp.test:80")
             && carried.iter().any(|c| c == "intranet.corp.test:443"),
         "the tunnel carries the name, not the address: {carried:?}"

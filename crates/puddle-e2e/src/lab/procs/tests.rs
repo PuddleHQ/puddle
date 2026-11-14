@@ -119,12 +119,19 @@ fn shell_with_a_child() -> Child {
 fn a_running_tree_is_read_with_its_child_and_reported() {
     let mut shell = shell_with_a_child();
     let pid = shell.id();
+    let (_, _, expected) = programs::SHELL_WITH_A_CHILD;
+    // A forked child is named after the shell until it execs the program: wait for the program's
+    // name, or a loaded machine reads the child in that gap.
     let found = puddle_test_kit::eventually_blocking(
-        "the shell's child process",
+        "the shell's child process, running its program",
         Duration::from_secs(30),
         || {
             let tree = tree(pid);
-            (tree.len() >= 2).then_some(tree)
+            let ready = tree.len() >= 2
+                && tree
+                    .last()
+                    .is_some_and(|p| p.name.eq_ignore_ascii_case(expected));
+            ready.then_some(tree)
         },
     );
     let evidence = stall_evidence(&shell);
@@ -135,7 +142,6 @@ fn a_running_tree_is_read_with_its_child_and_reported() {
     assert_eq!(found.first().map(|p| p.pid), Some(pid));
     assert_eq!(found.len(), 2, "{found:?}");
     let child = found.last().unwrap();
-    let (_, _, expected) = programs::SHELL_WITH_A_CHILD;
     assert!(child.name.eq_ignore_ascii_case(expected), "{found:?}");
     assert!(child.created.is_some() && child.cpu.is_some(), "{found:?}");
     assert!(cpu.is_some());

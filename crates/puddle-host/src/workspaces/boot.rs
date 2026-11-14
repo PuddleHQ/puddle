@@ -14,7 +14,7 @@ use puddle_types::{
 use puddle_workspace::Layout;
 
 use super::{GuestState, HostWorkspaces, Live, editor_file_title, problem_key};
-use crate::boot::{GuestInputs, root_disk_size};
+use crate::boot::{GuestInputs, MiseLayer, root_disk_size};
 use crate::git_hosts::{
     Authors, GitProblem, SshListing, authors, credentials_problem, left_out_problem,
     never_decrypted, old_git_problem,
@@ -102,7 +102,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         gate,
                         gated: Some(Arc::new(gated)),
                         ssh: None,
-                        spec_env: guest.env.clone(),
+                        spec_env: env,
                         guest: Some(guest),
                         rewrite: Arc::default(),
                     },
@@ -151,6 +151,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .kit
             .editor(id, self.reconnection_grace(name), self.editor_kind())?
             .map(|server| server.with_user(session_user));
+        let mode = crate::settings_read::mise_or_off(inner.settings.as_ref(), name);
+        let mise = MiseLayer::of(id, mode)?;
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
@@ -176,6 +178,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             editor_file,
             session_user,
             ssh_agent: began.ssh_agent,
+            mise,
         };
         match inner.kit.plan(
             &state.image,
@@ -191,6 +194,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 editor_file: state.editor_file.as_ref(),
                 session_user: state.session_user,
                 ssh_agent: state.ssh_agent,
+                mise: state.mise.as_ref(),
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),

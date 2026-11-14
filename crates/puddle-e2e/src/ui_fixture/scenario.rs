@@ -76,6 +76,10 @@ pub struct Scenario {
     /// at the busy state use the `hold_workspaces` step instead.
     #[serde(default)]
     pub workspace_step_delay_ms: u64,
+    /// Whether several users may sign in, which gives the owner the admin screen (the API's
+    /// `multi_user` with browser sign-in on a public name).
+    #[serde(default)]
+    pub multi_user: bool,
     /// Settings documents kept as given.
     #[serde(default)]
     pub settings: SettingsSeed,

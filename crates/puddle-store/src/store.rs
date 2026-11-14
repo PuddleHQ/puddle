@@ -228,6 +228,14 @@ impl Store {
     }
 }
 
+#[cfg(feature = "testing")]
+impl Store {
+    /// Runs `sql` on the connection, for [`crate::testing::break_database`].
+    pub(crate) fn run_sql_for_testing(&self, sql: &str) -> Result<(), rusqlite::Error> {
+        lock(&self.conn).execute_batch(sql)
+    }
+}
+
 /// A finished second's excess of `connection` records that [`Store::flush_limits`] took out of
 /// memory: the workspace (`None` for Puddle's own), its start and count.
 struct Flushed(Option<WorkspaceId>, u64, u64);

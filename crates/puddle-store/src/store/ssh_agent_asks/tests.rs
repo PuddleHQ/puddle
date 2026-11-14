@@ -371,3 +371,13 @@ fn a_request_that_cannot_be_counted_on_its_open_question_fails_and_changes_nothi
         .unwrap();
     assert!(matches!(joined, SshAgentAskStart::Open(n) if n == id));
 }
+
+#[test]
+fn a_store_that_cannot_count_the_open_questions_opens_none() {
+    let (_, store, _) = store();
+    store.refuse_sql_function("count");
+
+    let failed = store.start_ssh_agent_ask(&ws("a"), "h.example.com", KEY, "ssh-ed25519");
+
+    assert!(matches!(failed, Err(StoreError::Database(_))), "{failed:?}");
+}

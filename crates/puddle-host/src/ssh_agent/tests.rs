@@ -240,6 +240,48 @@ mod gate {
     }
 
     #[test]
+    fn a_store_that_cannot_take_the_question_refuses_the_signature() {
+        let store = store();
+        puddle_store::testing::break_database(
+            &store,
+            "CREATE TRIGGER asks_insert_fails BEFORE INSERT ON ssh_agent_asks
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        );
+        let gate = gate(&store, Duration::from_secs(5), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unavailable)
+        );
+        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_read_while_a_login_waits_refuses_the_signature() {
+        let store = store();
+        let gate = gate(&store, Duration::from_secs(30), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        let breaker = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                // flake-ok: a fake failure, once the question the code under test opens is there.
+                while store.open_ssh_agent_asks(None, None).unwrap().is_empty() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                puddle_store::testing::break_database(
+                    &store,
+                    "ALTER TABLE ssh_agent_asks RENAME TO ssh_agent_asks_gone",
+                );
+            })
+        };
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unavailable)
+        );
+        breaker.join().unwrap();
+    }
+
+    #[test]
     fn a_workspace_that_stops_while_a_login_waits_ends_the_wait() {
         let store = store();
         let gate = gate(&store, Duration::from_secs(30), Duration::ZERO);
@@ -286,6 +328,21 @@ mod gate {
             third.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unanswered),
             "the run grant of the earlier run is gone"
+        );
+    }
+
+    #[test]
+    fn a_gate_over_a_store_that_cannot_clear_the_old_grants_is_made_and_refuses_signatures() {
+        let store = store();
+        puddle_store::testing::break_database(
+            &store,
+            "ALTER TABLE ssh_agent_grants RENAME TO ssh_agent_grants_gone",
+        );
+        let gate = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        let key = TestKey::ed25519(2).blob();
+        assert_eq!(
+            gate.approve(&ws("a"), "h.example.com", &key),
+            Err(Disapproval::Unavailable)
         );
     }
 

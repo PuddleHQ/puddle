@@ -168,6 +168,7 @@ async fn rig() -> Rig {
 
 fn allow(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
@@ -180,6 +181,7 @@ fn allow(store: &Store, host: &str) {
 
 fn deny(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),

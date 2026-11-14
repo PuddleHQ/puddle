@@ -850,6 +850,7 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     ] {
         puddle_store::testing::own(host.store(), &sandbox);
         host.store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(site).unwrap(),

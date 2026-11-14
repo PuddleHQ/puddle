@@ -222,6 +222,7 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
 
     // Allowed: the request reaches the server unchanged and is audited with method and path.
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse("node.test").unwrap(),

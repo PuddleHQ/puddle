@@ -71,12 +71,15 @@ fn changed(sink: &CollectingSink) -> usize {
 fn a_rule_is_kept_with_its_own_numbering_and_listed_by_scope() {
     let (sink, store) = fixture();
     let global = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(None, "api.example.com", &["delete"], "/repos/**"))
         .unwrap();
     let own = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(Some("shop"), "*.example.org", &[], "/a/*"))
         .unwrap();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(Some("other"), "x.example.net", &[], "/"))
         .unwrap();
     assert_eq!((global.id, own.id), (1, 2));
@@ -103,15 +106,20 @@ fn a_rule_is_refused_from_the_system_with_no_host_or_over_the_limit() {
     let mut system = new_rule(None, "a.example.com", &[], "/");
     system.created_by = Actor::System;
     assert!(matches!(
-        store.add_request_rule(&system),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_request_rule(&system),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
-        store.add_request_rule(&new_rule(None, "  ", &[], "/")),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_request_rule(&new_rule(None, "  ", &[], "/")),
         Err(StoreError::RequestRuleInvalid(_))
     ));
     for i in 0..MAX_REQUEST_RULES {
         store
+            .as_user(puddle_store::UserId::OWNER)
             .add_request_rule(&new_rule(
                 Some("shop"),
                 &format!("h{i}.example.com"),
@@ -121,13 +129,17 @@ fn a_rule_is_refused_from_the_system_with_no_host_or_over_the_limit() {
             .unwrap();
     }
     assert!(matches!(
-        store.add_request_rule(&new_rule(Some("shop"), "more.example.com", &[], "/")),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_request_rule(&new_rule(Some("shop"), "more.example.com", &[], "/")),
         Err(StoreError::RequestRuleInvalid(_))
     ));
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(None, "global.example.com", &[], "/"))
         .unwrap();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(Some("other"), "more.example.com", &[], "/"))
         .unwrap();
     assert_eq!(
@@ -141,6 +153,7 @@ fn a_rule_is_refused_from_the_system_with_no_host_or_over_the_limit() {
 fn deleting_a_rule_is_recorded_with_who_did_it() {
     let (sink, store) = fixture();
     let rule = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(None, "api.example.com", &["PUT"], "/x"))
         .unwrap();
     drop(sink.take());
@@ -176,12 +189,15 @@ fn deleting_a_rule_is_recorded_with_who_did_it() {
 fn deleting_a_workspace_takes_its_rules_and_keeps_the_global_ones() {
     let (sink, store) = fixture();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(None, "g.example.com", &[], "/"))
         .unwrap();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(Some("shop"), "a.example.com", &[], "/a"))
         .unwrap();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(Some("shop"), "b.example.com", &[], "/b"))
         .unwrap();
     drop(sink.take());
@@ -246,6 +262,7 @@ fn a_row_that_cannot_be_read_back_is_reported_as_corrupt_and_not_dropped() {
     let path = dir.path().join("puddle.db");
     let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_request_rule(&new_rule(None, "a.example.com", &["GET"], "/x"))
         .unwrap();
     drop(store);

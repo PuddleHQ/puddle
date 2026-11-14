@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use puddle_compute::{ExecOutput, ExecRequest, FileMount};
 use puddle_store::Store;
-use puddle_types::{GuestFile, GuestPath, SessionUser, WorkspaceId};
+use puddle_types::{GuestFile, SessionUser, WorkspaceId, guest_path};
 
 /// Where a workspace's folder with its shell init is mounted.
 pub(crate) const GUEST_DIR: &str = "/puddle/shell-init";
@@ -42,21 +42,7 @@ pub(crate) fn loader() -> GuestFile {
          # here: change it in puddle.\n\
          if [ -r {GUEST_DIR}/{FILE_NAME} ]; then\n    . {GUEST_DIR}/{FILE_NAME}\nfi\n"
     );
-    GuestFile::new(guest_path(LOADER_GUEST), text.into_bytes())
-}
-
-fn guest_path(path: &str) -> GuestPath {
-    // Only called with the constants above, which a test checks.
-    GuestPath::new(path).unwrap_or_else(|_| unreachable_path(path))
-}
-
-#[cold]
-#[expect(
-    clippy::panic,
-    reason = "invariant: the constants passed to guest_path are valid guest paths (unit-tested)"
-)]
-fn unreachable_path(path: &str) -> GuestPath {
-    panic!("constant guest path {path:?} is not valid")
+    GuestFile::new(guest_path!(LOADER_GUEST), text.into_bytes())
 }
 
 /// What [`Copies::publish`] found.
@@ -95,7 +81,7 @@ impl Copies {
 
     /// The read-only mount that shows `id`'s folder at [`GUEST_DIR`].
     pub(crate) fn mount(&self, id: &WorkspaceId) -> FileMount {
-        FileMount::read_only_dir(self.dir(id), guest_path(GUEST_DIR))
+        FileMount::read_only_dir(self.dir(id), guest_path!(GUEST_DIR))
     }
 
     /// Makes `id`'s folder hold exactly the text saved for `id` (an empty file when there is

@@ -54,7 +54,7 @@ pub(crate) async fn create_rule(
     let new = body.into_new_rule()?;
     let (action, resource) = authz::rule_scope(new.scope.workspace());
     authz::check(&state, principal, action, resource).await?;
-    let rule = blocking(move || Ok(state.store.add_rule_as(principal.user, &new)?)).await?;
+    let rule = blocking(move || Ok(state.store.as_user(principal.user).add_rule(&new)?)).await?;
     Ok((StatusCode::CREATED, Json(Rule::from_store(rule)?)))
 }
 

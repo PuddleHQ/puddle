@@ -221,6 +221,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
     let id = new_id(ask(&store, "a", "www.example.com"));
     drop(sink.take());
     let rule = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse(".example.com").unwrap(),
@@ -246,6 +247,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
 
     // The sweeper's expiry of a rule is a rule change too.
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("short.example").unwrap(),
@@ -298,6 +300,7 @@ fn deleted_workspaces_close_their_rows_as_expired() {
 fn deleting_a_workspace_with_rules_reports_rules_changed() {
     let (_, sink, store) = fixture(Limits::default());
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sb("a")),
             pattern: Pattern::parse("example.com").unwrap(),
@@ -498,8 +501,8 @@ fn seeded(records: &[AuditRecord]) -> (tempfile::TempDir, Store) {
     {
         let mut insert = tx
             .prepare(
-                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, user_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
             )
             .unwrap();
         for record in records {

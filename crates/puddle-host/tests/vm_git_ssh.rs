@@ -81,6 +81,7 @@ async fn workspace(fake: &GitHost, tag: &str) -> (NameProxy, VmHost, WorkspaceId
     puddle_store::testing::own(vm.host.store(), &sandbox);
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(NAME).unwrap(),

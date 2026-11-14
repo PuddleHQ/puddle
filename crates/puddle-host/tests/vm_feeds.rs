@@ -309,6 +309,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
         puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(workspace.clone()),
                 pattern: Pattern::parse(site).unwrap(),

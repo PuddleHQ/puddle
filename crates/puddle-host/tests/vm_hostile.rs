@@ -137,6 +137,7 @@ async fn workspace_that_reaches_127_0_0_1(
     let sandbox = WorkspaceId::new(name).unwrap();
     puddle_store::testing::own(host.store(), &sandbox);
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse("127.0.0.1").unwrap(),

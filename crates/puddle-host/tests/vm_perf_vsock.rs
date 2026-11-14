@@ -73,6 +73,7 @@ async fn rig(tag: &str, gate: usize) -> Rig {
     puddle_store::testing::own(host.host.store(), &sandbox);
     host.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(BULK_HOST).unwrap(),

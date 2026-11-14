@@ -69,10 +69,9 @@ pub(crate) fn stand(
     hosts
         .iter()
         .map(|host| {
-            let decision = match workspace {
-                Some(workspace) => store.peek(workspace, host)?,
-                None => store.peek_as(user, &placeholder, host),
-            };
+            let decision = store
+                .as_user(user)
+                .peek(workspace.unwrap_or(&placeholder), host);
             let (state, blocked_by) = match decision {
                 None => (RepositoryHostState::New, None),
                 Some(d) => match blocked_by(store, user, host, d) {

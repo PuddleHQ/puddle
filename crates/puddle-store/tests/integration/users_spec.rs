@@ -99,10 +99,12 @@ fn draft(label: &str) -> IdentityDraft {
 fn a_global_rule_decides_only_the_workspaces_of_the_user_who_made_it() {
     let (store, ann, _) = fixture();
     store
+        .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Global, "owners.example"))
         .unwrap();
     let anns = store
-        .add_rule_as(ann, &allow(Scope::Global, "anns.example"))
+        .as_user(ann)
+        .add_rule(&allow(Scope::Global, "anns.example"))
         .unwrap();
     assert_eq!(anns.user, ann);
     assert!(allows(&store, "mine", "owners.example"));
@@ -128,7 +130,8 @@ fn a_global_rule_decides_only_the_workspaces_of_the_user_who_made_it() {
 fn a_rule_for_another_users_workspace_or_set_is_refused_as_unknown() {
     let (store, ann, _) = fixture();
     let err = store
-        .add_rule_as(ann, &allow(Scope::Workspace(ws("mine")), "x.example"))
+        .as_user(ann)
+        .add_rule(&allow(Scope::Workspace(ws("mine")), "x.example"))
         .unwrap_err();
     assert!(matches!(err, StoreError::UnknownWorkspace(w) if w == ws("mine")));
     let owners_set = store
@@ -138,11 +141,18 @@ fn a_rule_for_another_users_workspace_or_set_is_refused_as_unknown() {
         unreachable!()
     };
     let err = store
-        .add_rule_as(ann, &allow(Scope::Set(set), "x.example"))
+        .as_user(ann)
+        .add_rule(&allow(Scope::Set(set), "x.example"))
         .unwrap_err();
     assert!(matches!(err, StoreError::UnknownRuleSet(_)));
-    // A workspace rule made without a user is the workspace's user's.
+    // The owner does not write into ann's workspace either; ann does, and the rule is hers.
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_rule(&allow(Scope::Workspace(ws("anns")), "y.example"))
+        .unwrap_err();
+    assert!(matches!(err, StoreError::UnknownWorkspace(w) if w == ws("anns")));
     let made = store
+        .as_user(ann)
         .add_rule(&allow(Scope::Workspace(ws("anns")), "y.example"))
         .unwrap();
     assert_eq!(made.user, ann);
@@ -181,17 +191,18 @@ fn approving_for_every_workspace_makes_a_rule_of_the_workspaces_user() {
 fn a_workspace_with_no_user_has_no_rules_until_its_user_is_recorded() {
     let (store, ann, _) = fixture();
     store
+        .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Global, "owners.example"))
         .unwrap();
     assert!(matches!(
-        store.peek(&ws("late"), &host("owners.example")),
+        store.decide(
+            &EgressRequest::new(ws("late"), host("owners.example"), 443),
+            SuffixAllows::Count
+        ),
         Err(StoreError::UnknownWorkspace(w)) if w == ws("late")
     ));
     store.set_workspace_owner(&ws("late"), ann).unwrap();
-    assert_eq!(
-        store.peek(&ws("late"), &host("owners.example")).unwrap(),
-        None
-    );
+    assert!(!allows(&store, "late", "owners.example"));
 }
 
 #[test]
@@ -208,7 +219,8 @@ fn rule_sets_and_switches_are_one_users() {
         unreachable!()
     };
     store
-        .add_rule_as(ann, &allow(Scope::Set(anns_id), "set.example"))
+        .as_user(ann)
+        .add_rule(&allow(Scope::Set(anns_id), "set.example"))
         .unwrap();
     let ids = |user| -> Vec<RuleSetId> {
         store
@@ -287,8 +299,11 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
     };
-    let owners = store.add_request_rule(&new(None)).unwrap();
-    let anns = store.add_request_rule_as(ann, &new(None)).unwrap();
+    let owners = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&new(None))
+        .unwrap();
+    let anns = store.as_user(ann).add_request_rule(&new(None)).unwrap();
     let ids = |workspace: &str| -> Vec<i64> {
         store
             .request_rules_for(&ws(workspace))
@@ -301,7 +316,7 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
     assert_eq!(ids("anns"), vec![anns.id]);
     assert_eq!(store.request_rules(ann, None).unwrap(), vec![anns]);
     assert!(matches!(
-        store.add_request_rule_as(ann, &new(Some("mine"))),
+        store.as_user(ann).add_request_rule(&new(Some("mine"))),
         Err(StoreError::UnknownWorkspace(_))
     ));
 }
@@ -394,7 +409,8 @@ fn audit_records_and_their_events_reach_the_user_they_belong_to() {
     let (store, ann, events) = fixture();
     let _ = events.take();
     let made = store
-        .add_rule_as(ann, &allow(Scope::Global, "anns.example"))
+        .as_user(ann)
+        .add_rule(&allow(Scope::Global, "anns.example"))
         .unwrap();
     let appended: Vec<Event> = events
         .take()
@@ -539,9 +555,15 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
     };
-    let owners_rule = store.add_request_rule(&new(Some("mine"))).unwrap();
-    let anns_global = store.add_request_rule_as(ann, &new(None)).unwrap();
-    let anns_own = store.add_request_rule_as(ann, &new(Some("anns"))).unwrap();
+    let owners_rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&new(Some("mine")))
+        .unwrap();
+    let anns_global = store.as_user(ann).add_request_rule(&new(None)).unwrap();
+    let anns_own = store
+        .as_user(ann)
+        .add_request_rule(&new(Some("anns")))
+        .unwrap();
     let ids = |rules: Vec<puddle_store::RequestRule>| -> Vec<i64> {
         rules.iter().map(|r| r.id).collect()
     };
@@ -584,8 +606,14 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
         expires_at: None,
         created_by: Actor::Api,
     };
-    let owners_host = store.add_rule(&rule("mine", "o.example")).unwrap();
-    let anns_host = store.add_rule_as(ann, &rule("anns", "a.example")).unwrap();
+    let owners_host = store
+        .as_user(UserId::OWNER)
+        .add_rule(&rule("mine", "o.example"))
+        .unwrap();
+    let anns_host = store
+        .as_user(ann)
+        .add_rule(&rule("anns", "a.example"))
+        .unwrap();
     let rule_ids = |rules: Vec<puddle_store::Rule>| -> Vec<puddle_types::RuleId> {
         rules.iter().map(|r| r.id).collect()
     };
@@ -665,6 +693,7 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
         );
     };
     store
+        .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Global, "owners.example"))
         .unwrap();
     nobodys(
@@ -675,15 +704,16 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
             )
             .map(drop),
     );
-    nobodys(store.peek(&stray, &host("owners.example")).map(drop));
     nobodys(
         store
+            .as_user(UserId::OWNER)
             .add_rule(&allow(Scope::Workspace(stray.clone()), "x.example"))
             .map(drop),
     );
     nobodys(store.request_rules_for(&stray).map(drop));
     nobodys(
         store
+            .as_user(UserId::OWNER)
             .add_request_rule(&NewRequestRule {
                 workspace: Some(stray.clone()),
                 host: "api.example".to_owned(),
@@ -718,6 +748,7 @@ fn a_workspace_that_lost_its_user_is_refused_and_its_delete_clears_it() {
     let store = open();
     own(&store, &lost);
     store
+        .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Workspace(lost.clone()), "x.example"))
         .unwrap();
     store
@@ -768,6 +799,7 @@ fn a_workspace_that_lost_its_user_is_refused_and_its_delete_clears_it() {
 fn the_proxy_gets_no_answer_for_a_workspace_with_no_user() {
     let (store, _, _) = fixture();
     store
+        .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Global, "owners.example"))
         .unwrap();
     let request = EgressRequest::new(ws("stray"), host("owners.example"), 443);
@@ -792,9 +824,11 @@ fn the_install_sees_every_users_workspaces() {
     let (store, ann, _) = fixture();
     let all = store.take_all_users().unwrap();
     store
+        .as_user(UserId::OWNER)
         .add_rule(&allow(Scope::Workspace(ws("mine")), "o.example"))
         .unwrap();
     store
+        .as_user(ann)
         .add_rule(&allow(Scope::Workspace(ws("anns")), "a.example"))
         .unwrap();
     decide(&store, "mine", "mine.example");
@@ -820,4 +854,90 @@ fn the_install_sees_every_users_workspaces() {
         pending(store.open_pending(ann, None).unwrap()),
         set(&["anns"])
     );
+}
+
+/// Every write a second user makes is stored as theirs: no row of the seven per-user tables is
+/// the owner's afterwards, so a write that forgets its user cannot pass for the owner's.
+#[test]
+fn every_write_as_a_second_user_leaves_no_row_of_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
+    let ann = store.add_user(&UserName::new("Ann").unwrap()).unwrap().id;
+    store.set_workspace_owner(&ws("anns"), ann).unwrap();
+
+    let anns = store.as_user(ann);
+    anns.add_rule(&allow(Scope::Global, "global.example"))
+        .unwrap();
+    anns.add_rule(&allow(Scope::Workspace(ws("anns")), "own.example"))
+        .unwrap();
+    let set = store
+        .create_rule_set(ann, "Work", "", None, Actor::Api)
+        .unwrap();
+    let RuleSetId::User(set_id) = set.id else {
+        unreachable!()
+    };
+    anns.add_rule(&allow(Scope::Set(set_id), "set.example"))
+        .unwrap();
+    store
+        .switch_rule_set(ann, set.id, Some(&ws("anns")), Some(true), Actor::Api)
+        .unwrap();
+    for workspace in [None, Some("anns")] {
+        anns.add_request_rule(&NewRequestRule {
+            workspace: workspace.map(ws),
+            host: "api.example".to_owned(),
+            methods: Methods::parse(["GET"]).unwrap(),
+            path: PathPattern::parse("/*").unwrap(),
+            created_by: Actor::Api,
+        })
+        .unwrap();
+    }
+    store
+        .set_env(
+            ann,
+            &EnvScope::Global,
+            &EnvName::new("COLOUR").unwrap(),
+            EnvDraft::plain("red").unwrap(),
+        )
+        .unwrap();
+    store.create_identity(ann, draft("Work")).unwrap();
+    let Decision::Pending(PendingOutcome::New(id)) = decide(&store, "anns", "ask.example") else {
+        unreachable!()
+    };
+    store
+        .resolve_pending(
+            id,
+            &Resolution {
+                effect: puddle_store::Effect::Allow,
+                pattern: PatternChoice::Exact,
+                scope: ScopeChoice::Global,
+                expires_in: None,
+            },
+            Actor::Api,
+        )
+        .unwrap();
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for table in [
+        "rules",
+        "request_rules",
+        "audit",
+        "rule_sets",
+        "rule_set_switches",
+        "env_vars",
+        "identities",
+    ] {
+        let rows: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        let owners: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM {table} WHERE user_id = 1"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(rows > 0, "{table}: the test wrote nothing");
+        assert_eq!(owners, 0, "{table} holds a row of the owner");
+    }
 }

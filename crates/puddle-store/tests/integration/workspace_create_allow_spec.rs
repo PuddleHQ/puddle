@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use puddle_store::testing::own;
 use puddle_store::{Actor, Effect, Limits, ManualClock, NewRule, Pattern, Scope, Store};
 use puddle_types::{Decision, EgressRequest, Host, PendingOutcome, SuffixAllows, WorkspaceId};
 
@@ -18,8 +17,10 @@ fn store() -> Store {
         Limits::default(),
     )
     .unwrap();
-    for name in ["aaaaaaaa", "bbbbbbbb"] {
-        own(&store, &ws(name));
+    for id in ["aaaaaaaa", "bbbbbbbb"] {
+        store
+            .set_workspace_owner(&ws(id), puddle_store::UserId::OWNER)
+            .unwrap();
     }
     store
 }
@@ -34,6 +35,7 @@ fn host(name: &str) -> Host {
 
 fn deny(store: &Store, scope: Scope, pattern: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope,
             pattern: Pattern::parse(pattern).unwrap(),
@@ -50,7 +52,9 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
     // otherwise, with or without a Git identity (a credential never allows a host).
     let store = store();
     assert_eq!(
-        store.peek(&ws("aaaaaaaa"), &host("github.com")).unwrap(),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("github.com")),
         None
     );
     let decision = store
@@ -69,7 +73,9 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
 fn peek_records_nothing() {
     let store = store();
     assert_eq!(
-        store.peek(&ws("aaaaaaaa"), &host("github.com")).unwrap(),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("github.com")),
         None
     );
     assert_eq!(
@@ -100,12 +106,16 @@ fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
             .any(|r| r.id == rule.id)
     );
     assert!(matches!(
-        store.peek(&ws("aaaaaaaa"), &host("github.com")).unwrap(),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("github.com")),
         Some(Decision::Allow { .. })
     ));
     // Another workspace is unaffected.
     assert_eq!(
-        store.peek(&ws("bbbbbbbb"), &host("github.com")).unwrap(),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("bbbbbbbb"), &host("github.com")),
         None
     );
     // The audit says who made it.
@@ -122,6 +132,7 @@ fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
 fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
     let store = store();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse(".github.com").unwrap(),
@@ -158,8 +169,8 @@ fn a_block_rule_is_never_overridden_by_the_create() {
     assert_eq!(made.len(), 0);
     assert!(matches!(
         store
-            .peek(&ws("aaaaaaaa"), &host("api.github.com"))
-            .unwrap(),
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("api.github.com")),
         Some(Decision::Deny { .. })
     ));
 }
@@ -190,5 +201,18 @@ fn the_grant_closes_a_pending_request_it_decides() {
             .unwrap()
             .len(),
         0
+    );
+}
+
+#[test]
+fn a_workspace_with_no_recorded_user_gets_no_rule_from_a_create() {
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    let err = store
+        .allow_hosts_for_create(&ws("nobodys1"), &[host("github.com")])
+        .unwrap_err();
+    assert!(matches!(err, puddle_store::StoreError::UnknownWorkspace(w) if w == ws("nobodys1")));
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        []
     );
 }

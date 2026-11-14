@@ -108,7 +108,7 @@ fn host_roots_and_puddle_cas_become_files_env_and_a_step() {
     assert_eq!(env.len(), 7);
     assert_eq!(
         trust.boot_steps(),
-        [path(BUNDLE_STEP_PATH), path(JAVA_STEP_PATH)]
+        [guest_path!(BUNDLE_STEP_PATH), guest_path!(JAVA_STEP_PATH)]
     );
     assert!(!trust.is_empty());
 }

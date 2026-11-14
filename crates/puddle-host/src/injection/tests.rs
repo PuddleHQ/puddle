@@ -304,6 +304,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
     let host = |h: &str| Host::parse_normalised(h).unwrap();
     let add = |workspace: Option<&WorkspaceId>, host: &str, path: &str| {
         store
+            .as_user(puddle_store::UserId::OWNER)
             .add_request_rule(&puddle_store::NewRequestRule {
                 workspace: workspace.cloned(),
                 host: host.to_owned(),

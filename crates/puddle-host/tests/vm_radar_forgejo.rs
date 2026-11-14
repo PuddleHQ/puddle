@@ -101,6 +101,7 @@ async fn vm_radar_forgejo_clones_pushes_and_deletes_a_branch_and_the_guest_never
     puddle_store::testing::own(vm.host.store(), &sandbox);
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(NAME).unwrap(),

@@ -28,7 +28,7 @@ use crate::pattern::{Pattern, registrable_domain};
 use crate::pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
-use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
+use crate::rule::{Actor, NewRule, Rule, Scope};
 use crate::schema;
 use crate::users::UserId;
 
@@ -43,6 +43,7 @@ mod learned;
 mod ports;
 mod request_rules;
 mod rows;
+mod scoped;
 mod sets;
 mod shell_init;
 mod ssh_agent;
@@ -61,6 +62,7 @@ pub use interception::{
 pub use learned::LearnedRow;
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
+pub use scoped::UserStore;
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
 pub use ssh_agent::{MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
 pub use users::{AllUsers, WorkspaceOwners};
@@ -537,27 +539,15 @@ impl Store {
         Ok(out)
     }
 
-    /// Creates a rule and closes the open rows it now decides (R-16). A workspace rule is the
-    /// workspace's user's, a set's entry the set's user's, and a global rule the owner's: see
-    /// [`Store::add_rule_as`] for a rule another user makes.
+    /// Creates a rule of `user` and closes the open rows it now decides (R-16): a global rule
+    /// becomes theirs, and a workspace or set it names must be theirs. Reached through
+    /// [`Store::as_user`].
     ///
     /// # Errors
-    /// [`StoreError::SystemActor`], [`StoreError::ExpiryNotInFuture`], or a database error.
-    pub fn add_rule(&self, new: &NewRule) -> Result<Rule, StoreError> {
-        self.add_rule_by(None, new)
-    }
-
-    /// [`Store::add_rule`] by `user`: a global rule becomes theirs, and a workspace or set it
-    /// names must be theirs.
-    ///
-    /// # Errors
-    /// As [`Store::add_rule`], and [`StoreError::UnknownWorkspace`] or
-    /// [`StoreError::UnknownRuleSet`] for another user's workspace or set.
-    pub fn add_rule_as(&self, user: UserId, new: &NewRule) -> Result<Rule, StoreError> {
-        self.add_rule_by(Some(user), new)
-    }
-
-    fn add_rule_by(&self, user: Option<UserId>, new: &NewRule) -> Result<Rule, StoreError> {
+    /// [`StoreError::SystemActor`], [`StoreError::ExpiryNotInFuture`],
+    /// [`StoreError::UnknownWorkspace`] or [`StoreError::UnknownRuleSet`] for another user's
+    /// workspace or set, or a database error.
+    fn add_rule_by(&self, user: UserId, new: &NewRule) -> Result<Rule, StoreError> {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
@@ -580,28 +570,11 @@ impl Store {
         Ok(rule)
     }
 
-    /// What the rules say about `host` for `workspace` right now, without recording anything:
-    /// the same answer [`Store::decide`] gives, but `None` where that would open a pending row.
-    /// For a workspace that is not made yet, see [`Store::peek_as`].
-    ///
-    /// # Errors
-    /// [`StoreError::UnknownWorkspace`] for a workspace that is nobody's.
-    pub fn peek(
-        &self,
-        workspace: &WorkspaceId,
-        host: &Host,
-    ) -> Result<Option<Decision>, StoreError> {
-        self.match_rules(
-            &EgressRequest::new(workspace.clone(), host.clone(), 443),
-            self.clock.now_ms(),
-            SuffixAllows::Count,
-        )
-    }
-
-    /// [`Store::peek`] for a workspace of `user` that is not made yet (`workspace` is a name no
-    /// workspace has): `user`'s global rules and sets.
-    #[must_use]
-    pub fn peek_as(&self, user: UserId, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
+    /// What `user`'s rules say about `host` for `workspace` right now, without recording
+    /// anything: the answer [`Store::decide`] gives, but `None` where that would open a pending
+    /// row. `workspace` may be a name no workspace has yet (a create not made yet): `user`'s
+    /// global rules and sets then decide. Reached through [`Store::as_user`].
+    fn peek_by(&self, user: UserId, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
         self.snapshot()
             .decide_as(
                 user,
@@ -611,35 +584,6 @@ impl Store {
                 SuffixAllows::Count,
             )
             .map(Hit::decision)
-    }
-
-    /// Allows each of `hosts` for `workspace` that no rule decides yet, with an exact allow rule
-    /// made by [`Actor::WorkspaceCreate`] (a create names the hosts of its repositories, and the
-    /// clone that follows would otherwise wait in the inbox). A host that is allowed already, or
-    /// that a deny decides, gets no rule: a create never overrides a block. Returns the rules
-    /// made.
-    ///
-    /// # Errors
-    /// A database error; the rules made before it stay.
-    pub fn allow_hosts_for_create(
-        &self,
-        workspace: &WorkspaceId,
-        hosts: &[Host],
-    ) -> Result<Vec<Rule>, StoreError> {
-        let mut made = Vec::new();
-        for host in hosts {
-            if self.peek(workspace, host)?.is_some() {
-                continue;
-            }
-            made.push(self.add_rule(&NewRule {
-                scope: Scope::Workspace(workspace.clone()),
-                pattern: Pattern::Exact(host.clone()),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::WorkspaceCreate,
-            })?);
-        }
-        Ok(made)
     }
 
     /// Deletes a rule.
@@ -754,7 +698,7 @@ impl Store {
             };
             // The rule is the user's whose workspace asked, global or not.
             let user = users::owner_in(tx, &row.workspace)?;
-            let rule = insert_rule(tx, Some(user), &new, now, Some(id))?;
+            let rule = insert_rule(tx, user, &new, now, Some(id))?;
             decide_row(tx, &row, &rule, actor, now, fx)?;
             let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now, fx)?;
             fx.push(Event::RulesChanged {});

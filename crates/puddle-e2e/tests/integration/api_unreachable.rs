@@ -130,6 +130,7 @@ async fn a_guest_cannot_reach_the_api_even_with_every_local_toggle_on_and_an_all
     let port = rig.api.local_addr().port();
     // An exact allow for the literal doesn't help either: Puddle's own listeners come first.
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("127.0.0.1").unwrap(),

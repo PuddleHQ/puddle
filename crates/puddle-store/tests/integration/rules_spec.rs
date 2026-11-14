@@ -72,7 +72,11 @@ fn rule(scope: Option<&str>, pattern: &str, effect: Effect) -> NewRule {
 }
 
 fn add(store: &Store, scope: Option<&str>, pattern: &str, effect: Effect) -> RuleId {
-    store.add_rule(&rule(scope, pattern, effect)).unwrap().id
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&rule(scope, pattern, effect))
+        .unwrap()
+        .id
 }
 
 fn new_pending(decision: Decision) -> PendingId {
@@ -246,7 +250,11 @@ fn r07_expired_rule_never_matches_even_before_the_sweeper() {
     let (clock, store) = fixture();
     let mut temp = rule(None, "example.com", Effect::Allow);
     temp.expires_at = Some(T0 + 1000);
-    let id = store.add_rule(&temp).unwrap().id;
+    let id = store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&temp)
+        .unwrap()
+        .id;
     clock.set(T0 + 999);
     assert_eq!(allowed_by(decide(&store, "a", "example.com")), Some(id));
     clock.set(T0 + 1000);
@@ -269,7 +277,7 @@ fn r07_expiry_in_the_past_is_refused() {
     let mut stale = rule(None, "example.com", Effect::Allow);
     stale.expires_at = Some(T0);
     assert!(matches!(
-        store.add_rule(&stale),
+        store.as_user(puddle_store::UserId::OWNER).add_rule(&stale),
         Err(StoreError::ExpiryNotInFuture)
     ));
     let id = add(&store, None, "example.com", Effect::Allow);
@@ -627,6 +635,7 @@ fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
     let ip = add(&store, Some("a"), "192.168.1.20", Effect::Allow);
     let deny = add(&store, None, "192.168.1.21", Effect::Deny);
     let expiring = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             expires_at: Some(T0 + DAY),
             ..rule(None, "192.168.1.22", Effect::Allow)
@@ -754,7 +763,9 @@ fn r15_invalid_choices_are_refused() {
     let mut system_rule = rule(None, "example.com", Effect::Allow);
     system_rule.created_by = Actor::System;
     assert!(matches!(
-        store.add_rule(&system_rule),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_rule(&system_rule),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
@@ -915,7 +926,11 @@ fn r19_sweeper_deletes_expired_rules_and_records_them_whole() {
     let (clock, store) = fixture();
     let mut temp = rule(Some("a"), ".example.com", Effect::Allow);
     temp.expires_at = Some(T0 + 10);
-    let id = store.add_rule(&temp).unwrap().id;
+    let id = store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&temp)
+        .unwrap()
+        .id;
     let keep = add(&store, None, "example.org", Effect::Allow);
     assert_eq!(store.sweep().unwrap().rules_expired, 0);
     clock.advance(10);
@@ -1022,7 +1037,10 @@ async fn sweeper_task_sweeps_at_start_and_shuts_down() {
     let (clock, store) = fixture();
     let mut temp = rule(None, "example.com", Effect::Allow);
     temp.expires_at = Some(T0 + 1);
-    store.add_rule(&temp).unwrap();
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&temp)
+        .unwrap();
     clock.advance(1);
     let store = Arc::new(store);
     let sweeper = Sweeper::spawn(Arc::clone(&store), Duration::from_secs(3600));
@@ -1553,7 +1571,7 @@ proptest! {
         let (clock, store) = fixture();
         let mut temp = rule(Some("a"), "example.com", Effect::Allow);
         temp.expires_at = Some(T0 + lifetime);
-        let id = store.add_rule(&temp).unwrap().id;
+        let id = store.as_user(puddle_store::UserId::OWNER).add_rule(&temp).unwrap().id;
         clock.set(T0 + at);
         if sweep {
             store.sweep().unwrap();

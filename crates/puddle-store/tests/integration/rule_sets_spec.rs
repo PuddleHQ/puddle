@@ -259,6 +259,7 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     assert!(info.on_by_default() && info.entries.is_empty() && info.created_at == Some(T0));
     // An entry added directly.
     let entry = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Set(azure), "*.azure.com", Effect::Allow))
         .unwrap();
     assert!(matches!(
@@ -305,7 +306,9 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
         Err(StoreError::UnknownRuleSet(_))
     ));
     assert!(matches!(
-        store.add_rule(&new_rule(Scope::Set(999), "x.example", Effect::Allow)),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_rule(&new_rule(Scope::Set(999), "x.example", Effect::Allow)),
         Err(StoreError::UnknownRuleSet(_))
     ));
 }
@@ -360,6 +363,7 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
         .update_rule_set(OWNER, one, "client x", "", None, Actor::Api)
         .unwrap();
     let r = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Set(one), "x.example", Effect::Deny))
         .unwrap();
     store
@@ -403,6 +407,7 @@ fn r39_your_own_rules_decide_before_any_set() {
         .unwrap();
     // E1: your global deny of *.visualstudio.com beats System managed's exact allow.
     let deny = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Global, "*.visualstudio.com", Effect::Deny))
         .unwrap();
     assert_eq!(
@@ -416,9 +421,11 @@ fn r39_your_own_rules_decide_before_any_set() {
     // E2: your allow of *.example.com; your set blocks ads.example.com; your exact allow wins.
     let blocks = user_set(&store, "Trackers");
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Global, "*.example.com", Effect::Allow))
         .unwrap();
     let block = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(
             Scope::Set(blocks),
             "ads.example.com",
@@ -434,6 +441,7 @@ fn r39_your_own_rules_decide_before_any_set() {
         }
     );
     let mine = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(
             Scope::Workspace(sb("a")),
             "ads.example.com",
@@ -459,6 +467,7 @@ fn r39_a_set_may_hold_allows_and_denies_and_the_most_specific_entry_wins() {
     let mixed = user_set(&store, "Mixed");
     let entry = |pattern: &str, effect| {
         store
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&new_rule(Scope::Set(mixed), pattern, effect))
             .unwrap()
     };
@@ -632,6 +641,7 @@ fn r42_set_allows_need_an_exact_rule_of_your_own_for_local_destinations() {
     assert!(matches!(again, Decision::Pending(_)));
     // Your own exact allow does count.
     let mine = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Global, "github.com", Effect::Allow))
         .unwrap();
     assert_eq!(
@@ -748,10 +758,10 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     own_workspaces(&Store::open(&path, clock.clone(), Limits::default()).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at) VALUES
-            ('builtin:gone', NULL, 1, 1),
-            ('builtin:github', 'Not A Name', 1, 1),
-            ('builtin:github', 'a', 1, 1);
+        "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id) VALUES
+            ('builtin:gone', NULL, 1, 1, 1),
+            ('builtin:github', 'Not A Name', 1, 1, 1),
+            ('builtin:github', 'a', 1, 1, 1);
          INSERT INTO system_reasons (workspace_id, reason) VALUES
             (NULL, 'a_later_reason'),
             ('Not A Name', 'code_server'),

@@ -1123,9 +1123,11 @@ impl State {
             expires_at: seed.expires_in_ms.map(|ms| created + ms),
             created_by: Actor::Ui,
         };
-        self.at(now, seed.ago_ms, || self.store.add_rule(&new))
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+        self.at(now, seed.ago_ms, || {
+            self.store.as_user(UserId::OWNER).add_rule(&new)
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
     }
 
     fn add_request_rule(&self, seed: &RequestRuleSeed, now: u64) -> Result<(), String> {
@@ -1141,9 +1143,11 @@ impl State {
             path: PathPattern::parse(&seed.path).map_err(|err| err.to_string())?,
             created_by: Actor::Api,
         };
-        self.at(now, seed.ago_ms, || self.store.add_request_rule(&new))
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+        self.at(now, seed.ago_ms, || {
+            self.store.as_user(UserId::OWNER).add_request_rule(&new)
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
     }
 
     fn request(&self, seed: &RequestSeed, now: u64) -> Result<(), String> {

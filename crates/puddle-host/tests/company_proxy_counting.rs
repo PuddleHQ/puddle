@@ -11,21 +11,20 @@ use std::path::Path;
 
 /// The lines of `source` that read the proxy's whole `CONNECT` list without naming a host.
 fn unfiltered_counts(source: &str) -> Vec<(usize, String)> {
-    let lines: Vec<&str> = source.lines().collect();
-    lines
-        .iter()
-        .enumerate()
-        .filter(|(i, line)| {
-            let code = line.trim_start();
-            !code.starts_with("//")
-                && (code.contains(".carried()") || code.contains(".connects()"))
-                // A discard (`let _ = proxy.connects();`) counts nothing.
-                && !code.starts_with("let _ =")
-                && !line.contains("// by-name")
-                && !(*i > 0 && lines[i - 1].trim() == "// by-name")
-        })
-        .map(|(i, line)| (i + 1, line.trim().to_owned()))
-        .collect()
+    let mut found = Vec::new();
+    let mut marked = false;
+    for (index, line) in source.lines().enumerate() {
+        let code = line.trim();
+        let counts = (code.contains(".carried()") || code.contains(".connects()"))
+            && !code.starts_with("//")
+            // A discard (`let _ = proxy.connects();`) counts nothing.
+            && !code.starts_with("let _ =");
+        if counts && !marked && !code.contains("// by-name") {
+            found.push((index + 1, code.to_owned()));
+        }
+        marked = code == "// by-name";
+    }
+    found
 }
 
 #[test]
@@ -36,7 +35,10 @@ fn no_vm_test_counts_what_the_company_proxy_carried_without_naming_a_host() {
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if !(name.starts_with("vm_") && name.ends_with(".rs")) {
+        let is_rust = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("rs"));
+        if !(name.starts_with("vm_") && is_rust) {
             continue;
         }
         files += 1;

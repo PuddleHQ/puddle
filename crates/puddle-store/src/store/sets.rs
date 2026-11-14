@@ -286,16 +286,6 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
     Ok(())
 }
 
-/// The user a set made by a user belongs to.
-pub(super) fn set_user(conn: &Connection, id: i64) -> Result<UserId, StoreError> {
-    conn.query_row("SELECT user_id FROM rule_sets WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })
-    .optional()?
-    .map(UserId::from_stored)
-    .ok_or_else(|| StoreError::UnknownRuleSet(RuleSetId::User(id).to_string()))
-}
-
 /// Fails unless `user` made a set with this id. Another user's set is unknown, as one that does
 /// not exist.
 pub(super) fn require_user_set(

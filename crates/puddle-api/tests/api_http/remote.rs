@@ -602,6 +602,7 @@ async fn a_client_that_never_starts_the_handshake_is_closed_when_the_limit_passe
         .expect("the server gives up on a silent client");
     assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
     let waited = started.elapsed();
+    // flake-ok: the clock is paused, so `waited` is virtual time the runtime advanced, not a load-dependent measurement.
     assert!(
         waited >= Duration::from_secs(10) && waited < Duration::from_secs(30),
         "{waited:?}"

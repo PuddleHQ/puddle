@@ -229,10 +229,23 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
             && tls.contains("403"),
         "HTTPS with the toggle off: {tls}"
     );
+    // Only the intranet name counts: the host's own background downloads (mise's setup after
+    // the first start) also leave through the client's tunnel while the test runs.
+    let name_prefix = format!("{}:", PrivateAccess::NAME);
+    let reached: Vec<String> = lab
+        .access
+        .carried()
+        .into_iter()
+        .filter(|c| c.starts_with(&name_prefix))
+        .collect();
     assert!(
-        lab.access.carried().is_empty() && lab.access.served().is_empty(),
-        "the refused requests reached the client's tunnel or the site: {:?}",
-        lab.access.carried()
+        reached.is_empty()
+            && lab
+                .access
+                .served()
+                .iter()
+                .all(|s| s.headers_named("host") != [PrivateAccess::NAME]),
+        "the refused requests reached the client's tunnel or the site: {reached:?}"
     );
     let refused = lab.records().await;
     assert!(

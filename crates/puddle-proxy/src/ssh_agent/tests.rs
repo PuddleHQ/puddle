@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_ca::CaBuilder;
+use puddle_ssh_agent::filter::Refusal;
 use puddle_ssh_agent::request;
 use puddle_ssh_agent::testing::{TestKey, bind, framed, login, server_kex, sign_request};
 use tokio::io::{DuplexStream, duplex};
@@ -36,10 +37,38 @@ impl HostAgent for FakeAgent {
     }
 }
 
+/// The gate in memory: its answer to the first-use question, what it was asked and what it
+/// recorded.
+#[derive(Default)]
+struct FakeGate {
+    answer: Mutex<Option<Disapproval>>,
+    asked: Mutex<Vec<(WorkspaceId, String, Vec<u8>)>>,
+    recorded: Mutex<Vec<(WorkspaceId, Option<String>, Outcome)>>,
+}
+
+impl AgentGate for FakeGate {
+    fn approve(&self, workspace: &WorkspaceId, host: &str, key: &[u8]) -> Result<(), Disapproval> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((workspace.clone(), host.to_owned(), key.to_vec()));
+        self.answer.lock().unwrap().map_or(Ok(()), Err)
+    }
+
+    fn record(&self, workspace: &WorkspaceId, host: Option<&str>, outcome: &Outcome) {
+        self.recorded.lock().unwrap().push((
+            workspace.clone(),
+            host.map(str::to_owned),
+            outcome.clone(),
+        ));
+    }
+}
+
 struct World {
     server: TestKey,
     user: TestKey,
     agent: Arc<FakeAgent>,
+    gate: Arc<FakeGate>,
     agents: Arc<SshAgents>,
     terminations: Arc<Terminations>,
 }
@@ -52,11 +81,13 @@ fn world() -> World {
         keys: vec![Identity::new(user.blob(), "me@desk".into())],
         ..FakeAgent::default()
     });
-    let agents = Arc::new(SshAgents::new(agent.clone()));
+    let gate = Arc::new(FakeGate::default());
+    let agents = Arc::new(SshAgents::new(agent.clone(), gate.clone()));
     let w = World {
         server: TestKey::ed25519(1),
         user,
         agent,
+        gate,
         agents,
         terminations: Arc::new(Terminations::new()),
     };
@@ -193,6 +224,69 @@ async fn a_stream_binds_to_a_seen_session_lists_and_signs_its_login() {
 }
 
 #[tokio::test]
+async fn the_first_use_question_names_the_workspace_host_and_key_and_every_outcome_is_recorded() {
+    let w = world();
+    let _tunnel = w.spliced("box", "build.example");
+    let (mut guest, _served) = w.stream("box", IDLE_LIMIT);
+    ask(&mut guest, &w.the_bind()).await;
+    ask(&mut guest, &framed(&[11])).await;
+    let data = login(&SESSION, &w.user.blob(), Some(&w.server.blob()));
+    ask(&mut guest, &framed(&sign_request(&w.user.blob(), &data, 0))).await;
+    assert_eq!(
+        *w.gate.asked.lock().unwrap(),
+        vec![(workspace("box"), "build.example".to_owned(), w.user.blob())]
+    );
+    let outcomes: Vec<_> = w
+        .gate
+        .recorded
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(ws, host, outcome)| (ws.to_string(), host.clone(), outcome.clone()))
+        .collect();
+    let host = Some("build.example".to_owned());
+    assert_eq!(
+        outcomes,
+        vec![
+            (
+                "box".to_owned(),
+                host.clone(),
+                Outcome::Bound("build.example".into())
+            ),
+            ("box".to_owned(), host.clone(), Outcome::Listed(1)),
+            (
+                "box".to_owned(),
+                host,
+                Outcome::Signed {
+                    family: "ed25519",
+                    fingerprint: w.user.fingerprint()
+                }
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_first_use_the_user_does_not_approve_is_refused_and_nothing_is_signed() {
+    let w = world();
+    *w.gate.answer.lock().unwrap() = Some(Disapproval::Denied);
+    let _tunnel = w.spliced("box", "build.example");
+    let (mut guest, _served) = w.stream("box", IDLE_LIMIT);
+    ask(&mut guest, &w.the_bind()).await;
+    let data = login(&SESSION, &w.user.blob(), Some(&w.server.blob()));
+    assert_eq!(
+        ask(&mut guest, &framed(&sign_request(&w.user.blob(), &data, 0))).await,
+        request::failure()
+    );
+    assert!(w.agent.signed.lock().unwrap().is_empty());
+    let recorded = w.gate.recorded.lock().unwrap();
+    assert_eq!(
+        recorded.last().map(|r| r.2.clone()),
+        Some(Outcome::Refused(Refusal::Disapproved(Disapproval::Denied)))
+    );
+}
+
+#[tokio::test]
 async fn a_bind_is_refused_for_another_workspace_an_unseen_session_or_a_host_switched_off() {
     let w = world();
     // Seen, but on another workspace's tunnel.
@@ -315,7 +409,7 @@ impl HostAgent for PanickingAgent {
 #[tokio::test]
 async fn a_panic_while_answering_closes_only_that_stream() {
     let mut w = world();
-    w.agents = Arc::new(SshAgents::new(Arc::new(PanickingAgent)));
+    w.agents = Arc::new(SshAgents::new(Arc::new(PanickingAgent), w.gate.clone()));
     let _tunnel = w.spliced("box", "build.example");
     let (mut guest, served) = w.stream("box", IDLE_LIMIT);
     assert_eq!(ask(&mut guest, &w.the_bind()).await, request::success());

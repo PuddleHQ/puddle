@@ -132,6 +132,11 @@ impl Store {
             )? > 0;
             if removed {
                 changed(fx, workspace);
+                if super::ssh_agent_asks::drop_host(tx, workspace, host)? {
+                    fx.push(Event::SshAgentAsksChanged {
+                        workspace: workspace.clone(),
+                    });
+                }
             }
             Ok(removed)
         })

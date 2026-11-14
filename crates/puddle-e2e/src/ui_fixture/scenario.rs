@@ -76,6 +76,10 @@ pub struct Scenario {
     /// at the busy state use the `hold_workspaces` step instead.
     #[serde(default)]
     pub workspace_step_delay_ms: u64,
+    /// Whether several users may sign in, which gives the owner the admin screen (the API's
+    /// `multi_user` with browser sign-in on a public name).
+    #[serde(default)]
+    pub multi_user: bool,
     /// Settings documents kept as given.
     #[serde(default)]
     pub settings: SettingsSeed,
@@ -701,6 +705,18 @@ pub enum Step {
     },
     /// A workspace asks for a host.
     Request(RequestSeed),
+    /// A workspace's `ssh` logs in to `host` with a key and waits for the first-use answer of the
+    /// filtered SSH agent, as the host's gate puts it: one open question per workspace, host and
+    /// key, or none when an earlier "for this run" or "always" answer covers it.
+    SshAgentAsk {
+        /// The workspace's name.
+        workspace: String,
+        /// The host the login is for.
+        host: String,
+        /// The key's SHA-256 fingerprint; a fixed fictional one when left out.
+        #[serde(default)]
+        fingerprint: Option<String>,
+    },
     /// `count` workspaces-worth of requests to `n0.<domain>` .. `n<count-1>.<domain>`.
     Bulk {
         /// The workspace's name.

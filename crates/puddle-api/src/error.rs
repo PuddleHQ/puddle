@@ -206,6 +206,7 @@ impl From<StoreError> for ApiError {
     fn from(err: StoreError) -> Self {
         match err {
             StoreError::UnknownPending(_)
+            | StoreError::UnknownSshAgentAsk(_)
             | StoreError::UnknownRule(_)
             | StoreError::UnknownRequestRule(_)
             | StoreError::UnknownRuleSet(_)
@@ -221,6 +222,7 @@ impl From<StoreError> for ApiError {
                 err.to_string(),
             ),
             StoreError::PendingNotOpen { .. }
+            | StoreError::SshAgentAskNotOpen { .. }
             | StoreError::RuleSetOff { .. }
             | StoreError::RuleSetHidden(_)
             | StoreError::IdentityLabelTaken(_)
@@ -241,7 +243,8 @@ impl From<StoreError> for ApiError {
             | StoreError::EnvInvalid(_)
             | StoreError::ShellInitInvalid(_)
             | StoreError::RequestRuleInvalid(_)
-            | StoreError::TooManySshAgentHosts(_) => Self::invalid(&err),
+            | StoreError::TooManySshAgentHosts(_)
+            | StoreError::TooManySshAgentAsks(_) => Self::invalid(&err),
             _ => Self::internal(&err),
         }
     }

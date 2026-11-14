@@ -447,6 +447,12 @@ pub enum WorkspaceOpKind {
     /// A workspace's root disk made bigger, or the attempt failed; `detail` says from what size
     /// to what size and how it took effect.
     RootDiskGrown,
+    /// The filtered SSH agent signed a login for the workspace; `detail` names the host and key.
+    SshAgentSigned,
+    /// The filtered SSH agent refused a request of the workspace; `detail` says why.
+    SshAgentRefused,
+    /// The user answered the first-use question of the filtered SSH agent; `detail` says how.
+    SshAgentAnswered,
 }
 
 /// How a workspace operation ended.

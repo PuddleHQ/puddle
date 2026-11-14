@@ -629,6 +629,15 @@ async fn owners_things(pair: &Pair) -> OwnersThings {
 async fn pair_with_owners_things() -> (Pair, OwnersThings) {
     let pair = pair().await;
     let things = owners_things(&pair).await;
+    // The owner's SSH agent waits for a first-use answer.
+    pair.store
+        .start_ssh_agent_ask(
+            &ws(&things.workspace),
+            "owners.example",
+            "SHA256:owners",
+            "ssh-ed25519",
+        )
+        .unwrap();
     (pair, things)
 }
 
@@ -678,7 +687,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 53, "routes that name a resource");
+    assert_eq!(checked, 54, "routes that name a resource");
     shut_down(pair).await;
 }
 
@@ -943,7 +952,7 @@ async fn hostile_lists_hold_only_their_callers_things() {
         })
         .map(|(_, path)| path)
         .collect();
-    assert_eq!(lists.len(), 13, "{lists:?}");
+    assert_eq!(lists.len(), 14, "{lists:?}");
     for path in &lists {
         let (status, body) = send(ann, token, "GET", path, None).await;
         // The devices list answers 503 here: this server has no sign-in.
@@ -963,6 +972,7 @@ async fn hostile_lists_hold_only_their_callers_things() {
     for path in [
         "/api/workspaces",
         "/api/pending",
+        "/api/ssh-agent-asks",
         "/api/rules",
         "/api/request-rules",
         "/api/audit",

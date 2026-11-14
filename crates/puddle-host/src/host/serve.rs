@@ -9,6 +9,8 @@ use url::Url;
 
 use crate::{HostConfig, HostError};
 
+use super::Step;
+
 /// The API, bound and serving. It registers its own address in the services' endpoint registry
 /// (the guard's) and drops that entry when it stops.
 pub(super) struct ServedApi {
@@ -32,6 +34,7 @@ pub struct RemoteListener {
 pub(super) async fn serve_api(
     config: &HostConfig,
     services: Services,
+    steps: &mut Vec<Step>,
 ) -> Result<ServedApi, HostError> {
     let mut api_config = ApiConfig::with_port(config.api.port);
     api_config
@@ -70,6 +73,8 @@ pub(super) async fn serve_api(
                 certificate_file,
             });
     let api = server.spawn();
+    steps.push(Step::ApiServing);
+    tracing::info!(%url, "Puddle is up");
     Ok(ServedApi {
         info,
         url,

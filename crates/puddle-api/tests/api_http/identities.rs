@@ -369,31 +369,41 @@ async fn bad_input_is_refused_and_no_command_source_exists() {
     api.running.shutdown().await;
 }
 
-#[tokio::test]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn attaching_colliding_identities_is_a_409_naming_both() {
+/// An API with a workspace `shop` and the identities `Work` (acme), `Clash` (ACME, which collides
+/// with `Work`) and `Personal` (the rest of the host); gives their ids in that order.
+async fn api_with_colliding_identities() -> (Api, i64, i64, i64) {
     let api = start().await;
     workspace(&api, "shop").await;
     let work = make(&api, "Work", &["acme"], false).await;
     let clash = make(&api, "Clash", &["ACME"], false).await;
     let rest = make(&api, "Personal", &[], true).await;
+    (api, work, clash, rest)
+}
 
-    let attach = |id: i64| json!({"identity": id});
-    let ok = api
-        .send(
-            "POST",
-            "/api/workspaces/shop/identities",
-            Some(&attach(work)),
-        )
-        .await;
+/// Attaches `id` to `shop`, rest first by position when `position` is given.
+async fn attach(api: &Api, id: i64, position: Option<i64>) -> crate::common::Reply {
+    let body = match position {
+        Some(position) => json!({"identity": id, "position": position}),
+        None => json!({"identity": id}),
+    };
+    api.send("POST", "/api/workspaces/shop/identities", Some(&body))
+        .await
+}
+
+/// `shop` with `Personal` first and `Work` second, as the exact owner and the rest of the host live.
+async fn api_with_work_and_the_rest_attached() -> (Api, i64, i64, i64) {
+    let (api, work, clash, rest) = api_with_colliding_identities().await;
+    assert_eq!(attach(&api, work, None).await.status, 200);
+    assert_eq!(attach(&api, rest, Some(0)).await.status, 200);
+    (api, work, clash, rest)
+}
+
+#[tokio::test]
+async fn attaching_a_colliding_identity_is_a_409_naming_both() {
+    let (api, work, clash, _) = api_with_colliding_identities().await;
+    let ok = attach(&api, work, None).await;
     assert_eq!(ok.status, 200, "{}", ok.body);
-    let refused = api
-        .send(
-            "POST",
-            "/api/workspaces/shop/identities",
-            Some(&attach(clash)),
-        )
-        .await;
+    let refused = attach(&api, clash, None).await;
     assert_eq!(
         (refused.status, refused.error().as_str()),
         (409, "identity_collision")
@@ -403,15 +413,14 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
         message,
         "Work and Clash both cover github.com/acme; narrow one"
     );
-    // The exact owner and the rest of the host live together, rest first by position.
-    let both = api
-        .send(
-            "POST",
-            "/api/workspaces/shop/identities",
-            Some(&json!({"identity": rest, "position": 0})),
-        )
-        .await
-        .json();
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_exact_owner_and_the_rest_of_the_host_live_together_rest_first() {
+    let (api, work, _, rest) = api_with_colliding_identities().await;
+    assert_eq!(attach(&api, work, None).await.status, 200);
+    let both = attach(&api, rest, Some(0)).await.json();
     let ids: Vec<_> = both["identities"]
         .as_array()
         .unwrap()
@@ -420,16 +429,13 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
         .collect();
     assert_eq!(ids, [rest, work]);
     assert_eq!(both["identities"][1]["workspaces"], json!(["shop"]));
-    assert_eq!(
-        api.send(
-            "POST",
-            "/api/workspaces/shop/identities",
-            Some(&attach(rest))
-        )
-        .await
-        .status,
-        409
-    );
+    assert_eq!(attach(&api, rest, None).await.status, 409);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn replacing_the_identity_list_is_checked_as_a_whole() {
+    let (api, work, clash, rest) = api_with_work_and_the_rest_attached().await;
     // A list without a clash replaces the old one; the clash list is refused below.
     let swapped = api
         .send(
@@ -440,7 +446,6 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
         .await;
     assert_eq!(swapped.status, 200, "{}", swapped.body);
     assert_eq!(swapped.json()["identities"][0]["id"], work);
-    // Replacing the list is checked as a whole.
     let put = api
         .send(
             "PUT",
@@ -456,8 +461,12 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
             .len(),
         2
     );
-    // Widening an identity into a collision on a workspace that has both is refused too; one that
-    // is on no workspace can say anything.
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn widening_an_identity_into_a_collision_is_refused_and_one_on_no_workspace_is_free() {
+    let (api, _, clash, rest) = api_with_work_and_the_rest_attached().await;
     let widen = api
         .send(
             "PUT",
@@ -477,27 +486,29 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
         )
         .await;
     assert_eq!(free.status, 200);
-    // Unknown things are 404.
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn attaching_to_an_unknown_workspace_or_identity_is_a_404() {
+    let (api, work, _, _) = api_with_work_and_the_rest_attached().await;
     assert_eq!(
         api.send(
             "POST",
             "/api/workspaces/none/identities",
-            Some(&attach(work))
+            Some(&json!({"identity": work}))
         )
         .await
         .status,
         404
     );
-    assert_eq!(
-        api.send(
-            "POST",
-            "/api/workspaces/shop/identities",
-            Some(&attach(999))
-        )
-        .await
-        .status,
-        404
-    );
+    assert_eq!(attach(&api, 999, None).await.status, 404);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn detaching_an_identity_works_once_and_then_is_a_404() {
+    let (api, _, _, rest) = api_with_work_and_the_rest_attached().await;
     let off = api
         .send(
             "DELETE",
@@ -520,8 +531,7 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
 }
 
 #[tokio::test]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn a_workspaces_repository_table_and_switches() {
+async fn a_new_workspace_starts_with_its_own_repository_and_the_default_switches() {
     let api = start().await;
     workspace(&api, "shop").await;
     let fresh = api.get("/api/workspaces/shop/git").await.json();
@@ -530,10 +540,33 @@ async fn a_workspaces_repository_table_and_switches() {
     // A new workspace starts with its own repository, Pull and Push on.
     assert_eq!(fresh["repos"].as_array().unwrap().len(), 1);
     assert_eq!(fresh["repos"][0]["repo"], "api");
+    assert_eq!(api.get("/api/workspaces/other/git").await.status, 404);
+    api.running.shutdown().await;
+}
 
-    let add = json!({"host": "GitHub.com", "owner": "Acme", "repo": "Docs.git", "pull": true, "push": true});
+/// The body that adds `acme/docs` to `shop`'s table, spelled in mixed case.
+fn add_docs() -> Value {
+    json!({"host": "GitHub.com", "owner": "Acme", "repo": "Docs.git", "pull": true, "push": true})
+}
+
+/// An API with `shop` and the row for `acme/docs` added; gives the row's id.
+async fn api_with_a_docs_row() -> (Api, i64) {
+    let api = start().await;
+    workspace(&api, "shop").await;
     let row = api
-        .send("POST", "/api/workspaces/shop/git/repos", Some(&add))
+        .send("POST", "/api/workspaces/shop/git/repos", Some(&add_docs()))
+        .await;
+    assert_eq!(row.status, 201, "{}", row.body);
+    let id = row.json()["id"].as_i64().unwrap();
+    (api, id)
+}
+
+#[tokio::test]
+async fn a_repository_row_is_added_normalised_and_a_duplicate_or_odd_one_is_refused() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let row = api
+        .send("POST", "/api/workspaces/shop/git/repos", Some(&add_docs()))
         .await;
     assert_eq!(row.status, 201, "{}", row.body);
     let row = row.json();
@@ -546,7 +579,7 @@ async fn a_workspaces_repository_table_and_switches() {
         (Some("github.com"), Some("acme"), Some("docs"))
     );
     assert_eq!(
-        api.send("POST", "/api/workspaces/shop/git/repos", Some(&add))
+        api.send("POST", "/api/workspaces/shop/git/repos", Some(&add_docs()))
             .await
             .status,
         409
@@ -559,8 +592,12 @@ async fn a_workspaces_repository_table_and_switches() {
             .status,
         422
     );
+    api.running.shutdown().await;
+}
 
-    let id = row["id"].as_i64().unwrap();
+#[tokio::test]
+async fn a_repository_rows_pull_and_push_toggle() {
+    let (api, id) = api_with_a_docs_row().await;
     let toggled = api
         .send(
             "PUT",
@@ -575,6 +612,13 @@ async fn a_workspaces_repository_table_and_switches() {
         ),
         (json!(false), json!(true))
     );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_only_listed_switches_change_one_at_a_time() {
+    let api = start().await;
+    workspace(&api, "shop").await;
     let switched = api
         .send(
             "PUT",
@@ -605,7 +649,12 @@ async fn a_workspaces_repository_table_and_switches() {
         ),
         (json!(false), json!(true))
     );
+    api.running.shutdown().await;
+}
 
+#[tokio::test]
+async fn a_repository_row_is_deleted_once_and_then_is_a_404() {
+    let (api, id) = api_with_a_docs_row().await;
     assert_eq!(
         api.send(
             "DELETE",
@@ -626,7 +675,6 @@ async fn a_workspaces_repository_table_and_switches() {
         .status,
         404
     );
-    assert_eq!(api.get("/api/workspaces/other/git").await.status, 404);
     api.running.shutdown().await;
 }
 

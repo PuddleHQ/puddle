@@ -12,6 +12,8 @@ name: company-network-windows
 
 on:
   workflow_dispatch:
+  push:
+    branches: [task/t-1623]
 
 permissions:
   contents: read

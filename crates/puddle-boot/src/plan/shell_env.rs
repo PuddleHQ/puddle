@@ -47,20 +47,37 @@ pub(super) fn files(env: &GuestEnv) -> Result<Vec<GuestFile>, PlanError> {
         .map(|(name, value)| format!("export {name}={}", sh_word(value)))
         .collect::<Vec<_>>()
         .join("\n");
-    let spec = MergeSpec::new(
-        MergeFormat::ShellBlock,
-        vec![MergeEntry::shell_block(&exports)],
-    )
-    .map_err(|e| shell_error(&e))?;
-    let merged = |path: &str| -> Result<GuestFile, PlanError> {
+    let activate = activates_mise(env);
+    let merged = |path: &str, hook: Option<&str>| -> Result<GuestFile, PlanError> {
+        let body = hook.map_or_else(|| exports.clone(), |h| format!("{exports}\n{h}"));
+        let spec = MergeSpec::new(
+            MergeFormat::ShellBlock,
+            vec![MergeEntry::shell_block(&body)],
+        )
+        .map_err(|e| shell_error(&e))?;
         let path = GuestPath::new(path).map_err(|e| shell_error(&e))?;
-        Ok(GuestFile::merged(path, spec.clone()))
+        Ok(GuestFile::merged(path, spec))
     };
     Ok(vec![
         sudoers,
-        merged(BASH_RC_GUEST)?,
-        merged(ZSH_ENV_GUEST)?,
+        merged(BASH_RC_GUEST, activate.then_some(MISE_ACTIVATE_BASH))?,
+        merged(ZSH_ENV_GUEST, activate.then_some(MISE_ACTIVATE_ZSH))?,
     ])
+}
+
+/// Interactive bash: mise's prompt hook, so a repository's `[env]` follows `cd`. Skipped while
+/// the binary is not downloaded yet; the next terminal finds it.
+const MISE_ACTIVATE_BASH: &str =
+    "case $- in *i*) command -v mise >/dev/null 2>&1 && eval \"$(mise activate bash)\" ;; esac";
+
+/// The same for zsh, whose `zshenv` every zsh reads, so interactive only.
+const MISE_ACTIVATE_ZSH: &str = "if [[ -o interactive ]] && command -v mise >/dev/null 2>&1; then eval \"$(mise activate zsh)\"; fi";
+
+/// Whether interactive shells run mise's hook: the managed layer is on (its data folder is set)
+/// and the repository's code is trusted. Without trust mise refuses a repository's `[env]` with
+/// an error at every prompt, and the shims already give every process the tools.
+fn activates_mise(env: &GuestEnv) -> bool {
+    env.get("MISE_DATA_DIR").is_some() && env.get("MISE_TRUSTED_CONFIG_PATHS").is_some()
 }
 
 fn shell_error(e: &puddle_types::ValidationError) -> PlanError {

@@ -17,23 +17,25 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
-    EventHub, HostCredentials, Launcher, ProxySignInService, RunningApi, Services, SettingsRepo,
-    forward_network_changes, forward_proxy_sign_in_failures,
+    EventHub, HostCredentials, HostNetworkHealth, Launcher, ProxySignInService, RunningApi,
+    Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
 };
+use puddle_certs::CorporateRoots;
 use puddle_compute::Runtime;
 use puddle_front::Front;
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Lifecycle, ShutdownReport};
 use puddle_netpolicy::{CompanySignals, LocalAccess, PuddleEndpoints};
 use puddle_ports::Ports;
-use puddle_proxy::{PortProbe, PullRoute, Resolver};
+use puddle_proxy::{PortProbe, ProxyUrl, PullProxy, PullRoute, Resolver};
 use puddle_secrets::{SecretStore, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{
     AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
 };
-use puddle_types::{EventSink, Problems, WorkspaceId};
+use puddle_types::{EventSink, Problems, WorkspaceId, WorkspaceStatus};
 use puddle_upstream::{Chain, Discovery, Watching};
+use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
 
@@ -49,7 +51,7 @@ use crate::proxy_sign_ins::HostProxySignIns;
 use crate::quit_trims::QuitTrims;
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, RewriteGate};
-use crate::{HostError, HostWorkspaces, ProxyPasswords, VsCodeLauncher};
+use crate::{HostConfig, HostError, HostWorkspaces, ProxyPasswords, VsCodeLauncher};
 
 mod egress;
 mod factory;
@@ -211,6 +213,26 @@ struct Background {
     disk_watch: AbortOnDrop,
 }
 
+impl Background {
+    fn new(serving: Serving, watchers: Watchers, vault_sweep: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            sweeper: serving.sweeper,
+            vault_sweep,
+            retired_sweep: watchers.retired_sweep,
+            pull: serving.pull,
+            front: serving.front,
+            _watching: serving.watching,
+            network_events: serving.network_events,
+            sign_in_failures: serving.sign_in_failures,
+            git_changes: watchers.git_changes,
+            sign_in_notices: watchers.sign_in_notices,
+            editor_updates: watchers.editor_updates,
+            space_watch: watchers.space_watch,
+            disk_watch: watchers.disk_watch,
+        }
+    }
+}
+
 /// Aborts its task when dropped, so a forwarder never outlives the host.
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
@@ -316,10 +338,6 @@ impl<R: Runtime + Clone> Host<R> {
     /// [`HostError`] from the step that failed. Whatever started is stopped again by drop, and
     /// no sandbox is left running: reconcile only runs after everything that can refuse to start
     /// has been built.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one start-up sequence, read top to bottom, each step recorded in order"
-    )]
     pub async fn start<F>(
         prepared: Prepared,
         factory: &F,
@@ -348,271 +366,67 @@ impl<R: Runtime + Clone> Host<R> {
             book,
             stored,
             retired,
-        } = open_state(&config.paths, &events, &clock)?;
-        steps.push(Step::StoreOpened);
+        } = open_state(&config.paths, &events, &clock, &mut steps)?;
 
-        // Credential injection: what each workspace decrypts, the injector and the secrets behind
-        // it, and the client that verifies the real servers of decrypted hosts.
-        let chosen = crate::vault::open(
-            options.secret_store.as_ref(),
-            &options.secret_setup,
-            &config.paths,
-            &store,
-            &problems,
-        )
-        .await?;
-        let vault: Arc<dyn SecretStore> = chosen.vault.clone();
-        chosen.check_in_background(problems.clone());
-        let vault_sweep = if chosen.usable {
-            crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone())
-        } else {
-            tokio::task::spawn_blocking(|| ())
+        let shared = Shared {
+            config: &config,
+            options: &options,
+            events: &events,
+            problems: &problems,
+            clock: &clock,
+            store: &store,
+            settings: &settings,
+            endpoints: &endpoints,
+            roots: &roots,
         };
-        let marks = config.paths.login_markers();
-        let injecting =
-            Injecting::build(&options, &vault, &store, &events, &roots, marks, &settings)?;
-        let proxy_passwords = ProxyPasswords::new(vault.clone());
-        load_proxy_passwords(proxy_passwords.clone(), problems.clone());
-
-        // The way out: the company network (discovery, sign-in as the user, then Basic) for the
-        // sandbox proxy and the pull proxy alike.
-        let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
-        let reports = Arc::new(ReportDesk::new(problems.clone()));
-        let ports = Ports::new(
-            endpoints.clone(),
-            Arc::new(StorePins::new(store.clone())),
-            events.clone() as Arc<dyn EventSink>,
+        let credentials = open_credentials(&shared).await?;
+        let (outbound, pull) = build_outbound(
+            &shared,
+            &credentials.injecting,
+            &credentials.proxy_passwords,
+            pull,
         );
-        // Who `ssh -T` greets: read from the store, named once the repository reader exists.
-        let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
-        let mut egress_parts = EgressParts::new(
-            injecting.termination(),
-            &proxy_passwords,
-            &reports,
-            &ports,
-            &roots,
-        );
-        if options.git_ssh {
-            egress_parts.git_ssh = Some(ssh_accounts.clone());
-        }
-        let egress = Egress::build(
-            &config,
-            &options,
-            &settings,
-            &endpoints,
-            &connections,
-            &events,
-            egress_parts,
-        );
-        let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
-        let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
-            proxy_passwords.clone(),
-            egress.chain.clone(),
-        ));
-        let network_health = network_health_of(
-            &egress.chain,
-            &discovery,
-            &clock,
-            &roots,
-            sign_ins.clone(),
-            company_signals(&options),
-        );
-        network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
-        let pull_url = pull.proxy_url();
-        // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
-        let pull = pull
-            .with_company_signals(company_signals(&options))
-            .with_upstream(upstream)
-            .with_connection_log(connections.clone());
         steps.push(Step::UpstreamBuilt);
 
-        // One development certificate service: the guests' boot files and the first-run line.
-        let dev_cert: Arc<dyn DevCertSource> = options
-            .dev_cert
-            .clone()
-            .unwrap_or_else(|| host_dev_cert(config.paths.data(), clock.clone()));
-        let kit = BootKit::new(
-            &config.paths.guest_share(),
-            &config.guest,
-            proxy,
-            &roots,
-            store.clone(),
-            config.paths.data(),
-        )?
-        .with_dev_cert(dev_cert.clone());
-        steps.push(Step::GuestFilesReady);
-
-        // The login key of direct SSH: made before the runtime opens, which takes its public half.
-        let ssh = Arc::new(SshSetup::open(config.paths.data(), &config.ssh));
-
-        // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
-        let runtime = factory
-            .open(RuntimeInputs {
-                layout: &config.layout,
-                guest_share: config.paths.guest_share(),
-                data: config.paths.data().to_path_buf(),
-                pull_proxy: pull_url,
-                registry_roots: pem_of(&roots),
-                log_level: config.runtime_log_level.clone(),
-                ssh_login_key: ssh.authorized_key().map(str::to_owned),
-            })
-            .await?;
-        steps.push(Step::RuntimeOpened);
+        let opened = open_runtime(&shared, &outbound, factory, &mut steps).await?;
 
         // Clean up after an earlier run, then rebuild what only lives in memory.
-        let (report, status) = reconcile_with(&runtime, &config, &stored).await?;
-        for problem in reconcile_problems(&report) {
-            problems.raise(problem);
-        }
+        let reconciled = reconcile_phase(&opened.runtime, &config, &stored, &problems).await?;
         steps.push(Step::Reconciled);
-        // A trim that failed when the last run quit is told now, to a user who can read it.
-        let quit_trims = QuitTrims::new(config.paths.quit_trims());
-        let carried: BTreeMap<WorkspaceId, String> = quit_trims
-            .load()
-            .into_iter()
-            .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
-            .collect();
-        for (id, why) in &carried {
-            if let Some(stored) = stored.iter().find(|s| &s.id == id) {
-                problems.raise(crate::quit_trims::problem(id, stored.name.as_str(), why));
-            }
-        }
-        let workspaces = adopt_holders(&runtime, &config, &stored).await?;
+        let workspaces = adopt_holders(&opened.runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
 
-        // From here the host serves. The pull proxy first: the first create pulls an image.
-        let pull = pull.serve().map_err(HostError::PullProxy)?;
-        // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
-        network_health.set_pull_proxy(true, true);
-        steps.push(Step::PullProxyServing);
-        let sweeper =
-            Sweeper::spawn_reporting(store.clone(), DEFAULT_SWEEP_PERIOD, problems.clone());
-        let watching = discovery.watch();
-        let network_events = AbortOnDrop::forwarding(&discovery, &events);
-        let sign_in_failures = AbortOnDrop::forwarding_sign_in_failures(&egress.chain, &events);
-        // The browser editor's front: a listener on this computer's loopback that reaches each
-        // running workspace's editor through its agent link, so a window can open it by origin.
-        let flavours = Arc::new(Flavours::default());
-        let (front, front_guests, front_halves) = crate::front::serve(
-            &config.paths,
-            &endpoints,
-            ports.clone(),
-            flavours.clone(),
-            &problems,
-        )
-        .await?;
-        let front_addr = front.local_addr();
-        steps.push(Step::BackgroundStarted);
+        // From here the host serves.
+        let serving = serve_background(&shared, &outbound, pull, &mut steps).await?;
 
-        let signals = company_signals(&options);
-        let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
-        let service = HostWorkspaces::new(
-            Parts {
-                runtime,
-                workspaces,
-                lifecycle: lifecycle.clone(),
-                kit,
-                events: events.clone() as Arc<dyn EventSink>,
-                clock: clock.clone(),
-                settings: settings.clone(),
-                store: store.clone(),
-                all_users,
-                launcher: options.launcher,
-                ssh,
-                book,
-                injection: injecting.injection.clone(),
-                problems: problems.clone(),
-                reports,
-                ports: ports.clone(),
-                rewrite_gate: options.rewrite_gate.clone(),
-                flavours,
-                front_addr,
-                front_guests,
-                front_halves,
-                ids: options
-                    .workspace_ids
-                    .clone()
-                    .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
-                login_markers: config.paths.login_markers(),
-                space: crate::space_watch::space_or_drive(
-                    options.free_space.clone(),
-                    config.paths.data(),
-                ),
-            },
-            stored,
-            retired,
-            &status,
-        )?;
-        // Downloads the image the delete check boots now, while nobody is waiting on it.
-        service.warm_maintenance_image_for_listed();
-        // Finishes what a delete that did not end left under its id.
-        let retired_sweep = tokio::spawn({
-            let service = service.clone();
-            async move { service.sweep_retired().await }
-        });
-        let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
-        let editor_windows = front.windows().clone();
-        let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
-            service.clone(),
-            editor_windows.clone(),
+        let lifecycle = Arc::new(Lifecycle::new(
+            opened.runtime.clone(),
+            config.shutdown.clone(),
         ));
-        let space_watch = AbortOnDrop(crate::space_watch::spawn(
-            crate::space_watch::DriveOf(config.paths.data().to_path_buf()),
-            config.free_space,
-            settings.clone(),
-            events.clone() as Arc<dyn EventSink>,
-        ));
-        let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
+        let dev_cert = opened.dev_cert.clone();
+        let parts = workspace_parts(
+            &shared,
+            &outbound,
+            &credentials.injecting,
+            &serving,
+            opened,
+            (workspaces, book, all_users),
+            lifecycle.clone(),
+        );
+        let service = HostWorkspaces::new(parts, stored, retired, &reconciled.status)?;
+        let editor_windows = serving.front.windows().clone();
+        let watchers = spawn_watchers(&shared, &service, &credentials.injecting, &editor_windows);
         steps.push(Step::WorkspacesReady);
 
-        let services = Services::new(
-            store.clone(),
-            settings.clone(),
-            events.clone(),
-            clock.clone(),
-        )
-        .with_problems(problems.clone())
-        .with_workspaces(Arc::new(service.clone()))
-        .with_network_health(network_health)
-        .with_secret_store(vault.clone())
-        .with_credentials(Arc::new(
-            HostCredentials::new(ToolPaths::resolve(), vault)
-                .with_read_log(Arc::clone(&injecting.reads)),
-        ))
-        .with_repos({
-            let repos = injecting.repos(&egress.chain, &clock, connections.clone(), &events);
-            ssh_accounts.read_with(repos.clone());
-            repos
-        })
-        .with_doctor(system_doctor(
-            &config.layout,
-            &config.paths,
-            &config.expected_runtime,
-            settings.clone(),
-            options.az_search_path.clone(),
-        ))
-        .with_dev_cert(dev_cert)
-        .with_ports(Arc::new(HostPorts::new(ports)))
-        .with_terminals(Arc::new(service.clone()))
-        .with_learned(Arc::new(HostLearned::new(
-            injecting.terminations.clone(),
-            Arc::clone(&store),
-        )))
-        .with_proxy_sign_ins(sign_ins)
-        .with_company_signals(signals)
-        .with_endpoints(endpoints.clone());
-        let services = match options.front_resolver.clone() {
-            Some(resolver) => services.with_front_resolver(resolver),
-            None => services,
-        };
-        // Browsers sign in against the database's secrets, which only the API ever holds.
-        let services = match store.take_account_secrets() {
-            Some(secrets) => services.with_account_secrets(secrets),
-            None => services,
-        };
-        let served = serve_api(&config, services).await?;
-        steps.push(Step::ApiServing);
-        tracing::info!(url = %served.url, "Puddle is up");
+        let services = build_services(
+            &shared,
+            &service,
+            &credentials.injecting,
+            &outbound,
+            credentials.vault,
+            dev_cert,
+        );
+        let served = serve_api(&config, services, &mut steps).await?;
 
         Ok(Self {
             info: served.info,
@@ -620,9 +434,9 @@ impl<R: Runtime + Clone> Host<R> {
             remote_listener: served.remote_listener,
             events,
             problems,
-            quit_trims,
-            carried,
-            proxy_passwords,
+            quit_trims: reconciled.quit_trims,
+            carried: reconciled.carried,
+            proxy_passwords: credentials.proxy_passwords,
             store,
             settings,
             endpoints,
@@ -631,23 +445,13 @@ impl<R: Runtime + Clone> Host<R> {
             lifecycle,
             grace: config.operations_grace,
             api: AsyncMutex::new(Some(served.api)),
-            background: AsyncMutex::new(Some(Background {
-                sweeper,
-                vault_sweep,
-                retired_sweep,
-                pull,
-                front,
-                _watching: watching,
-                network_events,
-                sign_in_failures,
-                git_changes,
-                sign_in_notices,
-                editor_updates,
-                space_watch,
-                disk_watch,
-            })),
+            background: AsyncMutex::new(Some(Background::new(
+                serving,
+                watchers,
+                credentials.vault_sweep,
+            ))),
             steps: Mutex::new(steps),
-            reconcile: report,
+            reconcile: reconciled.report,
             stopped: OnceCell::new(),
             _lock: lock,
         })
@@ -851,6 +655,7 @@ fn open_state(
     paths: &crate::HostPaths,
     events: &Arc<EventHub>,
     clock: &Arc<SystemClock>,
+    steps: &mut Vec<Step>,
 ) -> Result<State, HostError> {
     crate::data_folder::make_owner_only(paths)?;
     let store = Arc::new(
@@ -869,6 +674,7 @@ fn open_state(
         workspaces: stored,
         retired,
     } = book.load()?;
+    steps.push(Step::StoreOpened);
     Ok(State {
         store,
         all_users,
@@ -877,6 +683,490 @@ fn open_state(
         stored,
         retired,
     })
+}
+
+/// The handles every start-up phase reads: the settings it has opened and the options it was given.
+struct Shared<'a> {
+    config: &'a HostConfig,
+    options: &'a HostOptions,
+    events: &'a Arc<EventHub>,
+    problems: &'a Arc<Problems>,
+    clock: &'a Arc<SystemClock>,
+    store: &'a Arc<Store>,
+    settings: &'a Arc<dyn SettingsRepo>,
+    endpoints: &'a PuddleEndpoints,
+    roots: &'a CorporateRoots,
+}
+
+/// The way out through the company network, with what the host's screens read about it.
+struct Outbound {
+    connections: Arc<ConnectionRecorder>,
+    reports: Arc<ReportDesk>,
+    ports: Ports,
+    ssh_accounts: Arc<crate::ssh_accounts::SshAccounts>,
+    egress: Egress,
+    sign_ins: Arc<dyn ProxySignInService>,
+    network_health: Arc<HostNetworkHealth>,
+    pull_url: ProxyUrl,
+}
+
+/// The way out: the company network (discovery, sign-in as the user, then Basic) for the sandbox
+/// proxy and the pull proxy alike. Returns the pull proxy, now going out through it.
+fn build_outbound(
+    shared: &Shared<'_>,
+    injecting: &Injecting,
+    proxy_passwords: &Arc<ProxyPasswords>,
+    pull: PullProxy,
+) -> (Outbound, PullProxy) {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        clock,
+        store,
+        settings,
+        endpoints,
+        roots,
+    } = *shared;
+    let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
+    let reports = Arc::new(ReportDesk::new(problems.clone()));
+    let ports = Ports::new(
+        endpoints.clone(),
+        Arc::new(StorePins::new(store.clone())),
+        events.clone() as Arc<dyn EventSink>,
+    );
+    // Who `ssh -T` greets: read from the store, named once the repository reader exists.
+    let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
+    let mut egress_parts = EgressParts::new(
+        injecting.termination(),
+        proxy_passwords,
+        &reports,
+        &ports,
+        roots,
+    );
+    if options.git_ssh {
+        egress_parts.git_ssh = Some(ssh_accounts.clone());
+    }
+    let egress = Egress::build(
+        config,
+        options,
+        settings,
+        endpoints,
+        &connections,
+        events,
+        egress_parts,
+    );
+    let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
+        proxy_passwords.clone(),
+        egress.chain.clone(),
+    ));
+    let network_health = network_health_of(
+        &egress.chain,
+        &egress.discovery,
+        clock,
+        roots,
+        sign_ins.clone(),
+        company_signals(options),
+    );
+    network_health.set_tls_left_out(injecting.tls.rejected_roots(), roots);
+    let pull_url = pull.proxy_url();
+    // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
+    let pull = pull
+        .with_company_signals(company_signals(options))
+        .with_upstream(egress.upstream.clone())
+        .with_connection_log(connections.clone());
+    let outbound = Outbound {
+        connections,
+        reports,
+        ports,
+        ssh_accounts,
+        egress,
+        sign_ins,
+        network_health,
+        pull_url,
+    };
+    (outbound, pull)
+}
+
+/// What the credential injection and the proxy sign-ins stand on.
+struct Credentials {
+    vault: Arc<dyn SecretStore>,
+    vault_sweep: tokio::task::JoinHandle<()>,
+    injecting: Injecting,
+    proxy_passwords: Arc<ProxyPasswords>,
+}
+
+/// Credential injection: what each workspace decrypts, the injector and the secrets behind it,
+/// and the client that verifies the real servers of decrypted hosts.
+async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        store,
+        settings,
+        roots,
+        ..
+    } = *shared;
+    let chosen = crate::vault::open(
+        options.secret_store.as_ref(),
+        &options.secret_setup,
+        &config.paths,
+        store,
+        problems,
+    )
+    .await?;
+    let vault: Arc<dyn SecretStore> = chosen.vault.clone();
+    chosen.check_in_background(problems.clone());
+    let vault_sweep = if chosen.usable {
+        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone())
+    } else {
+        tokio::task::spawn_blocking(|| ())
+    };
+    let marks = config.paths.login_markers();
+    let injecting = Injecting::build(options, &vault, store, events, roots, marks, settings)?;
+    let proxy_passwords = ProxyPasswords::new(vault.clone());
+    load_proxy_passwords(proxy_passwords.clone(), problems.clone());
+    Ok(Credentials {
+        vault,
+        vault_sweep,
+        injecting,
+        proxy_passwords,
+    })
+}
+
+/// The guests' boot files and the runtime that boots them.
+struct Opened<R> {
+    dev_cert: Arc<dyn DevCertSource>,
+    kit: BootKit,
+    ssh: Arc<SshSetup>,
+    runtime: R,
+}
+
+async fn open_runtime<R, F>(
+    shared: &Shared<'_>,
+    outbound: &Outbound,
+    factory: &F,
+    steps: &mut Vec<Step>,
+) -> Result<Opened<R>, HostError>
+where
+    R: Runtime,
+    F: RuntimeFactory<Runtime = R>,
+{
+    let Shared {
+        config,
+        options,
+        clock,
+        store,
+        roots,
+        ..
+    } = *shared;
+    // One development certificate service: the guests' boot files and the first-run line.
+    let dev_cert: Arc<dyn DevCertSource> = options
+        .dev_cert
+        .clone()
+        .unwrap_or_else(|| host_dev_cert(config.paths.data(), clock.clone()));
+    let kit = BootKit::new(
+        &config.paths.guest_share(),
+        &config.guest,
+        outbound.egress.proxy.clone(),
+        roots,
+        store.clone(),
+        config.paths.data(),
+    )?
+    .with_dev_cert(dev_cert.clone());
+    steps.push(Step::GuestFilesReady);
+
+    // The login key of direct SSH: made before the runtime opens, which takes its public half.
+    let ssh = Arc::new(SshSetup::open(config.paths.data(), &config.ssh));
+
+    // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
+    let runtime = factory
+        .open(RuntimeInputs {
+            layout: &config.layout,
+            guest_share: config.paths.guest_share(),
+            data: config.paths.data().to_path_buf(),
+            pull_proxy: outbound.pull_url.clone(),
+            registry_roots: pem_of(roots),
+            log_level: config.runtime_log_level.clone(),
+            ssh_login_key: ssh.authorized_key().map(str::to_owned),
+        })
+        .await?;
+    steps.push(Step::RuntimeOpened);
+    Ok(Opened {
+        dev_cert,
+        kit,
+        ssh,
+        runtime,
+    })
+}
+
+/// The parts of the host that serve beside the API.
+struct Serving {
+    pull: PullRoute,
+    sweeper: Sweeper,
+    watching: Option<Watching>,
+    network_events: AbortOnDrop,
+    sign_in_failures: AbortOnDrop,
+    flavours: Arc<Flavours>,
+    front: Front,
+    front_guests: Arc<dyn puddle_front::Guests>,
+    front_halves: Arc<dyn puddle_front::ServerHalves>,
+}
+
+/// The pull proxy first: the first create pulls an image. Then the sweeper, the network watch and
+/// the browser editor's front.
+async fn serve_background(
+    shared: &Shared<'_>,
+    outbound: &Outbound,
+    pull: PullProxy,
+    steps: &mut Vec<Step>,
+) -> Result<Serving, HostError> {
+    let pull = pull.serve().map_err(HostError::PullProxy)?;
+    // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
+    outbound.network_health.set_pull_proxy(true, true);
+    steps.push(Step::PullProxyServing);
+    let sweeper = Sweeper::spawn_reporting(
+        shared.store.clone(),
+        DEFAULT_SWEEP_PERIOD,
+        shared.problems.clone(),
+    );
+    let watching = outbound.egress.discovery.watch();
+    let network_events = AbortOnDrop::forwarding(&outbound.egress.discovery, shared.events);
+    let sign_in_failures =
+        AbortOnDrop::forwarding_sign_in_failures(&outbound.egress.chain, shared.events);
+    // The browser editor's front: a listener on this computer's loopback that reaches each
+    // running workspace's editor through its agent link, so a window can open it by origin.
+    let flavours = Arc::new(Flavours::default());
+    let (front, front_guests, front_halves) = crate::front::serve(
+        &shared.config.paths,
+        shared.endpoints,
+        outbound.ports.clone(),
+        flavours.clone(),
+        shared.problems,
+    )
+    .await?;
+    steps.push(Step::BackgroundStarted);
+    Ok(Serving {
+        pull,
+        sweeper,
+        watching,
+        network_events,
+        sign_in_failures,
+        flavours,
+        front,
+        front_guests,
+        front_halves,
+    })
+}
+
+/// What a run of the host left unfinished, and what it learned about it: the reconcile report, the
+/// state of each known sandbox and the trims that failed when the last run quit.
+struct Reconciled {
+    report: puddle_lifecycle::ReconcileReport,
+    status: BTreeMap<WorkspaceId, WorkspaceStatus>,
+    quit_trims: QuitTrims,
+    carried: BTreeMap<WorkspaceId, String>,
+}
+
+/// Cleans up after an earlier run, then reads what only lives in memory back in.
+async fn reconcile_phase<R: Runtime>(
+    runtime: &R,
+    config: &HostConfig,
+    stored: &[crate::files::Stored],
+    problems: &Problems,
+) -> Result<Reconciled, HostError> {
+    let (report, status) = reconcile_with(runtime, config, stored).await?;
+    for problem in reconcile_problems(&report) {
+        problems.raise(problem);
+    }
+    // A trim that failed when the last run quit is told now, to a user who can read it.
+    let quit_trims = QuitTrims::new(config.paths.quit_trims());
+    let carried: BTreeMap<WorkspaceId, String> = quit_trims
+        .load()
+        .into_iter()
+        .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
+        .collect();
+    for (id, why) in &carried {
+        if let Some(stored) = stored.iter().find(|s| &s.id == id) {
+            problems.raise(crate::quit_trims::problem(id, stored.name.as_str(), why));
+        }
+    }
+    Ok(Reconciled {
+        report,
+        status,
+        quit_trims,
+        carried,
+    })
+}
+
+/// What the workspace service is made of, from the phases before it.
+fn workspace_parts<R: Runtime + Clone>(
+    shared: &Shared<'_>,
+    outbound: &Outbound,
+    injecting: &Injecting,
+    serving: &Serving,
+    opened: Opened<R>,
+    (workspaces, book, all_users): (Workspaces, WorkspaceBook, AllUsers),
+    lifecycle: Arc<Lifecycle<R>>,
+) -> Parts<R> {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        clock,
+        store,
+        settings,
+        ..
+    } = *shared;
+    Parts {
+        runtime: opened.runtime,
+        workspaces,
+        lifecycle,
+        kit: opened.kit,
+        events: events.clone() as Arc<dyn EventSink>,
+        clock: clock.clone(),
+        settings: settings.clone(),
+        store: store.clone(),
+        all_users,
+        launcher: options.launcher.clone(),
+        ssh: opened.ssh,
+        book,
+        injection: injecting.injection.clone(),
+        problems: problems.clone(),
+        reports: outbound.reports.clone(),
+        ports: outbound.ports.clone(),
+        rewrite_gate: options.rewrite_gate.clone(),
+        flavours: serving.flavours.clone(),
+        front_addr: serving.front.local_addr(),
+        front_guests: serving.front_guests.clone(),
+        front_halves: serving.front_halves.clone(),
+        ids: options
+            .workspace_ids
+            .clone()
+            .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
+        login_markers: config.paths.login_markers(),
+        space: crate::space_watch::space_or_drive(options.free_space.clone(), config.paths.data()),
+    }
+}
+
+/// The tasks that keep running beside the workspaces, each stopped when it drops.
+struct Watchers {
+    retired_sweep: tokio::task::JoinHandle<()>,
+    git_changes: AbortOnDrop,
+    sign_in_notices: AbortOnDrop,
+    editor_updates: AbortOnDrop,
+    space_watch: AbortOnDrop,
+    disk_watch: AbortOnDrop,
+}
+
+fn spawn_watchers<R: Runtime + Clone>(
+    shared: &Shared<'_>,
+    service: &HostWorkspaces<R>,
+    injecting: &Injecting,
+    editor_windows: &puddle_front::Windows,
+) -> Watchers {
+    // Downloads the image the delete check boots now, while nobody is waiting on it.
+    service.warm_maintenance_image_for_listed();
+    // Finishes what a delete that did not end left under its id.
+    let retired_sweep = tokio::spawn({
+        let service = service.clone();
+        async move { service.sweep_retired().await }
+    });
+    let (git_changes, sign_in_notices) = injecting.watch(service, shared.events);
+    let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
+        service.clone(),
+        editor_windows.clone(),
+    ));
+    let space_watch = AbortOnDrop(crate::space_watch::spawn(
+        crate::space_watch::DriveOf(shared.config.paths.data().to_path_buf()),
+        shared.config.free_space,
+        shared.settings.clone(),
+        shared.events.clone() as Arc<dyn EventSink>,
+    ));
+    let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
+    Watchers {
+        retired_sweep,
+        git_changes,
+        sign_in_notices,
+        editor_updates,
+        space_watch,
+        disk_watch,
+    }
+}
+
+/// The services the API serves, wired to the host's stores and workspaces.
+fn build_services<R: Runtime + Clone>(
+    shared: &Shared<'_>,
+    service: &HostWorkspaces<R>,
+    injecting: &Injecting,
+    outbound: &Outbound,
+    vault: Arc<dyn SecretStore>,
+    dev_cert: Arc<dyn DevCertSource>,
+) -> Services {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        clock,
+        store,
+        settings,
+        endpoints,
+        ..
+    } = *shared;
+    let services = Services::new(
+        store.clone(),
+        settings.clone(),
+        events.clone(),
+        clock.clone(),
+    )
+    .with_problems(problems.clone())
+    .with_workspaces(Arc::new(service.clone()))
+    .with_network_health(outbound.network_health.clone())
+    .with_secret_store(vault.clone())
+    .with_credentials(Arc::new(
+        HostCredentials::new(ToolPaths::resolve(), vault)
+            .with_read_log(Arc::clone(&injecting.reads)),
+    ))
+    .with_repos({
+        let repos = injecting.repos(
+            &outbound.egress.chain,
+            clock,
+            outbound.connections.clone(),
+            events,
+        );
+        outbound.ssh_accounts.read_with(repos.clone());
+        repos
+    })
+    .with_doctor(system_doctor(
+        &config.layout,
+        &config.paths,
+        &config.expected_runtime,
+        settings.clone(),
+        options.az_search_path.clone(),
+    ))
+    .with_dev_cert(dev_cert)
+    .with_ports(Arc::new(HostPorts::new(outbound.ports.clone())))
+    .with_terminals(Arc::new(service.clone()))
+    .with_learned(Arc::new(HostLearned::new(
+        injecting.terminations.clone(),
+        Arc::clone(store),
+    )))
+    .with_proxy_sign_ins(outbound.sign_ins.clone())
+    .with_company_signals(company_signals(options))
+    .with_endpoints(endpoints.clone());
+    let services = options.front_resolver.iter().fold(services, |s, resolver| {
+        s.with_front_resolver(resolver.clone())
+    });
+    // Browsers sign in against the database's secrets, which only the API ever holds.
+    match store.take_account_secrets() {
+        Some(secrets) => services.with_account_secrets(secrets),
+        None => services,
+    }
 }
 
 #[cfg(test)]

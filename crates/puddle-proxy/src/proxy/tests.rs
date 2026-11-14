@@ -649,11 +649,9 @@ async fn resolve_failures_are_502_and_504() {
 async fn connect_first_skips_addresses_that_refuse() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let good = listener.local_addr().unwrap();
-    // A port that was just free: connecting to it is refused.
-    let closed = {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap()
-    };
+    // A port held without listening: connecting to it is refused and no other test can take it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let (_, addr) = connect_first(&[closed, good], Duration::from_secs(5))
         .await
         .unwrap();

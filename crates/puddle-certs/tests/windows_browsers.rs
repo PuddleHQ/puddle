@@ -33,6 +33,16 @@ use puddle_certs::devcert::{
 mod trust_dialog;
 use trust_dialog::Answer;
 
+/// The two tests share the certificate store, the trust dialog and the browsers (a second Firefox
+/// session is refused), so they run one at a time.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn enabled() -> bool {
     if std::env::var_os("PUDDLE_REQUIRE_BROWSER_TRUST").is_some()
         || std::env::var_os("PUDDLE_STORE_TESTS").is_some()
@@ -90,6 +100,7 @@ fn the_browsers_warn_before_the_leaf_is_trusted_and_accept_it_after_yes() {
     if !enabled() {
         return;
     }
+    let _serial = one_at_a_time();
     let data = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let manager = Arc::new(DevCertManager::new(data.path(), WindowsTrust));
@@ -195,6 +206,7 @@ fn a_certificate_from_dotnet_dev_certs_is_passed_over_for_its_key_and_the_own_le
     if !enabled() {
         return;
     }
+    let _serial = one_at_a_time();
     // The test makes and removes the machine's ASP.NET certificate, so it refuses to run where a
     // person already has one (the hosted runner has none; `PUDDLE_STORE_TESTS` is for a
     // workstation without one).

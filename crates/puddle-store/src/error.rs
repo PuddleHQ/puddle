@@ -78,6 +78,9 @@ pub enum StoreError {
         "System managed can't be switched; it follows your setup (add a deny rule to block one of its hosts)"
     )]
     NotSwitchable,
+    /// A built-in set is hidden while the feature that needs it is off, so it can't be switched.
+    #[error("rule set {0} is hidden while the feature it belongs to is off")]
+    RuleSetHidden(String),
     /// A rule set's name is empty, too long, or already used by another set.
     #[error("rule set name: {0}")]
     RuleSetName(String),

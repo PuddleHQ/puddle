@@ -115,7 +115,32 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
             entry!("release-assets.githubusercontent.com", "release downloads"),
         ],
     },
+    BuiltInSet {
+        slug: MISE_TOOLS_SLUG,
+        name: "mise tools",
+        description: "The hosts the managed mise layer downloads from: mise itself, its tool metadata, and the downloads of Node.js, Python, Go and Java. The set is hidden while the managed tools layer is switched off.",
+        default_on: false,
+        effect: Effect::Allow,
+        fill: Fill::solid(Rgb::new(0xd0, 0x7a, 0x2c)),
+        entries: &[
+            entry!("mise.jdx.dev", "mise downloads"),
+            entry!("mise-versions.jdx.dev", "tool versions"),
+            entry!("mise-java.jdx.dev", "Java versions"),
+            entry!("github.com", "Python and Java downloads"),
+            entry!(
+                "release-assets.githubusercontent.com",
+                "Python and Java download files"
+            ),
+            entry!("nodejs.org", "Node.js downloads"),
+            entry!("dl.google.com", "Go downloads"),
+            entry!("tuf-repo-cdn.sigstore.dev", "Python download attestations"),
+        ],
+    },
 ];
+
+/// The slug of the built-in set the managed mise layer's hosts live in; hidden while the layer is
+/// off ([`crate::SystemPlan::hidden_sets`]).
+pub const MISE_TOOLS_SLUG: &str = "mise-tools";
 
 /// The built-in set with this slug.
 #[must_use]
@@ -275,8 +300,10 @@ impl fmt::Display for SystemReason {
 }
 
 /// The engine entries of `sets` (R-36), each carrying its set's effect.
-pub(crate) fn set_entries(sets: &[BuiltInSet]) -> Vec<crate::engine::SetEntry> {
-    sets.iter()
+pub(crate) fn set_entries<'a>(
+    sets: impl IntoIterator<Item = &'a BuiltInSet>,
+) -> Vec<crate::engine::SetEntry> {
+    sets.into_iter()
         .flat_map(|set| {
             patterns(set.entries)
                 .into_iter()

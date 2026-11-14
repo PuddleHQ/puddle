@@ -87,6 +87,37 @@ test("a built-in set ships off, and switches for one workspace", async ({
   ).not.toBeChecked();
 });
 
+test("the mise tools set ships off, and is gone while the global tools switch is off", async ({
+  page,
+  request,
+  backend,
+}) => {
+  await openRules(page, backend);
+  const mise = page.getByRole("article", { name: "mise tools" });
+  await expect(
+    mise.getByRole("switch", { name: "On for every workspace" }),
+  ).not.toBeChecked();
+  await expect(mise).toContainText("Off (built-in sets ship off)");
+  await expect(mise).toContainText("nodejs.org");
+
+  const put = await request.put("/api/settings", {
+    headers: auth(backend),
+    data: { tools: { mise: false } },
+  });
+  expect(put.ok()).toBe(true);
+  await page.goto("/rules");
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Rule sets" }),
+  ).toBeVisible();
+  await expect(page.getByRole("article", { name: "GitHub" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "mise tools" })).toHaveCount(
+    0,
+  );
+  expect((await sets(request, backend)).map((s) => s.id)).not.toContain(
+    "builtin:mise-tools",
+  );
+});
+
 test("a set of your own: make it, then approve a request into it from the inbox", async ({
   page,
   request,

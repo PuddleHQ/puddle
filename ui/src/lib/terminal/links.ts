@@ -24,9 +24,10 @@ function isLocalHost(hostname: string): boolean {
   if (/^127(\.\d{1,3}){3}$/.test(host) || host === "0.0.0.0") return true;
   if (host === "[::1]" || host === "[::]") return true;
   const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(host);
-  if (mapped === null) return false;
-  const high = parseInt(mapped[1], 16);
-  const low = parseInt(mapped[2], 16);
+  const [, highHex, lowHex] = mapped ?? [];
+  if (highHex === undefined || lowHex === undefined) return false;
+  const high = parseInt(highHex, 16);
+  const low = parseInt(lowHex, 16);
   return high >> 8 === 127 || (high === 0 && low === 0);
 }
 

@@ -42,3 +42,105 @@ fn a_root_in_a_missing_parent_fails_with_the_path() {
         other => panic!("unexpected {other}"),
     }
 }
+
+#[test]
+fn a_stable_root_below_a_file_fails_with_the_path_and_the_cause() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("a-file");
+    fs::write(&file, "x").unwrap();
+    let state = tmp.path().join("state");
+    fs::create_dir(&state).unwrap();
+    match crate::IpcRoot::stable_in(&file, &state).unwrap_err() {
+        IpcError::Root { path, source } => {
+            assert!(path.starts_with(&file), "{}", path.display());
+            assert_ne!(source.kind(), io::ErrorKind::NotFound);
+        }
+        other => panic!("unexpected {other}"),
+    }
+}
+
+fn stable_root(parent: &Path, state: &Path) -> crate::IpcRoot {
+    crate::IpcRoot::stable_in(parent, state).unwrap()
+}
+
+#[tokio::test]
+async fn a_stable_endpoint_is_the_same_after_the_process_that_served_it_is_gone() {
+    let parent = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let first = stable_root(parent.path(), state.path());
+    let listener = first.listen_named("acme").unwrap();
+    let path = listener.endpoint().path().to_path_buf();
+    crate::connect(&path).await.unwrap();
+    drop(listener);
+    drop(first);
+    // A new run: a new root over the same state folder names the same socket.
+    let second = stable_root(parent.path(), state.path());
+    assert_eq!(second.endpoint_named("acme").unwrap().path(), path);
+    let mut listener = second.listen_named("acme").unwrap();
+    let client = tokio::spawn(async move { crate::connect(&path).await.map(drop) });
+    listener.accept().await.unwrap();
+    client.await.unwrap().unwrap();
+    // Another install gets other names.
+    let other_state = tempfile::tempdir().unwrap();
+    let other = stable_root(parent.path(), other_state.path());
+    assert_ne!(
+        other.endpoint_named("acme").unwrap().path(),
+        second.endpoint_named("acme").unwrap().path()
+    );
+}
+
+#[tokio::test]
+async fn a_socket_file_a_dead_process_left_is_replaced() {
+    let parent = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let root = stable_root(parent.path(), state.path());
+    let path = root.endpoint_named("acme").unwrap().path().to_path_buf();
+    // A killed Puddle leaves the file: bound and closed with nobody removing it.
+    drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+    assert!(path.exists());
+    let mut listener = root.listen_named("acme").unwrap();
+    let client = tokio::spawn({
+        let path = path.clone();
+        async move { crate::connect(&path).await.map(drop) }
+    });
+    listener.accept().await.unwrap();
+    client.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_socket_that_still_answers_is_never_taken_over() {
+    let parent = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let root = stable_root(parent.path(), state.path());
+    let _live = root.listen_named("acme").unwrap();
+    // Another Puddle of the same user, or a squatter: the same name is refused, the live one stays.
+    let again = stable_root(parent.path(), state.path());
+    let err = again.listen_named("acme").unwrap_err();
+    assert!(matches!(err, IpcError::NameTaken { .. }), "{err}");
+    crate::connect(root.endpoint_named("acme").unwrap().path())
+        .await
+        .unwrap();
+}
+
+#[test]
+fn a_root_folder_that_is_not_ours_alone_is_refused() {
+    let parent = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let id = crate::install_id(state.path()).unwrap();
+    let folder = parent.path().join(format!("puddle-{}", &id[..8]));
+    // Too open: others could add sockets to it.
+    fs::create_dir(&folder).unwrap();
+    fs::set_permissions(&folder, Permissions::from_mode(0o755)).unwrap();
+    let err = crate::IpcRoot::stable_in(parent.path(), state.path()).unwrap_err();
+    assert!(matches!(err, IpcError::Root { .. }), "{err}");
+    fs::remove_dir(&folder).unwrap();
+    // A symlink is never followed, even to a folder with the right mode.
+    let target = parent.path().join("elsewhere");
+    puddle_fs::private::create_new_dir(&target).unwrap();
+    std::os::unix::fs::symlink(&target, &folder).unwrap();
+    let err = crate::IpcRoot::stable_in(parent.path(), state.path()).unwrap_err();
+    assert!(matches!(err, IpcError::Root { .. }), "{err}");
+    fs::remove_file(&folder).unwrap();
+    // A missing one is made 0700, and an existing 0700 one is reused.
+    crate::IpcRoot::stable_in(parent.path(), state.path()).unwrap();
+}

@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use puddle_api::EndReason;
 use puddle_api::{DisplayName, WorkspaceError, WorkspaceRecord};
-use puddle_boot::{BootError, GatedSandbox};
-use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal};
-use puddle_types::{ImageRef, Problem, WorkspaceId, WorkspaceStep};
+use puddle_boot::{BootError, Gate, GatedSandbox};
+use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal, VsockRoute};
+use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
 
-use super::{HostWorkspaces, RuntimeNames, State, problem_key};
+use super::{HostWorkspaces, Live, RuntimeNames, State, problem_key};
+use crate::boot::BootKit;
 use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
@@ -20,13 +21,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
         inner.reports.begin(name, &record.name);
-        let exists = inner
+        let sandbox = inner
             .runtime
             .list()
             .await?
-            .iter()
-            .any(|s| s.name == name.as_str());
-        let route_alive = inner.live.lock().await.contains_key(name);
+            .into_iter()
+            .find(|s| s.name == name.as_str());
+        let exists = sandbox.is_some();
+        let mut route_alive = inner.live.lock().await.contains_key(name);
+        if let Some(sandbox) = sandbox.filter(|_| !route_alive) {
+            // An earlier run of Puddle made it: it is kept when this run can serve its route.
+            route_alive = self.adopt_sandbox(name, &sandbox.routes).await;
+        }
         let restarted = exists && route_alive && self.restart_in_place(&record).await?;
         if exists && route_alive && !restarted {
             // The root disk goes with the old sandbox (home directory, installed packages); the
@@ -57,6 +63,65 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         self.refresh_checkouts_later(&record.id);
         Ok(())
+    }
+
+    /// Takes over the sandbox an earlier run of Puddle made, so it starts again with its root disk
+    /// (home directory, installed packages): binds the workspace's route and keeps the sandbox only
+    /// if that is the endpoint the sandbox was made with (`routes`, from the runtime). Otherwise
+    /// (a sandbox from before routes were stable, a name another process holds) nothing is kept
+    /// and the caller makes a new sandbox on the same volume, as before.
+    async fn adopt_sandbox(&self, name: &WorkspaceId, routes: &[VsockRoute]) -> bool {
+        let inner = &self.inner;
+        // A sandbox whose volume is gone cannot start: the new-sandbox path refuses that with the
+        // volume-missing state, which is the answer to give.
+        match inner.runtime.list_volumes().await {
+            Ok(volumes)
+                if volumes
+                    .iter()
+                    .any(|v| v.name == name.volume_name().as_str()) => {}
+            _ => return false,
+        }
+        let bound = match inner.kit.route(name) {
+            Ok(route) => Some(route),
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "no route for the sandbox of an earlier run");
+                None
+            }
+        };
+        let route = match bound {
+            Some(route) if BootKit::serves(routes, &route) => route,
+            other => {
+                if let Some(route) = other {
+                    route.shutdown().await;
+                }
+                self.progress(
+                    name,
+                    WorkspaceStep::Starting,
+                    Some(
+                        "its sandbox was made with a route this run of Puddle cannot serve, so \
+                         it is made again; the volume with your work is kept, what was installed \
+                         outside it is not"
+                            .to_owned(),
+                    ),
+                );
+                return false;
+            }
+        };
+        inner.live.lock().await.insert(
+            name.clone(),
+            Live {
+                route,
+                gate: Gate::new(),
+                gated: None,
+                ssh: None,
+                guest: None,
+                // What the sandbox has is not known: an empty set makes the next start write the
+                // variables (a no-op in the runtime when they are the same).
+                spec_env: GuestEnv::default(),
+                rewrite: Arc::default(),
+            },
+        );
+        true
     }
 
     /// Starts the stopped sandbox again, with the workspace's variables as they are now: a changed

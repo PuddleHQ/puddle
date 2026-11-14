@@ -205,28 +205,26 @@ impl RuntimeFactory for FakeFactory {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_host_started_from_a_config_file_listens_on_the_files_port_and_writes_the_files_connection_file()
- {
-    let dir = tempfile::tempdir().unwrap();
+/// Starts a host from a `serve.toml` in `dir` on a free port, over the fake runtime.
+async fn start_fake_host(dir: &Path) -> (Host<FakeRuntime>, u16) {
     let port = puddle_test_kit::quiet_port();
     std::fs::write(
-        dir.path().join("serve.toml"),
+        dir.join("serve.toml"),
         format!("port = {port}\nconnection_file = \"conn/api.json\"\ndata_dir = \"data\"\n"),
     )
     .unwrap();
-    std::fs::create_dir(dir.path().join("conn")).unwrap();
+    std::fs::create_dir(dir.join("conn")).unwrap();
     let args = ServeArgs {
-        flags: [("config", Value::Path(dir.path().join("serve.toml")))]
+        flags: [("config", Value::Path(dir.join("serve.toml")))]
             .into_iter()
             .collect(),
         print_config: false,
     };
-    let options = serve::options::resolve(&args.flags, &|_| None, dir.path()).unwrap();
+    let options = serve::options::resolve(&args.flags, &|_| None, dir).unwrap();
     let exe = std::env::current_exe().unwrap();
     let mut config = serve::config(&options, &exe).unwrap();
     // The one thing a test build has no copy of: the guest agent beside the runtime.
-    let agent = dir.path().join("puddle-agent");
+    let agent = dir.join("puddle-agent");
     std::fs::write(&agent, b"#!agent\n").unwrap();
     config.guest.agent_binary = agent;
     let prepared = prepare(config, &QuietPlatform).unwrap();
@@ -235,6 +233,15 @@ async fn a_host_started_from_a_config_file_listens_on_the_files_port_and_writes_
     let host = Host::start(prepared, &FakeFactory, host_options)
         .await
         .unwrap();
+
+    (host, port)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_started_from_a_config_file_listens_on_the_files_port_and_writes_the_files_connection_file()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let (host, port) = start_fake_host(dir.path()).await;
 
     assert_eq!(host.url().port(), Some(port));
     let connection = std::fs::read_to_string(dir.path().join("conn").join("api.json")).unwrap();
@@ -255,6 +262,32 @@ async fn a_host_started_from_a_config_file_listens_on_the_files_port_and_writes_
     stream.read_to_end(&mut reply).await.unwrap();
     assert!(text(&reply).starts_with("HTTP/1.1 "), "{}", text(&reply));
     host.shutdown().await;
+}
+
+/// Windows gives the main thread 1 MiB unless the link says otherwise (`build.rs` links 8 MiB), and
+/// an overflow is an abort with no message. `puddle serve` starts the host on the main thread
+/// (`block_on`), so the start-up must fit in half of the linked stack. Measured on Windows (debug
+/// build): it needs between 1024 and 1088 KiB.
+#[test]
+fn the_host_start_fits_in_half_the_programs_main_thread_stack() {
+    let half = env!("PUDDLE_MAIN_STACK_BYTES").parse::<usize>().unwrap() / 2;
+    std::thread::Builder::new()
+        .stack_size(half)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (host, port) = start_fake_host(dir.path()).await;
+                assert_eq!(host.url().port(), Some(port));
+                host.shutdown().await;
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

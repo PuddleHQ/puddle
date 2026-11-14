@@ -433,10 +433,7 @@ async fn a_body_without_a_length_is_read_to_its_end_and_a_long_one_is_cut() {
 #[tokio::test]
 async fn trouble_with_the_proxy_is_said_on_stderr() {
     // Nothing listens.
-    let gone = {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        listener.local_addr().unwrap()
-    };
+    let (_held, gone) = refused_address();
     let (exit, stdout, stderr) = go(&settings(gone), &request("a.test", 22), b"x").await;
     assert_eq!((exit, stdout.as_str()), (Exit::Failed, ""));
     assert!(
@@ -578,18 +575,21 @@ async fn echo() -> u16 {
     port
 }
 
-/// A proxy address nobody listens on: a connection that goes there fails loudly.
-async fn no_proxy() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    listener.local_addr().unwrap()
+/// A loopback address nobody listens on, whose port stays the returned value's until it is
+/// dropped: a connection to it is refused, and no parallel test can start a server on it.
+fn refused_address() -> (puddle_test_kit::ReservedPort, SocketAddr) {
+    let held = puddle_test_kit::ReservedPort::new();
+    let addr = SocketAddr::from(([127, 0, 0, 1], held.port()));
+    (held, addr)
 }
 
 #[tokio::test]
 async fn an_address_inside_the_workspace_is_dialled_directly_and_never_asked_of_the_proxy() {
     let port = echo().await;
+    let (_held, dead) = refused_address();
     let direct = Settings {
         lookup: names,
-        ..settings(no_proxy().await)
+        ..settings(dead)
     };
     // A literal address, and a name that resolves to loopback.
     for host in ["127.0.0.1", "::ffff:127.0.0.1", "app.test"] {
@@ -629,13 +629,12 @@ async fn a_dns_name_that_starts_with_127_goes_to_the_proxy_unless_it_resolves_in
 
 #[tokio::test]
 async fn a_local_destination_that_refuses_is_said_on_stderr() {
-    let closed = {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    let (_held, closed) = refused_address();
+    let closed = closed.port();
+    let (_held, dead) = refused_address();
     let direct = Settings {
         lookup: names,
-        ..settings(no_proxy().await)
+        ..settings(dead)
     };
     let (exit, stdout, stderr) = go(&direct, &bridge_request("app.test", closed), b"x").await;
     assert_eq!((exit, stdout.as_str()), (Exit::Failed, ""));
@@ -648,9 +647,10 @@ async fn a_local_destination_that_refuses_is_said_on_stderr() {
 #[tokio::test]
 async fn a_direct_connection_whose_client_went_away_fails() {
     let port = echo().await;
+    let (_held, dead) = refused_address();
     let direct = Settings {
         lookup: names,
-        ..settings(no_proxy().await)
+        ..settings(dead)
     };
     let (mut ssh, stdin) = tokio::io::duplex(64);
     let (stdout, out) = tokio::io::duplex(64);

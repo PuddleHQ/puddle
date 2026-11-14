@@ -8,8 +8,7 @@ fn p(s: &str) -> GuestPath {
 #[test]
 fn an_owner_only_file_never_prints_its_contents() {
     let secret = GuestFile::new(p("/etc/puddle/key"), b"CANARY-KEY".to_vec())
-        .with_mode(0o600)
-        .unwrap();
+        .with_mode(FileMode::new(0o600));
     let shown = format!("{secret:?}");
     let leaked_text = shown.contains("CANARY");
     let leaked_bytes = shown.contains("67, 65");
@@ -104,9 +103,48 @@ fn guest_file_defaults_and_mode_check() {
     assert_eq!(f.mode(), GuestFile::DEFAULT_MODE);
     assert_eq!(f.path(), &p("/etc/x"));
     assert_eq!(f.contents(), b"hi");
-    assert_eq!(f.clone().with_mode(0o4755).unwrap().mode(), 0o4755);
-    let err = f.with_mode(0o10000).unwrap_err();
+    assert_eq!(f.with_mode(FileMode::new(0o4755)).mode(), 0o4755);
+    let err = FileMode::try_new(0o10000).unwrap_err();
     assert_eq!(err.what(), "file mode");
+}
+
+#[test]
+fn the_build_time_path_check_agrees_with_the_runtime_one() {
+    let long = format!("/{}", "a".repeat(4096));
+    let longest = format!("/{}", "a".repeat(4095));
+    let samples = [
+        &longest,
+        "/",
+        "/a",
+        "/a/b",
+        "/a/b/",
+        "//",
+        "/a//b",
+        "/.",
+        "/..",
+        "/a/.",
+        "/a/..",
+        "/a/./b",
+        "/a/../b",
+        "/...",
+        "/.a",
+        "/a.",
+        "/a\0b",
+        "a",
+        "",
+        "relative/x",
+        "/ab/cd/ef",
+        "/a/b/c/",
+        &long,
+    ];
+    assert!(is_valid_path(&longest));
+    for sample in samples {
+        assert_eq!(
+            is_valid_path(sample),
+            GuestPath::new(sample).is_ok(),
+            "{sample:?}"
+        );
+    }
 }
 
 #[test]
@@ -144,4 +182,29 @@ fn guest_env_serde_validates() {
     assert_eq!(env.get("A"), Some("1"));
     assert_eq!(serde_json::to_string(&env).unwrap(), r#"{"A":"1"}"#);
     assert!(serde_json::from_str::<GuestEnv>(r#"{"A-B":"1"}"#).is_err());
+}
+
+#[test]
+fn a_guest_path_literal_is_the_same_path_as_a_parsed_one() {
+    let from_lit = GuestPath::from(GuestPathLit::new("/etc/puddle/key"));
+    assert_eq!(from_lit, p("/etc/puddle/key"));
+    assert_eq!(guest_path!("/"), p("/"));
+}
+
+#[test]
+#[should_panic(expected = "not a valid guest path")]
+fn an_invalid_guest_path_literal_panics_which_stops_a_const_build() {
+    let _ = GuestPathLit::new("relative");
+}
+
+#[test]
+fn a_file_mode_within_the_permission_bits_is_accepted() {
+    assert_eq!(FileMode::try_new(0o4755).unwrap().bits(), 0o4755);
+    assert_eq!(FileMode::try_new(0o7777).unwrap(), FileMode::new(0o7777));
+}
+
+#[test]
+#[should_panic(expected = "a file mode is within 0o7777")]
+fn a_file_mode_beyond_the_permission_bits_panics_which_stops_a_const_build() {
+    let _ = FileMode::new(0o10000);
 }

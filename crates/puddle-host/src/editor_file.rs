@@ -9,7 +9,7 @@
 
 use puddle_api::StartFolder;
 use puddle_types::{
-    CheckoutDir, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, WorkspaceId,
+    CheckoutDir, FileMode, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, WorkspaceId,
 };
 use puddle_workspace::CheckoutList;
 
@@ -126,7 +126,7 @@ pub(crate) fn workspace_file(
         vec![MergeEntry::json(&["folders"], &value)],
     )
     .ok()?;
-    GuestFile::merged(path, spec).with_mode(0o644).ok()
+    Some(GuestFile::merged(path, spec).with_mode(FileMode::new(0o644)))
 }
 
 #[cfg(test)]

@@ -336,6 +336,7 @@ impl<R: Runtime + Clone> Host<R> {
             .secret_store
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
+        crate::vault::check_in_background(options.secret_store.clone(), problems.clone());
         let vault_sweep =
             crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let marks = config.paths.login_markers();

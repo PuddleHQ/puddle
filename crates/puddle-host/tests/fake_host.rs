@@ -10185,6 +10185,49 @@ async fn a_credential_store_that_cannot_be_read_at_start_is_a_problem_until_the_
     again.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_store_that_refuses_a_write_at_start_is_one_problem_naming_the_cause() {
+    let rig = Rig::new();
+    rig.secrets.break_it();
+    let host = rig.start().await;
+    eventually(
+        "the credential store problem raised",
+        Duration::from_secs(5),
+        || {
+            host.problems()
+                .list()
+                .iter()
+                .any(|p| p.key == "credential-store")
+        },
+    )
+    .await;
+    let ours: Vec<_> = problems_of(&api(&host))
+        .await
+        .into_iter()
+        .filter(|(key, ..)| key == "credential-store")
+        .collect();
+    assert_eq!(ours.len(), 1, "{ours:?}");
+    assert!(ours[0].3.contains("restart Puddle"), "{ours:?}");
+    host.shutdown().await;
+    drop(host);
+
+    // The store works at the next start: nothing is raised, and the probe left no entry behind.
+    rig.secrets.heal();
+    let again = rig.start().await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        again
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "credential-store"),
+        "{:?}",
+        again.problems().list()
+    );
+    assert_eq!(rig.secrets.ids(), Vec::<String>::new());
+    again.shutdown().await;
+}
+
 // ---- shell init -------------------------------------------------------------------------------
 
 /// The folder the guest sees a workspace's shell init in, on the host.

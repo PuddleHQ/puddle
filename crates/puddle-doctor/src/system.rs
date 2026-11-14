@@ -15,6 +15,8 @@ use puddle_ssh_agent::{
     AgentEndpoint, AgentError, Identity, WINDOWS_DEFAULT_PIPE, key_family, list_identities,
 };
 
+use puddle_secrets::StoreHealth;
+
 use crate::diagnose::Probe;
 use crate::facts::{
     AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, DataPathFacts,
@@ -111,13 +113,17 @@ impl SystemProbe {
         ))
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the home is never read or written here; it only has to be an absolute folder"
-    )]
+    /// The layout the runtime check opens: the runtime folder and the msb home the host would
+    /// use, Puddle's data folder (the one set with [`Self::with_data_dir`], else the user's).
+    /// `--version` doesn't touch the home and the test boot brings its own.
     fn layout(&self) -> Result<RuntimeLayout, RuntimeError> {
-        // The home is unused here: `--version` doesn't touch it and the test boot brings its own.
-        RuntimeLayout::new(self.runtime_dir.clone(), std::env::temp_dir())
+        let data = match &self.data_dir {
+            Some(dir) => dir.clone(),
+            None => puddle_fs::data_dir().map_err(|e| RuntimeError::NoDataDir {
+                reason: e.to_string(),
+            })?,
+        };
+        RuntimeLayout::new(self.runtime_dir.clone(), data.join("msb"))
     }
 }
 
@@ -238,6 +244,10 @@ impl Probe for SystemProbe {
 
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
         az_cli_in(std::env::var_os("PATH"), limit)
+    }
+
+    fn credential_store(&self) -> StoreHealth {
+        puddle_secrets::probe_os_store()
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {

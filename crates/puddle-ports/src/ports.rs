@@ -159,7 +159,6 @@ struct Inner {
     events: Arc<dyn EventSink>,
     programs: Arc<dyn ProgramLookup>,
     host: Arc<dyn HostAddrs>,
-    max_connections: usize,
     entries: Mutex<HashMap<WorkspaceId, Entry>>,
     /// Serialises the calls that change forwards, so two of them never race for one port.
     changing: tokio::sync::Mutex<()>,
@@ -171,6 +170,8 @@ struct Inner {
 #[derive(Clone)]
 pub struct Ports {
     inner: Arc<Inner>,
+    /// Connections one forward carries at once; set before the ports are shared.
+    max_connections: usize,
 }
 
 impl std::fmt::Debug for Ports {
@@ -206,25 +207,19 @@ impl Ports {
                 events,
                 programs,
                 host: Arc::new(OwnAddresses),
-                max_connections: MAX_CONNECTIONS,
                 entries: Mutex::new(HashMap::new()),
                 changing: tokio::sync::Mutex::new(()),
                 ended: tokio::sync::broadcast::channel(64).0,
             }),
+            max_connections: MAX_CONNECTIONS,
         }
     }
 
     /// The same ports with a forward carrying at most `limit` connections at once.
-    ///
-    /// # Panics
-    ///
-    /// When called on a clone: it must be the only handle, before the ports are shared.
+    /// Call it before the ports are cloned: a clone made earlier keeps the old limit.
     #[must_use]
-    pub fn with_connection_limit(mut self, limit: usize) -> Self {
-        match Arc::get_mut(&mut self.inner) {
-            Some(inner) => inner.max_connections = limit,
-            None => unreachable!("with_connection_limit is for a fresh Ports"),
-        }
+    pub const fn with_connection_limit(mut self, limit: usize) -> Self {
+        self.max_connections = limit;
         self
     }
 
@@ -499,7 +494,7 @@ impl Ports {
             pin.guest_port,
             &link,
             &self.inner.endpoints,
-            self.inner.max_connections,
+            self.max_connections,
         )
         .map_err(|err| self.bind_failed(pin.host_port, &err))?;
         let old = {

@@ -177,6 +177,13 @@ pub enum Event {
     /// the list could not be read, or a Git host started or stopped limiting requests. Carries no
     /// data: refetch `GET /api/repos`.
     RepoListsChanged {},
+    /// The first-use questions of a workspace's filtered SSH agent changed: one opened, was
+    /// answered, or went when the agent was turned off for its host. Refetch
+    /// `GET /api/ssh-agent-asks`.
+    SshAgentAsksChanged {
+        /// The workspace.
+        workspace: WorkspaceId,
+    },
     /// A workspace's identities, repository table or "only listed" switches changed (also when an
     /// identity it has changed). Refetch `GET /api/workspaces/{id}/git`.
     WorkspaceGitChanged {
@@ -683,6 +690,7 @@ impl Event {
             | Self::ForeignCredential { workspace, .. }
             | Self::UnknownTokenInAnswer { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
+            | Self::SshAgentAsksChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. }
             | Self::WorkspaceShellInitChanged { workspace }

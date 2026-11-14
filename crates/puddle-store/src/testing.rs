@@ -25,3 +25,14 @@ pub fn own(store: &Store, workspace: &WorkspaceId) {
 pub fn all_users() -> AllUsers {
     AllUsers::new()
 }
+
+/// Runs `sql` on the store's database, to break something a test wants to see fail: a trigger that
+/// raises, or a table renamed away.
+///
+/// # Panics
+/// When the SQL is refused.
+pub fn break_database(store: &Store, sql: &str) {
+    store
+        .run_sql_for_testing(sql)
+        .unwrap_or_else(|err| panic!("breaking the database with {sql:?}: {err}"));
+}

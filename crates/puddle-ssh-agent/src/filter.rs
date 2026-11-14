@@ -50,6 +50,35 @@ pub fn fingerprint(key: &[u8]) -> Option<String> {
         .map(|k| k.fingerprint(HashAlg::Sha256).to_string())
 }
 
+/// Why the user's first-use question did not end in a yes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disapproval {
+    /// The user said no.
+    Denied,
+    /// The user did not answer in time; the question stays open for a later try.
+    Unanswered,
+    /// Puddle could not put the question (its store failed, or too many are waiting).
+    Unavailable,
+}
+
+impl fmt::Display for Disapproval {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Denied => "the user said no",
+            Self::Unanswered => "the user did not answer in time",
+            Self::Unavailable => "the question could not be put to the user",
+        })
+    }
+}
+
+/// A key blob's type name (`ssh-ed25519`, `ssh-rsa`, ...), or `None` for a blob that is not a key.
+#[must_use]
+pub fn key_type(key: &[u8]) -> Option<String> {
+    PublicKey::from_bytes(key)
+        .ok()
+        .map(|k| k.algorithm().as_str().to_owned())
+}
+
 /// What the filter asks of Puddle: the workspace's spliced sessions, the user's switches and the
 /// host's agent.
 pub trait Context {
@@ -64,6 +93,13 @@ pub trait Context {
     ///
     /// Whatever the host's agent fails with.
     fn list(&self) -> Result<Vec<Identity>, AgentError>;
+    /// Whether the user lets the workspace sign for `key` at `host` (the first-use question).
+    /// It may block until the user answers; the filter runs on a blocking thread.
+    ///
+    /// # Errors
+    ///
+    /// Why the answer is not a yes.
+    fn approve(&self, host: &str, key: &[u8]) -> Result<(), Disapproval>;
     /// A signature from the host's agent.
     ///
     /// # Errors
@@ -105,6 +141,8 @@ pub enum Refusal {
     Extension,
     /// Adding, removing or locking keys and every other request type.
     Unsupported(u8),
+    /// The user's first-use answer was not a yes.
+    Disapproved(Disapproval),
     /// The host's agent failed.
     Agent(String),
 }
@@ -127,6 +165,7 @@ impl fmt::Display for Refusal {
             Self::UnknownFlags(flags) => write!(f, "sign flags {flags:#x}"),
             Self::Extension => f.write_str("an extension other than the session bind"),
             Self::Unsupported(kind) => write!(f, "request type {kind}"),
+            Self::Disapproved(why) => write!(f, "first use not approved: {why}"),
             Self::Agent(why) => write!(f, "the host's agent: {why}"),
         }
     }
@@ -139,8 +178,14 @@ pub enum Outcome {
     Bound(String),
     /// The key list went out with this many keys.
     Listed(usize),
-    /// A signature went out, from a key of this family (`ed25519`, `rsa`).
-    Signed(&'static str),
+    /// A signature went out, from a key of this family (`ed25519`, `rsa`) with this
+    /// fingerprint.
+    Signed {
+        /// `ed25519`, `rsa`, ...
+        family: &'static str,
+        /// The key's SHA-256 fingerprint.
+        fingerprint: String,
+    },
     /// Refused.
     Refused(Refusal),
 }
@@ -272,11 +317,21 @@ impl Filter {
         if login_key != key || !allowed_keys.allows(key) {
             return refused(Refusal::KeyNotAllowed);
         }
+        if let Err(why) = cx.approve(&bound.host, key) {
+            return refused(Refusal::Disapproved(why));
+        }
         match cx.sign(key, data, flags) {
             Ok(signature) => {
                 let family = PublicKey::from_bytes(key)
                     .map_or("other", |k| key_family(k.algorithm().as_str()));
-                (request::signature(&signature), Outcome::Signed(family))
+                let fingerprint = fingerprint(key).unwrap_or_default();
+                (
+                    request::signature(&signature),
+                    Outcome::Signed {
+                        family,
+                        fingerprint,
+                    },
+                )
             }
             Err(e) => refused(Refusal::Agent(e.to_string())),
         }

@@ -6,6 +6,7 @@ import Boxes from "@lucide/svelte/icons/boxes";
 import ShieldCheck from "@lucide/svelte/icons/shield-check";
 import ScrollText from "@lucide/svelte/icons/scroll-text";
 import KeyRound from "@lucide/svelte/icons/key-round";
+import UsersRound from "@lucide/svelte/icons/users-round";
 import Settings from "@lucide/svelte/icons/settings";
 import type { Component } from "svelte";
 import { isWelcome, stepFor } from "./welcome/steps.ts";
@@ -18,6 +19,8 @@ export interface NavItem {
   icon: Component;
   /** Show the pending-requests badge. */
   badge?: "pending";
+  /** Listed only where the server has an admin screen for the signed-in owner. */
+  owner?: boolean;
 }
 
 export const NAV: readonly NavItem[] = [
@@ -32,6 +35,12 @@ export const NAV: readonly NavItem[] = [
   { href: "/activity", label: "Activity", icon: ScrollText as Component },
   { href: "/identities", label: "Identities", icon: KeyRound as Component },
   { href: "/settings", label: "Settings", icon: Settings as Component },
+  {
+    href: "/admin",
+    label: "Admin",
+    icon: UsersRound as Component,
+    owner: true,
+  },
 ];
 
 export const APP_NAME = "Puddle";

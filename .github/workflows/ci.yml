@@ -337,7 +337,7 @@ jobs:
           # It stays off PATH so `claude` above is the current one.
           npm ci --prefix ci/login-tools-old --no-audit --no-fund
           old="$GITHUB_WORKSPACE/ci/login-tools-old/node_modules/.bin/claude"
-          "$old" --version | grep -qx '2.1.5 (Claude Code)'
+          grep -qx '2.1.5 (Claude Code)' <<<"$("$old" --version)"
           {
             echo "PUDDLE_CLAUDE_OLD_BIN=$old"
             echo "PUDDLE_COPILOT_BIN=$tools/copilot"
@@ -510,6 +510,9 @@ jobs:
       - name: silent skips (a test that returns early must fail in the job that provides its prerequisite)
         if: ${{ !cancelled() }}
         run: scripts/check.sh silent-skips
+      - name: early-exit pipes (grep -q after a pipe is a SIGPIPE coin toss under pipefail)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh early-exit-pipes
       - name: mutation exclusions (an exclude_re entry that matches no mutant is stale)
         if: ${{ !cancelled() }}
         run: scripts/check.sh mutants-exclusions

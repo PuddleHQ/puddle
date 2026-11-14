@@ -36,14 +36,14 @@ cat >"$tmp/pw.json" <<'JSON'
  {"projectName":"webkit","results":[{"status":"passed"},{"status":"timedOut"},{"status":"passed"}]},
  {"projectName":"chromium","results":[{"status":"passed"},{"status":"passed"}]}]}]}]}]}
 JSON
-python3 "$FLAKY" --stress playwright "$tmp/pw.json" 2>/dev/null | grep -q "^- ${bt}a.spec.ts > opens \\[webkit\\]${bt}: failed 1 of 3 runs\$" || fail "playwright: webkit repeat"
-python3 "$FLAKY" --stress playwright "$tmp/pw.json" 2>/dev/null | grep -q 'chromium' && fail "playwright: a passing project must not be listed"
+grep -q "^- ${bt}a.spec.ts > opens \\[webkit\\]${bt}: failed 1 of 3 runs\$" <<<"$(python3 "$FLAKY" --stress playwright "$tmp/pw.json" 2>/dev/null)" || fail "playwright: webkit repeat"
+grep -q 'chromium' <<<"$(python3 "$FLAKY" --stress playwright "$tmp/pw.json" 2>/dev/null)" && fail "playwright: a passing project must not be listed"
 
 cat >"$tmp/vt.xml" <<'XML'
 <testsuites><testsuite name="s"><testcase classname="f.test.ts" name="t1"/><testcase classname="f.test.ts" name="t1"><failure/></testcase></testsuite></testsuites>
 XML
-python3 "$FLAKY" --stress vitest "$tmp/vt.xml" 2>/dev/null | grep -q "^- ${bt}f.test.ts::t1${bt}: failed 1 of 2 runs\$" || fail "vitest"
-python3 "$FLAKY" --stress rust "$tmp/missing.xml" | grep -q 'No report' || fail "a missing report must say so"
+grep -q "^- ${bt}f.test.ts::t1${bt}: failed 1 of 2 runs\$" <<<"$(python3 "$FLAKY" --stress vitest "$tmp/vt.xml" 2>/dev/null)" || fail "vitest"
+grep -q 'No report' <<<"$(python3 "$FLAKY" --stress rust "$tmp/missing.xml")" || fail "a missing report must say so"
 
 # 2. stress-yield.py: rows and the report
 printf '# c\nsign_in_down\tfix a\n' >"$tmp/known.tsv"
@@ -58,15 +58,15 @@ for k in rust vitest playwright; do
 done
 tsv="$tmp/out/yield.tsv"
 [ "$(wc -l <"$tsv")" = 4 ] || fail "yield.tsv: header and three rows, got $(wc -l <"$tsv")"
-awk -F'\t' '$4=="rust" && $5=="failed" && $8==2 && $9==1 && $7=="30.0"' "$tsv" | grep -q . || fail "rust row: $(cat "$tsv")"
-awk -F'\t' '$4=="vitest" && $5=="failed" && $8==1 && $9==0' "$tsv" | grep -q . || fail "vitest row"
-awk -F'\t' '$4=="playwright" && $5=="no-report"' "$tsv" | grep -q . || fail "a run with no report must be no-report"
+grep -q . <<<"$(awk -F'\t' '$4=="rust" && $5=="failed" && $8==2 && $9==1 && $7=="30.0"' "$tsv")" || fail "rust row: $(cat "$tsv")"
+grep -q . <<<"$(awk -F'\t' '$4=="vitest" && $5=="failed" && $8==1 && $9==0' "$tsv")" || fail "vitest row"
+grep -q . <<<"$(awk -F'\t' '$4=="playwright" && $5=="no-report"' "$tsv")" || fail "a run with no report must be no-report"
 # a report with no test runs in it is not a green night
 mkdir -p "$tmp/empty/vitest"
 printf '<testsuites/>' >"$tmp/empty/vitest/report.xml"
 printf 'KIND=vitest\nEXIT=0\nWALL_S=1\nREPORT=report.xml\nARGS=x\n' >"$tmp/empty/vitest/result.env"
 python3 "$here/stress-yield.py" record "$tmp/empty" vitest --sha a --run-id 1 --job-seconds 60 --date 2026-10-30 --known "$tmp/known.tsv" >/dev/null
-awk -F'\t' 'NR==2 && $5=="no-report" && $12==0' "$tmp/empty/yield.tsv" | grep -q . || fail "an empty report must be no-report: $(cat "$tmp/empty/yield.tsv")"
+grep -q . <<<"$(awk -F'\t' 'NR==2 && $5=="no-report" && $12==0' "$tmp/empty/yield.tsv")" || fail "an empty report must be no-report: $(cat "$tmp/empty/yield.tsv")"
 python3 "$here/stress-yield.py" report "$tsv" "$tsv" >"$tmp/report.md"
 grep -q '^| rust | 1 | 2 | 2 | 0 | 4 | 2 | 2 |' "$tmp/report.md" || fail "report row for rust: $(cat "$tmp/report.md")"
 grep -q '1 nights' "$tmp/report.md" || fail "report: nights"

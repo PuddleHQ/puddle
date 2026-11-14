@@ -685,7 +685,7 @@ mod proxy_script {
 
 #[test]
 fn the_shipped_options_carry_the_machines_signals_and_the_defaults_carry_none() {
-    assert!(crate::HostOptions::default().company_signals.is_none());
+    assert!(crate::HostOptions::default().company_signals.is_none()); // az-ok: reads a field, starts no host
     let shipped = crate::HostOptions::system();
     let signals = shipped
         .company_signals

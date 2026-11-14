@@ -36,15 +36,16 @@ async fn an_answer_is_remembered_until_exactly_its_time_is_up() {
 
 #[test]
 fn a_name_that_does_not_resolve_is_not_reachable() {
-    // The probe's own time limit is 300 ms, so a resolver that is slow to say "no such name" (or
-    // never does) costs the test that, not the resolver's retry time. The runtime is not dropped
-    // by waiting for its blocking pool: the stuck system lookup runs there until it gives up.
+    // A name with a space is no host name: the system lookup refuses it without asking a resolver
+    // (a name that is only unlikely to exist, `.invalid` too, is a question for the machine's DNS).
+    // The probe's own time limit is 300 ms in case a lookup does hang. The runtime is not dropped
+    // by waiting for its blocking pool: a stuck system lookup runs there until it gives up.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     let probe = TcpPortProbe::new(Duration::from_millis(300), Duration::from_secs(60));
-    let reachable = runtime.block_on(probe.reachable("nothing.invalid", 22));
+    let reachable = runtime.block_on(probe.reachable("no such host", 22));
     runtime.shutdown_background();
     assert!(!reachable);
 }

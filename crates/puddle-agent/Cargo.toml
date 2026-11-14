@@ -10,6 +10,12 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Lets a test run the built binary with a lookup that never asks the machine's resolver
+# (`PUDDLE_AGENT_TEST_LOOKUP`). Only this crate's own dev-dependency on itself turns it on, so a
+# release build never has it; scripts/check-test-features.sh proves that.
+test-lookup = []
+
 [dependencies]
 flate2 = { workspace = true }
 futures-util = { workspace = true }
@@ -33,6 +39,7 @@ nix = { workspace = true }
 rustix = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+puddle-agent = { path = ".", features = ["test-lookup"] }
 arbitrary = { workspace = true }
 tracing-subscriber = { workspace = true }
 puddle-test-kit = { workspace = true }

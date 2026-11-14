@@ -69,7 +69,9 @@ pub use vault::SecretSetup;
 mod vscode;
 mod workspaces;
 
-pub use accounts::{AccountError, reset_user};
+pub use accounts::{
+    AccountError, UserRow, UserState, add_user, list_users, remove_user, reset_user,
+};
 pub use backup::{
     BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
 };

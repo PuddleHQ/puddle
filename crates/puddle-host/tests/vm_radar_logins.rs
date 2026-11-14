@@ -253,6 +253,7 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
     let name = format!("{}-tools", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in INSTALL_HOSTS.iter().chain(PROFILE_HOSTS) {
+        puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
             .as_user(puddle_store::UserId::OWNER)

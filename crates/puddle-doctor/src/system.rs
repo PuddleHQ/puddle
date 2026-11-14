@@ -33,6 +33,7 @@ pub struct SystemProbe {
     keep_boot_logs: Option<PathBuf>,
     data_dir: Option<PathBuf>,
     ssh_agent_pipe: Option<String>,
+    az_search_path: Option<std::ffi::OsString>,
     opened: OnceCell<BundledRuntime>,
 }
 
@@ -49,6 +50,7 @@ impl SystemProbe {
             keep_boot_logs: None,
             data_dir: None,
             ssh_agent_pipe: None,
+            az_search_path: None,
             opened: OnceCell::new(),
         }
     }
@@ -84,6 +86,15 @@ impl SystemProbe {
     #[must_use]
     pub fn with_ssh_agent_pipe(mut self, pipe: Option<String>) -> Self {
         self.ssh_agent_pipe = pipe;
+        self
+    }
+
+    /// Looks for the Azure CLI in the folders of `path` (a `PATH` value) instead of the process's
+    /// own. Running the real `az` can wait on the network (it checks for updates and sends
+    /// telemetry), which a test of the check should not depend on.
+    #[must_use]
+    pub fn with_az_search_path(mut self, path: Option<std::ffi::OsString>) -> Self {
+        self.az_search_path = path;
         self
     }
 
@@ -241,7 +252,12 @@ impl Probe for SystemProbe {
     }
 
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
-        az_cli_in(std::env::var_os("PATH"), limit)
+        az_cli_in(
+            self.az_search_path
+                .clone()
+                .or_else(|| std::env::var_os("PATH")),
+            limit,
+        )
     }
 
     fn credential_store(&self) -> CredentialStoreFacts {

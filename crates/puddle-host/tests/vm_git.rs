@@ -108,6 +108,7 @@ fn identity(label: &str, credentials: Vec<CredentialBinding>) -> IdentityDraft {
 
 fn allow(vm: &VmHost, sandbox: &WorkspaceId, hosts: &[&str]) {
     for host in hosts {
+        puddle_store::testing::own(vm.host.store(), sandbox);
         vm.host
             .store()
             .as_user(puddle_store::UserId::OWNER)

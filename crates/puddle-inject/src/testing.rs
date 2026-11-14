@@ -176,6 +176,7 @@ impl World {
             .unwrap(),
         );
         let workspace = WorkspaceId::new("box").unwrap();
+        puddle_store::testing::own(&store, &workspace);
         let credentials = StaticCredentials::new();
         let events = Arc::new(CollectingSink::default());
         let injector = Arc::new(GitInjector::new(

@@ -29,7 +29,9 @@ use puddle_ports::Ports;
 use puddle_proxy::{PortProbe, PullRoute, Resolver};
 use puddle_secrets::{SecretStore, ToolPaths};
 use puddle_settings::resolve;
-use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
+use puddle_store::{
+    AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
+};
 use puddle_types::{EventSink, Problems, WorkspaceId};
 use puddle_upstream::{Chain, Discovery, Watching};
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
@@ -118,6 +120,17 @@ pub struct HostOptions {
     /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
     /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
     pub free_space: Option<Arc<dyn crate::Space>>,
+    /// Looks up a name for the host's own connections (the lists of repositories, the sign-in
+    /// checks) before the company proxy is asked. Without one, the operating system's resolver;
+    /// tests give a double, so a name is never a question for the machine's real DNS.
+    pub host_lookup: Option<puddle_upstream::HostLookup>,
+    /// Resolves the names of the front in front of Puddle for the guard. Without one, the
+    /// operating system's resolver; tests give a double.
+    pub front_resolver: Option<Arc<dyn puddle_api::NameResolver>>,
+    /// The folders searched for the Azure CLI by the system check (a `PATH` value). Without one,
+    /// the process's `PATH`; tests give an empty one, so the check never runs the machine's real
+    /// `az`, which waits on the network.
+    pub az_search_path: Option<std::ffi::OsString>,
 }
 
 impl Default for HostOptions {
@@ -136,6 +149,9 @@ impl Default for HostOptions {
             git_ssh: true,
             workspace_ids: None,
             free_space: None,
+            host_lookup: None,
+            front_resolver: None,
+            az_search_path: None,
         }
     }
 }
@@ -327,6 +343,7 @@ impl<R: Runtime + Clone> Host<R> {
         let clock = Arc::new(SystemClock);
         let State {
             store,
+            all_users,
             settings,
             book,
             stored,
@@ -499,6 +516,7 @@ impl<R: Runtime + Clone> Host<R> {
                 clock: clock.clone(),
                 settings: settings.clone(),
                 store: store.clone(),
+                all_users,
                 launcher: options.launcher,
                 ssh,
                 book,
@@ -571,6 +589,7 @@ impl<R: Runtime + Clone> Host<R> {
             &config.paths,
             &config.expected_runtime,
             settings.clone(),
+            options.az_search_path.clone(),
         ))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
@@ -582,6 +601,10 @@ impl<R: Runtime + Clone> Host<R> {
         .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
+        let services = match options.front_resolver.clone() {
+            Some(resolver) => services.with_front_resolver(resolver),
+            None => services,
+        };
         // Browsers sign in against the database's secrets, which only the API ever holds.
         let services = match store.take_account_secrets() {
             Some(secrets) => services.with_account_secrets(secrets),
@@ -815,6 +838,8 @@ impl<R: Runtime + Clone> Host<R> {
 /// What `open_state` opened.
 struct State {
     store: Arc<Store>,
+    /// The reach across every user's data, taken before anything serves.
+    all_users: AllUsers,
     settings: Arc<dyn SettingsRepo>,
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
@@ -832,6 +857,12 @@ fn open_state(
         Store::open(&paths.store(), clock.clone(), Limits::default())?
             .with_events(events.clone() as Arc<dyn EventSink>),
     );
+    // Taken here, before the store reaches anything that serves requests, so no request handler
+    // can take it after.
+    let all_users = store.take_all_users().ok_or(HostError::State {
+        what: "the database",
+        reason: "the reach across every user was taken before the host started".to_owned(),
+    })?;
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
     let crate::files::Book {
@@ -840,6 +871,7 @@ fn open_state(
     } = book.load()?;
     Ok(State {
         store,
+        all_users,
         settings,
         book,
         stored,

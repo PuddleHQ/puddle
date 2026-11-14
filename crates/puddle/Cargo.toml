@@ -32,6 +32,8 @@ toml = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
@@ -42,7 +44,6 @@ puddle-runtime = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-vm-tests = { workspace = true }
 puddle-ipc = { workspace = true }
-puddle-store = { workspace = true }
 tempfile = { workspace = true }
 sha2 = { workspace = true }
 rustls = { workspace = true }

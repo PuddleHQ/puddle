@@ -534,12 +534,12 @@ proptest! {
                 let back = unmerge_bytes(MergeFormat::Json, out.as_bytes(), &spec.keys()).unwrap();
                 let back = match back.merged {
                     Merged::Write(b) => String::from_utf8(b).unwrap(),
-                    Merged::Unchanged => out.clone(),
+                    Merged::Unchanged => out,
                 };
                 // (Up to empty objects on the key's path, which the removal prunes.)
                 prop_assert_eq!(
                     strip(serde_json::from_str::<Value>(&back).unwrap(), &key),
-                    strip(doc.clone(), &key)
+                    strip(doc, &key)
                 );
             }
             // A non-object on the path is the only reason to refuse a valid document.

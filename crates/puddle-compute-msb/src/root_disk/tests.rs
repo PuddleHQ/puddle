@@ -10,7 +10,7 @@ struct FakeSdk {
 
 impl FakeSdk {
     fn new(plan: Result<GrowPlan, ()>, fail_apply: bool) -> Self {
-        FakeSdk {
+        Self {
             plan,
             fail_apply,
             applied: std::sync::Mutex::new(Vec::new()),
@@ -86,7 +86,7 @@ impl Home {
         fs::create_dir_all(sandboxes.join("other")).unwrap();
         fs::write(sandboxes.join("mine").join("upper.ext4"), b"mine").unwrap();
         fs::write(sandboxes.join("other").join("upper.ext4"), b"other").unwrap();
-        Home {
+        Self {
             _dir: dir,
             sandboxes,
         }

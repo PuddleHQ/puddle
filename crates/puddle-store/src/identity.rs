@@ -121,7 +121,7 @@ impl TryFrom<String> for Owner {
 }
 
 impl From<Owner> for String {
-    fn from(owner: Owner) -> String {
+    fn from(owner: Owner) -> Self {
         owner.0
     }
 }

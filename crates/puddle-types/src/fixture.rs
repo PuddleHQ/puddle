@@ -45,14 +45,14 @@ pub fn suffix() -> &'static str {
 /// in one test differ (`password("right")`, `password("wrong")`).
 #[must_use]
 pub fn password(label: &str) -> String {
-    label.to_owned() + "-" + suffix()
+    format!("{label}-{}", suffix())
 }
 
 /// A canary: a secret-looking string a test plants and then looks for in output, logs and files.
 /// It is `CANARY-<label>-<suffix>`, so a leak is easy to grep for.
 #[must_use]
 pub fn canary(label: &str) -> String {
-    "CANARY-".to_owned() + label + "-" + suffix()
+    format!("CANARY-{label}-{}", suffix())
 }
 
 /// A name no other call of this process returns, `<label>-<suffix>-<n>` where `n` counts the

@@ -21,13 +21,13 @@ pub struct FreeGb(u32);
 
 impl FreeGb {
     /// Smallest accepted line: 1 GB. Zero would never warn.
-    pub const MIN: FreeGb = FreeGb(1);
+    pub const MIN: Self = Self(1);
     /// Largest accepted line: 10 000 GB.
-    pub const MAX: FreeGb = FreeGb(10_000);
+    pub const MAX: Self = Self(10_000);
     /// Puddle's default for the warning line: 20 GB.
-    pub const DEFAULT_WARN: FreeGb = FreeGb(20);
+    pub const DEFAULT_WARN: Self = Self(20);
     /// Puddle's default for the failure line: 5 GB.
-    pub const DEFAULT_FAIL: FreeGb = FreeGb(5);
+    pub const DEFAULT_FAIL: Self = Self(5);
 
     /// Checks `gb` and wraps it.
     ///
@@ -68,7 +68,7 @@ impl TryFrom<u32> for FreeGb {
 }
 
 impl From<FreeGb> for u32 {
-    fn from(g: FreeGb) -> u32 {
+    fn from(g: FreeGb) -> Self {
         g.0
     }
 }

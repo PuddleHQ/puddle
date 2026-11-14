@@ -591,7 +591,7 @@ mod proxy_script {
     fn a_name_being_evaluated_is_not_evaluated_twice() {
         let os = script(corporate);
         let (spawn, jobs) = queued();
-        let pac = PacReader::with_spawn(os.clone(), PacTiming::default(), spawn);
+        let pac = PacReader::with_spawn(os, PacTiming::default(), spawn);
         for _ in 0..3 {
             assert!(!pac.direct("intranet.corp.example"));
         }

@@ -67,11 +67,11 @@ impl RepoService for Repos {
         identities: &'a [Identity],
         read: Read,
     ) -> BoxFuture<'a, Result<Vec<SourceList>, ReposError>> {
-        Box::pin(async move { Ok(Repos::lists(self, identities, read).await) })
+        Box::pin(async move { Ok(Self::lists(self, identities, read).await) })
     }
 
     fn profile(&self, source: SourceSpec) -> BoxFuture<'_, Result<ProfileRead, ReposError>> {
-        Box::pin(async move { Ok(Repos::profile(self, &source).await) })
+        Box::pin(async move { Ok(Self::profile(self, &source).await) })
     }
 }
 

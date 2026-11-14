@@ -1178,7 +1178,9 @@ fn upstream_request(
             ::http::HeaderValue::from_static("websocket"),
         );
     }
-    let body: UpBody = body.map_err(|err| Box::new(err) as BoxError).boxed_unsync();
+    let body: UpBody = body
+        .map_err(|err| -> BoxError { Box::new(err) })
+        .boxed_unsync();
     let mut builder = ::http::Request::builder()
         .method(parsed.method.as_str())
         .uri(target)

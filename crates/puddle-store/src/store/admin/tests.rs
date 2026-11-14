@@ -84,7 +84,7 @@ fn deleting_a_user_removes_every_row_that_names_them_and_nobody_elses() {
     seed(&store, ann, &ws_a);
     seed(&store, bob, &ws_b);
     store.add_device(ann, "phone", 50_000).unwrap();
-    assert_eq!(store.workspaces_of(ann).unwrap(), vec![ws_a.clone()]);
+    assert_eq!(store.workspaces_of(ann).unwrap(), vec![ws_a]);
 
     store.begin_user_delete(UserId::OWNER, ann).unwrap();
     assert_eq!(store.users_deleting().unwrap().len(), 1);

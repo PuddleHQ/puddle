@@ -242,7 +242,7 @@ fn parse_no_proxy_entry(entry: &str) -> Option<Entry> {
     };
     let domain = host.trim_start_matches("*.").trim_start_matches('.');
     (!domain.is_empty()).then(|| Entry::Suffix {
-        domain: domain.to_string(),
+        domain: domain.to_owned(),
         port,
     })
 }
@@ -285,8 +285,8 @@ fn parse_entry(raw: &str) -> Option<Entry> {
         return None;
     }
     let (glob, bare) = match host.strip_prefix('.') {
-        Some(domain) => (format!("*.{domain}"), Some(domain.to_string())),
-        None => (host.to_string(), None),
+        Some(domain) => (format!("*.{domain}"), Some(domain.to_owned())),
+        None => (host.to_owned(), None),
     };
     Some(Entry::Pattern {
         scheme,

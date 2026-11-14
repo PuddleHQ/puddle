@@ -406,7 +406,7 @@ fn steps_run_after_the_ca_trigger_once_each_and_must_be_plan_files() {
         .step(other.clone())
         .build()
         .unwrap();
-    assert_eq!(plan.steps(), [other.clone(), step.clone()]);
+    assert_eq!(plan.steps(), [other, step.clone()]);
     let r = String::from_utf8(plan.render()).unwrap();
     let trigger = r.find("puddle_on_change").unwrap();
     let first = r

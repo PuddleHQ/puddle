@@ -76,7 +76,7 @@ impl TryFrom<String> for TermsVersion {
 }
 
 impl From<TermsVersion> for String {
-    fn from(v: TermsVersion) -> String {
+    fn from(v: TermsVersion) -> Self {
         v.0
     }
 }
@@ -155,7 +155,7 @@ pub enum ConsentKind {
 
 impl ConsentKind {
     /// Every kind, in a fixed order.
-    pub const ALL: [ConsentKind; 3] = [Self::Telemetry, Self::CrashReports, Self::VsCodeServer];
+    pub const ALL: [Self; 3] = [Self::Telemetry, Self::CrashReports, Self::VsCodeServer];
 }
 
 /// Every consent, one field per [`ConsentKind`]. Part of [`crate::GlobalSettings`]: consent is

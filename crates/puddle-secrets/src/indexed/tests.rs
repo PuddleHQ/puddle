@@ -106,7 +106,7 @@ fn a_delete_that_fails_leaves_the_id_listed_for_the_next_sweep() {
     disk.0.break_it();
     assert_eq!(first.delete(&id("tok-a")), Err(StoreError));
     disk.0.heal();
-    let second = IndexedStore::new(disk.clone());
+    let second = IndexedStore::new(disk);
     assert_eq!(second.sweep_orphans(&|_| false).unwrap(), removed_one());
     assert!(second.get(&id("tok-a")).unwrap().is_none());
 }
@@ -135,7 +135,7 @@ fn a_store_that_cannot_keep_its_index_refuses_the_value_and_one_that_fails_a_swe
     assert_eq!(store.sweep_orphans(&|_| false), Err(StoreError));
     disk.0.heal();
     assert!(store.get(&id("tok-b")).unwrap().is_none());
-    let fresh = IndexedStore::new(disk.clone());
+    let fresh = IndexedStore::new(disk);
     assert_eq!(fresh.sweep_orphans(&|_| true).unwrap(), Sweep::default());
     assert!(fresh.get(&id("tok-a")).unwrap().is_some());
 }

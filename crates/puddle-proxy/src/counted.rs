@@ -60,7 +60,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
     ) -> Poll<io::Result<()>> {
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if let Poll::Ready(Ok(())) = polled {
+        if matches!(polled, Poll::Ready(Ok(()))) {
             let n = buf.filled().len().saturating_sub(before);
             self.counts.read.fetch_add(n as u64, Ordering::Relaxed);
         }

@@ -415,7 +415,7 @@ impl Store {
         self.change(|tx, now, fx| {
             let before = one(tx, user, id)?;
             label_free(tx, user, &draft.label, Some(id))?;
-            let mut after = before.clone();
+            let mut after = before;
             after.label.clone_from(&draft.label);
             after.author = draft.author.clone();
             after.credentials.clone_from(&draft.credentials);

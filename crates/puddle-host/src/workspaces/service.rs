@@ -173,9 +173,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     u64::from(self.inner.workspaces.config().default_size.as_mib());
                 record.disk_used_mib = None;
                 record.busy = Some(Operation::Creating);
-                state
-                    .slots
-                    .insert(id.clone(), Slot::new(record.clone(), true));
+                state.slots.insert(id, Slot::new(record.clone(), true));
                 self.ticket(record, Operation::Creating)
             };
             let record = ticket.record().clone();

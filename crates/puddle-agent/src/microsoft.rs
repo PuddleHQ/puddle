@@ -289,7 +289,7 @@ pub async fn install_latest(
     platform: &str,
     builds: &Path,
 ) -> Result<PathBuf, InstallError> {
-    std::fs::create_dir_all(builds)?;
+    tokio::fs::create_dir_all(builds).await?;
     let latest = resolve_latest(fetch, platform).await?;
     let dir = download_build(fetch, platform, builds, &latest).await?;
     write_pointer(builds, CURRENT, &latest.commit)?;
@@ -322,15 +322,15 @@ async fn download_build(
         )
         .await;
         // Whatever happened, the tarball (hundreds of MB) is not kept.
-        let _ = std::fs::remove_file(&tarball);
+        let _ = tokio::fs::remove_file(&tarball).await;
         if let Err(err) = fetched {
-            let _ = std::fs::remove_dir_all(&staging);
+            let _ = tokio::fs::remove_dir_all(&staging).await;
             return Err(err);
         }
         // A folder without the marker is an earlier attempt that died: not a build, replaced whole
         // (a missing folder is the usual case, so the answer is not looked at).
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::rename(&staging, &dir)?;
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::rename(&staging, &dir).await?;
     }
     Ok(dir)
 }
@@ -364,7 +364,7 @@ pub async fn stage_update(
     if skip {
         return Ok(Update::UpToDate);
     }
-    std::fs::create_dir_all(builds)?;
+    tokio::fs::create_dir_all(builds).await?;
     download_build(fetch, platform, builds, &latest).await?;
     write_pointer(builds, STAGED, &latest.commit)?;
     Ok(Update::Staged(latest.commit))

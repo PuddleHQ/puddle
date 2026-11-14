@@ -561,6 +561,7 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
         .seed(record.clone(), puddle_api::Unsaved::default());
 
     start_delete(&admin, ann_id, "Ann").await;
+    // An absence window: nothing signals that the reaper looked and left Ann, so give it time.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(admin.listed().await.iter().any(|u| u["name"] == "Ann"));
 

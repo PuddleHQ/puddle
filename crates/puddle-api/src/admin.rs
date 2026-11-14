@@ -232,9 +232,6 @@ impl AdminService {
         let user = blocking(move || Ok(store.user(target)?))
             .await
             .map_err(|_| ApiError::not_found(format!("no user {}", target.get())))?;
-        if user.role == Role::Owner {
-            return Err(conflict("the owner can't be deleted"));
-        }
         if confirm != user.name {
             return Err(ApiError::invalid(
                 "type the user's name exactly to confirm the deletion",

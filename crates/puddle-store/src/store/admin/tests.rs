@@ -191,3 +191,27 @@ fn the_audit_reads_newest_first_and_stops_at_the_limit() {
         Err(StoreError::UnknownUser(_))
     ));
 }
+
+#[test]
+fn a_database_that_fails_leaves_no_half_made_user_and_no_half_written_audit() {
+    let name = UserName::new("bo").unwrap();
+    // The name check cannot read the users.
+    let (store, _) = setup();
+    store.break_database("ALTER TABLE users RENAME COLUMN name TO name_gone");
+    assert!(store.admin_add_user(UserId::OWNER, &name).is_err());
+
+    // The audit cannot be written: each step that audits fails whole.
+    let (store, _) = setup();
+    let ann = add(&store, "ann");
+    store.break_database("ALTER TABLE admin_audit RENAME TO audit_gone");
+    assert!(store.note_invite_reissued(UserId::OWNER, ann).is_err());
+    assert!(store.begin_user_delete(UserId::OWNER, ann).is_err());
+    assert!(store.users_deleting().unwrap().is_empty(), "no half start");
+    // A deletion that began before the audit broke is not finished either.
+    let (store, _) = setup();
+    let bob = add(&store, "bob");
+    store.begin_user_delete(UserId::OWNER, bob).unwrap();
+    store.break_database("ALTER TABLE admin_audit RENAME TO audit_gone");
+    assert!(store.finish_user_delete(bob).is_err());
+    assert_eq!(store.users_deleting().unwrap().len(), 1, "still to finish");
+}

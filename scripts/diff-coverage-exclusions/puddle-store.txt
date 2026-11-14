@@ -2,7 +2,3 @@
 # Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
 # path glob here starts with crates/puddle-store/; the gate refuses another crate's entry, so two pull requests that
 # touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
-crates/puddle-store/src/store/admin.rs | AdminAction::InviteReissued,\ntarget,\n&name,\n)?; | the `?` error branch of a database call: SQLite fails here only on a broken database or a full disk, which the store's own failure tests cover; no test of the admin code can break the database
-crates/puddle-store/src/store/admin.rs | AdminAction::UserDeleteStarted,\ntarget,\n&user.name,\n)?; | the `?` error branch of a database call: SQLite fails here only on a broken database or a full disk, which the store's own failure tests cover; no test of the admin code can break the database
-crates/puddle-store/src/store/admin.rs | AdminAction::UserDeleted,\ntarget,\n&name,\n)?; | the `?` error branch of a database call: SQLite fails here only on a broken database or a full disk, which the store's own failure tests cover; no test of the admin code can break the database
-crates/puddle-store/src/store/admin.rs | [name.as_str()],\n\|r\| r.get(0),\n)?; | the `?` error branch of a database call: SQLite fails here only on a broken database or a full disk, which the store's own failure tests cover; no test of the admin code can break the database

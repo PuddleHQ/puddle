@@ -48,7 +48,7 @@ pub enum UsageError {
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] [--multi-user | --no-multi-user] | user reset [--config <path>] [--data-dir <path>] <name> | backup [--config <path>] [--data-dir <path>] <dest> | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--secret-store <store>] [--headless | --no-headless] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] [--multi-user | --no-multi-user] | user reset [--config <path>] [--data-dir <path>] <name> | backup [--config <path>] [--data-dir <path>] <dest> | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
 
 /// Parse the arguments after the program name.
 ///

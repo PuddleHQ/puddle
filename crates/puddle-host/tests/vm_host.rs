@@ -3434,7 +3434,7 @@ async fn refusal_matrix(
 /// spliced. Never run by the per-pull-request gate (the name starts `vm_radar_`).
 #[expect(clippy::print_stderr, reason = "the radar's table goes to stderr")]
 async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
-    let (vm, sandbox, api) = radar_workspace(tag, terminate).await;
+    let (vm, sandbox, api) = Box::pin(radar_workspace(tag, terminate)).await;
     // The run means nothing if the registries are not decrypted when they should be (or are when
     // they should not be): the issuer the guest sees says which.
     let issuer = guest(&vm.runtime, &sandbox, &issuer_script("registry.npmjs.org")).await;
@@ -5543,7 +5543,7 @@ async fn vm_host_a_restart_of_puddle_keeps_the_sandbox_and_its_root_disk() {
     assert!(!boot_before.is_empty(), "no boot id");
     drop(events);
 
-    let vm = vm_support::restart_vm_host(vm).await;
+    let vm = Box::pin(vm_support::restart_vm_host(vm)).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let mut events = api.events().await;
     let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;

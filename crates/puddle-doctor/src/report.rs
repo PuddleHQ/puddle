@@ -201,6 +201,13 @@ pub enum Finding {
     CredentialStoreMissing,
     /// The credential store answers and refuses a write: it is locked.
     CredentialStoreLocked,
+    /// The operating system's store works, and this computer has no graphical login session, so
+    /// its keyring may be locked after a reboot.
+    CredentialStoreNoDesktop,
+    /// The file vault's header cannot be read.
+    CredentialStoreVaultUnreadable,
+    /// `secrets/store.json` cannot be read.
+    CredentialStoreRecordUnreadable,
 }
 
 /// One line of the report.

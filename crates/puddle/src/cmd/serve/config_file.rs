@@ -190,10 +190,10 @@ fn value_of(value: &DeValue<'_>, kind: Kind, folder: &Path) -> Result<Value, Str
                 other => other,
             })
             .map_err(|_| "an empty string".to_owned()),
-        (Kind::Log | Kind::Ip | Kind::Domain, DeValue::String(text)) => kind
+        (Kind::Log | Kind::Ip | Kind::Domain | Kind::SecretStore, DeValue::String(text)) => kind
             .parse_text(text)
             .map_err(|_| format!("the string {:?}", text.as_ref())),
-        (Kind::Bool, DeValue::Boolean(on)) => Ok(Value::Bool(*on)),
+        (Kind::Bool | Kind::Toggle, DeValue::Boolean(on)) => Ok(Value::Bool(*on)),
         (kind, DeValue::Array(items)) if kind.is_list() => {
             let mut texts = Vec::new();
             for item in items {

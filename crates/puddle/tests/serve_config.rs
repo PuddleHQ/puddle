@@ -127,6 +127,8 @@ fn print_config_prints_the_effective_options_and_starts_nothing() {
              port = 4000 (flag --port)\n\
              connection_file = {api} (config file {file})\n\
              data_dir = the per-user data folder (default)\n\
+             secret_store = auto (default)\n\
+             headless = off (default)\n\
              log = debug (environment PUDDLE_LOG)\n\
              remote = off (default)\n\
              public_hosts = none (default)\n\

@@ -243,3 +243,121 @@ fn an_az_in_a_path_folder_is_found_and_asked_for_its_version() {
         }
     );
 }
+
+fn data_with_store(store: puddle_secrets::StoreKind) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    puddle_secrets::write_record(dir.path(), store, puddle_secrets::Rule::Headless).unwrap();
+    dir
+}
+
+/// A probe and a session that fail the test when asked: a file vault asks neither.
+fn never<T>() -> T {
+    panic!("a file vault asks neither the keyring nor loginctl");
+}
+
+#[test]
+fn a_data_folder_that_records_the_file_vault_reads_its_header_and_asks_nothing_else() {
+    use puddle_secrets::{FileVault, KeySourceTag, StoreKind, VaultKey, vault_path};
+    let dir = data_with_store(StoreKind::File);
+    // The record names the vault and there is none yet.
+    assert_eq!(
+        credential_store_facts(Some(dir.path()), never, never),
+        CredentialStoreFacts::File(VaultFacts::NoVaultYet)
+    );
+    FileVault::create(
+        &vault_path(dir.path()),
+        VaultKey::from_bytes([7; 32]),
+        KeySourceTag::SystemdHostTpm2,
+    )
+    .unwrap();
+    assert_eq!(
+        credential_store_facts(Some(dir.path()), never, never),
+        CredentialStoreFacts::File(VaultFacts::Header(KeySourceTag::SystemdHostTpm2))
+    );
+    std::fs::write(vault_path(dir.path()), b"not a vault at all").unwrap();
+    assert_eq!(
+        credential_store_facts(Some(dir.path()), never, never),
+        CredentialStoreFacts::File(VaultFacts::Unreadable)
+    );
+}
+
+#[test]
+fn the_operating_system_store_is_probed_when_it_is_recorded_or_nothing_is_decided() {
+    use puddle_secrets::{LoginSession, StoreHealth, StoreKind};
+    let recorded = data_with_store(StoreKind::Os);
+    assert_eq!(
+        credential_store_facts(
+            Some(recorded.path()),
+            || StoreHealth::Locked,
+            || LoginSession::NotGraphical
+        ),
+        CredentialStoreFacts::Os {
+            recorded: true,
+            health: StoreHealth::Locked,
+            session: LoginSession::NotGraphical
+        }
+    );
+    let fresh = tempfile::tempdir().unwrap();
+    for data in [Some(fresh.path()), None] {
+        assert_eq!(
+            credential_store_facts(data, || StoreHealth::Working, || LoginSession::Graphical),
+            CredentialStoreFacts::Os {
+                recorded: false,
+                health: StoreHealth::Working,
+                session: LoginSession::Graphical
+            }
+        );
+    }
+}
+
+#[test]
+fn a_record_that_cannot_be_read_is_reported_and_nothing_is_probed() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = puddle_secrets::secrets_folder(dir.path());
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("store.json"), "{").unwrap();
+    assert_eq!(
+        credential_store_facts(Some(dir.path()), never, never),
+        CredentialStoreFacts::Unreadable
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_login_session_is_read_from_loginctl_found_on_the_path() {
+    use puddle_secrets::LoginSession;
+    // A new folder for each script: a file that was just written is not run again in place.
+    let answer = |display: &str, kind: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("loginctl");
+        let body = format!(
+            "#!/bin/sh\ncase \"$1\" in show-user) echo '{display}';; show-session) echo '{kind}';; esac\n"
+        );
+        puddle_test_kit::write_executable(&path, &body);
+        login_session_in(
+            Some(dir.path().as_os_str().to_owned()),
+            Duration::from_secs(5),
+        )
+    };
+    assert_eq!(answer("c3", "wayland"), LoginSession::Graphical);
+    assert_eq!(answer("c1", "tty"), LoginSession::NotGraphical);
+    assert_eq!(answer("", ""), LoginSession::NotGraphical);
+    assert_eq!(answer("--help", ""), LoginSession::Unknown);
+    // A display session whose type cannot be read is not guessed at.
+    let dir = tempfile::tempdir().unwrap();
+    puddle_test_kit::write_executable(
+        &dir.path().join("loginctl"),
+        "#!/bin/sh\ncase \"$1\" in show-user) echo c1;; *) exit 1;; esac\n",
+    );
+    assert_eq!(
+        login_session_in(
+            Some(dir.path().as_os_str().to_owned()),
+            Duration::from_secs(5)
+        ),
+        LoginSession::Unknown
+    );
+    assert_eq!(
+        login_session_in(Some("/nonexistent".into()), Duration::from_secs(1)),
+        LoginSession::Unknown
+    );
+}

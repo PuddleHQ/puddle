@@ -617,3 +617,33 @@ pub struct DiskEncryptionFacts {
     /// The swap.
     pub swap: SwapFacts,
 }
+
+/// What the doctor found of the vault a data folder keeps its secrets in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultFacts {
+    /// The vault's header names this key source.
+    Header(puddle_secrets::KeySourceTag),
+    /// No vault file yet.
+    NoVaultYet,
+    /// The file is there and its header cannot be read.
+    Unreadable,
+}
+
+/// Which store keeps this install's secrets, and how it is doing. Everything is read; nothing is
+/// written but the test entry of the operating system's store, and no key is opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialStoreFacts {
+    /// The operating system's credential store: the data folder recorded it, or has not decided.
+    Os {
+        /// Whether `secrets/store.json` names it.
+        recorded: bool,
+        /// Whether a test write worked.
+        health: puddle_secrets::StoreHealth,
+        /// What the user's login sessions say about a screen (Linux).
+        session: puddle_secrets::LoginSession,
+    },
+    /// Puddle's file vault.
+    File(VaultFacts),
+    /// `secrets/store.json` cannot be read, so Puddle does not know where the secrets are.
+    Unreadable,
+}

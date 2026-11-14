@@ -61,6 +61,9 @@ pub enum HostError {
     /// The API token or connection file failed.
     #[error(transparent)]
     Connection(#[from] puddle_api::ConnectionFileError),
+    /// The store for secrets could not be chosen or recorded.
+    #[error("{0}")]
+    SecretStore(String),
     /// A file the guest needs could not be written under the guest-share root.
     #[error("cannot prepare the files sandboxes mount: {0}")]
     GuestFiles(String),

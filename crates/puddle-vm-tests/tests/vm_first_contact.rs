@@ -108,6 +108,48 @@ const GO: &[Tool] = &[(
     "cd /tmp && HOME=/root GOCACHE=/tmp/gocache go run /tmp/m.go",
 )];
 
+/// The (tool, condition) pairs that must be refused after the trust is applied; every other
+/// pair must reach HTTP. Measured on the real images: a pinned client refuses any proxy
+/// certificate, and Node `fetch` and Python `requests` with its bundled roots read only the
+/// guest environment, not the system store.
+const REFUSES_AFTER_TRUST: &[(&str, &str)] = &[
+    ("curl-pinned", "env"),
+    ("curl-pinned", "system"),
+    ("node-fetch", "system"),
+    ("python-requests-bundled-roots", "system"),
+];
+
+/// Compare the rows the probes printed against the pinned expectation, tool by tool.
+fn check_after_trust(label: &str, tools: &[&Tool], out: &str) -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for (name, _) in tools {
+        for condition in ["env", "system"] {
+            let prefix = format!("matrix|{label}|{name}|{condition}|");
+            let rows: Vec<&str> = out.lines().filter(|l| l.starts_with(&prefix)).collect();
+            let [row] = rows.as_slice() else {
+                wrong.push(format!("{name}/{condition}: {} rows, want 1", rows.len()));
+                continue;
+            };
+            let verdict = if REFUSES_AFTER_TRUST.contains(&(name, condition)) {
+                "tls-fail"
+            } else {
+                "tls-ok"
+            };
+            if !row[prefix.len()..].starts_with(verdict) {
+                wrong.push(format!("{name}/{condition}: want {verdict}, got {row}"));
+            } else if verdict == "tls-ok" && row.contains("not found") {
+                // A missing binary prints no certificate error, so it would read as tls-ok.
+                wrong.push(format!("{name}/{condition}: the tool did not run: {row}"));
+            }
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
+    }
+}
+
 struct Fixture {
     trust: GuestTrust,
     leaf_pem: String,
@@ -270,8 +312,8 @@ async fn matrix_run(
             all.push_str(&probe(label, tool, "env", ". /etc/profile.d/01-puddle-env.sh; "));
             all.push_str(&probe(label, tool, "system", ""));
         }
-        let out = sh(&sandbox, "after", all).await?;
-        eprintln!("{out}");
+        let after = sh(&sandbox, "after", all).await?;
+        eprintln!("{after}");
 
         within("stop", STOP_BUDGET, sandbox.stop()).await??;
         within("remove", STOP_BUDGET, Sandbox::remove(sandbox.name())).await??;
@@ -279,6 +321,12 @@ async fn matrix_run(
         assert!(
             !bare_pass.iter().any(|l| l.contains("|curl|bare|")),
             "curl trusted the fixture CA before the trust: the rows say nothing"
+        );
+        let verdicts = check_after_trust(label, &list, &after);
+        assert!(
+            verdicts.is_ok(),
+            "tools after the trust differ from the pinned list:\n{}",
+            verdicts.unwrap_err()
         );
         Ok(())
     }))

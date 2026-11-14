@@ -605,6 +605,7 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         .build(context())?;
     app.run(|handle, event| {
         if matches!(event, RunEvent::Exit) {
+            // the process is exiting; there is no one left to report a failed stop to
             let _ = stop(handle);
         }
     });

@@ -13289,7 +13289,7 @@ async fn a_failed_mise_fetch_is_a_problem_with_the_blocking_rule_and_the_start_s
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    puddle_store::testing::own(&host.store(), &name("acme"));
+    puddle_store::testing::own(host.store(), &name("acme"));
     host.store()
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {

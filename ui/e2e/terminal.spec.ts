@@ -286,6 +286,13 @@ test("a web address opens in the browser on Ctrl+click; a local one says to forw
   page,
   backend,
 }) => {
+  // The popup must not need the network: with no route the host's DNS decides the test, and the
+  // popup's address is read only after it has navigated.
+  await page
+    .context()
+    .route("https://example.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>docs</title>" }),
+    );
   await open(page, backend);
   await start(page);
   await run(page, "https://example.com/docs");
@@ -299,7 +306,7 @@ test("a web address opens in the browser on Ctrl+click; a local one says to forw
   await page.mouse.down();
   await page.mouse.up();
   await page.keyboard.up("Control");
-  expect((await popup).url()).toContain("example.com");
+  await expect.poll(async () => (await popup).url()).toContain("example.com");
   await run(page, "http://localhost:3999/x");
   const local = page
     .locator(".xterm-rows span", { hasText: "http://localhost:3999/x" })
@@ -427,11 +434,15 @@ test("the terminal's colours follow the theme", async ({ page, backend }) => {
               ?.querySelector(".xterm-scrollable-element") as HTMLElement,
           ).backgroundColor,
       );
-  await page.emulateMedia({ colorScheme: "dark" });
-  await expect.poll(background).not.toBe("");
-  const dark = await background();
+  // Read each scheme's colour only once the emulator shows one that differs from the other: the
+  // first read after a switch can still be the page's default white, which equals the light theme.
   await page.emulateMedia({ colorScheme: "light" });
-  await expect.poll(background).not.toBe(dark);
+  await expect.poll(background).not.toBe("");
+  const light = await background();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(background).not.toBe(light);
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(background).toBe(light);
 });
 
 test("at 390 px the page scrolls only up and down", async ({

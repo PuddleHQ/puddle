@@ -93,6 +93,7 @@
           waiting={waitingBy[workspace.id] ?? 0}
           progress={workspaces.progress[workspace.id]}
           oom={workspaces.oom[workspace.id]}
+          tools={workspaces.tools[workspace.id]}
           onStart={actions.start}
           onStop={actions.stop}
           onConnect={actions.connect}

@@ -55,3 +55,55 @@ fn endpoint_displays_its_path() {
     assert_eq!(e.to_string(), "/a/b.sock");
     assert_eq!(e.path(), Path::new("/a/b.sock"));
 }
+
+#[test]
+fn the_install_id_is_made_once_kept_and_remade_when_it_is_garbage() {
+    let state = tempfile::tempdir().unwrap();
+    let first = install_id(state.path()).unwrap();
+    assert!(name::is_install_id(&first), "{first}");
+    assert_eq!(install_id(state.path()).unwrap(), first);
+    std::fs::write(state.path().join(INSTALL_ID_FILE), "not an id").unwrap();
+    let remade = install_id(state.path()).unwrap();
+    assert!(name::is_install_id(&remade) && remade != first);
+    assert_eq!(install_id(state.path()).unwrap(), remade);
+    let other = tempfile::tempdir().unwrap();
+    assert_ne!(install_id(other.path()).unwrap(), remade);
+}
+
+#[test]
+fn an_install_id_that_cannot_be_written_names_the_file() {
+    let state = tempfile::tempdir().unwrap();
+    let missing = state.path().join("a-file");
+    std::fs::write(&missing, "x").unwrap();
+    match install_id(&missing).unwrap_err() {
+        IpcError::Root { path, .. } => assert_eq!(path, missing.join(INSTALL_ID_FILE)),
+        other => panic!("unexpected {other}"),
+    }
+}
+
+#[test]
+fn endpoint_names_are_workspace_shaped_labels() {
+    for ok in ["a", "acme-api", "a0000000", &"a".repeat(63)] {
+        name::check_name(ok).unwrap();
+    }
+    for bad in [
+        "",
+        "Acme",
+        "a/b",
+        "a.b",
+        "a b",
+        "../x",
+        "a_b",
+        &"a".repeat(64),
+    ] {
+        let err = name::check_name(bad).unwrap_err();
+        assert!(matches!(err, IpcError::InvalidName { .. }), "{bad}: {err}");
+    }
+}
+
+#[test]
+fn a_root_of_random_names_has_no_stable_names() {
+    let root = IpcRoot::new().unwrap();
+    let err = root.endpoint_named("acme").unwrap_err();
+    assert!(matches!(err, IpcError::NotStable), "{err}");
+}

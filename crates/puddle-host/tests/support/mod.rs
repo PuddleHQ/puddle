@@ -435,6 +435,13 @@ pub(crate) fn hermetic_options() -> HostOptions {
     let mut options = HostOptions::default();
     options.dev_cert = Some(Arc::new(NoDevCert));
     options.free_space = Some(Arc::new(FixedSpace(FIXED_FREE_BYTES)));
+    // No name resolves on this machine's DNS and no `az` runs: a resolver that is slow or down
+    // must not decide how long a test takes.
+    options.host_lookup = Some(puddle_upstream::HostLookup::new(|_, _| async {
+        Err(std::io::Error::other("no names resolve in a hermetic host"))
+    }));
+    options.front_resolver = Some(Arc::new(puddle_api::NoNames));
+    options.az_search_path = Some(std::ffi::OsString::new());
     options
 }
 

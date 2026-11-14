@@ -9,10 +9,12 @@
 //! and stopped when the host exits.
 //!
 //! A sandbox boots from the spec it was created with, and that spec holds the endpoint of its
-//! egress route, which only lives as long as this process. So a stopped workspace starts again in
-//! the same sandbox only while this process still serves that route; otherwise (after a restart
-//! of the host) its sandbox is rebuilt on the same volume. Everything on the volume survives,
-//! the root disk does not (ADR 0006, point 3).
+//! egress route. The endpoint of a workspace is the same at every run of Puddle (`IpcRoot::stable`),
+//! so a stopped workspace starts again in the same sandbox, with its root disk, after a restart of
+//! the host too: the new run takes the sandbox over when the route the runtime lists for it is the
+//! one it serves. A sandbox made with another route (before routes were stable, or a name another
+//! process holds) is rebuilt on the same volume: everything on the volume survives, the root disk
+//! does not (ADR 0006, point 3).
 //!
 //! The workspace list on disk is what the next start keeps volumes for, so it is saved before
 //! anything it must cover exists or goes: a create is refused when its entry can't be written,
@@ -41,7 +43,7 @@ use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
 use puddle_ssh::SshEndpoint;
-use puddle_store::{Clock, Store};
+use puddle_store::{AllUsers, Clock, Store};
 use puddle_types::{
     CheckoutDir, DiskKind, EntryId, Event, EventSink, GuestEnv, GuestFile, GuestPath, Problem,
     Problems, SessionUser, WorkspaceId, WorkspaceStatus,
@@ -52,7 +54,7 @@ use puddle_workspace::{Findings, Workspaces};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
-use crate::boot::BootKit;
+use crate::boot::{BootKit, MiseLayer};
 use crate::files::{Stored, WorkspaceBook};
 use crate::front::Flavours;
 use crate::git_hosts::{Authors, SshListing};
@@ -157,6 +159,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
     /// Where the audit log is written.
     pub(crate) store: Arc<Store>,
+    /// The reach across every user's data, for recording the owner of the workspaces made before
+    /// every create recorded its user.
+    pub(crate) all_users: AllUsers,
     pub(crate) launcher: Arc<dyn Launcher>,
     /// The login key and ssh config of direct SSH.
     pub(crate) ssh: Arc<SshSetup>,
@@ -294,6 +299,8 @@ struct GuestState {
     session_user: SessionUser,
     /// Whether the guest has its SSH agent socket: the switch as of this start.
     ssh_agent: bool,
+    /// The managed mise layer the guest was planned with: the settings as of this start.
+    mise: Option<MiseLayer>,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.
@@ -311,9 +318,10 @@ struct Live<R: Runtime> {
     ssh: Option<SshEndpoint>,
     /// What the running guest was given at boot; `None` while it does not run.
     guest: Option<GuestState>,
-    /// The user's variables in the sandbox's own spec: those it was made with, or the last set
-    /// written to it. A sandbox reads them at its start, so a start with other variables writes
-    /// them first (`Runtime::set_env`) and keeps the sandbox and its root disk.
+    /// The variables in the sandbox's own spec (the user's, Puddle's proxy and trust ones and the
+    /// managed tools'): those it was made with, or the last set written to it. A sandbox reads
+    /// them at its start, so a start with other variables writes them first (`Runtime::set_env`)
+    /// and keeps the sandbox and its root disk.
     spec_env: GuestEnv,
     /// Held while the running guest's author files or login-shell environment file are rewritten,
     /// so two changes never run the boot hook at once.

@@ -13,7 +13,7 @@ use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
     Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
-    VolumeInfo, VolumeSpec,
+    VolumeInfo, VolumeSpec, VsockRoute,
 };
 use puddle_types::{
     CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
@@ -437,14 +437,6 @@ impl Runtime for MsbRuntime {
                 })?;
             Ok(Capabilities {
                 runtime_version: version,
-                // msb removes what a failed create leaves (upstream
-                // `superradcompany/microsandbox#1929`, since v0.7.12); the contract suite's
-                // volume-mismatch case checks it on every VM run.
-                stale_dir_fixed: true,
-                // msb's SSH server sends exit status 1 for a signal-killed command (upstream
-                // `superradcompany/microsandbox#2011`, carried by the fork; stock 0.7.7 sent 0).
-                // `vm_ssh_reports_a_signal_killed_command_as_a_failure` checks it.
-                ssh_reports_signal_exit: true,
             })
         })
     }
@@ -686,6 +678,17 @@ impl Runtime for MsbRuntime {
                     name: h.name().to_owned(),
                     status: status(h.status_snapshot()),
                     root_disk: root_disk::usage(&self.sandbox_dir(h.name())),
+                    routes: h.config().map_or_else(
+                        |_| Vec::new(),
+                        |c| {
+                            c.spec
+                                .vsock
+                                .routes
+                                .iter()
+                                .map(|r| VsockRoute::new(r.port, &r.host_socket))
+                                .collect()
+                        },
+                    ),
                     // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)

@@ -14,14 +14,17 @@ use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{DiskSize, FileMount, ImageConfig, OwnedDisk, SandboxSpec, VsockRoute};
-use puddle_guest_env::{ProxySettings, guest_proxy_config, ssh_known_hosts_file};
+use puddle_guest_env::{
+    MiseSettings, ProxySettings, guest_proxy_config, mise_config, ssh_known_hosts_file,
+};
 use puddle_ipc::{IpcError, IpcRoot};
 use puddle_proxy::{Proxy, Route};
+use puddle_settings::MiseMode;
 use puddle_store::Store;
 use puddle_types::{
     GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, guest_path,
 };
-use puddle_workspace::Layout;
+use puddle_workspace::{Layout, WORKSPACES_ROOT};
 
 use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::{Authors, SshListing};
@@ -148,6 +151,31 @@ pub(crate) struct GuestInputs<'a> {
     /// Whether the guest gets its SSH agent socket, which carries each client to the user's agent
     /// on the host (for the hosts the workspace has it on for).
     pub(crate) ssh_agent: bool,
+    /// The managed mise layer, when it is on for this workspace.
+    pub(crate) mise: Option<&'a MiseLayer>,
+}
+
+/// Where the managed mise layer lives in one workspace and what it may trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MiseLayer {
+    /// `/workspaces/<id>/.puddle/mise`.
+    pub(crate) dir: GuestPath,
+    /// The workspace's volume when the repository's own code is trusted (`repo_code`).
+    pub(crate) trusted: Option<GuestPath>,
+}
+
+impl MiseLayer {
+    /// The layer of workspace `id` for `mode`; `None` while the layer is off.
+    pub(crate) fn of(id: &WorkspaceId, mode: MiseMode) -> Result<Option<Self>, BootInputError> {
+        let MiseMode::On { trust } = mode else {
+            return Ok(None);
+        };
+        let layout = Layout::new(id)?;
+        Ok(Some(Self {
+            dir: layout.mise_dir()?,
+            trusted: trust.then(|| layout.mount().clone()),
+        }))
+    }
 }
 
 impl BootKit {
@@ -159,6 +187,7 @@ impl BootKit {
         proxy: Arc<Proxy>,
         roots: &CorporateRoots,
         store: Arc<Store>,
+        state_dir: &Path,
     ) -> Result<Self, HostError> {
         let io = |what: &str, e: std::io::Error| HostError::GuestFiles(format!("{what}: {e}"));
         if !guest.agent_binary.is_file() {
@@ -180,7 +209,15 @@ impl BootKit {
             .map(|release| install_code_server(release, &dir))
             .transpose()
             .map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))?;
-        let ipc = IpcRoot::new().map_err(|e| HostError::GuestFiles(e.to_string()))?;
+        // Stable routes keep every sandbox across a restart of this process. Without them (the
+        // runtime folder is unusable) the routes are random again, and a restart rebuilds sandboxes.
+        let ipc = match IpcRoot::stable(state_dir) {
+            Ok(root) => root,
+            Err(e) => {
+                tracing::warn!(error = %e, "no stable sandbox routes: a restart of Puddle will make every sandbox again");
+                IpcRoot::new().map_err(|e| HostError::GuestFiles(e.to_string()))?
+            }
+        };
         Ok(Self {
             proxy,
             ipc,
@@ -217,11 +254,27 @@ impl BootKit {
         &self.hook
     }
 
-    /// Starts the egress route of `sandbox`: a fresh owner-only endpoint served by the shared
-    /// proxy. It lives as long as the returned [`Route`].
+    /// Starts the egress route of `workspace`: an owner-only endpoint served by the shared proxy,
+    /// the same one at every run of Puddle, so a sandbox made by an earlier run finds its route
+    /// where its spec says. A name that cannot be had (taken by another process, no stable root)
+    /// gets a random endpoint instead: that route is not the one an older sandbox has, so such a
+    /// sandbox is made again. It lives as long as the returned [`Route`].
     pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, BootInputError> {
-        let listener = self.ipc.listen()?;
+        let listener = match self.ipc.listen_named(workspace.as_str()) {
+            Ok(listener) => listener,
+            Err(e) => {
+                tracing::warn!(%workspace, error = %e, "the workspace's stable route is not available, so it gets a random one");
+                self.ipc.listen()?
+            }
+        };
         Ok(self.proxy.serve_route(listener, workspace.clone()))
+    }
+
+    /// Whether a sandbox made with `routes` starts with `route`: its agent route is this endpoint.
+    pub(crate) fn serves(routes: &[VsockRoute], route: &Route) -> bool {
+        routes
+            .iter()
+            .any(|r| r.guest_port == AGENT_ROUTE_PORT && r.host == route.endpoint().path())
     }
 
     /// The boot plan and the environment for a sandbox of `image`. The same inputs give the same
@@ -255,11 +308,31 @@ impl BootKit {
         let mut env = guest.env.clone();
         env.extend(&proxy.env);
         env.extend(&trust.env());
+        let mise = guest
+            .mise
+            .map(|layer| {
+                mise_config(&MiseSettings {
+                    dir: layer.dir.clone(),
+                    ceiling: GuestPath::new(WORKSPACES_ROOT)?,
+                    trusted: layer.trusted.clone(),
+                    image_path: image_env
+                        .iter()
+                        .rev()
+                        .find(|(name, _)| name == "PATH")
+                        .map(|(_, value)| value.clone()),
+                })
+                .map_err(BootInputError::from)
+            })
+            .transpose()?;
+        if let Some(mise) = &mise {
+            env.extend(&mise.env);
+        }
         let mut builder = BootPlan::builder(image)
             .session_user(user)
             .env(&env)
             .files(proxy.files)
             .files(trust.guest_files())
+            .files(mise.map(|m| m.files).unwrap_or_default())
             .file(shell_init::loader())
             .file(puddle_boot::start_folder_file(
                 guest.root,
@@ -359,14 +432,21 @@ impl BootKit {
     }
 }
 
-/// Puts the code-server release at `release` below `dir` (inside the guest share, the only place
-/// msb mounts from) and returns where. The folder is named for the release's version, so two
-/// versions never mix and a sandbox that still mounts the old one keeps working; a folder that
-/// is already complete is reused. Files are hard-linked where the folders share a disk, else
-/// copied.
+/// The folder below the guest share that holds the code-server release the guests mount. It has
+/// one name for every release: a sandbox keeps the mount source it was made with, so a name that
+/// changed with the version would make every sandbox of an earlier run unstartable after an
+/// update (and a restart that keeps sandboxes would have to make them again).
+const CODE_SERVER_DIR: &str = "code-server";
+
+/// Puts the code-server release at `release` in [`CODE_SERVER_DIR`] below `dir` (inside the guest
+/// share, the only place msb mounts from) and returns where. A folder that is complete for this
+/// release is reused; another release replaces it in place, which is safe because this runs when
+/// the host starts, before any sandbox of this run exists (one host runs per data folder, and the
+/// sandboxes of an earlier run are stopped). Files are hard-linked where the folders share a disk,
+/// else copied.
 fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     let manifest = std::fs::read_to_string(release.join("code-server.json"))?;
-    let version = serde_json::from_str::<serde_json::Value>(&manifest)
+    serde_json::from_str::<serde_json::Value>(&manifest)
         .ok()
         .and_then(|m| m.get("version")?.as_str().map(ToOwned::to_owned))
         .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
@@ -376,52 +456,38 @@ fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
                 release.join("code-server.json").display()
             ))
         })?;
-    let target = dir.join(format!("code-server-{version}"));
+    let target = dir.join(CODE_SERVER_DIR);
+    remove_legacy_releases(dir);
     let done = target.join(INSTALLED_MARKER);
-    if done.is_file() {
+    if std::fs::read_to_string(&done).is_ok_and(|installed| installed == manifest) {
         return Ok(target);
     }
-    let partial = dir.join(format!("code-server-{version}.partial"));
+    let partial = dir.join(format!("{CODE_SERVER_DIR}.partial"));
     if partial.exists() {
         std::fs::remove_dir_all(&partial)?;
-    }
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
     }
     tracing::info!(from = %release.display(), to = %target.display(), "installing code-server for the guests");
     link_or_copy_tree(release, &partial, &|from, to| std::fs::hard_link(from, to))?;
     std::fs::write(partial.join(INSTALLED_MARKER), &manifest)?;
+    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
     std::fs::rename(&partial, &target)?;
-    prune_old_releases(dir, &target);
     Ok(target)
 }
 
-/// How many releases besides the newest stay in the guest share: a sandbox that is still running
-/// from before an update mounts the one before.
-const KEPT_OLD_RELEASES: usize = 1;
-
-/// Removes the `code-server-<version>` folders below `dir` except `keep` and the newest
-/// [`KEPT_OLD_RELEASES`] others (by the time they were installed). Failing to remove one only
-/// leaves it for the next install.
-fn prune_old_releases(dir: &Path, keep: &Path) {
-    let mut old: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+/// Removes what earlier versions of Puddle left below `dir`: the `code-server-<version>` folders
+/// (a sandbox of that time is made again at its next start, since its route is not a stable one
+/// either). Failing to remove one only leaves it for the next start.
+fn remove_legacy_releases(dir: &Path) {
+    let legacy: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("code-server-"))
         .map(|e| e.path())
-        .filter(|p| p != keep)
-        .map(|p| {
-            // Folders that never completed (no marker) count as oldest, so they go first.
-            let installed = std::fs::metadata(p.join(INSTALLED_MARKER))
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            (installed, p)
-        })
         .collect();
-    old.sort();
-    let drop_count = old.len().saturating_sub(KEPT_OLD_RELEASES);
-    for (_, path) in old.into_iter().take(drop_count) {
+    for path in legacy {
         let gone = if path.is_dir() {
             std::fs::remove_dir_all(&path)
         } else {

@@ -189,7 +189,7 @@ pub(crate) struct RuleIndex {
     rules: Vec<Rule>,
     entries: Vec<SetEntry>,
     switches: Switches,
-    /// Each workspace's user, where one is recorded; the others are the owner's.
+    /// Each workspace's user. A workspace with none is nobody's: no rule decides for it.
     owners: HashMap<WorkspaceId, UserId>,
     /// Exact patterns and suffix bases (`.example.com` stored under `example.com`) to slots.
     exact: HashMap<String, Vec<Slot>>,
@@ -263,15 +263,16 @@ impl RuleIndex {
         }
     }
 
-    /// The user `workspace` belongs to.
-    pub(crate) fn owner_of(&self, workspace: &WorkspaceId) -> UserId {
-        self.owners.get(workspace).copied().unwrap_or(UserId::OWNER)
+    /// The user `workspace` belongs to, or `None` when it is nobody's.
+    pub(crate) fn owner_of(&self, workspace: &WorkspaceId) -> Option<UserId> {
+        self.owners.get(workspace).copied()
     }
 
-    /// Whether `set` is on for `workspace` (R-37), by its user's switches.
+    /// Whether `set` is on for `workspace` (R-37), by its user's switches; no set is on for a
+    /// workspace that is nobody's.
     pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceId) -> bool {
-        self.switches
-            .is_on(self.owner_of(workspace), set, workspace)
+        self.owner_of(workspace)
+            .is_some_and(|user| self.switches.is_on(user, set, workspace))
     }
 
     /// `user`'s workspaces that override `set`, sorted by name.
@@ -279,7 +280,7 @@ impl RuleIndex {
         self.switches
             .overrides(set)
             .into_iter()
-            .filter(|(workspace, _)| self.owner_of(workspace) == user)
+            .filter(|(workspace, _)| self.owner_of(workspace) == Some(user))
             .collect()
     }
 
@@ -299,7 +300,8 @@ impl RuleIndex {
         &self.switches
     }
 
-    /// What decides `host` requested by `workspace` at `now`, or `None`.
+    /// What decides `host` requested by `workspace` at `now`, or `None`; always `None` for a
+    /// workspace that is nobody's, which has no rules (the store refuses its requests).
     ///
     /// Only the rules of the workspace's user count. Their own rules: non-expired global rules
     /// and non-expired rules of `workspace` (R-5, R-7), ranked by R-6. Set entries: those of sets
@@ -315,13 +317,8 @@ impl RuleIndex {
         now: u64,
         suffix_allows: SuffixAllows,
     ) -> Option<Hit<'_>> {
-        self.decide_as(
-            self.owner_of(workspace),
-            workspace,
-            host,
-            now,
-            suffix_allows,
-        )
+        let user = self.owner_of(workspace)?;
+        self.decide_as(user, workspace, host, now, suffix_allows)
     }
 
     /// [`RuleIndex::decide`] for `workspace` as a workspace of `user`: for one that is not made

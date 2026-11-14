@@ -20,7 +20,7 @@ use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_store::{ConnectionRecorder, Store, SystemClock};
 use puddle_types::{ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceId};
-use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, system_auth};
+use puddle_upstream::{AuthList, BasicAuth, Chain, ChainConfig, Discovery, TlsClient, system_auth};
 
 use crate::injection::{Injection, InjectorInputs, credential_read_log, forward_sign_in_needed};
 use crate::{HostConfig, HostError, HostWorkspaces, ProxyPasswords};
@@ -278,7 +278,15 @@ impl Egress {
             basic = basic.with_default(credentials);
         }
         let auth = AuthList::new().with(system_auth()).with(Arc::new(basic));
-        let chain = Chain::new(discovery.clone(), Arc::new(auth));
+        let chain = match options.host_lookup.clone() {
+            Some(lookup) => Chain::with_lookup(
+                discovery.clone(),
+                Arc::new(auth),
+                ChainConfig::default(),
+                lookup,
+            ),
+            None => Chain::new(discovery.clone(), Arc::new(auth)),
+        };
         let upstream = Upstream::new(chain.clone());
         let access_settings = settings.clone();
         let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceId| {

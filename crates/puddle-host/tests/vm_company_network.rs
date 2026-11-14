@@ -120,6 +120,7 @@ async fn boot(tag: &str, extra_allows: &[&str], memory_mib: u32) -> Lab {
     let vm = start_vm_host_platform(tag, options, &platform, |_| {}).await;
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(vm.host.store(), &workspace);
     for site in std::iter::once(&PrivateAccess::NAME).chain(extra_allows) {
         vm.host
             .store()

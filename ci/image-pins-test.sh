@@ -118,7 +118,7 @@ grep -q "manifests/debian" "$tmp/log" || bad "refresh: the registry request must
 fresh "$ref" "$ref"
 reg "200 $d1"
 run refresh
-{ [ "$rc" = 0 ] && [ "$(pins | sort -u | wc -l)" = 1 ] && pins | head -n 1 | grep -q "$d1"; } ||
+{ [ "$rc" = 0 ] && [ "$(pins | sort -u | wc -l)" = 1 ] && grep -q "$d1" <<<"$(pins | head -n 1)"; } ||
 	bad "refresh: a bare tag must be pinned in both files: $(cat "$tmp/out")"
 
 # refresh: a moved digest

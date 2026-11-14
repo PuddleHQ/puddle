@@ -65,3 +65,11 @@ fn prepare_request_runs_the_script_as_root_for_the_session_user() {
         assert_eq!(r.timeout, PREPARE_TIMEOUT);
     }
 }
+
+#[test]
+fn the_managed_tools_live_in_a_folder_of_the_puddle_directory() {
+    assert_eq!(
+        layout().mise_dir().unwrap().as_str(),
+        "/workspaces/acme/.puddle/mise"
+    );
+}

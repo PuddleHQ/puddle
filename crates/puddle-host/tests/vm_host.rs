@@ -3902,6 +3902,28 @@ fn editor_server_scan_is_silent_while_processes_exit() {
     assert_eq!(String::from_utf8_lossy(&noise), "");
 }
 
+/// The editor server's Uid, Gid and Groups lines from its own status, then the session user's
+/// wanted values, one `key value` per line.
+#[cfg(not(windows))]
+async fn server_credentials(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> String {
+    guest(
+        runtime,
+        sandbox,
+        &format!(
+            "{EDITOR_SERVER_PROCS} \
+               awk '$1==\"Uid:\"{{print \"uid\", $2, $3, $4, $5}} $1==\"Gid:\"{{print \"gid\", $2, $3, $4, $5}} \
+                    $1==\"Groups:\"{{for(i=2;i<=NF;i++)print \"group\", $i}}' $p/status \
+               ; break;; \
+           esac; \
+         done | sort -u; \
+         u=$(id -u agent); g=$(id -g agent); \
+         echo \"want-uid $u $u $u $u\"; echo \"want-gid $g $g $g $g\"; \
+         for g in $(id -G agent); do echo \"want-group $g\"; done"
+        ),
+    )
+    .await
+}
+
 /// K tier. The bundled code-server runs in the guest, started by the agent from the read-only
 /// mount: it listens on loopback with a password only its owner can read, signs a client in, and
 /// keeps its data on the workspace volume, so a rebuilt sandbox finds it again. (The Windows tier
@@ -3962,22 +3984,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     // The server's kernel credentials equal the session user's: the owner name above would also
     // pass if the server kept root's groups or group. Uid and Gid read from the process's own
     // status; the group set is the supplementary groups plus the group, as `id -G` lists them.
-    let creds = guest(
-        &runtime,
-        &sandbox,
-        &format!(
-            "{EDITOR_SERVER_PROCS} \
-               awk '$1==\"Uid:\"{{print \"uid\", $2, $3, $4, $5}} $1==\"Gid:\"{{print \"gid\", $2, $3, $4, $5}} \
-                    $1==\"Groups:\"{{for(i=2;i<=NF;i++)print \"group\", $i}}' $p/status \
-               ; break;; \
-           esac; \
-         done | sort -u; \
-         u=$(id -u agent); g=$(id -g agent); \
-         echo \"want-uid $u $u $u $u\"; echo \"want-gid $g $g $g $g\"; \
-         for g in $(id -G agent); do echo \"want-group $g\"; done"
-        ),
-    )
-    .await;
+    let creds = server_credentials(&runtime, &sandbox).await;
     let field = |key: &str| -> BTreeSet<String> {
         creds
             .lines()

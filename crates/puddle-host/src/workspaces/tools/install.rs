@@ -195,9 +195,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         });
         let install = self.mise_install(name, false, INSTALL_TIMEOUT);
         let outcome = tokio::select! {
-            outcome = install => outcome,
-            () = report_progress(PROGRESS_EVERY, total, missing, send) => None,
-        }?;
+            outcome = install => outcome?,
+            () = report_progress(PROGRESS_EVERY, total, missing, send) => return None,
+        };
         let (report, reason) = read_install(outcome);
         if has_java(&report.installed) {
             self.trust_new_jdk(name).await;

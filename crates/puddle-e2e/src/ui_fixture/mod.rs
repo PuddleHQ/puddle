@@ -637,6 +637,24 @@ impl State {
             // Handled by the caller: it must not hold the state while it sleeps.
             Step::Wait { .. } => {}
             Step::Request(request) => self.request(request, now)?,
+            Step::SshAgentAsk {
+                workspace: name,
+                host: target,
+                fingerprint,
+            } => {
+                let id = workspace(name)?;
+                self.own(&id)?;
+                self.store
+                    .start_ssh_agent_ask(
+                        &id,
+                        target,
+                        fingerprint
+                            .as_deref()
+                            .unwrap_or("SHA256:ZXhhbXBsZS1maXh0dXJlLWtleS1ub3QtcmVhbC0wMDA"),
+                        "ssh-ed25519",
+                    )
+                    .map_err(|err| err.to_string())?;
+            }
             Step::Bulk {
                 workspace,
                 count,

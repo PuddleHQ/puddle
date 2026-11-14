@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26,
+    V22, V23, V24, V25, V26, V27,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 26;
+pub const SCHEMA_VERSION: u32 = 27;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -914,6 +914,38 @@ CREATE TABLE admin_audit (
         ('user_created', 'invite_reissued', 'user_delete_started', 'user_deleted')),
     target_user_id INTEGER NOT NULL,
     target_name    TEXT    NOT NULL
+) STRICT;
+";
+
+/// The filtered SSH agent's first-use question. An `ssh_agent_asks` row is one question for a
+/// workspace, host and key (one open at a time, `requested`) and what the user answered. An
+/// `ssh_agent_grants` row is a standing yes for that triple: `run` ones last until the workspace
+/// stops, the others until the user turns the agent off for the host.
+const V27: &str = r"
+CREATE TABLE ssh_agent_asks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL CHECK (length(host) BETWEEN 1 AND 253),
+    fingerprint  TEXT    NOT NULL CHECK (length(fingerprint) BETWEEN 1 AND 100),
+    key_type     TEXT    NOT NULL CHECK (length(key_type) BETWEEN 1 AND 40),
+    state        TEXT    NOT NULL CHECK (state IN
+                     ('requested', 'allowed_once', 'allowed_run', 'allowed_always', 'denied')),
+    first_seen   INTEGER NOT NULL,
+    last_seen    INTEGER NOT NULL,
+    attempts     INTEGER NOT NULL CHECK (attempts >= 1),
+    decided_at   INTEGER,
+    CHECK ((state = 'requested') = (decided_at IS NULL))
+) STRICT;
+CREATE UNIQUE INDEX ssh_agent_asks_open
+    ON ssh_agent_asks (workspace_id, host, fingerprint) WHERE state = 'requested';
+CREATE INDEX ssh_agent_asks_decided ON ssh_agent_asks (decided_at) WHERE decided_at IS NOT NULL;
+CREATE TABLE ssh_agent_grants (
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL,
+    fingerprint  TEXT    NOT NULL,
+    run          INTEGER NOT NULL CHECK (run IN (0, 1)),
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, host, fingerprint)
 ) STRICT;
 ";
 

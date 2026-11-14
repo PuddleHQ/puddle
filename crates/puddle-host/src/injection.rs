@@ -721,6 +721,10 @@ impl Injection {
         let mut running = self.running();
         self.terminations.remove(workspace);
         running.remove(workspace);
+        // The run is over: its "for this run" answers go with it, and so do the questions.
+        if let Err(error) = self.inputs.store.end_ssh_agent_run(Some(workspace)) {
+            tracing::warn!(workspace = %workspace, %error, "SSH agent run grants were not cleared");
+        }
     }
 
     /// Forgets the login of `service` (its short name or the name the user sees) kept for

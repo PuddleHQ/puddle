@@ -25,10 +25,10 @@
           >
             <item.icon aria-hidden="true" size={18} />
             <span>{item.label}</span>
-            {#if item.badge === "pending" && live.pending > 0}
+            {#if item.badge === "pending" && live.open > 0}
               <span class="badge" data-testid="pending-badge">
-                <span aria-hidden="true">{live.pending}</span>
-                <span class="visually-hidden">{live.pending} pending</span>
+                <span aria-hidden="true">{live.open}</span>
+                <span class="visually-hidden">{live.open} pending</span>
               </span>
             {/if}
           </a>

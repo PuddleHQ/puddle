@@ -15,6 +15,9 @@ struct Fake {
     allowed: BTreeMap<String, AllowedKeys>,
     keys: Vec<Identity>,
     agent_down: bool,
+    /// The answer to the first-use question: `None` is a yes.
+    approval: Option<Disapproval>,
+    approved: RefCell<Vec<(String, Vec<u8>)>>,
     signed: RefCell<Vec<Asked>>,
 }
 
@@ -33,6 +36,12 @@ impl Context for Fake {
             return Err(AgentError::Refused);
         }
         Ok(self.keys.clone())
+    }
+    fn approve(&self, host: &str, key: &[u8]) -> Result<(), Disapproval> {
+        self.approved
+            .borrow_mut()
+            .push((host.to_owned(), key.to_vec()));
+        self.approval.map_or(Ok(()), Err)
     }
     fn sign(&self, key: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>, AgentError> {
         if self.agent_down {
@@ -97,6 +106,13 @@ fn list_answer(keys: &[&TestKey]) -> Vec<u8> {
     request::identities(&ids.iter().collect::<Vec<_>>())
 }
 
+fn signed(key: &TestKey) -> Outcome {
+    Outcome::Signed {
+        family: "ed25519",
+        fingerprint: key.fingerprint(),
+    }
+}
+
 fn refused(why: Refusal) -> (Vec<u8>, Outcome) {
     (request::failure(), Outcome::Refused(why))
 }
@@ -113,7 +129,7 @@ fn a_bound_session_lists_the_allowed_keys_and_signs_its_own_login() {
     let data = login(&SESSION, &w.user.blob(), None);
     assert_eq!(
         filter.answer(&sign_request(&w.user.blob(), &data, 4), &w.fake),
-        (request::signature(b"SIGNATURE"), Outcome::Signed("ed25519"))
+        (request::signature(b"SIGNATURE"), signed(&w.user))
     );
     assert_eq!(
         *w.fake.signed.borrow(),
@@ -121,7 +137,7 @@ fn a_bound_session_lists_the_allowed_keys_and_signs_its_own_login() {
     );
     let hostbound = login(&SESSION, &w.user.blob(), Some(&w.host.blob()));
     let (_, outcome) = filter.answer(&sign_request(&w.user.blob(), &hostbound, 0), &w.fake);
-    assert_eq!(outcome, Outcome::Signed("ed25519"));
+    assert_eq!(outcome, signed(&w.user));
 }
 
 #[test]
@@ -146,7 +162,7 @@ fn only_the_keys_allowed_for_the_host_are_listed_and_used() {
         filter
             .answer(&sign_request(&w.other_user.blob(), &data, 0), &w.fake)
             .1,
-        Outcome::Signed("ed25519")
+        signed(&w.other_user)
     );
     let not_a_key = login(&SESSION, b"junk", None);
     assert_eq!(
@@ -340,7 +356,7 @@ fn commit_signing_and_any_other_data_are_refused() {
         filter
             .answer(&sign_request(&w.user.blob(), &data, 2 | 4), &w.fake)
             .1,
-        Outcome::Signed("ed25519")
+        signed(&w.user)
     );
 }
 
@@ -427,4 +443,79 @@ fn a_fingerprint_is_the_sha256_form_and_none_for_junk() {
 fn the_answers_are_framed() {
     // A sanity check that the helpers agree with the answers the filter writes.
     assert_eq!(request::failure(), framed(&[5]));
+}
+
+#[test]
+fn a_signature_waits_for_the_first_use_answer_and_asks_for_the_bound_host_and_key() {
+    let w = world();
+    let mut filter = bound(&w);
+    let data = login(&SESSION, &w.user.blob(), None);
+    filter.answer(&sign_request(&w.user.blob(), &data, 0), &w.fake);
+    assert_eq!(
+        *w.fake.approved.borrow(),
+        vec![("build.example".to_owned(), w.user.blob())]
+    );
+}
+
+#[test]
+fn a_first_use_that_is_not_approved_signs_nothing_and_says_why() {
+    for why in [
+        Disapproval::Denied,
+        Disapproval::Unanswered,
+        Disapproval::Unavailable,
+    ] {
+        let mut w = world();
+        w.fake.approval = Some(why);
+        let mut filter = bound(&w);
+        let data = login(&SESSION, &w.user.blob(), None);
+        assert_eq!(
+            filter.answer(&sign_request(&w.user.blob(), &data, 0), &w.fake),
+            refused(Refusal::Disapproved(why))
+        );
+        assert!(w.fake.signed.borrow().is_empty(), "{why:?}");
+        assert_eq!(
+            filter.answer(&[11], &w.fake).1,
+            Outcome::Listed(2),
+            "listing keys asks nothing"
+        );
+    }
+}
+
+#[test]
+fn no_question_is_put_for_a_request_that_is_refused_anyway() {
+    let w = world();
+    let mut filter = bound(&w);
+    let other_session = login(&[0x77; 32], &w.user.blob(), None);
+    filter.answer(&sign_request(&w.user.blob(), &other_session, 0), &w.fake);
+    filter.answer(&sign_request(&w.user.blob(), b"not a login", 0), &w.fake);
+    filter.answer(
+        &sign_request(&w.user.blob(), &login(&SESSION, &w.user.blob(), None), 1),
+        &w.fake,
+    );
+    assert_eq!(*w.fake.approved.borrow(), vec![]);
+}
+
+#[test]
+fn a_key_blob_names_its_type_and_a_junk_blob_has_none() {
+    let w = world();
+    assert_eq!(key_type(&w.user.blob()).as_deref(), Some("ssh-ed25519"));
+    assert_eq!(key_type(b"junk"), None);
+}
+
+#[test]
+fn a_first_use_that_is_not_approved_says_why_in_words() {
+    for (why, words) in [
+        (Disapproval::Denied, "the user said no"),
+        (Disapproval::Unanswered, "the user did not answer in time"),
+        (
+            Disapproval::Unavailable,
+            "the question could not be put to the user",
+        ),
+    ] {
+        assert_eq!(why.to_string(), words);
+        assert_eq!(
+            Refusal::Disapproved(why).to_string(),
+            format!("first use not approved: {words}")
+        );
+    }
 }

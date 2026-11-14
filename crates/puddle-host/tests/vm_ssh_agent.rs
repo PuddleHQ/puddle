@@ -185,6 +185,73 @@ async fn login(vm: &vm_support::VmHost, workspace: &WorkspaceId, port: u16) -> (
     .await
 }
 
+/// The guest's agent socket belongs to the session user and `SSH_AUTH_SOCK` and `IdentityAgent`
+/// name it.
+async fn socket_is_the_session_users(vm: &vm_support::VmHost, workspace: &WorkspaceId, port: u16) {
+    let (code, setup) = guest_as(
+        &vm.runtime,
+        workspace,
+        "agent",
+        &format!(
+            "for i in $(seq 50); do [ -S {SOCKET} ] && break; sleep 0.2; done; \
+             echo \"owner=$(stat -c '%U %a' {SOCKET})\"; echo \"sock=$SSH_AUTH_SOCK\"; \
+             ssh -G -p {port} {NAME} | grep -i '^identityagent'"
+        ),
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(code, 0, "{setup}");
+    assert!(setup.contains("owner=agent 600"), "{setup}");
+    assert!(setup.contains(&format!("sock={SOCKET}")), "{setup}");
+    assert!(
+        setup.contains(&format!("identityagent {SOCKET}")),
+        "{setup}"
+    );
+}
+
+/// A question of the inbox, as `GET /api/ssh-agent-asks` lists it.
+#[derive(serde::Deserialize)]
+struct Ask {
+    id: i64,
+    workspace: String,
+    host: String,
+    key_type: String,
+    fingerprint: String,
+}
+
+/// The first use asks the user: waits for the question in the inbox list, checks what it names
+/// (this workspace, this host, the user's key) and gives `answer`. The guest's `ssh` waits for it.
+async fn answer_first_use(api: &Api, workspace: &str, key: &TestKey, answer: &str) {
+    #[derive(serde::Deserialize)]
+    struct Asks {
+        asks: Vec<Ask>,
+    }
+    let ask = puddle_test_kit::eventually_async(
+        "the first-use question reaches the inbox",
+        Duration::from_secs(90),
+        || async {
+            let reply = api.get("/api/ssh-agent-asks").await;
+            let list: Asks = serde_json::from_str(&reply.body).unwrap();
+            list.asks.into_iter().next()
+        },
+    )
+    .await;
+    assert_eq!(ask.workspace, workspace);
+    assert_eq!(ask.host, NAME);
+    assert_eq!(ask.key_type, "ssh-ed25519");
+    assert_eq!(ask.fingerprint, key.fingerprint());
+    let reply = api
+        .post(
+            &format!(
+                "/api/workspaces/{workspace}/ssh-agent-asks/{}/answer",
+                ask.id
+            ),
+            &json!({ "answer": answer }).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 204, "{}", reply.body);
+}
+
 /// With the agent on for `build.invalid`, the guest's `ssh` logs in there with the user's key:
 /// the socket belongs to the session user, `SSH_AUTH_SOCK` and `IdentityAgent` name it, ssh binds
 /// the connection before it asks for the key list (an earlier list gets no key, so the login
@@ -234,29 +301,14 @@ async fn vm_ssh_agent_logs_in_with_the_users_key_through_the_filter_and_stops_wh
         assert_eq!(end["step"], "done", "{end}");
     }
 
-    let (code, setup) = guest_as(
-        &vm.runtime,
-        &workspace,
-        "agent",
-        &format!(
-            "for i in $(seq 50); do [ -S {SOCKET} ] && break; sleep 0.2; done; \
-             echo \"owner=$(stat -c '%U %a' {SOCKET})\"; echo \"sock=$SSH_AUTH_SOCK\"; \
-             ssh -G -p {} {NAME} | grep -i '^identityagent'",
-            server.port()
-        ),
-        Duration::from_secs(60),
-    )
-    .await;
-    eprintln!("{setup}");
-    assert_eq!(code, 0, "{setup}");
-    assert!(setup.contains("owner=agent 600"), "{setup}");
-    assert!(setup.contains(&format!("sock={SOCKET}")), "{setup}");
-    assert!(
-        setup.contains(&format!("identityagent {SOCKET}")),
-        "{setup}"
-    );
+    socket_is_the_session_users(&vm, &workspace, server.port()).await;
 
-    let (code, out) = login(&vm, &workspace, server.port()).await;
+    // The first signature for this workspace, host and key waits for the user: nothing is signed
+    // before the answer, and "always" lets the login through.
+    let ((code, out), ()) = tokio::join!(
+        login(&vm, &workspace, server.port()),
+        answer_first_use(&api, id, &key, "always")
+    );
     eprintln!("{out}");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("logged in"), "{out}");
@@ -276,6 +328,24 @@ async fn vm_ssh_agent_logs_in_with_the_users_key_through_the_filter_and_stops_wh
         "the host's agent listed once and signed once"
     );
 
+    // A second login with the same key asks nothing: "always" stands.
+    let (code, out) = login(&vm, &workspace, server.port()).await;
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        logins.lock().unwrap().len(),
+        2,
+        "the standing answer let it in"
+    );
+    let list = api.get("/api/ssh-agent-asks").await;
+    assert_eq!(list.body, r#"{"asks":[]}"#, "no second question");
+    let signed_before_off = asked
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| **a == "sign")
+        .count();
+    assert_eq!(signed_before_off, 2, "{:?}", asked.lock().unwrap());
+
     // Off again: the filter reads the switch on every request, so the socket stays until the next
     // start but hands out no key.
     let off = api
@@ -286,9 +356,15 @@ async fn vm_ssh_agent_logs_in_with_the_users_key_through_the_filter_and_stops_wh
     eprintln!("{out}");
     assert_ne!(code, 0, "{out}");
     assert!(out.contains("Permission denied"), "{out}");
-    assert_eq!(logins.lock().unwrap().len(), 1, "no second login");
-    assert!(
-        !asked.lock().unwrap()[2..].contains(&"sign"),
+    assert_eq!(logins.lock().unwrap().len(), 2, "no third login");
+    assert_eq!(
+        asked
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| **a == "sign")
+            .count(),
+        signed_before_off,
         "nothing signed once off: {:?}",
         asked.lock().unwrap()
     );

@@ -701,6 +701,18 @@ pub enum Step {
     },
     /// A workspace asks for a host.
     Request(RequestSeed),
+    /// A workspace's `ssh` logs in to `host` with a key and waits for the first-use answer of the
+    /// filtered SSH agent, as the host's gate puts it: one open question per workspace, host and
+    /// key, or none when an earlier "for this run" or "always" answer covers it.
+    SshAgentAsk {
+        /// The workspace's name.
+        workspace: String,
+        /// The host the login is for.
+        host: String,
+        /// The key's SHA-256 fingerprint; a fixed fictional one when left out.
+        #[serde(default)]
+        fingerprint: Option<String>,
+    },
     /// `count` workspaces-worth of requests to `n0.<domain>` .. `n<count-1>.<domain>`.
     Bulk {
         /// The workspace's name.

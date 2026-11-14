@@ -841,6 +841,7 @@ test.describe("the detail page", () => {
       /Git/,
       /Environment/,
       /Shell init/,
+      /SSH agent/,
       /Ports/,
       /Settings/,
     ]);
@@ -1720,6 +1721,7 @@ test.describe("accessibility", () => {
       "git",
       "environment",
       "shell-init",
+      "ssh-agent",
       "ports",
       "settings",
     ]) {

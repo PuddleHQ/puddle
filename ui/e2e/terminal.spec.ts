@@ -137,27 +137,46 @@ test("the size follows the area: the host hears the new size after the window ch
   }).toPass();
 });
 
-test("keys the browser owns go to the shell: Ctrl+R, Ctrl+W and F5 do not reload or close the page", async ({
+test("keys the browser owns go to the shell: Ctrl+R, Ctrl+W and F5 are cancelled, so the page is not reloaded or closed", async ({
   page,
   backend,
 }) => {
   await open(page, backend);
   await start(page);
+  // The events themselves are kept (a capture listener on the window sees every key first), and
+  // read after the emulator and the terminal's key rule ran: `defaultPrevented` is then the state
+  // the browser acts on. (A test browser has no accelerators to run, so the cancel is what is
+  // measured, on the page's real handlers and the browser's own key events.)
   await page.evaluate(() => {
-    (window as unknown as { __kept: boolean }).__kept = true;
+    const w = window as unknown as {
+      __kept: boolean;
+      __keys: KeyboardEvent[];
+    };
+    w.__kept = true;
+    w.__keys = [];
+    window.addEventListener("keydown", (e) => w.__keys.push(e), true);
   });
-  for (const key of [
-    "Control+r",
-    "Control+w",
-    "Control+p",
-    "F5",
-    "F7",
-    "Tab",
-  ]) {
+  const cancelled = ["Control+r", "Control+w", "Control+p", "F5", "F7"];
+  for (const key of [...cancelled, "Tab"]) {
     await page.keyboard.press(key);
   }
   await run(page, "still here");
   await expect(screen(page)).toContainText("still here");
+  const seen = await page.evaluate(() =>
+    (window as unknown as { __keys: KeyboardEvent[] }).__keys.map((e) => ({
+      key: e.key,
+      ctrl: e.ctrlKey,
+      defaultPrevented: e.defaultPrevented,
+    })),
+  );
+  const prevented = (key: string, ctrl: boolean) =>
+    seen.find((k) => k.key.toLowerCase() === key && k.ctrl === ctrl)
+      ?.defaultPrevented;
+  expect(prevented("r", true), "Ctrl+R cancelled").toBe(true);
+  expect(prevented("w", true), "Ctrl+W cancelled").toBe(true);
+  expect(prevented("p", true), "Ctrl+P cancelled").toBe(true);
+  expect(prevented("f5", false), "F5 cancelled").toBe(true);
+  expect(prevented("f7", false), "F7 cancelled").toBe(true);
   await expect
     .poll(() =>
       page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept),

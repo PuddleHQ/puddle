@@ -111,6 +111,7 @@ pub async fn watch(group: u16, reports: tokio::sync::mpsc::Sender<AgentMessage>)
             continue;
         }
         if let Some(report) = reporter.refused(Instant::now(), dest, port) {
+            // a full report queue drops one refusal notice; the datagram itself was refused regardless
             let _ = reports.try_send(report);
         }
     }

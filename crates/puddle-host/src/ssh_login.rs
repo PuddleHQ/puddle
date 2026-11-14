@@ -170,11 +170,13 @@ fn private_file(seed: &[u8; 32], public: &[u8; 32]) -> Zeroizing<String> {
     body.extend_from_slice(&Zeroizing::new(ssh_string(&section)));
     let encoded = Zeroizing::new(STANDARD.encode(&*body));
     let mut text = Zeroizing::new(String::with_capacity(TEXT_CAPACITY));
+    // writing into a `String` cannot fail
     let _ = writeln!(text, "-----BEGIN {PEM_KIND}-----");
     for chunk in encoded.as_bytes().chunks(70) {
         text.push_str(std::str::from_utf8(chunk).unwrap_or_default());
         text.push('\n');
     }
+    // writing into a `String` cannot fail
     let _ = writeln!(text, "-----END {PEM_KIND}-----");
     text
 }

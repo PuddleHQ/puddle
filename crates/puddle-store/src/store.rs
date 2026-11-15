@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -34,6 +34,7 @@ use crate::users::UserId;
 
 mod admin;
 mod audit;
+mod audit_retention;
 mod devices;
 mod environment;
 #[cfg(test)]
@@ -57,6 +58,9 @@ use rows::{
     load_pending, load_rule, load_rules, pending_from_raw, raw_pending, stored_ts,
 };
 
+pub use audit_retention::{
+    AuditPrune, AuditStats, DEFAULT_AUDIT_RETENTION_DAYS, MAX_AUDIT_RETENTION_DAYS,
+};
 pub use interception::{
     DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits,
     WorkspaceInterception,
@@ -78,10 +82,10 @@ pub struct Limits {
     /// Most open pending rows per workspace (R-45). A request for a new host past it gets no
     /// row of its own and is answered like any waiting one; it is listed once room is made.
     pub max_open_rows: u64,
-    /// The audit is trimmed when its lines exceed this many bytes (R-26).
-    pub audit_max_bytes: u64,
-    /// A trim deletes the oldest records until this many bytes remain.
-    pub audit_trim_to_bytes: u64,
+    /// The audit is only warned about when its lines exceed this many bytes: nothing is deleted
+    /// for size, because a workspace could then flood out its own records. Records go by age
+    /// ([`Store::audit_retention_days`]).
+    pub audit_warn_bytes: u64,
     /// `connection` records per workspace per second (R-26).
     pub connection_records_per_second: u32,
     /// Most `connection` records written while a request waited (decision `pending`) kept per
@@ -91,11 +95,10 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        const MIB: u64 = 1024 * 1024;
+        const GIB: u64 = 1024 * 1024 * 1024;
         Self {
             max_open_rows: 1000,
-            audit_max_bytes: 256 * MIB,
-            audit_trim_to_bytes: 230 * MIB,
+            audit_warn_bytes: 2 * GIB,
             connection_records_per_second: 200,
             max_waiting_connection_records: 5000,
         }
@@ -162,8 +165,12 @@ pub enum AuditCursor {
 pub struct SweepReport {
     /// Expired rules deleted.
     pub rules_expired: u64,
-    /// Audit records deleted by the size cap.
-    pub audit_records_trimmed: u64,
+    /// Audit records deleted for being older than the retention.
+    pub audit_records_pruned: u64,
+    /// Bytes the database file gave back to the disk.
+    pub audit_file_shrunk_bytes: u64,
+    /// Whether the audit's lines are over [`Limits::audit_warn_bytes`].
+    pub audit_over_warn_size: bool,
     /// Records of waiting requests merged into summaries by the per-workspace cap.
     pub waiting_records_merged: u64,
 }
@@ -254,6 +261,9 @@ pub struct Store {
     clock: Arc<dyn Clock>,
     limits: Limits,
     events: Arc<dyn EventSink>,
+    /// When the sweeper last pruned the audit by age ([`audit_retention::NEVER`] before the
+    /// first pass).
+    last_audit_prune: AtomicU64,
 }
 
 impl std::fmt::Debug for Store {
@@ -294,6 +304,13 @@ impl Store {
     /// [`StoreError`] if the file can't be opened, is from a newer Puddle, or holds invalid rows.
     pub fn open(path: &Path, clock: Arc<dyn Clock>, limits: Limits) -> Result<Self, StoreError> {
         let conn = Connection::open(path)?;
+        // A new file frees its pages in small steps (`Store::shrink_audit_file`); the mode cannot
+        // be changed on a file that has tables without rebuilding it, so an older file is rebuilt
+        // once, when it first has space to give back.
+        let pages: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
+        if pages == 0 {
+            conn.pragma_update(None, "auto_vacuum", 2)?;
+        }
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "synchronous", "normal")?;
         Self::init(conn, clock, limits)
@@ -327,6 +344,7 @@ impl Store {
             clock,
             limits,
             events: Arc::new(NullSink),
+            last_audit_prune: AtomicU64::new(audit_retention::NEVER),
         })
     }
 

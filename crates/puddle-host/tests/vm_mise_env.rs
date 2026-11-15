@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use puddle_compute::{ExecRequest, Runtime as _, Sandbox as _};
 use puddle_e2e::lab::WebOptions;
-use puddle_types::WorkspaceId;
+use puddle_types::{GuestPath, WorkspaceId};
 use serde_json::json;
 use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, create_workspace_from, guest_as, start_vm_host_platform, web_internet};
@@ -54,10 +54,13 @@ async fn terminal(vm: &VmHost, ws: &WorkspaceId, name: &str, script: &str) -> (i
     (code, out)
 }
 
-/// A program run the way an editor or an agent does: no shell, the sandbox's own environment.
+/// A program run the way an editor or an agent does: no shell, the sandbox's own environment, in
+/// `dir` (mise reads the `mise.toml` of the folder it runs in and the ones above it, so the
+/// shims find a version only inside a checkout).
 async fn exec_as_agent(
     vm: &VmHost,
     ws: &WorkspaceId,
+    dir: &str,
     program: &str,
     args: &[&str],
 ) -> (i32, String) {
@@ -66,6 +69,7 @@ async fn exec_as_agent(
         .exec(
             ExecRequest::new(program, args.iter().copied())
                 .as_user("agent")
+                .in_dir(GuestPath::new(dir).unwrap())
                 .with_timeout(Duration::from_mins(2)),
         )
         .await
@@ -192,13 +196,14 @@ async fn vm_radar_mise_environment_reaches_every_way_into_the_guest_and_follows_
     )
     .await;
     assert!(code == 0 && out.contains("v22."), "{out}");
-    let (code, out) = exec_as_agent(&vm, &ws, "node", &["--version"]).await;
+    let (code, out) =
+        exec_as_agent(&vm, &ws, &format!("{mount}/repo"), "node", &["--version"]).await;
     assert!(code == 0 && out.contains("v22."), "a plain exec: {out}");
     let (code, out) = terminal(
         &vm,
         &ws,
         "sudo",
-        "sudo -E node --version && sudo node --version",
+        &format!("cd {mount}/repo && sudo -E node --version && sudo node --version"),
     )
     .await;
     assert!(code == 0 && out.matches("v22.").count() == 2, "sudo: {out}");

@@ -35,6 +35,7 @@ vi.mock("#lib/stores/live.svelte.ts", async (original) => {
 
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 import Page from "./+page.svelte";
 
 const { api, source, workspace } = h;
@@ -59,6 +60,16 @@ const box = () =>
 const button = (name: string) => screen.getByRole("button", { name });
 
 describe("the editor", () => {
+  it("holds an automatic reload while the box has unsaved text", async () => {
+    render(Page);
+    const field = await box();
+    expect(hasUnsavedEdits()).toBe(false);
+    await fireEvent.input(field, { target: { value: "export A=2\n" } });
+    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
+    await fireEvent.click(button("Discard changes"));
+    await waitFor(() => expect(hasUnsavedEdits()).toBe(false));
+  });
+
   it("shows the saved script and keeps Save for a change", async () => {
     render(Page);
     expect(await box()).toHaveValue("export A=1\n");

@@ -37,6 +37,7 @@ pub mod host_header;
 pub mod keys;
 pub mod microsoft;
 mod proxy;
+pub mod remote_label;
 mod server;
 pub mod windows;
 

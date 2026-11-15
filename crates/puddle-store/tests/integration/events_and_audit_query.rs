@@ -374,18 +374,16 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
 }
 
 #[test]
-fn trimming_the_audit_emits_for_its_trim_record() {
-    let (_, sink, store) = fixture(Limits {
-        audit_max_bytes: 400,
-        audit_trim_to_bytes: 200,
-        ..Limits::default()
-    });
+fn pruning_the_audit_emits_for_its_trim_record() {
+    let (clock, sink, store) = fixture(Limits::default());
+    store.set_audit_retention_days(1).unwrap();
     for i in 0..6 {
         ask(&store, "a", &format!("h{i}.example"));
     }
+    clock.advance(2 * 24 * 60 * 60 * 1000);
     drop(sink.take());
     let report = store.sweep().unwrap();
-    assert!(report.audit_records_trimmed > 0);
+    assert!(report.audit_records_pruned > 0);
     assert_eq!(
         sink.take().last(),
         Some(&Event::AuditAppended {

@@ -65,3 +65,53 @@ async fn a_sweeper_whose_task_was_cancelled_says_so_when_shut_down() {
         "{lines:?}"
     );
 }
+
+#[tokio::test]
+async fn a_log_over_its_warning_size_is_a_problem_that_deletes_nothing_until_it_shrinks() {
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let store = Arc::new(
+        Store::open_in_memory(
+            clock.clone(),
+            Limits {
+                audit_warn_bytes: 200,
+                ..Limits::default()
+            },
+        )
+        .unwrap(),
+    );
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&NewRule {
+            scope: Scope::Global,
+            pattern: Pattern::parse("kept.example").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let records = store.audit_lines(0, 100).unwrap().len();
+    assert!(store.audit_bytes().unwrap() > 200);
+    let problems = Arc::new(Problems::new(Arc::new(NullSink)));
+    let sweeper =
+        Sweeper::spawn_reporting(store.clone(), Duration::from_millis(20), problems.clone());
+    eventually("the size problem", Duration::from_secs(5), || {
+        !problems.list().is_empty()
+    })
+    .await;
+    let problem = problems.list().remove(0);
+    assert_eq!(problem.key, AUDIT_SIZE_PROBLEM);
+    assert!(problem.detail.contains("90 days"), "{problem:?}");
+    assert_eq!(
+        store.audit_lines(0, 100).unwrap().len(),
+        records,
+        "nothing was deleted"
+    );
+    // Once the records are past their days they go, and the problem goes with them.
+    clock.advance(91 * 24 * 60 * 60 * 1000);
+    store.set_audit_retention_days(90).unwrap();
+    eventually("the problem to end", Duration::from_secs(5), || {
+        problems.list().is_empty()
+    })
+    .await;
+    sweeper.shutdown().await;
+}

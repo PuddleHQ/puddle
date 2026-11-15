@@ -64,14 +64,15 @@ pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use store::{
-    AllUsers, AuditCursor, AuditFilter, DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS,
-    InterceptionSettings, LearnedLimits, LearnedRow, Limits, MAX_OPEN_SSH_AGENT_ASKS,
-    MAX_REQUEST_RULES, MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, NewRequestRule, NewWorkspaceOp,
-    PinnedPort, RequestRule, RuleSetEntryInfo, RuleSetInfo, SshAgentAnswer, SshAgentAsk,
-    SshAgentAskStart, SshAgentAskState, SshAgentHost, Store, SweepReport, SystemHost, SystemPlan,
-    UserStore, WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
+    AllUsers, AuditCursor, AuditFilter, AuditPrune, AuditStats, DEFAULT_AUDIT_RETENTION_DAYS,
+    DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits, LearnedRow,
+    Limits, MAX_AUDIT_RETENTION_DAYS, MAX_OPEN_SSH_AGENT_ASKS, MAX_REQUEST_RULES,
+    MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, NewRequestRule, NewWorkspaceOp, PinnedPort,
+    RequestRule, RuleSetEntryInfo, RuleSetInfo, SshAgentAnswer, SshAgentAsk, SshAgentAskStart,
+    SshAgentAskState, SshAgentHost, Store, SweepReport, SystemHost, SystemPlan, UserStore,
+    WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
 };
-pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
+pub use sweeper::{AUDIT_SIZE_PROBLEM, DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use users::{
     Device, DeviceId, DeviceSession, MAX_DEVICE_NAME_CHARS, MAX_USER_NAME_CHARS, Role,
     SignInMethod, User, UserId, UserName, device_name,

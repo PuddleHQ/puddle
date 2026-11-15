@@ -35,6 +35,8 @@ describe("until", () => {
   });
 
   it("names what it waited for when the time runs out", async () => {
-    await expect(until("the page", () => false, 20, 1)).rejects.toThrow(/waiting for the page/);
+    await expect(until("the page", () => false, 20, 1)).rejects.toThrow(
+      /waiting for the page/,
+    );
   });
 });

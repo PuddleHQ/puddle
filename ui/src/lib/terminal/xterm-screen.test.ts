@@ -239,7 +239,11 @@ describe("links", () => {
     const handler = screen.term.options.linkHandler;
     expect(handler?.hover).toBeTypeOf("function");
     expect(() => {
-      handler?.hover?.(new MouseEvent("mousemove"), "https://a.b/", {} as never);
+      handler?.hover?.(
+        new MouseEvent("mousemove"),
+        "https://a.b/",
+        {} as never,
+      );
       handler?.leave?.(new MouseEvent("mouseout"), "https://a.b/", {} as never);
       screen.onLeave();
     }).not.toThrow();

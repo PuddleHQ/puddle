@@ -11,6 +11,7 @@ export type Layer = S["SettingsLayer"];
 export type Ui = S["UiPrefs"];
 export type VsCodeServer = S["VsCodeServer"];
 export type GlobalTools = S["GlobalTools"];
+export type Limits = S["Limits"];
 export type Consent = S["Consent"];
 export type ServerChoice = NonNullable<VsCodeServer["server"]>;
 export type CloseBehaviour = NonNullable<Ui["close_behaviour"]>;
@@ -142,6 +143,7 @@ export function bodyFrom(
     server?: Partial<VsCodeServer>;
     ui?: Partial<Ui>;
     tools?: Partial<GlobalTools>;
+    limits?: Partial<Limits>;
   } = {},
 ): GlobalBody {
   return {
@@ -149,6 +151,7 @@ export function bodyFrom(
     vscode_server: { ...view.vscode_server, ...patch.server },
     ui: { ...view.ui, ...patch.ui },
     tools: { ...view.tools, ...patch.tools },
+    limits: { ...view.limits, ...patch.limits },
   };
 }
 

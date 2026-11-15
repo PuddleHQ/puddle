@@ -93,7 +93,7 @@ impl EffectiveToggles {
 }
 
 impl Effective {
-    /// Puddle's built-in defaults: 8 GiB, one vCPU, every local toggle off, wildcards don't reach
+    /// Puddle's built-in defaults: 8 GiB, four vCPUs (see [`resolve_on_host`] for small computers), every local toggle off, wildcards don't reach
     /// local addresses, 300 s grace, zoom hotkeys on, clipboard reads
     /// ask.
     pub const DEFAULTS: Self = Self {
@@ -136,6 +136,38 @@ fn pick<T: Copy>(workspace: Option<T>, global: Option<T>, builtin: Resolved<T>) 
         },
         (None, None) => builtin,
     }
+}
+
+/// The logical cores of this computer (one when the system will not say).
+#[must_use]
+pub fn host_cpu_count() -> u32 {
+    std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(u32::MAX))
+}
+
+/// [`resolve`] for a computer with `host_cores` logical cores: the built-in CPU default is four
+/// or half the cores (at least one), and the count, whichever level set it, never exceeds the
+/// global maximum ([`crate::Limits::max_cpus_on`]).
+///
+/// ```
+/// use puddle_settings::{GlobalSettings, Source, resolve_on_host};
+/// let global = GlobalSettings::default();
+/// let small = resolve_on_host(&global, None, 4);
+/// assert_eq!((small.cpus.value.get(), small.cpus.source), (2, Source::Default));
+/// assert_eq!(resolve_on_host(&global, None, 16).cpus.value.get(), 4);
+/// ```
+#[must_use]
+pub fn resolve_on_host(
+    global: &GlobalSettings,
+    workspace: Option<&WorkspaceSettings>,
+    host_cores: u32,
+) -> Effective {
+    let mut effective = resolve(global, workspace);
+    let own = workspace.and_then(|w| w.overrides.cpus);
+    let builtin = default(CpuCount::default_for_host(host_cores));
+    let mut cpus = pick(own, global.workspace_defaults.cpus, builtin);
+    cpus.value = cpus.value.min(global.limits.max_cpus_on(host_cores));
+    effective.cpus = cpus;
+    effective
 }
 
 /// The settings `workspace` runs with: its override if set, else the global value if set, else

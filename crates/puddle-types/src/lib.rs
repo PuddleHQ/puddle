@@ -7,7 +7,7 @@
 //! | [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`], [`CheckoutDir`] | validated names; workspace id, sandbox and volume names are DNS labels |
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
 //! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: Puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
-//! | [`CpuCount`] | guest vCPU count: 1 to 32, default 1 (the setting is in `puddle-settings`) |
+//! | [`CpuCount`] | guest vCPU count: at least 1, default 4 or half the cores (the setting and its maximum are in `puddle-settings`) |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
 //! | [`Problem`], [`Problems`] | what Puddle did on its own that failed, listed until its cause goes away |
 //! | [`WorkspaceStatus`], [`Event`], [`EventSink`] | workspace states and the user-facing event stream (incl. [`Event::OomKill`]) |

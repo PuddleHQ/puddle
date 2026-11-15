@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
+use puddle_types::CpuCount;
 
 #[test]
 fn direct_ssh_follows_the_override_then_the_global_default() {
@@ -140,4 +141,56 @@ fn the_company_network_is_off_until_a_level_turns_it_on() {
             .get(c)
             .value
     );
+}
+
+fn cpus(n: u32) -> CpuCount {
+    CpuCount::new(n).unwrap()
+}
+
+#[test]
+fn the_built_in_cpu_default_is_four_or_half_the_cores() {
+    let global = GlobalSettings::default();
+    for (cores, want) in [(1, 1), (2, 1), (4, 2), (8, 4), (32, 4)] {
+        let e = resolve_on_host(&global, None, cores);
+        assert_eq!(e.cpus.value.get(), want, "{cores} cores");
+        assert_eq!(e.cpus.source, Source::Default);
+    }
+}
+
+#[test]
+fn a_chosen_cpu_count_wins_over_the_default_and_is_not_capped_at_32() {
+    let mut global = GlobalSettings::default();
+    global.workspace_defaults.cpus = Some(cpus(6));
+    let mut own = WorkspaceSettings::default();
+    assert_eq!(resolve_on_host(&global, Some(&own), 16).cpus.value.get(), 6);
+    own.overrides.cpus = Some(cpus(48));
+    let e = resolve_on_host(&global, Some(&own), 64);
+    assert_eq!((e.cpus.value.get(), e.cpus.source), (48, Source::Workspace));
+}
+
+#[test]
+fn the_maximum_defaults_to_the_cores_and_lowers_any_level_but_keeps_its_source() {
+    let mut global = GlobalSettings::default();
+    let mut own = WorkspaceSettings::default();
+    own.overrides.cpus = Some(cpus(12));
+    assert_eq!(global.limits.max_cpus_on(8).get(), 8);
+    let e = resolve_on_host(&global, Some(&own), 8);
+    assert_eq!((e.cpus.value.get(), e.cpus.source), (8, Source::Workspace));
+    assert_eq!(
+        resolve_on_host(&global, Some(&own), 16).cpus.value.get(),
+        12
+    );
+
+    global.limits.max_cpus = Some(cpus(2));
+    let e = resolve_on_host(&global, Some(&own), 64);
+    assert_eq!(e.cpus.value.get(), 2, "a set maximum beats the cores");
+    assert_eq!(resolve_on_host(&global, None, 64).cpus.value.get(), 2);
+
+    global.limits.max_cpus = Some(cpus(100));
+    assert_eq!(resolve_on_host(&global, Some(&own), 8).cpus.value.get(), 12);
+}
+
+#[test]
+fn this_computers_core_count_is_at_least_one() {
+    assert!(host_cpu_count() >= 1);
 }

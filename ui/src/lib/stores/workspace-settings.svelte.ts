@@ -23,6 +23,8 @@ export class WorkspaceSettings {
   tools = $state.raw<Tools>({ mise: null, repo_code: null });
   /** The global mise switch: while it is off the workspace's switches are hidden and do nothing. */
   globalMise = $state(true);
+  /** The most CPUs a workspace may have on this computer (the global maximum); 1 until loaded. */
+  maxCpus = $state(1);
   /** Fields in the stored document that this Puddle doesn't know. */
   unknownFields = $state.raw<string[]>([]);
   /** What a workspace with no overrides gets: the global values. */
@@ -58,6 +60,7 @@ export class WorkspaceSettings {
         this.overrides = mine.data.overrides;
         this.tools = mine.data.tools;
         this.globalMise = global.data.tools.mise ?? true;
+        this.maxCpus = global.data.effective_limits.max_cpus;
         this.effective = mine.data.effective;
         this.unknownFields = mine.data.unknown_fields;
         this.global = global.data.effective;

@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The guest CPU count the settings accept. The API does not publish the limits, so they are
-// written here; `crates/puddle-e2e/tests/integration/ui_cpu_limits.rs` fails when they differ from the host's.
+// The guest CPU count the settings accept. The host publishes the upper bound (the global maximum,
+// `effective_limits.max_cpus`), so only the smallest count and the default are written here;
+// `crates/puddle-e2e/tests/integration/ui_cpu_limits.rs` fails when they differ from the host's.
 
 export const CPUS_MIN = 1;
-export const CPUS_MAX = 32;
 
-/** What a workspace has without any setting; the host's default count. */
-export const CPUS_DEFAULT = 1;
+/** The host's default on a computer with eight or more logical cores; a smaller one gets half its cores. */
+export const CPUS_DEFAULT = 4;
 
-/** The counts to choose from, lowest first. */
-export const CPU_COUNTS: readonly number[] = Array.from(
-  { length: CPUS_MAX - CPUS_MIN + 1 },
-  (_, i) => CPUS_MIN + i,
-);
+/** The counts to choose from, lowest first: 1 up to `max`, and `keep` when it is above that. */
+export function cpuCounts(max: number, keep: number | null = null): number[] {
+  const top = Math.max(CPUS_MIN, max);
+  const counts = Array.from(
+    { length: top - CPUS_MIN + 1 },
+    (_, i) => CPUS_MIN + i,
+  );
+  return keep !== null && keep > top ? [...counts, keep] : counts;
+}
 
 export const cpuLabel = (count: number): string =>
   count === 1 ? "1 CPU" : `${count} CPUs`;

@@ -152,6 +152,10 @@ export class FakeWorkspaces {
   /** Unknown fields per workspace document. */
   unknown: Record<string, string[]> = {};
   globalMemory = 8192;
+  /** The computer's logical cores, the most CPUs a workspace may have here. */
+  hostCpus = 16;
+  /** What a workspace without a count gets. */
+  defaultCpus = 4;
   check: DeleteCheck | null = null;
   calls: string[] = [];
   bodies: unknown[] = [];
@@ -255,7 +259,10 @@ export class FakeWorkspaces {
         o.memory === null
           ? resolved(this.globalMemory, "global")
           : resolved(o.memory, "workspace"),
-      cpus: resolved(o.cpus ?? 1, o.cpus === null ? "default" : "workspace"),
+      cpus: resolved(
+        o.cpus ?? this.defaultCpus,
+        o.cpus === null ? "default" : "workspace",
+      ),
       reconnection_grace: resolved(300, "default"),
       wildcards_reach_local: resolved(false, "default"),
       zoom_hotkeys: resolved(true, "default"),
@@ -333,6 +340,12 @@ export class FakeWorkspaces {
           unknown_fields: [],
           vscode_server: {},
           tools: { mise: this.globalMise },
+          limits: { max_cpus: null },
+          effective_limits: {
+            max_cpus: this.hostCpus,
+            host_cpus: this.hostCpus,
+            default_cpus: this.defaultCpus,
+          },
         });
       case "/api/settings/workspaces/{workspace}": {
         const key = String(id);

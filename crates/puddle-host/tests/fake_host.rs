@@ -3901,7 +3901,9 @@ async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_
         .request(
             "PUT",
             "/api/settings",
-            Some(&json!({"workspace_defaults": {"cpus": 2}}).to_string()),
+            Some(
+                &json!({"workspace_defaults": {"cpus": 2}, "limits": {"max_cpus": 8}}).to_string(),
+            ),
             true,
         )
         .await;
@@ -3928,6 +3930,28 @@ async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_
     api.post("/api/workspaces/acme/start", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(online_cpus(&rig, "acme").await, "0-3", "its own override");
+
+    // Lowering the global maximum under a stored count lowers the next start.
+    let lowered = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(
+                &json!({"workspace_defaults": {"cpus": 2}, "limits": {"max_cpus": 2}}).to_string(),
+            ),
+            true,
+        )
+        .await;
+    assert_eq!(lowered.status, 200, "{}", lowered.body);
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        online_cpus(&rig, "acme").await,
+        "0-1",
+        "capped by the maximum"
+    );
     host.shutdown().await;
 }
 

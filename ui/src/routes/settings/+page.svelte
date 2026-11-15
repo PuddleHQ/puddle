@@ -23,13 +23,14 @@
     LOCAL_LABELS,
     type LocalCategory,
   } from "#lib/decision/local-labels.ts";
-  import { CPU_COUNTS, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
+  import { cpuCounts, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import {
     EMPTY_DRAFT,
     isDirty,
     restartNames,
     RESTART_NOTE,
     savePatch,
+    setLimits,
     setLayer,
     setServer,
     setToggle,
@@ -745,10 +746,43 @@
             onchange={(e) =>
               editLayer("cpus", Number(e.currentTarget.value), eff.cpus.value)}
           >
-            {#each CPU_COUNTS as count (count)}
+            {#each cpuCounts(view.effective_limits.max_cpus, eff.cpus.value) as count (count)}
               <option value={String(count)}>{cpuLabel(count)}</option>
             {/each}
           </select>
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-max-cpus">Most CPUs a workspace may have</label>
+            <p class="desc" id="set-max-cpus-desc">
+              Leave empty to allow as many as this computer has ({view
+                .effective_limits.host_cpus}). The default and every workspace's
+              own count stay within it.
+            </p>
+          </div>
+          <input
+            id="set-max-cpus"
+            type="number"
+            min="1"
+            max="255"
+            step="1"
+            placeholder={String(view.effective_limits.host_cpus)}
+            aria-describedby="set-max-cpus-desc"
+            value={("max_cpus" in draft.limits
+              ? draft.limits.max_cpus
+              : view.limits.max_cpus) ?? ""}
+            onchange={(e) => {
+              const text = e.currentTarget.value.trim();
+              edit(
+                setLimits(
+                  draft,
+                  "max_cpus",
+                  text === "" ? null : Number(text),
+                  view.limits.max_cpus,
+                ),
+              );
+            }}
+          />
         </div>
         <div class="setting">
           <div class="grow">

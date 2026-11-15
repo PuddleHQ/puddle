@@ -5,10 +5,11 @@
 // Operations finish at once unless a test holds them (`hold_workspaces`) to look at the busy
 // state; the page clock is the fixture's.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
-import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
+import { cpuLabel, CPUS_MIN } from "../src/lib/settings/cpus.ts";
 import { type Backend, expect, test } from "./fixture";
 import {
   axeStops,
+  cpuLimits,
   RECONNECT_WAIT_MS,
   watchCsp,
   expectNoAxeViolations,
@@ -1258,18 +1259,23 @@ test.describe("the settings tab", () => {
     ).toBeNull();
   });
 
-  test("cpus: choose a count from the keyboard, it is kept, says a running workspace keeps its count, and the API takes 1 to 32 only", async ({
+  test("cpus: choose a count from the keyboard, it is kept, says a running workspace keeps its count, and the API takes 1 up to the computer's cores only", async ({
     page,
     request,
     backend,
   }) => {
+    const limits = await cpuLimits(request, backend.token);
+    // The arrow key below picks the first count; a count of one would not change the select.
+    test.skip(limits.max_cpus < 2, "a one-core computer");
     await openDetail(page, backend, "web-shop", "settings");
     const cpus = page.getByLabel("CPUs for this workspace");
     await expect(cpus).toHaveValue("");
     await expect(cpus.locator("option").first()).toHaveText(
-      "Use the global default (1 CPU)",
+      `Use the global default (${cpuLabel(limits.default_cpus)})`,
     );
-    await expect(cpus.locator("option")).toHaveCount(CPUS_MAX - CPUS_MIN + 2);
+    await expect(cpus.locator("option")).toHaveCount(
+      limits.max_cpus - CPUS_MIN + 2,
+    );
     await expect(
       page.getByText(/A running workspace keeps the count it started with/),
     ).toBeVisible();
@@ -1310,9 +1316,9 @@ test.describe("the settings tab", () => {
     // Each put is an action whose answer is the thing under test, so it is made once, not polled.
     const accepted = {
       belowMin: await put(CPUS_MIN - 1),
-      aboveMax: await put(CPUS_MAX + 1),
+      aboveMax: await put(limits.max_cpus + 1),
       min: await put(CPUS_MIN),
-      max: await put(CPUS_MAX),
+      max: await put(limits.max_cpus),
     };
     expect(accepted).toEqual({
       belowMin: false,

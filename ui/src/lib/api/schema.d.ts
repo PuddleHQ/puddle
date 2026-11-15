@@ -2528,7 +2528,7 @@ export interface components {
              *     a value. Records written before it existed, and connections of a workspace that turned
              *     the warning off, read as empty.
              */
-            answer_credentials: string[];
+            answer_credentials: components["schemas"]["UnknownTokenKind"][];
             /** @description The credential binding, by id. */
             binding_id: string | null;
             /**
@@ -2558,7 +2558,7 @@ export interface components {
              *     `azure_devops_token` or `git_authorization`. Never a value. Records written before it
              *     existed, and connections of a workspace that turned the warning off, read as empty.
              */
-            foreign_credentials: string[];
+            foreign_credentials: components["schemas"]["ForeignCredentialKind"][];
             /** @description The requested host. */
             host: string | null;
             /** @description Whether a credential was injected. */
@@ -2582,7 +2582,12 @@ export interface components {
              * @description The requested port.
              */
             port: number | null;
-            /** @description Why: `rule`, `no_rule`, or a block reason. */
+            /**
+             * @description Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with
+             *     a `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a
+             *     `FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the
+             *     pass-through (open-ended). A reader keeps a string it does not know.
+             */
             reason: string;
             /**
              * @description The first address of the answer that an IP rule denied, else the first the address
@@ -2590,7 +2595,10 @@ export interface components {
              *     before it existed.
              */
             refused_address: string | null;
-            /** @description Why `refused_address` was refused: a reason code such as `ip_rule` or `toggle:private`. */
+            /**
+             * @description Why `refused_address` was refused: a `reason` code such as `ip_rule` or
+             *     `toggle:private`.
+             */
             refused_reason: string | null;
             /**
              * Format: int64
@@ -2616,11 +2624,7 @@ export interface components {
              *     before it existed read as empty.
              */
             scrubbed_stand_ins: string[];
-            /**
-             * @description The signal that put the destination in the company network: `pac_direct`,
-             *     `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.
-             */
-            signal: string | null;
+            signal: components["schemas"]["CompanySignal"] | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -3120,6 +3124,12 @@ export interface components {
             /** @description A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active. */
             private_access_client: boolean;
         };
+        /**
+         * @description Which host signal put an address in [`LocalCategory::CompanyNetwork`]. The `code` is stored
+         *     in the audit's `signal` field, so the codes are stored format.
+         * @enum {string}
+         */
+        CompanySignal: "pac_direct" | "dns_suffix" | "private_access_cgnat" | "vpn_route";
         /**
          * @description How the proxy handled a connection.
          * @enum {string}
@@ -3864,6 +3874,12 @@ export interface components {
             /** @enum {string} */
             type: "disk_space_changed";
         };
+        /**
+         * @description Why one of Puddle's own requests (a repository listing, an image pull) did not work: the code
+         *     after `puddle_request_failed:`.
+         * @enum {string}
+         */
+        FailedRequestCode: "unreachable" | "tls" | "timeout" | "too_large" | "protocol" | "bad_token" | "host_refused" | "rate_limited" | "host_error";
         /** @description What a rule set is painted with: one solid colour today. A gradient would be another `kind`. */
         Fill: {
             /** @description The colour. */
@@ -4630,13 +4646,7 @@ export interface components {
              */
             attempts: number;
             blocked_by: components["schemas"]["LocalCategory"] | null;
-            /**
-             * @description For an open request to an IP literal on the company network, whether or not its toggle is
-             *     on: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or
-             *     `vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to
-             *     tell a company address from the plain range it also falls in.
-             */
-            company_signal: string | null;
+            company_signal: components["schemas"]["CompanySignal"] | null;
             /**
              * Format: int64
              * @description Epoch ms it was decided or expired.
@@ -4885,6 +4895,17 @@ export interface components {
             /** @description The pull proxy reaches the internet through the company proxy setup above. */
             via_upstream: boolean;
         };
+        /**
+         * @description The reason codes that stand alone, without a prefix. Serialises as its [`ReasonCode::as_str`].
+         * @enum {string}
+         */
+        ReasonCode: "rule" | "no_rule" | "suppressed" | "merged" | "request_rule" | "request_rule_port" | "puddle_endpoint" | "ssh_unsupported" | "udp_unsupported" | "local_address" | "settings_unreadable" | "policy_unavailable" | "puddle_request" | "pki_distribution_point" | "sni_mismatch" | "guest_tls_rejected" | "certificate_unavailable" | "connection_limit" | "ip_rule" | "push_denied" | "pull_denied" | "bad_git_path" | "ssh_command_unsupported" | "ssh_channel_refused" | "credential_rejected" | "credential_unavailable" | "credential_ambiguous" | "git_settings_unavailable" | "login_not_kept" | "token_endpoint_spliced" | "peek_refused" | "body_too_large" | "answer_encoding" | "answer_withheld" | "bad_request" | "misdirected_host" | "expectation_unsupported" | "head_too_large" | "request_timeout" | "protocol_unsupported" | "stream_limit";
+        /**
+         * @description The text before the colon of a reason that carries a code after it. Serialises as its
+         *     [`ReasonPrefix::as_str`], without the colon.
+         * @enum {string}
+         */
+        ReasonPrefix: "toggle" | "limit" | "pass_through" | "puddle_request_failed";
         /**
          * @description Why a checkout's remote address is not shown as it stands.
          * @enum {string}

@@ -6,6 +6,7 @@
 import type { components } from "#lib/api/schema.d.ts";
 
 export type LocalCategory = components["schemas"]["LocalCategory"];
+type CompanySignal = components["schemas"]["CompanySignal"];
 
 export const LOCAL_LABELS: Record<LocalCategory, string> = {
   loopback: "This computer (loopback)",
@@ -17,7 +18,7 @@ export const LOCAL_LABELS: Record<LocalCategory, string> = {
 };
 
 /** What put an address on the company network, in words (the wire carries the code). */
-export const COMPANY_SIGNAL_TEXT: Record<string, string> = {
+export const COMPANY_SIGNAL_TEXT: Record<CompanySignal, string> = {
   pac_direct: "your company's proxy script sends it straight out",
   dns_suffix: "its name ends in one of your company's DNS suffixes",
   private_access_cgnat:
@@ -25,7 +26,13 @@ export const COMPANY_SIGNAL_TEXT: Record<string, string> = {
   vpn_route: "this computer reaches it through a VPN connection",
 };
 
+function isCompanySignal(signal: string): signal is CompanySignal {
+  return Object.hasOwn(COMPANY_SIGNAL_TEXT, signal);
+}
+
 /** The reason, or `null` for a signal this version doesn't know (shown as no reason at all). */
 export function companySignalText(signal: string | null): string | null {
-  return signal === null ? null : (COMPANY_SIGNAL_TEXT[signal] ?? null);
+  return signal !== null && isCompanySignal(signal)
+    ? COMPANY_SIGNAL_TEXT[signal]
+    : null;
 }

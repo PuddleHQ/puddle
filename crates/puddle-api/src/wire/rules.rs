@@ -142,7 +142,7 @@ pub struct PendingRequest {
     /// on: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or
     /// `vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to
     /// tell a company address from the plain range it also falls in.
-    #[schema(required = true)]
+    #[schema(required = true, value_type = Option<puddle_types::CompanySignal>)]
     pub company_signal: Option<String>,
 }
 

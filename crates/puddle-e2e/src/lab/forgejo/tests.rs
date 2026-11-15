@@ -121,7 +121,7 @@ fn a_call_to_a_server_that_is_not_there_panics_without_the_token() {
 #[test]
 fn the_host_keys_are_the_sorted_public_key_files_and_none_without_a_data_folder() {
     let fixture = unreachable_fixture();
-    assert!(fixture.ssh_host_keys().is_empty());
+    assert_eq!(fixture.ssh_host_keys(), [] as [String; 0]);
     let ssh = fixture.scratch().join("data/ssh");
     fs::create_dir_all(ssh.join("unreadable.pub")).unwrap();
     fs::write(ssh.join("b.pub"), "ssh-rsa BBB host\n").unwrap();

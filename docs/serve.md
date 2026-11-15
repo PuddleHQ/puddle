@@ -383,7 +383,9 @@ the next start, with the flag, may still pick the file vault.
 The file vault's key is read from, in order, a credential the service passes (`puddle-vault-key`), a key
 sealed by `systemd-creds --user` in `puddle/vault-key.cred` in your config folder, and a key file
 (`puddle/vault.key`, owner-only) in your config folder, which Puddle makes at the first start when sealing
-is not possible. `puddle doctor` names the store and where its key comes from. A vault whose key is
+is not possible (systemd older than 256, or the service refuses). When `systemd-creds` is only slow, Puddle
+tries sealing three times and then leaves the first start with a problem that says to restart when the
+computer is idle; it makes no key file then. `puddle doctor` names the store and where its key comes from. A vault whose key is
 missing or does not open leaves Puddle running with a problem that says what to do; saving a secret then
 fails.
 

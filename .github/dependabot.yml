@@ -100,28 +100,3 @@ updates:
     groups:
       lab-proxies:
         patterns: ["*"]
-  # Frozen on purpose: ci/login-tools-old pins Claude Code 2.1.5, the last release whose login ends on
-  # console.anthropic.com, and the CI install step checks that exact version, because the profile still
-  # has to capture that login. Nothing watches this directory automatically, yet Dependabot still
-  # opened a bump here (its security updates run without an entry in this file).
-  # `open-pull-requests-limit: 0` turns off both version and security update PRs for it.
-  #
-  # Open alerts (all on @anthropic-ai/claude-code 2.1.5, first patched release in brackets):
-  # #33 low symlink deny bypass [2.1.7], #34 high workspace trust dialog bypass [2.1.53], #35 medium
-  # Windows managed-settings loading [2.1.75], #36 high sandbox symlink escape [2.1.64], #37 medium
-  # WebFetch to huggingface.co [2.1.163], #38 high plugin hash pin bypass [2.1.179], #39 high macOS
-  # Edit tool race [2.1.251]. Why they do not reach us: the one test that runs it
-  # (`claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only`, Linux CI only) starts the
-  # login screen, pastes a fake code and stops at "Login successful". It never opens a repository,
-  # starts an agent session, runs a tool, installs a plugin or fetches a page, and it runs with a
-  # cleared environment, a temporary home and fake hosts. Nothing here installs the package for use
-  # outside CI, and the install runs with `--ignore-scripts` (the package has none to run).
-  # Remove the fixture (the install step, this entry, the directory and the test) when Puddle no
-  # longer supports the console-host login, or when a release that fixes these advisories still
-  # logs in on that host; then Dependabot's alerts for the directory close on their own.
-  - package-ecosystem: npm
-    directory: /ci/login-tools-old
-    target-branch: develop
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 0

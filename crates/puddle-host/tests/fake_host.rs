@@ -12455,6 +12455,51 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     assert!(!detail.contains("docker"), "{detail}");
 }
 
+/// Setting a start folder on a running workspace replaces the multi-root window at once: the plan
+/// the guest gets no longer holds the file, and when the next attach cannot list the checkouts the
+/// editor still opens the folder, not the file the folder replaced.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_folder_set_on_a_running_workspace_drops_the_multi_root_file_before_any_attach() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let attach = || async {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": "desktop"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+        rig.launcher
+            .targets
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap()
+    };
+    let file = ".puddle/editor/acme.code-workspace";
+    assert!(attach().await.is_workspace_file);
+
+    let reply = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let plan = last_plan(&rig);
+    assert!(!plan.contains(file), "{plan}");
+
+    rig.guest.fail_listing.store(true, Ordering::SeqCst);
+    let target = attach().await;
+    assert_eq!(target.path, "/workspaces/acme/api");
+    assert!(!target.is_workspace_file);
+    host.shutdown().await;
+}
+
 /// A workspace that runs, with nothing else going on in its guest.
 async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, Api) {
     let host = rig.start().await;

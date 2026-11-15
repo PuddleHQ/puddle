@@ -493,11 +493,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let replanned = GuestState {
             start_folder: record.start_folder.clone(),
             // Opening a folder replaces the multi-root window; the next attach writes it again.
-            editor_file: record
-                .start_folder
-                .as_ref()
-                .and(None)
-                .or(guest.editor_file.clone()),
+            editor_file: if record.start_folder.is_some() {
+                None
+            } else {
+                guest.editor_file.clone()
+            },
             ..guest
         };
         let key = problem_key("start-folder-file", name);

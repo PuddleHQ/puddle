@@ -569,7 +569,7 @@ impl Guest {
         dirs.sort();
         let mut out = String::new();
         for dir in dirs {
-            out.push_str(&format!("C\t{dir}\t\t\t\t0\n"));
+            writeln!(out, "C\t{dir}\t\t\t\t0").unwrap();
         }
         out.push_str("O\t0\nD\n");
         ExecOutput::new(0, out, "")

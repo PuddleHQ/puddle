@@ -299,6 +299,29 @@ async fn the_empty_service_says_it_is_unavailable() {
 }
 
 #[tokio::test]
+async fn a_service_that_keeps_no_workspace_disks_lists_none_and_restores_none() {
+    let id = WorkspaceId::new("w").unwrap();
+    assert_eq!(NoWorkspaces.orphan_volumes().await.unwrap(), Vec::new());
+    let restored = NoWorkspaces.restore_orphan(&id, None, &NoGitSetup).await;
+    assert!(
+        matches!(restored, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no workspace disks")),
+        "{restored:?}"
+    );
+    // The default for a settings change is to do nothing, and to finish.
+    NoWorkspaces.settings_changed().await;
+}
+
+#[tokio::test]
+async fn the_empty_service_refuses_a_start_folder_change() {
+    let id = WorkspaceId::new("w").unwrap();
+    let changed = NoWorkspaces.set_start_folder(&id, None).await;
+    assert!(
+        matches!(changed, Err(WorkspaceError::Unavailable(_))),
+        "{changed:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() {
     let id = WorkspaceId::new("w").unwrap();
     let listed = NoWorkspaces.kept_logins(&id).await;

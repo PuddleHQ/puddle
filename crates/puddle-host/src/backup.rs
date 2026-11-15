@@ -194,19 +194,23 @@ impl puddle_api::BackupService for DataFolderBackup {
     > {
         let paths = self.paths.clone();
         Box::pin(async move {
-            let made = tokio::task::spawn_blocking(move || backup_archive(&paths))
-                .await
-                .map_err(|e| {
-                    puddle_api::BackupServiceError::Failed(format!("the backup stopped: {e}"))
-                })?;
-            let archive =
-                made.map_err(|e| puddle_api::BackupServiceError::Failed(e.to_string()))?;
+            let archive = blocking(move || backup_archive(&paths)).await?;
             Ok(puddle_api::BackupArchive::new(
                 archive.size,
                 tokio::fs::File::from_std(archive.file),
             ))
         })
     }
+}
+
+/// Runs `job` on a blocking thread; a job that fails or panics is a failed backup that says why.
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, BackupError> + Send + 'static,
+) -> Result<T, puddle_api::BackupServiceError> {
+    let made = tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|e| puddle_api::BackupServiceError::Failed(format!("the backup stopped: {e}")))?;
+    made.map_err(|e| puddle_api::BackupServiceError::Failed(e.to_string()))
 }
 
 /// A backup packed into one file: a gzip-compressed tar archive of the three parts at its top
@@ -231,26 +235,30 @@ pub struct BackupArchive {
 ///
 /// [`BackupError`] as for [`backup`], or [`BackupError::Io`] when the archive cannot be written.
 pub fn backup_archive(paths: &HostPaths) -> Result<BackupArchive, BackupError> {
+    backup_archive_in(paths, &tempfile::env::temp_dir())
+}
+
+/// [`backup_archive`] with its temporary folder and file made in `scratch`.
+fn backup_archive_in(paths: &HostPaths, scratch: &Path) -> Result<BackupArchive, BackupError> {
     let staging = tempfile::Builder::new()
         .prefix("puddle-backup-")
-        .tempdir()
-        .map_err(|source| BackupError::Io {
-            what: "cannot create a temporary folder".to_owned(),
-            source,
-        })?;
+        .tempdir_in(scratch)
+        .map_err(io_error("cannot create a temporary folder in", scratch))?;
     let folder = staging.path().join("backup");
     let report = backup(paths, &folder)?;
-    let (file, size) = pack(&folder).map_err(|source| BackupError::Io {
-        what: "cannot write the archive".to_owned(),
-        source,
-    })?;
+    let (file, size) = pack(&folder, scratch)?;
     Ok(BackupArchive { file, size, report })
 }
 
-/// Packs the backup folder `folder` into a new unnamed temporary file, with no owner, group or
-/// modification time in the entries, so the same backup always packs to the same entries.
-fn pack(folder: &Path) -> io::Result<(File, u64)> {
-    let file = tempfile::tempfile()?;
+/// Packs the backup folder `folder` into a new unnamed temporary file made in `scratch`, with no
+/// owner, group or modification time in the entries, so the same backup always packs to the same
+/// entries.
+fn pack(folder: &Path, scratch: &Path) -> Result<(File, u64), BackupError> {
+    pack_io(folder, scratch).map_err(io_error("cannot write the archive of", folder))
+}
+
+fn pack_io(folder: &Path, scratch: &Path) -> io::Result<(File, u64)> {
+    let file = tempfile::tempfile_in(scratch)?;
     let gzip = flate2::write::GzEncoder::new(file, flate2::Compression::default());
     let mut tar = tar::Builder::new(gzip);
     tar.mode(tar::HeaderMode::Deterministic);
@@ -262,7 +270,9 @@ fn pack(folder: &Path) -> io::Result<(File, u64)> {
     Ok((file, size))
 }
 
-/// Appends the regular files below `folder/relative`, in name order so the archive is stable.
+/// Appends the files below `folder/relative`, in name order so the archive is stable. A backup
+/// folder holds only regular files and folders; anything else would be written as the link or
+/// special entry it is, which a restore refuses.
 fn append_below<W: io::Write>(
     tar: &mut tar::Builder<W>,
     folder: &Path,
@@ -272,10 +282,9 @@ fn append_below<W: io::Write>(
     entries.sort_by_key(fs::DirEntry::file_name);
     for entry in entries {
         let name = relative.join(entry.file_name());
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
+        if entry.file_type()?.is_dir() {
             append_below(tar, folder, &name)?;
-        } else if kind.is_file() {
+        } else {
             tar.append_path_with_name(entry.path(), &name)?;
         }
     }

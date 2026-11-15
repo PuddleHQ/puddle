@@ -72,3 +72,6 @@ fn chunks(
         }
     })
 }
+
+#[cfg(test)]
+mod tests;

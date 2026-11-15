@@ -229,18 +229,9 @@ async fn start_inner(options: Options) -> Api {
     let services = services.with_credentials(
         own_credentials.unwrap_or_else(|| credentials.clone() as Arc<dyn CredentialService>),
     );
-    let services = match doctor {
-        Some(doctor) => services.with_doctor(doctor),
-        None => services,
-    };
-    let services = match backup {
-        Some(backup) => services.with_backup(backup),
-        None => services,
-    };
-    let services = match dev_cert {
-        Some(dev_cert) => services.with_dev_cert(dev_cert),
-        None => services,
-    };
+    let services = doctor.into_iter().fold(services, Services::with_doctor);
+    let services = backup.into_iter().fold(services, Services::with_backup);
+    let services = dev_cert.into_iter().fold(services, Services::with_dev_cert);
     let repos = Arc::new(FakeRepos::new());
     let services = if with_repos {
         services.with_repos(repos.clone() as Arc<dyn RepoService>)
@@ -256,10 +247,9 @@ async fn start_inner(options: Options) -> Api {
     let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
     let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
     let services = services.with_account_secrets(store.take_account_secrets().unwrap());
-    let services = match company_signals {
-        Some(signals) => services.with_company_signals(signals),
-        None => services,
-    };
+    let services = company_signals
+        .into_iter()
+        .fold(services, Services::with_company_signals);
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();

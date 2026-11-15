@@ -377,3 +377,37 @@ async fn the_api_service_streams_the_archive_and_names_a_missing_database() {
     let err = empty.create().await.unwrap_err();
     assert!(err.to_string().contains("no database at"), "{err}");
 }
+
+#[test]
+fn an_unusable_scratch_folder_is_a_named_error() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    drop(open(&paths.store()));
+    let missing = root.path().join("no-such-scratch");
+    let err = backup_archive_in(&paths, &missing).unwrap_err();
+    assert!(
+        err.to_string().contains(&format!("{}", missing.display())),
+        "{err}"
+    );
+}
+
+#[test]
+fn packing_a_folder_that_is_not_there_names_it() {
+    let root = tempfile::tempdir().unwrap();
+    let gone = root.path().join("gone");
+    let err = pack(&gone, root.path()).unwrap_err();
+    assert!(matches!(err, BackupError::Io { .. }), "{err}");
+    assert!(err.to_string().contains("gone"), "{err}");
+}
+
+#[tokio::test]
+async fn a_backup_job_that_panics_is_a_failed_backup_not_a_dead_service() {
+    let err = blocking::<()>(|| std::panic::resume_unwind(Box::new("boom")))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("the backup stopped"), "{err}");
+    let err = blocking::<()>(|| Err(BackupError::DestinationExists(PathBuf::from("x"))))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err}");
+}

@@ -71,7 +71,8 @@ impl Launcher for FakeLauncher {
         _target: &'a DesktopTarget,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            if let Some(message) = lock(&self.fail_with).take() {
+            let failure = lock(&self.fail_with).take();
+            if let Some(message) = failure {
                 return Err(LaunchError::new(message));
             }
             lock(&self.opened).push(workspace.id.clone());
@@ -85,7 +86,8 @@ impl Launcher for FakeLauncher {
         _target: &'a BrowserTarget,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            if let Some(message) = lock(&self.fail_with).take() {
+            let failure = lock(&self.fail_with).take();
+            if let Some(message) = failure {
                 return Err(LaunchError::new(message));
             }
             lock(&self.browsers).push(workspace.id.clone());

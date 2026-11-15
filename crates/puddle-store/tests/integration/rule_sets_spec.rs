@@ -202,7 +202,7 @@ fn r37_switches_apply_globally_with_a_per_workspace_override_and_close_waiting_r
         .unwrap();
     assert_eq!(closed, vec![waiting_b]);
     let info = store.rule_set(OWNER, github).unwrap();
-    assert_eq!((info.global, info.overrides.clone()), (Some(true), vec![]));
+    assert_eq!((info.global, info.overrides), (Some(true), vec![]));
     let switched = audit_of(&store, "rule_set_switched");
     assert_eq!(switched.len(), 3);
     assert_eq!(switched[1]["workspace_id"], Value::Null);

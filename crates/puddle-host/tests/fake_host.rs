@@ -2693,7 +2693,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
         .await
         .unwrap()
         .into_iter()
-        .map(|v| v.name.clone())
+        .map(|v| v.name)
         .collect();
     assert_eq!(volumes, ["ws-probe"], "the failed create's volume is gone");
     host.shutdown().await;

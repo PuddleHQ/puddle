@@ -52,7 +52,7 @@ fn a_sweep_removes_what_no_identity_or_variable_names_and_keeps_the_rest() {
     for name in ["env-named", "env-orphan", "tok-orphan"] {
         put(&earlier, name);
     }
-    let later = IndexedStore::new(Shared(disk.clone()));
+    let later = IndexedStore::new(Shared(disk));
     assert_eq!(
         sweep(&later, &store),
         Ok(Sweep {

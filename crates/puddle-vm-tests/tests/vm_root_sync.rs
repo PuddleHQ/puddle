@@ -34,7 +34,7 @@ const CREATE_BUDGET: Duration = Duration::from_secs(600);
 const EXEC_BUDGET: Duration = Duration::from_secs(120);
 const STOP_BUDGET: Duration = Duration::from_secs(60);
 
-const SERVER_PY: &str = r"
+const SERVER_PY: &str = "
 import http.server, ssl, os
 os.chdir('/tmp/www')
 srv = http.server.HTTPServer(('127.0.0.1', 8443), http.server.SimpleHTTPRequestHandler)

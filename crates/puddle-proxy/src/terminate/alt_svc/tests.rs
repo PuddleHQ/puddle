@@ -147,7 +147,7 @@ proptest! {
         let expected: Vec<&String> = entries.iter().filter(|e| !is_h3(e.as_bytes())).collect();
         prop_assert_eq!(removed, entries.len() - expected.len());
         if removed == 0 {
-            prop_assert_eq!(&left, &[field.clone().into_bytes()]);
+            prop_assert_eq!(&left, &[field.into_bytes()]);
         } else if expected.is_empty() {
             prop_assert!(left.is_empty());
         } else {

@@ -288,7 +288,8 @@ impl Store {
                 taken.push(Flushed(Some(workspace.clone()), ts, count));
             }
         }
-        if let Some((ts, count)) = lock(&self.puddle_connections).roll(now) {
+        let rolled = lock(&self.puddle_connections).roll(now);
+        if let Some((ts, count)) = rolled {
             let record = ConnectionRecord::suppressed_summary(ts, None, count);
             records.push(AuditRecord::Connection(record));
             taken.push(Flushed(None, ts, count));

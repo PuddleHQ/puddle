@@ -422,7 +422,7 @@ fn build(source: &dyn CodeServerSource, pin: &Pin, staging: &Path) -> Result<Man
     write("PUDDLE-NOTICE.txt", notice(pin))?;
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| XtaskError::parse("code-server.json", e))?;
-    write("code-server.json", json + "\n")?;
+    write("code-server.json", format!("{json}\n"))?;
     Ok(manifest)
 }
 

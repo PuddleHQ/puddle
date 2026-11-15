@@ -50,7 +50,7 @@ fn a_failed_entrypoint_is_a_problem_on_its_workspace_in_the_boot_hooks_words() {
     assert_eq!(raised.len(), 1);
     assert_eq!(raised[0], entrypoint_problem(&box_, SHOWN, "137: Killed"));
     assert_eq!(raised[0].key, "entrypoint:box");
-    assert_eq!(raised[0].workspace, Some(box_.clone()));
+    assert_eq!(raised[0].workspace, Some(box_));
     assert!(
         raised[0]
             .detail

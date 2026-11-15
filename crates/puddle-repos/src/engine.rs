@@ -34,11 +34,11 @@ pub trait Secrets: Send + Sync {
 
 impl<F: Fetch + 'static> Secrets for SecretCache<F> {
     fn get<'a>(&'a self, spec: &'a SourceSpec) -> BoxFuture<'a, Result<Credential, SourceError>> {
-        Box::pin(SecretCache::get_for(self, spec, ReadUse::RepositoryList))
+        Box::pin(Self::get_for(self, spec, ReadUse::RepositoryList))
     }
 
     fn invalidate(&self, spec: &SourceSpec) {
-        SecretCache::invalidate(self, spec);
+        Self::invalidate(self, spec);
     }
 }
 

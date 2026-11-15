@@ -782,7 +782,8 @@ impl Store {
         }
         let current: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> = {
             let mut map: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
-            for (workspace, reason) in load_reasons(&lock(&self.conn))? {
+            let loaded = load_reasons(&lock(&self.conn))?;
+            for (workspace, reason) in loaded {
                 map.entry(workspace).or_default().insert(reason);
             }
             map

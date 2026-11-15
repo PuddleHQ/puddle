@@ -146,7 +146,7 @@ fn hostile_names() -> Vec<(String, u16, &'static str, Option<String>)> {
             None,
         ),
         (
-            too_long.clone() + ":443",
+            too_long + ":443",
             400,
             "is longer than 253 characters",
             None,
@@ -169,12 +169,7 @@ fn hostile_names() -> Vec<(String, u16, &'static str, Option<String>)> {
             "pending",
             Some("evil.example".into()),
         ),
-        (
-            long_ok.clone() + ":443",
-            403,
-            "pending",
-            Some(long_ok.clone()),
-        ),
+        (long_ok.clone() + ":443", 403, "pending", Some(long_ok)),
     ]
 }
 

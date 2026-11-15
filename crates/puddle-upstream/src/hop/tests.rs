@@ -72,7 +72,7 @@ fn a_route_is_never_empty_and_demotion_never_shortens_it() {
     let demoted = route.demote(|p| *p == a);
     assert_eq!(
         demoted.hops(),
-        &[Hop::Proxy(b.clone()), Hop::Direct, Hop::Proxy(a.clone())]
+        &[Hop::Proxy(b.clone()), Hop::Direct, Hop::Proxy(a)]
     );
     let all_bad = route.demote(|_| true);
     assert_eq!(all_bad.hops().len(), 3);

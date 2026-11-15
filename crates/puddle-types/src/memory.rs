@@ -25,11 +25,11 @@ pub struct MemoryMib(u32);
 
 impl MemoryMib {
     /// Smallest accepted size: 256 MiB.
-    pub const MIN: MemoryMib = MemoryMib(256);
+    pub const MIN: Self = Self(256);
     /// Largest accepted size: 1 TiB.
-    pub const MAX: MemoryMib = MemoryMib(1024 * 1024);
+    pub const MAX: Self = Self(1024 * 1024);
     /// The default for every workspace: 8 GiB.
-    pub const DEFAULT: MemoryMib = MemoryMib(8 * 1024);
+    pub const DEFAULT: Self = Self(8 * 1024);
 
     /// Checks `mib` and wraps it.
     ///
@@ -76,7 +76,7 @@ impl TryFrom<u32> for MemoryMib {
 }
 
 impl From<MemoryMib> for u32 {
-    fn from(m: MemoryMib) -> u32 {
+    fn from(m: MemoryMib) -> Self {
         m.0
     }
 }

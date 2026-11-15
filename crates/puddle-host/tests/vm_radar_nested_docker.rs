@@ -118,13 +118,13 @@ sudo docker build --progress=plain -t built:real $d
 sudo docker run --rm built:real | grep -q built
 "#;
     let publish = format!(
-        r"
+        "
 sudo docker run -d --name web -p {PUBLISHED}:80 nginx:alpine
 for i in $(seq 1 30); do curl -fsS http://127.0.0.1:{PUBLISHED}/ | grep -q nginx && break; sleep 1; done
 curl -fsS http://127.0.0.1:{PUBLISHED}/ | grep -q nginx
 "
     );
-    let bridge = r"
+    let bridge = "
 sudo docker network create user-bridge
 sudo docker run -d --name backend --network user-bridge nginx:alpine
 for i in $(seq 1 30); do sudo docker run --rm --network user-bridge built:real curl -fsS http://backend/ | grep -q nginx && break; sleep 1; done

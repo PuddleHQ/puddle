@@ -84,7 +84,7 @@ fn times_parse_in_both_forms_and_refuse_garbage() {
 fn refuses_truncated_trailing_and_odd_encodings() {
     let der = cert("X", (2040, 1, 1));
     assert!(parse(&der[..der.len() - 1]).is_err());
-    let mut trailing = der.clone();
+    let mut trailing = der;
     trailing.push(0);
     assert_eq!(parse(&trailing), Err(Malformed("trailing bytes")));
     assert_eq!(parse(&[]), Err(Malformed("truncated")));

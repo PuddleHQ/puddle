@@ -126,7 +126,7 @@ fn an_unreadable_config_file_stops_the_doctor_with_its_name() {
         &["doctor", "--no-boot", "--config", "absent.toml"],
     );
     assert_eq!(out.status.code(), Some(1), "{out:?}");
-    let stderr = String::from_utf8(out.stderr.clone()).unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("absent.toml"), "{stderr}");
 }
 

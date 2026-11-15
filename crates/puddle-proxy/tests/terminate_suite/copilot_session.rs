@@ -167,7 +167,7 @@ async fn session() -> Session {
         .name("elsewhere.test", elsewhere.addr)
         .injector(TestInjector::new(|_| InjectDecision::PassThrough))
         .stand_ins(&registry)
-        .exchanges(Arc::new(logins.clone()))
+        .exchanges(Arc::new(logins))
         .build();
     Session {
         api,

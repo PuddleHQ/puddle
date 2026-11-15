@@ -39,7 +39,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Public {
             parts
                 .extensions
                 .get::<ReachedPublicly>()
-                .map(|_| Public)
+                .map(|_| Self)
                 .ok_or_else(|| ApiError::not_found("no such route")),
         )
     }

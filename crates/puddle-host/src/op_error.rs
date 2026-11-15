@@ -86,7 +86,7 @@ pub(crate) enum OpError {
     )]
     Cleanup {
         /// Why the step failed.
-        cause: Box<OpError>,
+        cause: Box<Self>,
         /// What is left, one phrase each, joined with `; `.
         leftovers: String,
     },
@@ -94,7 +94,7 @@ pub(crate) enum OpError {
     #[error("{cause}; {source}; {SAVE_HINT}")]
     NotSaved {
         /// Why the step failed.
-        cause: Box<OpError>,
+        cause: Box<Self>,
         /// Why the save failed.
         source: crate::HostError,
     },

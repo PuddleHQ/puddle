@@ -124,7 +124,7 @@ proptest! {
         head in proptest::collection::vec("[a-z0-9]{1,6}", 0..4),
     ) {
         let pattern = Pattern::parse(&format!(".{base}")).unwrap();
-        let name = if head.is_empty() { base.clone() } else { format!("{}.{base}", head.join(".")) };
+        let name = if head.is_empty() { base } else { format!("{}.{base}", head.join(".")) };
         prop_assert_eq!(pattern.matches(&host(&name)), !head.is_empty());
     }
 

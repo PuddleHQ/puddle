@@ -445,7 +445,7 @@ fn a_key_that_will_not_export_falls_through_to_the_next_certificate_and_then_to_
 
     // Neither exports: Puddle's own leaf takes over.
     let dir = tempfile::tempdir().unwrap();
-    let fake = FakeTrust::new(vec![better.clone()]);
+    let fake = FakeTrust::new(vec![better]);
     fake.exported.lock().unwrap()[0].1 = None;
     let report = manager(&dir, &fake).ensure(now()).unwrap();
     assert_eq!(report.material.origin, Origin::Generated);

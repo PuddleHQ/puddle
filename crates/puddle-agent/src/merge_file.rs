@@ -71,7 +71,7 @@ impl Request {
     /// A usage message.
     pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
         let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-        let request = |action, state: &str, key: &str, file: &str| Request {
+        let request = |action, state: &str, key: &str, file: &str| Self {
             action,
             state_dir: PathBuf::from(state),
             key: key.to_owned(),

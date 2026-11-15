@@ -18,6 +18,9 @@
 #                      that are no checkout); only when listing all, before D
 #   E <dir> <message>  something could not be read
 #   D                  the listing ran to the end
+#
+# Exit status: 0 when the listing ran to the end, 3 when it could not run (the E line says why),
+# 4 when the image has no git (the E line says so; puddle-workspace reports it on its own).
 # Fields have control characters replaced by '?' and are cut at 500 characters.
 set -u
 
@@ -70,7 +73,7 @@ cd -- "$1" || {
 }
 if ! command -v git >/dev/null 2>&1; then
     printf 'E\t.\tgit is not installed in the image\n'
-    exit 3
+    exit 4
 fi
 
 if [ $# -ge 2 ]; then

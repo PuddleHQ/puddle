@@ -431,9 +431,8 @@ mod attach {
             .unwrap()
             .replace("\r\n", "\n");
         assert!(
-            // A folder where the image has git to list checkouts, the multi-root file where it has not.
-            (args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
-                || args.starts_with("--file-uri\nvscode-remote://ssh-remote+"))
+            // The folder, on an image with git and on one without: the volume holds no checkout.
+            args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
                 && args.contains(&format!("+{}/workspaces/", s.alias)),
             "{args}"
         );

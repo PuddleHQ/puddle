@@ -59,8 +59,17 @@ fn held_message(dir: &Path, holder: Option<u32>) -> String {
 /// The exclusive hold on a data folder; released when dropped or when the process ends.
 #[derive(Debug)]
 pub struct DataLock {
-    // Held for its lock: closing the file releases it.
-    _file: File,
+    // Held for its lock; unlocked and closed on drop.
+    file: File,
+}
+
+impl Drop for DataLock {
+    fn drop(&mut self) {
+        // Closing the file is not enough: a process another thread is spawning holds a copy of
+        // every open descriptor until its exec, and a copy shares the lock, so the folder would
+        // stay refused for that moment. Unlocking releases it for every copy.
+        let _ = self.file.unlock();
+    }
 }
 
 impl DataLock {
@@ -82,7 +91,7 @@ impl DataLock {
         // Only a hint for the next refusal, so a failure to write it never fails the start.
         let note = format!("{}\n", std::process::id());
         let _ = private::write_atomic(&dir.join(HOLDER_FILE), note.as_bytes());
-        Ok(Self { _file: file })
+        Ok(Self { file })
     }
 }
 

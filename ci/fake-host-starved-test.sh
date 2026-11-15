@@ -39,7 +39,10 @@ run() { # run <out> <fail-on> ; prints the script's output, returns its status
         FAKE_HOST_RUNS=3 FAKE_HOST_CPUS="$cpu" FAKE_HOST_BUSY=2 "$here/fake-host-starved.sh"
 }
 
-busy_before=$(pgrep -fc 'while :; do :; done' || true)
+# count only this script's process group: another worker's stress loop on the same machine must not count
+own_group=$(ps -o pgid= -p $$ | tr -d ' ')
+busy_loops() { pgrep -f -g "$own_group" 'while :; do :; done' | sort || true; }
+busy_before=$(busy_loops)
 rc=0
 run "$tmp/out-red" 2 >"$tmp/red.txt" 2>&1 || rc=$?
 [ "$rc" = 1 ] || fail "a failing run must exit 1, got $rc: $(cat "$tmp/red.txt")"
@@ -62,6 +65,8 @@ grep -q '^FAILED=0$' "$tmp/out-green/result.env" || fail "green result.env"
 
 # nothing leaked: no busy loop (`while :; do :; done` pinned by this script) and no sampler is left
 sleep 1
-[ "$(pgrep -fc 'while :; do :; done' || true)" = "$busy_before" ] || fail "a busy loop outlived the script"
+# only a loop that appeared during this run is a leak: an earlier test's loop can still be dying when this one starts
+leaked=$(comm -13 <(echo "$busy_before") <(busy_loops))
+[ -z "$leaked" ] || fail "a busy loop outlived the script: $leaked"
 ! pgrep -f "sample_holders $tmp" >/dev/null || fail "a sampler outlived the script"
 echo "fake-host-starved-test: ok"

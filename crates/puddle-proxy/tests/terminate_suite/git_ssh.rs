@@ -424,7 +424,9 @@ async fn a_listed_repository_is_read_and_written_and_the_record_says_who_with_wh
 #[tokio::test]
 async fn a_push_to_a_repository_off_the_list_ends_before_anything_goes_upstream() {
     let t = SshRig::new().await;
-    t.git.world.switches(true, false);
+    t.git
+        .world
+        .switches(puddle_inject::testing::OnlyListed::Push);
     let mut guest = t.git.rig.guest();
     let mut ssh = t.client(&mut guest, "bound.test:22").await;
     login(&mut ssh).await;
@@ -586,7 +588,9 @@ async fn git_lfs_falls_back_to_https_with_no_token_in_the_answer() {
         "{\"href\":\"https://bound.test/acme/web.git/info/lfs\"}\n"
     );
     assert!(!auth.out.contains("token"));
-    t.git.world.switches(true, false);
+    t.git
+        .world
+        .switches(puddle_inject::testing::OnlyListed::Push);
     let off = exec(
         &ssh,
         &[],
@@ -1101,7 +1105,9 @@ async fn a_closed_channel_frees_its_place_and_a_second_shell_on_one_channel_is_r
 #[tokio::test]
 async fn a_download_of_lfs_objects_asks_the_table_about_a_fetch() {
     let t = SshRig::new().await;
-    t.git.world.switches(false, true);
+    t.git
+        .world
+        .switches(puddle_inject::testing::OnlyListed::Pull);
     let mut guest = t.git.rig.guest();
     let mut ssh = t.client(&mut guest, "bound.test:22").await;
     login(&mut ssh).await;

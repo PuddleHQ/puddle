@@ -104,10 +104,33 @@ impl Default for Notifier {
     }
 }
 
-/// Whether a notification may show now, by the switches: the master switch for requests, and
+/// The kinds of notification that each have a switch of their own.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    Requests,
+    Oom,
+    DiskFull,
+    UnexpectedStop,
+    LowDiskSpace,
+}
+
+impl Kind {
+    /// This kind's own switch.
+    fn switch(self, prefs: &UiPrefs) -> bool {
+        match self {
+            Self::Requests => prefs.notifications(),
+            Self::Oom => prefs.notify_oom(),
+            Self::DiskFull => prefs.notify_disk_full(),
+            Self::UnexpectedStop => prefs.notify_unexpected_stop(),
+            Self::LowDiskSpace => prefs.notify_low_disk_space(),
+        }
+    }
+}
+
+/// Whether a notification of `kind` may show now, by the switches: its own, and
 /// "only while Puddle is not in front".
-fn allowed(prefs: &UiPrefs, master: bool, in_front: bool) -> bool {
-    master && !(prefs.notify_only_unfocused() && in_front)
+fn allowed(prefs: &UiPrefs, kind: Kind, in_front: bool) -> bool {
+    kind.switch(prefs) && !(prefs.notify_only_unfocused() && in_front)
 }
 
 impl Notifier {
@@ -149,14 +172,14 @@ impl Notifier {
         match event {
             Event::PendingOpened { request } => {
                 let mut notices = self.flush_ended(now, prefs, in_front);
-                if allowed(prefs, prefs.notifications(), in_front) {
+                if allowed(prefs, Kind::Requests, in_front) {
                     notices.extend(self.offer(now, request));
                 }
                 notices
             }
             Event::OomKill {
                 workspace, process, ..
-            } if allowed(prefs, prefs.notify_oom(), in_front) => vec![Notice {
+            } if allowed(prefs, Kind::Oom, in_front) => vec![Notice {
                 title: format!("{} ran out of memory", self.shown(workspace)),
                 body: format!(
                     "{} was ended. Give the workspace more memory in its settings; it applies \
@@ -169,7 +192,7 @@ impl Notifier {
                 workspace,
                 disk,
                 percent,
-            } if allowed(prefs, prefs.notify_disk_full(), in_front) => vec![Notice {
+            } if allowed(prefs, Kind::DiskFull, in_front) => vec![Notice {
                 title: format!(
                     "{} {} is {percent} % full",
                     self.shown(workspace),
@@ -192,7 +215,7 @@ impl Notifier {
             Event::StatusChanged {
                 workspace,
                 status: WorkspaceStatus::Crashed,
-            } if allowed(prefs, prefs.notify_unexpected_stop(), in_front) => vec![Notice {
+            } if allowed(prefs, Kind::UnexpectedStop, in_front) => vec![Notice {
                 title: format!("{} stopped", self.shown(workspace)),
                 body: "It stopped or crashed without you or Puddle asking it to. Start it again \
                        from Puddle."
@@ -203,7 +226,7 @@ impl Notifier {
                 // Told apart from `allowed`: the level is remembered even while the switch is off,
                 // so turning it on later does not announce a state that was there all along.
                 let tighter = *level > std::mem::replace(&mut self.disk, *level);
-                if tighter && allowed(prefs, prefs.notify_low_disk_space(), in_front) {
+                if tighter && allowed(prefs, Kind::LowDiskSpace, in_front) {
                     vec![low_disk_space(*level, *free_mib)]
                 } else {
                     Vec::new()
@@ -262,7 +285,7 @@ impl Notifier {
     /// Ends every window that is over: held requests become one summary per workspace (shown
     /// only if the switches still allow it) and the workspace's next window starts after it.
     fn flush_ended(&mut self, now: Instant, prefs: &UiPrefs, in_front: bool) -> Vec<Notice> {
-        let show = allowed(prefs, prefs.notifications(), in_front);
+        let show = allowed(prefs, Kind::Requests, in_front);
         let mut notices = Vec::new();
         let mut ended: Vec<(WorkspaceId, Group)> =
             self.groups.extract_if(|_, g| g.ends <= now).collect();

@@ -2,6 +2,7 @@
 <script lang="ts">
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { onDestroy, onMount } from "svelte";
+  import { holdReload } from "#lib/stores/unsaved-edits.ts";
   import { beforeNavigate } from "$app/navigation";
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
@@ -146,6 +147,8 @@
   /** The edits not saved yet; Save sends them as one change, Discard drops them. */
   let draft = $state.raw<Draft>(EMPTY_DRAFT);
   const dirty = $derived(isDirty(draft));
+  // A build-id reload waits while the draft holds edits.
+  $effect(() => holdReload(() => dirty));
   let saving = $state(false);
 
   /** Replaces the draft after an edit; any earlier "saved" or "refused" line is no longer true. */

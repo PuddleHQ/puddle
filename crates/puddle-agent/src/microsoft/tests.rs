@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use puddle_agent_proto::editor::MicrosoftOptions;
+
 use super::*;
 
 const COMMIT: &str = "e646868227c3e3a9e3f24277c8c7220be42c0be7";
@@ -119,7 +121,15 @@ fn the_published_hash_must_belong_to_the_build_asked_for() {
 
 #[test]
 fn the_command_line_carries_the_terms_the_token_file_and_the_telemetry_choice() {
-    let server = EditorServer::microsoft("/w/.puddle/vscode-server", "/w", 120, false, true);
+    let server = EditorServer::microsoft(
+        "/w/.puddle/vscode-server",
+        "/w",
+        120,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update: true,
+        },
+    );
     let token = Path::new("/run/puddle/editor-password");
     let args = |telemetry: bool, target: &str| -> Vec<String> {
         arguments(&server, telemetry, token, OsStr::new(target))

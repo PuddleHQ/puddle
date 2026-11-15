@@ -166,7 +166,9 @@ async fn hostile_hg47_an_azure_devops_path_takes_no_escape_but_a_space() {
 #[tokio::test]
 async fn hostile_hg47_a_push_to_an_unlisted_repository_is_denied_in_every_spelling_that_names_it() {
     let t = SshRig::new().await;
-    t.git.world.switches(true, false);
+    t.git
+        .world
+        .switches(puddle_inject::testing::OnlyListed::Push);
     let mut guest = t.git.rig.guest();
     let mut ssh = t.client(&mut guest, "bound.test:22").await;
     login(&mut ssh).await;

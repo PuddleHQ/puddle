@@ -177,6 +177,24 @@ impl Report {
     }
 }
 
+/// The mount's read-only flag, as a report spells it (`ro` or `rw`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MountFlag {
+    ReadOnly,
+    ReadWrite,
+}
+
+impl MountFlag {
+    /// `ro` is read-only; anything else is read-write.
+    pub(crate) fn of(state: &str) -> Self {
+        if state == "ro" {
+            Self::ReadOnly
+        } else {
+            Self::ReadWrite
+        }
+    }
+}
+
 /// The outcome `op` must have on a boot mount whose guest-side flag is read-only (`read_only`) or
 /// cleared.
 ///
@@ -197,10 +215,14 @@ impl Report {
 ///   `mknod` over it is `EEXIST` (the name is taken, checked before the flag).
 /// - Beside the file, in the guest's own folder, a new name is the guest's own business (`ok`): it
 ///   is not on the share, and the host-side check shows that no new name reached the host's folder.
-pub(crate) fn expected(read_only: bool, op: &str, running: bool) -> &'static str {
+pub(crate) fn expected(flag: MountFlag, op: &str, running: bool) -> &'static str {
     match op {
         "read" | "create_beside" | "mknod_beside" => "ok",
-        "open_write" | "append" | "o_trunc" | "truncate" if running && !read_only => "ETXTBSY",
+        "open_write" | "append" | "o_trunc" | "truncate"
+            if running && flag == MountFlag::ReadWrite =>
+        {
+            "ETXTBSY"
+        }
         "open_write" | "append" | "o_trunc" | "truncate" | "chmod" | "chown" | "utimes" => "EROFS",
         "link" => "EXDEV",
         "mknod_over" => "EEXIST",
@@ -346,7 +368,7 @@ pub(crate) fn judge_outcomes(target: &str, report: &Report) -> Vec<String> {
         match report.outcomes.get(op) {
             None => failures.push(format!("{target}: {op} has no outcome")),
             Some(got) => {
-                let want = expected(report.state == "ro", op, report.running);
+                let want = expected(MountFlag::of(&report.state), op, report.running);
                 if got != want {
                     failures.push(format!(
                         "{target}: {op} gave {got}, must give {want} (flag {}, running {})",

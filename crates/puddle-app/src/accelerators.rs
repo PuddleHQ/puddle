@@ -37,15 +37,28 @@ pub(crate) fn turn_off<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
-/// Whether a key event is Ctrl+Q going down: no other modifier, and not the release.
-fn is_quit_chord(
-    kind: COREWEBVIEW2_KEY_EVENT_KIND,
-    key: u32,
+/// Which of the three modifier keys are held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Modifiers {
     ctrl: bool,
     shift: bool,
     alt: bool,
-) -> bool {
-    kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && key == u32::from(b'Q') && ctrl && !shift && !alt
+}
+
+impl Modifiers {
+    /// Only Ctrl.
+    const CTRL: Self = Self {
+        ctrl: true,
+        shift: false,
+        alt: false,
+    };
+}
+
+/// Whether a key event is Ctrl+Q going down: no other modifier, and not the release.
+fn is_quit_chord(kind: COREWEBVIEW2_KEY_EVENT_KIND, key: u32, mods: Modifiers) -> bool {
+    kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+        && key == u32::from(b'Q')
+        && mods == Modifiers::CTRL
 }
 
 /// Whether `key` is held down now.
@@ -76,7 +89,15 @@ pub(crate) fn on_ctrl_q<R: Runtime>(
                 args.KeyEventKind(&raw mut kind)?;
                 args.VirtualKey(&raw mut key)?;
             }
-            if is_quit_chord(kind, key, held(VK_CONTROL), held(VK_SHIFT), held(VK_MENU)) {
+            if is_quit_chord(
+                kind,
+                key,
+                Modifiers {
+                    ctrl: held(VK_CONTROL),
+                    shift: held(VK_SHIFT),
+                    alt: held(VK_MENU),
+                },
+            ) {
                 // SAFETY: as above; one boolean set on the same event.
                 #[expect(unsafe_code, reason = "WebView2 COM call with no safe wrapper")]
                 unsafe {

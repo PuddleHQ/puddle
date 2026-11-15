@@ -35,11 +35,11 @@ fn event() -> ConnectionEvent {
 fn rule_wire() -> RuleWire {
     RuleWire {
         id: 1,
-        scope: "workspace".into(),
+        scope: RuleWireScope::Workspace,
         workspace_id: Some("sb-1".into()),
-        pattern_kind: "exact".into(),
+        pattern_kind: RuleWirePatternKind::Exact,
         pattern: "example.com".into(),
-        effect: "allow".into(),
+        effect: Effect::Allow,
         expires_at: None,
         created_at: 5,
         created_by: "cli".into(),
@@ -152,7 +152,9 @@ fn lines_written_with_the_old_names_still_read() {
     let record: AuditRecord =
         serde_json::from_value(json!({"type": "rule_created", "ts": 9, "rule": rule("sandbox")}))
             .unwrap();
-    assert!(matches!(record, AuditRecord::RuleCreated { rule, .. } if rule.scope == "workspace"));
+    assert!(
+        matches!(record, AuditRecord::RuleCreated { rule, .. } if rule.scope == RuleWireScope::Workspace)
+    );
 }
 
 /// A line written before the list existed reads as no stand-in left unswapped, and a list

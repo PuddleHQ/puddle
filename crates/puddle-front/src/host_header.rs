@@ -32,7 +32,7 @@ pub struct Route {
 }
 
 /// A guest port as a host label writes it: digits only, no leading zero, 1 to 65535.
-fn guest_port(label: &str) -> Option<u16> {
+pub(crate) fn guest_port(label: &str) -> Option<u16> {
     let plain = label.bytes().all(|b| b.is_ascii_digit()) && !label.starts_with('0');
     plain.then(|| label.parse().ok()).flatten()
 }

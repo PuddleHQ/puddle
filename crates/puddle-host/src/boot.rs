@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use puddle_agent_proto::editor::{EditorServer, ServerKind};
+use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions, ServerKind};
 use puddle_api::StartFolder;
 use puddle_boot::{
     BootHook, BootPlan, GitIdentity, with_boot_mounts, with_code_server_mount, write_assets,
@@ -418,8 +418,10 @@ impl BootKit {
                 format!("{data}/{MICROSOFT_DATA_DIR}"),
                 mount,
                 grace_secs,
-                telemetry,
-                auto_update,
+                MicrosoftOptions {
+                    telemetry,
+                    auto_update,
+                },
             ),
         };
         server.workspace_file = crate::editor_file::workspace_file_path(layout.mount(), id)

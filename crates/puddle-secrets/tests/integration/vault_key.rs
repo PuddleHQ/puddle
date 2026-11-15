@@ -26,6 +26,11 @@ const HEALTHY: &str = "[--version]\nstdout=systemd 257 (257.13-1~deb13u1)\\n\n\
                        [decrypt]\necho_stdin=1\n\
                        [has-tpm2]\nexit=19\n";
 
+/// The limit for a case whose fake hangs. Only those cases set one: under host load a fake can take
+/// longer than this to start, and a timed-out `--version` is read as "go on and seal", so a
+/// limit on every call made the answers depend on the clock.
+const HANG_LIMIT: Duration = Duration::from_millis(500);
+
 struct Setup {
     fakes: Fakes,
     dir: tempfile::TempDir,
@@ -55,7 +60,8 @@ impl Setup {
         self.config().join("puddle").join("vault.key")
     }
 
-    /// Keys over a fake `systemd-creds` with `behaviour`; also returns the fake's path for its log.
+    /// Keys over a fake `systemd-creds` with `behaviour`, with no time limit (a real hang ends at
+    /// nextest's slow-timeout); also returns the fake's path for its log.
     fn keys(&self, behaviour: &str) -> (VaultKeys, PathBuf) {
         let existing = self.fakes.dir.path().join("systemd-creds");
         let tool = if existing.exists() {
@@ -69,7 +75,7 @@ impl Setup {
         let paths = ToolPaths::default().with_systemd_creds(Some(tool.clone()));
         let keys = VaultKeys::new(&self.config(), &self.vault(), paths)
             .with_credentials_dir(None)
-            .with_timeout(Duration::from_millis(500));
+            .with_timeout(Duration::MAX);
         (keys, tool)
     }
 }
@@ -197,6 +203,12 @@ async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
     for (name, behaviour) in cases {
         let setup = Setup::new();
         let (keys, _) = setup.keys(&behaviour);
+        // The outcome is the same whether `--version` answers in time or not.
+        let keys = if name == "it hangs" {
+            keys.with_timeout(HANG_LIMIT)
+        } else {
+            keys
+        };
         let found = keys.find_or_make().await.unwrap();
         assert_eq!(found.source, KeySource::KeyFile, "{name}");
         assert_eq!(found.tag, KeySourceTag::KeyFile, "{name}");
@@ -273,6 +285,12 @@ async fn a_sealed_key_that_does_not_open_says_why_and_is_never_replaced() {
         let setup = Setup::new();
         puddle_fs::private::write_atomic(&setup.sealed(), b"sealed").unwrap();
         let (keys, _) = setup.keys(behaviour);
+        // `decrypt` times out before `--version` would be asked.
+        let keys = if name == "it hangs" {
+            keys.with_timeout(HANG_LIMIT)
+        } else {
+            keys
+        };
         assert_eq!(
             keys.find_or_make().await.unwrap_err(),
             KeyError::Sealed(expected),

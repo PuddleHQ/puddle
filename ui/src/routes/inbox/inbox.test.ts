@@ -6,6 +6,7 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = await vi.hoisted(async () => {
@@ -278,13 +279,17 @@ describe("the inbox page", () => {
     seed();
     await ready();
     const fetched = inbox.calls.length;
+    // A new row also schedules a refetch 150 ms later, which replaces the rows with the service's
+    // (no row 9 here). Each step below waits on a Svelte flush, a microtask, so that timer cannot
+    // fire between them however long the worker is starved; waiting on the clock instead let it.
     source.emit({
       type: "pending_opened",
       request: request(9, { host: "new.example.com", first_seen: 9_000 }),
       registrable_domain: "example.com",
     });
+    await tick();
     expect(
-      await screen.findByText("new.example.com", { selector: ".host" }),
+      screen.getByText("new.example.com", { selector: ".host" }),
     ).toBeInTheDocument();
     source.emit({
       type: "pending_updated",
@@ -292,18 +297,16 @@ describe("the inbox page", () => {
       attempts: 4,
       last_seen: 9_500,
     });
-    await vi.waitFor(() =>
-      expect(rowOf("new.example.com")).toHaveTextContent("4 attempts"),
-    );
+    await tick();
+    expect(rowOf("new.example.com")).toHaveTextContent("4 attempts");
     source.emit({
       type: "pending_closed",
       id: 9,
       state: "allowed",
       rule_id: 1,
     });
-    await vi.waitFor(() =>
-      expect(screen.queryByText("new.example.com")).toBeNull(),
-    );
+    await tick();
+    expect(screen.queryByText("new.example.com")).toBeNull();
     expect(
       inbox.calls.slice(fetched).filter((c) => c === "GET /api/inbox"),
     ).toEqual([]);

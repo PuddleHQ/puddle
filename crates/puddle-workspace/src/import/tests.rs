@@ -113,7 +113,7 @@ fn ssh_remotes_of_known_hosts_get_their_https_form_and_credentials_go() {
         ),
         (
             "ssh://org@vs-ssh.visualstudio.com/v3/org/proj/repo",
-            "https://dev.azure.com/org/proj/_git/repo",
+            "https://org.visualstudio.com/proj/_git/repo",
         ),
     ] {
         assert_eq!(https_form(remote).as_deref(), Ok(https), "{remote}");

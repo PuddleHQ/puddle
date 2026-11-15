@@ -12,8 +12,8 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlockReason, CompanySignal, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId,
-    WorkspaceId,
+    BlockReason, CompanySignal, Decision, EgressRequest, FailedRequestCode, Host, PendingId,
+    RuleId, RuleSetId, WorkspaceId,
 };
 
 /// How the proxy handled a connection (R-24).
@@ -192,7 +192,7 @@ pub enum ConnectionReason {
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
     /// `host_refused` for a 401 or 403, `rate_limited` for a 429, `host_error` for any other error
     /// status).
-    PuddleRequestFailed(&'static str),
+    PuddleRequestFailed(FailedRequestCode),
 }
 
 impl fmt::Display for ConnectionReason {

@@ -9,6 +9,12 @@ export type AuditEntry = Schemas["AuditEntry"];
 export type AuditRecord = Schemas["AuditRecord"];
 export type AuditType = Schemas["AuditType"];
 export type AuditOutcome = Schemas["AuditOutcome"];
+type ForeignCredentialKind = Schemas["ForeignCredentialKind"];
+type UnknownTokenKind = Schemas["UnknownTokenKind"];
+type CompanySignal = Schemas["CompanySignal"];
+type ReasonCode = Schemas["ReasonCode"];
+type FailedRequestCode = Schemas["FailedRequestCode"];
+type LocalCategory = Schemas["LocalCategory"];
 
 /** The newest matching records come first and the log is read back from there. */
 export const PAGE_SIZE = 200;
@@ -33,7 +39,7 @@ export const CATEGORIES: readonly { value: AuditCategory; label: string }[] = [
 ];
 
 /** What put a destination on the company network, as a record's `signal` code reads in words. */
-const COMPANY_SIGNAL_WORDS: Record<string, string> = {
+const COMPANY_SIGNAL_WORDS: Record<CompanySignal, string> = {
   pac_direct: "The company's proxy script sends it straight out.",
   dns_suffix: "Its name ends in one of the company's DNS suffixes.",
   private_access_cgnat: "A company private-access client's range.",
@@ -227,7 +233,9 @@ export function splitDetail(
   };
 }
 
-const REASONS: Record<string, string> = {
+/** The reason codes that stand alone. Keyed by the schema's enum, so a code the service adds
+ * fails the type check until it has words. */
+const REASON_WORDS: Record<ReasonCode, string> = {
   rule: "a rule",
   no_rule: "no rule yet",
   suppressed: "more records came in one second than Puddle writes",
@@ -240,13 +248,20 @@ const REASONS: Record<string, string> = {
   ssh_unsupported: "SSH is not supported",
   udp_unsupported: "UDP is not supported",
   local_address: "a local address",
-  "toggle:loopback": "this computer's own addresses are switched off",
-  "toggle:private": "private networks are switched off",
-  "toggle:link_local": "link-local addresses are switched off",
-  "toggle:metadata": "cloud metadata addresses are switched off",
-  "toggle:special": "other special ranges are switched off",
-  "toggle:company_network": "company network destinations are switched off",
   settings_unreadable: "unreadable settings",
+  policy_unavailable: "the rules could not be checked",
+  sni_mismatch: "the tool asked for another name than the one it connected to",
+  guest_tls_rejected:
+    "the tool in the workspace didn't accept Puddle's certificate",
+  certificate_unavailable:
+    "Puddle could not make its certificate for this host",
+  connection_limit: "the workspace had too many connections open",
+  ip_rule: "a rule on that address denies it",
+  login_not_kept: "Puddle no longer keeps the login that was asked for",
+  token_endpoint_spliced:
+    "the request sent a credential Puddle chose to another address than its sign-in endpoint",
+  peek_refused: "the request body was not one Puddle reads",
+  stream_limit: "the connection had too many requests open at once",
   puddle_request: "Puddle's own request",
   pki_distribution_point:
     "a certificate check address named in your company's root certificates",
@@ -278,9 +293,19 @@ const REASONS: Record<string, string> = {
   protocol_unsupported: "the request used a protocol Puddle does not support",
 };
 
+/** The words for the local-destination toggles, after `toggle:` in a reason. */
+const TOGGLE_WORDS: Record<LocalCategory, string> = {
+  loopback: "this computer's own addresses are switched off",
+  private: "private networks are switched off",
+  link_local: "link-local addresses are switched off",
+  metadata: "cloud metadata addresses are switched off",
+  special: "other special ranges are switched off",
+  company_network: "company network destinations are switched off",
+};
+
 /** Why one of Puddle's own requests (listing repositories) did not work: the code after
  * `puddle_request_failed:`. */
-const FAILED_REQUEST: Record<string, string> = {
+const FAILED_REQUEST: Record<FailedRequestCode, string> = {
   unreachable: "the host could not be reached",
   tls: "its certificate was not trusted",
   timeout: "it did not answer in time",
@@ -292,6 +317,25 @@ const FAILED_REQUEST: Record<string, string> = {
   host_error: "the Git host answered with an error",
 };
 const FAILED_PREFIX = "puddle_request_failed:";
+const TOGGLE_PREFIX = "toggle:";
+
+function has<T extends string>(
+  table: Partial<Record<T, string>>,
+  key: string,
+): key is T {
+  return Object.hasOwn(table, key);
+}
+
+/** A reason in words: a listed code, `toggle:<category>`, or what came (a code from another
+ * version, or `limit:<code>` and `pass_through:<code>`, which are open-ended). */
+function reasonWords(reason: string): string {
+  if (has(REASON_WORDS, reason)) return REASON_WORDS[reason];
+  if (reason.startsWith(TOGGLE_PREFIX)) {
+    const category = reason.slice(TOGGLE_PREFIX.length);
+    if (has(TOGGLE_WORDS, category)) return TOGGLE_WORDS[category];
+  }
+  return reason;
+}
 
 /** What an allowed connection came to when reaching the destination failed. A connection
  * that was made (`connected`) or never tried (`null`) has no note. */
@@ -302,7 +346,7 @@ const OUTCOME_NOTES: Record<string, string> = {
 };
 
 /** Reasons that say something happened to an allowed connection, shown beside the rule. */
-const NOTES: Record<string, string> = {
+const NOTES: Partial<Record<ReasonCode, string>> = {
   guest_tls_rejected:
     "the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
   certificate_unavailable:
@@ -530,9 +574,9 @@ function connectionDetail(
     : null;
   const reason =
     failed === null
-      ? (REASONS[record.reason] ?? record.reason)
-      : `Puddle's own request failed: ${FAILED_REQUEST[failed] ?? failed}`;
-  const note = NOTES[record.reason];
+      ? reasonWords(record.reason)
+      : `Puddle's own request failed: ${has(FAILED_REQUEST, failed) ? FAILED_REQUEST[failed] : failed}`;
+  const note = has(NOTES, record.reason) ? NOTES[record.reason] : undefined;
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
   if (record.request_rule !== null) {
@@ -556,7 +600,7 @@ function connectionDetail(
     parts.push(
       why === "ip_rule"
         ? `the answer held ${record.refused_address}, which a rule on that address denies, so Puddle did not use it`
-        : `the answer also held ${record.refused_address} (${REASONS[why] ?? why}), which Puddle did not use`,
+        : `the answer also held ${record.refused_address} (${reasonWords(why)}), which Puddle did not use`,
     );
   }
   if (record.unswapped_stand_ins.length > 0) {
@@ -577,7 +621,7 @@ function connectionDetail(
   return parts.join(" · ");
 }
 
-const FOREIGN_KINDS: Record<string, string> = {
+const FOREIGN_KINDS: Record<ForeignCredentialKind, string> = {
   stale_stand_in: "a stand-in Puddle no longer holds",
   github_token: "a GitHub token",
   npm_token: "an npm token",
@@ -588,11 +632,13 @@ const FOREIGN_KINDS: Record<string, string> = {
 
 /** The kinds of credential the workspace sent that Puddle did not add; never a value. */
 function foreignNote(kinds: readonly string[]): string {
-  const names = kinds.map((k) => FOREIGN_KINDS[k] ?? k).join(", ");
+  const names = kinds
+    .map((k) => (has(FOREIGN_KINDS, k) ? FOREIGN_KINDS[k] : k))
+    .join(", ");
   return `the workspace sent ${names} that Puddle did not add; it went out as it was`;
 }
 
-const UNKNOWN_TOKEN_KINDS: Record<string, string> = {
+const UNKNOWN_TOKEN_KINDS: Record<UnknownTokenKind, string> = {
   github_token: "a GitHub token",
   github_fine_grained_token: "a fine-grained GitHub token",
   gitlab_token: "a GitLab token",
@@ -605,7 +651,9 @@ const UNKNOWN_TOKEN_KINDS: Record<string, string> = {
 
 /** The kinds of token the answers held that Puddle does not hold; never a value. */
 function unknownTokenNote(kinds: readonly string[]): string {
-  const names = kinds.map((k) => UNKNOWN_TOKEN_KINDS[k] ?? k).join(", ");
+  const names = kinds
+    .map((k) => (has(UNKNOWN_TOKEN_KINDS, k) ? UNKNOWN_TOKEN_KINDS[k] : k))
+    .join(", ");
   return `the answer held ${names} that Puddle does not hold; the workspace got it as it was`;
 }
 
@@ -681,7 +729,8 @@ export function describe(record: AuditRecord): RowView {
               company: {
                 label: "Company network",
                 title:
-                  (record.signal && COMPANY_SIGNAL_WORDS[record.signal]) ||
+                  (record.signal !== null &&
+                    COMPANY_SIGNAL_WORDS[record.signal]) ||
                   "On the company network.",
               },
             }

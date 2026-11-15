@@ -12878,7 +12878,7 @@
               "answer_credentials": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/UnknownTokenKind"
                 },
                 "description": "The kinds of token the answers held that Puddle does not hold, each once:\n`github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,\n`azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never\na value. Records written before it existed, and connections of a workspace that turned\nthe warning off, read as empty."
               },
@@ -12931,7 +12931,7 @@
               "foreign_credentials": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ForeignCredentialKind"
                 },
                 "description": "The kinds of credential the requests carried that Puddle did not add or swap, each\nonce: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,\n`azure_devops_token` or `git_authorization`. Never a value. Records written before it\nexisted, and connections of a workspace that turned the warning off, read as empty."
               },
@@ -12998,7 +12998,7 @@
               },
               "reason": {
                 "type": "string",
-                "description": "Why: `rule`, `no_rule`, or a block reason."
+                "description": "Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with\na `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a\n`FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the\npass-through (open-ended). A reader keeps a string it does not know."
               },
               "refused_address": {
                 "type": [
@@ -13012,7 +13012,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Why `refused_address` was refused: a reason code such as `ip_rule` or `toggle:private`."
+                "description": "Why `refused_address` was refused: a `reason` code such as `ip_rule` or\n`toggle:private`."
               },
               "request_rule": {
                 "type": [
@@ -13052,11 +13052,15 @@
                 "description": "The ids of the stand-ins whose real values an answer from one of their hosts held, put back as\nthe stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),\neach once, at most 16. Records written\nbefore it existed read as empty."
               },
               "signal": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "The signal that put the destination in the company network: `pac_direct`,\n`dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`."
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CompanySignal",
+                    "description": "The signal that put the destination in the company network: `pac_direct`,\n`dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "ts": {
                 "type": "integer",
@@ -14386,6 +14390,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "CompanySignal": {
+        "type": "string",
+        "description": "Which host signal put an address in [`LocalCategory::CompanyNetwork`]. The `code` is stored\nin the audit's `signal` field, so the codes are stored format.",
+        "enum": [
+          "pac_direct",
+          "dns_suffix",
+          "private_access_cgnat",
+          "vpn_route"
+        ]
       },
       "ConnectionDecision": {
         "type": "string",
@@ -16363,6 +16377,21 @@
         ],
         "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one workspace and carry a `workspace` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::workspace`] returns\n`None` for them."
       },
+      "FailedRequestCode": {
+        "type": "string",
+        "description": "Why one of Puddle's own requests (a repository listing, an image pull) did not work: the code\nafter `puddle_request_failed:`.",
+        "enum": [
+          "unreachable",
+          "tls",
+          "timeout",
+          "too_large",
+          "protocol",
+          "bad_token",
+          "host_refused",
+          "rate_limited",
+          "host_error"
+        ]
+      },
       "Fill": {
         "oneOf": [
           {
@@ -18043,11 +18072,15 @@
             ]
           },
           "company_signal": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "For an open request to an IP literal on the company network, whether or not its toggle is\non: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or\n`vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to\ntell a company address from the plain range it also falls in."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompanySignal",
+                "description": "For an open request to an IP literal on the company network, whether or not its toggle is\non: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or\n`vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to\ntell a company address from the plain range it also falls in."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decided_at": {
             "type": [
@@ -18527,6 +18560,63 @@
           }
         },
         "additionalProperties": false
+      },
+      "ReasonCode": {
+        "type": "string",
+        "description": "The reason codes that stand alone, without a prefix. Serialises as its [`ReasonCode::as_str`].",
+        "enum": [
+          "rule",
+          "no_rule",
+          "suppressed",
+          "merged",
+          "request_rule",
+          "request_rule_port",
+          "puddle_endpoint",
+          "ssh_unsupported",
+          "udp_unsupported",
+          "local_address",
+          "settings_unreadable",
+          "policy_unavailable",
+          "puddle_request",
+          "pki_distribution_point",
+          "sni_mismatch",
+          "guest_tls_rejected",
+          "certificate_unavailable",
+          "connection_limit",
+          "ip_rule",
+          "push_denied",
+          "pull_denied",
+          "bad_git_path",
+          "ssh_command_unsupported",
+          "ssh_channel_refused",
+          "credential_rejected",
+          "credential_unavailable",
+          "credential_ambiguous",
+          "git_settings_unavailable",
+          "login_not_kept",
+          "token_endpoint_spliced",
+          "peek_refused",
+          "body_too_large",
+          "answer_encoding",
+          "answer_withheld",
+          "bad_request",
+          "misdirected_host",
+          "expectation_unsupported",
+          "head_too_large",
+          "request_timeout",
+          "protocol_unsupported",
+          "stream_limit"
+        ]
+      },
+      "ReasonPrefix": {
+        "type": "string",
+        "description": "The text before the colon of a reason that carries a code after it. Serialises as its\n[`ReasonPrefix::as_str`], without the colon.",
+        "enum": [
+          "toggle",
+          "limit",
+          "pass_through",
+          "puddle_request_failed"
+        ]
       },
       "RemoteNote": {
         "type": "string",

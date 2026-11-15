@@ -25,6 +25,7 @@ import { report } from "#lib/testing/fake-network.ts";
 import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
@@ -262,6 +263,19 @@ describe("explicit Save", () => {
     expect(screen.getByText(/You have unsaved changes/)).toBeInTheDocument();
     expect(putBodies()).toHaveLength(0);
     expect(api.ui.sound).toBeNull();
+  });
+
+  it("holds an automatic reload while the draft has edits, and lets it go after Discard or unmount", async () => {
+    await open();
+    expect(hasUnsavedEdits()).toBe(false);
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
+    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(hasUnsavedEdits()).toBe(false));
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
+    cleanup();
+    expect(hasUnsavedEdits()).toBe(false);
   });
 
   it("shows the company network switch right under private networks, off, with its words", async () => {

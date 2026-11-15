@@ -847,11 +847,14 @@ async fn a_listing_request_that_failed_says_why_in_the_audit() {
         .unwrap_err();
 
     let reason = |written: &Written| written.events()[0].reason;
-    assert_eq!(reason(&refused), PuddleRequestFailed("host_refused"));
+    assert_eq!(
+        reason(&refused),
+        PuddleRequestFailed(puddle_types::FailedRequestCode::HostRefused)
+    );
     for (status, code) in [
-        (429, "rate_limited"),
-        (404, "host_error"),
-        (503, "host_error"),
+        (429, puddle_types::FailedRequestCode::RateLimited),
+        (404, puddle_types::FailedRequestCode::HostError),
+        (503, puddle_types::FailedRequestCode::HostError),
     ] {
         let server = Server::start(
             &pki,
@@ -868,8 +871,14 @@ async fn a_listing_request_that_failed_says_why_in_the_audit() {
         api.get(request(&host, "/user")).await.unwrap();
         assert_eq!(reason(&written), PuddleRequestFailed(code), "{status}");
     }
-    assert_eq!(reason(&tls), PuddleRequestFailed("tls"));
-    assert_eq!(reason(&gone), PuddleRequestFailed("unreachable"));
+    assert_eq!(
+        reason(&tls),
+        PuddleRequestFailed(puddle_types::FailedRequestCode::Tls)
+    );
+    assert_eq!(
+        reason(&gone),
+        PuddleRequestFailed(puddle_types::FailedRequestCode::Unreachable)
+    );
     assert_eq!(
         reason(&gone).to_string(),
         "puddle_request_failed:unreachable"
@@ -910,10 +919,10 @@ async fn the_other_ways_a_listing_request_fails_have_their_own_audit_codes() {
     assert_eq!(
         reasons,
         [
-            PuddleRequestFailed("timeout"),
-            PuddleRequestFailed("protocol"),
-            PuddleRequestFailed("too_large"),
-            PuddleRequestFailed("bad_token"),
+            PuddleRequestFailed(puddle_types::FailedRequestCode::Timeout),
+            PuddleRequestFailed(puddle_types::FailedRequestCode::Protocol),
+            PuddleRequestFailed(puddle_types::FailedRequestCode::TooLarge),
+            PuddleRequestFailed(puddle_types::FailedRequestCode::BadToken),
         ]
     );
 }

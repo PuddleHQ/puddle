@@ -47,7 +47,7 @@ use puddle_netpolicy::{
 };
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
-    ConnectionReason, Host, HttpRequestLine, LocalCategory, NullConnectionLog,
+    ConnectionReason, FailedRequestCode, Host, HttpRequestLine, LocalCategory, NullConnectionLog,
 };
 use subtle::ConstantTimeEq;
 use tokio::io::BufReader;
@@ -552,9 +552,9 @@ fn note_failure(event: &mut ConnectionEvent, refusal: &Refusal) {
         return;
     }
     let code = if refusal.outcome == Some(ConnectionOutcome::Timeout) {
-        "timeout"
+        FailedRequestCode::Timeout
     } else {
-        "unreachable"
+        FailedRequestCode::Unreachable
     };
     event.reason = ConnectionReason::PuddleRequestFailed(code);
     event.outcome = refusal.outcome;

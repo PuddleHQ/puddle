@@ -11,7 +11,9 @@ fail() {
     echo "check-socket-guard-test: $*" >&2
     exit 1
 }
-root=$(mktemp -d)
+# Under /var/tmp, not the caller's TMPDIR: a gate run's own TMPDIR is a long chk.* dir, and the cases below need a
+# root short enough to build a 68-byte base below it.
+root=$(mktemp -d /var/tmp/chk-guard.XXXXXX)
 trap 'rm -rf "$root"' EXIT
 sys="$root/system-tmp"
 mkdir -p "$sys" "$root/repo/scripts"

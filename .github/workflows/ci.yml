@@ -334,8 +334,9 @@ jobs:
           echo "$tools" >> "$GITHUB_PATH"
           # Claude Code 2.1.5 is a second, deliberately frozen install (ci/login-tools-old, not watched by
           # Dependabot): its login ends on console.anthropic.com, which the profile still has to capture.
-          # It stays off PATH so `claude` above is the current one.
-          npm ci --prefix ci/login-tools-old --no-audit --no-fund
+          # It stays off PATH so `claude` above is the current one. It has no install scripts, so
+          # `--ignore-scripts` costs nothing and keeps any future one from running.
+          npm ci --prefix ci/login-tools-old --no-audit --no-fund --ignore-scripts
           old="$GITHUB_WORKSPACE/ci/login-tools-old/node_modules/.bin/claude"
           grep -qx '2.1.5 (Claude Code)' <<<"$("$old" --version)"
           {

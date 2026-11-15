@@ -23,6 +23,15 @@ use crate::git_hosts::GitProblem;
 use crate::kubernetes::kubernetes_key;
 use crate::merge_notice::merge_notice_prefix;
 
+/// What [`HostWorkspaces::undo_boot`] takes down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Undo {
+    /// The sandbox stays (a start that failed leaves the workspace as it was).
+    Keep,
+    /// The sandbox goes, and so does the volume if the failed create made it.
+    Remove { created_volume: bool },
+}
+
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The single gate for direct SSH: whether the user allowed it for `name`. Whatever opens an
     /// SSH way into a workspace (the endpoint, and any ssh config entry) must check this first.
@@ -426,10 +435,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn undo_boot(
         &self,
         record: &WorkspaceRecord,
-        remove: bool,
-        created_volume: bool,
+        undo: Undo,
         reason: OpError,
     ) -> OpError {
+        let (remove, created_volume) = match undo {
+            Undo::Keep => (false, false),
+            Undo::Remove { created_volume } => (true, created_volume),
+        };
         let inner = &self.inner;
         let mut leftovers = Vec::new();
         let name = &record.id;

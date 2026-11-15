@@ -263,9 +263,9 @@ type Encoding<'a> = &'a dyn Fn(&str) -> Zeroizing<Vec<u8>>;
 fn forms(real: &str, stand_in: &str) -> Vec<(Zeroizing<Vec<u8>>, Vec<u8>)> {
     let encodings: [Encoding<'_>; 15] = [
         &|text| Zeroizing::new(text.as_bytes().to_vec()),
-        &|text| percent(text, false, false),
-        &|text| percent(text, true, false),
-        &|text| percent(text, false, true),
+        &|text| percent(text, Hex::Upper, Space::Percent),
+        &|text| percent(text, Hex::Lower, Space::Percent),
+        &|text| percent(text, Hex::Upper, Space::Plus),
         &|text| encoded(text, keeps_in_path),
         &|text| encoded(text, keeps_in_query),
         &|text| json(text, Json::default()),
@@ -321,19 +321,34 @@ fn forms(real: &str, stand_in: &str) -> Vec<(Zeroizing<Vec<u8>>, Vec<u8>)> {
     out
 }
 
+/// The case of the hex digits in a percent escape.
+#[derive(Clone, Copy)]
+enum Hex {
+    Upper,
+    Lower,
+}
+
+/// How a space is written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Space {
+    /// `%20`.
+    Percent,
+    /// `+` (a form).
+    Plus,
+}
+
 /// `text` percent-encoded as a whole URL component: every byte but the unreserved ones escaped,
-/// in lower-case hex if `lower`, a space as `+` if `plus` (a form).
-fn percent(text: &str, lower: bool, plus: bool) -> Zeroizing<Vec<u8>> {
-    let hex: &[u8; 16] = if lower {
-        b"0123456789abcdef"
-    } else {
-        b"0123456789ABCDEF"
+/// in the case `case` of hex, a space as `+` for a form.
+fn percent(text: &str, case: Hex, space: Space) -> Zeroizing<Vec<u8>> {
+    let hex: &[u8; 16] = match case {
+        Hex::Lower => b"0123456789abcdef",
+        Hex::Upper => b"0123456789ABCDEF",
     };
     let mut out = Zeroizing::new(Vec::with_capacity(text.len() * 3));
     for &byte in text.as_bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
             out.push(byte);
-        } else if plus && byte == b' ' {
+        } else if space == Space::Plus && byte == b' ' {
             out.push(b'+');
         } else {
             out.extend_from_slice(&[

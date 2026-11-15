@@ -156,9 +156,35 @@ async fn boot(tag: &str, extra_allows: &[&str], memory_mib: u32) -> Lab {
     }
 }
 
+/// The workspace's `company_network` and `private` toggles.
+#[derive(Debug, Clone, Copy)]
+struct Toggles {
+    company_network: bool,
+    private: bool,
+}
+
+impl Toggles {
+    const COMPANY_ONLY: Self = Self {
+        company_network: true,
+        private: false,
+    };
+    const PRIVATE_ONLY: Self = Self {
+        company_network: false,
+        private: true,
+    };
+    const NEITHER: Self = Self {
+        company_network: false,
+        private: false,
+    };
+}
+
 impl Lab {
-    /// Sets the workspace's toggles (`company_network`, `private`) to the given values.
-    async fn toggles(&self, company_network: bool, private: bool) {
+    /// Sets the workspace's toggles to the given values.
+    async fn toggles(&self, set: Toggles) {
+        let Toggles {
+            company_network,
+            private,
+        } = set;
         let reply = self
             .api
             .put(
@@ -217,7 +243,7 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
     let limit = Duration::from_secs(120);
 
     // Toggle off: refused over both schemes, with an exact allow rule and the private toggle on.
-    lab.toggles(false, true).await;
+    lab.toggles(Toggles::PRIVATE_ONLY).await;
     let plain = lab.guest(PLAIN, limit).await;
     assert!(
         plain.contains("status=403") && plain.contains("reason=toggle:company_network"),
@@ -253,7 +279,7 @@ async fn vm_company_network_toggle_off_refuses_the_intranet_name_and_toggle_on_r
 
     // Toggle on (the private toggle off, so the company toggle alone decides): the same request
     // reaches the site by name through the client's tunnel.
-    lab.toggles(true, false).await;
+    lab.toggles(Toggles::COMPANY_ONLY).await;
     let plain = lab.guest(PLAIN, limit).await;
     assert!(
         plain.contains("status=200"),
@@ -382,7 +408,7 @@ async fn vm_radar_company_network_toggle_changes_only_the_intranets_answer_for_t
     ];
 
     // Toggle off: every public part passes; the intranet is refused and its bytes never leave.
-    lab.toggles(false, false).await;
+    lab.toggles(Toggles::NEITHER).await;
     let off_public = lab.guest(&public_battery("off"), long).await;
     let rows = results(&off_public);
     let ok = passed(&rows);
@@ -404,7 +430,7 @@ async fn vm_radar_company_network_toggle_changes_only_the_intranets_answer_for_t
     );
 
     // Toggle on: the same public parts still pass, and the intranet answers with its bytes.
-    lab.toggles(true, false).await;
+    lab.toggles(Toggles::COMPANY_ONLY).await;
     let on_public = lab.guest(&public_battery("on"), long).await;
     let rows = results(&on_public);
     let ok = passed(&rows);

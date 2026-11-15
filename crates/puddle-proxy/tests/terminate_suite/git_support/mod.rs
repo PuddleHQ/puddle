@@ -199,7 +199,7 @@ impl GitRig {
         let world = World::new();
         world.identity("Work", "bound.test", &["acme"], false, WORK);
         world.identity("Personal", "bound.test", &[], true, PERSONAL);
-        world.list("bound.test/acme/web", true, true);
+        world.list("bound.test/acme/web", puddle_store::RepoToggles::BOTH);
         world
     }
 

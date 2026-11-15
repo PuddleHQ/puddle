@@ -98,9 +98,8 @@ pub(crate) fn classify(host: &str, method: &str, path: &str, query: Option<&str>
         Ok(service) => service,
         Err(why) => return Classified::Ambiguous(why),
     };
-    let reading = method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD");
-    let posting = method.eq_ignore_ascii_case("POST");
-    let mut access = endpoint.access(reading, posting, service);
+    let verb = Verb::of(method);
+    let mut access = endpoint.access(verb, service);
     // The words of a push anywhere after the repository, or in the query, make it one.
     if service == Some(Service::Receive) || found.rest.iter().any(|s| s == "git-receive-pack") {
         access = Access::Push;
@@ -415,7 +414,9 @@ impl Endpoint {
 
     /// What it asks for. Anything that is not clearly a read is a write: a method that changes
     /// state, a service this reading does not know.
-    fn access(&self, reading: bool, posting: bool, service: Option<Service>) -> Access {
+    fn access(&self, verb: Verb, service: Option<Service>) -> Access {
+        let reading = verb == Verb::Read;
+        let posting = verb == Verb::Post;
         let by_method = if reading { Access::Pull } else { Access::Push };
         match self {
             Self::InfoRefs => match service {
@@ -440,6 +441,29 @@ impl Endpoint {
                     _ => by_method,
                 }
             }
+        }
+    }
+}
+
+/// What a request's HTTP method does to the repository, as far as the classifier cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verb {
+    /// `GET` or `HEAD`.
+    Read,
+    /// `POST`.
+    Post,
+    /// Every other method.
+    Other,
+}
+
+impl Verb {
+    fn of(method: &str) -> Self {
+        if method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD") {
+            Self::Read
+        } else if method.eq_ignore_ascii_case("POST") {
+            Self::Post
+        } else {
+            Self::Other
         }
     }
 }

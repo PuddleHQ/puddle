@@ -28,10 +28,23 @@ fn gsa_state_from_its_services() {
 
 #[test]
 fn an_installed_agent_service_is_running_disabled_or_stopped() {
-    assert_eq!(AgentService::installed(false, true), AgentService::Running);
-    assert_eq!(AgentService::installed(true, true), AgentService::Running);
-    assert_eq!(AgentService::installed(true, false), AgentService::Disabled);
-    assert_eq!(AgentService::installed(false, false), AgentService::Stopped);
+    use ServiceStart::{Disabled, Enabled};
+    assert_eq!(
+        AgentService::installed(Enabled, true),
+        AgentService::Running
+    );
+    assert_eq!(
+        AgentService::installed(Disabled, true),
+        AgentService::Running
+    );
+    assert_eq!(
+        AgentService::installed(Disabled, false),
+        AgentService::Disabled
+    );
+    assert_eq!(
+        AgentService::installed(Enabled, false),
+        AgentService::Stopped
+    );
 }
 
 #[test]

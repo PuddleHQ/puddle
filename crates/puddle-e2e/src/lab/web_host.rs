@@ -16,6 +16,7 @@
 //! at the issuer a guest sees can tell Puddle's certificate from the fixture's. Test code only.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
@@ -73,6 +74,8 @@ struct State {
     seen: Mutex<Vec<Seen>>,
     /// Token-endpoint answers a responder gave with a type login capture refuses.
     unreadable: Mutex<Vec<String>>,
+    /// TLS connections that ended before a handshake completed.
+    failed_handshakes: AtomicUsize,
 }
 
 /// The fake website. Stops when dropped.
@@ -106,6 +109,7 @@ impl WebHost {
             options,
             seen: Mutex::new(Vec::new()),
             unreadable: Mutex::new(Vec::new()),
+            failed_handshakes: AtomicUsize::new(0),
         });
         let plain_listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let tls_listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
@@ -168,6 +172,13 @@ impl WebHost {
         )
     }
 
+    /// How many TLS connections ended before their handshake completed (a client that connected
+    /// and closed, or spoke something that is no TLS).
+    #[must_use]
+    pub fn failed_handshakes(&self) -> usize {
+        self.state.failed_handshakes.load(Ordering::SeqCst)
+    }
+
     /// Every request answered so far, oldest first.
     #[must_use]
     pub fn seen(&self) -> Vec<Seen> {
@@ -205,6 +216,7 @@ async fn serve_tls(listener: TcpListener, acceptor: TlsAcceptor, state: Arc<Stat
         let (acceptor, state) = (acceptor.clone(), state.clone());
         tokio::spawn(async move {
             let Ok(tls) = acceptor.accept(tcp).await else {
+                state.failed_handshakes.fetch_add(1, Ordering::SeqCst);
                 return;
             };
             let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");

@@ -516,6 +516,94 @@ async fn create_refuses_what_cannot_work_and_says_why() {
     api.running.shutdown().await;
 }
 
+/// What a refused create says about where the refusal belongs: the `field` and the `row`.
+#[tokio::test]
+async fn create_refusals_name_the_input_and_the_entry_they_are_about() {
+    let api = start().await;
+    let long = "w".repeat(61);
+    let many: Vec<Value> = (0..101)
+        .map(|n| json!({"url": format!("https://github.com/acme/r{n}")}))
+        .collect();
+    let cases = [
+        (
+            json!({"name": "", "repositories": [{"url": REPO}]}),
+            Some("name"),
+            None,
+        ),
+        (json!({"name": long}), Some("name"), None),
+        (
+            json!({"name": "a", "memory_mib": 10}),
+            Some("memory_mib"),
+            None,
+        ),
+        (
+            json!({"name": "a", "image": "no spaces allowed"}),
+            Some("image"),
+            None,
+        ),
+        (
+            json!({"name": "a", "start_folder": "../etc"}),
+            Some("start_folder"),
+            None,
+        ),
+        (
+            json!({"name": "a", "repo_url": REPO}),
+            Some("repo_url"),
+            None,
+        ),
+        (
+            json!({"name": "a", "repositories": many}),
+            Some("repo_url"),
+            None,
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "http://github.com/a/b"}]}),
+            Some("url"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://gitlab.com/b/c", "directory": "lost+found"}]}),
+            Some("directory"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://gitlab.com/b/api"}]}),
+            Some("directory"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://github.com/ACME/api", "directory": "two"}]}),
+            Some("url"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO, "identity_id": 77}]}),
+            Some("url"),
+            Some(1),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"local_path": "/no/such/checkout"}]}),
+            Some("local_path"),
+            Some(1),
+        ),
+        // A body the JSON reader refuses is about no one input.
+        (json!({"name": "a", "extra": 1}), None, None),
+    ];
+    for (body, field, row) in cases {
+        let reply = api.send("POST", "/api/workspaces", Some(&body)).await;
+        assert_eq!(reply.status, 422, "{}", reply.body);
+        let sent = reply.json();
+        assert_eq!(sent.get("field").and_then(Value::as_str), field, "{sent}");
+        assert_eq!(sent.get("row").and_then(Value::as_u64), row, "{sent}");
+    }
+    let missing = api.get("/api/workspaces/nope").await.json();
+    assert!(
+        missing["field"].is_null() && missing["row"].is_null(),
+        "{missing}"
+    );
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn create_refuses_a_taken_name_and_a_failed_create_leaves_nothing() {
     let api = start().await;
@@ -1344,6 +1432,8 @@ async fn a_rename_refuses_bad_names_and_bodies_and_unknown_workspaces() {
         assert_eq!(reply.status, 422, "{body}: {}", reply.body);
     }
     assert_eq!(api.get("/api/workspaces/web").await.json()["name"], "web");
+    let empty = rename(&api, "web", &json!({"name": " "})).await.json();
+    assert_eq!(empty["field"], "name", "{empty}");
     assert_eq!(
         rename(&api, "ghost", &json!({"name": "x"})).await.status,
         404

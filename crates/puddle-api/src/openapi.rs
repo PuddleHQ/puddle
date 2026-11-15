@@ -31,6 +31,7 @@ const BEARER: &str = "bearer";
         crate::events::Lagged,
         crate::error::ApiErrorBody,
         crate::error::ErrorCode,
+        crate::error::ErrorField,
         crate::wire::ConsentKind,
         crate::wire::AuditType,
         crate::wire::AuditOutcome,

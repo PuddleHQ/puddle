@@ -60,6 +60,30 @@ pub enum ErrorCode {
     Internal,
 }
 
+/// The input of a request a refusal is about, so a form can put the message beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ErrorField {
+    /// The workspace's name.
+    Name,
+    /// The repository list as a whole (too many entries), or the address of the entry `row`
+    /// names.
+    RepoUrl,
+    /// The image.
+    Image,
+    /// The memory size.
+    MemoryMib,
+    /// The start folder.
+    StartFolder,
+    /// With `row`: that entry's `local_path`.
+    LocalPath,
+    /// With `row`: that entry's `url`.
+    Url,
+    /// With `row`: that entry's `directory`.
+    Directory,
+}
+
 /// The body of every error response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ApiErrorBody {
@@ -67,6 +91,14 @@ pub struct ApiErrorBody {
     pub error: ErrorCode,
     /// Human-readable, lower case, no trailing period. Never contains a token.
     pub message: String,
+    /// The input the refusal is about; `null` when it is about no one input. Set on the
+    /// refusals of a workspace's name, repository list, start folder, image and memory.
+    #[schema(required = true)]
+    pub field: Option<ErrorField>,
+    /// The place, counted from 1, of the entry of the request's `repositories` list the refusal
+    /// is about; `field` then names the entry's input. `null` when it is about no entry.
+    #[schema(required = true, minimum = 1)]
+    pub row: Option<u32>,
 }
 
 impl std::fmt::Display for ApiErrorBody {
@@ -96,10 +128,27 @@ impl ApiError {
             body: ApiErrorBody {
                 error,
                 message: message.into(),
+                field: None,
+                row: None,
             },
             detail: None,
             retry_after: None,
         }
+    }
+
+    /// Says the refusal is about the request's input `field`.
+    #[must_use]
+    pub(crate) fn at_field(mut self, field: ErrorField) -> Self {
+        self.body.field = Some(field);
+        self
+    }
+
+    /// Says the refusal is about the input `field` of the entry `row` (from 1) of the list.
+    #[must_use]
+    pub(crate) fn at_row(mut self, row: usize, field: ErrorField) -> Self {
+        self.body.field = Some(field);
+        self.body.row = u32::try_from(row).ok();
+        self
     }
 
     /// Too many attempts: try again in `seconds`.

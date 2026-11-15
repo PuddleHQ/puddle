@@ -33,6 +33,7 @@ mod git_host;
 mod interceptor;
 mod pac;
 mod pip_index;
+mod placement_feeds;
 mod private_access;
 mod procs;
 #[cfg(unix)]
@@ -52,6 +53,9 @@ pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};
 pub use pip_index::pip_index;
+pub use placement_feeds::{
+    CARGO_CRATE, GO_MODULE, PlacementHosts, QUERY_PARAMETER, placement_feeds, wheel_file,
+};
 pub use private_access::{Adapter, PrivateAccess};
 #[cfg(unix)]
 pub use squid::{Squid, SquidOptions};

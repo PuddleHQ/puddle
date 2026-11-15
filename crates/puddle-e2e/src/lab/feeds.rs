@@ -25,20 +25,23 @@ pub const PIP_PROJECT: &str = "probe-private";
 /// The Maven coordinates the Maven feed serves, `group:artifact:version`.
 pub const MAVEN_COORDINATES: &str = "com.example:probe-private:1.0";
 
-/// What a request carried as a credential: a bearer token, or the password of basic
-/// authentication.
-fn presented(seen: &Seen) -> Option<String> {
+/// What a request carried as a credential: a bearer token, the password of basic
+/// authentication, or the whole `authorization` value (`cargo` sends a registry token bare).
+pub(super) fn presented(seen: &Seen) -> Option<String> {
     let value = seen.headers_named("authorization").into_iter().next()?;
     if let Some(token) = value.strip_prefix("Bearer ") {
         return Some(token.to_owned());
     }
-    let decoded = STANDARD.decode(value.strip_prefix("Basic ")?).ok()?;
+    let Some(basic) = value.strip_prefix("Basic ") else {
+        return Some(value.to_owned());
+    };
+    let decoded = STANDARD.decode(basic).ok()?;
     let text = String::from_utf8(decoded).ok()?;
     text.split_once(':')
         .map(|(_, password)| password.to_owned())
 }
 
-fn answer(content_type: &'static str, body: Vec<u8>) -> WebAnswer {
+pub(super) fn answer(content_type: &'static str, body: Vec<u8>) -> WebAnswer {
     WebAnswer {
         status: 200,
         content_type,
@@ -46,7 +49,7 @@ fn answer(content_type: &'static str, body: Vec<u8>) -> WebAnswer {
     }
 }
 
-fn status(status: u16) -> WebAnswer {
+pub(super) fn status(status: u16) -> WebAnswer {
     WebAnswer {
         status,
         content_type: "text/plain",
@@ -55,7 +58,7 @@ fn status(status: u16) -> WebAnswer {
 }
 
 /// A ustar archive of `files`, gzip-compressed (an npm tarball).
-fn tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
+pub(super) fn tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut archive = tar::Builder::new(Vec::new());
     for (name, data) in files {
         let mut header = tar::Header::new_gnu();
@@ -70,7 +73,9 @@ fn tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
     gz.finish().unwrap()
 }
 
-fn npm_answer(host: &str, path: &str) -> WebAnswer {
+/// The npm registry's answers; `prefix` is what the registry URL has before the package name
+/// (empty, or `/t/<token>` for a feed that takes its token in the path).
+pub(super) fn npm_answer(host: &str, prefix: &str, path: &str) -> WebAnswer {
     let tarball = format!("/{NPM_PACKAGE}/-/{NPM_PACKAGE}-1.0.0.tgz");
     if path == format!("/{NPM_PACKAGE}") {
         let doc = serde_json::json!({
@@ -79,7 +84,7 @@ fn npm_answer(host: &str, path: &str) -> WebAnswer {
             "versions": {"1.0.0": {
                 "name": NPM_PACKAGE,
                 "version": "1.0.0",
-                "dist": {"tarball": format!("https://{host}{tarball}")},
+                "dist": {"tarball": format!("https://{host}{prefix}{tarball}")},
             }},
         });
         answer("application/json", doc.to_string().into_bytes())
@@ -133,7 +138,7 @@ fn nuget_answer(host: &str, path: &str) -> WebAnswer {
     }
 }
 
-fn pip_answer(path: &str) -> WebAnswer {
+pub(super) fn pip_answer(path: &str) -> WebAnswer {
     let name = wheel_name(PIP_PROJECT);
     if path == format!("/simple/{PIP_PROJECT}/") {
         answer(
@@ -197,7 +202,7 @@ pub fn private_feeds(
         }
         let path = seen.target.split('?').next().unwrap_or_default();
         Some(match host.as_str() {
-            h if h == npm => npm_answer(h, path),
+            h if h == npm => npm_answer(h, "", path),
             h if h == nuget => nuget_answer(h, path),
             h if h == pip => pip_answer(path),
             _ => maven_answer(path),

@@ -1002,34 +1002,30 @@ fn r21_workspace_deletion_removes_its_rules_and_expires_its_rows() {
 }
 
 #[test]
-fn r22_sweeper_enforces_the_audit_cap() {
-    let limits = Limits {
-        audit_max_bytes: 20_000,
-        audit_trim_to_bytes: 10_000,
-        ..Limits::default()
-    };
-    let (clock, store) = fixture_with(limits);
-    for n in 0..200 {
+fn r22_sweeper_deletes_audit_records_older_than_the_retention_and_nothing_else() {
+    let (clock, store) = fixture();
+    store.set_audit_retention_days(30).unwrap();
+    for n in 0..20 {
         clock.advance(1);
-        decide(&store, "a", &format!("h{n}.example"));
+        decide(&store, "a", &format!("old{n}.example"));
     }
-    let before = store.audit_bytes().unwrap();
-    assert!(before > 20_000, "{before}");
+    let old = audit(&store).len();
+    clock.advance(31 * DAY);
+    for n in 0..20 {
+        clock.advance(1);
+        decide(&store, "a", &format!("new{n}.example"));
+    }
     let report = store.sweep().unwrap();
-    assert!(report.audit_records_trimmed > 0);
-    assert!(store.audit_bytes().unwrap() <= 10_000 + 4096);
+    assert_eq!(report.audit_records_pruned, old as u64);
     let lines = audit(&store);
     let trimmed = lines.last().unwrap();
     assert_eq!(trimmed["type"], "audit_trimmed");
-    assert_eq!(trimmed["deleted_records"], report.audit_records_trimmed);
-    // The oldest records went first.
-    let oldest_kept = trimmed["oldest_ts_kept"].as_u64().unwrap();
-    assert!(
-        lines
-            .iter()
-            .all(|l| l["ts"].as_u64().unwrap() >= oldest_kept)
-    );
-    assert_eq!(store.sweep().unwrap().audit_records_trimmed, 0);
+    assert_eq!(trimmed["deleted_records"], report.audit_records_pruned);
+    let cutoff = T0 + 31 * DAY + 40 - 30 * DAY;
+    // Every record left is newer than the cutoff, and the oldest of them is the kept one.
+    assert!(lines.iter().all(|l| l["ts"].as_u64().unwrap() >= cutoff));
+    assert_eq!(trimmed["oldest_ts_kept"], lines[0]["ts"]);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
 }
 
 #[tokio::test]
@@ -1079,11 +1075,8 @@ fn r23_every_stored_line_is_tagged_json_with_nulls_written() {
 
 #[test]
 fn r24_the_store_writes_each_record_type_it_owns() {
-    let (clock, store) = fixture_with(Limits {
-        audit_max_bytes: 1,
-        audit_trim_to_bytes: 0,
-        ..Limits::default()
-    });
+    let (clock, store) = fixture();
+    store.set_audit_retention_days(7).unwrap();
     let a = new_pending(decide(&store, "a", "a.example"));
     new_pending(decide(&store, "a", "b.example"));
     let decided = store

@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27,
+    V22, V23, V24, V25, V26, V27, V28,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 27;
+pub const SCHEMA_VERSION: u32 = 28;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -946,6 +946,16 @@ CREATE TABLE ssh_agent_grants (
     run          INTEGER NOT NULL CHECK (run IN (0, 1)),
     created_at   INTEGER NOT NULL,
     PRIMARY KEY (workspace_id, host, fingerprint)
+) STRICT;
+";
+
+/// How many days the audit is kept. One row, absent until the owner chooses (the store then uses
+/// its default). The records older than this are deleted by the sweeper; there is no cap per
+/// workspace, because a workspace that floods its own log could then push out its history.
+const V28: &str = "
+CREATE TABLE audit_retention (
+    id   INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    days INTEGER NOT NULL CHECK (days BETWEEN 1 AND 3650)
 ) STRICT;
 ";
 

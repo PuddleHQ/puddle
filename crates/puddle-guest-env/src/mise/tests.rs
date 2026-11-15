@@ -45,6 +45,22 @@ fn without_trust_no_trusted_path_is_set() {
 }
 
 #[test]
+fn without_trust_mise_keeps_its_state_apart_from_the_trusted_runs() {
+    // mise remembers every config it loaded as trusted in its state folder; a workspace
+    // switched to no trust must not read those records.
+    let on = mise_config(&settings(true, None)).unwrap();
+    let off = mise_config(&settings(false, None)).unwrap();
+    assert_eq!(
+        on.env.get("MISE_STATE_DIR"),
+        Some("/workspaces/w1/.puddle/mise/state")
+    );
+    assert_eq!(
+        off.env.get("MISE_STATE_DIR"),
+        Some("/workspaces/w1/.puddle/mise/state-untrusted")
+    );
+}
+
+#[test]
 fn the_image_path_sits_between_the_shims_and_the_binary() {
     let config = mise_config(&settings(true, Some("/usr/local/cargo/bin:/opt/x"))).unwrap();
     assert_eq!(

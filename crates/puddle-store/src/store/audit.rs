@@ -214,10 +214,14 @@ impl Store {
         })?;
         self.flush_limits()?;
         let waiting_records_merged = self.merge_waiting_connections()?;
-        let audit_records_trimmed = self.trim_audit()?;
+        let audit_records_pruned = self.prune_audit_if_due()?;
+        let audit_file_shrunk_bytes = self.shrink_audit_file()?;
+        let audit_over_warn_size = self.audit_bytes()? > self.limits.audit_warn_bytes;
         Ok(SweepReport {
             rules_expired,
-            audit_records_trimmed,
+            audit_records_pruned,
+            audit_file_shrunk_bytes,
+            audit_over_warn_size,
             waiting_records_merged,
         })
     }
@@ -327,64 +331,6 @@ impl Store {
                 }
             }
         }
-    }
-
-    /// Deletes the oldest audit records while the audit is over its cap, then records the trim.
-    fn trim_audit(&self) -> Result<u64, StoreError> {
-        const CHUNK: i64 = 5000;
-        let mut deleted = 0u64;
-        if self.audit_bytes()? <= self.limits.audit_max_bytes {
-            return Ok(0);
-        }
-        loop {
-            let mut conn = lock(&self.conn);
-            let tx = write_tx(&mut conn)?;
-            let total = audit_bytes(&tx)?;
-            let Some(excess) = total.checked_sub(self.limits.audit_trim_to_bytes) else {
-                break;
-            };
-            if excess == 0 {
-                break;
-            }
-            let mut stmt = tx
-                .prepare("SELECT id, length(CAST(line AS BLOB)) FROM audit ORDER BY id LIMIT ?1")?;
-            let mut freed = 0u64;
-            let mut cutoff = None;
-            for item in stmt.query_map([CHUNK], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-            })? {
-                let (id, len) = item?;
-                freed += u64::try_from(len).unwrap_or(0);
-                cutoff = Some(id);
-                if freed >= excess {
-                    break;
-                }
-            }
-            drop(stmt);
-            let Some(cutoff) = cutoff else { break };
-            deleted += u64::try_from(tx.execute("DELETE FROM audit WHERE id <= ?1", [cutoff])?)
-                .unwrap_or(0);
-            tx.commit()?;
-        }
-        let mut conn = lock(&self.conn);
-        let tx = write_tx(&mut conn)?;
-        let head = audit_head(&tx)?;
-        let oldest: Option<i64> = tx
-            .query_row("SELECT ts FROM audit ORDER BY id LIMIT 1", [], |row| {
-                row.get(0)
-            })
-            .optional()?;
-        append(
-            &tx,
-            &AuditRecord::AuditTrimmed {
-                ts: self.clock.now_ms(),
-                deleted_records: deleted,
-                oldest_ts_kept: oldest.and_then(|ts| u64::try_from(ts).ok()),
-            },
-        )?;
-        self.commit(tx, head, Vec::new())?;
-        tracing::info!(deleted, "audit trimmed to its size cap");
-        Ok(deleted)
     }
 
     /// Total bytes of audit lines.

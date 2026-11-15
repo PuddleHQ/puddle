@@ -16,6 +16,22 @@ pub const DEFAULT_SWEEP_PERIOD: Duration = Duration::from_secs(60);
 /// The key of the problem a failed sweep raises.
 pub const SWEEP_PROBLEM: &str = "sweeper";
 
+/// The key of the problem raised while the activity log is over its warning size.
+pub const AUDIT_SIZE_PROBLEM: &str = "audit-size";
+
+fn audit_size_problem(bytes: u64, retention_days: u32) -> Problem {
+    Problem::new(
+        AUDIT_SIZE_PROBLEM,
+        "The activity log is getting large",
+        format!(
+            "It holds about {} MiB, over the size Puddle warns at. Nothing is deleted for its size: \
+             records are kept for {retention_days} days. If the disk is getting full, shorten that \
+             in the admin screen, or prune it by hand with the `audit prune` command.",
+            bytes / (1024 * 1024)
+        ),
+    )
+}
+
 fn sweep_problem(reason: &str) -> Problem {
     Problem::new(
         SWEEP_PROBLEM,
@@ -26,6 +42,18 @@ fn sweep_problem(reason: &str) -> Problem {
              cause: free some space."
         ),
     )
+}
+
+/// Raises [`AUDIT_SIZE_PROBLEM`] while the audit is over its warning size, and ends it after.
+fn warn_when_large(store: &Store, problems: &Problems, over: bool) {
+    if !over {
+        problems.clear(AUDIT_SIZE_PROBLEM);
+        return;
+    }
+    // A read that fails is not worth a second problem; the next pass looks again.
+    if let (Ok(bytes), Ok(days)) = (store.audit_bytes(), store.audit_retention_days()) {
+        problems.raise(audit_size_problem(bytes, days));
+    }
 }
 
 /// A running sweeper. Its owner ends it with [`Sweeper::shutdown`]; dropping the handle also
@@ -61,6 +89,7 @@ impl Sweeper {
                     Ok(report) => {
                         tracing::debug!(?report, "sweep done");
                         problems.clear(SWEEP_PROBLEM);
+                        warn_when_large(&store, &problems, report.audit_over_warn_size);
                     }
                     Err(reason) => problems.raise(sweep_problem(&reason)),
                 }

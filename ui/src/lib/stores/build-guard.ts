@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Keeps a tab from running old code against a newer server. The server names the build of the app
-// it serves in `GET /api/health`; a tab whose own build differs reloads, once per server build.
+// it serves in `GET /api/health`; a tab whose own build differs reloads, once per server build, but never over typing that is not saved yet.
 // A tab left open across an upgrade (or a server that came back after one) is the case: the
 // event stream reconnecting is the cue, with a slow poll behind it for a stream that never broke.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { LiveSource } from "./live.svelte.ts";
+import { hasUnsavedEdits } from "./unsaved-edits.ts";
 
 /** Where the build already reloaded for is kept, so a bundle that stays stale cannot loop. */
 const RELOADED_KEY = "puddle.reloaded-for-build";
@@ -19,6 +20,8 @@ export interface BuildGuardDeps {
   /** Where the last build reloaded for is remembered; the tab's session storage by default. */
   memory?: Pick<Storage, "getItem" | "setItem">;
   pollMs?: number;
+  /** Whether a form holds typing not saved yet, which a reload would drop; the registered forms by default. */
+  unsavedEdits?: () => boolean;
 }
 
 function sessionMemory(): Pick<Storage, "getItem" | "setItem"> | undefined {
@@ -36,6 +39,7 @@ export class BuildGuard {
   readonly #location: Pick<Location, "reload">;
   readonly #memory: Pick<Storage, "getItem" | "setItem"> | undefined;
   readonly #pollMs: number;
+  readonly #unsavedEdits: () => boolean;
 
   constructor(deps: BuildGuardDeps) {
     this.#current = deps.current;
@@ -44,6 +48,7 @@ export class BuildGuard {
     this.#location = deps.location ?? window.location;
     this.#memory = "memory" in deps ? deps.memory : sessionMemory();
     this.#pollMs = deps.pollMs ?? 60_000;
+    this.#unsavedEdits = deps.unsavedEdits ?? hasUnsavedEdits;
   }
 
   /**
@@ -60,6 +65,8 @@ export class BuildGuard {
     }
     if (!served || served === this.#current) return false;
     if (this.#remembered() === served) return false;
+    // Not remembered: the next check (stream resync or poll) reloads once the edits are saved or dropped.
+    if (this.#unsavedEdits()) return false;
     this.#remember(served);
     this.#location.reload();
     return true;

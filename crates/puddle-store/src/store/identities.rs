@@ -16,8 +16,8 @@ use crate::identity::{
 };
 use crate::users::UserId;
 use crate::workspace_git::{
-    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
-    SwitchSource, WorkspaceGit,
+    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
+    SwitchChange, SwitchSource, WorkspaceGit,
 };
 
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
@@ -846,8 +846,7 @@ impl Store {
         &self,
         ws: &WorkspaceId,
         repo: &RepoRef,
-        pull: bool,
-        push: bool,
+        toggles: RepoToggles,
     ) -> Result<RepoEntry, StoreError> {
         let id = self.change(|tx, now, fx| {
             let added = tx.execute(
@@ -859,8 +858,8 @@ impl Store {
                     repo.host.as_str(),
                     repo.owner.as_str(),
                     repo.repo,
-                    pull,
-                    push,
+                    toggles.pull,
+                    toggles.push,
                     sql_ts(now)
                 ],
             )?;
@@ -889,13 +888,12 @@ impl Store {
         &self,
         ws: &WorkspaceId,
         id: i64,
-        pull: bool,
-        push: bool,
+        toggles: RepoToggles,
     ) -> Result<RepoEntry, StoreError> {
         self.change(|tx, _now, fx| {
             let n = tx.execute(
                 "UPDATE workspace_repos SET pull = ?3, push = ?4 WHERE id = ?1 AND workspace_id = ?2",
-                params![id, ws.as_str(), pull, push],
+                params![id, ws.as_str(), toggles.pull, toggles.push],
             )?;
             if n == 0 {
                 return Err(StoreError::UnknownRepo(id));

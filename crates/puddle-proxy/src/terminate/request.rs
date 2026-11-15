@@ -11,6 +11,7 @@ use ::http::header::{HeaderMap, HeaderName, HeaderValue};
 use puddle_netpolicy::normalise_host;
 
 use super::inject::Injection;
+use super::response::GuestHttp;
 use crate::http::{self, Body, Head};
 use crate::proxy::Refusal;
 use crate::target::Target;
@@ -55,6 +56,19 @@ pub(crate) struct Parsed {
     pub(crate) close: bool,
     /// A WebSocket handshake (`Connection: upgrade`, `Upgrade: websocket`).
     pub(crate) upgrade: bool,
+}
+
+impl Parsed {
+    /// The version the guest speaks and whether it asked to close.
+    pub(crate) const fn guest(&self) -> GuestHttp {
+        if self.http11 {
+            GuestHttp::Http11 {
+                close_requested: self.close,
+            }
+        } else {
+            GuestHttp::Http10
+        }
+    }
 }
 
 pub(crate) fn bad(why: impl Into<String>) -> Refusal {

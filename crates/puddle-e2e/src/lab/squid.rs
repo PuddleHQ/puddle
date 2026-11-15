@@ -14,8 +14,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    BASIC_USER, LOCAL, Prefix, READY, StartCost, basic_password, configured_or_skip, free_port,
-    is_address_in_use, on_free_port, read, require_file, stop, try_answers,
+    BASIC_USER, LOCAL, Prefix, READY, Requirement, StartCost, basic_password, configured_or_skip,
+    free_port, is_address_in_use, on_free_port, read, require_file, stop, try_answers,
 };
 
 /// How long [`Squid::access_log_with`] waits for its line (a loaded machine needs seconds).
@@ -245,7 +245,7 @@ impl Squid {
         // A missing program is a skip (`None`); `configured_or_skip` panics instead when required.
         configured_or_skip(
             bin.is_some() || image.is_some(),
-            std::env::var_os("PUDDLE_REQUIRE_SQUID").is_some(),
+            Requirement::from_env("PUDDLE_REQUIRE_SQUID"),
             "PUDDLE_REQUIRE_SQUID",
             "set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid",
         )

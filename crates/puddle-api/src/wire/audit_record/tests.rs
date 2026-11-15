@@ -108,3 +108,33 @@ fn a_new_request_and_a_new_rule_are_served_with_their_rows() {
     assert_eq!(made["rule"]["id"], 3);
     assert_eq!(made["rule"]["pattern"], "new.example");
 }
+
+#[test]
+fn a_rule_in_the_audit_serves_its_scope_kind_and_effect_as_the_same_words_it_always_did() {
+    for (scope, kind, effect) in [
+        ("global", "exact", "allow"),
+        ("workspace", "suffix", "deny"),
+        ("set", "suffix", "allow"),
+    ] {
+        let mut stored = rule(1, "example.com");
+        stored["set_id"] = Value::Null;
+        stored["scope"] = json!(scope);
+        stored["pattern_kind"] = json!(kind);
+        stored["effect"] = json!(effect);
+        let out = served(&json!({"type": "rule_created", "ts": 9, "rule": stored.clone()}));
+        assert_eq!(out["rule"], stored, "{scope} {kind} {effect}");
+    }
+    // A line written before the rename still reads, and is served under the new name.
+    let mut old = rule(2, "old.example.com");
+    old["scope"] = json!("sandbox");
+    let out = served(&json!({"type": "rule_created", "ts": 9, "rule": old}));
+    assert_eq!(out["rule"]["scope"], "workspace");
+}
+
+#[test]
+fn a_rule_in_the_audit_with_an_unknown_effect_is_not_a_record() {
+    let mut stored = rule(1, "example.com");
+    stored["effect"] = json!("maybe");
+    let line = json!({"type": "rule_created", "ts": 9, "rule": stored});
+    assert!(serde_json::from_value::<store::AuditRecord>(line).is_err());
+}

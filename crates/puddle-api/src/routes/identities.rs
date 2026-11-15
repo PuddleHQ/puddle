@@ -593,7 +593,7 @@ pub(crate) async fn add_git_repo(
     let name = workspace(&state, &id).await?;
     let repo = body.repo_ref()?;
     let row = blocking(move || {
-        let entry = state.store.add_repo(&name, &repo, body.pull, body.push)?;
+        let entry = state.store.add_repo(&name, &repo, body.toggles())?;
         record_op(
             &state.store,
             principal.user,
@@ -630,9 +630,7 @@ pub(crate) async fn set_git_repo(
 ) -> Result<Json<GitRepoView>, ApiError> {
     let name = workspace(&state, &id).await?;
     let row = blocking(move || {
-        let entry = state
-            .store
-            .set_repo_toggles(&name, repo, body.pull, body.push)?;
+        let entry = state.store.set_repo_toggles(&name, repo, body.toggles())?;
         record_op(
             &state.store,
             principal.user,

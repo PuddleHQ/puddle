@@ -413,15 +413,24 @@ pub enum AgentService {
     Unreadable,
 }
 
+/// Whether an installed service may be started by the service manager.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceStart {
+    /// The start type is disabled.
+    Disabled,
+    /// Any other start type.
+    Enabled,
+}
+
 impl AgentService {
     /// The state of an installed service from its start type and whether it runs. A running
     /// service counts as running even when its start type is disabled (it was started by hand
     /// before the type changed).
     #[must_use]
-    pub fn installed(start_disabled: bool, running: bool) -> Self {
+    pub fn installed(start: ServiceStart, running: bool) -> Self {
         if running {
             Self::Running
-        } else if start_disabled {
+        } else if start == ServiceStart::Disabled {
             Self::Disabled
         } else {
             Self::Stopped

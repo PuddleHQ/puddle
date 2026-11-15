@@ -15,6 +15,8 @@ use puddle_types::{
 
 use puddle_workspace::Import;
 
+use super::access::Undo;
+use super::boot::BootFor;
 use super::{
     Grown, HostWorkspaces, Room, TERMINAL_BOOT_POLL, TERMINAL_BOOT_WAIT, clone_problem_key,
     problem_key, with_leftovers,
@@ -31,7 +33,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let (imported, mut created_volume) = self.import_all(&record, &imports).await?;
         let mut created_by_boot = false;
         if let Err(reason) = self
-            .boot_new(&record, &mut created_by_boot, true, true)
+            .boot_new(&record, &mut created_by_boot, BootFor::Create)
             .await
         {
             return Err(if created_volume {
@@ -42,16 +44,22 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         created_volume |= created_by_boot;
         if let Err(reason) = self.settle(&record).await {
-            return Err(self.undo_boot(&record, true, created_volume, reason).await);
+            return Err(self
+                .undo_boot(&record, Undo::Remove { created_volume }, reason)
+                .await);
         }
         let gated = self.gated(&record.id).await?;
         if let Err(reason) = self.clone_all(&record, gated.ungated(), &imported).await {
-            return Err(self.undo_boot(&record, true, created_volume, reason).await);
+            return Err(self
+                .undo_boot(&record, Undo::Remove { created_volume }, reason)
+                .await);
         }
         // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
         // a workspace the next start takes for an unfinished create.
         if let Err(reason) = self.mark_created(&record.id) {
-            return Err(self.undo_boot(&record, true, created_volume, reason).await);
+            return Err(self
+                .undo_boot(&record, Undo::Remove { created_volume }, reason)
+                .await);
         }
         self.refresh_checkouts_later(&record.id);
         Ok(())

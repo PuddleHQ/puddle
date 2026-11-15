@@ -278,14 +278,39 @@ fn on_free_port<T>(
     panic!("the fixture found its port taken {PORT_ATTEMPTS} times\n{last}");
 }
 
-/// Whether a fixture whose program is not configured must fail its test (`required`, from its
+/// Whether a fixture whose program is not configured must fail its test or skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Requirement {
+    /// A missing program skips the test.
+    Optional,
+    /// A missing program fails the test.
+    Required,
+}
+
+impl Requirement {
+    /// `Required` when the `PUDDLE_REQUIRE_*` variable `variable` is set (CI sets it).
+    fn from_env(variable: &str) -> Self {
+        if std::env::var_os(variable).is_some() {
+            Self::Required
+        } else {
+            Self::Optional
+        }
+    }
+}
+
+/// Whether a fixture whose program is not configured must fail its test (`requirement`, from its
 /// `PUDDLE_REQUIRE_*` variable) instead of skipping.
 ///
 /// # Panics
-/// When `required` and the program is not `configured`.
-fn configured_or_skip(configured: bool, required: bool, variable: &str, how: &str) -> bool {
+/// When `requirement` is `Required` and the program is not `configured`.
+fn configured_or_skip(
+    configured: bool,
+    requirement: Requirement,
+    variable: &str,
+    how: &str,
+) -> bool {
     assert!(
-        configured || !required,
+        configured || requirement == Requirement::Optional,
         "{variable} is set but the fixture's program is not configured: {how}"
     );
     if !configured {

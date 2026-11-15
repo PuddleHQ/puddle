@@ -54,8 +54,8 @@ pub use facts::{
     AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
     CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
     DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
-    Protection, RuntimeFacts, RuntimeState, ServiceState, SshAgentFacts, SwapArea, SwapFacts,
-    VaultFacts, WritableFolder,
+    Protection, RuntimeFacts, RuntimeState, ServiceStart, ServiceState, SshAgentFacts, SwapArea,
+    SwapFacts, VaultFacts, WritableFolder,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;

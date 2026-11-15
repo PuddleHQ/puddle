@@ -139,8 +139,11 @@ impl GitRig {
         let world = World::new();
         world.identity("Work", NAME, &["acme"], false, WORK);
         world.identity("Personal", NAME, &[], true, PERSONAL);
-        world.list("bound.test/acme/web", true, true);
-        world.list("bound.test/acme/readonly", true, false);
+        world.list("bound.test/acme/web", puddle_store::RepoToggles::BOTH);
+        world.list(
+            "bound.test/acme/readonly",
+            puddle_store::RepoToggles::PULL_ONLY,
+        );
         world
             .store
             .as_user(puddle_store::UserId::OWNER)

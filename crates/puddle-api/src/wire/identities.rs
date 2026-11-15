@@ -598,6 +598,13 @@ impl GitRepoRequest {
     pub(crate) fn repo_ref(&self) -> Result<store::RepoRef, ApiError> {
         Ok(store::RepoRef::new(&self.host, &self.owner, &self.repo)?)
     }
+
+    pub(crate) fn toggles(&self) -> store::RepoToggles {
+        store::RepoToggles {
+            pull: self.pull,
+            push: self.push,
+        }
+    }
 }
 
 /// A repository row's toggles.
@@ -607,6 +614,15 @@ pub struct GitRepoToggles {
     pub pull: bool,
     /// A push to it may go out.
     pub push: bool,
+}
+
+impl GitRepoToggles {
+    pub(crate) fn toggles(&self) -> store::RepoToggles {
+        store::RepoToggles {
+            pull: self.pull,
+            push: self.push,
+        }
+    }
 }
 
 /// The default of the two switches, for every workspace that has not set its own.

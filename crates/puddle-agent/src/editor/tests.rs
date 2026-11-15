@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use puddle_agent_proto::editor::MicrosoftOptions;
+
 use super::*;
 
 fn server() -> EditorServer {
@@ -386,7 +388,15 @@ fn the_session_user_is_given_the_server_s_folders_and_the_password_file() {
         shell: "/bin/sh".to_owned(),
     };
     let data = dir.path().join("code-server");
-    let microsoft = EditorServer::microsoft(data.to_str().unwrap(), "/f", 300, false, false);
+    let microsoft = EditorServer::microsoft(
+        data.to_str().unwrap(),
+        "/f",
+        300,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update: false,
+        },
+    );
     let config = |server: EditorServer| EditorConfig {
         server,
         password_file: dir.path().join("editor-password"),
@@ -425,7 +435,15 @@ fn a_switch_made_before_the_server_reads_its_build_is_not_a_restart_request() {
         std::fs::write(builds.join(commit).join(".puddle-installed"), "").unwrap();
     }
     std::fs::write(builds.join("current"), &old).unwrap();
-    let mut server = EditorServer::microsoft("/d", "/f", 120, false, true);
+    let mut server = EditorServer::microsoft(
+        "/d",
+        "/f",
+        120,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update: true,
+        },
+    );
     server.dir = builds.to_string_lossy().into_owned();
     let control = Control::new(&server);
     assert_eq!(control.claim(), Some((builds.join(&old), false)));
@@ -491,7 +509,15 @@ impl Fetch for Arc<WrongHash> {
 
 /// A Microsoft server config on a fresh volume, and the service that refuses every build.
 fn refusing(dir: &Path, auto_update: bool) -> (EditorConfig, Arc<WrongHash>) {
-    let mut server = EditorServer::microsoft("/d", "/f", 120, false, auto_update);
+    let mut server = EditorServer::microsoft(
+        "/d",
+        "/f",
+        120,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update,
+        },
+    );
     server.dir = dir.join("servers").to_string_lossy().into_owned();
     server.data = dir.join("data").to_string_lossy().into_owned();
     let config = EditorConfig {
@@ -545,7 +571,15 @@ async fn every_refused_download_is_told_to_the_host_in_words_without_checksums()
 
 #[tokio::test(start_paused = true)]
 async fn an_install_that_works_ends_the_report_once_and_says_nothing_when_nothing_was_reported() {
-    let control = Control::new(&EditorServer::microsoft("/d", "/f", 120, false, false));
+    let control = Control::new(&EditorServer::microsoft(
+        "/d",
+        "/f",
+        120,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update: false,
+        },
+    ));
     let (out, mut host) = mpsc::channel(8);
     tokio::spawn(forward_editor_problems(
         control.install_problem(),

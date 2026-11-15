@@ -396,8 +396,11 @@ where
             guest.writer,
             response.map(AnswerBody::Streaming),
             &parsed.method,
-            parsed.http11,
-            parsed.close || last,
+            if last {
+                parsed.guest().closing()
+            } else {
+                parsed.guest()
+            },
             config.body_idle_timeout,
         ) => written,
         never = h1::keep_reading(guest.reader) => match never {},

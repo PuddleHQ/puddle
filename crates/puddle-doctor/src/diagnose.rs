@@ -486,7 +486,15 @@ const ENCRYPTION_WHY: &str = "Puddle keeps secrets in memory while it runs (the 
 and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk \
 (a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot.";
 
-fn encryption_fix(os: Os, data_bad: bool, swap_bad: bool) -> String {
+/// What is not encrypted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unencrypted {
+    Drive,
+    Swap,
+    Both,
+}
+
+fn encryption_fix(os: Os, bad: Unencrypted) -> String {
     let how = match os {
         Os::Windows => {
             "Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: \
@@ -503,10 +511,10 @@ swap,cipher=aes-xts-plain64,size=512`, and use /dev/mapper/swap in /etc/fstab; o
         }
         Os::Other => "Encrypt the drive and the swap with the tools your OS provides.",
     };
-    let what = match (data_bad, swap_bad) {
-        (true, true) => "The drive and the swap are",
-        (true, false) => "The drive is",
-        _ => "The swap is",
+    let what = match bad {
+        Unencrypted::Both => "The drive and the swap are",
+        Unencrypted::Drive => "The drive is",
+        Unencrypted::Swap => "The swap is",
     };
     format!("{what} not encrypted. {ENCRYPTION_WHY} {how}")
 }
@@ -579,7 +587,13 @@ fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
         .collect();
     let mut unknowns = unknowns;
     unknowns.dedup();
-    if data_bad || swap_bad {
+    let unencrypted = match (data_bad, swap_bad) {
+        (true, true) => Some(Unencrypted::Both),
+        (true, false) => Some(Unencrypted::Drive),
+        (false, true) => Some(Unencrypted::Swap),
+        (false, false) => None,
+    };
+    if let Some(bad) = unencrypted {
         let finding = if data_bad {
             Finding::DiskNotEncrypted
         } else {
@@ -587,7 +601,7 @@ fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
         };
         let mut check = Check::new(id, Status::Warn, summary)
             .finding(finding)
-            .fix(encryption_fix(os, data_bad, swap_bad));
+            .fix(encryption_fix(os, bad));
         if !unknowns.is_empty() {
             check = check.detail(unknowns.join("; "));
         }

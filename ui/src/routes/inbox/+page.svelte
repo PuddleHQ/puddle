@@ -9,7 +9,7 @@
   import SshAgentAsks from "#lib/components/SshAgentAsks.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import { decidedPattern, decidedSentence } from "#lib/decision/decided.ts";
-  import { LOCAL_LABELS } from "#lib/decision/local.ts";
+  import { LOCAL_LABELS } from "#lib/decision/local-labels.ts";
   import { narrowest, type Effect } from "#lib/decision/model.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";

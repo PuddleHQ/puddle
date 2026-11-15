@@ -190,7 +190,7 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
@@ -531,19 +531,21 @@ done
 # Temp dir: cargo, nextest, the tests' fixtures, vitest and Playwright write scratch files to $TMPDIR, by default
 # /tmp, which on a host with a RAM-backed tmpfs is small and shared (one gate run filling it fails every other
 # process there). A run therefore points TMPDIR at a fresh directory under the target dir, when that is outside the repository (CHECK_TMPDIR=DIR uses
-# DIR/chk.* instead), removed when the run ends, also on a failure or a signal. A real run of the test, ui
+# DIR/chk.* instead; a target dir below any other repository, such as the workspace's .scratch/, moves it to the system temp dir), removed when the run ends, also on a failure or a signal. A real run of the test, ui
 # and ui-e2e gates (cargo, nextest, vitest, Playwright with Chromium and WebKit) added nothing to /tmp or /dev/shm.
 # A tool that hardcodes a path still writes there, and a socket path under a deep target dir can pass the 107 bytes
 # of sun_path (the one test that nests two roots uses a short base; mbx binds a socket in TMPDIR, so the directory
 # name stays short: <target dir>/chk.XXXXXX/mbx-session-XXXXXX/cache-agent.sock must fit in 107 bytes).
 check_tmp=
 check_tmp_cleanup() { [ -z "$check_tmp" ] || rm -rf "$check_tmp"; }
-# A unix socket path is at most 107 bytes (sun_path). The longest socket the tests bind sits 39 bytes below TMPDIR
-# (measured under a 32-byte TMPDIR: the longest bound path was 71 bytes, the agent tests' route.sock), so a longer
-# TMPDIR fails the socket tests with an error that names no cause. Refuse it here, before any gate runs.
+# A unix socket path is at most 107 bytes (sun_path). A bind logger over the whole workspace test run found the
+# longest socket under TMPDIR in two places: puddle-ipc's default endpoint, `/puddle-<16 hex>/<16 hex>.sock`, which
+# sits 46 bytes below TMPDIR when XDG_RUNTIME_DIR is unset or not a directory (it binds under that directory
+# otherwise), and the agent tests' `/pa-editor-nopassword-XXXXXX/route.sock`, 39 bytes below. A longer TMPDIR fails
+# the socket tests with an error that names no cause. Refuse it here, before any gate runs.
 sock_max=107
-sock_tail=39
 tmp_guard() {
+    if [ -d "${XDG_RUNTIME_DIR:-}" ]; then sock_tail=39; else sock_tail=46; fi
     n=$(printf %s "${TMPDIR:-/tmp}" | wc -c | tr -d ' ')
     limit=$((sock_max - sock_tail))
     [ "$n" -le "$limit" ] || {
@@ -551,23 +553,53 @@ tmp_guard() {
         exit 1
     }
 }
+# enclosing_repo <dir>: prints the nearest directory at or above <dir> that holds a `.git` (a repository or a linked
+# worktree), and succeeds; fails when there is none. Git finds such a repository from any scratch repository
+# or crate a test builds below <dir> that has no `.git` of its own, so a temp dir below one breaks the git fixtures.
+enclosing_repo() {
+    d=$1
+    while :; do
+        [ ! -e "$d/.git" ] || {
+            printf '%s\n' "$d"
+            return 0
+        }
+        [ "$d" != / ] || return 1
+        d=$(dirname "$d")
+    done
+}
 private_tmp() {
     base="${CHECK_TMPDIR:-${CARGO_TARGET_DIR:-target}}"
     case $base in /*) ;; *) base="$PWD/$base" ;; esac
+    sys_tmp="${TMPDIR:-/tmp}"
     # Not inside the repository: tests that build a scratch repository or crate under TMPDIR would find this one
     # above it (the default target dir `target` is inside, so a plain run keeps the system temp dir).
     case $base in "$PWD" | "$PWD"/*)
-        echo "check: the target dir is inside the repository, TMPDIR stays ${TMPDIR:-/tmp} (set CARGO_TARGET_DIR outside it, or CHECK_TMPDIR)" >&2
+        echo "check: the target dir is inside the repository, TMPDIR stays $sys_tmp (set CARGO_TARGET_DIR outside it, or CHECK_TMPDIR)" >&2
+        base=
         ;;
     *)
+        mkdir -p "$base"
+        # Nor inside any other repository (a target dir under the enclosing workspace's .scratch/): the temp dir
+        # moves to the system temp dir, where it is still private and removed at the end. When that is inside a
+        # repository too there is nowhere safe to go.
+        if outer=$(enclosing_repo "$(cd "$base" && pwd -P)"); then
+            echo "check: the target dir is inside the repository $outer, the temp dir goes to the system temp dir $sys_tmp instead" >&2
+            base=$sys_tmp
+        fi
+        ;;
+    esac
+    if [ -n "$base" ]; then
         mkdir -p "$base"
         check_tmp=$(mktemp -d "$base/chk.XXXXXX")
         trap check_tmp_cleanup EXIT
         trap 'check_tmp_cleanup; exit 130' INT
         trap 'check_tmp_cleanup; exit 143' TERM HUP
         export TMPDIR="$check_tmp"
-        ;;
-    esac
+    fi
+    if outer=$(enclosing_repo "$(cd "${TMPDIR:-/tmp}" && pwd -P)"); then
+        echo "check: TMPDIR ${TMPDIR:-/tmp} is inside the repository $outer, whose .git the tests' scratch repositories would find. Set CHECK_TMPDIR to a directory outside every repository." >&2
+        exit 1
+    fi
     tmp_guard
 }
 private_tmp

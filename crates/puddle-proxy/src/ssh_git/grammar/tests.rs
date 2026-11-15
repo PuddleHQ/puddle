@@ -127,6 +127,8 @@ fn every_other_spelling_of_a_path_is_bad_git_path() {
         "'acme/web",
         "acme/web'",
         "'acme/%20b'",
+        "'acme/web.git/info/refs'",
+        "'acme/WEB.GIT/web'",
     ] {
         assert_eq!(
             repo(&format!("git-upload-pack {arg}"), "github.com"),

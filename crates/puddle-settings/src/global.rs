@@ -57,6 +57,9 @@ pub struct GlobalSettings {
     /// workspace, so no workspace value can override it.
     #[serde(default, skip_serializing_if = "Tools::is_empty")]
     pub tools: Tools,
+    /// Upper bounds on what a workspace may be given (global only).
+    #[serde(default, skip_serializing_if = "Limits::is_empty")]
+    pub limits: Limits,
     /// What the user agreed to or declined (per user, never per workspace).
     #[serde(default, skip_serializing_if = "Consents::is_empty")]
     pub consents: Consents,
@@ -123,6 +126,7 @@ impl Document for GlobalSettings {
         document::push_unknown("vscode_server.", &self.vscode_server.extra, out);
         document::push_unknown("ui.", &self.ui.extra, out);
         document::push_unknown("tools.", &self.tools.extra, out);
+        document::push_unknown("limits.", &self.limits.extra, out);
         self.consents.collect_unknown("consents.", out);
         document::push_unknown("first_run.", &self.first_run.extra, out);
     }
@@ -196,6 +200,39 @@ impl Tools {
     #[must_use]
     pub fn mise(&self) -> bool {
         self.mise.unwrap_or(Self::DEFAULT_MISE)
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Upper bounds on what a workspace may be given. Global only: no workspace can lift them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Limits {
+    /// The most vCPUs a workspace may have, for the global default and for every workspace's own
+    /// count. Unset means the computer's logical cores, with no other cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cpus: Option<puddle_types::CpuCount>,
+    #[serde(flatten)]
+    pub(crate) extra: BTreeMap<String, Value>,
+}
+
+impl Limits {
+    /// The most vCPUs a workspace may have on a computer with `host_cores` logical cores.
+    ///
+    /// ```
+    /// use puddle_settings::Limits;
+    /// use puddle_types::CpuCount;
+    /// assert_eq!(Limits::default().max_cpus_on(12).get(), 12);
+    /// let mut own = Limits::default();
+    /// own.max_cpus = Some(CpuCount::new(6).unwrap());
+    /// assert_eq!(own.max_cpus_on(12).get(), 6);
+    /// ```
+    #[must_use]
+    pub fn max_cpus_on(&self, host_cores: u32) -> puddle_types::CpuCount {
+        self.max_cpus
+            .unwrap_or_else(|| puddle_types::CpuCount::clamped(host_cores))
     }
 
     fn is_empty(&self) -> bool {

@@ -47,7 +47,17 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
     assert_eq!(e["memory"], json!({"value": 8192, "source": "default"}));
-    assert_eq!(e["cpus"], json!({"value": 1, "source": "default"}));
+    let host = u32::try_from(std::thread::available_parallelism().unwrap().get()).unwrap();
+    let default_cpus = puddle_types::CpuCount::default_for_host(host).get();
+    assert_eq!(
+        e["cpus"],
+        json!({"value": default_cpus, "source": "default"})
+    );
+    assert_eq!(view["limits"], json!({"max_cpus": null}));
+    assert_eq!(
+        view["effective_limits"],
+        json!({"max_cpus": host.min(255), "host_cpus": host, "default_cpus": default_cpus})
+    );
     assert_eq!(e["reconnection_grace"]["value"], 300);
     assert_eq!(e["clipboard_read"]["value"], "ask");
     assert_eq!(e["local_toggles"]["metadata"]["value"], false);
@@ -237,7 +247,8 @@ async fn global_and_workspace_values_resolve_in_order() {
             "/api/settings",
             Some(&json!({
                 "workspace_defaults": {"memory": 4096, "cpus": 2, "local_toggles": {"private": true}},
-                "vscode_server": {"telemetry": true}
+                "vscode_server": {"telemetry": true},
+                "limits": {"max_cpus": 64}
             })),
         )
         .await;
@@ -299,7 +310,8 @@ async fn global_and_workspace_values_resolve_in_order() {
         json!({
             "schema_version": 2,
             "workspace_defaults": {"memory": 4096, "cpus": 2, "local_toggles": {"private": true}},
-            "vscode_server": {"telemetry": true}
+            "vscode_server": {"telemetry": true},
+            "limits": {"max_cpus": 64}
         })
     );
 
@@ -315,7 +327,7 @@ async fn out_of_range_and_unknown_settings_are_refused() {
     for body in [
         json!({"workspace_defaults": {"memory": 1}}),
         json!({"workspace_defaults": {"cpus": 0}}),
-        json!({"workspace_defaults": {"cpus": 33}}),
+        json!({"limits": {"max_cpus": 0}}),
         json!({"workspace_defaults": {"reconnection_grace": 5}}),
         json!({"workspace_defaults": {"clipboard_read": "sometimes"}}),
         json!({"workspace_defaults": {"swap": 4}}),
@@ -734,6 +746,61 @@ async fn global_settings_stored_under_the_old_name_are_read_and_rewritten() {
             "workspace_defaults": {"memory": 4096, "local_toggles": {"private": true}},
             "ui": {"theme": "dark"}
         })
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cpu_count_above_the_global_maximum_is_refused_where_it_is_set() {
+    let api = start().await;
+    api.own("w");
+    let put = |path: &'static str, body: Value| {
+        let api = &api;
+        async move { api.send("PUT", path, Some(&body)).await }
+    };
+    let reply = put("/api/settings", json!({"limits": {"max_cpus": 3}})).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["effective_limits"]["max_cpus"], 3);
+
+    // The limit is the user's own and has no cap of 32: 40 is fine once it is raised.
+    let reply = put(
+        "/api/settings",
+        json!({"workspace_defaults": {"cpus": 4}, "limits": {"max_cpus": 3}}),
+    )
+    .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    let reply = put(
+        "/api/settings/workspaces/w",
+        json!({"overrides": {"cpus": 4}}),
+    )
+    .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert!(reply.body.contains("overrides.cpus"), "{}", reply.body);
+    let reply = put(
+        "/api/settings/workspaces/w",
+        json!({"overrides": {"cpus": 3}}),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+
+    let reply = put("/api/settings", json!({"limits": {"max_cpus": 40}})).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let reply = put(
+        "/api/settings/workspaces/w",
+        json!({"overrides": {"cpus": 40}}),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["effective"]["cpus"]["value"], 40);
+
+    // Lowering the limit under a stored count lowers what the workspace runs with.
+    let reply = put("/api/settings", json!({"limits": {"max_cpus": 2}})).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let own = api.get("/api/settings/workspaces/w").await.json();
+    assert_eq!(own["overrides"]["cpus"], 40);
+    assert_eq!(
+        own["effective"]["cpus"],
+        json!({"value": 2, "source": "workspace"})
     );
     api.running.shutdown().await;
 }

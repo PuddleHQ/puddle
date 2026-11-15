@@ -65,7 +65,10 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
-import { FakeSettings } from "#lib/testing/fake-settings.ts";
+import {
+  FAKE_EFFECTIVE_LIMITS,
+  FakeSettings,
+} from "#lib/testing/fake-settings.ts";
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
 import { sshAgentAsks } from "#lib/stores/ssh-agent-asks.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -614,6 +617,8 @@ describe("every workspace needs a confirm", () => {
       unknown_fields: [],
       vscode_server: fake.vscode,
       tools: fake.tools,
+      limits: fake.limits,
+      effective_limits: FAKE_EFFECTIVE_LIMITS,
       workspace_defaults: fake.layer,
     };
     seed();
@@ -656,6 +661,8 @@ function shortcuts(on: boolean | null) {
     unknown_fields: [],
     vscode_server: fake.vscode,
     tools: fake.tools,
+    limits: fake.limits,
+    effective_limits: FAKE_EFFECTIVE_LIMITS,
     workspace_defaults: fake.layer,
   };
 }

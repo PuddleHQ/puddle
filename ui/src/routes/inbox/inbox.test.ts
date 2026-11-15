@@ -76,14 +76,12 @@ function reset() {
   globalSettings.view = null;
   inbox.open = [];
   inbox.rules = [];
-  inbox.toggles = {};
   inbox.calls = [];
   inbox.down = false;
   inbox.openLimit = 1000;
   pending.rows = [];
   pending.openLimit = Number.POSITIVE_INFINITY;
   pending.decided = [];
-  pending.toggles = {};
   workspaces.list = [];
   pending.status = "loading";
   setsApi.sets = [];
@@ -821,8 +819,13 @@ describe("local destinations", () => {
   beforeEach(() => shortcuts(true));
 
   async function local(toggleOn: boolean) {
-    inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
-    inbox.toggles["demo"] = { private: toggleOn };
+    inbox.add(
+      request(1, {
+        host: "192.168.1.10",
+        blocked_by: toggleOn ? null : "private",
+      }),
+      "192.168.1.10",
+    );
     render(InboxPage);
     await screen.findByRole("heading", { name: "192.168.1.10" });
   }

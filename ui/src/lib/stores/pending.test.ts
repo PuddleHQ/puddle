@@ -147,21 +147,22 @@ describe("refresh", () => {
     );
   });
 
-  it("reads a workspace's local toggles only for rows that are local, and blocks them when off", async () => {
+  it("blocks the rows the service names and no others, and reads no settings itself", async () => {
     const { inbox, store } = setup();
-    inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
     inbox.add(
-      request(2, { host: "10.0.0.5", workspace: "lab" as never }),
-      "10.0.0.5",
+      request(1, { host: "192.168.1.10", blocked_by: "private" }),
+      "192.168.1.10",
     );
-    inbox.add(request(3, { host: "8.8.8.8" }), "8.8.8.8");
-    inbox.toggles["demo"] = { private: false };
-    inbox.toggles["lab"] = { private: true };
+    // Local addresses the service did not name: their toggle is on, so nothing blocks them.
+    inbox.add(request(2, { host: "10.0.0.5" }), "10.0.0.5");
+    inbox.add(request(3, { host: "0.0.0.0" }), "0.0.0.0");
+    inbox.add(request(4, { host: "100.64.0.1" }), "100.64.0.1");
     await store.refresh();
     expect(store.blockedBy(rowOf(store, 1).request)).toBe("private");
-    expect(store.blockedBy(rowOf(store, 2).request)).toBeNull();
-    expect(store.blockedBy(rowOf(store, 3).request)).toBeNull();
-    expect(inbox.calls.filter((c) => c.includes("settings"))).toHaveLength(2);
+    for (const id of [2, 3, 4]) {
+      expect(store.blockedBy(rowOf(store, id).request)).toBeNull();
+    }
+    expect(inbox.calls.filter((c) => c.includes("settings"))).toHaveLength(0);
   });
 
   it("blocks a company-network destination the service named, by that toggle alone", async () => {
@@ -174,43 +175,12 @@ describe("refresh", () => {
       }),
       "100.64.3.7",
     );
-    inbox.toggles["demo"] = { private: true, company_network: false };
     await store.refresh();
     expect(store.blockedBy(rowOf(store, 1).request)).toBe("company_network");
-    // The service no longer names a blocker once the toggle is on; the signal still says what the
-    // address is, so the browser's range for 100.64/10 ("special", off) doesn't take over.
-    inbox.toggles["demo"] = {
-      private: false,
-      special: false,
-      company_network: true,
-    };
+    // Once the toggle is on the service names no blocker, and nothing in the browser takes over.
     inbox.open[0]!.request.blocked_by = null;
     await store.refresh();
     expect(store.blockedBy(rowOf(store, 1).request)).toBeNull();
-  });
-
-  it("does not block when the settings can't be read", async () => {
-    const { inbox, store } = setup();
-    inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
-    await store.refresh();
-    expect(store.toggles["demo"]).toBeNull();
-    expect(store.blockedBy(rowOf(store, 1).request)).toBeNull();
-  });
-
-  it("copes with a settings call that throws", async () => {
-    const { inbox, store } = setup();
-    inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
-    const get = inbox.GET;
-    vi.spyOn(inbox, "GET").mockImplementation((async (
-      path: string,
-      init: never,
-    ) => {
-      if (path !== "/api/inbox") throw new TypeError("down");
-      return get(path, init);
-    }) as never);
-    await store.refresh();
-    expect(store.status).toBe("ready");
-    expect(store.toggles["demo"]).toBeNull();
   });
 });
 
@@ -284,11 +254,14 @@ describe("events", () => {
     }
   });
 
-  it("reads the toggles of a local request that arrives live", async () => {
+  it("takes the blocking toggle of a local request that arrives live from the refetch it triggers", async () => {
     const { inbox, source, store } = setup();
     store.start();
     await vi.waitFor(() => expect(store.status).toBe("ready"));
-    inbox.toggles["demo"] = { private: false };
+    inbox.add(
+      request(8, { host: "10.1.1.1", blocked_by: "private" }),
+      "10.1.1.1",
+    );
     source.emit({
       type: "pending_opened",
       request: request(8, { host: "10.1.1.1" }),
@@ -308,11 +281,8 @@ describe("events", () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => (release = r));
     const get = inbox.GET;
-    vi.spyOn(inbox, "GET").mockImplementation((async (
-      path: string,
-      init: never,
-    ) => {
-      const out = await get(path, init);
+    vi.spyOn(inbox, "GET").mockImplementation((async (path: string) => {
+      const out = await get(path);
       if (path === "/api/inbox") await gate;
       return out;
     }) as never);

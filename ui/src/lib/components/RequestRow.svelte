@@ -6,7 +6,7 @@
     LOCAL_LABELS,
     companySignalText,
     type LocalCategory,
-  } from "#lib/decision/local.ts";
+  } from "#lib/decision/local-labels.ts";
   import type { Choice } from "#lib/decision/model.ts";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import type { Row } from "#lib/stores/pending.svelte.ts";

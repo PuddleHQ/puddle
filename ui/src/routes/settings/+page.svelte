@@ -18,7 +18,7 @@
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
   import { SECRET_NEVER_IN } from "#lib/environment/model.ts";
   import { api } from "#lib/api/client.ts";
-  import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local-labels.ts";
   import { CPU_COUNTS, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import {
     EMPTY_DRAFT,

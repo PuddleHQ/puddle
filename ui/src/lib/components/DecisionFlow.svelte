@@ -4,8 +4,12 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import OptionsPopover from "./OptionsPopover.svelte";
   import { decidedSentence, type Decided } from "#lib/decision/decided.ts";
-  import { localCategory } from "#lib/decision/local.ts";
-  import { describe, needsConfirm, type Choice } from "#lib/decision/model.ts";
+  import {
+    describe,
+    isIpLiteral,
+    needsConfirm,
+    type Choice,
+  } from "#lib/decision/model.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { pending as defaultStore } from "#lib/stores/pending.svelte.ts";
   import { isOn, setsOnFor, userSetNumber } from "#lib/rules/sets.ts";
@@ -180,7 +184,7 @@
     }}
     workspace={optionsRow.request.workspace}
     anchor={shown?.anchor ?? null}
-    exactOnly={localCategory(optionsRow.request.host) !== null}
+    exactOnly={isIpLiteral(optionsRow.request.host)}
     sets={setChoices}
     onDecide={(choice) => decide(optionsRow, choice)}
     onClose={() => {

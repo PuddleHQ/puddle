@@ -619,6 +619,26 @@ async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
     api.running.shutdown().await;
 }
 
+/// The UI used to guess the toggle from the address and disagreed with the proxy on these three
+/// (it said "special" for 0.0.0.0 and 100.64/10 and nothing for multicast). It now shows what the
+/// service says, so the service has to say the proxy class for each.
+#[tokio::test]
+async fn the_blocking_toggle_is_the_proxy_class_for_addresses_a_browser_copy_got_wrong() {
+    let api = start().await;
+    let unspecified = api.request("box", "0.0.0.0");
+    let cgnat = api.request("box", "100.64.0.1");
+    let multicast = api.request("box", "224.0.0.1");
+    let one = |id: i64| {
+        let path = format!("/api/pending/{id}");
+        let api = &api;
+        async move { api.get(&path).await.json()["blocked_by"].clone() }
+    };
+    assert_eq!(one(unspecified).await, "loopback");
+    assert_eq!(one(cgnat).await, "private");
+    assert_eq!(one(multicast).await, "special");
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off() {
     let signals = puddle_netpolicy::StaticSignals::new().with_private_access_client();

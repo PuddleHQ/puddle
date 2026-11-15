@@ -1,0 +1,2 @@
+drwx------@ 82 runner  staff  2624 Nov 15 15:28 /Users/runner/Library
+ 0: group:everyone deny delete

@@ -1,0 +1,4 @@
+drwxr-xr-x+ 2 runner  wheel  64 Nov 15 15:27 DIR/multi
+ 0: group:everyone deny delete
+ 1: group:admin allow add_file
+ 2: user:root allow list

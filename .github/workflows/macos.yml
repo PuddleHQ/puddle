@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The macOS-only checks of `puddle doctor`, run on a GitHub-hosted macOS runner (no Mac is needed
+# and no microVM boots there). The doctor library's tests run on the runner, among them folders
+# given real ACL entries with `chmod +a`, read back through `ls -lde` and the same probe the
+# doctor uses, so the parser meets the output of the macOS this runner image carries. The samples
+# the parser's other tests read (crates/puddle-doctor/src/sys/acl/fixtures) were captured the same
+# way on such a runner. Not a required check: it runs on pull requests that touch the doctor, on
+# pushes to develop that do, nightly and by hand.
+name: macos
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "crates/puddle-doctor/**"
+      - ".github/workflows/macos.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "crates/puddle-doctor/**"
+      - ".github/workflows/macos.yml"
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  doctor-acl:
+    name: puddle-doctor on macOS (ACL rule)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: macos-doctor
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: Show the runner's ACL listing format
+        run: |
+          sw_vers
+          dir=$(mktemp -d /tmp/acl-sample.XXXXXX)
+          chmod +a "everyone allow add_file" "$dir"
+          ls -lde "$dir"
+      - name: puddle-doctor tests
+        run: cargo test -p puddle-doctor --locked

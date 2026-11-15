@@ -1,0 +1,2 @@
+drwxr-xr-x+ 2 runner  wheel  64 Nov 15 15:27 DIR/f5
+ 0: group:admin allow add_file,delete,add_subdirectory,writeattr,writeextattr,writesecurity,chown

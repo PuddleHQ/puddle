@@ -3,7 +3,10 @@
 //! calls in `windows.rs` (the crate's only `unsafe`), `linux.rs` and `macos.rs`; `unix.rs` holds
 //! what the Unixes share.
 
-#[cfg(target_os = "linux")]
+// The parser is built on Linux for tests only, so real macOS captures run on every CI host.
+#[cfg(any(target_os = "macos", test))]
+mod acl;
+#[cfg(unix)]
 mod ancestors;
 mod encryption;
 #[cfg(target_os = "linux")]
@@ -15,7 +18,7 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub(crate) use ancestors::data_path;
 pub(crate) use encryption::disk_encryption;
 #[cfg(target_os = "linux")]
@@ -31,8 +34,8 @@ pub(crate) use windows::{
     code_integrity, file_access, global_secure_access, hypervisor, job, ssh_agent_service,
 };
 
-/// msb's rule about the folders above its catalog exists only on Linux here; the probe never asks elsewhere.
-#[cfg(not(target_os = "linux"))]
+/// msb's rule about the folders above its catalog is read on Linux and macOS; Windows has none.
+#[cfg(not(unix))]
 pub(crate) fn data_path(_dir: Option<&std::path::Path>) -> crate::facts::DataPathFacts {
     crate::facts::DataPathFacts::NoFolder
 }

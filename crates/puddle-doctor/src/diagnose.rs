@@ -648,6 +648,46 @@ fn data_path(facts: &DataPathFacts) -> Check {
     }
 }
 
+/// The summary, the fix and the detail line for one folder msb refuses for what it is, who owns
+/// it or who holds an ACL entry on it.
+fn blocked_text(b: &BlockedFolder) -> (String, String, String) {
+    let path = b.path.display();
+    let (problem, fix) = match &b.by {
+        BlockedBy::NotAFolder => (
+            format!("{path} is not a folder"),
+            format!(
+                "{path} is a file or another kind of entry, but Puddle's data has to live below a folder. \
+Rename or remove it (for example `mv {0} {0}.old`), or point XDG_DATA_HOME at a folder you own.",
+                shell_word(&b.path)
+            ),
+        ),
+        BlockedBy::MutatingAcl { index, entry } => (
+            format!("{path} has an ACL entry that lets another account change it ({entry})"),
+            format!(
+                "msb refuses a folder where another account holds an ACL entry that can add, delete or change \
+things. If you added the entry, remove it with `chmod -a# {index} {}` (`sudo` in front when you do not own the \
+folder); otherwise keep Puddle's data under a folder only you can enter, or ask whoever manages this Mac.",
+                shell_word(&b.path)
+            ),
+        ),
+        BlockedBy::OtherOwner { uid } => (
+            format!("{path} belongs to another user (id {uid})"),
+            format!(
+                "msb trusts only folders you or root own. If {path} is yours, run `sudo chown \"$USER\" {}`; \
+otherwise point XDG_DATA_HOME at a folder you own.",
+                shell_word(&b.path)
+            ),
+        ),
+    };
+
+    let line = match &b.by {
+        BlockedBy::NotAFolder => format!("{path} not a folder"),
+        BlockedBy::OtherOwner { uid } => format!("{path} owner id {uid}"),
+        BlockedBy::MutatingAcl { index, entry } => format!("{path} ACL entry {index}: {entry}"),
+    };
+    (problem, fix, line)
+}
+
 /// The failure for folders above Puddle's data that msb refuses: `blocked` (not a folder, or
 /// another user's) and `writable` (other accounts can rename entries in it).
 fn data_path_refused(writable: &[WritableFolder], blocked: &[BlockedFolder]) -> Check {
@@ -655,31 +695,10 @@ fn data_path_refused(writable: &[WritableFolder], blocked: &[BlockedFolder]) -> 
     let mut fixes = Vec::new();
     let mut detail = Vec::new();
     for b in blocked {
-        let path = b.path.display();
-        let (problem, fix) = match b.by {
-            BlockedBy::NotAFolder => (
-                format!("{path} is not a folder"),
-                format!(
-                    "{path} is a file or another kind of entry, but Puddle's data has to live below a folder. \
-Rename or remove it (for example `mv {0} {0}.old`), or point XDG_DATA_HOME at a folder you own.",
-                    shell_word(&b.path)
-                ),
-            ),
-            BlockedBy::OtherOwner { uid } => (
-                format!("{path} belongs to another user (id {uid})"),
-                format!(
-                    "msb trusts only folders you or root own. If {path} is yours, run `sudo chown \"$USER\" {}`; \
-otherwise point XDG_DATA_HOME at a folder you own.",
-                    shell_word(&b.path)
-                ),
-            ),
-        };
+        let (problem, fix, line) = blocked_text(b);
         problems.push(problem);
         fixes.push(fix);
-        detail.push(match b.by {
-            BlockedBy::NotAFolder => format!("{path} not a folder"),
-            BlockedBy::OtherOwner { uid } => format!("{path} owner id {uid}"),
-        });
+        detail.push(line);
     }
     if !writable.is_empty() {
         let names = writable
@@ -734,6 +753,12 @@ every sandbox start fails until the write permission is gone. A user created wit
     )
     .finding(if blocked.is_empty() {
         Finding::DataPathWritable
+    } else if writable.is_empty()
+        && blocked
+            .iter()
+            .all(|b| matches!(b.by, BlockedBy::MutatingAcl { .. }))
+    {
+        Finding::DataPathAcl
     } else {
         Finding::DataPathBlocked
     })

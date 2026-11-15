@@ -193,6 +193,8 @@ describe("CreateWorkspaceDialog", () => {
       ok: false,
       message:
         "repository 1 (the checkout /home/you/shop): it has no origin remote",
+      field: "repo_url",
+      at: { row: 1, input: "localPath" },
     });
     await screen.findByRole("dialog");
     await fireEvent.click(screen.getByTestId("source-folder"));
@@ -981,6 +983,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
       message:
         "repositories 1 (https://github.com/acme/api.git) and 2 (https://gitlab.com/o/api.git) both go into api; give one of them another directory, such as api-2",
       field: "repo_url",
+      at: { row: 2, input: "directory" },
     });
     await screen.findByRole("dialog");
     await fireEvent.click(add());

@@ -334,6 +334,27 @@ pub enum RepositoryListError {
     },
 }
 
+impl RepositoryListError {
+    /// The entry (from 1) and the input of it that this refusal is about; `None` when it is about
+    /// the list as a whole. For two entries that clash it is the later one, the one to change.
+    #[must_use]
+    pub fn place(&self) -> Option<(usize, crate::ErrorField)> {
+        use crate::ErrorField::{Directory, LocalPath, Url};
+        match self {
+            Self::TooMany { .. } => None,
+            Self::Checkout { n, .. } => Some((*n, LocalPath)),
+            Self::Entry {
+                n,
+                problem: EntryProblem::Directory(_),
+                ..
+            } => Some((*n, Directory)),
+            Self::Entry { n, .. } => Some((*n, Url)),
+            Self::SameDirectory { second, .. } => Some((*second, Directory)),
+            Self::SameRepository { second, .. } => Some((*second, Url)),
+        }
+    }
+}
+
 /// Checks a create's repository list as a whole, before anything exists. Each
 /// refusal names the entry by its place in the list and its address: an address the create
 /// checks refuse, a bad directory, two entries with one directory (with a free name to use

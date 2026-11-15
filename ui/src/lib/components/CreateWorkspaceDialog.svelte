@@ -23,6 +23,7 @@
   import {
     workspaces,
     type Field,
+    type RowRefusal,
     type NewWorkspace,
     type WorkspaceStore,
   } from "#lib/stores/workspaces.svelte.ts";
@@ -41,7 +42,6 @@
     folderOf,
     MAX_REPOSITORIES,
     newRow,
-    refusedRow,
     startFolderProblem,
     type RowDraft,
     type RowProblems,
@@ -312,17 +312,16 @@
       onCreated?.(result.value);
       return;
     }
-    await refuse(result.message, result.field ?? "form");
+    await refuse(result.message, result.field ?? "form", result.at);
   }
 
   /** Puts the service's refusal where it belongs: at a row when it names one, else at its field. */
-  async function refuse(message: string, field: Field) {
-    const at = refusedRow(message);
+  async function refuse(message: string, field: Field, at?: RowRefusal) {
     const row = at ? rows[at.row - 1] : undefined;
     if (at && row) {
-      rowErrors = { [row.key]: { [at.field]: message } };
+      rowErrors = { [row.key]: { [at.input]: message } };
       errors = {};
-      await showAndFocus(rowId(row, at.field));
+      await showAndFocus(rowId(row, at.input));
       return;
     }
     // An address refusal that names no row is the one row's, when there is only one.

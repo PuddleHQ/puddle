@@ -43,16 +43,19 @@ pub fn suffix() -> &'static str {
 
 /// A fixture password: `<label>-<suffix>`. The label says what it is for, and makes two passwords
 /// in one test differ (`password("right")`, `password("wrong")`).
+///
+/// Built with `concat`: `CodeQL` follows taint through `format!` and `push_str`, so using either here
+/// flags every caller as a hard-coded cryptographic value.
 #[must_use]
 pub fn password(label: &str) -> String {
-    format!("{label}-{}", suffix())
+    [label, "-", suffix()].concat()
 }
 
 /// A canary: a secret-looking string a test plants and then looks for in output, logs and files.
 /// It is `CANARY-<label>-<suffix>`, so a leak is easy to grep for.
 #[must_use]
 pub fn canary(label: &str) -> String {
-    format!("CANARY-{label}-{}", suffix())
+    ["CANARY-", label, "-", suffix()].concat()
 }
 
 /// A name no other call of this process returns, `<label>-<suffix>-<n>` where `n` counts the

@@ -293,10 +293,11 @@ mod tests {
     use super::*;
 
     fn wire<T: Serialize>(value: T) -> String {
-        match serde_json::to_value(value) {
-            Ok(serde_json::Value::String(text)) => text,
-            other => panic!("expected a string, got {other:?}"),
-        }
+        serde_json::to_value(value)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
 
     #[test]

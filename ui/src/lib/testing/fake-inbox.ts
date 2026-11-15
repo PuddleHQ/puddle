@@ -28,7 +28,6 @@ export function request(id: number, over: Partial<Req> = {}): Req {
 
 export class FakeInbox {
   open: { request: Req; domain: string }[] = [];
-  toggles: Record<string, Partial<Record<string, boolean>>> = {};
   calls: string[] = [];
   /** Set to make every call fail the way a stopped service does. */
   down = false;
@@ -59,10 +58,7 @@ export class FakeInbox {
         };
   }
 
-  GET = async (
-    path: string,
-    init?: { params?: { path?: Record<string, unknown> } },
-  ) => {
+  GET = async (path: string) => {
     this.calls.push(`GET ${path}`);
     if (this.down) throw new TypeError("down");
     if (path === "/api/inbox") {
@@ -75,28 +71,6 @@ export class FakeInbox {
           requests,
         })),
         open_limit: this.openLimit,
-      });
-    }
-    if (path === "/api/settings/workspaces/{workspace}") {
-      const workspace = String(init?.params?.path?.["workspace"]);
-      const t = this.toggles[workspace];
-      if (t === undefined) return this.reply(500);
-      const v = (name: string) => ({
-        value: t[name] ?? false,
-        source: "default",
-      });
-      return this.reply(200, {
-        workspace,
-        effective: {
-          local_toggles: {
-            loopback: v("loopback"),
-            private: v("private"),
-            link_local: v("link_local"),
-            metadata: v("metadata"),
-            special: v("special"),
-            company_network: v("company_network"),
-          },
-        },
       });
     }
     throw new Error(`unexpected GET ${path}`);

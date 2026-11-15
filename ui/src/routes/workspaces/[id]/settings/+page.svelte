@@ -6,7 +6,10 @@
   import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
-  import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import {
+    LOCAL_LABELS,
+    type LocalCategory,
+  } from "#lib/decision/local-labels.ts";
   import { CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import { KeptLogins } from "#lib/stores/kept-logins.svelte.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";

@@ -284,6 +284,10 @@ impl Store {
     }
 }
 
+/// How the audit reader opens the file: it can never write.
+const READ_ONLY: OpenFlags =
+    OpenFlags::SQLITE_OPEN_READ_ONLY.union(OpenFlags::SQLITE_OPEN_NO_MUTEX);
+
 /// Starts a transaction that holds the write lock from its first statement. Every write here begins
 /// with a read (`audit_head`), and a plain `BEGIN` that reads first and writes later fails the moment
 /// another connection to the file (the CLI, a second host start) holds the write lock: SQLite does not
@@ -312,10 +316,7 @@ impl Store {
         conn.pragma_update(None, "synchronous", "normal")?;
         let mut store = Self::init(conn, clock, limits)?;
         // After `init`: the file is migrated and in WAL mode by now.
-        let reader = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        let reader = Connection::open_with_flags(path, READ_ONLY)?;
         reader.busy_timeout(Duration::from_secs(5))?;
         store.audit_reader = Some(Mutex::new(reader));
         Ok(store)

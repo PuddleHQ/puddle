@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use puddle_store::{IdentityId, RepoRef};
+use puddle_store::{IdentityId, RepoRef, is_bare_user};
 use puddle_types::{CheckoutDir, EntryId};
 
 use super::MAX_ID_DRAWS;
@@ -64,14 +64,28 @@ impl RepoUrl {
             return Err(RepoUrlError::NotHttps);
         };
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-        if authority.contains('@') {
-            return Err(RepoUrlError::Credentials);
+        let (user, host_port) = authority
+            .rsplit_once('@')
+            .map_or((None, authority), |(u, h)| (Some(u), h));
+        let host = host_port.rsplit_once(':').map_or(host_port, |(h, _)| h);
+        if let Some(user) = user {
+            // Only a bare user name on a host whose Clone button copies one is dropped; a password,
+            // a token or a user name anywhere else is refused.
+            if !is_bare_user(user, host) {
+                return Err(RepoUrlError::Credentials);
+            }
         }
-        let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
         if host.is_empty() {
             return Err(RepoUrlError::NoHost);
         }
-        Ok(Self(url.to_owned()))
+        match user {
+            // `authority` came from `lower`, which has the same byte offsets as `url`.
+            Some(user) => {
+                let at = "https://".len() + user.len() + 1;
+                Ok(Self(format!("https://{}", &url[at..])))
+            }
+            None => Ok(Self(url.to_owned())),
+        }
     }
 
     /// The URL.

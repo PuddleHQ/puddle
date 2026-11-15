@@ -12,7 +12,7 @@
     type IdentitiesStore,
   } from "#lib/stores/identities.svelte.ts";
   import type { AddRepository } from "#lib/stores/checkouts.svelte.ts";
-  import { repoUrlProblem } from "#lib/workspaces/model.ts";
+  import { cleanRepoUrl, repoUrlProblem } from "#lib/workspaces/model.ts";
   import {
     directoryFor,
     directoryProblem,
@@ -132,7 +132,7 @@
       const typed = directory.trim();
       refusal = await onSubmit({
         kind: "clone",
-        url: url.trim(),
+        url: cleanRepoUrl(url),
         ...(typed === "" ? {} : { directory: typed }),
         ...(selected === "" ? {} : { identity_id: Number(selected) }),
         pull,

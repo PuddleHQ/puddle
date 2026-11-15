@@ -56,7 +56,7 @@ describe("parseRepoUrl", () => {
     expect(message("git@github.com:a/b.git")).toMatch(
       /SSH remotes are not supported/,
     );
-    expect(message("https://me@github.com/a/b")).toMatch(
+    expect(message("https://me@example.com/a/b")).toMatch(
       /Remove the user name/,
     );
     expect(message("https://github.com/a")).toMatch(

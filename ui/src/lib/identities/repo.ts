@@ -4,6 +4,7 @@
 // is `my project`). The host reads addresses the same way (`RepoRef::from_https_url`); both are
 // tested against one list of cases.
 import {
+  cleanRepoUrl,
   looksLikeSsh,
   repoUrlProblem,
   sshAddress,
@@ -125,7 +126,8 @@ export function parseRepoUrl(
   }
   const problem = repoUrlProblem(raw);
   if (problem !== null) return { ok: false, message: problem };
-  const rest = raw.trim().slice("https://".length).split(/[?#]/)[0] ?? "";
+  const rest =
+    cleanRepoUrl(raw).slice("https://".length).split(/[?#]/)[0] ?? "";
   const slash = rest.indexOf("/");
   if (slash < 0) return refuse();
   const host = asciiLower(rest.slice(0, slash));

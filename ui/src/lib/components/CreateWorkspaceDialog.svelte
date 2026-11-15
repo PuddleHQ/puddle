@@ -19,6 +19,11 @@
     type IdentitiesStore,
   } from "#lib/stores/identities.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
+  import {
+    globalSettings as globalSettingsStore,
+    type GlobalSettings,
+  } from "#lib/stores/global-settings.svelte.ts";
+  import { cpuLabel } from "#lib/settings/cpus.ts";
   import { inDesktopApp, pickFolder } from "#lib/desktop/folder-picker.ts";
   import {
     workspaces,
@@ -55,6 +60,7 @@
     identities = identityStore,
     prefill = null,
     onCreated,
+    settings = globalSettingsStore,
     hostCheck = undefined,
   }: {
     open?: boolean;
@@ -69,6 +75,8 @@
     prefill?: { url: string; identity: number | null } | null;
     /** Called with the new workspace (still being created) once the service accepted it. */
     onCreated?: (workspace: Workspace) => void;
+    /** The global settings, which say how many CPUs a workspace may have and gets by default. */
+    settings?: Pick<GlobalSettings, "view" | "load">;
     /** For tests: the host check. */
     hostCheck?: HostCheck;
   } = $props();
@@ -84,6 +92,8 @@
   let nameTouched = $state(false);
   let image = $state("");
   let memoryGib = $state("");
+  /** The count the slider was moved to; `null` while it is still on the default. */
+  let cpusChosen = $state<number | null>(null);
   let startFolder = $state("");
   let moreOpen = $state(false);
   let errors = $state<Partial<Record<FormField, string>>>({});
@@ -96,6 +106,16 @@
   $effect(() => {
     if (open) void identities.ensureLoaded();
   });
+
+  // The CPU limits are read each time the form opens: the maximum can change in Settings.
+  $effect(() => {
+    if (open) void settings.load(true);
+  });
+  const limits = $derived(settings.view?.effective_limits ?? null);
+  /** What the slider shows: the count it was moved to, else what a new workspace gets by default. */
+  const cpusShown = $derived(
+    cpusChosen ?? settings.view?.effective.cpus.value ?? 1,
+  );
 
   // A repository handed in by "Create a workspace for this" becomes the only row, once.
   $effect(() => {
@@ -175,6 +195,7 @@
     nameTouched = false;
     image = "";
     memoryGib = "";
+    cpusChosen = null;
     startFolder = "";
     moreOpen = false;
     errors = {};
@@ -264,7 +285,7 @@
   }
 
   async function showAndFocus(id: string | null) {
-    if (id && /start_folder|memory_mib|image/.test(id)) moreOpen = true;
+    if (id && /start_folder|memory_mib|cpus|image/.test(id)) moreOpen = true;
     await tick();
     if (id) focus(id);
   }
@@ -300,6 +321,8 @@
       ...(folder === "" ? {} : { start_folder: folder }),
       ...(image.trim() === "" ? {} : { image: image.trim() }),
       ...(memory.ok && memory.mib !== null ? { memory_mib: memory.mib } : {}),
+      // Without the limits the slider is not shown, and the workspace follows the global default.
+      ...(limits === null ? {} : { cpus: cpusShown }),
     };
     working = true;
     const result = await store.create(body);
@@ -659,7 +682,7 @@
     </div>
 
     <details class="more" bind:open={moreOpen}>
-      <summary>Start folder, image and memory</summary>
+      <summary>Start folder, image, memory and CPUs</summary>
       <div class="field">
         <label for="new-ws-start_folder">Start folder</label>
         <input
@@ -728,6 +751,38 @@
             "You can change it later; it applies at the next start."}
         </p>
       </div>
+      {#if limits}
+        <div class="field">
+          <label for="new-ws-cpus">CPUs</label>
+          <div class="slider">
+            <input
+              id="new-ws-cpus"
+              type="range"
+              min="1"
+              max={limits.max_cpus}
+              step="1"
+              value={cpusShown}
+              aria-valuetext={cpuLabel(cpusShown)}
+              aria-invalid={errors.cpus ? "true" : undefined}
+              aria-describedby="new-ws-cpus-hint"
+              oninput={(e) => {
+                cpusChosen = Number(e.currentTarget.value);
+                const { cpus: _gone, ...rest } = errors;
+                errors = rest;
+              }}
+            />
+            <output for="new-ws-cpus">{cpusShown}</output>
+          </div>
+          <p
+            class={errors.cpus ? "error" : "hint"}
+            id="new-ws-cpus-hint"
+            role={errors.cpus ? "alert" : undefined}
+          >
+            {errors.cpus ??
+              `This computer has ${limits.host_cpus}. The count is the workspace's own and applies from its first start; you can change it later. JetBrains Gateway needs at least 4.`}
+          </p>
+        </div>
+      {/if}
     </details>
 
     {#if errors.form}
@@ -773,6 +828,20 @@
   }
   .more .field {
     margin-top: var(--space-3);
+  }
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .slider input {
+    flex: 1;
+    min-height: var(--control-size);
+  }
+  .slider output {
+    min-width: 2.5ch;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
   }
   .repo {
     padding: var(--space-3);

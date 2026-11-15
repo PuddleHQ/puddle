@@ -63,7 +63,13 @@ export interface OomEvent {
 
 /** `field` tells a form where to put the message; `form` is anything else. */
 export type Field =
-  "name" | "repo_url" | "image" | "memory_mib" | "start_folder" | "form";
+  | "name"
+  | "repo_url"
+  | "image"
+  | "memory_mib"
+  | "cpus"
+  | "start_folder"
+  | "form";
 
 export type ActionResult<T = null> =
   | { ok: true; value: T }
@@ -85,6 +91,7 @@ const DOWN = "Puddle's service isn't answering.";
 export function fieldOf(message: string): Field {
   const m = message.toLowerCase();
   if (/start folder|start_folder/.test(m)) return "start_folder";
+  if (/\bcpus?\b/.test(m)) return "cpus";
   if (/ssh|repository|repositories|url|https/.test(m)) return "repo_url";
   if (/image/.test(m)) return "image";
   if (/memory/.test(m)) return "memory_mib";

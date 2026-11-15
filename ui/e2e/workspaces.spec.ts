@@ -259,7 +259,7 @@ test.describe("creating", () => {
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/other.git");
     await expect(dialog.getByLabel("Name")).toHaveValue("my-name");
-    await dialog.getByText("Start folder, image and memory").click();
+    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Memory (GiB)").fill("3");
     await dialog.getByLabel("Image").fill("ghcr.io/acme/dev:1");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
@@ -268,6 +268,40 @@ test.describe("creating", () => {
       (w) => w.name === "my-name",
     );
     expect(made?.memory_mib).toBe(3072);
+  });
+
+  test("the CPU slider starts on the default, moves with the keyboard from 1 to the computer's maximum, and the count goes to the API", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    const limits = await cpuLimits(request, backend.token);
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await dialog.getByLabel("Name").fill("slider-ws");
+    await dialog
+      .getByLabel("Git repository (HTTPS)")
+      .fill("https://example.org/slider.git");
+    await dialog.getByText("Start folder, image, memory and CPUs").click();
+    const slider = dialog.getByLabel("CPUs", { exact: true });
+    await expect(slider).toHaveAttribute("max", String(limits.max_cpus));
+    await expect(slider).toHaveValue(String(limits.default_cpus));
+    await slider.focus();
+    await page.keyboard.press("End");
+    await expect(slider).toHaveValue(String(limits.max_cpus));
+    await expect(dialog.locator("output")).toHaveText(String(limits.max_cpus));
+    await page.keyboard.press("Home");
+    await expect(slider).toHaveValue("1");
+    await page.keyboard.press("End");
+    const posted = page.waitForRequest(
+      (r) => r.url().endsWith("/api/workspaces") && r.method() === "POST",
+    );
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    expect((await posted).postDataJSON()).toMatchObject({
+      name: "slider-ws",
+      cpus: limits.max_cpus,
+    });
+    await expect(card(page, "slider-ws")).toBeVisible();
   });
 
   test("checks the fields before asking; an SSH address gets the message", async ({
@@ -1668,7 +1702,7 @@ test.describe("accessibility", () => {
         const create = page.getByRole("dialog", { name: "New workspace" });
         await create.getByRole("button", { name: "Create workspace" }).click();
         await expect(create.getByRole("alert")).toHaveCount(2);
-        await create.getByText("Start folder, image and memory").click();
+        await create.getByText("Start folder, image, memory and CPUs").click();
         await scan(page, "create with errors");
         await create.getByRole("button", { name: "Cancel" }).click();
 

@@ -4589,6 +4589,13 @@ export interface components {
         NewWorkspaceIdentityBasis: "chosen" | "covers" | "default" | "none";
         /** @description `POST /api/workspaces`. */
         NewWorkspaceRequest: {
+            /**
+             * Format: int32
+             * @description The workspace's own vCPU count (at least 1, at most the global maximum, which
+             *     `GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows
+             *     the global default. Stored as the workspace's own setting, so it applies from the first start.
+             */
+            cpus?: number | null;
             /** @description The image to boot; left out or `null` is the default devcontainer image. */
             image?: string | null;
             /**

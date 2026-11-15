@@ -72,6 +72,19 @@ pub(crate) fn load_workspace(
     Ok(loaded)
 }
 
+/// Refuses a new workspace's own CPU count above the global maximum (the settings routes do the
+/// same for the counts they set).
+pub(crate) fn check_new_workspace_cpus(
+    repo: &dyn SettingsRepo,
+    cpus: Option<puddle_types::CpuCount>,
+) -> Result<(), ApiError> {
+    // A create without a count reads no settings: it must not fail on a damaged file.
+    if cpus.is_none() {
+        return Ok(());
+    }
+    check_cpus_within(cpus, &load_global(repo)?.settings.limits, "cpus")
+}
+
 /// A CPU count above the global maximum is refused where it is set, so the user hears it then
 /// instead of finding the count silently lowered at the next start.
 fn check_cpus_within(

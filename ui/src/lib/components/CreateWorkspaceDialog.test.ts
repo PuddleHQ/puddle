@@ -80,9 +80,39 @@ function mount(
   );
   const onCreated = vi.fn();
   render(CreateWorkspaceDialog, {
-    props: { open: true, store: { create }, onCreated },
+    props: { open: true, store: { create }, onCreated, settings: settings() },
   } as never);
   return { create, onCreated };
+}
+
+/** The global settings as far as the form reads them: the limits, or none before they load. */
+function settings(
+  limits: { max_cpus: number; host_cpus: number } | null = null,
+  byDefault = 4,
+) {
+  return {
+    load: vi.fn(async () => {}),
+    view: limits && {
+      effective_limits: { ...limits, default_cpus: byDefault },
+      effective: { cpus: { value: byDefault, source: "default" } },
+    },
+  } as never;
+}
+
+function mountWithLimits(
+  limits: { max_cpus: number; host_cpus: number } | null,
+  byDefault = 4,
+  result: ActionResult<Workspace> = {
+    ok: true,
+    value: workspace("made", { busy: "creating", status: "created" }),
+  },
+) {
+  const create = vi.fn(async (_body: unknown) => result);
+  const source = settings(limits, byDefault) as { load: () => void };
+  render(CreateWorkspaceDialog, {
+    props: { open: true, store: { create }, settings: source },
+  } as never);
+  return { create, source };
 }
 
 const field = (label: string) =>
@@ -325,7 +355,9 @@ describe("CreateWorkspaceDialog", () => {
     const { create } = mount();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
     await type("Image", " ghcr.io/acme/dev:1 ");
     await type("Memory (GiB)", "3");
     await fireEvent.click(submit());
@@ -336,6 +368,78 @@ describe("CreateWorkspaceDialog", () => {
       image: "ghcr.io/acme/dev:1",
       memory_mib: 3072,
     });
+  });
+
+  it("has a CPU slider from 1 to the maximum, on the default, that stores the chosen count", async () => {
+    const { create, source } = mountWithLimits(
+      { max_cpus: 12, host_cpus: 12 },
+      4,
+    );
+    await screen.findByRole("dialog");
+    expect(source.load).toHaveBeenCalledWith(true);
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
+    const slider = screen.getByLabelText("CPUs") as HTMLInputElement;
+    expect([slider.type, slider.min, slider.max, slider.value]).toEqual([
+      "range",
+      "1",
+      "12",
+      "4",
+    ]);
+    expect(slider.getAttribute("aria-valuetext")).toBe("4 CPUs");
+    expect(screen.getByText(/This computer has 12\./)).toBeInTheDocument();
+    expect(slider.parentElement?.querySelector("output")).toHaveTextContent(
+      "4",
+    );
+    await fireEvent.input(slider, { target: { value: "7" } });
+    expect(slider.parentElement?.querySelector("output")).toHaveTextContent(
+      "7",
+    );
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith({
+      name: "web",
+      repositories: [{ url: "https://github.com/acme/web.git" }],
+      cpus: 7,
+    });
+  });
+
+  it("stores the default count when the slider is left alone, and a single CPU at the bottom", async () => {
+    const { create } = mountWithLimits({ max_cpus: 2, host_cpus: 2 }, 1);
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ cpus: 1 }));
+  });
+
+  it("shows no slider and sends no count before the limits are known", async () => {
+    mount();
+    await screen.findByRole("dialog");
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
+    expect(screen.queryByLabelText("CPUs")).toBeNull();
+  });
+
+  it("puts the service's refusal of the count at the slider and opens the fold", async () => {
+    const { create } = mountWithLimits({ max_cpus: 12, host_cpus: 12 }, 4, {
+      ok: false,
+      field: "cpus",
+      message: "cpus: 12 is more than the most CPUs a workspace may have (8)",
+    });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    const alert = await screen.findByText(/12 is more than the most CPUs/);
+    expect(alert).toHaveAttribute("role", "alert");
+    const slider = screen.getByLabelText("CPUs");
+    expect(slider).toHaveAttribute("aria-invalid", "true");
+    await fireEvent.input(slider, { target: { value: "8" } });
+    expect(screen.queryByText(/12 is more than the most CPUs/)).toBeNull();
   });
 
   it("checks the fields first and puts focus on the first bad one", async () => {
@@ -361,7 +465,9 @@ describe("CreateWorkspaceDialog", () => {
     const { create } = mount();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
     await type("Memory (GiB)", "plenty");
     await fireEvent.click(submit());
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -382,7 +488,9 @@ describe("CreateWorkspaceDialog", () => {
       mount({ ok: false, message, field: fieldName });
       await screen.findByRole("dialog");
       await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-      await fireEvent.click(screen.getByText("Start folder, image and memory"));
+      await fireEvent.click(
+        screen.getByText("Start folder, image, memory and CPUs"),
+      );
       await fireEvent.click(submit());
       await vi.waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(message),
@@ -823,7 +931,9 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     await fireEvent.click(
       within(row(2)).getByRole("checkbox", { name: "Push" }),
     );
-    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
     await type("Start folder", " api/src ");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
@@ -966,10 +1076,14 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
-    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
     await type("Start folder", "../escape");
     expect(field("Start folder")).toHaveAttribute("aria-invalid", "true");
-    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
     await fireEvent.click(submit());
     expect(field("Start folder")).toHaveFocus();
     expect(create).not.toHaveBeenCalled();

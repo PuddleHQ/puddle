@@ -641,6 +641,8 @@ describe("fieldOf", () => {
     ["SSH remotes are not supported yet", "repo_url"],
     ["bad image reference", "image"],
     ["memory must be at least 256 MiB", "memory_mib"],
+    ["cpus: 9 is more than the most CPUs a workspace may have (8)", "cpus"],
+    ["cpu count 0: must be at least 1 and at most 255", "cpus"],
     ["this name can't be a workspace: x", "name"],
     ["a workspace named x already exists", "name"],
     ["the start folder can't be inside .puddle", "start_folder"],

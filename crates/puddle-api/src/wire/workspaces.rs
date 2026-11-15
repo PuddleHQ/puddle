@@ -301,6 +301,12 @@ pub struct NewWorkspaceRequest {
     #[serde(default)]
     #[schema(minimum = 256, maximum = 1_048_576)]
     pub memory_mib: Option<u32>,
+    /// The workspace's own vCPU count (at least 1, at most the global maximum, which
+    /// `GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows
+    /// the global default. Stored as the workspace's own setting, so it applies from the first start.
+    #[serde(default)]
+    #[schema(minimum = 1)]
+    pub cpus: Option<u8>,
     /// Replaced by `repositories`; a body that sends it is refused with a message saying so.
     #[serde(default, deserialize_with = "retired", skip_serializing)]
     // skip-ok: leaves the retired field out of the contract; no test is skipped.
@@ -365,6 +371,11 @@ impl NewWorkspaceRequest {
             .map(MemoryMib::new)
             .transpose()
             .map_err(ApiError::invalid)?;
+        let cpus = self
+            .cpus
+            .map(|c| puddle_types::CpuCount::new(u32::from(c)))
+            .transpose()
+            .map_err(ApiError::invalid)?;
         let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
         Ok(domain::NewWorkspace {
             owner,
@@ -373,6 +384,7 @@ impl NewWorkspaceRequest {
             start_folder,
             image,
             memory,
+            cpus,
         })
     }
 }

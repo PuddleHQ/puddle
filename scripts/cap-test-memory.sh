@@ -10,7 +10,8 @@
 # The limit is soft (`-S`), so a child that is no test code (the real tools the login tests start) may
 # lift it for itself: Claude Code's Bun runtime reserves about 1 GiB of address space and aborts under
 # 512 MiB. A runaway test process cannot lift it: nothing in test code calls setrlimit.
-# usage: cap-test-memory.sh <command> [args...]    PUDDLE_TEST_MEMORY_KB sets the limit (default 1 GiB).
+# usage: cap-test-memory.sh <command> [args...]    PUDDLE_TEST_MEMORY_KB sets the limit (default 1 GiB);
+#        PUDDLE_TEST_TMPDIR, when a writable directory, becomes the command's TMPDIR.
 set -eu
 # glibc gives each thread that allocates its own arena and reserves 64 MiB of address space for it, and
 # `ulimit -d` counts that reservation: a test that starts a few hundred blocking threads on a 40-core
@@ -26,4 +27,11 @@ export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 # hostile_floods hg11) count with their own allocator and do not depend on this limit.
 # shellcheck disable=SC3045 # `-d` is in dash and bash, which is every shell the Linux mutants job has.
 ulimit -S -d "${PUDDLE_TEST_MEMORY_KB:-1048576}"
+# scripts/mutants.sh points TMPDIR at the disk that holds the tree copies; the tests' own scratch files (small,
+# fsync-heavy) go to the directory it was given in PUDDLE_TEST_TMPDIR instead (RAM on the hosts that keep one).
+# A directory that is gone or not writable is ignored, so a test never fails because of it.
+if [ -n "${PUDDLE_TEST_TMPDIR:-}" ] && [ -d "$PUDDLE_TEST_TMPDIR" ] && [ -w "$PUDDLE_TEST_TMPDIR" ]; then
+    TMPDIR="$PUDDLE_TEST_TMPDIR"
+    export TMPDIR
+fi
 exec "$@"

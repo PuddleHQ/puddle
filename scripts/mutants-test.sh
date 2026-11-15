@@ -264,6 +264,7 @@ case $1 in
 mutants)
     [ "$2" = --version ] && { echo "cargo-mutants 0.0.0"; exit 0; }
     echo "TMPDIR=$TMPDIR CARGO_HOME=$CARGO_HOME $*" >>"$FAKE_TMPS"
+    echo "${PUDDLE_TEST_TMPDIR:-unset}" >>"$FAKE_TMPS.test"
     : >"$TMPDIR/copy"
     ;;
 esac
@@ -291,4 +292,12 @@ grep -q "^TMPDIR=$tmp/elsewhere/mutants-tmp\." "$FAKE_TMPS" || fail "MUTANTS_TMP
 : >"$FAKE_TMPS"
 MUTANTS_SHARED_CARGO_HOME=1 MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
 grep -q "^TMPDIR=$tmp/target/mutants-tmp\." "$FAKE_TMPS" || fail "the private TMPDIR must not depend on the cargo home choice"
+# The tests' own scratch directory is the caller's TMPDIR (RAM on the hosts that set one), kept apart from the copies' disk.
+mkdir -p "$tmp/callers-tmp"
+: >"$FAKE_TMPS.test"
+TMPDIR="$tmp/callers-tmp" MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
+[ "$(cat "$FAKE_TMPS.test")" = "$tmp/callers-tmp" ] || fail "the caller's TMPDIR must reach the tests as PUDDLE_TEST_TMPDIR, got $(cat "$FAKE_TMPS.test")"
+: >"$FAKE_TMPS.test"
+env -u TMPDIR -u PUDDLE_TEST_TMPDIR MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
+[ "$(cat "$FAKE_TMPS.test")" = unset ] || fail "with no TMPDIR given, no PUDDLE_TEST_TMPDIR is set, got $(cat "$FAKE_TMPS.test")"
 echo "mutants-test: ok"

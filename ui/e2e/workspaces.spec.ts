@@ -27,6 +27,7 @@ interface Ws {
   busy: string | null;
   direct_ssh: boolean;
   memory_mib: number;
+  repositories: { url: string }[];
 }
 
 async function workspaceList(
@@ -304,7 +305,29 @@ test.describe("creating", () => {
     await expect(card(page, "slider-ws")).toBeVisible();
   });
 
-  test("checks the fields before asking; an SSH address gets the message", async ({
+  test("takes an SSH address of a Git host and clones it over HTTPS", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await dialog.getByLabel("Name").fill("over-ssh");
+    await dialog
+      .getByLabel("Git repository (HTTPS)")
+      .fill("git@github.com:Acme/Web-Shop.git");
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    await expect(card(page, "over-ssh")).toBeVisible();
+    const made = (await workspaceList(request, backend)).find(
+      (w) => w.name === "over-ssh",
+    );
+    expect(made?.repositories[0]?.url).toBe(
+      "https://github.com/Acme/Web-Shop.git",
+    );
+  });
+
+  test("checks the fields before asking; an SSH address of another host gets the message", async ({
     page,
     request,
     backend,
@@ -317,11 +340,11 @@ test.describe("creating", () => {
     await expect(dialog.getByLabel("Git repository (HTTPS)")).toBeFocused();
     await dialog
       .getByLabel("Git repository (HTTPS)")
-      .fill("git@github.com:acme/web-shop.git");
+      .fill("git@git.example.com:acme/web-shop.git");
     await dialog.getByLabel("Name").fill("x".repeat(61));
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog.getByRole("alert").first()).toContainText(
-      "SSH remotes are not supported yet; use the repository's HTTPS URL instead.",
+      "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.",
     );
     await expect(dialog.getByLabel("Name")).toHaveAttribute(
       "aria-invalid",

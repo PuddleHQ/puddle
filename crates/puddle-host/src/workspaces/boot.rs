@@ -23,14 +23,23 @@ use crate::kubernetes::kubernetes_problem;
 use crate::merge_notice::settle_merge_notices;
 use crate::op_error::OpError;
 
+/// Why a sandbox is booted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BootFor {
+    /// A create: reports the pull and makes the volume.
+    Create,
+    /// A start: stays quiet about the pull and must find the volume it left.
+    Start,
+}
+
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn boot_new(
         &self,
         record: &WorkspaceRecord,
         created_volume: &mut bool,
-        announce_pull: bool,
-        fresh: bool,
+        purpose: BootFor,
     ) -> Result<(), OpError> {
+        let announce_pull = purpose == BootFor::Create;
         let inner = &self.inner;
         let (id, name) = (&record.id, &record.id);
         let size = DiskSize::mib(u32::try_from(record.disk_size_mib).unwrap_or(u32::MAX));
@@ -38,7 +47,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.progress(name, WorkspaceStep::PreparingVolume, None);
         }
         // A start must find the volume it left; only a create makes one.
-        let attachment = if fresh {
+        let attachment = if purpose == BootFor::Create {
             inner
                 .workspaces
                 .prepare(&inner.runtime, id, &name.sandbox_name(), Some(size))

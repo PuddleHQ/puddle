@@ -216,7 +216,9 @@ async fn a_refused_fetch_is_readable_when_the_pull_list_is_on() {
         return;
     }
     let git = Git::new().await;
-    git.t.world.switches(true, true);
+    git.t
+        .world
+        .switches(puddle_inject::testing::OnlyListed::Both);
     let ran = git
         .run(&["ls-remote", "https://bound.test/someone/else.git"])
         .await;

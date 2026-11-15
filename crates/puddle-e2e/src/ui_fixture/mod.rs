@@ -1171,7 +1171,14 @@ impl State {
             let repo = RepoRef::new(&row.host, &row.owner, &row.repo)
                 .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
             self.store
-                .add_repo(&name, &repo, row.pull, row.push)
+                .add_repo(
+                    &name,
+                    &repo,
+                    puddle_store::RepoToggles {
+                        pull: row.pull,
+                        push: row.push,
+                    },
+                )
                 .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
         }
         if git.only_push_listed.is_some() || git.only_pull_listed.is_some() {

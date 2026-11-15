@@ -30,6 +30,17 @@ use crate::wire::{
     RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
 
+/// How image pulls leave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullProxyState {
+    /// They do not go through the pull proxy.
+    Off,
+    /// Through the pull proxy, which leaves directly.
+    Direct,
+    /// Through the pull proxy, which leaves through the company proxy.
+    ViaUpstream,
+}
+
 /// Why a report could not be made.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -164,10 +175,10 @@ impl HostNetworkHealth {
 
     /// Records whether image pulls go through the pull proxy, and whether that proxy leaves
     /// through the company proxy.
-    pub fn set_pull_proxy(&self, active: bool, via_upstream: bool) {
+    pub fn set_pull_proxy(&self, state: PullProxyState) {
         *self.pull.write().unwrap_or_else(PoisonError::into_inner) = PullProxyReport {
-            active,
-            via_upstream: active && via_upstream,
+            active: state != PullProxyState::Off,
+            via_upstream: state == PullProxyState::ViaUpstream,
         };
     }
 

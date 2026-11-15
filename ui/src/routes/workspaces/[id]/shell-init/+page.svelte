@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from "$app/state";
+  import { holdReload } from "#lib/stores/unsaved-edits.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import { ShellInitStore } from "#lib/stores/workspace-shell-init.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -25,6 +26,8 @@
   const view = $derived(store.view);
   const text = $derived(edit?.text ?? view?.content ?? "");
   const dirty = $derived(edit !== null && edit.text !== (view?.content ?? ""));
+  // A build-id reload waits while the box holds unsaved text.
+  $effect(() => holdReload(() => dirty));
   // The saved script changed (another window, a restore) while the user was typing.
   const stale = $derived(
     edit !== null && view !== null && edit.base !== view.changed_at,

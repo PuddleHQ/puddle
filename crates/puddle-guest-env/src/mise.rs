@@ -16,6 +16,10 @@ pub const DEBIAN_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 const DATA: &str = "data";
 const CACHE: &str = "cache";
 const STATE: &str = "state";
+/// The state folder of a workspace whose repository code may not run: mise records every config
+/// it loaded under a trusted path as trusted in its state folder, and a record made while the
+/// switch was on must not outlive it.
+const STATE_UNTRUSTED: &str = "state-untrusted";
 const BIN: &str = "bin";
 const SHIMS: &str = "shims";
 
@@ -39,7 +43,7 @@ const GENERATED: &str = "Written by Puddle at every boot; changes here are overw
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MiseSettings {
     /// Puddle's mise folder on the volume (`<volume>/.puddle/mise`): the binary's `bin`, and
-    /// mise's `data`, `cache` and `state`.
+    /// mise's `data`, `cache` and `state` (`state-untrusted` without trust).
     pub dir: GuestPath,
     /// The folder above every workspace's volume: mise looks for config files no higher.
     pub ceiling: GuestPath,
@@ -77,7 +81,12 @@ pub fn mise_config(settings: &MiseSettings) -> Result<MiseConfig, ConfigError> {
     };
     set("MISE_DATA_DIR", &format!("{dir}/{DATA}"))?;
     set("MISE_CACHE_DIR", &format!("{dir}/{CACHE}"))?;
-    set("MISE_STATE_DIR", &format!("{dir}/{STATE}"))?;
+    let state = if settings.trusted.is_some() {
+        STATE
+    } else {
+        STATE_UNTRUSTED
+    };
+    set("MISE_STATE_DIR", &format!("{dir}/{state}"))?;
     // Not the workspace's own folder: a ceiling hides the config file inside it.
     set("MISE_CEILING_PATHS", settings.ceiling.as_str())?;
     if let Some(trusted) = &settings.trusted {

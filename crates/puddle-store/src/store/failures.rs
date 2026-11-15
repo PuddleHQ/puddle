@@ -412,16 +412,14 @@ fn waiting_records_stay_unmerged_when_their_summary_cannot_be_written() {
 }
 
 #[test]
-fn an_audit_trim_whose_record_cannot_be_written_still_trimmed() {
-    let (_, store) = store_with(Limits {
-        audit_max_bytes: 1,
-        audit_trim_to_bytes: 0,
-        ..Limits::default()
-    });
+fn an_audit_prune_whose_record_cannot_be_written_still_pruned() {
+    let (clock, store) = store_with(Limits::default());
+    store.set_audit_retention_days(1).unwrap();
     store
         .as_user(UserId::OWNER)
         .add_rule(&workspace_rule("x.example"))
         .unwrap();
+    clock.advance(2 * 24 * 60 * 60 * 1000);
     store.fail_audit_writes("audit_trimmed");
 
     let err = store.sweep().unwrap_err();

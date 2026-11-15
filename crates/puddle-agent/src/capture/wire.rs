@@ -264,12 +264,12 @@ pub fn respond(
     additional: &[Record],
     udp: bool,
 ) -> Vec<u8> {
-    let full = build(query, rcode, answers, additional, false);
+    let full = build(query, rcode, answers, additional, Truncation::Whole);
     let limit = query
         .edns_payload
         .map_or(PLAIN_UDP, |p| usize::from(p.min(EDNS_PAYLOAD)));
     if udp && full.len() > limit {
-        return build(query, rcode, &[], &[], true);
+        return build(query, rcode, &[], &[], Truncation::Truncated);
     }
     full
 }
@@ -279,12 +279,20 @@ pub fn respond(
 pub fn error_response(id: u16, rcode: Rcode, recursion_desired: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(12);
     out.extend_from_slice(&id.to_be_bytes());
-    out.extend_from_slice(&flags(rcode, recursion_desired, false).to_be_bytes());
+    out.extend_from_slice(&flags(rcode, recursion_desired, Truncation::Whole).to_be_bytes());
     out.extend_from_slice(&[0; 8]);
     out
 }
 
-fn flags(rcode: Rcode, recursion_desired: bool, truncated: bool) -> u16 {
+/// Whether a response was cut down to its question (the TC bit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Truncation {
+    Whole,
+    Truncated,
+}
+
+fn flags(rcode: Rcode, recursion_desired: bool, truncation: Truncation) -> u16 {
+    let truncated = truncation == Truncation::Truncated;
     // QR and RA set; the stub is not authoritative.
     0x8080 | (u16::from(recursion_desired) << 8) | (u16::from(truncated) << 9) | rcode.code()
 }
@@ -294,11 +302,11 @@ fn build(
     rcode: Rcode,
     answers: &[Record],
     additional: &[Record],
-    truncated: bool,
+    truncation: Truncation,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(96);
     out.extend_from_slice(&query.id.to_be_bytes());
-    out.extend_from_slice(&flags(rcode, query.recursion_desired, truncated).to_be_bytes());
+    out.extend_from_slice(&flags(rcode, query.recursion_desired, truncation).to_be_bytes());
     let opt = usize::from(query.edns_payload.is_some());
     out.extend_from_slice(&1u16.to_be_bytes());
     out.extend_from_slice(&count(answers.len()).to_be_bytes());

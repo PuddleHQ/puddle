@@ -14,8 +14,9 @@ use proptest::prelude::*;
 use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditOutcome, AuditRecord, ConnectionRecord, Effect, Limits,
-    ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire, Resolution,
-    RuleDeleteReason, RuleWire, Scope, Store, UserId, UserName,
+    ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire,
+    RequestRuleWireScope, Resolution, RuleDeleteReason, RuleWire, RuleWirePatternKind,
+    RuleWireScope, Scope, Store, UserId, UserName,
 };
 use puddle_test_kit::cpu_time;
 use puddle_types::{
@@ -374,18 +375,16 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
 }
 
 #[test]
-fn trimming_the_audit_emits_for_its_trim_record() {
-    let (_, sink, store) = fixture(Limits {
-        audit_max_bytes: 400,
-        audit_trim_to_bytes: 200,
-        ..Limits::default()
-    });
+fn pruning_the_audit_emits_for_its_trim_record() {
+    let (clock, sink, store) = fixture(Limits::default());
+    store.set_audit_retention_days(1).unwrap();
     for i in 0..6 {
         ask(&store, "a", &format!("h{i}.example"));
     }
+    clock.advance(2 * 24 * 60 * 60 * 1000);
     drop(sink.take());
     let report = store.sweep().unwrap();
-    assert!(report.audit_records_trimmed > 0);
+    assert!(report.audit_records_pruned > 0);
     assert_eq!(
         sink.take().last(),
         Some(&Event::AuditAppended {
@@ -426,11 +425,11 @@ fn pending_wire(workspace: &str, host: &str, state: &str) -> PendingWire {
 fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
     RuleWire {
         id: 1,
-        scope: workspace.map_or("global", |_| "workspace").into(),
+        scope: workspace.map_or(RuleWireScope::Global, |_| RuleWireScope::Workspace),
         workspace_id: workspace.map(Into::into),
-        pattern_kind: "exact".into(),
+        pattern_kind: RuleWirePatternKind::Exact,
         pattern: pattern.into(),
-        effect: "allow".into(),
+        effect: Effect::Allow,
         expires_at: None,
         created_at: 1,
         created_by: "cli".into(),
@@ -816,7 +815,7 @@ fn the_search_box_matches_each_text_column_and_combines_with_the_other_filters()
             ts: T0 + 4,
             rule: RequestRuleWire {
                 id: 1,
-                scope: "global".into(),
+                scope: RequestRuleWireScope::Global,
                 workspace_id: None,
                 host: "files.example.io".into(),
                 methods: vec!["DELETE".into()],

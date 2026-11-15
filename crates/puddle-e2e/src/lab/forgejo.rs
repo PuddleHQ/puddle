@@ -228,11 +228,10 @@ fn ssh_greets(port: u16) -> bool {
     let Ok(mut conn) = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) else {
         return false;
     };
-    if conn.set_read_timeout(Some(Duration::from_secs(2))).is_err() {
-        return false;
-    }
     let mut banner = [0_u8; 4];
-    conn.read_exact(&mut banner).is_ok() && &banner == b"SSH-"
+    conn.set_read_timeout(Some(Duration::from_secs(2))).is_ok()
+        && conn.read_exact(&mut banner).is_ok()
+        && &banner == b"SSH-"
 }
 
 /// The two ports of an instance.
@@ -280,6 +279,34 @@ fn await_up(
     Ok(())
 }
 
+/// Checks that the API answered `201 Created` to `what`.
+///
+/// # Panics
+/// On any other status, with Forgejo's answer.
+fn expect_created(status: u16, answer: &str, what: &str) {
+    assert_eq!(status, 201, "{what}: {answer}");
+}
+
+/// The commit a branch lookup (`what` names it) answered with, or `None` for `404`.
+///
+/// # Panics
+/// When the answer is neither a branch nor `404`.
+fn head_from_answer(status: u16, answer: &str, what: &str) -> Option<String> {
+    match status {
+        200 => {
+            let json: serde_json::Value = serde_json::from_str(answer).unwrap();
+            Some(
+                json.pointer("/commit/id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap()
+                    .to_owned(),
+            )
+        }
+        404 => None,
+        other => panic!("branch {what}: {other} {answer}"),
+    }
+}
+
 impl Forgejo {
     /// Starts Forgejo answering to `name`, or `None` (skip) when none is configured; see the
     /// module docs. Its certificate names `name`, signed by a root made for the run.
@@ -312,23 +339,25 @@ impl Forgejo {
         .then_some(())?;
         let bin = bin?;
         require_file(&bin, "PUDDLE_FORGEJO_BIN");
+        Some(Self::start_from(&bin, name, fixed_port))
+    }
+
+    /// Starts the Forgejo at `bin`, on `fixed_port` when given.
+    fn start_from(bin: &std::ffi::OsStr, name: &str, fixed_port: Option<u16>) -> Self {
         if let Some(http_port) = fixed_port {
-            return Some(
-                // flake-ok: the HTTP port is the caller's and fixed; the SSH port is only free-picked, and a clash
-                // fails the start with Forgejo's own "address already in use" in the panic message.
-                Self::launch(&bin, name, http_port, free_port()).unwrap_or_else(|why| {
-                    panic!("Forgejo did not start on port {http_port}\n{why}")
-                }),
-            );
+            // flake-ok: the HTTP port is the caller's and fixed; the SSH port is only free-picked, and a clash
+            // fails the start with Forgejo's own "address already in use" in the panic message.
+            return Self::launch(bin, name, http_port, free_port())
+                .unwrap_or_else(|why| panic!("Forgejo did not start on port {http_port}\n{why}"));
         }
         // Forgejo reads its ports from `app.ini` and takes no inherited socket, so a port cannot
         // be held across the start; a collision retries on fresh ports.
-        Some(on_free_port(free_port, |http_port| {
+        on_free_port(free_port, |http_port| {
             // flake-ok: a taken SSH port makes Forgejo exit at once with "address already in use" in
             // its log (tried by holding the port), which `launch` returns as `Err` and `on_free_port`
             // retries on fresh ports; nothing can hold a port across Forgejo's own bind.
-            Self::launch(&bin, name, http_port, free_port())
-        }))
+            Self::launch(bin, name, http_port, free_port())
+        })
     }
 
     /// One start attempt. `Err` is Forgejo's own log when it did not come up.
@@ -512,7 +541,7 @@ impl Forgejo {
             r#"{{"name":"{name}","private":{private},"auto_init":true,"default_branch":"main"}}"#
         );
         let (status, answer) = self.api("POST", "/user/repos", Some(&body));
-        assert_eq!(status, 201, "create {repo}: {answer}");
+        expect_created(status, &answer, &format!("create {repo}"));
     }
 
     /// Adds `content` as the file `path` on the default branch of `repo` (one commit), through the
@@ -532,7 +561,7 @@ impl Forgejo {
             &format!("/repos/{repo}/contents/{path}"),
             Some(&body),
         );
-        assert_eq!(status, 201, "add {path} to {repo}: {answer}");
+        expect_created(status, &answer, &format!("add {path} to {repo}"));
     }
 
     /// Where the lab root's PEM file is (for a client that must trust it, such as the machine's
@@ -550,7 +579,7 @@ impl Forgejo {
     pub fn add_ssh_key(&self, public_key: &str) {
         let body = serde_json::json!({"title": "lab", "key": public_key.trim()}).to_string();
         let (status, answer) = self.api("POST", "/user/keys", Some(&body));
-        assert_eq!(status, 201, "add key: {answer}");
+        expect_created(status, &answer, "add key");
     }
 
     /// The server's SSH host keys as `<type> <base64>` lines, as `ssh-keyscan` prints them.
@@ -581,19 +610,7 @@ impl Forgejo {
     #[must_use]
     pub fn branch_head(&self, repo: &str, branch: &str) -> Option<String> {
         let (status, answer) = self.api("GET", &format!("/repos/{repo}/branches/{branch}"), None);
-        match status {
-            200 => {
-                let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
-                Some(
-                    json.pointer("/commit/id")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap()
-                        .to_owned(),
-                )
-            }
-            404 => None,
-            other => panic!("branch {repo}/{branch}: {other} {answer}"),
-        }
+        head_from_answer(status, &answer, &format!("{repo}/{branch}"))
     }
 
     /// The server's own log so far (for a failing test to print).
@@ -602,3 +619,6 @@ impl Forgejo {
         read(&self.scratch().join("forgejo.log"))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -73,20 +73,17 @@ pub(crate) fn multi_root_folders(
     if start.is_some() || found.checkouts.len() < 2 {
         return None;
     }
-    let mut dirs: Vec<&CheckoutDir> = list_order
-        .iter()
-        .filter(|d| found.checkouts.contains(d))
-        .collect();
     let mut rest: Vec<&CheckoutDir> = found
         .checkouts
         .iter()
         .filter(|d| !list_order.contains(d))
         .collect();
     rest.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    dirs.extend(rest);
     let path = |dir: &str| GuestPath::new(&format!("{}/{dir}", root.as_str())).ok();
-    let mut folders: Vec<_> = dirs
-        .into_iter()
+    let mut folders: Vec<_> = list_order
+        .iter()
+        .filter(|d| found.checkouts.contains(d))
+        .chain(rest)
         .filter_map(|d| path(d.as_str()).map(|p| (p, None)))
         .collect();
     if found.loose {

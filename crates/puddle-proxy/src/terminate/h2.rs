@@ -139,12 +139,12 @@ enum Usable {
 impl Shared {
     /// The route for one more request, connecting again when the upstream connection is gone.
     async fn route(&self) -> Result<Route, Refusal> {
-        if let Some(refusal) = self
+        let deferred = self
             .deferred
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(refusal) = deferred {
             return Err(refusal);
         }
         let usable = match self.usable() {

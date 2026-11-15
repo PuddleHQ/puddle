@@ -38,7 +38,7 @@ fn oci_config_becomes_puddles_image_config() {
 }
 
 #[derive(Debug)]
-struct Layer(&'static str, Option<Box<Layer>>);
+struct Layer(&'static str, Option<Box<Self>>);
 
 impl std::fmt::Display for Layer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

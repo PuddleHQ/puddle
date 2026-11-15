@@ -58,9 +58,7 @@ fn the_listener_s_own_address_matches_even_if_not_host_local() {
 fn dropping_the_registration_unregisters_only_that_listener() {
     let endpoints = PuddleEndpoints::new();
     let api = endpoints.register(sa("127.0.0.1:7070"), EndpointKind::Api);
-    let pull = endpoints
-        .clone()
-        .register(sa("127.0.0.1:7071"), EndpointKind::PullProxy);
+    let pull = endpoints.register(sa("127.0.0.1:7071"), EndpointKind::PullProxy);
     assert_eq!(endpoints.list().len(), 2);
     drop(api);
     assert_eq!(

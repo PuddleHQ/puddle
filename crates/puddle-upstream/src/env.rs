@@ -90,7 +90,7 @@ impl EnvOs {
 
 impl OsProxy for EnvOs {
     fn config(&self) -> Result<ProxyConfig, SettingsError> {
-        Ok(EnvOs::config(self))
+        Ok(Self::config(self))
     }
 
     fn resolve_pac(&self, _query: &PacQuery) -> Result<Vec<crate::hop::Hop>, PacError> {

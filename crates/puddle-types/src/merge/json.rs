@@ -611,7 +611,7 @@ fn kept_comments(
         if after.is_empty() || after.starts_with(['\n', '\r']) {
             out.pop();
         } else if let Some(indent) = text
-            .get(span.clone())
+            .get(span)
             .and_then(|s| s.rsplit_once('\n'))
             .map(|(_, tail)| tail)
             .filter(|tail| tail.chars().all(|c| c == ' ' || c == '\t'))

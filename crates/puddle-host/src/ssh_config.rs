@@ -63,7 +63,7 @@ pub(crate) enum SshConfigError {
         /// The file.
         path: PathBuf,
         /// What went wrong.
-        source: Box<SshConfigError>,
+        source: Box<Self>,
     },
     /// The include line could not be added to the user's file.
     #[error("cannot add Puddle's include line to {}: {source}", path.display())]
@@ -71,7 +71,7 @@ pub(crate) enum SshConfigError {
         /// The user's file.
         path: PathBuf,
         /// What went wrong.
-        source: Box<SshConfigError>,
+        source: Box<Self>,
     },
     /// A value an ssh config cannot hold safely.
     #[error("{value:?} has the character {character:?}, which an ssh config cannot hold safely")]

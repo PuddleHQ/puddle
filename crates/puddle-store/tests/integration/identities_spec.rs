@@ -756,7 +756,7 @@ fn a_list_of_repositories_is_set_up_whole_or_not_at_all() {
     let blog = ask(repo("github.com", "me", "blog"));
     let _ = sink.take();
     let starts = store
-        .start_repositories_git(&w, &[shop.clone(), blog.clone()])
+        .start_repositories_git(&w, &[shop.clone(), blog])
         .unwrap();
     assert_eq!(
         starts

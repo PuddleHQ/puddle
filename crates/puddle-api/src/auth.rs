@@ -115,22 +115,22 @@ impl Refusal {
 impl From<Refusal> for ApiError {
     fn from(refusal: Refusal) -> Self {
         match refusal {
-            Refusal::Host => ApiError::new(
+            Refusal::Host => Self::new(
                 StatusCode::MISDIRECTED_REQUEST,
                 ErrorCode::MisdirectedHost,
                 "the Host header must be 127.0.0.1:<port> or localhost:<port>",
             ),
-            Refusal::Origin | Refusal::FetchSite => ApiError::new(
+            Refusal::Origin | Refusal::FetchSite => Self::new(
                 StatusCode::FORBIDDEN,
                 ErrorCode::ForbiddenOrigin,
                 "requests from this origin are not allowed",
             ),
-            Refusal::CredentialHost => ApiError::new(
+            Refusal::CredentialHost => Self::new(
                 StatusCode::UNAUTHORIZED,
                 ErrorCode::Unauthorized,
                 "this credential is not accepted on this address",
             ),
-            Refusal::Token => ApiError::new(
+            Refusal::Token => Self::new(
                 StatusCode::UNAUTHORIZED,
                 ErrorCode::Unauthorized,
                 "missing or wrong bearer token",

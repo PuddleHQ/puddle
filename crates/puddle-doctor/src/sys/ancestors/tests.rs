@@ -147,7 +147,7 @@ fn a_file_where_a_folder_should_be_blocks_msb_and_is_named() {
     let w = walk(root.path(), &root.path().join("a/file/data"), uid);
     assert_eq!(
         blocked_names(root.path(), &w),
-        [("a/file".to_string(), BlockedBy::NotAFolder)]
+        [("a/file".to_owned(), BlockedBy::NotAFolder)]
     );
     assert_eq!(w.writable, []);
 }
@@ -164,9 +164,9 @@ fn a_folder_owned_by_another_user_blocks_msb_even_below_a_private_folder() {
         blocked_names(root.path(), &w),
         [
             (String::new(), by),
-            ("a".to_string(), by),
-            ("a/b".to_string(), by),
-            ("a/b/data".to_string(), by)
+            ("a".to_owned(), by),
+            ("a/b".to_owned(), by),
+            ("a/b/data".to_owned(), by)
         ]
     );
 }

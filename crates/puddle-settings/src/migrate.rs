@@ -79,14 +79,15 @@ pub(crate) fn upgrade(
     }
     let mut version = found;
     while version < current {
-        let step = steps
-            .iter()
-            .find(|m| m.from == version)
-            .ok_or(SettingsError::Migration {
-                kind,
-                from: version,
-                reason: "no migration for this version".to_owned(),
-            })?;
+        let step =
+            steps
+                .iter()
+                .find(|m| m.from == version)
+                .ok_or_else(|| SettingsError::Migration {
+                    kind,
+                    from: version,
+                    reason: "no migration for this version".to_owned(),
+                })?;
         (step.apply)(&mut map).map_err(|reason| SettingsError::Migration {
             kind,
             from: version,

@@ -797,7 +797,7 @@ fn windows_boot_spawn_refused() {
 fn windows_boot_setup_failed() {
     let fake = Fake {
         boot: BootFacts::SetupFailed {
-            detail: r"temp dir: Access is denied. (os error 5)".into(),
+            detail: "temp dir: Access is denied. (os error 5)".into(),
         },
         ..windows()
     };

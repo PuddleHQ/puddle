@@ -167,13 +167,13 @@ impl GuestPath {
     /// Whether this path is `dir` itself or lies below it (component-wise, so `/ab` is not within
     /// `/a`).
     #[must_use]
-    pub fn is_within(&self, dir: &GuestPath) -> bool {
+    pub fn is_within(&self, dir: &Self) -> bool {
         self.relative_to(dir).is_some()
     }
 
     /// This path relative to `dir` (`""` for `dir` itself), or `None` if it isn't within `dir`.
     #[must_use]
-    pub fn relative_to(&self, dir: &GuestPath) -> Option<&str> {
+    pub fn relative_to(&self, dir: &Self) -> Option<&str> {
         if dir.0 == "/" {
             return Some(self.0.trim_start_matches('/'));
         }
@@ -209,7 +209,7 @@ impl TryFrom<&str> for GuestPath {
 }
 
 impl From<GuestPath> for String {
-    fn from(p: GuestPath) -> String {
+    fn from(p: GuestPath) -> Self {
         p.0
     }
 }
@@ -460,7 +460,7 @@ impl GuestEnv {
     }
 
     /// Adds every variable of `other`; `other` wins on equal names.
-    pub fn extend(&mut self, other: &GuestEnv) {
+    pub fn extend(&mut self, other: &Self) {
         self.0
             .extend(other.0.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
@@ -502,7 +502,7 @@ impl TryFrom<BTreeMap<String, String>> for GuestEnv {
     type Error = ValidationError;
 
     fn try_from(map: BTreeMap<String, String>) -> Result<Self, Self::Error> {
-        let mut env = GuestEnv::new();
+        let mut env = Self::new();
         for (k, v) in &map {
             env.set(k, v)?;
         }

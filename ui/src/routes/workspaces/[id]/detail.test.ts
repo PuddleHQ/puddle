@@ -137,7 +137,6 @@ function reset() {
   inbox.open = [];
   inbox.rules = [];
   inbox.calls = [];
-  inbox.toggles = {};
   inbox.down = false;
   rules.down = false;
   api.list = [workspace("demo", { status: "running" })];

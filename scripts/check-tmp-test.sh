@@ -15,7 +15,9 @@ fail() {
     echo "check-tmp-test: $*" >&2
     exit 1
 }
-root=$(mktemp -d)
+# Under /var/tmp, not the caller's TMPDIR: a gate run's TMPDIR is already a long chk.* dir, and nesting this test's
+# own chk.* dirs below it pushes them past the socket-path guard of check.sh (the host's hooks gate failed on it).
+root=$(mktemp -d /var/tmp/chk-test.XXXXXX)
 trap 'rm -rf "$root"' EXIT
 sys="$root/system-tmp"
 mkdir -p "$sys" "$root/repo/scripts"

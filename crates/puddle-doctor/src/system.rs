@@ -73,7 +73,7 @@ impl SystemProbe {
 
     /// Measures the free space of the drive that holds `dir`, Puddle's data folder. Unset, the disk
     /// check says it has nothing to measure.
-    /// Checks the folders above `dir`, Puddle's data folder (Linux). Unset, that check says it has
+    /// Checks the folders above `dir`, Puddle's data folder (Linux and macOS). Unset, that check says it has
     /// nothing to read.
     #[must_use]
     pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
@@ -268,7 +268,7 @@ impl Probe for SystemProbe {
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {
-        cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
+        cfg!(unix).then(|| sys::data_path(self.data_dir.as_deref()))
     }
 }
 

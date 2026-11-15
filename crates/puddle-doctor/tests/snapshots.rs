@@ -1481,6 +1481,35 @@ fn linux_data_path_other_owner_and_writable() {
 }
 
 #[test]
+fn data_path_mutating_acl() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/Users/dev/Library/Application Support/Puddle".into(), // flake-ok: a path the fake probe reports, never opened
+            writable: vec![],
+            blocked: vec![BlockedFolder {
+                path: "/Users/dev/Library/Application Support".into(),
+                by: BlockedBy::MutatingAcl {
+                    index: 1,
+                    entry: "group:everyone allow add_file,delete_child".into(),
+                },
+            }],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "data_path_mutating_acl",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathAcl),
+    );
+    let fix = r.check(CheckId::DataPath).unwrap().fix.clone().unwrap();
+    assert!(
+        fix.contains("chmod -a# 1 '/Users/dev/Library/Application Support'"),
+        "{fix}"
+    );
+}
+
+#[test]
 fn linux_data_path_unreadable() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Unreadable {

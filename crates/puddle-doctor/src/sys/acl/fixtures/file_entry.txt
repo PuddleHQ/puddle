@@ -1,0 +1,2 @@
+-rw-r--r--+ 1 runner  wheel  0 Nov 15 15:27 DIR/afile
+ 0: group:everyone allow write

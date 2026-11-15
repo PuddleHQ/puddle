@@ -39,7 +39,11 @@ fn check(root: &Path, data: &Path, uid: u32) -> Vec<WritableFolder> {
 }
 
 fn walk(root: &Path, data: &Path, uid: u32) -> Walk {
-    walk_ancestors(&std::fs::canonicalize(root).unwrap(), data, uid).unwrap()
+    walk_with(root, data, uid, &|_| Ok(Vec::new()))
+}
+
+fn walk_with(root: &Path, data: &Path, uid: u32, grants: GrantReader<'_>) -> Walk {
+    walk_ancestors(&std::fs::canonicalize(root).unwrap(), data, uid, grants).unwrap()
 }
 
 #[test]
@@ -133,7 +137,7 @@ fn blocked_names(root: &Path, w: &Walk) -> Vec<(String, BlockedBy)> {
         .map(|b| {
             (
                 b.path.strip_prefix(&top).unwrap().display().to_string(),
-                b.by,
+                b.by.clone(),
             )
         })
         .collect()
@@ -163,9 +167,9 @@ fn a_folder_owned_by_another_user_blocks_msb_even_below_a_private_folder() {
     assert_eq!(
         blocked_names(root.path(), &w),
         [
-            (String::new(), by),
-            ("a".to_owned(), by),
-            ("a/b".to_owned(), by),
+            (String::new(), by.clone()),
+            ("a".to_owned(), by.clone()),
+            ("a/b".to_owned(), by.clone()),
             ("a/b/data".to_owned(), by)
         ]
     );
@@ -176,7 +180,13 @@ fn a_folder_owned_by_this_user_or_by_root_is_not_blocked() {
     let (root, data, uid) = tree(0o755, 0o755, 0o755);
     assert_eq!(walk(root.path(), &data, uid).blocked, []);
     // Root-owned folders pass for any user: `/` and `/usr` are the real ones.
-    let w = walk_ancestors(Path::new("/"), Path::new("/usr"), uid.wrapping_add(1)).unwrap();
+    let w = walk_ancestors(
+        Path::new("/"),
+        Path::new("/usr"),
+        uid.wrapping_add(1),
+        &|_| Ok(Vec::new()),
+    )
+    .unwrap();
     assert_eq!(w.blocked, []);
 }
 
@@ -198,4 +208,116 @@ fn a_folder_that_cannot_be_resolved_is_unreadable_and_named() {
                 if dir == Path::new("") && !detail.is_empty()),
         "{facts:?}"
     );
+}
+
+fn grant(index: u32, text: &str, mutating: bool) -> Grant {
+    Grant {
+        index,
+        text: text.to_owned(),
+        mutating,
+    }
+}
+
+/// A reader that gives `grants` for the folder `name` below `root` and none elsewhere.
+fn grants_on<'a>(
+    root: &'a Path,
+    name: &'a str,
+    grants: Vec<Grant>,
+) -> impl Fn(&Path) -> io::Result<Vec<Grant>> + 'a {
+    move |folder| {
+        let at = std::fs::canonicalize(root).unwrap().join(name);
+        Ok(if folder == at {
+            grants.clone()
+        } else {
+            Vec::new()
+        })
+    }
+}
+
+fn acl_names(root: &Path, w: &Walk) -> Vec<(String, BlockedBy)> {
+    w.blocked
+        .iter()
+        .map(|b| {
+            let name = b
+                .path
+                .strip_prefix(std::fs::canonicalize(root).unwrap())
+                .unwrap();
+            (name.display().to_string(), b.by.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn a_mutating_acl_grant_on_an_ancestor_is_named_with_its_entry() {
+    let (root, data, uid) = tree(0o755, 0o755, 0o755);
+    let read = grants_on(
+        root.path(),
+        "a",
+        vec![grant(3, "group:everyone allow add_file", true)],
+    );
+    let w = walk_with(root.path(), &data, uid, &read);
+    assert_eq!(
+        acl_names(root.path(), &w),
+        [(
+            "a".to_owned(),
+            BlockedBy::MutatingAcl {
+                index: 3,
+                entry: "group:everyone allow add_file".to_owned()
+            }
+        )]
+    );
+}
+
+#[test]
+fn a_read_only_grant_is_no_finding() {
+    let (root, data, uid) = tree(0o755, 0o755, 0o755);
+    let read = grants_on(
+        root.path(),
+        "a",
+        vec![grant(0, "group:everyone allow list", false)],
+    );
+    assert_eq!(walk_with(root.path(), &data, uid, &read).blocked, []);
+}
+
+#[test]
+fn a_read_only_grant_stops_an_owner_only_folder_from_being_a_boundary() {
+    // `top` is 0700 and own, but carries a harmless grant: msb keeps checking below it, so the
+    // mutating grant on `a` is still refused. Without the grant on `top`, `a` is not looked at.
+    let (root, data, uid) = tree(0o700, 0o755, 0o755);
+    let mutating = grant(0, "group:everyone allow add_file", true);
+    let harmless = grant(0, "group:everyone allow list", false);
+    let below = |folder: &Path| {
+        let top = std::fs::canonicalize(root.path()).unwrap();
+        Ok(if folder == top {
+            vec![harmless.clone()]
+        } else if folder == top.join("a") {
+            vec![mutating.clone()]
+        } else {
+            Vec::new()
+        })
+    };
+    assert_eq!(walk_with(root.path(), &data, uid, &below).blocked.len(), 1);
+    let boundary = grants_on(root.path(), "a", vec![mutating.clone()]);
+    assert_eq!(walk_with(root.path(), &data, uid, &boundary).blocked, []);
+}
+
+#[test]
+fn a_mutating_grant_below_an_owner_only_folder_is_not_reported() {
+    let (root, data, uid) = tree(0o755, 0o700, 0o755);
+    let read = grants_on(
+        root.path(),
+        "a/b",
+        vec![grant(0, "group:everyone allow add_file", true)],
+    );
+    assert_eq!(walk_with(root.path(), &data, uid, &read).blocked, []);
+}
+
+#[test]
+fn an_unreadable_acl_makes_the_walk_fail() {
+    let (root, data, uid) = tree(0o755, 0o755, 0o755);
+    let top = std::fs::canonicalize(root.path()).unwrap();
+    let err = walk_ancestors(&top, &data, uid, &|_| Err(io::Error::other("no ls")))
+        .err()
+        .unwrap();
+    assert_eq!(err.to_string(), "no ls");
 }

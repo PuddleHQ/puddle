@@ -192,7 +192,15 @@ fn other_urls_say_what_to_change() {
             "https://user:secret@github.com/a/b",
             "user name and password",
         ),
-        ("https://token@github.com/a/b", "user name and password"),
+        ("https://token@example.com/a/b", "user name and password"),
+        ("https://@github.com/a/b", "user name and password"),
+        ("https://me:@github.com/a/b", "user name and password"),
+        ("https://a@b@github.com/a/b", "user name and password"),
+        (
+            "https://org@dev.azure.com@evil.test/a",
+            "user name and password",
+        ),
+        ("https://org@notgithub.com/a/b", "user name and password"),
         ("https://github.com/a b", "spaces"),
         ("https://github.com/a\nb", "control"),
     ];
@@ -208,6 +216,34 @@ fn other_urls_say_what_to_change() {
             .to_string()
             .contains("longer than")
     );
+}
+
+#[test]
+fn a_bare_user_name_of_a_known_host_is_dropped() {
+    let cases = [
+        (
+            "https://org@dev.azure.com/org/proj/_git/repo",
+            "https://dev.azure.com/org/proj/_git/repo",
+        ),
+        (
+            "  HTTPS://Org@Dev.Azure.com/org/proj/_git/repo  ",
+            "https://Dev.Azure.com/org/proj/_git/repo",
+        ),
+        (
+            "https://org@org.visualstudio.com/proj/_git/repo",
+            "https://org.visualstudio.com/proj/_git/repo",
+        ),
+        (
+            "https://me@github.com:443/a/b.git",
+            "https://github.com:443/a/b.git",
+        ),
+        ("https://me@gitlab.com/a/b", "https://gitlab.com/a/b"),
+        ("https://me@bitbucket.org/a/b", "https://bitbucket.org/a/b"),
+        ("https://me@github.com/a/b@c", "https://github.com/a/b@c"),
+    ];
+    for (url, wants) in cases {
+        assert_eq!(RepoUrl::parse(url).unwrap().as_str(), wants, "{url:?}");
+    }
 }
 
 #[test]

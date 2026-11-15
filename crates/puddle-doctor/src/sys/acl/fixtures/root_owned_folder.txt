@@ -1,0 +1,2 @@
+drwxr-xr-x+ 2 root  wheel  64 Nov 15 15:29 DIR/o
+ 0: user:runner allow add_file

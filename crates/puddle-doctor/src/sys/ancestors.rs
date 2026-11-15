@@ -7,7 +7,9 @@
 //!
 //! msb also refuses, at every level and even below that owner-only folder, an ancestor that is not
 //! a folder or that a user other than this one and root owns; both are reported too. The macOS
-//! build of msb adds an ACL check that this Linux-only probe does not make.
+//! build of msb adds an ACL check: an ALLOW entry for another account that can change the folder
+//! is refused too, and a folder with any such entry is no private boundary. On Linux no ACL is
+//! read.
 
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -21,13 +23,27 @@ const STICKY: u32 = 0o1000;
 /// Any group or world access.
 const ANY_BY_OTHERS: u32 = 0o077;
 
+/// An ACL entry that gives another account something on a folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Grant {
+    /// The entry's number in the folder's listing (`chmod -a# <index>` removes it).
+    pub(super) index: u32,
+    /// The entry as `ls -lde` prints it.
+    pub(super) text: String,
+    /// Whether it lets the holder change the folder.
+    pub(super) mutating: bool,
+}
+
+/// The ACL grants of a folder, as seen by the user the walk runs for.
+type GrantReader<'a> = &'a dyn Fn(&Path) -> io::Result<Vec<Grant>>;
+
 /// The facts about the folders above `dir` (`None`: Puddle's data folder is unknown).
 pub(crate) fn data_path(dir: Option<&Path>) -> DataPathFacts {
     let Some(dir) = dir else {
         return DataPathFacts::NoFolder;
     };
     let euid = rustix::process::geteuid().as_raw();
-    match walk_ancestors(Path::new("/"), dir, euid) {
+    match walk_from_root(dir, euid) {
         Ok(walk) => DataPathFacts::Checked {
             dir: walk.dir,
             writable: walk.writable,
@@ -40,6 +56,20 @@ pub(crate) fn data_path(dir: Option<&Path>) -> DataPathFacts {
     }
 }
 
+/// The walk from `/` with the ACL rule of this OS: macOS reads each folder's ACL, Linux has none.
+#[cfg(target_os = "macos")]
+fn walk_from_root(dir: &Path, euid: u32) -> io::Result<Walk> {
+    let me = super::acl::current_user()?;
+    walk_ancestors(Path::new("/"), dir, euid, &|folder| {
+        super::acl::read_grants(folder, &me)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn walk_from_root(dir: &Path, euid: u32) -> io::Result<Walk> {
+    walk_ancestors(Path::new("/"), dir, euid, &|_| Ok(Vec::new()))
+}
+
 /// What the walk found.
 struct Walk {
     dir: PathBuf,
@@ -49,7 +79,7 @@ struct Walk {
 
 /// The folders msb would refuse among those from `top` down to `dir` (or its nearest existing
 /// parent, which Puddle creates below), as seen by the user `euid`, top first.
-fn walk_ancestors(top: &Path, dir: &Path, euid: u32) -> io::Result<Walk> {
+fn walk_ancestors(top: &Path, dir: &Path, euid: u32, grants: GrantReader<'_>) -> io::Result<Walk> {
     let absolute = std::path::absolute(dir)?;
     let existing = absolute
         .ancestors()
@@ -85,8 +115,19 @@ fn walk_ancestors(top: &Path, dir: &Path, euid: u32) -> io::Result<Walk> {
                 owned: meta.uid() == euid,
             });
         }
-        if !private_boundary {
-            private_boundary = meta.uid() == euid && mode & ANY_BY_OTHERS == 0;
+        if !private_boundary && meta.is_dir() {
+            let granted = grants(folder)?;
+            if let Some(g) = granted.iter().find(|g| g.mutating) {
+                blocked.push(BlockedFolder {
+                    path: folder.to_path_buf(),
+                    by: BlockedBy::MutatingAcl {
+                        index: g.index,
+                        entry: g.text.clone(),
+                    },
+                });
+            }
+            private_boundary =
+                meta.uid() == euid && mode & ANY_BY_OTHERS == 0 && granted.is_empty();
         }
     }
     Ok(Walk {

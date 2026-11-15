@@ -15,11 +15,9 @@ use crate::common::{START_MS, start, start_with, start_with_company_signals};
 async fn health_names_the_versions() {
     // No app is served: with the embedded one the build id depends on whether `ui/build` exists
     // when the test runs, which the host check's `ui` step decides while the tests are running.
-    let api = start_with(ApiConfig {
-        ui: None,
-        ..ApiConfig::default()
-    })
-    .await;
+    let mut config = ApiConfig::default();
+    config.ui = None;
+    let api = start_with(config).await;
     let reply = api.get("/api/health").await;
     assert_eq!(reply.status, 200);
     assert_eq!(

@@ -170,9 +170,6 @@ export function stepPosition(
   return at < 0 ? null : { index: at + 1, of: steps.length };
 }
 
-export const SSH_MESSAGE =
-  "SSH remotes are not supported yet; use the repository's HTTPS URL instead.";
-
 function looksLikeScp(url: string): boolean {
   if (url.includes("://") || /^http/i.test(url)) return false;
   const colon = url.indexOf(":");
@@ -236,11 +233,61 @@ export function cleanRepoUrl(raw: string): string {
   return `https://${host}${tail}`;
 }
 
+const SSH_SHAPE =
+  "That is not an SSH address Puddle can read. Use git@github.com:owner/repo.git or the repository's HTTPS URL.";
+const SSH_HOST =
+  "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.";
+
+/** The SSH names of the Git hosts Puddle serves over SSH, with the HTTPS host each one stands for
+ * (`PathForm` in the proxy's `ssh_git/grammar.rs`; the host reads them the same way,
+ * `ssh_address_as_https` in `puddle-store`). */
+const SSH_HOSTS: Record<string, string> = {
+  "github.com": "github.com",
+  "ssh.github.com": "github.com",
+  "gitlab.com": "gitlab.com",
+  "altssh.gitlab.com": "gitlab.com",
+  "bitbucket.org": "bitbucket.org",
+  "altssh.bitbucket.org": "bitbucket.org",
+  "ssh.dev.azure.com": "dev.azure.com",
+  "vs-ssh.visualstudio.com": "visualstudio.com",
+};
+
+/** The HTTPS address of the repository an SSH address names, or why it can't be read. A workspace
+ * is cloned over HTTPS, so this is the address the create sends and the table lists. Azure DevOps
+ * writes `v3/<organisation>/<project>/<repository>`. */
+export function sshAsHttps(raw: string): { url: string } | { message: string } {
+  const address = sshAddress(raw);
+  if (address === null || /[\p{Cc}?#\\]/u.test(address.path)) {
+    return { message: SSH_SHAPE };
+  }
+  const https = SSH_HOSTS[address.host];
+  if (https === undefined) return { message: SSH_HOST };
+  if (
+    https === "github.com" ||
+    https === "gitlab.com" ||
+    https === "bitbucket.org"
+  ) {
+    return { url: `https://${https}/${address.path}` };
+  }
+  const [version, org, project, repo, ...more] = address.path.split("/");
+  if (version !== "v3" || !org || !project || !repo || more.length > 0) {
+    return { message: SSH_SHAPE };
+  }
+  return https === "dev.azure.com"
+    ? { url: `https://dev.azure.com/${org}/${project}/_git/${repo}` }
+    : { url: `https://${org}.visualstudio.com/${project}/_git/${repo}` };
+}
+
 /** The reason a repository URL can't be cloned, or `null` when it can. */
 export function repoUrlProblem(raw: string): string | null {
   const url = cleanRepoUrl(raw);
   if (url === "") return "Enter the repository's HTTPS URL.";
-  if (/^ssh:\/\//i.test(url) || looksLikeScp(url)) return SSH_MESSAGE;
+  if (looksLikeSsh(url)) {
+    const converted = sshAsHttps(url);
+    return "message" in converted
+      ? converted.message
+      : repoUrlProblem(converted.url);
+  }
   if (/\s/.test(url)) return "The URL must not contain spaces.";
   if (!/^https:\/\//i.test(url)) return "Use an https:// URL.";
   const authority = url.slice(8).split(/[/?#]/)[0] ?? "";

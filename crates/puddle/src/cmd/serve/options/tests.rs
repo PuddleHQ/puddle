@@ -87,6 +87,57 @@ const REMOTE_DEFAULTS: &str = "remote = off (default)\n\
      allowed_proxies = none (default)\n\
      multi_user = off (default)\n";
 
+/// Which of the three places hold a value.
+#[derive(Debug, Clone, Copy)]
+struct Places {
+    flag: bool,
+    env: bool,
+    file: bool,
+}
+
+impl Places {
+    const NONE: Self = Self {
+        flag: false,
+        env: false,
+        file: false,
+    };
+    const FLAG: Self = Self {
+        flag: true,
+        env: false,
+        file: false,
+    };
+    const ENV: Self = Self {
+        flag: false,
+        env: true,
+        file: false,
+    };
+    const FILE: Self = Self {
+        flag: false,
+        env: false,
+        file: true,
+    };
+    const FLAG_ENV: Self = Self {
+        flag: true,
+        env: true,
+        file: false,
+    };
+    const FLAG_FILE: Self = Self {
+        flag: true,
+        env: false,
+        file: true,
+    };
+    const ENV_FILE: Self = Self {
+        flag: false,
+        env: true,
+        file: true,
+    };
+    const ALL: Self = Self {
+        flag: true,
+        env: true,
+        file: true,
+    };
+}
+
 struct Rig {
     dir: tempfile::TempDir,
 }
@@ -103,13 +154,8 @@ impl Rig {
     }
 
     /// Resolves with the given places set for `spec` only.
-    fn resolve(
-        &self,
-        spec: &'static Spec,
-        flag: bool,
-        env: bool,
-        file: bool,
-    ) -> Result<Effective, ConfigError> {
+    fn resolve(&self, spec: &'static Spec, set: Places) -> Result<Effective, ConfigError> {
+        let Places { flag, env, file } = set;
         let s = samples(spec.kind);
         let mut flags = Flags::new();
         let mut vars: BTreeMap<&str, OsString> = BTreeMap::new();
@@ -142,36 +188,28 @@ fn each_option_takes_the_flag_over_the_environment_over_the_file_over_the_defaul
         let env = expect(spec, s.env, dir, Source::Environment(spec.env));
         let file = expect(spec, s.file, dir, Source::File(rig.file()));
         let key = spec.key;
-        let got = |f, e, c| rig.resolve(spec, f, e, c).unwrap().get(key).cloned();
+        let got = |places| rig.resolve(spec, places).unwrap().get(key).cloned();
         // Every pair, both ways round where the order matters.
         assert_eq!(
-            got(true, true, false),
+            got(Places::FLAG_ENV),
             Some(flag.clone()),
             "{key}: flag over environment"
         );
         assert_eq!(
-            got(true, false, true),
+            got(Places::FLAG_FILE),
             Some(flag.clone()),
             "{key}: flag over file"
         );
         assert_eq!(
-            got(false, true, true),
+            got(Places::ENV_FILE),
             Some(env.clone()),
             "{key}: environment over file"
         );
-        assert_eq!(
-            got(true, true, true),
-            Some(flag.clone()),
-            "{key}: all three"
-        );
-        assert_eq!(got(true, false, false), Some(flag), "{key}: flag alone");
-        assert_eq!(
-            got(false, true, false),
-            Some(env),
-            "{key}: environment alone"
-        );
-        assert_eq!(got(false, false, true), Some(file), "{key}: file alone");
-        assert_eq!(got(false, false, false), None, "{key}: default is no value");
+        assert_eq!(got(Places::ALL), Some(flag.clone()), "{key}: all three");
+        assert_eq!(got(Places::FLAG), Some(flag), "{key}: flag alone");
+        assert_eq!(got(Places::ENV), Some(env), "{key}: environment alone");
+        assert_eq!(got(Places::FILE), Some(file), "{key}: file alone");
+        assert_eq!(got(Places::NONE), None, "{key}: default is no value");
     }
 }
 

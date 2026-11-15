@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
-    EventHub, HostCredentials, HostNetworkHealth, Launcher, ProxySignInService, RunningApi,
-    Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
+    EventHub, HostCredentials, HostNetworkHealth, Launcher, ProxySignInService, PullProxyState,
+    RunningApi, Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::Runtime;
@@ -917,7 +917,9 @@ async fn serve_background(
 ) -> Result<Serving, HostError> {
     let pull = pull.serve().map_err(HostError::PullProxy)?;
     // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
-    outbound.network_health.set_pull_proxy(true, true);
+    outbound
+        .network_health
+        .set_pull_proxy(PullProxyState::ViaUpstream);
     steps.push(Step::PullProxyServing);
     let sweeper = Sweeper::spawn_reporting(
         shared.store.clone(),

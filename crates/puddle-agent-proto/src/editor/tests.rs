@@ -62,8 +62,10 @@ fn microsoft_s_server_keeps_its_builds_below_its_data_and_reads_back() {
             "/workspaces/a/.puddle/vscode-server",
             "/workspaces/a",
             90,
-            telemetry,
-            auto_update,
+            MicrosoftOptions {
+                telemetry,
+                auto_update,
+            },
         );
         assert_eq!(server.dir, "/workspaces/a/.puddle/vscode-server/servers");
         assert_eq!(

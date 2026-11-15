@@ -15,8 +15,9 @@ use proptest::prelude::*;
 use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditOutcome, AuditRecord, ConnectionRecord, Effect, Limits,
-    ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire, Resolution,
-    RuleDeleteReason, RuleWire, Scope, Store, UserId, UserName,
+    ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire,
+    RequestRuleWireScope, Resolution, RuleDeleteReason, RuleWire, RuleWirePatternKind,
+    RuleWireScope, Scope, Store, UserId, UserName,
 };
 use puddle_test_kit::cpu_time;
 use puddle_types::{
@@ -427,11 +428,11 @@ fn pending_wire(workspace: &str, host: &str, state: &str) -> PendingWire {
 fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
     RuleWire {
         id: 1,
-        scope: workspace.map_or("global", |_| "workspace").into(),
+        scope: workspace.map_or(RuleWireScope::Global, |_| RuleWireScope::Workspace),
         workspace_id: workspace.map(Into::into),
-        pattern_kind: "exact".into(),
+        pattern_kind: RuleWirePatternKind::Exact,
         pattern: pattern.into(),
-        effect: "allow".into(),
+        effect: Effect::Allow,
         expires_at: None,
         created_at: 1,
         created_by: "cli".into(),
@@ -855,7 +856,7 @@ fn the_search_box_matches_each_text_column_and_combines_with_the_other_filters()
             ts: T0 + 4,
             rule: RequestRuleWire {
                 id: 1,
-                scope: "global".into(),
+                scope: RequestRuleWireScope::Global,
                 workspace_id: None,
                 host: "files.example.io".into(),
                 methods: vec!["DELETE".into()],

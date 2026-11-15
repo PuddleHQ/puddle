@@ -15025,6 +15025,35 @@
           "deny"
         ]
       },
+      "EffectiveLimits": {
+        "type": "object",
+        "description": "The limits as they apply on this computer.",
+        "required": [
+          "max_cpus",
+          "host_cpus",
+          "default_cpus"
+        ],
+        "properties": {
+          "default_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The vCPUs a new workspace gets unless it or the global default says otherwise: four, or\nhalf the cores on a small computer.",
+            "minimum": 0
+          },
+          "host_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The computer's logical cores.",
+            "minimum": 0
+          },
+          "max_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The most vCPUs a workspace may have: the set limit, else the logical cores.",
+            "minimum": 0
+          }
+        }
+      },
       "EffectiveSettings": {
         "type": "object",
         "description": "The values a workspace gets: its override, else the global value, else Puddle's default.",
@@ -16652,6 +16681,10 @@
         "type": "object",
         "description": "New global settings. Replaces every value listed here; unknown stored fields are kept.",
         "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "The limits; omitted or `null` falls back to the computer's cores."
+          },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
             "description": "The tool switches."
@@ -16679,6 +16712,8 @@
           "vscode_server",
           "ui",
           "tools",
+          "limits",
+          "effective_limits",
           "effective",
           "unknown_fields"
         ],
@@ -16686,6 +16721,14 @@
           "effective": {
             "$ref": "#/components/schemas/EffectiveSettings",
             "description": "The effective values for a workspace with no overrides."
+          },
+          "effective_limits": {
+            "$ref": "#/components/schemas/EffectiveLimits",
+            "description": "What the limits come to on this computer."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "The limits the user set (global only)."
           },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
@@ -17433,6 +17476,24 @@
             "type": "integer",
             "format": "int32",
             "description": "Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).",
+            "minimum": 0
+          }
+        }
+      },
+      "Limits": {
+        "type": "object",
+        "description": "Upper bounds on what a workspace may be given (global only).",
+        "required": [
+          "max_cpus"
+        ],
+        "properties": {
+          "max_cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The most vCPUs a workspace may have. `null` is the computer's logical cores.",
             "minimum": 0
           }
         }
@@ -19930,7 +19991,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest vCPUs (1 to 32); applies at the next start.",
+            "description": "Guest vCPUs (at least 1, at most the global maximum); applies at the next start.",
             "maximum": 32,
             "minimum": 1
           },

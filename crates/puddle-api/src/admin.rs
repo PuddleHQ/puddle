@@ -162,8 +162,7 @@ impl AdminService {
             running: count(up.clone().count()),
             disk_used_mib: records.iter().map(mib_used).sum(),
             memory_mib: up.map(|w| u64::from(w.memory.get())).sum(),
-            host_cpus: std::thread::available_parallelism()
-                .map_or(1, |n| u32::try_from(n.get()).unwrap_or(u32::MAX)),
+            host_cpus: puddle_settings::host_cpu_count(),
         })
     }
 

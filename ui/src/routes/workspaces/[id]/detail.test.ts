@@ -1132,7 +1132,7 @@ describe("the settings tab", () => {
       "CPUs for this workspace",
     ) as HTMLSelectElement;
     expect(cpus.value).toBe("");
-    expect(cpus.options[0]?.text).toBe("Use the global default (1 CPU)");
+    expect(cpus.options[0]?.text).toBe("Use the global default (4 CPUs)");
     expect(
       screen.getByText(/A running workspace keeps the count it started with/),
     ).toBeInTheDocument();

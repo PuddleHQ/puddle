@@ -338,27 +338,57 @@ describe("explicit Save", () => {
     expect(api.layer.memory).toBe(16_384);
   });
 
-  it("sets the default CPU count from 1 to 32 and says a running workspace keeps its own", async () => {
+  it("sets the default CPU count from 1 up to the computer's cores and says a running workspace keeps its own", async () => {
     await open();
     const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
-    expect(cpus).toHaveValue("1");
+    expect(cpus).toHaveValue("4");
     expect([...cpus.options].map((o) => o.value)).toEqual(
-      Array.from({ length: 32 }, (_, i) => String(i + 1)),
+      Array.from({ length: 16 }, (_, i) => String(i + 1)),
     );
     expect(cpus.options[0]?.text).toBe("1 CPU");
     expect(cpus.options[3]?.text).toBe("4 CPUs");
     expect(
       screen.getByText(/A running workspace keeps the count it started with/),
     ).toBeInTheDocument();
-    await choose("Default CPUs", "4");
+    await choose("Default CPUs", "6");
     expect(
       screen.getByText(/Default CPUs apply when a workspace next starts/),
     ).toBeInTheDocument();
     await save(
       "Settings saved. Default CPUs apply when a workspace next starts.",
     );
-    expect(api.layer.cpus).toBe(4);
-    expect(screen.getByLabelText("Default CPUs")).toHaveValue("4");
+    expect(api.layer.cpus).toBe(6);
+    expect(screen.getByLabelText("Default CPUs")).toHaveValue("6");
+  });
+
+  it("takes the CPU maximum from the setting, not from a fixed 32, and saves a new one", async () => {
+    api.hostCpus = 64;
+    await open();
+    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
+    expect(cpus.options).toHaveLength(64);
+    const max = screen.getByLabelText(
+      "Most CPUs a workspace may have",
+    ) as HTMLInputElement;
+    expect(max.value).toBe("");
+    expect(max.placeholder).toBe("64");
+    await fireEvent.change(max, { target: { value: "6" } });
+    await save("Settings saved.");
+    expect(api.limits.max_cpus).toBe(6);
+    expect(
+      (screen.getByLabelText("Default CPUs") as HTMLSelectElement).options,
+    ).toHaveLength(6);
+    await fireEvent.change(max, { target: { value: "" } });
+    expect(max.value).toBe("");
+    await save("Settings saved.");
+    expect(api.limits.max_cpus).toBeNull();
+  });
+
+  it("keeps the CPU maximum when another setting is saved", async () => {
+    api.limits = { max_cpus: 9 };
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await save("Settings saved.");
+    expect(api.limits.max_cpus).toBe(9);
   });
 
   it("says nothing about a restart for settings that apply at once", async () => {

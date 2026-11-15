@@ -71,6 +71,15 @@ pub enum WorkspaceError {
         /// Why.
         reason: String,
     },
+    /// The checkout listing needs git and the image has none. A volume's checkouts can't be
+    /// described then, which is a fact about the image and no failure of the listing.
+    #[error(
+        "cannot list the checkouts of workspace {workspace:?}: git is not installed in the image"
+    )]
+    GitMissing {
+        /// The workspace.
+        workspace: String,
+    },
     /// `fstrim` failed in the guest.
     #[error("cannot trim workspace {workspace:?}: {reason}")]
     Trim {

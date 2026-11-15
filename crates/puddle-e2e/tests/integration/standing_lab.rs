@@ -48,17 +48,14 @@ fn listening(port: u64) -> bool {
 }
 
 /// Starts the program with `args`, waits for its info file and returns the child and the info.
-fn start(args: &[&str], dir: &Path) -> (Child, serde_json::Value) {
+fn start(args: &[&str], dir: &Path, stop_file: bool) -> (Child, serde_json::Value) {
     let info = dir.join("lab.json");
-    let child = lab()
-        .args(args)
-        .arg("--info")
-        .arg(&info)
-        .arg("--stop")
-        .arg(dir.join("stop"))
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut command = lab();
+    command.args(args).arg("--info").arg(&info);
+    if stop_file {
+        command.arg("--stop").arg(dir.join("stop"));
+    }
+    let child = command.stderr(Stdio::null()).spawn().unwrap();
     let text = eventually_blocking("the lab writes its info file", MAX_WAIT, || {
         std::fs::read_to_string(&info).ok()
     });
@@ -94,6 +91,25 @@ fn the_self_test_checks_that_every_piece_answers() {
 }
 
 #[test]
+fn the_self_test_of_an_open_squid_alone_checks_that_it_forwards() {
+    if !programs() {
+        return;
+    }
+    let output = lab().args(["--self-test", "--squid"]).output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("ok: squid on"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("forwards a request"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn a_missing_program_fails_the_self_test_and_names_the_variable() {
     let output = lab()
         .args(["--self-test", "--interceptor"])
@@ -126,6 +142,7 @@ fn a_standing_run_lists_its_pieces_and_stops_every_one_on_the_stop_file() {
             "intranet.corp.test",
         ],
         dir.path(),
+        true,
     );
     assert_eq!(info["names"][0], "intranet.corp.test");
     assert_eq!(info["squid"]["auth"], "basic");
@@ -161,7 +178,11 @@ fn a_termination_signal_stops_the_lab_cleanly() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let (mut child, info) = start(&["--ntlm", "--pac"], dir.path());
+    let (mut child, info) = start(
+        &["--squid", "--ntlm", "--squid-through", "ntlm", "--pac"],
+        dir.path(),
+        false,
+    );
     let port = info["ntlm"]["port"].as_u64().unwrap();
     assert!(listening(port));
     let sent = Command::new("kill")

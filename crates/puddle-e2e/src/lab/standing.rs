@@ -571,13 +571,16 @@ fn run(cmd: &Command) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
-    runtime.block_on(shutdown(cmd.stop.as_deref()));
+    runtime.block_on(shutdown(cmd.stop.as_deref()))?;
     eprintln!("puddle-lab: stopping");
     Ok(())
 }
 
 /// Returns when the process is asked to stop: `SIGINT`, `SIGTERM` or the stop file appearing.
-async fn shutdown(stop: Option<&Path>) {
+///
+/// # Errors
+/// When the `SIGTERM` handler cannot be installed.
+async fn shutdown(stop: Option<&Path>) -> Result<(), String> {
     let stop_file = async {
         let Some(stop) = stop else {
             return std::future::pending::<()>().await;
@@ -589,21 +592,18 @@ async fn shutdown(stop: Option<&Path>) {
         }
     };
     #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
-            }
-            Err(_) => std::future::pending::<()>().await,
-        }
-    };
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|e| format!("cannot listen for SIGTERM: {e}"))?;
+    #[cfg(unix)]
+    let terminate = term.recv();
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    let terminate = std::future::pending::<Option<()>>();
     tokio::select! {
         () = stop_file => {}
-        () = terminate => {}
+        _ = terminate => {}
         _ = tokio::signal::ctrl_c() => {}
     }
+    Ok(())
 }
 
 /// The program: parse, then run or self-test. The exit code is 0 for a clean run, 1 for a failed

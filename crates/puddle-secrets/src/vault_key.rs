@@ -412,21 +412,44 @@ impl VaultKeys {
 
 /// What a failed `decrypt` says, by the two texts measured on 257 to 259 (systemd gives no other
 /// handle); any other text is "failed".
-fn classify(stderr: &[u8]) -> Unseal {
-    let text = String::from_utf8_lossy(stderr);
-    if text.contains("doesn't match expectations") {
+#[must_use]
+pub fn classify_unseal_failure(stderr: &str) -> Unseal {
+    if stderr.contains("doesn't match expectations") {
         Unseal::NameMismatch
-    } else if text.contains("Failed to decrypt") {
+    } else if stderr.contains("Failed to decrypt") {
         Unseal::Rejected
     } else {
         Unseal::Failed
     }
 }
 
+/// The same for the raw bytes of the error stream.
+fn classify(stderr: &[u8]) -> Unseal {
+    classify_unseal_failure(&String::from_utf8_lossy(stderr))
+}
+
 /// The major version in the first line of `systemd-creds --version`: `systemd 257 (257.13-1)`.
 fn major_version(stdout: &[u8]) -> Option<u32> {
     let text = std::str::from_utf8(stdout).ok()?;
     text.lines().next()?.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Whether a `systemd-creds --version` first line names a systemd without per-user sealing.
+#[must_use]
+pub fn systemd_lacks_user_sealing(version_first_line: &str) -> bool {
+    major_version(version_first_line.as_bytes()).is_some_and(|v| v < FIRST_USER_SCOPE)
+}
+
+/// The `--name` a sealed vault key carries: the sealed file only opens under it.
+#[must_use]
+pub fn sealed_key_name() -> &'static str {
+    CREDENTIAL_NAME
+}
+
+/// Where the sealed vault key is kept for the config folder `config_home`.
+#[must_use]
+pub fn sealed_key_path(config_home: &Path) -> PathBuf {
+    config_home.join("puddle").join(SEALED_FILE)
 }
 
 /// A key from exactly 32 bytes; the caller's buffer is the caller's to wipe.

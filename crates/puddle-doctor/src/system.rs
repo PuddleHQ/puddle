@@ -19,7 +19,8 @@ use crate::diagnose::Probe;
 use crate::facts::{
     AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts,
     DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os,
-    ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts, VaultFacts,
+    ProcessOutcome, RuntimeFacts, RuntimeState, SealedKeyFacts, SshAgentFacts, TpmFacts,
+    VaultFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -262,9 +263,19 @@ impl Probe for SystemProbe {
 
     fn credential_store(&self) -> CredentialStoreFacts {
         let data = self.data_dir.clone().or_else(|| puddle_fs::data_dir().ok());
-        credential_store_facts(data.as_deref(), puddle_secrets::probe_os_store, || {
-            login_session_in(std::env::var_os("PATH"), Duration::from_secs(2))
-        })
+        credential_store_facts(
+            data.as_deref(),
+            puddle_secrets::probe_os_store,
+            || login_session_in(std::env::var_os("PATH"), Duration::from_secs(2)),
+            |tag| {
+                sealed_key_facts_in(
+                    tag,
+                    puddle_secrets::config_home().as_deref(),
+                    std::env::var_os("PATH"),
+                    SEALED_KEY_LIMIT,
+                )
+            },
+        )
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {
@@ -279,6 +290,7 @@ fn credential_store_facts(
     data: Option<&Path>,
     probe: impl FnOnce() -> puddle_secrets::StoreHealth,
     session: impl FnOnce() -> puddle_secrets::LoginSession,
+    sealed_key: impl FnOnce(puddle_secrets::KeySourceTag) -> VaultFacts,
 ) -> CredentialStoreFacts {
     let record = match data {
         Some(data) => match puddle_secrets::read_record(data) {
@@ -292,7 +304,7 @@ fn credential_store_facts(
     {
         return CredentialStoreFacts::File(
             match puddle_secrets::FileVault::header_source(&puddle_secrets::vault_path(data)) {
-                Ok(Some(tag)) => VaultFacts::Header(tag),
+                Ok(Some(tag)) => sealed_key(tag),
                 Ok(None) => VaultFacts::NoVaultYet,
                 Err(_) => VaultFacts::Unreadable,
             },
@@ -303,6 +315,69 @@ fn credential_store_facts(
         health: probe(),
         session: session(),
     }
+}
+
+/// How long each `systemd-creds` call of the sealed-key check may run.
+const SEALED_KEY_LIMIT: Duration = Duration::from_secs(5);
+
+/// What the vault's header and the sealed key file say, given a header that names `tag`. A tag of a
+/// key file, or a systemd tag with no sealed file in `config_home` (the service passes the key), is
+/// not examined. The sealed file is opened once through `systemd-creds` found on `path`: the key
+/// comes out on a pipe whose text is dropped without being looked at, and an answer that is not an exit 0 is classified
+/// by the same texts the service uses.
+fn sealed_key_facts_in(
+    tag: puddle_secrets::KeySourceTag,
+    config_home: Option<&Path>,
+    path: Option<std::ffi::OsString>,
+    limit: Duration,
+) -> VaultFacts {
+    use puddle_secrets::{KeySourceTag, Unseal};
+    let sealed = config_home.map(puddle_secrets::sealed_key_path);
+    let (true, Some(sealed)) = (
+        tag != KeySourceTag::KeyFile,
+        sealed.filter(|file| file.is_file()),
+    ) else {
+        return VaultFacts::Header(tag);
+    };
+    let Some(program) = find_on_path("systemd-creds", path) else {
+        return VaultFacts::Sealed {
+            tag,
+            key: SealedKeyFacts::Fails(Unseal::ToolMissing),
+            tpm: None,
+        };
+    };
+    let ask = |args: &[&std::ffi::OsStr]| launch::run(Command::new(&program).args(args), limit);
+    let name = format!("--name={}", puddle_secrets::sealed_key_name());
+    let key = match ask(&[
+        "--user".as_ref(),
+        "decrypt".as_ref(),
+        name.as_ref(),
+        sealed.as_os_str(),
+        "-".as_ref(),
+    ]) {
+        ProcessOutcome::Exited { code: Some(0), .. } => SealedKeyFacts::Opens,
+        ProcessOutcome::Exited { stderr_tail, .. } => {
+            let old = matches!(
+                ask(&["--version".as_ref()]),
+                ProcessOutcome::Exited { code: Some(0), stdout_first_line, .. }
+                    if puddle_secrets::systemd_lacks_user_sealing(&stdout_first_line)
+            );
+            SealedKeyFacts::Fails(if old {
+                Unseal::Unsupported
+            } else {
+                puddle_secrets::classify_unseal_failure(&stderr_tail)
+            })
+        }
+        ProcessOutcome::TimedOut { .. } => SealedKeyFacts::Fails(Unseal::TimedOut),
+        ProcessOutcome::SpawnFailed { .. } => SealedKeyFacts::Fails(Unseal::Failed),
+    };
+    let tpm = (tag == KeySourceTag::SystemdHost).then(|| match ask(&["has-tpm2".as_ref()]) {
+        ProcessOutcome::Exited { code: Some(0), .. } => TpmFacts::Usable,
+        ProcessOutcome::Exited { code: Some(16), .. } => TpmFacts::LibrariesMissing,
+        ProcessOutcome::Exited { code: Some(_), .. } => TpmFacts::Unavailable,
+        _ => TpmFacts::Unknown,
+    });
+    VaultFacts::Sealed { tag, key, tpm }
 }
 
 /// What `loginctl` says about the display session of this user, found on `PATH`.

@@ -8,6 +8,8 @@ use tauri::{Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
 use crate::navigation::{Navigation, OriginPolicy};
+#[cfg(windows)]
+use crate::webview_environment;
 
 /// The main window's label. Puddle's one capability file names this label and grants it the folder dialog only;
 /// workspace windows get labels of their own (`vs-<workspace>`), never this one.
@@ -112,13 +114,24 @@ pub fn open_main<R: Runtime, M: Manager<R>>(
             NewWindowResponse::Deny
         });
     #[cfg(windows)]
-    let builder = match debug_port {
-        // WebView2 only takes this from the API (the environment variable is ignored once the
-        // API sets arguments, which wry always does); the first two are wry's own defaults.
-        Some(port) => builder.additional_browser_args(&format!(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port} --remote-allow-origins=*"
-        )),
-        None => builder,
+    let builder = {
+        // WebView2 only takes the arguments from the API (the environment variable is ignored
+        // once the API sets arguments, which wry always does), and our own environment turns the
+        // crash-report upload off; the library ignores `additional_browser_args` once it has one.
+        let debug_arguments = webview_environment::arguments(debug_port);
+        let arguments = debug_arguments
+            .as_deref()
+            .unwrap_or(webview_environment::DEFAULT_ARGUMENTS);
+        let builder = match &debug_arguments {
+            Some(arguments) => builder.additional_browser_args(arguments),
+            None => builder,
+        };
+        // The folder Tauri gives a window that names none; the environment must use the same one.
+        let data_folder = manager.path().app_local_data_dir().ok();
+        match webview_environment::create(manager, data_folder.as_deref(), arguments) {
+            Some(environment) => builder.with_environment(environment),
+            None => builder,
+        }
     };
     #[cfg(not(windows))]
     let _ = debug_port;

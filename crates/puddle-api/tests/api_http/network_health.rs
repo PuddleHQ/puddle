@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use puddle_api::{
-    FakeNetworkHealth, HostNetworkHealth, NetworkHealthService, forward_network_changes,
-    forward_proxy_sign_in_failures,
+    FakeNetworkHealth, HostNetworkHealth, NetworkHealthService, PullProxyState,
+    forward_network_changes, forward_proxy_sign_in_failures,
 };
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_store::{Clock, ManualClock};
@@ -133,7 +133,7 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
         &root_snapshot(),
         SystemTime::now(),
     )));
-    health.set_pull_proxy(true, true);
+    health.set_pull_proxy(PullProxyState::ViaUpstream);
     let api = start_with_network(health.clone() as Arc<dyn NetworkHealthService>).await;
 
     let reply = api.get("/api/network-health").await;
@@ -397,7 +397,7 @@ async fn a_pull_proxy_that_is_off_is_never_reported_as_using_the_upstream() {
     let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
     let clock = Arc::new(ManualClock::new(START_MS));
     let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
-    health.set_pull_proxy(false, true);
+    health.set_pull_proxy(PullProxyState::Off);
     let api = start_with_network(health).await;
     let body = api.get("/api/network-health").await.json();
     assert_eq!(

@@ -74,14 +74,19 @@ fn unlistening() -> (tokio::net::TcpSocket, u16) {
 
 #[test]
 fn a_configured_program_runs_and_a_missing_one_skips() {
-    assert!(configured_or_skip(true, true, "V", "how"));
-    assert!(!configured_or_skip(false, false, "V", "how"));
+    assert!(configured_or_skip(true, Requirement::Required, "V", "how"));
+    assert!(!configured_or_skip(
+        false,
+        Requirement::Optional,
+        "V",
+        "how"
+    ));
 }
 
 #[test]
 #[should_panic(expected = "V is set but the fixture's program is not configured: set X")]
 fn a_required_but_missing_program_fails() {
-    configured_or_skip(false, true, "V", "set X");
+    configured_or_skip(false, Requirement::Required, "V", "set X");
 }
 
 #[test]

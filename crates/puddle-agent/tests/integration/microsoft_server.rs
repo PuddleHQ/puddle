@@ -26,7 +26,7 @@ use puddle_agent::microsoft::{
     InstallError, Update, confirm, current_build, download_url, ensure_build, install_latest,
     latest_url, on_trial, roll_back, stage_update, switch_to_staged, versions_url,
 };
-use puddle_agent_proto::editor::EditorServer;
+use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions};
 use sha2::{Digest as _, Sha256};
 
 const WAIT: Duration = Duration::from_secs(30);
@@ -615,8 +615,10 @@ fn fixture_updating(telemetry: bool, auto_update: bool) -> Fixture {
         dir.path().join("data").to_string_lossy(),
         dir.path().join("work").to_string_lossy(),
         120,
-        telemetry,
-        auto_update,
+        MicrosoftOptions {
+            telemetry,
+            auto_update,
+        },
     );
     let reserved = ReservedPort::new();
     server.port = reserved.port();
@@ -1132,7 +1134,15 @@ async fn an_old_build_that_cannot_be_removed_stays_and_the_clean_up_goes_on() {
 }
 
 fn control_for(builds: &Path) -> std::sync::Arc<Control> {
-    let mut server = EditorServer::microsoft("/d", "/f", 120, false, true);
+    let mut server = EditorServer::microsoft(
+        "/d",
+        "/f",
+        120,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update: true,
+        },
+    );
     server.dir = builds.to_string_lossy().into_owned();
     Control::new(&server)
 }

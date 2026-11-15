@@ -84,6 +84,13 @@ pub enum Freshness {
     Reload,
 }
 
+/// Whether a finished read tells the listener that the list changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Announce {
+    Yes,
+    No,
+}
+
 /// What to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Read {
@@ -419,11 +426,11 @@ impl Repos {
                 distinct.push(slot);
             }
         }
-        let force = read.freshness == Freshness::Reload;
+        let freshness = read.freshness;
         let waiting = distinct
             .into_iter()
-            .filter(|slot| force || !self.revalidate_behind(slot));
-        join_all(waiting.map(|slot| inner.refresh(slot, force, false))).await;
+            .filter(|slot| freshness == Freshness::Reload || !self.revalidate_behind(slot));
+        join_all(waiting.map(|slot| inner.refresh(slot, freshness, Announce::No))).await;
 
         let now = inner.clock.now_ms();
         resolved
@@ -442,7 +449,9 @@ impl Repos {
         }
         {
             let mut entry = slot.entry();
-            if entry.loaded_at.is_none() || !inner.wants_read(&entry, inner.clock.now_ms(), false) {
+            if entry.loaded_at.is_none()
+                || !inner.wants_read(&entry, inner.clock.now_ms(), Freshness::Cached)
+            {
                 return false;
             }
             if entry.revalidating {
@@ -452,7 +461,7 @@ impl Repos {
         }
         let (inner, slot) = (Arc::clone(&self.inner), Arc::clone(slot));
         tokio::spawn(async move {
-            inner.refresh(&slot, false, true).await;
+            inner.refresh(&slot, Freshness::Cached, Announce::Yes).await;
             slot.entry().revalidating = false;
         });
         true
@@ -479,7 +488,8 @@ impl Inner {
         Arc::clone(slot)
     }
 
-    fn wants_read(&self, entry: &Entry, now: u64, force: bool) -> bool {
+    fn wants_read(&self, entry: &Entry, now: u64, freshness: Freshness) -> bool {
+        let force = freshness == Freshness::Reload;
         if entry.blocked_until.is_some_and(|until| until > now) {
             return false;
         }
@@ -500,13 +510,14 @@ impl Inner {
 
     /// Reads `slot`'s list if it is due. `announce`: say so through [`Repos::on_change`] when
     /// the read changed what the list shows (a read the caller waits for needs no telling).
-    async fn refresh(&self, slot: &Slot, force: bool, announce: bool) {
+    async fn refresh(&self, slot: &Slot, freshness: Freshness, announce: Announce) {
         let seen = slot.entry().generation;
         let mut pages = slot.turn.lock().await;
         let strikes = {
             let entry = slot.entry();
             // Another caller read it while this one waited its turn.
-            if entry.generation != seen || !self.wants_read(&entry, self.clock.now_ms(), force) {
+            if entry.generation != seen || !self.wants_read(&entry, self.clock.now_ms(), freshness)
+            {
                 return;
             }
             entry.strikes
@@ -534,7 +545,7 @@ impl Inner {
             }
             before != entry.shown(now)
         };
-        if announce
+        if announce == Announce::Yes
             && changed
             && let Some(notify) = self.on_change.get()
         {

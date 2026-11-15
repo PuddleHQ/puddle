@@ -11,6 +11,8 @@
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
   import DevicesPanel from "#lib/components/DevicesPanel.svelte";
+  import TabNotificationsSetting from "#lib/components/TabNotificationsSetting.svelte";
+  import { inDesktopApp } from "#lib/desktop/folder-picker.ts";
   import { DevicesStore } from "#lib/stores/devices.svelte.ts";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
   import { session } from "#lib/session/session.svelte.ts";
@@ -578,6 +580,7 @@
           "At most one notification every 10 seconds per workspace, naming what it asked for. Clicking it opens the request.",
           true,
         )}
+        {#if !inDesktopApp()}<TabNotificationsSetting />{/if}
         {@render uiToggle(
           "notify_only_unfocused",
           "set-unfocused",

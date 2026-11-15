@@ -134,3 +134,35 @@ async fn the_stream_does_not_count_the_servers_own_listener() {
     assert_eq!(api.events.subscribers(), 1);
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_workspace_nobody_owns_announces_nothing_and_the_next_request_still_does() {
+    let api = start().await;
+    let mut s = Stream::open(&api, "").await;
+    let summary = |id: i64, workspace: &str| puddle_types::PendingSummary {
+        id,
+        workspace: puddle_types::WorkspaceId::new(workspace).unwrap(),
+        host: "a.example.com".into(),
+        registrable_domain: "example.com".into(),
+        port: 443,
+        first_seen: 1,
+        last_seen: 1,
+        attempts: 1,
+    };
+    // A request of a workspace with no recorded user reaches no stream, and nobody is told.
+    puddle_types::EventSink::emit(
+        &*api.events,
+        puddle_types::Event::PendingOpened {
+            request: summary(900, "ghost"),
+        },
+    );
+    let event = notified(&api, &mut s, "box", "www.example.com").await;
+    assert_ne!(event["request"]["workspace"], "ghost");
+    let told: Vec<_> = s
+        .data()
+        .into_iter()
+        .filter(|d| d["type"] == "pending_notify")
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    api.running.shutdown().await;
+}

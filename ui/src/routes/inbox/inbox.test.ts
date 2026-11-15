@@ -24,6 +24,15 @@ const h = await vi.hoisted(async () => {
   };
 });
 
+// The address of the page is the one in the window's history, as the browser has it.
+vi.mock("$app/state", () => ({
+  page: {
+    get url() {
+      return new URL(window.location.href);
+    },
+  },
+}));
+
 vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) => {
   const mod =
     await original<typeof import("#lib/stores/rule-sets.svelte.ts")>();

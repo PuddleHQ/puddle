@@ -27,7 +27,7 @@ A **rule** says what happens to matching requests:
 | `pattern` | `exact` host or IP, or `suffix` (stored as `.example.com`) |
 | `effect` | `allow` or `deny` |
 | `expires_at` | epoch ms, or `null` for permanent |
-| `created_at`, `created_by` | `ts`; actor `cli`, `ui` or `api` |
+| `created_at`, `created_by` | `ts`; actor `cli`, `ui`, `api` or `workspace_create` (R-58) |
 | `source_pending_id` | the pending row it was approved from, or `null` |
 
 A **pending row** is a request that matched no rule (§3). Rules and pending rows live in SQLite;
@@ -529,6 +529,15 @@ the API. *Added 2026-10-08.*
   there was none. A colour never decides anything: it is shown beside the set's name, never in
   its place, the ink on a filled chip is chosen for at least 4.5:1 contrast, and the edge of a
   dot or chip is the theme's border colour, so it shows in the light and the dark theme.
+
+- **R-58 Creating a workspace allows the host of each of its repositories.** The grant is an exact `allow`
+  rule (§1), workspace scope, no expiry, made before the first clone, with `created_by` `workspace_create`.
+  A host a rule already decides gets no new rule, and a deny rule is never overridden: it refuses the create
+  (`409`) and nothing is made. A suffix rule such as `.github.com` does not cover the apex `github.com`
+  (R-3), so the grant names the exact host. A credential alone never allows a host (the built-in GitHub set
+  ships off, R-36), so without the grant a clone into a fresh workspace would wait for the user. Cloning
+  again and adopting an existing checkout make no grant. A grant that closes a pending row records
+  `decided_by` `system`. The create answer lists the hosts it allowed with their rule ids.
 
 ### Groups and precedence
 

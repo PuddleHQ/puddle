@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Creating a workspace allows the host of its repositories (storage ST-44a), over real HTTP.
+//! Creating a workspace allows the host of its repositories (rules R-58), over real HTTP.
 
 use puddle_api::{DisplayName, RepoUrl, Repository, Unsaved, WorkspaceRecord};
 use puddle_types::{CheckoutDir, EntryId, WorkspaceId, WorkspaceStatus};

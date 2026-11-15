@@ -2,7 +2,7 @@
 //! The built-in duck icons, drawn from paths so they are sharp at any size.
 //!
 //! The duck is the one in the app's sidebar (`DuckMark.svelte`), in the same 64 by 64 space and
-//! the same colours; a test below pins the colours to the pixels.
+//! the same colours; `builtin/tests.rs` pins the colours to the pixels.
 
 use puddle_settings::AppIconChoice;
 use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Pixmap, Transform};

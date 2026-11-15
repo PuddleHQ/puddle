@@ -458,7 +458,22 @@ impl Workspaces {
         sandbox: &S,
         id: &WorkspaceId,
     ) -> Result<CheckoutList, WorkspaceError> {
-        checkouts::run(sandbox, id, None).await
+        checkouts::run(sandbox, id, checkouts::Scope::All).await
+    }
+
+    /// Lists the names of the checkouts as [`Workspaces::list_checkouts`] finds them, without
+    /// running git, so it works on an image that has none. Every checkout comes back with no
+    /// remote, branch or commit and a clean tree: only the directories are known.
+    ///
+    /// # Errors
+    ///
+    /// As [`Workspaces::list_checkouts`], except [`WorkspaceError::GitMissing`].
+    pub async fn list_checkout_names<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+    ) -> Result<CheckoutList, WorkspaceError> {
+        checkouts::run(sandbox, id, checkouts::Scope::Names).await
     }
 
     /// Lists the checkouts on the volume of workspace `id` when no sandbox runs with it, in a
@@ -501,7 +516,7 @@ impl Workspaces {
         id: &WorkspaceId,
         dir: &CheckoutDir,
     ) -> Result<Option<FoundCheckout>, WorkspaceError> {
-        Ok(checkouts::run(sandbox, id, Some(dir))
+        Ok(checkouts::run(sandbox, id, checkouts::Scope::One(dir))
             .await?
             .checkouts
             .into_iter()

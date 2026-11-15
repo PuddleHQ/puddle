@@ -500,6 +500,9 @@ impl Guest {
             return None;
         }
         match r.args.get(2).map(String::as_str) {
+            Some("puddle-checkouts") if r.args.get(4).map(String::as_str) == Some("--names") => {
+                Some(self.list_volume_names())
+            }
             Some("puddle-checkouts") => Some(self.list_volume(r.args.get(4).cloned())),
             Some("puddle-exists") => {
                 let dir = r
@@ -552,6 +555,25 @@ impl Guest {
         }
         out.push_str("D\n");
         self.listings.lock().unwrap().push(only);
+        ExecOutput::new(0, out, "")
+    }
+
+    /// What the listing script prints with `--names`: the checkout directories alone, from any
+    /// image (it runs no git).
+    fn list_volume_names(&self) -> ExecOutput {
+        let mut dirs: Vec<String> = self
+            .volume
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(d, _)| d.clone())
+            .collect();
+        dirs.sort();
+        let mut out = String::new();
+        for dir in dirs {
+            writeln!(out, "C\t{dir}\t\t\t\t0").unwrap();
+        }
+        out.push_str("O\t0\nD\n");
         ExecOutput::new(0, out, "")
     }
 
@@ -6638,6 +6660,47 @@ async fn a_desktop_attach_on_an_image_without_git_opens_the_folder_and_raises_no
     assert_eq!(target.path, "/workspaces/acme");
     assert!(!target.is_workspace_file);
     assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+    host.shutdown().await;
+}
+
+/// On an image with no git, two checkouts still open the multi-root window: the editor's listing
+/// falls back to the checkout names, which need no git.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_on_an_image_without_git_with_two_checkouts_opens_the_multi_root_window() {
+    let rig = Rig::named_ids();
+    rig.guest.git_missing.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+    let target = rig
+        .launcher
+        .targets
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        target.path,
+        "/workspaces/acme/.puddle/editor/acme.code-workspace"
+    );
+    assert!(target.is_workspace_file);
+    assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+    // The checkouts screen still says why it has nothing to show.
+    let list = checkouts_of(&api, "acme").await;
+    assert!(list["problem"].as_str().unwrap().contains("git"), "{list}");
     host.shutdown().await;
 }
 

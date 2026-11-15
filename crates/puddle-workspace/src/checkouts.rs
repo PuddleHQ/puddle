@@ -22,6 +22,10 @@ pub const CHECKOUTS_SH: &str = include_str!("../guest/checkouts.sh");
 /// The listing's exit status when the image has no git (`guest/checkouts.sh`).
 const GIT_MISSING_EXIT: i32 = 4;
 
+/// The argument that asks `guest/checkouts.sh` for names only (no checkout directory starts with
+/// a dash, so it can't be mistaken for one).
+const NAMES_ARG: &str = "--names";
+
 /// How long the listing may take.
 pub const CHECKOUTS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -81,15 +85,30 @@ pub struct CheckoutList {
     pub others: u64,
 }
 
-/// The command for `layout`: all checkouts, or just `only`.
-pub(crate) fn request(layout: &Layout, only: Option<&CheckoutDir>) -> ExecRequest {
+/// What the listing is asked for.
+#[derive(Clone, Copy)]
+pub(crate) enum Scope<'a> {
+    /// Every checkout, described with git.
+    All,
+    /// Only this directory, described with git.
+    One(&'a CheckoutDir),
+    /// Every checkout by name alone; runs no git, so an image without git can answer.
+    Names,
+}
+
+/// The command for `layout` and `scope`.
+pub(crate) fn request(layout: &Layout, scope: Scope<'_>) -> ExecRequest {
     let mut args = vec![
         "-c".to_owned(),
         CHECKOUTS_SH.to_owned(),
         "puddle-checkouts".to_owned(),
         layout.mount().as_str().to_owned(),
     ];
-    args.extend(only.map(|dir| dir.as_str().to_owned()));
+    match scope {
+        Scope::All => {}
+        Scope::One(dir) => args.push(dir.as_str().to_owned()),
+        Scope::Names => args.push(NAMES_ARG.to_owned()),
+    }
     ExecRequest::new("sh", args)
         .as_user("root")
         .with_timeout(CHECKOUTS_TIMEOUT)
@@ -99,11 +118,11 @@ pub(crate) fn request(layout: &Layout, only: Option<&CheckoutDir>) -> ExecReques
 pub(crate) async fn run<S: Sandbox>(
     sandbox: &S,
     id: &WorkspaceId,
-    only: Option<&CheckoutDir>,
+    scope: Scope<'_>,
 ) -> Result<CheckoutList, WorkspaceError> {
     let layout = Layout::new(id)?;
     let out = sandbox
-        .exec(request(&layout, only))
+        .exec(request(&layout, scope))
         .await
         .map_err(|e| WorkspaceError::runtime("list the checkouts", id, e))?;
     let fail = |reason: String| WorkspaceError::Checkouts {

@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Puddle's list of the git checkouts on a workspace's volume.
 #
-# Usage: sh checkouts.sh <volume mount point> [<one directory under it>]
+# Usage: sh checkouts.sh <volume mount point> [<one directory under it> | --names]
 # Runs as root in the guest. Lists the checkouts directly under the volume root by the delete
 # check's test (a directory, not a link, with a `.git` entry; Puddle's own .puddle and ext4's
 # lost+found skipped), at most 100. With a directory it lists only that one, and nothing when it
-# is not a checkout.
+# is not a checkout. With --names it lists only the names, with empty remote, branch and head and
+# a clean tree, and runs no git: it works on an image that has none.
 #
 # Output, one record per line, tab-separated (puddle-workspace parses it):
 #   C <dir> <remote> <branch> <head> <dirty>
@@ -71,12 +72,14 @@ cd -- "$1" || {
     printf 'E\t.\t%s\n' "$(clean "cannot enter $1")"
     exit 3
 }
-if ! command -v git >/dev/null 2>&1; then
+names=0
+if [ "${2-}" = --names ]; then names=1; fi
+if [ "$names" -eq 0 ] && ! command -v git >/dev/null 2>&1; then
     printf 'E\t.\tgit is not installed in the image\n'
     exit 4
 fi
 
-if [ $# -ge 2 ]; then
+if [ $# -ge 2 ] && [ "$names" -eq 0 ]; then
     d=$2
     case $d in
     '' | . | .. | .puddle | lost+found | */* | -*)
@@ -99,7 +102,13 @@ for d in * .[!.]* ..?*; do
         continue
     fi
     count=$((count + 1))
-    if [ "$count" -le "$limit" ]; then describe; fi
+    if [ "$count" -le "$limit" ]; then
+        if [ "$names" -eq 1 ]; then
+            printf 'C\t%s\t\t\t\t0\n' "$(clean "$d")"
+        else
+            describe
+        fi
+    fi
 done
 if [ "$count" -gt "$limit" ]; then printf 'M\t%s\n' "$((count - limit))"; fi
 printf 'O\t%s\n' "$others"

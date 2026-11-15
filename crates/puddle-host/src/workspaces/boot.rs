@@ -537,6 +537,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
     }
 
+    /// The checkouts the editor opens. An image with no git can't describe checkouts (the
+    /// checkouts screen says so), but the editor needs only their names, which a scan for `.git`
+    /// entries gives.
+    async fn editor_checkouts(
+        &self,
+        gated: &GatedSandbox<R::Sandbox>,
+        id: &WorkspaceId,
+    ) -> Result<crate::editor_file::Found, WorkspaceError> {
+        let workspaces = &self.inner.workspaces;
+        let list = match workspaces.list_checkouts(gated.ungated(), id).await {
+            Err(WorkspaceError::GitMissing { .. }) => {
+                workspaces.list_checkout_names(gated.ungated(), id).await?
+            }
+            other => other?,
+        };
+        Ok(crate::editor_file::Found::from_listing(&list))
+    }
+
     /// At an attach: the editor's target. With no start folder and two or more checkouts the
     /// multi-root file is written again (through the boot hook, which merges only `folders` and
     /// leaves a file it cannot parse as it is, with a problem naming it); with fewer, Puddle's
@@ -578,16 +596,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .about(name.clone()),
             );
         };
-        let found = match inner
-            .workspaces
-            .list_checkouts(gated.ungated(), &record.id)
-            .await
-        {
-            Ok(list) => crate::editor_file::Found::from_listing(&list),
-            // An image with no git can't describe checkouts (the checkouts screen says so). The
-            // editor then opens the volume root, which shows every folder on it, and the attach
-            // has nothing to report: the start's optimistic multi-root file is dropped below.
-            Err(WorkspaceError::GitMissing { .. }) => crate::editor_file::Found::default(),
+        let found = match self.editor_checkouts(&gated, &record.id).await {
+            Ok(found) => found,
             Err(e) => {
                 not_updated(&e);
                 return;

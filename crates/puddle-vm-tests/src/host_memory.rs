@@ -17,6 +17,19 @@ pub fn resident_bytes(pid: u32) -> Result<u64, HarnessError> {
     read(pid).map_err(|e| HarnessError::io("read resident memory of", format!("pid {pid}"), e))
 }
 
+/// The most resident memory process `pid` has had so far, in bytes (`VmHWM`): a spike that came
+/// and went between two reads of [`resident_bytes`] still shows here.
+///
+/// # Errors
+///
+/// [`HarnessError::Io`] when the process is gone or its figure can't be read or parsed.
+#[cfg(target_os = "linux")]
+pub fn peak_resident_bytes(pid: u32) -> Result<u64, HarnessError> {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .and_then(|status| parse_vm_hwm(&status))
+        .map_err(|e| HarnessError::io("read peak resident memory of", format!("pid {pid}"), e))
+}
+
 fn invalid(what: &str, text: &str) -> std::io::Error {
     let shown: String = text.chars().take(120).collect();
     std::io::Error::other(format!("{what}: {shown:?}"))
@@ -58,10 +71,26 @@ fn parse_kib(text: &str) -> std::io::Result<u64> {
     expect(dead_code, reason = "only Linux reads /proc/<pid>/status")
 )]
 fn parse_vm_rss(status: &str) -> std::io::Result<u64> {
+    parse_status_kib(status, "VmRSS:")
+}
+
+#[cfg_attr(
+    not(any(test, target_os = "linux")),
+    expect(dead_code, reason = "only Linux reads /proc/<pid>/status")
+)]
+fn parse_vm_hwm(status: &str) -> std::io::Result<u64> {
+    parse_status_kib(status, "VmHWM:")
+}
+
+#[cfg_attr(
+    not(any(test, target_os = "linux")),
+    expect(dead_code, reason = "only Linux reads /proc/<pid>/status")
+)]
+fn parse_status_kib(status: &str, key: &str) -> std::io::Result<u64> {
     let line = status
         .lines()
-        .find_map(|l| l.strip_prefix("VmRSS:"))
-        .ok_or_else(|| invalid("no VmRSS line in", status))?;
+        .find_map(|l| l.strip_prefix(key))
+        .ok_or_else(|| invalid(&format!("no {} line in", key.trim_end_matches(':')), status))?;
     parse_kib(line.trim())
 }
 

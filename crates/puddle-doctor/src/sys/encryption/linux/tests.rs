@@ -264,8 +264,20 @@ fn wsl_leaves_a_missing_folder_and_a_missing_swap_alone() {
 }
 
 #[test]
-fn the_probe_reads_this_machine_without_panicking() {
+fn the_probe_names_the_folder_it_was_given_and_reads_this_machines_mount_table() {
     let dir = tempfile::tempdir().unwrap();
-    let _facts = disk_encryption(Some(dir.path()));
+    match disk_encryption(Some(dir.path())).data {
+        DataEncryption::Volume {
+            dir: named,
+            protection,
+        } => {
+            assert_eq!(named, dir.path());
+            // Whatever the machine's answer is, it is not "the mount table could not be read".
+            if let Protection::Unknown { why } = &protection {
+                assert!(!why.starts_with("/proc/"), "{why}");
+            }
+        }
+        other @ DataEncryption::NoFolder => panic!("a folder that exists got {other:?}"),
+    }
     assert_eq!(disk_encryption(None).data, DataEncryption::NoFolder);
 }

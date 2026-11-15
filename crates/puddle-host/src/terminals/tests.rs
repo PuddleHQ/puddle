@@ -184,7 +184,15 @@ async fn a_stop_ends_the_session_with_its_reason_and_closing_the_link_ends_it_to
     drop(second.input);
     let mut gone = second.output;
     // The pump ends once the page's side is gone.
-    while let Ok(Some(_)) = tokio::time::timeout(STEP, gone.recv()).await {}
+    loop {
+        match tokio::time::timeout(STEP, gone.recv()).await {
+            Ok(None) => break,
+            Ok(Some(_)) => {}
+            Err(elapsed) => {
+                panic!("the output stayed open after the page's side was gone: {elapsed}")
+            }
+        }
+    }
 }
 
 #[tokio::test]

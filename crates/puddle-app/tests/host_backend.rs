@@ -227,6 +227,13 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
         .build()
         .unwrap();
     let port = app.state::<Backend>().url().port().unwrap();
+    let token = app.state::<Backend>().token().to_owned();
+    // The probe below only proves a stop when it can see a running host.
+    assert_eq!(
+        puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/api/workspaces", &token),
+        Some(200),
+        "the running host answers its own token"
+    );
 
     let stopped = shell::stop(app.handle()).unwrap();
     assert_eq!(stopped.steps, SHUTDOWN_STEPS);
@@ -234,7 +241,6 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
     // Not "nothing accepts on the port": the port is the system's pick, and another test's socket
     // can take it the moment the host lets go (seen on a Windows runner). The host no longer
     // answers its own token.
-    let token = app.state::<Backend>().token().to_owned();
     assert_ne!(
         puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/api/workspaces", &token),
         Some(200)

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A guest that floods the host-side devices meets the caps of the msb fork, and the sandbox stays
-//! healthy. The caps are unit-tested in the fork at device level; this runs them from inside a
-//! booted guest: it reads 64 MiB from the random-number device, writes 32 MiB to its console and
-//! opens file handles past the per-mount limit. Seen from outside, as the fork's own tests cannot:
+//! healthy. The caps are unit-tested in the fork at device level; this runs two of them from inside
+//! a booted guest: it writes 32 MiB to its console and opens file handles past the per-mount limit.
+//! It also reads 64 MiB from the random-number device, which shows the device keeps answering but
+//! does not reach the per-request cap: the guest's stock driver asks for a few hundred bytes at a
+//! time, so that cap is shown only at device level. Seen from outside, as the fork's own tests
+//! cannot:
 //!
-//! - the process that hosts the VM keeps its memory (resident set within a bound of what it had
-//!   before the floods);
+//! - the process that hosts the VM keeps its memory (its peak resident set, `VmHWM`, grows by no
+//!   more than a bound over the floods, so a spike that came and went is seen too);
 //! - `kernel.log` stops at 16 MiB plus the fork's marker line, though the guest saw every write succeed;
 //! - the handle flood ends in `EMFILE` at the mount's limit, not at the guest's own;
 //! - the guest still answers and the sandbox stops cleanly, its host process gone.
@@ -21,7 +24,8 @@ use std::time::Duration;
 use microsandbox::Sandbox;
 use puddle_test_kit::eventually_async;
 use puddle_vm_tests::{
-    DEBIAN_DEVCONTAINER, HarnessError, VmEnv, create_from_registry, resident_bytes, within,
+    DEBIAN_DEVCONTAINER, HarnessError, VmEnv, create_from_registry, peak_resident_bytes,
+    resident_bytes, within,
 };
 
 const MIB: u64 = 1024 * 1024;
@@ -46,9 +50,9 @@ const HANDLE_LIMIT: u64 = 65_536;
 const GUEST_FD_LIMIT: u64 = 300_000;
 /// What the flood loop tries to open: past [`HANDLE_LIMIT`] with room to show a missing cap.
 const HANDLE_TRIES: u64 = 120_000;
-/// Memory the host process may gain over its size before the floods. The handle flood makes the
-/// guest kernel cache tens of thousands of inodes, so this is generous; an uncapped rng request
-/// (a 4 GiB buffer) or an unbounded handle table is far beyond it.
+/// Memory the host process's peak may gain over the floods. The handle flood makes the guest
+/// kernel cache tens of thousands of inodes, so this is generous; an unbounded handle table is
+/// far beyond it.
 const RSS_GROWTH_BOUND: u64 = 384 * MIB;
 
 /// 64 MiB through the guest's hardware random-number driver, which is the host's rng device.
@@ -109,6 +113,8 @@ fn log_tail(path: &Path) -> std::io::Result<(u64, Vec<u8>)> {
 struct Seen {
     rss_before: u64,
     rss_after: u64,
+    peak_before: u64,
+    peak_after: u64,
     kernel_log_len: u64,
     handles_opened: u64,
 }
@@ -137,6 +143,7 @@ async fn flood(env: &VmEnv) -> Result<Seen, HarnessError> {
         let pid = env.process_id_of(sandbox.name()).await?;
         let kernel_log = env.log_dir(sandbox.name()).join("kernel.log");
         let rss_before = resident_bytes(pid)?;
+        let peak_before = peak_resident_bytes(pid)?;
 
         let rng = guest(&sandbox, "rng flood", RNG_FLOOD).await?;
         assert_eq!(
@@ -184,26 +191,18 @@ async fn flood(env: &VmEnv) -> Result<Seen, HarnessError> {
             "{handles_opened} opens worked (output {handles:?}); the mount's limit is {HANDLE_LIMIT} (guest limit {GUEST_FD_LIMIT}, tried {HANDLE_TRIES})"
         );
 
-        // The host process settles back within the bound once the guest's handles are gone with
-        // its shell, and it was never above it for the other floods: the bound holds at the end.
-        let rss_after = eventually_async(
-            "the host process stays within its memory bound",
-            SETTLE_WITHIN,
-            || async {
-                let now = resident_bytes(pid).map_err(|e| e.to_string())?;
-                if now <= rss_before + RSS_GROWTH_BOUND {
-                    Ok(now)
-                } else {
-                    Err(format!(
-                        "resident {} MiB, was {} MiB before the floods, bound +{} MiB",
-                        mib(now),
-                        mib(rss_before),
-                        mib(RSS_GROWTH_BOUND)
-                    ))
-                }
-            },
-        )
-        .await;
+        // The peak, not the figure at one moment: memory taken during a flood and given back by
+        // the time of the read would pass a poll of the resident set. What the process had held
+        // before the floods (boot included) is the peak read at the start.
+        let peak_after = peak_resident_bytes(pid)?;
+        assert!(
+            peak_after <= peak_before + RSS_GROWTH_BOUND,
+            "the host process peaked at {} MiB, {} MiB before the floods, bound +{} MiB",
+            mib(peak_after),
+            mib(peak_before),
+            mib(RSS_GROWTH_BOUND)
+        );
+        let rss_after = resident_bytes(pid)?;
 
         // The guest still answers, and nothing was lost to the floods.
         let alive = guest(&sandbox, "answer after the floods", "echo still-here").await?;
@@ -221,6 +220,8 @@ async fn flood(env: &VmEnv) -> Result<Seen, HarnessError> {
         Ok(Seen {
             rss_before,
             rss_after,
+            peak_before,
+            peak_after,
             kernel_log_len,
             handles_opened,
         })
@@ -243,9 +244,11 @@ async fn vm_guest_floods_meet_the_host_caps_and_the_sandbox_stays_healthy() {
     let cleaned = Box::pin(env.cleanup()).await;
     let seen = result.expect("flood the host from the guest");
     eprintln!(
-        "host process {} MiB before the floods, {} MiB after; kernel.log {} bytes; {} handles opened",
+        "host process {} MiB before the floods, {} MiB after (peak {} then {} MiB); kernel.log {} bytes; {} handles opened",
         mib(seen.rss_before),
         mib(seen.rss_after),
+        mib(seen.peak_before),
+        mib(seen.peak_after),
         seen.kernel_log_len,
         seen.handles_opened
     );

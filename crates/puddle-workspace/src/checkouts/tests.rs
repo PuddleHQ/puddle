@@ -229,14 +229,17 @@ fn long_valid_records_are_cut_and_made_printable() {
 #[test]
 fn the_request_runs_the_script_as_root_on_the_mount_point() {
     let l = Layout::new(&WorkspaceId::new("a").unwrap()).unwrap();
-    let r = request(&l, None);
+    let r = request(&l, Scope::All);
     assert_eq!(r.program, "sh");
     assert_eq!(
         r.args,
         ["-c", CHECKOUTS_SH, "puddle-checkouts", "/workspaces/a"]
     );
     assert_eq!(r.user.as_deref(), Some("root"));
-    let one = request(&l, Some(&CheckoutDir::new("src").unwrap()));
+    let one = request(&l, Scope::One(&CheckoutDir::new("src").unwrap()));
     assert_eq!(one.args.last().map(String::as_str), Some("src"));
     assert_eq!(one.args.len(), 5);
+    let names = request(&l, Scope::Names);
+    assert_eq!(names.args.last().map(String::as_str), Some("--names"));
+    assert_eq!(names.args.len(), 5);
 }

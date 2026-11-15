@@ -272,6 +272,7 @@ mod attach {
             "{said}"
         );
         phase_editor_opens(&story).await;
+        phase_two_checkouts_open_the_multi_root_window(&story).await;
         phase_hostile_guest(&story).await;
         story.host.shutdown().await;
     }
@@ -434,6 +435,38 @@ mod attach {
             // The folder, on an image with git and on one without: the volume holds no checkout.
             args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
                 && args.contains(&format!("+{}/workspaces/", s.alias)),
+            "{args}"
+        );
+    }
+
+    /// On an image without git (Alpine here) two checkouts still open the multi-root window: the
+    /// listing for the editor scans for `.git` entries and runs no git.
+    async fn phase_two_checkouts_open_the_multi_root_window(s: &Story) {
+        let made = guest(
+            &s.runtime,
+            &s.sandbox,
+            &format!(
+                "! command -v git >/dev/null && mkdir -p /workspaces/{0}/api/.git /workspaces/{0}/web/.git && echo made",
+                s.name
+            ),
+        )
+        .await;
+        assert_eq!(made.trim(), "made", "{made}");
+        let attach = s
+            .api
+            .post(
+                &format!("/api/workspaces/{}/attach", s.name),
+                &json!({"mode": "desktop"}).to_string(),
+            )
+            .await;
+        assert_eq!(attach.json()["opened"], true, "{}", attach.body);
+        let args = std::fs::read_to_string(&s.seen)
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert!(
+            args.starts_with("--file-uri\nvscode-remote://ssh-remote+")
+                && args.contains(".puddle/editor/")
+                && args.contains(".code-workspace"),
             "{args}"
         );
     }

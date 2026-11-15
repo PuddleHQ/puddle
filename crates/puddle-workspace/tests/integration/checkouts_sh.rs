@@ -368,6 +368,106 @@ async fn an_image_without_git_is_reported_as_that() {
     }
 }
 
+/// With `--names` the listing runs no git: on an image without it the checkouts still come back
+/// by name, the same ones the full listing finds, with nothing else known about them.
+#[tokio::test]
+async fn the_names_listing_finds_the_checkouts_on_an_image_without_git() {
+    let tmp = tempfile::tempdir().unwrap();
+    let vol = tmp.path().join("vol");
+    for dir in ["api", "web"] {
+        std::fs::create_dir_all(vol.join(dir).join(".git")).unwrap();
+    }
+    std::fs::create_dir_all(vol.join("plain-folder")).unwrap();
+    std::fs::write(vol.join("notes.txt"), "x").unwrap();
+    // An image with the tools the script cleans names with, and no git.
+    let empty_path = tmp.path().join("no-git");
+    std::fs::create_dir_all(&empty_path).unwrap();
+    for tool in ["tr", "cut"] {
+        let found = String::from_utf8(
+            Command::new("sh")
+                .args(["-c", &format!("command -v {tool}")])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(found.trim(), empty_path.join(tool)).unwrap();
+    }
+    for shell in shells() {
+        let shell_path = String::from_utf8(
+            Command::new("sh")
+                .args(["-c", &format!("command -v {shell}")])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let (shell_path, empty_path, root) = (
+            shell_path.trim().to_owned(),
+            empty_path.clone(),
+            vol.clone(),
+        );
+        let g = sandbox_answering(move |r| {
+            (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH)).then(
+                || {
+                    let out = command(&shell_path)
+                        .args(["-c", CHECKOUTS_SH, "puddle-script"])
+                        .arg(&root)
+                        .args(r.args.iter().skip(4))
+                        .env("PATH", &empty_path)
+                        .output()
+                        .unwrap();
+                    ExecOutput::new(out.status.code().unwrap_or(-1), out.stdout, out.stderr)
+                },
+            )
+        })
+        .await;
+        let list = g.w.list_checkout_names(&g.sb, &id()).await.unwrap();
+        let dirs: Vec<&str> = list.checkouts.iter().map(|c| c.dir.as_str()).collect();
+        assert_eq!(dirs, ["api", "web"], "{shell}");
+        assert_eq!(list.others, 2, "{shell}");
+        assert!(
+            list.checkouts
+                .iter()
+                .all(|c| c.branch.is_none() && c.head.is_none() && !c.dirty),
+            "{shell}: {list:?}"
+        );
+        // The full listing stays the checkouts screen's, and still says git is missing.
+        let err = g.w.list_checkouts(&g.sb, &id()).await.unwrap_err();
+        assert!(
+            matches!(err, WorkspaceError::GitMissing { .. }),
+            "{shell}: {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_names_listing_agrees_with_the_full_one_when_git_is_there() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = volume(tmp.path());
+        let g = sandbox_answering({
+            let (vol, shell) = (vol.clone(), shell);
+            move |r| {
+                (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH))
+                    .then(|| run_script(shell, CHECKOUTS_SH, r, &vol))
+            }
+        })
+        .await;
+        let full = g.w.list_checkouts(&g.sb, &id()).await.unwrap();
+        let names = g.w.list_checkout_names(&g.sb, &id()).await.unwrap();
+        let dirs = |l: &CheckoutList| -> Vec<String> {
+            l.checkouts.iter().map(|c| c.dir.clone()).collect()
+        };
+        assert_eq!(dirs(&names), dirs(&full), "{shell}");
+        assert_eq!(
+            (names.others, names.more),
+            (full.others, full.more),
+            "{shell}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_missing_volume_root_fails_closed() {
     for shell in shells() {

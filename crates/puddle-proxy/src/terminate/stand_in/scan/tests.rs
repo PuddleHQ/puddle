@@ -737,7 +737,7 @@ fn a_compressed_frame_is_decoded_only_up_to_the_cap_and_the_decoder_is_then_drop
     let early = token(TokenKind::Npm, "early");
     let mut plain = vec![b' '; 40 * MAX_SCANNED];
     plain.extend_from_slice(late.as_bytes());
-    let mut first = early.clone().into_bytes();
+    let mut first = early.into_bytes();
     first.extend_from_slice(&plain);
     let rig = rig(true);
     for (body, kinds) in [(plain, Vec::<&str>::new()), (first, vec!["npm_token"])] {

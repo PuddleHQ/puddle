@@ -96,7 +96,7 @@ impl Effective {
     /// Puddle's built-in defaults: 8 GiB, one vCPU, every local toggle off, wildcards don't reach
     /// local addresses, 300 s grace, zoom hotkeys on, clipboard reads
     /// ask.
-    pub const DEFAULTS: Effective = Effective {
+    pub const DEFAULTS: Self = Self {
         memory: default(MemoryMib::DEFAULT),
         cpus: default(CpuCount::DEFAULT),
         local_toggles: EffectiveToggles {

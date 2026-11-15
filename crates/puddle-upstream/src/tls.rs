@@ -258,7 +258,7 @@ impl TlsClient {
         let asked = Arc::new(AskedForCertificate::default());
         let mut config = ClientConfig::clone(&self.config);
         config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
-        config.client_auth_cert_resolver = Arc::clone(&asked) as Arc<dyn ResolvesClientCert>;
+        config.client_auth_cert_resolver = asked.clone();
         let tls = TlsConnector::from(Arc::new(config))
             .connect(name, stream)
             .await

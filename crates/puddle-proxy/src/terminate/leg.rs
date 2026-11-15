@@ -334,7 +334,10 @@ impl H1Pool {
             // `ready` waits until the connection has settled after its last response, so one the
             // server closed (or fed stray bytes) is seen as closed here.
             // A connection that does not settle is as good as closed.
-            if let Ok(Ok(())) = tokio::time::timeout(READY_WAIT, conn.sender.ready()).await {
+            if matches!(
+                tokio::time::timeout(READY_WAIT, conn.sender.ready()).await,
+                Ok(Ok(()))
+            ) {
                 return Ok(Lease::new(conn, self, permit));
             }
         }

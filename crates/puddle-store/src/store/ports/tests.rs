@@ -45,7 +45,7 @@ fn a_pin_is_kept_replaced_and_removed_per_workspace() {
     assert_eq!(
         store.all_pinned_ports().unwrap(),
         [
-            (blog.clone(), pin(3000, 3001)),
+            (blog, pin(3000, 3001)),
             (shop.clone(), pin(3000, 4000)),
             (shop.clone(), pin(8080, 18080)),
         ]

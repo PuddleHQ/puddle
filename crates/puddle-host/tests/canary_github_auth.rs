@@ -12,7 +12,7 @@ use serde_json::Value;
 
 /// Loads the extension with a `vscode` module that keeps the provider it is given, activates it,
 /// asks the provider the way the git extension's askpass does and prints what it saw.
-const HARNESS: &str = r"
+const HARNESS: &str = "
 const Module = require('node:module');
 const real = Module._load;
 let registered = null;

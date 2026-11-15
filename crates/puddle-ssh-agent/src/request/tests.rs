@@ -95,7 +95,7 @@ fn a_sign_answer_from_the_host_agent_gives_its_signature_or_says_why_not() {
         (vec![], "not a sign response"),
         (vec![14, 0, 0], "a number is cut short"),
         (
-            [ok.clone(), vec![1]].concat(),
+            [ok, vec![1]].concat(),
             "the answer has bytes after its signature",
         ),
     ];

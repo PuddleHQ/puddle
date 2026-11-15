@@ -22,11 +22,11 @@ pub struct ReconnectionGrace(u32);
 
 impl ReconnectionGrace {
     /// Shortest accepted grace: 30 s, so a page reload or a short network drop survives.
-    pub const MIN: ReconnectionGrace = ReconnectionGrace(30);
+    pub const MIN: Self = Self(30);
     /// Longest accepted grace: one day.
-    pub const MAX: ReconnectionGrace = ReconnectionGrace(24 * 60 * 60);
+    pub const MAX: Self = Self(24 * 60 * 60);
     /// Puddle's default: 300 s.
-    pub const DEFAULT: ReconnectionGrace = ReconnectionGrace(300);
+    pub const DEFAULT: Self = Self(300);
 
     /// Checks `secs` and wraps it.
     ///
@@ -79,7 +79,7 @@ impl TryFrom<u32> for ReconnectionGrace {
 }
 
 impl From<ReconnectionGrace> for u32 {
-    fn from(g: ReconnectionGrace) -> u32 {
+    fn from(g: ReconnectionGrace) -> Self {
         g.0
     }
 }
@@ -100,11 +100,11 @@ pub struct DiskWarningPercent(u8);
 
 impl DiskWarningPercent {
     /// Lowest accepted threshold: below half full a warning is noise.
-    pub const MIN: DiskWarningPercent = DiskWarningPercent(50);
+    pub const MIN: Self = Self(50);
     /// Highest accepted threshold: warn only when the disk is full.
-    pub const MAX: DiskWarningPercent = DiskWarningPercent(100);
+    pub const MAX: Self = Self(100);
     /// Puddle's default: 95 %.
-    pub const DEFAULT: DiskWarningPercent = DiskWarningPercent(95);
+    pub const DEFAULT: Self = Self(95);
 
     /// Checks `percent` and wraps it.
     ///
@@ -152,7 +152,7 @@ impl TryFrom<u8> for DiskWarningPercent {
 }
 
 impl From<DiskWarningPercent> for u8 {
-    fn from(p: DiskWarningPercent) -> u8 {
+    fn from(p: DiskWarningPercent) -> Self {
         p.0
     }
 }
@@ -262,7 +262,7 @@ impl TryFrom<String> for HexColour {
 }
 
 impl From<HexColour> for String {
-    fn from(c: HexColour) -> String {
+    fn from(c: HexColour) -> Self {
         c.0
     }
 }

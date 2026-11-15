@@ -95,7 +95,7 @@ fn a_disk_warns_exactly_at_the_threshold_and_an_unknown_one_never() {
 #[test]
 fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
     let name = DisplayName::parse("demo").unwrap();
-    let record = WorkspaceRecord::new(WorkspaceId::new("demo").unwrap(), name.clone(), vec![]);
+    let record = WorkspaceRecord::new(WorkspaceId::new("demo").unwrap(), name, vec![]);
     let desktop = DesktopTarget {
         ssh_host: "puddle-demo".into(),
         path: "/".into(),
@@ -885,7 +885,7 @@ fn a_long_directory_still_gets_a_free_name_that_fits() {
                 ..draft("https://github.com/acme/one")
             },
             RepositoryDraft {
-                directory: Some(long.clone()),
+                directory: Some(long),
                 ..draft("https://github.com/acme/two")
             },
         ],

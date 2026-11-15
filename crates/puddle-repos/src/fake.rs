@@ -116,7 +116,7 @@ impl Api for FakeApi {
             } else {
                 queue.front().cloned()
             };
-            next.unwrap_or(Err(TransportError::Protocol("an empty queue".to_owned())))
+            next.unwrap_or_else(|| Err(TransportError::Protocol("an empty queue".to_owned())))
         })
     }
 }

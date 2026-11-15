@@ -120,10 +120,10 @@ fn only_a_decrypting_workspace_skips_hosts_and_it_says_why() {
     let learned = Arc::new(PassThrough::new());
     learned.learn(&host("pinned.example"));
     let never = TerminationSet::parse(["bank.example", "*.health.example"]).unwrap();
-    let off = Interception::new(Arc::clone(&learned)).never_decrypt(never.clone());
+    let off = Interception::new(Arc::clone(&learned)).never_decrypt(never);
     assert!(!off.is_decrypting_all());
     assert_eq!(off.skipped(&host("bank.example")), None, "switch off");
-    let on = off.clone().decrypt_all(true);
+    let on = off.decrypt_all(true);
     assert!(on.is_decrypting_all() && on.never().contains(&host("bank.example")));
     assert_eq!(on.skipped(&host("bank.example")), Some("never_decrypt"));
     assert_eq!(on.skipped(&host("a.health.example")), Some("never_decrypt"));

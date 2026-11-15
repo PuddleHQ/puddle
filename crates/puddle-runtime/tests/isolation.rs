@@ -82,7 +82,7 @@ fn a_fake_msb_on_path_never_runs() {
         .iter()
         .map(|(k, v)| (OsString::from(k), OsString::from(v)))
         .collect();
-    user_env.push(("PATH".into(), user_bin.clone().into_os_string()));
+    user_env.push(("PATH".into(), user_bin.into_os_string()));
     let plan = RuntimeEnv::plan(&layout, user_env.clone());
     let mut cmd = Command::new(layout.msb_path());
     cmd.env_clear().envs(user_env);

@@ -298,7 +298,7 @@ fn prepare_writes_the_private_home_config() {
     assert_eq!(written, pair.config_json(None));
     let debug = Settings {
         msb_log_level: Some("debug".into()),
-        ..settings.clone()
+        ..settings
     };
     debug.prepare().unwrap();
     let written = std::fs::read_to_string(config_path(&debug.home())).unwrap();

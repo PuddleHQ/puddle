@@ -407,7 +407,7 @@ fn build(
     };
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| XtaskError::parse("runtime.json", e))?;
-    write(&staging.join("runtime.json"), json + "\n")?;
+    write(&staging.join("runtime.json"), format!("{json}\n"))?;
     Ok(manifest)
 }
 

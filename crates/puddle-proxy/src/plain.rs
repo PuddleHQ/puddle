@@ -448,7 +448,9 @@ fn upstream_request(
         None => path.clone(),
     };
     let (body, tx, abort) = ChannelBody::new(incoming.parsed.body);
-    let body: UpBody = body.map_err(|err| Box::new(err) as BoxError).boxed_unsync();
+    let body: UpBody = body
+        .map_err(|err| -> BoxError { Box::new(err) })
+        .boxed_unsync();
     let mut builder = ::http::Request::builder()
         .method(incoming.parsed.method.as_str())
         .uri(uri)

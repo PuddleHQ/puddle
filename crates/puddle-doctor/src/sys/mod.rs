@@ -4,7 +4,7 @@
 //! what the Unixes share.
 
 // The parser is built on Linux for tests only, so real macOS captures run on every CI host.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 mod acl;
 #[cfg(unix)]
 mod ancestors;

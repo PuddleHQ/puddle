@@ -190,11 +190,11 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
-            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
+            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/fake-host-starved-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
             ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh
         ;;
     git-env)
@@ -538,6 +538,19 @@ done
 # name stays short: <target dir>/chk.XXXXXX/mbx-session-XXXXXX/cache-agent.sock must fit in 107 bytes).
 check_tmp=
 check_tmp_cleanup() { [ -z "$check_tmp" ] || rm -rf "$check_tmp"; }
+# A unix socket path is at most 107 bytes (sun_path). The longest socket the tests bind sits 39 bytes below TMPDIR
+# (measured under a 32-byte TMPDIR: the longest bound path was 71 bytes, the agent tests' route.sock), so a longer
+# TMPDIR fails the socket tests with an error that names no cause. Refuse it here, before any gate runs.
+sock_max=107
+sock_tail=39
+tmp_guard() {
+    n=$(printf %s "${TMPDIR:-/tmp}" | wc -c | tr -d ' ')
+    limit=$((sock_max - sock_tail))
+    [ "$n" -le "$limit" ] || {
+        echo "check: TMPDIR is $n bytes, over the $limit-byte limit: a unix socket path is at most $sock_max bytes and the longest one the tests bind adds $sock_tail. Use a shorter CHECK_TMPDIR (or CARGO_TARGET_DIR)." >&2
+        exit 1
+    }
+}
 private_tmp() {
     base="${CHECK_TMPDIR:-${CARGO_TARGET_DIR:-target}}"
     case $base in /*) ;; *) base="$PWD/$base" ;; esac
@@ -545,15 +558,17 @@ private_tmp() {
     # above it (the default target dir `target` is inside, so a plain run keeps the system temp dir).
     case $base in "$PWD" | "$PWD"/*)
         echo "check: the target dir is inside the repository, TMPDIR stays ${TMPDIR:-/tmp} (set CARGO_TARGET_DIR outside it, or CHECK_TMPDIR)" >&2
-        return 0
+        ;;
+    *)
+        mkdir -p "$base"
+        check_tmp=$(mktemp -d "$base/chk.XXXXXX")
+        trap check_tmp_cleanup EXIT
+        trap 'check_tmp_cleanup; exit 130' INT
+        trap 'check_tmp_cleanup; exit 143' TERM HUP
+        export TMPDIR="$check_tmp"
         ;;
     esac
-    mkdir -p "$base"
-    check_tmp=$(mktemp -d "$base/chk.XXXXXX")
-    trap check_tmp_cleanup EXIT
-    trap 'check_tmp_cleanup; exit 130' INT
-    trap 'check_tmp_cleanup; exit 143' TERM HUP
-    export TMPDIR="$check_tmp"
+    tmp_guard
 }
 private_tmp
 

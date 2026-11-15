@@ -127,6 +127,14 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: scripts/check.sh clippy
+      # Once a build died with "A device which does not exist was specified" (os error 433) on D:
+      # while the runner agent also lost its own files there. A red job records the volumes, the free
+      # space and the disk, volume and file system events, so the next hit shows whether D: detached.
+      - name: volumes and disk events (red job)
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: ./ci/windows-volume-diag.ps1
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -193,6 +201,14 @@ jobs:
           path: ${{ runner.temp }}/bundle
           retention-days: 1
           compression-level: 0 # the archive is already compressed
+      # Once a build died with "A device which does not exist was specified" (os error 433) on D:
+      # while the runner agent also lost its own files there. A red job records the volumes, the free
+      # space and the disk, volume and file system events, so the next hit shows whether D: detached.
+      - name: volumes and disk events (red job)
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: ./ci/windows-volume-diag.ps1
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -658,6 +674,14 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: cargo build --workspace --release --locked
+      # Once a build died with "A device which does not exist was specified" (os error 433) on D:
+      # while the runner agent also lost its own files there. A red job records the volumes, the free
+      # space and the disk, volume and file system events, so the next hit shows whether D: detached.
+      - name: volumes and disk events (red job)
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: ./ci/windows-volume-diag.ps1
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true

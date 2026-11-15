@@ -3,12 +3,14 @@
 //! (`%h %p %n`) in a sandbox.
 //!
 //! `ssh` talks to it over stdin and stdout, and the command carries that connection to the proxy
-//! through the agent's listener as a `CONNECT`. SSH is not supported yet: the command reads the
-//! client's identification line first, and when it is SSH (`SSH-2.0-...`, on any port) it says so
-//! in the request ([`puddle_agent_proto::ssh::PROTOCOL_HEADER`]) and sends the line along, so the
-//! proxy refuses it at once without asking about the destination, whatever it is. The refusal
-//! goes to stderr, which `ssh` passes on to its own, so the user, `git` and tools that run `ssh`
-//! show it.
+//! through the agent's listener as a `CONNECT`. The command reads the client's identification line
+//! first, and when it is SSH (`SSH-2.0-...`, on any port) it says so in the request
+//! ([`puddle_agent_proto::ssh::PROTOCOL_HEADER`]) and sends the line along, so the proxy knows the
+//! protocol before it decides. For a Git host the proxy serves, Puddle's SSH server answers; for
+//! any other name the rules decide like for any connection, and an allowed one is carried to the
+//! destination. A refusal, such as a Git host the proxy does not serve, comes back as a message
+//! on stderr, which `ssh` passes on to its own, so the user, `git` and tools that run `ssh` show
+//! it.
 //!
 //! Anything that is not SSH is carried as it is: the command is a plain `CONNECT` helper for a
 //! client that is not.
@@ -20,7 +22,7 @@
 //! to whatever its zone says and goes to the proxy unless that is local. The address that was
 //! checked is the one dialled.
 //!
-//! `<name>` (the host name as typed, before `HostName`) is accepted and unused until SSH is.
+//! `<name>` (the host name as typed, before `HostName`) is accepted and unused.
 //! `ssh` ignores the exit status of its `ProxyCommand`: only what the command printed matters.
 
 use std::fmt::Write as _;

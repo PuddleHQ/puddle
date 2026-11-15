@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Daily re-signing of the freshness file of the update list (crates/puddle-freshness). The file says "the update list
+# is current as of <issued_at>, trust it until <expires_at>, this is signing round <sequence>". A client refuses a file
+# that expired or whose sequence is lower than one it has seen, so a mirror or an attacker can neither replay an old
+# update list for long nor hide new releases. Every run signs the next sequence number with an expiry seven days out,
+# so up to six missed runs in a row still leave the published file valid.
+#
+# The file lives on its own branch, not on develop: develop takes changes only through pull requests, and a
+# daily signed file is not a change anyone reviews. The branch holds one file, freshness.json, and nothing else:
+#   https://raw.githubusercontent.com/PuddleHQ/puddle/freshness/freshness.json
+# Only this job writes to it, with the workflow's own token (contents: write, nothing else), and its pushes start
+# no other workflow (a GitHub rule for pushes made with GITHUB_TOKEN).
+#
+# THE SIGNING KEY SLOT. The job reads the base64 32-byte Ed25519 seed from the repository secret
+# FRESHNESS_SIGNING_KEY_SEED. While that secret is not set the job signs with the public placeholder seed of the
+# crate and publishes to the branch `freshness-placeholder`, which no client reads and no client key trusts; that
+# keeps the whole path (build, previous file, sign, check, push) running and tested before the real key exists. To
+# plug the production key in: create the secret with `gh secret set FRESHNESS_SIGNING_KEY_SEED`, compile the public
+# half (`puddle-freshness public-key --seed-env NAME`) into the client's list of trusted keys, and the next run
+# publishes to `freshness` and continues the sequence from the file there. Never commit a seed, and never put it on a
+# command line (the job passes it in the environment of one step only).
+#
+# A run refuses to start over: when the file on the branch is unreadable or signed by another key, the step fails
+# instead of writing sequence 1, because that would hand every client a rollback. After a failure, read the log,
+# decide whether the key or the file is wrong, and fix that by hand.
+#
+# GitHub turns scheduled workflows off after 60 days without repository activity; the commits of this job do not
+# count as activity, so a quiet repository needs a run by hand (`gh workflow run freshness.yml`) now and then.
+name: freshness
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freshness
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: sign the next freshness file
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the signed file to the freshness branch; nothing else is written
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - name: Build the signer
+        run: cargo build --release --locked -p puddle-freshness --bin puddle-freshness
+      - name: Pick the key slot
+        id: slot
+        env:
+          SEED: ${{ secrets.FRESHNESS_SIGNING_KEY_SEED }}
+        run: |
+          if [ -n "$SEED" ]; then
+            echo "branch=freshness" >> "$GITHUB_OUTPUT"
+            echo "placeholder=" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=freshness-placeholder" >> "$GITHUB_OUTPUT"
+            echo "placeholder=--placeholder-key" >> "$GITHUB_OUTPUT"
+            echo "::notice::FRESHNESS_SIGNING_KEY_SEED is not set: signing with the public placeholder seed, publishing to freshness-placeholder"
+          fi
+      - name: Fetch the published file
+        env:
+          BRANCH: ${{ steps.slot.outputs.branch }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/published"
+          if git ls-remote --exit-code --heads "https://github.com/$REPO.git" "$BRANCH" > /dev/null; then
+            git init -q "$RUNNER_TEMP/published"
+            git -C "$RUNNER_TEMP/published" -c "http.extraheader=Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+              fetch -q --depth 1 "https://github.com/$REPO.git" "$BRANCH"
+            git -C "$RUNNER_TEMP/published" checkout -q FETCH_HEAD
+          else
+            echo "::notice::branch $BRANCH does not exist yet: this run publishes sequence 1"
+            git init -q -b "$BRANCH" "$RUNNER_TEMP/published"
+          fi
+      - name: Sign the next file
+        env:
+          FRESHNESS_SIGNING_KEY_SEED: ${{ secrets.FRESHNESS_SIGNING_KEY_SEED }}
+          PLACEHOLDER: ${{ steps.slot.outputs.placeholder }}
+        run: |
+          # The placeholder flag is empty or one fixed word; it is meant to split into zero or one argument.
+          # shellcheck disable=SC2086
+          target/release/puddle-freshness refresh --file "$RUNNER_TEMP/published/freshness.json" \
+            --seed-env FRESHNESS_SIGNING_KEY_SEED $PLACEHOLDER | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        env:
+          BRANCH: ${{ steps.slot.outputs.branch }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/published"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add freshness.json
+          git commit -q -m "freshness: sign the next file"
+          git -c "http.extraheader=Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+            push "https://github.com/$REPO.git" "HEAD:refs/heads/$BRANCH"

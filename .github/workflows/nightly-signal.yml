@@ -26,6 +26,7 @@ on:
       - lab-override
       - live-contracts
       - lab-forgejo
+      - freshness
     types: [completed]
 
 permissions:

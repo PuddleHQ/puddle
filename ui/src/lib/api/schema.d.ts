@@ -2923,11 +2923,16 @@ export interface components {
             methods: string[];
             /** @description The path pattern, in canonical form. */
             path: string;
-            /** @description `global` or `workspace`. */
-            scope: string;
+            /** @description Global or one workspace. */
+            scope: components["schemas"]["AuditRequestRuleScope"];
             /** @description The workspace, for a workspace rule. */
             workspace_id: string | null;
         };
+        /**
+         * @description Which workspaces a rule on method and path in the audit applies to.
+         * @enum {string}
+         */
+        AuditRequestRuleScope: "global" | "workspace";
         /** @description How many days to keep the activity log. */
         AuditRetentionRequest: {
             /**
@@ -2945,8 +2950,8 @@ export interface components {
             created_at: number;
             /** @description `cli`, `ui` or `api`. */
             created_by: string;
-            /** @description `allow` or `deny`. */
-            effect: string;
+            /** @description Allow or deny. */
+            effect: components["schemas"]["Effect"];
             /**
              * Format: int64
              * @description Epoch ms, or `null` for permanent.
@@ -2959,10 +2964,10 @@ export interface components {
             id: number;
             /** @description `example.com` or `.example.com`. */
             pattern: string;
-            /** @description `exact` or `suffix`. */
-            pattern_kind: string;
-            /** @description `global`, `workspace` or `set`. */
-            scope: string;
+            /** @description Exact or suffix. */
+            pattern_kind: components["schemas"]["PatternKind"];
+            /** @description Global, one workspace or a set. */
+            scope: components["schemas"]["AuditRuleScope"];
             /**
              * Format: int64
              * @description The rule set you made, for a set's entry (`scope` is `set`).
@@ -2976,6 +2981,11 @@ export interface components {
             /** @description The workspace, for a workspace rule. */
             workspace_id: string | null;
         };
+        /**
+         * @description Which workspaces a rule in the audit applies to.
+         * @enum {string}
+         */
+        AuditRuleScope: "global" | "workspace" | "set";
         /** @description A rule set you made, as an audit record shows it. */
         AuditRuleSet: {
             /**

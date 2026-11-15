@@ -313,14 +313,15 @@ async fn forward(
     // A forwarded port is the guest's own app: no secret-storage cookie, no frame headers (its
     // own policy stands), and its sockets are not editor windows that hold up a server update.
     let editor = guest_port.is_none();
-    let microsoft = editor && target.flavour == Flavour::Microsoft;
+    let editor_flavour = editor.then_some(target.flavour);
+    let microsoft = editor_flavour == Some(Flavour::Microsoft);
     let client_half = if microsoft {
         microsoft::client_half(request.headers())
     } else {
         None
     };
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut request));
-    prepare_request(&mut request, upgrade, microsoft);
+    prepare_request(&mut request, upgrade, editor_flavour);
     let mut response =
         match tokio::time::timeout(ANSWER_TIMEOUT, sender.send_request(request)).await {
             Ok(Ok(response)) => response,
@@ -428,9 +429,9 @@ fn remove_hop_by_hop(headers: &mut HeaderMap, upgrade: bool) {
 
 /// Makes the client's request the one the server gets: origin-form target, no hop-by-hop headers,
 /// and without the client half of Microsoft's key.
-fn prepare_request(request: &mut Request<Incoming>, upgrade: bool, microsoft: bool) {
+fn prepare_request(request: &mut Request<Incoming>, upgrade: bool, editor: Option<Flavour>) {
     remove_hop_by_hop(request.headers_mut(), upgrade);
-    if microsoft {
+    if editor == Some(Flavour::Microsoft) {
         microsoft::strip_client_half(request.headers_mut());
     }
     let target = request

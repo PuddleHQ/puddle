@@ -21,13 +21,13 @@ use std::fs::{File, FileTimes};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use support::mount_attack::{HostDir, OPS, Report, expected, judge, judge_outcomes};
+use support::mount_attack::{HostDir, MountFlag, OPS, Report, expected, judge, judge_outcomes};
 
 /// What the mounts promise for a file in `state`.
 fn promised(state: &str, running: bool) -> Report {
     let outcomes: Vec<(&str, &str)> = OPS
         .iter()
-        .map(|op| (*op, expected(state == "ro", op, running)))
+        .map(|op| (*op, expected(MountFlag::of(state), op, running)))
         .collect();
     Report::of(state, running, &outcomes)
 }
@@ -108,7 +108,7 @@ fn a_text_busy_answer_is_only_right_where_a_running_binary_makes_it() {
         ("ro", true, "append", false),
     ] {
         assert_eq!(
-            expected(state == "ro", op, running) == "ETXTBSY",
+            expected(MountFlag::of(state), op, running) == "ETXTBSY",
             busy,
             "{state} {running} {op}"
         );

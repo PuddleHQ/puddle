@@ -9,8 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    LOCAL, Prefix, READY, StartCost, StartSlot, configured_or_skip, procs, read, require_file,
-    stop, wait_ready,
+    LOCAL, Prefix, READY, Requirement, StartCost, StartSlot, configured_or_skip, procs, read,
+    require_file, stop, wait_ready,
 };
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
@@ -133,7 +133,7 @@ impl Mitm {
         // A missing program is a skip (`None`); `configured_or_skip` panics instead when required.
         configured_or_skip(
             bin.is_some(),
-            std::env::var_os("PUDDLE_REQUIRE_MITMPROXY").is_some(),
+            Requirement::from_env("PUDDLE_REQUIRE_MITMPROXY"),
             "PUDDLE_REQUIRE_MITMPROXY",
             "set PUDDLE_MITMDUMP_BIN to run against mitmproxy",
         )

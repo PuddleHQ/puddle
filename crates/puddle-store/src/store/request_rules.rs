@@ -7,7 +7,9 @@ use puddle_types::{Event, Methods, PathPattern, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{AllUsers, Store, append_for, lock, users};
-use crate::audit::{AuditRecord, RequestRuleWire, RuleDeleteReason, actor_str};
+use crate::audit::{
+    AuditRecord, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason, actor_str,
+};
 use crate::error::StoreError;
 use crate::rule::Actor;
 use crate::users::UserId;
@@ -41,11 +43,10 @@ impl RequestRule {
         RequestRuleWire {
             id: self.id,
             scope: if self.workspace.is_some() {
-                "workspace"
+                RequestRuleWireScope::Workspace
             } else {
-                "global"
-            }
-            .to_owned(),
+                RequestRuleWireScope::Global
+            },
             workspace_id: self.workspace.as_ref().map(ToString::to_string),
             host: self.host.clone(),
             methods: self.methods.names().to_vec(),

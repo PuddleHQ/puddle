@@ -13783,8 +13783,8 @@
             "description": "The path pattern, in canonical form."
           },
           "scope": {
-            "type": "string",
-            "description": "`global` or `workspace`."
+            "$ref": "#/components/schemas/AuditRequestRuleScope",
+            "description": "Global or one workspace."
           },
           "workspace_id": {
             "type": [
@@ -13794,6 +13794,14 @@
             "description": "The workspace, for a workspace rule."
           }
         }
+      },
+      "AuditRequestRuleScope": {
+        "type": "string",
+        "description": "Which workspaces a rule on method and path in the audit applies to.",
+        "enum": [
+          "global",
+          "workspace"
+        ]
       },
       "AuditRetentionRequest": {
         "type": "object",
@@ -13839,8 +13847,8 @@
             "description": "`cli`, `ui` or `api`."
           },
           "effect": {
-            "type": "string",
-            "description": "`allow` or `deny`."
+            "$ref": "#/components/schemas/Effect",
+            "description": "Allow or deny."
           },
           "expires_at": {
             "type": [
@@ -13861,12 +13869,12 @@
             "description": "`example.com` or `.example.com`."
           },
           "pattern_kind": {
-            "type": "string",
-            "description": "`exact` or `suffix`."
+            "$ref": "#/components/schemas/PatternKind",
+            "description": "Exact or suffix."
           },
           "scope": {
-            "type": "string",
-            "description": "`global`, `workspace` or `set`."
+            "$ref": "#/components/schemas/AuditRuleScope",
+            "description": "Global, one workspace or a set."
           },
           "set_id": {
             "type": [
@@ -13892,6 +13900,15 @@
             "description": "The workspace, for a workspace rule."
           }
         }
+      },
+      "AuditRuleScope": {
+        "type": "string",
+        "description": "Which workspaces a rule in the audit applies to.",
+        "enum": [
+          "global",
+          "workspace",
+          "set"
+        ]
       },
       "AuditRuleSet": {
         "type": "object",

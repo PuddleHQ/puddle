@@ -380,3 +380,30 @@ async fn a_site_dropped_with_an_unreadable_token_answer_fails_its_test() {
     ask(&proxy, "POST", "github.com", "/login/oauth/access_token").await;
     drop(web);
 }
+
+#[tokio::test]
+async fn a_client_that_closes_before_the_tls_handshake_is_counted_and_the_site_keeps_serving() {
+    let web = WebHost::start(&["one.test"], WebOptions::default()).await;
+    assert_eq!(web.failed_handshakes(), 0);
+
+    // Connects and closes without a byte: the handshake can never complete.
+    drop(TcpStream::connect(web.tls_addr()).await.unwrap());
+    // Connects, speaks something that is no TLS, and closes.
+    let mut junk = TcpStream::connect(web.tls_addr()).await.unwrap();
+    junk.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+    drop(junk);
+    puddle_test_kit::eventually(
+        "the site counts both failed handshakes",
+        std::time::Duration::from_secs(30),
+        || web.failed_handshakes() == 2,
+    )
+    .await;
+
+    // The listener is still up: a real client's handshake completes.
+    let conn = BufReader::new(TcpStream::connect(web.tls_addr()).await.unwrap());
+    let answer = rig::https_get_raw(conn, "one.test", &[web.root().as_ref()])
+        .await
+        .unwrap();
+    assert!(answer.ends_with("\r\n\r\nlab web host: /\n"), "{answer}");
+    assert_eq!(web.failed_handshakes(), 2);
+}

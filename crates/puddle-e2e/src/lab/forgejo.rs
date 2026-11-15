@@ -31,7 +31,7 @@ use rustls::pki_types::CertificateDer;
 
 use super::git_host::issue;
 use super::{
-    LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port, is_address_in_use,
+    LOCAL, Prefix, READY, Requirement, StartCost, configured_or_skip, free_port, is_address_in_use,
     on_free_port, read, require_file, stop, try_answers,
 };
 
@@ -332,7 +332,7 @@ impl Forgejo {
         let bin = std::env::var_os("PUDDLE_FORGEJO_BIN");
         configured_or_skip(
             bin.is_some(),
-            std::env::var_os("PUDDLE_REQUIRE_FORGEJO").is_some(),
+            Requirement::from_env("PUDDLE_REQUIRE_FORGEJO"),
             "PUDDLE_REQUIRE_FORGEJO",
             "set PUDDLE_FORGEJO_BIN to run against Forgejo (ci/fetch-forgejo.sh fetches the pinned release)",
         )

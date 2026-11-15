@@ -74,14 +74,19 @@ fn unlistening() -> (tokio::net::TcpSocket, u16) {
 
 #[test]
 fn a_configured_program_runs_and_a_missing_one_skips() {
-    assert!(configured_or_skip(true, true, "V", "how"));
-    assert!(!configured_or_skip(false, false, "V", "how"));
+    assert!(configured_or_skip(true, Requirement::Required, "V", "how"));
+    assert!(!configured_or_skip(
+        false,
+        Requirement::Optional,
+        "V",
+        "how"
+    ));
 }
 
 #[test]
 #[should_panic(expected = "V is set but the fixture's program is not configured: set X")]
 fn a_required_but_missing_program_fails() {
-    configured_or_skip(false, true, "V", "set X");
+    configured_or_skip(false, Requirement::Required, "V", "set X");
 }
 
 #[test]
@@ -232,4 +237,13 @@ fn a_busy_process_reports_more_cpu_time_than_an_idle_one() {
     // flake-ok: CPU time (user plus system time from the OS), not wall time: a `sleep` spends
     // none while it waits, whatever the load (0 ns measured under 16 busy loops on 4 cores).
     assert!(idle_cpu < Duration::from_millis(100), "{idle_cpu:?}");
+}
+
+#[test]
+fn a_requirement_is_required_only_when_its_variable_is_set() {
+    assert_eq!(
+        Requirement::from_env("NOBODY_SETS_THIS_VARIABLE"),
+        Requirement::Optional
+    );
+    assert_eq!(Requirement::from_env("PATH"), Requirement::Required);
 }

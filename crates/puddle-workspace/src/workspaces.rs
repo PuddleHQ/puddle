@@ -1048,7 +1048,7 @@ impl Workspaces {
         let sandbox = match rt.create(spec).await {
             Ok(s) => s,
             Err(e) => {
-                if let Err(cleanup) = cleanup_failed_create(rt, name, false, false).await {
+                if let Err(cleanup) = cleanup_failed_create(rt, name, Before::NOTHING).await {
                     warn!(workspace = %id, error = %cleanup, "cleanup after a failed import create failed");
                 }
                 return Err(WorkspaceError::runtime("create the import sandbox", id, e));
@@ -1179,7 +1179,7 @@ impl Workspaces {
         let sandbox = match rt.create(spec).await {
             Ok(s) => s,
             Err(e) => {
-                if let Err(cleanup) = cleanup_failed_create(rt, &name, false, false).await {
+                if let Err(cleanup) = cleanup_failed_create(rt, &name, Before::NOTHING).await {
                     warn!(workspace = %id, error = %cleanup, "cleanup after a failed maintenance create failed");
                 }
                 return Err(WorkspaceError::runtime(
@@ -1301,11 +1301,10 @@ async fn clear_leftover<R: Runtime>(
 async fn cleanup_failed_create<R: Runtime>(
     rt: &R,
     name: &SandboxName,
-    had_record: bool,
-    had_stale_dir: bool,
+    before: Before,
 ) -> Result<(), ComputeError> {
     let mut first = Ok(());
-    if !had_record {
+    if !before.record {
         match rt.list().await {
             Ok(list) => {
                 if let Some(left) = list.iter().find(|s| s.name == name.as_str()) {
@@ -1320,7 +1319,7 @@ async fn cleanup_failed_create<R: Runtime>(
             Err(e) => first = first.and(Err(e)),
         }
     }
-    if !had_stale_dir {
+    if !before.stale_dir {
         match rt.stale_dirs().await {
             Ok(dirs) if dirs.iter().any(|d| d == name.as_str()) => {
                 debug!(sandbox = %name, "removing the directory a failed create left");
@@ -1388,6 +1387,14 @@ struct Before {
     stale_dir: bool,
 }
 
+impl Before {
+    /// Neither existed.
+    const NOTHING: Self = Self {
+        record: false,
+        stale_dir: false,
+    };
+}
+
 impl Attachment<'_> {
     /// The workspace.
     #[must_use]
@@ -1439,16 +1446,11 @@ impl Attachment<'_> {
     /// [`WorkspaceError::Runtime`] with the first cleanup step that failed (the others still ran).
     pub async fn abort<R: Runtime>(mut self, rt: &R) -> Result<(), WorkspaceError> {
         self.reservation.open = false;
-        let mut result = cleanup_failed_create(
-            rt,
-            &self.reservation.sandbox,
-            self.before.record,
-            self.before.stale_dir,
-        )
-        .await
-        .map_err(|e| {
-            WorkspaceError::runtime("clean up after a failed create", &self.reservation.id, e)
-        });
+        let mut result = cleanup_failed_create(rt, &self.reservation.sandbox, self.before)
+            .await
+            .map_err(|e| {
+                WorkspaceError::runtime("clean up after a failed create", &self.reservation.id, e)
+            });
         if self.created_volume {
             match rt.remove_volume(&self.reservation.id.volume_name()).await {
                 Ok(()) | Err(ComputeError::VolumeNotFound { .. }) => {}

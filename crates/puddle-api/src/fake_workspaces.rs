@@ -527,8 +527,7 @@ impl FakeWorkspaces {
         id: &WorkspaceId,
         (directory, seen): (&CheckoutDir, &crate::workspaces::RepoUrl),
         identity: Option<puddle_store::IdentityId>,
-        pull: bool,
-        push: bool,
+        toggles: puddle_store::RepoToggles,
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let (name, new) = {
@@ -587,8 +586,8 @@ impl FakeWorkspaces {
                 NewRepository {
                     repository,
                     identity,
-                    pull,
-                    push,
+                    pull: toggles.pull,
+                    push: toggles.push,
                     local: None,
                 },
             )
@@ -1277,8 +1276,14 @@ impl WorkspaceService for FakeWorkspaces {
                     pull,
                     push,
                 } => {
-                    self.manage_existing(id, (&directory, &seen), identity, pull, push, git)
-                        .await
+                    self.manage_existing(
+                        id,
+                        (&directory, &seen),
+                        identity,
+                        puddle_store::RepoToggles { pull, push },
+                        git,
+                    )
+                    .await
                 }
             }
         })

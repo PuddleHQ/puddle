@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::pattern::Pattern;
 use crate::pending::PendingRow;
-use crate::rule::{Actor, Rule};
+use crate::rule::{Actor, Effect, Rule, Scope};
 
 /// Longest audit line, in bytes (R-26).
 pub const MAX_LINE_BYTES: usize = 4096;
@@ -231,14 +231,48 @@ impl ConnectionRecord {
     }
 }
 
-/// Reads a stored rule scope, mapping the name `sandbox` that older records carry.
-fn scope_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    let scope = String::deserialize(d)?;
-    Ok(if scope == "sandbox" {
-        "workspace".to_owned()
-    } else {
-        scope
-    })
+/// Which workspaces a rule in the audit applies to. Records written before the rename read
+/// `sandbox` as `workspace`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleWireScope {
+    /// Every workspace.
+    Global,
+    /// One workspace.
+    #[serde(alias = "sandbox")]
+    Workspace,
+    /// An entry of a rule set the user made.
+    Set,
+}
+
+impl From<&Scope> for RuleWireScope {
+    fn from(scope: &Scope) -> Self {
+        match scope {
+            Scope::Global => Self::Global,
+            Scope::Workspace(_) => Self::Workspace,
+            Scope::Set(_) => Self::Set,
+        }
+    }
+}
+
+/// How a rule's pattern in the audit matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleWirePatternKind {
+    /// The identical host.
+    Exact,
+    /// The host and every name under it.
+    Suffix,
+}
+
+/// Which workspaces a rule on method and path in the audit applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestRuleWireScope {
+    /// Every workspace.
+    Global,
+    /// One workspace.
+    Workspace,
 }
 
 /// A rule as it appears in the audit.
@@ -246,10 +280,8 @@ fn scope_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error
 pub struct RuleWire {
     /// Row id.
     pub id: i64,
-    /// `global`, `workspace` or `set`. Records written before the rename read `sandbox` as
-    /// `workspace`.
-    #[serde(deserialize_with = "scope_name")]
-    pub scope: String,
+    /// Global, one workspace or a set.
+    pub scope: RuleWireScope,
     /// The workspace, for a workspace rule.
     #[serde(alias = "sandbox_id")]
     pub workspace_id: Option<String>,
@@ -257,12 +289,12 @@ pub struct RuleWire {
     /// sets existed.
     #[serde(default)]
     pub set_id: Option<i64>,
-    /// `exact` or `suffix`.
-    pub pattern_kind: String,
+    /// Exact or suffix.
+    pub pattern_kind: RuleWirePatternKind,
     /// `example.com` or `.example.com`.
     pub pattern: String,
-    /// `allow` or `deny`.
-    pub effect: String,
+    /// Allow or deny.
+    pub effect: Effect,
     /// Epoch ms, or `null` for permanent.
     pub expires_at: Option<u64>,
     /// Epoch ms.
@@ -277,16 +309,15 @@ impl From<&Rule> for RuleWire {
     fn from(rule: &Rule) -> Self {
         Self {
             id: rule.id.0,
-            scope: rule.scope.as_str().to_owned(),
+            scope: RuleWireScope::from(&rule.scope),
             workspace_id: rule.scope.workspace().map(ToString::to_string),
             set_id: rule.scope.set(),
             pattern_kind: match rule.pattern {
-                Pattern::Exact(_) => "exact",
-                Pattern::Suffix(_) => "suffix",
-            }
-            .to_owned(),
+                Pattern::Exact(_) => RuleWirePatternKind::Exact,
+                Pattern::Suffix(_) => RuleWirePatternKind::Suffix,
+            },
             pattern: rule.pattern.to_string(),
-            effect: rule.effect.as_str().to_owned(),
+            effect: rule.effect,
             expires_at: rule.expires_at,
             created_at: rule.created_at,
             created_by: rule.created_by.as_str().to_owned(),
@@ -375,8 +406,8 @@ pub enum RuleDeleteReason {
 pub struct RequestRuleWire {
     /// Row id, numbered apart from the rules on hosts.
     pub id: i64,
-    /// `global` or `workspace`.
-    pub scope: String,
+    /// Global or one workspace.
+    pub scope: RequestRuleWireScope,
     /// The workspace, for a workspace rule.
     pub workspace_id: Option<String>,
     /// The host pattern (`example.com` or `*.example.com`).

@@ -476,20 +476,37 @@ struct Seen {
 struct Probe {
     seen: std::sync::Arc<std::sync::Mutex<Seen>>,
     out: Vec<u8>,
-    fail_write: bool,
-    fail_flush: bool,
+    fails: Fails,
+}
+
+/// Which steps of a write the [`Probe`] fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fails {
+    Nothing,
+    Write,
+    Flush,
+    WriteAndFlush,
+}
+
+impl Fails {
+    const fn write(self) -> bool {
+        matches!(self, Self::Write | Self::WriteAndFlush)
+    }
+
+    const fn flush(self) -> bool {
+        matches!(self, Self::Flush | Self::WriteAndFlush)
+    }
 }
 
 impl Probe {
-    fn new(fail_write: bool, fail_flush: bool) -> (Self, std::sync::Arc<std::sync::Mutex<Seen>>) {
+    fn new(fails: Fails) -> (Self, std::sync::Arc<std::sync::Mutex<Seen>>) {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Seen::default()));
         let mut out = HELLO.as_bytes().to_vec();
         out.extend_from_slice(b"SSH-2.0-x\r\n");
         let probe = Self {
             seen: seen.clone(),
             out,
-            fail_write,
-            fail_flush,
+            fails,
         };
         (probe, seen)
     }
@@ -529,7 +546,7 @@ impl AsyncWrite for Probe {
         _cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.fail_write {
+        if self.fails.write() {
             self.poke();
             return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
         }
@@ -537,7 +554,7 @@ impl AsyncWrite for Probe {
     }
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.poke();
-        if self.fail_flush {
+        if self.fails.flush() {
             return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
         }
         Poll::Ready(Ok(()))
@@ -552,20 +569,14 @@ impl AsyncWrite for Probe {
 async fn a_server_write_that_fails_stops_the_sending_whichever_step_fails() {
     // Only the write fails, then only the flush: either way nothing counts as sent and the
     // client's input is not reported as ended (the server went away first).
-    for (fail_write, fail_flush) in [(true, false), (false, true), (true, true)] {
+    for fails in [Fails::Write, Fails::Flush, Fails::WriteAndFlush] {
         let (mut stdin, i) = duplex(1024);
         let (o, _stdout) = duplex(1024);
         stdin.write_all(b"ping").await.unwrap();
-        let (probe, _seen) = Probe::new(fail_write, fail_flush);
+        let (probe, _seen) = Probe::new(fails);
         let report = timeout(WAIT, relay(i, o, probe)).await.unwrap().unwrap();
-        assert_eq!(
-            report.sent, 0,
-            "write fails: {fail_write}, flush: {fail_flush}"
-        );
-        assert!(
-            !report.input_ended,
-            "write fails: {fail_write}, flush: {fail_flush}"
-        );
+        assert_eq!(report.sent, 0, "fails: {fails:?}");
+        assert!(!report.input_ended, "fails: {fails:?}");
         assert_eq!(report.end, SessionEnd::ServerClosed);
         drop(stdin);
     }
@@ -589,7 +600,7 @@ async fn each_direction_reads_in_chunks_of_64_kib() {
     let (mut stdin, i) = duplex(1024);
     let (o, _stdout) = duplex(1024);
     stdin.write_all(b"ping").await.unwrap();
-    let (probe, seen) = Probe::new(false, false);
+    let (probe, seen) = Probe::new(Fails::Nothing);
     // The server's last read is its end of stream, offered a whole chunk like the others.
     let report = timeout(WAIT, relay(i, o, probe)).await.unwrap().unwrap();
     assert_eq!(report.sent, 4);
@@ -598,7 +609,7 @@ async fn each_direction_reads_in_chunks_of_64_kib() {
     // The client's input is read in the same size: a probe as the input.
     let offered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (o, _stdout) = duplex(1024);
-    let (probe, _seen) = Probe::new(false, false);
+    let (probe, _seen) = Probe::new(Fails::Nothing);
     timeout(WAIT, relay(Cap(offered.clone()), o, probe))
         .await
         .unwrap()

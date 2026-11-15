@@ -5,27 +5,77 @@ use puddle_store as store;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::AuditRecord;
+use super::{AuditRecord, Effect, PatternKind};
 
 // ---------------------------------------------------------------------------------------------
 // Audit (docs/spec/rules.md §5)
+
+/// Which workspaces a rule in the audit applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditRuleScope {
+    /// Every workspace.
+    Global,
+    /// One workspace.
+    Workspace,
+    /// An entry of a rule set you made.
+    Set,
+}
+
+impl From<store::RuleWireScope> for AuditRuleScope {
+    fn from(scope: store::RuleWireScope) -> Self {
+        match scope {
+            store::RuleWireScope::Global => Self::Global,
+            store::RuleWireScope::Workspace => Self::Workspace,
+            store::RuleWireScope::Set => Self::Set,
+        }
+    }
+}
+
+/// Which workspaces a rule on method and path in the audit applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditRequestRuleScope {
+    /// Every workspace.
+    Global,
+    /// One workspace.
+    Workspace,
+}
+
+impl From<store::RequestRuleWireScope> for AuditRequestRuleScope {
+    fn from(scope: store::RequestRuleWireScope) -> Self {
+        match scope {
+            store::RequestRuleWireScope::Global => Self::Global,
+            store::RequestRuleWireScope::Workspace => Self::Workspace,
+        }
+    }
+}
+
+impl From<store::RuleWirePatternKind> for PatternKind {
+    fn from(kind: store::RuleWirePatternKind) -> Self {
+        match kind {
+            store::RuleWirePatternKind::Exact => Self::Exact,
+            store::RuleWirePatternKind::Suffix => Self::Suffix,
+        }
+    }
+}
 
 /// A rule as an audit record shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AuditRule {
     /// Row id.
     pub id: i64,
-    /// `global`, `workspace` or `set`.
-    pub scope: String,
+    /// Global, one workspace or a set.
+    pub scope: AuditRuleScope,
     /// The workspace, for a workspace rule.
     #[schema(required = true)]
     pub workspace_id: Option<String>,
-    /// `exact` or `suffix`.
-    pub pattern_kind: String,
+    /// Exact or suffix.
+    pub pattern_kind: PatternKind,
     /// `example.com` or `.example.com`.
     pub pattern: String,
-    /// `allow` or `deny`.
-    pub effect: String,
+    /// Allow or deny.
+    pub effect: Effect,
     /// Epoch ms, or `null` for permanent.
     #[schema(required = true)]
     pub expires_at: Option<u64>,
@@ -59,11 +109,11 @@ impl From<store::RuleWire> for AuditRule {
         } = rule;
         Self {
             id,
-            scope,
+            scope: scope.into(),
             workspace_id,
-            pattern_kind,
+            pattern_kind: pattern_kind.into(),
             pattern,
-            effect,
+            effect: effect.into(),
             expires_at,
             created_at,
             created_by,
@@ -78,8 +128,8 @@ impl From<store::RuleWire> for AuditRule {
 pub struct AuditRequestRule {
     /// Row id, numbered apart from the rules on hosts.
     pub id: i64,
-    /// `global` or `workspace`.
-    pub scope: String,
+    /// Global or one workspace.
+    pub scope: AuditRequestRuleScope,
     /// The workspace, for a workspace rule.
     #[schema(required = true)]
     pub workspace_id: Option<String>,
@@ -109,7 +159,7 @@ impl From<store::RequestRuleWire> for AuditRequestRule {
         } = rule;
         Self {
             id,
-            scope,
+            scope: scope.into(),
             workspace_id,
             host,
             methods,

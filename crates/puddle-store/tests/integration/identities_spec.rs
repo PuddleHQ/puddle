@@ -12,8 +12,8 @@ use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::testing::own;
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
-    IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, StartBasis,
-    Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
+    IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, RepoToggles,
+    StartBasis, Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
 };
 use puddle_types::{CollectingSink, Event, WorkspaceId};
 
@@ -276,14 +276,14 @@ fn the_repository_table_and_the_two_switches() {
     let fresh = store.workspace_git(&w).unwrap();
     assert!(fresh.only_push_listed && !fresh.only_pull_listed && fresh.repos.is_empty());
     let web = RepoRef::new("GitHub.com", "Acme", "web.git").unwrap();
-    let entry = store.add_repo(&w, &web, true, true).unwrap();
+    let entry = store.add_repo(&w, &web, RepoToggles::BOTH).unwrap();
     assert_eq!(entry.repo.to_string(), "github.com/acme/web");
     assert!(matches!(
-        store.add_repo(&w, &web, true, true),
+        store.add_repo(&w, &web, RepoToggles::BOTH),
         Err(StoreError::RepoListed(_))
     ));
     let docs = RepoRef::new("github.com", "acme", "docs").unwrap();
-    let docs_row = store.add_repo(&w, &docs, true, false).unwrap();
+    let docs_row = store.add_repo(&w, &docs, RepoToggles::PULL_ONLY).unwrap();
     let git = store.workspace_git(&w).unwrap();
     assert!(git.allows_push(&web) && !git.allows_push(&docs));
     assert!(
@@ -292,7 +292,7 @@ fn the_repository_table_and_the_two_switches() {
     );
     store.set_git_switches(&w, None, Some(true)).unwrap();
     store
-        .set_repo_toggles(&w, docs_row.id, false, true)
+        .set_repo_toggles(&w, docs_row.id, RepoToggles::PUSH_ONLY)
         .unwrap();
     let git = store.workspace_git(&w).unwrap();
     assert!(git.only_push_listed && git.only_pull_listed);
@@ -303,7 +303,7 @@ fn the_repository_table_and_the_two_switches() {
     assert!(store.workspace_git(&w).unwrap().allows_push(&other));
     // Rows belong to their workspace.
     assert!(matches!(
-        store.set_repo_toggles(&ws("blog"), docs_row.id, true, true),
+        store.set_repo_toggles(&ws("blog"), docs_row.id, RepoToggles::BOTH),
         Err(StoreError::UnknownRepo(_))
     ));
     assert!(store.remove_repo(&ws("blog"), docs_row.id).is_err());
@@ -325,8 +325,7 @@ fn deleting_a_workspace_clears_its_git_settings_but_keeps_the_identities() {
         .add_repo(
             &w,
             &RepoRef::new("github.com", "acme", "web").unwrap(),
-            true,
-            true,
+            RepoToggles::BOTH,
         )
         .unwrap();
     store.set_git_switches(&w, Some(false), Some(true)).unwrap();
@@ -420,7 +419,9 @@ fn setting_a_repository_up_again_changes_nothing_and_an_existing_row_keeps_its_t
         .unwrap();
     assert_eq!(first.identity, Some((work, "Work".to_owned())));
     let row = store.workspace_git(&ws("w")).unwrap().repos[0].id;
-    store.set_repo_toggles(&ws("w"), row, false, false).unwrap();
+    store
+        .set_repo_toggles(&ws("w"), row, RepoToggles::NEITHER)
+        .unwrap();
     let _ = sink.take();
     let again = store.start_repository_git(&ws("w"), &ask(shop)).unwrap();
     assert_eq!(again, first);
@@ -867,7 +868,7 @@ fn a_set_up_that_only_adds_the_identity_or_only_adds_the_row_still_says_so() {
     // The row exists already: only the identity joins the list.
     let w = ws("only-identity");
     store
-        .add_repo(&w, &repo("github.com", "acme", "shop"), true, true)
+        .add_repo(&w, &repo("github.com", "acme", "shop"), RepoToggles::BOTH)
         .unwrap();
     let _ = sink.take();
     let named = RepoGitRequest {

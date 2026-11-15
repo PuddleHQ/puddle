@@ -10,12 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use puddle_inject::testing::{StaticSettings, World};
+use puddle_inject::testing::{OnlyListed, StaticSettings, World};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
 use puddle_proxy::{InjectContext, InjectDecision, Injector as _, RequestView};
 use puddle_secrets::{
     Credential, Fetch, Fetched, Secret, SecretCache, SourceError, SourceSpec, Tool,
 };
+use puddle_store::RepoToggles;
 use puddle_store::WorkspaceGit;
 use puddle_types::{Event, GitAccess, Host};
 use support::{Ask as _, basic, injected, refusal};
@@ -36,7 +37,7 @@ fn world() -> World {
     let w = World::new();
     w.identity("Work", "github.com", &["acme"], false, "CANARY-WORK");
     w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
-    w.list("github.com/acme/web", true, true);
+    w.list("github.com/acme/web", RepoToggles::BOTH);
     w
 }
 
@@ -161,7 +162,7 @@ async fn a_push_to_a_repository_that_is_not_listed_is_refused_and_says_how_to_ad
     assert_eq!(w.credentials.reads(), 0, "the credential was never read");
     // The refusal holds whoever supplies the credential: the workspace's own header does not
     // get a push through, and a Pull-only row does not either.
-    w.list("github.com/acme/readonly", true, false);
+    w.list("github.com/acme/readonly", RepoToggles::PULL_ONLY);
     for target in [
         "/acme/other.git/git-receive-pack",
         "/acme/readonly.git/git-receive-pack",
@@ -200,13 +201,13 @@ async fn turning_off_the_push_list_lets_any_push_through_and_a_name_the_table_ca
  {
     let w = world();
     let target = "/acme/other.git/git-receive-pack";
-    w.switches(false, false);
+    w.switches(OnlyListed::Neither);
     assert!(injected(
         &w.decide("github.com", "POST", target, &[]).await,
         &token_header("CANARY-WORK")
     ));
     // On again: a name the table has no spelling for can only be allowed by the switch.
-    w.switches(true, false);
+    w.switches(OnlyListed::Push);
     let odd = w
         .decide("github.com", "POST", "/acme/a+b.git/git-receive-pack", &[])
         .await;
@@ -247,7 +248,7 @@ async fn an_azure_devops_project_with_a_space_can_be_listed_and_is_refused_with_
         }]
     );
     // Listed with Push on, in the spelling the proxy reads: the same request is not refused.
-    w.list("dev.azure.com/org/my project/the repo", true, true);
+    w.list("dev.azure.com/org/my project/the repo", RepoToggles::BOTH);
     for spelled in [
         target,
         "/org/my%20project/_git/The%20Repo.git/git-receive-pack",
@@ -304,7 +305,7 @@ async fn a_repository_in_nested_groups_is_listed_and_credentialed_by_its_top_gro
         .await;
     assert!(injected(&fetch, &token_header("CANARY-LAB")), "{fetch:?}");
     // Listed, the push goes out; the owner's other repositories stay off the list.
-    w.list("gitlab.example/group/sub/proj", true, true);
+    w.list("gitlab.example/group/sub/proj", RepoToggles::BOTH);
     let pushed = w.decide("gitlab.example", "GET", push, &[]).await;
     assert!(injected(&pushed, &token_header("CANARY-LAB")), "{pushed:?}");
     let other = w
@@ -332,7 +333,7 @@ async fn a_repository_in_nested_groups_is_listed_and_credentialed_by_its_top_gro
 async fn a_path_that_could_be_two_nested_repositories_or_is_too_deep_is_refused_not_guessed() {
     let w = World::new();
     w.identity("Lab", "gitlab.example", &["group"], false, "CANARY-LAB");
-    w.switches(false, false);
+    w.switches(OnlyListed::Neither);
     for target in [
         "/group/proj/info/lfs/info/refs?service=git-upload-pack",
         "/group/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/git-upload-pack",
@@ -359,7 +360,7 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
         &w.decide("github.com", "GET", anywhere, &[]).await,
         &token_header("CANARY-PERSONAL")
     ));
-    w.switches(true, true);
+    w.switches(OnlyListed::Both);
     let decision = w.decide("github.com", "GET", anywhere, &[]).await;
     let (status, code, message) = refusal(&decision);
     assert_eq!((status, code), (403, "pull_denied"));
@@ -372,7 +373,7 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
         [Event::GitAccessDenied { access: GitAccess::Pull, repo, .. }] if repo == "private"
     ));
     // A row with Pull off is refused too; the workspace's own header does not get past it.
-    w.list("github.com/someone/pushonly", false, true);
+    w.list("github.com/someone/pushonly", RepoToggles::PUSH_ONLY);
     let decision = w
         .decide(
             "github.com",
@@ -392,7 +393,7 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
 #[tokio::test]
 async fn an_lfs_batch_is_decided_by_its_operation() {
     let w = world();
-    w.switches(true, false);
+    w.switches(OnlyListed::Push);
     let batch = "/someone/big.git/info/lfs/objects/batch";
     assert_eq!(w.body_wanted("github.com", "POST", batch), Some(256 * 1024));
     assert_eq!(w.body_wanted("github.com", "GET", batch), None);
@@ -728,7 +729,7 @@ async fn azure_devops_takes_a_pat_as_basic_an_entra_token_as_a_bearer_and_every_
         false,
         "eyJhbGciOiJSUzI1NiJ9.eyJhIjoxfQ.c2ln",
     );
-    w.switches(false, false);
+    w.switches(OnlyListed::Neither);
     let pat = w
         .decide(
             "dev.azure.com",
@@ -891,12 +892,12 @@ async fn a_request_that_reads_like_a_read_but_writes_never_goes_out_anonymously(
 async fn the_repository_table_still_gates_an_anonymous_read() {
     tokio::time::pause();
     let w = world();
-    w.switches(true, true);
+    w.switches(OnlyListed::Both);
     let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     w.credentials
         .fail(&work.credentials[0].source, SourceError::NotSignedIn);
     // Not on the pull list: refused by the table before the credential is asked for.
-    w.list("github.com/acme/closed", false, false);
+    w.list("github.com/acme/closed", RepoToggles::NEITHER);
     let decision = w
         .decide(
             "github.com",
@@ -1252,7 +1253,7 @@ async fn a_workspace_that_never_set_a_switch_is_held_to_the_global_default_live(
 async fn an_lfs_verify_or_unlock_is_a_push_whatever_its_method() {
     let w = World::new();
     w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
-    w.switches(true, false);
+    w.switches(OnlyListed::Push);
     for method in ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"] {
         for target in [
             "/someone/big.git/info/lfs/objects/verify",
@@ -1264,7 +1265,7 @@ async fn an_lfs_verify_or_unlock_is_a_push_whatever_its_method() {
     }
     assert_eq!(w.credentials.reads(), 0, "no credential was read");
     // Listed for Push, the same calls go out with the credential.
-    w.list("github.com/someone/big", false, true);
+    w.list("github.com/someone/big", RepoToggles::PUSH_ONLY);
     for method in ["GET", "POST"] {
         let decision = w
             .decide(
@@ -1286,7 +1287,7 @@ async fn an_lfs_lock_listing_is_a_pull_only_as_a_post_and_every_other_method_is_
  {
     let w = World::new();
     w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
-    w.switches(true, false);
+    w.switches(OnlyListed::Push);
     let verify = "/someone/big.git/info/lfs/locks/verify";
     let post = w.decide("github.com", "POST", verify, &[]).await;
     assert!(
@@ -1298,8 +1299,8 @@ async fn an_lfs_lock_listing_is_a_pull_only_as_a_post_and_every_other_method_is_
         assert_eq!(refusal(&decision).1, "push_denied", "{method}");
     }
     // A pull-only table lets the POST through and keeps the writes out.
-    w.switches(true, true);
-    w.list("github.com/someone/big", true, false);
+    w.switches(OnlyListed::Both);
+    w.list("github.com/someone/big", RepoToggles::PULL_ONLY);
     let post = w.decide("github.com", "POST", verify, &[]).await;
     assert!(
         injected(&post, &token_header("CANARY-PERSONAL")),
@@ -1319,8 +1320,14 @@ async fn a_name_the_table_cannot_hold_follows_the_switch_for_a_push_and_for_a_pu
     w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
     let push = ("POST", "/acme/a+b.git/git-receive-pack");
     let pull = ("POST", "/acme/a+b.git/git-upload-pack");
-    for (only_push, only_pull) in [(false, false), (true, false), (false, true), (true, true)] {
-        w.switches(only_push, only_pull);
+    for only in [
+        OnlyListed::Neither,
+        OnlyListed::Push,
+        OnlyListed::Pull,
+        OnlyListed::Both,
+    ] {
+        let (only_push, only_pull) = (only.push(), only.pull());
+        w.switches(only);
         for ((method, target), only_listed, code) in [
             (push, only_push, "push_denied"),
             (pull, only_pull, "pull_denied"),
@@ -1386,7 +1393,7 @@ async fn a_refused_path_says_which_spelling_it_cannot_read() {
 async fn a_repository_nested_as_deep_as_the_host_allows_is_read_and_one_deeper_is_refused() {
     let w = World::new();
     w.identity("Lab", "gitlab.example", &["group"], false, "CANARY-LAB");
-    w.switches(false, false);
+    w.switches(OnlyListed::Neither);
     let names = |count: usize| {
         (1..=count)
             .map(|n| format!("n{n}"))
@@ -1421,7 +1428,7 @@ async fn an_identity_bound_to_the_name_asked_for_covers_an_azure_devops_host_ali
         false,
         "ADO-OLD",
     );
-    w.switches(false, false);
+    w.switches(OnlyListed::Neither);
     let decision = w
         .decide(
             "contoso.visualstudio.com",

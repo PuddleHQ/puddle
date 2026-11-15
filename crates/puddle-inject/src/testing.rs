@@ -18,7 +18,7 @@ use puddle_secrets::{
 };
 use puddle_store::{
     Author, Coverage, CredentialBinding, IdentityDraft, IdentityId, Limits, ManualClock, Owner,
-    RepoRef, Store, WorkspaceGit,
+    RepoRef, RepoToggles, Store, WorkspaceGit,
 };
 use puddle_types::{CollectingSink, WorkspaceId};
 
@@ -254,21 +254,44 @@ impl World {
     }
 
     /// Lists `repo` (`host/owner/name`) in the table.
-    pub fn list(&self, repo: &str, pull: bool, push: bool) {
+    pub fn list(&self, repo: &str, toggles: RepoToggles) {
         self.store
-            .add_repo(&self.workspace, &repo_ref(repo), pull, push)
+            .add_repo(&self.workspace, &repo_ref(repo), toggles)
             .unwrap();
     }
 
     /// Sets "Only push to listed repos" and "Only pull from listed repos".
-    pub fn switches(&self, only_push_listed: bool, only_pull_listed: bool) {
+    pub fn switches(&self, only: OnlyListed) {
         self.store
-            .set_git_switches(
-                &self.workspace,
-                Some(only_push_listed),
-                Some(only_pull_listed),
-            )
+            .set_git_switches(&self.workspace, Some(only.push()), Some(only.pull()))
             .unwrap();
+    }
+}
+
+/// Which of the two "Only ... listed repos" switches are on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnlyListed {
+    /// Neither switch.
+    Neither,
+    /// Only the push switch.
+    Push,
+    /// Only the pull switch.
+    Pull,
+    /// Both switches.
+    Both,
+}
+
+impl OnlyListed {
+    /// "Only push to listed repos" is on.
+    #[must_use]
+    pub const fn push(self) -> bool {
+        matches!(self, Self::Push | Self::Both)
+    }
+
+    /// "Only pull from listed repos" is on.
+    #[must_use]
+    pub const fn pull(self) -> bool {
+        matches!(self, Self::Pull | Self::Both)
     }
 }
 

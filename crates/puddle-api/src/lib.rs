@@ -96,7 +96,7 @@ pub use front::{NameResolver, NoNames, SystemResolver};
 pub use learned::{FakeLearned, LearnedService, NoLearned};
 pub use network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
-    NoNetworkHealth, forward_network_changes, forward_proxy_sign_in_failures,
+    NoNetworkHealth, PullProxyState, forward_network_changes, forward_proxy_sign_in_failures,
 };
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};

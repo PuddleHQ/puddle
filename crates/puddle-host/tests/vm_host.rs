@@ -3427,13 +3427,26 @@ async fn refusal_matrix(
     (lines, silent, accepted)
 }
 
+/// How the radar's registries are reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RadarMode {
+    /// Their connections are decrypted and re-encrypted by Puddle.
+    Terminate,
+    /// Their connections are spliced.
+    Splice,
+    /// Spliced, with no proxy setting in the guest's environment (through the stub DNS).
+    NoProxy,
+}
+
 /// The real tools at their widest, cold, through the real proxy and the real agent (the discovery
 /// radar of the transparency bar): apt, npm, pnpm, cargo, go and maven fetch a few hundred to a few
 /// thousand packages from the real registries. Nothing may fail or be retried. With `terminate`
 /// set the registries' connections are decrypted and re-encrypted by Puddle; without it they are
 /// spliced. Never run by the per-pull-request gate (the name starts `vm_radar_`).
 #[expect(clippy::print_stderr, reason = "the radar's table goes to stderr")]
-async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
+async fn radar(tag: &str, mode: RadarMode) {
+    let terminate = mode == RadarMode::Terminate;
+    let no_proxy = mode == RadarMode::NoProxy;
     let (vm, sandbox, api) = Box::pin(radar_workspace(tag, terminate)).await;
     // The run means nothing if the registries are not decrypted when they should be (or are when
     // they should not be): the issuer the guest sees says which.
@@ -3526,17 +3539,17 @@ async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_the_registries_decrypted() {
-    Box::pin(radar("radt", true, false)).await;
+    Box::pin(radar("radt", RadarMode::Terminate)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_the_registries_spliced() {
-    Box::pin(radar("rads", false, false)).await;
+    Box::pin(radar("rads", RadarMode::Splice)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_no_proxy_setting_through_the_stub_dns() {
-    Box::pin(radar("radn", false, true)).await;
+    Box::pin(radar("radn", RadarMode::NoProxy)).await;
 }
 
 /// The variable that turns [`vm_host_second_process_probe`] from a no-op into the second

@@ -380,7 +380,7 @@ impl Store {
         limit: u32,
     ) -> Result<Vec<(i64, String)>, StoreError> {
         let (sql, args) = audit_query_sql(filter, cursor, limit);
-        let conn = lock(&self.conn);
+        let conn = self.audit_read();
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
             Ok((row.get(0)?, row.get(1)?))
@@ -445,7 +445,7 @@ impl Store {
     ///
     /// Fails if the database can't be read.
     pub fn audit_workspace_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, StoreError> {
-        let conn = lock(&self.conn);
+        let conn = self.audit_read();
         let mut stmt = conn.prepare_cached(
             "SELECT workspace_name FROM audit WHERE id = ?1 AND workspace_name IS NOT NULL",
         )?;
@@ -474,7 +474,7 @@ impl Store {
         limit: u32,
     ) -> Result<Vec<String>, StoreError> {
         let (sql, args) = audit_query_sql(filter, cursor, limit);
-        let conn = lock(&self.conn);
+        let conn = self.audit_read();
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| row.get(3))?;
         Ok(rows.collect::<Result<_, _>>()?)

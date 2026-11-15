@@ -8,6 +8,27 @@ fn linux_status_gives_the_rss_line_in_bytes() {
 }
 
 #[test]
+fn linux_status_gives_the_peak_line_in_bytes() {
+    let status = "Name:\tmsb\nVmHWM:\t  900 kB\nVmRSS:\t  123456 kB\n";
+    assert_eq!(parse_vm_hwm(status).unwrap(), 900 * 1024);
+    let err = parse_vm_hwm("Name:\tkthread\n").unwrap_err().to_string();
+    assert!(err.contains("no VmHWM line"), "{err}");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn the_peak_of_this_process_is_at_least_its_current_size_and_keeps_a_spike() {
+    let pid = std::process::id();
+    let before = peak_resident_bytes(pid).unwrap();
+    let spike = vec![1_u8; 64 * 1024 * 1024];
+    std::hint::black_box(&spike);
+    drop(spike);
+    let after = peak_resident_bytes(pid).unwrap();
+    assert!(after >= resident_bytes(pid).unwrap());
+    assert!(after >= before + 32 * 1024 * 1024, "{before} -> {after}");
+}
+
+#[test]
 fn a_status_without_rss_is_an_error_that_shows_the_text() {
     let err = parse_vm_rss("Name:\tkthread\n").unwrap_err().to_string();
     assert!(

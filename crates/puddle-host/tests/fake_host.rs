@@ -241,6 +241,8 @@ struct Guest {
     fail_import: AtomicBool,
     /// The listing script fails the way it does for a volume it cannot enter.
     fail_listing: AtomicBool,
+    /// The listing script finds no git in the image (it exits 4 and says so).
+    git_missing: AtomicBool,
     /// Checkouts the listing reports as unreadable, by directory and message.
     unreadable: Mutex<Vec<(String, String)>>,
     /// The next listing waits here before it answers, and says so in `listing_waits`.
@@ -518,6 +520,9 @@ impl Guest {
         if let Some(hold) = hold {
             self.listing_waits.store(true, Ordering::SeqCst);
             wait_for(&hold);
+        }
+        if self.git_missing.load(Ordering::SeqCst) {
+            return ExecOutput::new(4, "E\t.\tgit is not installed in the image\n", "");
         }
         if self.fail_listing.load(Ordering::SeqCst) {
             return ExecOutput::new(3, "E\t.\tcannot enter /workspaces/adds\n", "");
@@ -2999,12 +3004,21 @@ async fn window_gets(origin: &str) -> String {
 
 /// The raw answer to one request a window sends to the front at `origin`.
 async fn window_sends(origin: &str, method: &str, path: &str) -> String {
+    window_try_sends(origin, method, path).await.unwrap()
+}
+
+/// What [`window_gets`] gets, or `None` when nothing listens or the connection breaks.
+async fn window_try(origin: &str) -> Option<String> {
+    window_try_sends(origin, "GET", "/").await
+}
+
+async fn window_try_sends(origin: &str, method: &str, path: &str) -> Option<String> {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let authority = origin.strip_prefix("http://").unwrap();
     let port: u16 = authority.rsplit(':').next().unwrap().parse().unwrap();
     let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
-        .unwrap();
+        .ok()?;
     conn.write_all(
         format!(
             "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -3012,10 +3026,10 @@ async fn window_sends(origin: &str, method: &str, path: &str) -> String {
         .as_bytes(),
     )
     .await
-    .unwrap();
+    .ok()?;
     let mut answer = Vec::new();
-    conn.read_to_end(&mut answer).await.unwrap();
-    String::from_utf8_lossy(&answer).into_owned()
+    conn.read_to_end(&mut answer).await.ok()?;
+    Some(String::from_utf8_lossy(&answer).into_owned())
 }
 
 /// Waits until the front carries a request at `origin` to the editor, and returns the answer.
@@ -3799,13 +3813,15 @@ async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the
     let answer = served_at(&origin).await;
     assert!(!answer.contains("puddle-secret-half="), "{answer}");
     host.shutdown().await;
-    let port: u16 = origin.rsplit(':').next().unwrap().parse().unwrap();
-    // Not "the port refuses connections": the front's number can be another test's by now. The front
-    // answered this request with the editor's 200 above; a stranger on its old port does not.
-    assert_ne!(
-        puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/", ""),
-        Some(200),
-        "the front's listener is gone after shutdown"
+    // Not "the port refuses connections": the front's number can be another test's by now. The
+    // same request that got the editor's 200 above (same name in `Host`) no longer does: a
+    // stranger on the old port does not know the name.
+    let after = window_try(&origin).await;
+    assert!(
+        after
+            .as_deref()
+            .is_none_or(|a| !a.starts_with("HTTP/1.1 200")),
+        "the front's listener is gone after shutdown: {after:?}"
     );
 }
 
@@ -3996,6 +4012,16 @@ async fn shutdown_runs_the_steps_in_order_and_trims_then_stops_every_sandbox() {
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     create(&api, &mut events, "beta").await;
+    // The probe after the shutdown only proves a stop when it can see the running API.
+    assert_eq!(
+        puddle_test_kit::http_status(
+            ([127, 0, 0, 1], host.url().port().unwrap()).into(),
+            "/api/workspaces",
+            host.token()
+        ),
+        Some(200),
+        "the running API answers its own token"
+    );
 
     let down = host.shutdown().await;
     assert_eq!(down.steps, SHUTDOWN_STEPS);
@@ -6581,6 +6607,37 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     let folder = attach().await;
     assert_eq!(folder.path, "/workspaces/acme/api");
     assert!(!folder.is_workspace_file);
+    host.shutdown().await;
+}
+
+/// An image with no git can't describe checkouts; the editor still opens the volume root and the
+/// attach raises no problem about it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_on_an_image_without_git_opens_the_folder_and_raises_no_problem() {
+    let rig = Rig::named_ids();
+    rig.guest.git_missing.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+    let target = rig
+        .launcher
+        .targets
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(target.path, "/workspaces/acme");
+    assert!(!target.is_workspace_file);
+    assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
     host.shutdown().await;
 }
 

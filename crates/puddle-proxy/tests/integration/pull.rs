@@ -527,6 +527,14 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
     let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
     let addr = route.local_addr();
     let open = open_connection(&route, &good).await;
+    // The probe below only proves a close when it can see the running proxy refuse a wrong token.
+    let running = wrong_token_head(addr).await;
+    assert!(
+        running
+            .as_deref()
+            .is_some_and(|h| h.starts_with("HTTP/1.1 407 ")),
+        "the running proxy answers a wrong token with 407: {running:?}"
+    );
     route.shutdown().await;
     // Nothing below yields to the runtime, so a task that is only marked for abort is still alive.
     let mut buf = [0u8; 1];
@@ -536,11 +544,35 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
     );
     // Not "the port refuses connections": the proxy bound port 0, and another test's socket can hold
     // that number by now. The proxy answers a request with a wrong token 407; a stranger does not.
-    assert_ne!(
-        puddle_test_kit::http_status(addr, "/", "wrong"),
-        Some(407),
-        "the listener is closed"
+    let closed = wrong_token_head(addr).await;
+    assert!(
+        closed
+            .as_deref()
+            .is_none_or(|h| !h.starts_with("HTTP/1.1 407 ")),
+        "the listener is closed: {closed:?}"
     );
+}
+
+/// The head of the proxy's answer to a `CONNECT` with a wrong token, or `None` when nothing
+/// answers on `addr`.
+async fn wrong_token_head(addr: std::net::SocketAddr) -> Option<String> {
+    let wrong = BASE64.encode(format!("puddle:{}", "0".repeat(64)));
+    let mut s = tokio::time::timeout(Duration::from_secs(1), tokio::net::TcpStream::connect(addr))
+        .await
+        .ok()?
+        .ok()?;
+    s.write_all(connect("registry.test:1", Some(&format!("Basic {wrong}"))).as_bytes())
+        .await
+        .ok()?;
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match tokio::time::timeout(Duration::from_secs(1), s.read(&mut byte)).await {
+            Ok(Ok(1)) => head.push(byte[0]),
+            _ => break,
+        }
+    }
+    Some(String::from_utf8_lossy(&head).into_owned())
 }
 
 #[tokio::test]

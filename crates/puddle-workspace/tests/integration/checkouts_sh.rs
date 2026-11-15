@@ -11,6 +11,7 @@
 )]
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use puddle_compute::fake::{ExecContext, FakeRuntime, FakeSandbox};
 use puddle_compute::{ExecOutput, ExecRequest, SandboxSpec};
@@ -314,6 +315,56 @@ async fn odd_names_and_remotes_cannot_break_the_output() {
         let mut dirs: Vec<&str> = found.checkouts.iter().map(|c| c.dir.as_str()).collect();
         dirs.sort_unstable();
         assert_eq!(dirs, ["new?line", "ta?b?and?esc"], "{shell}");
+    }
+}
+
+/// An image with no git is its own error, not a listing that failed: the script has nothing to
+/// run `git` with, and says so on its own exit status.
+#[tokio::test]
+async fn an_image_without_git_is_reported_as_that() {
+    let tmp = tempfile::tempdir().unwrap();
+    let vol = tmp.path().join("vol");
+    std::fs::create_dir_all(vol.join("api/.git")).unwrap();
+    let empty_path = tmp.path().join("no-programs");
+    std::fs::create_dir_all(&empty_path).unwrap();
+    for shell in shells() {
+        let shell_path = String::from_utf8(
+            Command::new("sh")
+                .args(["-c", &format!("command -v {shell}")])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let (shell_path, empty_path, root) = (
+            shell_path.trim().to_owned(),
+            empty_path.clone(),
+            vol.clone(),
+        );
+        let g = sandbox_answering(move |r| {
+            (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH)).then(
+                || {
+                    let out = command(&shell_path)
+                        .args(["-c", CHECKOUTS_SH, "puddle-script"])
+                        .arg(&root)
+                        .env("PATH", &empty_path)
+                        .output()
+                        .unwrap();
+                    ExecOutput::new(out.status.code().unwrap_or(-1), out.stdout, out.stderr)
+                },
+            )
+        })
+        .await;
+        let err = g.w.list_checkouts(&g.sb, &id()).await.unwrap_err();
+        assert!(
+            matches!(err, WorkspaceError::GitMissing { .. }),
+            "{shell}: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("git is not installed in the image"),
+            "{shell}: {err}"
+        );
     }
 }
 

@@ -29,7 +29,7 @@
 //! * The tray, the close and minimize buttons, the badge and the operating-system notifications
 //!   run in Rust ([`desktop`]), driven by [`backend::Backend::events`] and the settings; the page
 //!   calls no Tauri API for any of them. A panic writes a crash file ([`crash`]), nothing is sent.
-// Not `forbid` on Windows: `accelerators` makes one WebView2 COM call.
+// Not `forbid` on Windows: `accelerators` and `webview_environment` make WebView2 COM calls.
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 
 #[cfg(windows)]
@@ -50,6 +50,8 @@ mod quit_shortcut;
 pub mod sandbox_window;
 pub mod shell;
 pub mod tray;
+#[cfg(windows)]
+mod webview_environment;
 pub mod window;
 
 pub use shell::{Options, ShellError, context, run, with_plugins};

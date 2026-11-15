@@ -840,8 +840,14 @@ async fn hostile_a_pasted_token_of_the_owners_is_refused_as_one_made_up() {
     let (ann, token) = (pair.ann.0, pair.token.as_str());
     let theirs_source = json!({"kind": "stored", "id": things.token, "host": "github.com"});
     let made_up = json!({"kind": "stored", "id": "tok-0000", "host": "github.com"});
-    let made_up_of_ann =
-        json!({"kind": "stored", "id": format!("u{}-tok-0000", pair.ann_id), "host": "github.com"});
+    let anns_own = make(
+        ann,
+        token,
+        "/api/credentials/stored",
+        &json!({"host": "github.com", "token": made_up_token("anns")}),
+    )
+    .await;
+    let anns_source = json!({"kind": "stored", "id": anns_own, "host": "github.com"});
     for path in ["/api/credentials/check", "/api/credentials/profile"] {
         let theirs = send(
             ann,
@@ -859,10 +865,17 @@ async fn hostile_a_pasted_token_of_the_owners_is_refused_as_one_made_up() {
             token,
             "POST",
             path,
-            Some(&json!({"source": made_up_of_ann})),
+            Some(&json!({"source": anns_source})),
         )
         .await;
-        assert_ne!(own.0, 422, "{path}: {}", own.1);
+        // Past the ownership gate: the check answers, and the profile route reaches the part of
+        // the build that is not there yet (503), where the owner's token stopped at 422.
+        let want = if path.ends_with("check") { 200 } else { 503 };
+        assert_eq!(
+            own.0, want,
+            "{path}: Ann's own token is let through: {}",
+            own.1
+        );
     }
     let (status, body) = send(
         ann,

@@ -12,6 +12,9 @@
 //! the guest has no SSH daemon of its own; another key is refused by the runtime's server; a host
 //! key a workspace had before it was rebuilt does not stop the next login; with the switch off
 //! the name does not resolve and the old endpoint says so.
+//!
+//! The same login on an Alpine image (musl, no `sudo`, no SSH daemon installed) reaches a shell as
+//! the session user: the server is the runtime's, so the image needs nothing for it.
 #![expect(
     clippy::unwrap_used,
     clippy::print_stdout,
@@ -26,10 +29,16 @@ use std::process::ExitCode;
 type Case = (&'static str, fn());
 
 #[cfg(any(unix, windows))]
-const CASES: &[Case] = &[(
-    "vm_desktop_attach_logs_in_with_the_hosts_key_and_nothing_else",
-    attach::logs_in_with_the_hosts_key_and_nothing_else,
-)];
+const CASES: &[Case] = &[
+    (
+        "vm_desktop_attach_logs_in_with_the_hosts_key_and_nothing_else",
+        attach::logs_in_with_the_hosts_key_and_nothing_else,
+    ),
+    (
+        "vm_desktop_attach_on_an_alpine_image_reaches_a_shell_as_the_session_user",
+        attach::on_an_alpine_image_reaches_a_shell_as_the_session_user,
+    ),
+];
 
 #[cfg(not(any(unix, windows)))]
 const CASES: &[Case] = &[];
@@ -163,17 +172,25 @@ mod attach {
     }
 
     pub(super) fn logs_in_with_the_hosts_key_and_nothing_else() {
-        // The story is one large future, and a Windows main thread has 1 MiB of stack where Linux
-        // gives 8: it runs on a thread of its own with room.
+        in_big_runtime(|| Box::pin(run()));
+    }
+
+    pub(super) fn on_an_alpine_image_reaches_a_shell_as_the_session_user() {
+        in_big_runtime(|| Box::pin(run_alpine()));
+    }
+
+    /// The story is one large future, and a Windows main thread has 1 MiB of stack where Linux
+    /// gives 8: it runs on a thread of its own with room.
+    fn in_big_runtime(story: fn() -> std::pin::Pin<Box<dyn Future<Output = ()>>>) {
         std::thread::Builder::new()
             .stack_size(64 << 20)
-            .spawn(|| {
+            .spawn(move || {
                 tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(4)
                     .enable_all()
                     .build()
                     .unwrap()
-                    .block_on(run());
+                    .block_on(story());
             })
             .unwrap()
             .join()
@@ -236,8 +253,31 @@ mod attach {
         }
     }
 
+    /// Alpine has no `sudo` and no SSH daemon: the login still lands as `agent` in its home, the
+    /// editor opens on the entry's host, and nothing listens on port 22 in the guest.
+    async fn run_alpine() {
+        let story = boot("dalp", Some("alpine:3")).await;
+        story.direct(true).await;
+        let login = ssh(&[
+            "-F",
+            &story.cfg,
+            &story.alias,
+            "id -un; echo \"$HOME\"; ! command -v sshd >/dev/null && echo no-sshd; echo from-the-guest",
+        ])
+        .await;
+        assert!(login.status.success(), "{}", text(&login));
+        let said = String::from_utf8_lossy(&login.stdout).into_owned();
+        assert_eq!(
+            said, "agent\n/home/agent\nno-sshd\nfrom-the-guest\n",
+            "{said}"
+        );
+        phase_editor_opens(&story).await;
+        phase_hostile_guest(&story).await;
+        story.host.shutdown().await;
+    }
+
     async fn run() {
-        let mut story = boot().await;
+        let mut story = boot("dattach", None).await;
         phase_off(&story).await;
         let first_endpoint = phase_on(&story).await;
         phase_editor_opens(&story).await;
@@ -250,7 +290,7 @@ mod attach {
         story.host.shutdown().await;
     }
 
-    async fn boot() -> Story {
+    async fn boot(tag: &str, image: Option<&str>) -> Story {
         let scratch = tempfile::tempdir().unwrap();
         let seen = scratch.path().join("code-args");
         let bin = stub_code(scratch.path(), &seen);
@@ -273,12 +313,12 @@ mod attach {
             settings,
             root,
             ..
-        } = start_vm_host_config("dattach", options, move |config| {
+        } = start_vm_host_config(tag, options, move |config| {
             config.ssh.bridge_program = Some(exe);
             config.ssh.user_config = Some(uc);
         })
         .await;
-        let name = format!("{}-dattach", settings.prefix.as_str());
+        let name = format!("{}-{tag}", settings.prefix.as_str());
         let workspace = WorkspaceId::new(&name).unwrap();
         let sandbox = workspace.clone();
         let api = Api::new(host.url(), host.token());
@@ -287,7 +327,11 @@ mod attach {
         let reply = api
             .post(
                 "/api/workspaces",
-                &json!({"name": name, "repositories": [], "memory_mib": 1024}).to_string(),
+                &match image {
+                    Some(image) => json!({"name": name, "repositories": [], "image": image, "memory_mib": 1024}),
+                    None => json!({"name": name, "repositories": [], "memory_mib": 1024}),
+                }
+                .to_string(),
             )
             .await;
         assert_eq!(reply.status, 202, "{}", reply.body);
@@ -387,6 +431,7 @@ mod attach {
             .unwrap()
             .replace("\r\n", "\n");
         assert!(
+            // The folder, on an image with git and on one without: the volume holds no checkout.
             args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
                 && args.contains(&format!("+{}/workspaces/", s.alias)),
             "{args}"

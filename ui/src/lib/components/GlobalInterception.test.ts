@@ -92,6 +92,8 @@ describe("the global interception setting", () => {
     api.down = true;
     render(GlobalInterception);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Which hosts to decrypt")).toBeNull();
+    expect(screen.queryByLabelText("Learn from rejections")).toBeNull();
   });
 
   it("settles the one-time notice when a mode is chosen", async () => {

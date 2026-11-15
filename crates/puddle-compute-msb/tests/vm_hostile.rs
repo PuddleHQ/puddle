@@ -183,7 +183,7 @@ async fn vm_hostile_hg44_a_guest_written_root_disk_journal_changes_nothing_at_th
 /// `virtio_mmio.device=` entries), then does what guest root would do to reach a device's
 /// registers past the guest kernel: open `/dev/mem` read-write (or a node it makes for char 1:1
 /// when the kernel has none) and map each window read-write. Prints `slot <addr>` per window,
-/// `devmem present|absent`, `node <path> open|refused: <why>` and, per window it tried,
+/// `devmem present|absent`, `node <path> open|refused: <why>` (or `mknod <path> failed` when no node could be made) and, per window it tried,
 /// `<addr> mapped <magic>` or `<addr> refused: <errno>`.
 const DEVMEM_PROBE: &str = r#"
 use strict; use warnings;
@@ -202,7 +202,7 @@ if (-e $node) { print "devmem present\n" } else {
   print "devmem absent\n";
   $node = "/dev/puddle-probe-mem";
   unlink $node;
-  system("mknod", $node, "c", "1", "1") == 0 or do { print "node $node refused: mknod failed\n"; exit 0 };
+  system("mknod", $node, "c", "1", "1") == 0 or do { print "mknod $node failed: no node made, nothing tried\n"; exit 0 };
   $made = 1;
 }
 my $fd;
@@ -255,11 +255,13 @@ async fn vm_hostile_hg54_guest_root_cannot_map_device_registers_through_physical
         report.lines().any(|l| l == "devmem absent"),
         "the guest has /dev/mem: {report}"
     );
+    // A node that could not be made is not a node that was refused: only the open's own refusal
+    // counts, so a guest without `mknod` fails here instead of passing.
     assert!(
         report
             .lines()
             .any(|l| l.starts_with("node ") && l.contains(" refused: ")),
-        "root opened a physical-memory node: {report}"
+        "root made no physical-memory node that was then refused: {report}"
     );
     assert_eq!(
         mapped, 0,

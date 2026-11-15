@@ -563,10 +563,12 @@ fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
 
 /// [`init_logging`] with the two variables as the process has them.
 fn init_logging_from_env() {
-    init_logging(
-        std::env::var(PUDDLE_LOG_VAR).ok().as_deref(),
-        std::env::var(RUST_LOG_VAR).ok().as_deref(),
-    );
+    init_logging_from(|name| std::env::var(name).ok());
+}
+
+/// [`init_logging`] with the two variables read through `var`.
+fn init_logging_from(var: impl Fn(&str) -> Option<String>) {
+    init_logging(var(PUDDLE_LOG_VAR).as_deref(), var(RUST_LOG_VAR).as_deref());
 }
 
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings

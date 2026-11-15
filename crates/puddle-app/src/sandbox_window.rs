@@ -48,6 +48,8 @@ use tauri::{
 use url::Url;
 
 use crate::navigation::{Navigation, OriginPolicy};
+#[cfg(windows)]
+use crate::webview_environment;
 use crate::window::{OpenExternal, Refused, navigation_handler};
 
 pub use signin::SessionCookie;
@@ -555,6 +557,8 @@ impl SandboxWindows {
                 hooks.refused.clone(),
             ))
             .on_permission_request(permission_handler(settings));
+        #[cfg(windows)]
+        let first_window = features.is_none();
         builder = match features {
             // A further window shares the opener's webview environment (and with it the data
             // folder); a second folder for it would not be allowed.
@@ -562,8 +566,20 @@ impl SandboxWindows {
             None => builder.data_directory(target.data_folder.clone()),
         };
         #[cfg(windows)]
-        if let Some(port) = target.debug_port {
-            builder = builder.additional_browser_args(&debug_arguments(port));
+        if first_window {
+            let debug_arguments = webview_environment::arguments(target.debug_port);
+            let arguments = debug_arguments
+                .as_deref()
+                .unwrap_or(webview_environment::DEFAULT_ARGUMENTS);
+            if let Some(arguments) = &debug_arguments {
+                builder = builder.additional_browser_args(arguments);
+            }
+            // Our own environment turns the crash-report upload off.
+            if let Some(environment) =
+                webview_environment::create(app, Some(&target.data_folder), arguments)
+            {
+                builder = builder.with_environment(environment);
+            }
         }
         #[cfg(not(windows))]
         let _ = target.debug_port;
@@ -793,15 +809,6 @@ fn session_cookie(target: &Target, cookie: &SessionCookie) -> Cookie<'static> {
         // network path reaches a loopback origin.
         .same_site(tauri::webview::cookie::SameSite::Lax)
         .build()
-}
-
-/// WebView2's arguments with the DevTools Protocol open on `port`; the first two are wry's own
-/// defaults (an argument string replaces them).
-#[cfg(windows)]
-fn debug_arguments(port: u16) -> String {
-    format!(
-        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port} --remote-allow-origins=*"
-    )
 }
 
 #[cfg(test)]

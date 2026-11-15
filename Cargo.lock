@@ -6383,6 +6383,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "proptest",
  "puddle-agent-proto",
  "puddle-fs",
  "puddle-netpolicy",

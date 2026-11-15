@@ -944,6 +944,146 @@
         }
       }
     },
+    "/api/audit/retention": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "How big the activity log is, how fast it grows, and for how many days it is kept. Only the\nowner sees it: it covers every user's records.",
+        "operationId": "get_retention",
+        "responses": {
+          "200": {
+            "description": "the log's size and growth, and its days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSize"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Changes how many days the activity log is kept. Records older than that are deleted within the\nhour and cannot be brought back; nothing is deleted for the log's size.",
+        "operationId": "put_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditRetentionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the log's size and days now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSize"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the days are not 1 to 3650",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/invite": {
       "post": {
         "tags": [
@@ -13689,6 +13829,22 @@
           "workspace"
         ]
       },
+      "AuditRetentionRequest": {
+        "type": "object",
+        "description": "How many days to keep the activity log.",
+        "required": [
+          "days"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 3650.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "AuditRule": {
         "type": "object",
         "description": "A rule as an audit record shows it.",
@@ -13825,6 +13981,94 @@
           "name": {
             "type": "string",
             "description": "Name."
+          }
+        }
+      },
+      "AuditSize": {
+        "type": "object",
+        "description": "What the activity log holds and how fast it grows, and for how many days it is kept. Records\nolder than the days are deleted; nothing is deleted for size, so the size is for the owner to\nwatch.",
+        "required": [
+          "retention_days",
+          "records",
+          "bytes",
+          "oldest_ts",
+          "records_last_day",
+          "bytes_last_day",
+          "records_last_week",
+          "bytes_last_week",
+          "warn_bytes",
+          "file_bytes",
+          "free_bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of their lines.",
+            "minimum": 0
+          },
+          "bytes_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written in the last 24 hours.",
+            "minimum": 0
+          },
+          "bytes_last_week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written in the last 7 days.",
+            "minimum": 0
+          },
+          "file_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the database file (the log and everything else Puddle keeps).",
+            "minimum": 0
+          },
+          "free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The part of the file that is free space, given back to the disk in steps.",
+            "minimum": 0
+          },
+          "oldest_ts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the oldest record was written, epoch ms; `null` when there are none.",
+            "minimum": 0
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records held.",
+            "minimum": 0
+          },
+          "records_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records written in the last 24 hours.",
+            "minimum": 0
+          },
+          "records_last_week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records written in the last 7 days.",
+            "minimum": 0
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Days the log is kept, 1 to 3650. Built in: 90.",
+            "minimum": 0
+          },
+          "warn_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the lines above which Puddle shows a warning.",
+            "minimum": 0
           }
         }
       },

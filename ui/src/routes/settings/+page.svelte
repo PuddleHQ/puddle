@@ -763,6 +763,7 @@
           <input
             id="set-max-cpus"
             type="number"
+            class="narrow"
             min="1"
             max="255"
             step="1"
@@ -1473,6 +1474,7 @@
     flex: none;
   }
   select,
+  input[type="number"],
   input[type="text"] {
     min-height: var(--control-size);
     max-width: 18rem;

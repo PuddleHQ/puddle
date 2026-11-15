@@ -302,7 +302,9 @@ fn a_refresh_token_value_still_growing_is_kept_whole_up_to_the_bound_and_dropped
     let first = format!("{start}{}", "a".repeat(MAX_RUN));
     let _ = scanner.feed(first.as_bytes(), false, &NO_ONE);
     assert_eq!(scanner.carry.len(), first.len());
-    assert!(scanner.carry.len() > MAX_RUN && scanner.carry.len() <= MAX_KEPT);
+    assert!(scanner.carry.len() > MAX_RUN);
+    // That longest start is exactly the most the scanner keeps, so the bound is no looser.
+    assert_eq!(scanner.carry.len(), MAX_KEPT);
     // One more byte makes the value a run no token is as long as: it is read as set and not kept.
     let _ = scanner.feed(b"a", false, &NO_ONE);
     assert!(scanner.carry.len() <= MAX_RUN, "{}", scanner.carry.len());

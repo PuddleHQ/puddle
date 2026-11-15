@@ -494,7 +494,7 @@
             <p class="hint" id={rowId(row, "url-hint")}>
               {row.source === "folder"
                 ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
-                : "SSH addresses aren't supported yet: use the HTTPS URL."}
+                : "An HTTPS URL, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS."}
             </p>
           {/if}
         </div>

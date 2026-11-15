@@ -326,7 +326,7 @@ describe("actions", () => {
     api.refuse.set("POST /api/workspaces", {
       status: 422,
       message:
-        "SSH remotes are not supported yet; use the repository's HTTPS URL instead",
+        "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps; for another host, use the repository's HTTPS URL",
     });
     const result = await store.create({
       name: "x",
@@ -638,7 +638,10 @@ describe("listening", () => {
 describe("fieldOf", () => {
   it.each([
     ["use an https:// URL for the repository", "repo_url"],
-    ["SSH remotes are not supported yet", "repo_url"],
+    [
+      "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps",
+      "repo_url",
+    ],
     ["bad image reference", "image"],
     ["memory must be at least 256 MiB", "memory_mib"],
     ["this name can't be a workspace: x", "name"],

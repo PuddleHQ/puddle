@@ -409,6 +409,20 @@ async fn a_pull_proxy_that_is_off_is_never_reported_as_using_the_upstream() {
 }
 
 #[tokio::test]
+async fn a_pull_proxy_that_leaves_directly_is_active_without_the_upstream() {
+    let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    health.set_pull_proxy(PullProxyState::Direct);
+    let api = start_with_network(health).await;
+    let body = api.get("/api/network-health").await.json();
+    assert_eq!(
+        body["pull_proxy"],
+        json!({"active": true, "via_upstream": false})
+    );
+}
+
+#[tokio::test]
 async fn a_network_change_is_an_event_and_the_next_report_shows_it() {
     let os = FakeOs::new(ProxyConfig::default());
     let discovery = Discovery::new(os, Config::default());

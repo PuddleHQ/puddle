@@ -204,7 +204,7 @@ One background task, every 60 s *(default)* and at startup. (R-20 is retired: se
   rule lapsed opens a new row (R-11).
 - **R-21** on workspace deletion (not stop), deletes that workspace's rules (`rule_deleted`, reason
   `workspace_deleted`) and expires its open rows, in the same transaction as the deletion.
-- **R-22** enforces the audit cap (R-26).
+- **R-22** deletes audit records older than the retention (R-26) and gives the file's free space back.
 
 Sweeper work never holds a lock that a decision waits on for more than one short transaction.
 
@@ -288,9 +288,13 @@ readable as JSONL (one record per line).
   that serialises it with canary values in every secret-bearing input and asserts the canary is
   absent.
 - **R-26 Size caps.** One line is at most 4 KiB: `path` is cut to 1 KiB *(default)* with
-  `path_truncated: true`, and any other oversize string field is cut the same way. Total audit is
-  capped at 256 MiB *(default)*; the sweeper deletes the oldest records first and writes one
-  `audit_trimmed` record per trim. Per workspace, `connection` records are limited to 200 per second
+  `path_truncated: true`, and any other oversize string field is cut the same way. The audit is kept
+  for a number of days, 90 *(default)*, 1 to 3650, set by the owner: the sweeper deletes the records
+  older than that (checked at most once an hour) and writes one `audit_trimmed` record per
+  deletion. Nothing is deleted for size and there is no cap per workspace, because a workspace
+  that floods its own log could then push out its history. The size only warns: past 2 GiB
+  *(default)* a problem is shown, and the admin sees the audit's size and growth. The database
+  file gives the space of deleted records back in short steps. Per workspace, `connection` records are limited to 200 per second
   *(default)*; the excess is counted and written as one `connection` record with
   `reason: suppressed` and a `count` per second. Puddle's own connections (`origin: puddle`) share one limit of the same size.
   Per workspace, the `connection` records written while a request waited (decision `pending`) are also

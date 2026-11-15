@@ -27,6 +27,9 @@
 #     files are there byte for byte, read through the newer runtime;
 #   - the workspace is deleted and the newer build uninstalled.
 # The steps before the upgrade drive the older build's API, so they use only the calls both have.
+#   - with -UpgradeMsi, an upgrade while the program runs, and again with a workspace running, is
+#     refused (the old install byte for byte as it was, nothing queued for a restart, the message
+#     in the log); once Puddle is quit the upgrade goes through.
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
 #        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>]
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
@@ -119,6 +122,53 @@ function Invoke-Msiexec([string[]]$Arguments, [string]$LogName) {
     Step "msiexec $($Arguments -join ' ')  (log: $log)"
     $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList $all -Wait -PassThru
     Expect ($p.ExitCode -eq 0) "msiexec $($Arguments -join ' ') exited with $($p.ExitCode); see $log"
+}
+
+# Runs msiexec on a package that must refuse: returns the exit code and the log's text. A run
+# that succeeds is the failure.
+function Invoke-MsiexecRefused([string[]]$Arguments, [string]$LogName) {
+    $log = Join-Path $LogDir $LogName
+    $all = $Arguments + @('/qn', '/norestart', '/l*v', "`"$log`"")
+    Step "msiexec $($Arguments -join ' ') while Puddle runs, expecting a refusal  (log: $log)"
+    $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList $all -Wait -PassThru
+    $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
+    [pscustomobject]@{ Code = $p.ExitCode; Log = $text }
+}
+
+# Path, size and SHA-256 of every file under the install folder, sorted: two listings are equal
+# when the folder is byte for byte the same.
+function Get-TreeDigest {
+    @(Get-ChildItem -LiteralPath $InstallDir -Recurse -Force -File | Sort-Object FullName | ForEach-Object {
+        "$($_.FullName.Substring($InstallDir.Length)) $($_.Length) $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+    })
+}
+
+# Names, as 'path' lines, of any install-folder file queued for replacement at the next restart.
+function Get-PendingReplacements {
+    $session = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+    $queued = (Get-ItemProperty -LiteralPath $session -ErrorAction SilentlyContinue).PendingFileRenameOperations
+    @($queued | Where-Object { $_ -and $_.IndexOf($InstallDir, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+}
+
+# The refusal: the newer package changes nothing while the program or a workspace runs. $Why
+# names the situation for the messages. The caller keeps the program (and workspace) running.
+function Assert-UpgradeRefused([string]$UpgradeMsi, [string]$Why, [string]$LogName, [string]$FirstVersion) {
+    $digest = Get-TreeDigest
+    $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object Id | Sort-Object)
+    $refused = Invoke-MsiexecRefused @('/i', "`"$UpgradeMsi`"") $LogName
+    Expect ($refused.Code -ne 0) "the upgrade went ahead $Why; it must refuse"
+    Expect ($refused.Log.Contains('Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again.')) "the refusal $Why does not say to quit Puddle; see $(Join-Path $LogDir $LogName)"
+    $same = Get-TreeDigest
+    Expect (($same -join "`n") -eq ($digest -join "`n")) "the refused upgrade $Why changed the install folder"
+    $entries = @(Get-UninstallEntries)
+    Expect ($entries.Count -eq 1 -and $entries[0].Version -eq $FirstVersion) "the refused upgrade $Why changed the installed version: $(($entries | ForEach-Object Version) -join ', ')"
+    $still = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object Id | Sort-Object)
+    Expect (($still -join ',') -eq ($running -join ',')) "the refused upgrade $Why ended a Puddle process (before: $($running -join ','), after: $($still -join ','))"
+    $pending = @(Get-PendingReplacements)
+    Expect ($pending.Count -eq 0) "the refused upgrade $Why queued files for the next restart: $($pending -join '; ')"
+    Write-Host "refused $Why (exit $($refused.Code)); the install folder is byte for byte as it was, nothing queued for a restart"
 }
 
 function Stop-Installed {
@@ -537,6 +587,24 @@ if ($SelfTest) {
     Check 'a newer package version passes' (-not (Throws { Assert-NewerVersion '0.0.0' '0.0.1' } '.'))
     Check 'the same version is not an upgrade' (Throws { Assert-NewerVersion '0.2.0' '0.2.0' } 'not newer')
     Check 'versions compare as numbers' (Throws { Assert-NewerVersion '0.10.0' '0.9.1' } 'not newer')
+    # The install-folder digest: equal for the same bytes, different when one byte or one file changes.
+    $savedInstallDir = $InstallDir
+    $InstallDir = Join-Path ([IO.Path]::GetTempPath()) "msi-digest-$([guid]::NewGuid())"
+    try {
+        New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir 'runtime') | Out-Null
+        Set-Content -LiteralPath (Join-Path $InstallDir 'a.exe') -Value 'one'
+        Set-Content -LiteralPath (Join-Path $InstallDir 'runtime\b.dll') -Value 'two'
+        $d1 = (Get-TreeDigest) -join "`n"
+        Check 'the digest is stable' ($d1 -eq ((Get-TreeDigest) -join "`n"))
+        Set-Content -LiteralPath (Join-Path $InstallDir 'runtime\b.dll') -Value 'twp'
+        Check 'the digest sees one changed byte' ($d1 -ne ((Get-TreeDigest) -join "`n"))
+        Set-Content -LiteralPath (Join-Path $InstallDir 'runtime\b.dll') -Value 'two'
+        Set-Content -LiteralPath (Join-Path $InstallDir 'c.txt') -Value 'x'
+        Check 'the digest sees an added file' ($d1 -ne ((Get-TreeDigest) -join "`n"))
+    } finally {
+        Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        $InstallDir = $savedInstallDir
+    }
     if ($failures -gt 0) { Fail "$failures self-test checks failed" }
     Write-Host 'self-test ok'
     return
@@ -611,6 +679,25 @@ try {
 
 $current = $Msi
 if ($UpgradeMsi) {
+    Step 'the upgrade refuses while the program, or a workspace, runs; then it goes through once Puddle is quit'
+    $conn = Start-Installed
+    try {
+        Assert-UpgradeRefused $UpgradeMsi 'with the program running' 'msi-upgrade-refused-app.log' $first.Version
+        if ($policy -eq 'run') {
+            $name = 'refusal-test'
+            $wsId = New-Workspace $conn $name
+            Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+            Expect (@(Get-RuntimeProcesses).Count -gt 0) 'no workspace runtime process runs, so the refusal below would prove nothing'
+            Assert-UpgradeRefused $UpgradeMsi 'with a workspace running' 'msi-upgrade-refused-workspace.log' $first.Version
+            Expect ($null -ne (Get-WorkspaceNow $conn $wsId) -and (Get-WorkspaceNow $conn $wsId).status -eq 'running') 'the refused upgrade did not leave the workspace running'
+            Stop-Workspace $conn $wsId $name
+            Remove-Workspace $conn $wsId $name
+        }
+    } finally {
+        # Quitting is the user's act; the test's stand-in for it ends what runs from the install folder.
+        Stop-Installed
+    }
+
     Step 'upgrade keeps what the first run wrote'
     $marker = Join-Path $DataDir 'upgrade-marker.txt'
     Set-Content -LiteralPath $marker -Value ([guid]::NewGuid().ToString())

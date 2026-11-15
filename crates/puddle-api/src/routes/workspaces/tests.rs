@@ -111,7 +111,7 @@ fn a_create_claims_the_workspace_for_its_user() {
         .claim(&id("anns"), UserId::from_stored(ann.get() + 1))
         .unwrap_err();
     assert!(matches!(taken, WorkspaceError::Conflict(_)), "{taken:?}");
-    let taken = StoreGitSetup::new(store.clone())
+    let taken = StoreGitSetup::new(store)
         .claim(&id("owners"), ann)
         .unwrap_err();
     assert!(matches!(taken, WorkspaceError::Conflict(_)), "{taken:?}");

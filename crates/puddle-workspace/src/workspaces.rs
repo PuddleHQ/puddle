@@ -1045,7 +1045,9 @@ impl Workspaces {
         let removed = rt.remove(name).await;
         let cleanup = stopped
             .map_err(|e| WorkspaceError::runtime("stop the import sandbox", id, e))
-            .and(removed.map_err(|e| WorkspaceError::runtime("remove the import sandbox", id, e)));
+            .and_then(|()| {
+                removed.map_err(|e| WorkspaceError::runtime("remove the import sandbox", id, e))
+            });
         match (work, cleanup) {
             (Ok(failed), Ok(())) => Ok(failed),
             (Ok(_), Err(e)) | (Err(e), Ok(())) => Err(e),
@@ -1185,10 +1187,10 @@ impl Workspaces {
         let removed = rt.remove(&name).await;
         let cleanup = stopped
             .map_err(|e| WorkspaceError::runtime("stop the maintenance sandbox", id, e))
-            .and(
+            .and_then(|()| {
                 removed
-                    .map_err(|e| WorkspaceError::runtime("remove the maintenance sandbox", id, e)),
-            );
+                    .map_err(|e| WorkspaceError::runtime("remove the maintenance sandbox", id, e))
+            });
         match (output, cleanup) {
             (Ok(output), Ok(())) => Ok(output),
             (Ok(_), Err(e)) => Err(e),
@@ -1436,11 +1438,13 @@ impl Attachment<'_> {
             match rt.remove_volume(&self.reservation.id.volume_name()).await {
                 Ok(()) | Err(ComputeError::VolumeNotFound { .. }) => {}
                 Err(e) => {
-                    result = result.and(Err(WorkspaceError::runtime(
-                        "remove the new volume",
-                        &self.reservation.id,
-                        e,
-                    )));
+                    result = result.and_then(|()| {
+                        Err(WorkspaceError::runtime(
+                            "remove the new volume",
+                            &self.reservation.id,
+                            e,
+                        ))
+                    });
                 }
             }
         }

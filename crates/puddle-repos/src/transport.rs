@@ -202,7 +202,7 @@ impl Api for HostApi {
             let (host, path) = (request.host.clone(), request.path.clone());
             let result = tokio::time::timeout(self.timeout, self.exchange(request))
                 .await
-                .unwrap_or(Err(TransportError::Timeout(self.timeout.as_secs().max(1))));
+                .unwrap_or_else(|_| Err(TransportError::Timeout(self.timeout.as_secs().max(1))));
             self.record(&host, &path, &result);
             result
         })

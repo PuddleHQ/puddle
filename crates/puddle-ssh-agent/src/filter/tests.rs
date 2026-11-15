@@ -131,10 +131,7 @@ fn a_bound_session_lists_the_allowed_keys_and_signs_its_own_login() {
         filter.answer(&sign_request(&w.user.blob(), &data, 4), &w.fake),
         (request::signature(b"SIGNATURE"), signed(&w.user))
     );
-    assert_eq!(
-        *w.fake.signed.borrow(),
-        vec![(w.user.blob(), data.clone(), 4)]
-    );
+    assert_eq!(*w.fake.signed.borrow(), vec![(w.user.blob(), data, 4)]);
     let hostbound = login(&SESSION, &w.user.blob(), Some(&w.host.blob()));
     let (_, outcome) = filter.answer(&sign_request(&w.user.blob(), &hostbound, 0), &w.fake);
     assert_eq!(outcome, signed(&w.user));

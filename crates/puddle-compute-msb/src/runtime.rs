@@ -129,9 +129,12 @@ impl MsbRuntime {
     /// database can't be opened.
     pub async fn open(config: MsbConfig) -> Result<Self, ComputeError> {
         for dir in [&config.home, &config.guest_share] {
-            std::fs::create_dir_all(dir).map_err(|e| runtime("open", &e))?;
+            tokio::fs::create_dir_all(dir)
+                .await
+                .map_err(|e| runtime("open", &e))?;
         }
-        std::fs::write(config.config_path(), config.config_json())
+        tokio::fs::write(config.config_path(), config.config_json())
+            .await
             .map_err(|e| runtime("open", &e))?;
         // The runtime pair and home are arguments and the environment is ignored, so a user's own
         // `MSB_*` variables never reach msb and Puddle never edits its own environment.

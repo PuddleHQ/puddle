@@ -27,7 +27,7 @@ fn a_problem_is_listed_until_it_is_cleared_and_each_change_is_announced_once() {
 fn clearing_by_prefix_ends_only_the_matching_problems() {
     let (_, problems) = problems();
     let box_name = WorkspaceId::new("box").unwrap();
-    problems.raise(Problem::new("git-locks:box", "a", "b").about(box_name.clone()));
+    problems.raise(Problem::new("git-locks:box", "a", "b").about(box_name));
     problems.raise(Problem::new("git-locks:other", "a", "b"));
     problems.clear_prefix("git-locks:box");
     let keys: Vec<_> = problems.list().into_iter().map(|p| p.key).collect();

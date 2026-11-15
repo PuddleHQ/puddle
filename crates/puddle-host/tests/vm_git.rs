@@ -88,7 +88,7 @@ fn owned_stored(host: &str, owner: &str, token: &str, vm: &VmHost, id: &str) -> 
     let host = HostName::new(host).unwrap();
     CredentialBinding::new(
         &host,
-        binding.source.clone(),
+        binding.source,
         Coverage::new(
             BTreeSet::from([puddle_store::Owner::new(owner).unwrap()]),
             false,

@@ -391,7 +391,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
     let rule = store::Rule {
         id: RuleId(3),
         user: store::UserId::OWNER,
-        scope: store::Scope::Workspace(workspace.clone()),
+        scope: store::Scope::Workspace(workspace),
         pattern: store::Pattern::parse("*.example.com").unwrap(),
         effect: store::Effect::Deny,
         expires_at: None,

@@ -86,7 +86,7 @@ fn requests_carry_an_optional_protocol_hint() {
     let host = Host::parse_normalised("example.com").unwrap();
     let plain = EgressRequest::new(workspace, host, 443);
     assert_eq!(plain.protocol, None);
-    let ssh = plain.clone().with_protocol(ProtocolHint::Ssh);
+    let ssh = plain.with_protocol(ProtocolHint::Ssh);
     assert_eq!(ssh.protocol, Some(ProtocolHint::Ssh));
     assert_eq!(
         (ssh.port, ssh.host.to_string()),

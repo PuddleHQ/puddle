@@ -123,7 +123,7 @@ impl Pki {
         }
         let key = rcgen::KeyPair::generate().unwrap();
         let cert = match flaw {
-            Flaw::UnknownRoot => Pki::new().sign(&params, &key),
+            Flaw::UnknownRoot => Self::new().sign(&params, &key),
             Flaw::SelfSigned => params.self_signed(&key).unwrap(),
             _ => self.sign(&params, &key),
         };

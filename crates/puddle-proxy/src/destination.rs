@@ -75,7 +75,7 @@ impl AddressCheck for NetPolicy {
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
-        NetPolicy::check_target(self, workspace, target, port)
+        Self::check_target(self, workspace, target, port)
     }
 
     fn check(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
@@ -92,11 +92,11 @@ impl AddressCheck for NetPolicy {
     }
 
     fn company_signal(&self, host: &Host, addr: SocketAddr) -> Option<CompanySignal> {
-        NetPolicy::company_signal(self, Some(host), addr)
+        Self::company_signal(self, Some(host), addr)
     }
 
     fn pki_address(&self, host: &Host, addr: SocketAddr) -> bool {
-        NetPolicy::pki_address(self, Some(host), addr)
+        Self::pki_address(self, Some(host), addr)
     }
 }
 

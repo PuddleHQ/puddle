@@ -25,11 +25,11 @@ pub struct CpuCount(u8);
 
 impl CpuCount {
     /// Smallest accepted count: one vCPU.
-    pub const MIN: CpuCount = CpuCount(1);
+    pub const MIN: Self = Self(1);
     /// Largest accepted count.
-    pub const MAX: CpuCount = CpuCount(32);
+    pub const MAX: Self = Self(32);
     /// The default for every sandbox: one vCPU, what msb boots without a count.
-    pub const DEFAULT: CpuCount = CpuCount(1);
+    pub const DEFAULT: Self = Self(1);
 
     /// Checks `count` and wraps it.
     ///
@@ -75,8 +75,8 @@ impl TryFrom<u32> for CpuCount {
 }
 
 impl From<CpuCount> for u32 {
-    fn from(c: CpuCount) -> u32 {
-        u32::from(c.0)
+    fn from(c: CpuCount) -> Self {
+        Self::from(c.0)
     }
 }
 

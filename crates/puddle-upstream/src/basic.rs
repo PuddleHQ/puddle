@@ -158,10 +158,11 @@ impl ProxyAuth for BasicAuth {
             .or(looked_up.as_ref())
             .or(self.default.as_ref());
         Ok(credentials.map(|credentials| {
-            Box::new(BasicSession {
+            let session: Box<dyn AuthSession> = Box::new(BasicSession {
                 header: credentials.header(),
                 sent: false,
-            }) as Box<dyn AuthSession>
+            });
+            session
         }))
     }
 }

@@ -620,7 +620,8 @@ impl Logins {
 
     /// Stops swapping the stand-ins of `slot`, its current one and the earlier ones.
     fn unregister(&self, profile: &Profile, slot: Slot) {
-        if let Some(stand_in) = self.slots().remove(&(profile.id, slot)) {
+        let current = self.slots().remove(&(profile.id, slot));
+        if let Some(stand_in) = current {
             self.inner.registry.remove(&stand_in);
         }
         let earlier = self

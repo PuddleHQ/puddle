@@ -65,8 +65,8 @@ async fn no_secret_reaches_logs_errors_or_debug_output() {
         }
     }
     impl MakeWriter<'_> for Capture {
-        type Writer = Capture;
-        fn make_writer(&self) -> Capture {
+        type Writer = Self;
+        fn make_writer(&self) -> Self {
             self.clone()
         }
     }

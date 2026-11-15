@@ -287,3 +287,93 @@ fn destination_under_a_file_cannot_be_created() {
     let err = backup(&paths, &blocker.join("out")).unwrap_err();
     assert!(matches!(err, BackupError::Io { .. }), "{err}");
 }
+
+/// Every entry of an archive as (path, bytes), read the way a restore would.
+fn entries(archive: BackupArchive) -> Vec<(String, Vec<u8>)> {
+    use std::io::Read as _;
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive.file));
+    tar.entries()
+        .unwrap()
+        .map(|entry| {
+            let mut entry = entry.unwrap();
+            assert!(entry.header().entry_type().is_file(), "only files");
+            assert_eq!(entry.header().uid().unwrap(), 0, "no owner");
+            let name = entry.path().unwrap().to_string_lossy().into_owned();
+            let mut body = Vec::new();
+            entry.read_to_end(&mut body).unwrap();
+            (name, body)
+        })
+        .collect()
+}
+
+#[test]
+fn the_archive_holds_the_three_parts_and_nothing_machine_bound() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    let live = open(&paths.store());
+    add(&live, 0);
+    let archive = backup_archive(&paths).unwrap();
+    assert!(archive.size > 0);
+    assert_eq!(archive.file.metadata().unwrap().len(), archive.size);
+    assert_eq!(archive.report.settings_files, 2);
+    let schema_version = archive.report.schema_version;
+
+    let found = entries(archive);
+    let names: Vec<_> = found.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "puddle.db",
+            "settings/global.json",
+            "settings/workspaces/a.json",
+            "workspaces.json"
+        ]
+    );
+    let canary = found
+        .iter()
+        .filter(|(_, body)| String::from_utf8_lossy(body).contains(CANARY))
+        .count();
+    assert_eq!(canary, 0, "no machine-bound file reaches the archive");
+    assert_eq!(found[3].1, fs::read(paths.workspace_book()).unwrap());
+
+    // The packed database opens as the live one: same rules, and a schema this Puddle knows.
+    let unpacked = tempfile::tempdir().unwrap();
+    let db = unpacked.path().join(BACKUP_DATABASE);
+    fs::write(&db, &found[0].1).unwrap();
+    let restored = open(&db);
+    assert_eq!(
+        restored.rules_every_user(&puddle_store::testing::all_users()),
+        live.rules_every_user(&puddle_store::testing::all_users())
+    );
+    assert!(schema_version > 0);
+}
+
+#[test]
+fn the_archive_of_a_folder_without_a_database_is_refused_and_leaves_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = HostPaths::new(root.path().join("empty"));
+    let err = backup_archive(&paths).unwrap_err();
+    assert!(matches!(err, BackupError::NoDatabase(_)), "{err}");
+}
+
+#[tokio::test]
+async fn the_api_service_streams_the_archive_and_names_a_missing_database() {
+    use puddle_api::BackupService as _;
+    use tokio::io::AsyncReadExt as _;
+
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    let live = open(&paths.store());
+    add(&live, 0);
+    let service = DataFolderBackup::new(paths);
+    let archive = service.create().await.unwrap();
+    let size = archive.size();
+    let mut bytes = Vec::new();
+    archive.into_reader().read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(bytes.len() as u64, size);
+    assert_eq!(&bytes[..2], [0x1f, 0x8b], "a gzip file");
+
+    let empty = DataFolderBackup::new(HostPaths::new(root.path().join("empty")));
+    let err = empty.create().await.unwrap_err();
+    assert!(err.to_string().contains("no database at"), "{err}");
+}

@@ -13,6 +13,7 @@ mod app_icon;
 mod common;
 
 mod admin;
+mod backup;
 mod credentials;
 mod doctor;
 mod endpoints;

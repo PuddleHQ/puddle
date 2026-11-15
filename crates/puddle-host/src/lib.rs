@@ -73,7 +73,8 @@ pub use accounts::{
     AccountError, UserRow, UserState, add_user, list_users, remove_user, reset_user,
 };
 pub use backup::{
-    BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
+    BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupArchive, BackupError, BackupReport,
+    backup, backup_archive,
 };
 pub use company_signals::{HostSignals, PacReader, PacTiming};
 pub use config::{

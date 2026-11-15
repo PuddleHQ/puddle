@@ -29,6 +29,7 @@ use tower_http::timeout::TimeoutLayer;
 use crate::admin::AdminService;
 use crate::auth::{Guard, Listener, guard};
 use crate::authz::{Isolation, Principal, authorize};
+use crate::backup::{BackupService, NoBackup};
 use crate::credential_store::{CredentialStoreService, NoCredentialStore};
 use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
 use crate::dev_cert::{DevCertService, NoDevCert};
@@ -54,8 +55,9 @@ use crate::workspaces::{NoWorkspaces, WorkspaceService};
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
 /// How long the routes of [`slow_router`] may take: the system check's test boot (up to about 30
-/// s) and a few checks queued behind each other, or the trust route's wait for the user, which
-/// gives up after two minutes on its own.
+/// s) and a few checks queued behind each other, the trust route's wait for the user, which
+/// gives up after two minutes on its own, or the copy a backup makes before it answers (the
+/// download itself is not under this limit).
 const SLOW_REQUEST_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// How long a client may take to send a request's headers.
@@ -162,6 +164,9 @@ pub struct Services {
     /// [`Services::new`] starts with [`NoRepos`], which answers 503; set the real one with
     /// [`Services::with_repos`].
     pub repos: Arc<dyn RepoService>,
+    /// The backup download in Settings. [`Services::new`] starts with [`NoBackup`], which answers
+    /// 503; set the real one with [`Services::with_backup`].
+    pub backup: Arc<dyn BackupService>,
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
@@ -222,6 +227,7 @@ impl Services {
             credentials: Arc::new(NoCredentials),
             secrets: Arc::new(NoSecretStore),
             repos: Arc::new(NoRepos),
+            backup: Arc::new(NoBackup),
             doctor: Arc::new(NoDoctor),
             credential_store: Arc::new(NoCredentialStore),
             dev_cert: Arc::new(NoDevCert),
@@ -299,6 +305,13 @@ impl Services {
         credential_store: Arc<dyn CredentialStoreService>,
     ) -> Self {
         self.credential_store = credential_store;
+        self
+    }
+
+    /// These services with this backup maker.
+    #[must_use]
+    pub fn with_backup(mut self, backup: Arc<dyn BackupService>) -> Self {
+        self.backup = backup;
         self
     }
 
@@ -685,6 +698,7 @@ impl ApiServer {
             credentials: services.credentials,
             secrets: services.secrets,
             repos: services.repos,
+            backup: services.backup,
             doctor: services.doctor,
             credential_store: services.credential_store,
             dev_cert: services.dev_cert,

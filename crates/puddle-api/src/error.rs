@@ -9,6 +9,7 @@ use puddle_store::StoreError;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::backup::BackupServiceError;
 use crate::credentials::CredentialsError;
 use crate::doctor::DoctorError;
 use crate::network_health::NetworkHealthError;
@@ -365,6 +366,17 @@ impl From<ReposError> for ApiError {
     fn from(err: ReposError) -> Self {
         match err {
             ReposError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+        }
+    }
+}
+
+impl From<BackupServiceError> for ApiError {
+    fn from(err: BackupServiceError) -> Self {
+        match err {
+            // `Failed` names what could not be read or written (a path or a reason, no content).
+            BackupServiceError::Unavailable(m) | BackupServiceError::Failed(m) => {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
             }
         }

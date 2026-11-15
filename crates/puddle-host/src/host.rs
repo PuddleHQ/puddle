@@ -39,6 +39,7 @@ use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
 
+use crate::backup::DataFolderBackup;
 use crate::boot::BootKit;
 use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
@@ -1141,6 +1142,7 @@ fn build_services<R: Runtime + Clone>(
         outbound.ssh_accounts.read_with(repos.clone());
         repos
     })
+    .with_backup(Arc::new(DataFolderBackup::new(config.paths.clone())))
     .with_doctor(system_doctor(
         &config.layout,
         &config.paths,

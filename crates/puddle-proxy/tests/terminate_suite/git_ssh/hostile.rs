@@ -801,7 +801,7 @@ async fn hostile_hg51_a_request_that_never_flushes_is_cut_off_at_a_bound_before_
     let mut guest = t.git.rig.guest();
     let mut ssh = t.client(&mut guest, "bound.test:22").await;
     login(&mut ssh).await;
-    let over = 33 * 1024 * 1024;
+    let over = 17 * 1024 * 1024;
     let lines = |line: &str| line.repeat(over / line.len() + 1).into_bytes();
     let have = format!("0032have {SHA}\n");
     let want = format!("0032want {SHA}\n");
@@ -819,7 +819,7 @@ async fn hostile_hg51_a_request_that_never_flushes_is_cut_off_at_a_bound_before_
     ] {
         let ran = exec_any(&ssh, env, &format!("{service} 'acme/web.git'"), &input).await;
         assert_eq!(ran.exit, Some(1), "{name}: {ran:?}");
-        assert!(ran.err.contains("32 MiB"), "{name}: {ran:?}");
+        assert!(ran.err.contains("16 MiB"), "{name}: {ran:?}");
     }
     assert!(
         asked(&t).iter().all(|r| !r.starts_with("POST")),

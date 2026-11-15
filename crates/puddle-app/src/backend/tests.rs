@@ -88,6 +88,10 @@ async fn the_fixture_runs_no_workspaces_so_it_has_no_terminals_open() {
 async fn the_fixture_stops_only_its_api_and_a_second_shutdown_does_nothing() {
     let backend = start_fixture(0).await;
     let port = backend.url().port().unwrap();
+    // The probe below only proves a stop when it can see a running API. Asked on the async side:
+    // this test's one thread also runs the API, so a blocking probe could never be answered.
+    let running = get(&backend, "/api/pending", Some(backend.token())).await;
+    assert!(running.starts_with("HTTP/1.1 200"), "{running}");
     assert_eq!(
         backend.shutdown().await,
         Some(HostShutdown {

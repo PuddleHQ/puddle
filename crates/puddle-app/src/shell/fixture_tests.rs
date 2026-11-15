@@ -35,9 +35,18 @@ fn start_opens_the_main_window_on_the_backend_and_stop_ends_the_backend() {
     let reply = rt.block_on(get(&backend, "/api/pending", Some(backend.token())));
     assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
 
+    let port = backend.url().port().unwrap();
+    assert_eq!(
+        puddle_test_kit::http_status(
+            ([127, 0, 0, 1], port).into(),
+            "/api/pending",
+            backend.token()
+        ),
+        Some(200),
+        "the running API answers its own token"
+    );
     let stopped = stop(app.handle()).unwrap();
     assert_eq!(stopped.steps, [puddle_host::Step::ApiStopped]);
-    let port = backend.url().port().unwrap();
     // The port was the system's pick and another test can take it at once, so the check is
     // that the API no longer answers its token, not that nothing accepts.
     assert_ne!(

@@ -4,12 +4,22 @@ use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::JobObjects::{CreateJobObjectW, SetInformationJobObject};
 
 #[test]
-fn probes_answer_without_admin_rights() {
-    // Values depend on the machine; each call must return without failing.
+fn probes_read_what_an_account_without_admin_rights_may_read() {
+    // Values depend on the machine; what does not is whether the read worked.
     let _hv = hypervisor();
-    let _ci = code_integrity();
-    let _job = job();
+    assert!(
+        matches!(code_integrity(), Some(CodeIntegrityFacts::Read(_))),
+        "the code-integrity query failed: {:?}",
+        code_integrity()
+    );
+    // A process in no job gives `None`; one in a job must have had it read.
+    assert!(
+        !matches!(job(), Some(JobFacts::Unreadable { .. })),
+        "{:?}",
+        job()
+    );
     assert!(global_secure_access().is_some());
+    // `None` is "no such service", which is a fact of the machine.
     let _service = ssh_agent_service();
 }
 

@@ -70,6 +70,8 @@ pub use bulk::{BulkHost, STALL_AFTER_BYTES};
 pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
 pub use freeze::{FrozenProcess, Gaps, parse_ticks};
+#[cfg(target_os = "linux")]
+pub use host_memory::peak_resident_bytes;
 pub use host_memory::resident_bytes;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};

@@ -261,6 +261,8 @@ fn github_api(request: &Recorded) -> Reply {
 struct Tools {
     rig: Rig,
     home: tempfile::TempDir,
+    /// The folder the home sits in: the ceiling for git's search for a repository.
+    outer: tempfile::TempDir,
     port: u16,
     servers: Vec<(&'static str, FakeServer)>,
     notices: Arc<Notices>,
@@ -327,11 +329,13 @@ impl Tools {
             .build();
         let guest = rig.guest();
         let (port, bridge) = guest.proxy_port().await;
-        let home = tempfile::tempdir().unwrap();
+        let outer = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir_in(outer.path()).unwrap();
         std::fs::write(home.path().join("ca.pem"), rig.ca.certificate().pem()).unwrap();
         Self {
             rig,
             home,
+            outer,
             port,
             servers,
             notices,
@@ -856,12 +860,20 @@ async fn copilot_cli_uses_the_stand_in_from_a_gh_login_on_the_copilot_hosts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_tool_run_never_discovers_a_repository_above_its_home() {
     let tools = Tools::new(false).await;
-    let command = tools.command(Path::new("git"));
-    let ceiling = command
-        .as_std()
-        .get_envs()
-        .find(|(name, _)| *name == "GIT_CEILING_DIRECTORIES")
-        .and_then(|(_, value)| value.map(PathBuf::from))
-        .expect("the ceiling is set");
-    assert_eq!(Some(ceiling.as_path()), tools.home.path().parent());
+    // A repository in the folder above the home, as a checkout is above a mutation run's temporary
+    // directory: a tool run in the home must not see it.
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(tools.outer.path())
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    let mut found = tools.command(Path::new("git"));
+    found.args(["rev-parse", "--show-toplevel"]);
+    let found = found.output().await.unwrap();
+    assert!(
+        !found.status.success(),
+        "git found a repository above the home: {}",
+        String::from_utf8_lossy(&found.stdout)
+    );
 }

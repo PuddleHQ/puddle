@@ -145,7 +145,7 @@ async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_prox
         &vm,
         &workspace,
         &format!(
-            "dsudo run -d --name pub --pull=never -p {PUBLISHED}:8080 probe:local /bin/busybox sh -c \"{}\"",
+            "dsudo run -d --name nested-published --pull=never -p {PUBLISHED}:8080 probe:local /bin/busybox sh -c \"{}\"",
             nc_server("published")
         ),
     )
@@ -237,7 +237,17 @@ async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_prox
         .unwrap();
     assert!(rows.is_empty(), "inbox rows from nested traffic: {rows:?}");
     let audit = vm.host.store().audit_lines(0, 100_000).unwrap();
-    for inner in ["neighbour", "compose-server", "pub", "bridge-two"] {
+    // A log that names nothing proves nothing: the proxied compose request is in it.
+    assert!(
+        allowed_connections(&vm, COMPOSE_SITE, 80) > 0,
+        "the audit holds no line for the request that did cross the proxy: {audit:?}"
+    );
+    for inner in [
+        "neighbour",
+        "compose-server",
+        "nested-published",
+        "bridge-two",
+    ] {
         assert!(
             !audit.iter().any(|(_, line)| line.contains(inner)),
             "the audit names {inner}, which never left the guest"
@@ -248,7 +258,7 @@ async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_prox
     let (code, left) = as_agent(
         &vm,
         &workspace,
-        "dsudo rm -f pub neighbour >/dev/null; dsudo compose -p nested down >/dev/null 2>&1; dsudo ps -aq",
+        "dsudo rm -f nested-published neighbour >/dev/null; dsudo compose -p nested down >/dev/null 2>&1; dsudo ps -aq",
     )
     .await;
     assert_eq!(code, 0, "{left}");

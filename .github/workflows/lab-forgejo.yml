@@ -170,6 +170,14 @@ jobs:
       - name: the fixture (git over HTTPS against Gitea)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
+        # The fixture's instance lives in the temp folder and `migrate` commits its SQLite database
+        # hundreds of times. On the runner's C: (the default temp) three at once took 60 to 115 s
+        # of wall time on 1 to 5 s of CPU, which is the 120 s test limit; on the runner's D: (the
+        # workspace and RUNNER_TEMP drive) the same three took 15 s, one alone on C: 12 to 14 s.
+        # Pointing the temp folder at D: makes the start wait on the disk less, not the limit longer.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: cargo nextest run --locked -p puddle-e2e --test integration --no-fail-fast -E 'test(forgejo_lab::)'
       - name: msb runtime (fork tag release assets; download, verify)
         if: steps.whp.outputs.ok == 'true'

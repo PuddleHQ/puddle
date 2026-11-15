@@ -15,7 +15,9 @@ use puddle_types::{
     ConnectionOrigin, Decision, EgressRequest, Event, EventSink, Host, NullSink, PendingId,
     PendingOutcome, PendingSummary, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceId,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 
 use crate::audit::{
     AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleDeleteReason, RuleWire,
@@ -243,6 +245,10 @@ struct Flushed(Option<WorkspaceId>, u64, u64);
 /// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
+    /// A second, read-only connection to the same file for the audit list and search, so a long
+    /// scan never holds the writer's lock (WAL readers don't block the writer). `None` for an
+    /// in-memory store, whose database exists only in `conn`.
+    audit_reader: Option<Mutex<Connection>>,
     /// Whether [`Store::take_account_secrets`] has handed the sign-in secrets out.
     secrets_taken: AtomicBool,
     /// Whether [`Store::take_all_users`] has handed the reach across every user out.
@@ -268,6 +274,14 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding the lock can't leave SQLite half-written (the transaction rolls
     // back on drop), and the other guarded state is counters, so carry on.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl Store {
+    /// The connection the audit list and search read through: the read-only one for a file store,
+    /// the only one for an in-memory store.
+    pub(crate) fn audit_read(&self) -> MutexGuard<'_, Connection> {
+        lock(self.audit_reader.as_ref().unwrap_or(&self.conn))
+    }
 }
 
 /// Starts a transaction that holds the write lock from its first statement. Every write here begins
@@ -296,7 +310,15 @@ impl Store {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "synchronous", "normal")?;
-        Self::init(conn, clock, limits)
+        let mut store = Self::init(conn, clock, limits)?;
+        // After `init`: the file is migrated and in WAL mode by now.
+        let reader = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        reader.busy_timeout(Duration::from_secs(5))?;
+        store.audit_reader = Some(Mutex::new(reader));
+        Ok(store)
     }
 
     /// An in-memory store, for tests.
@@ -319,6 +341,7 @@ impl Store {
         let rules = sets::load_index(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            audit_reader: None,
             secrets_taken: AtomicBool::new(false),
             all_users_taken: AtomicBool::new(false),
             rules: RwLock::new(Arc::new(rules)),

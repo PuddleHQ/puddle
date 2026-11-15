@@ -430,3 +430,86 @@ fn peeking_as_a_user_answers_from_that_users_rules_only() {
     assert_eq!(store.as_user(ana.id).peek(&workspace, &elsewhere), None);
     assert_eq!(store.as_user(UserId::OWNER).peek(&workspace, &host), None);
 }
+
+#[test]
+fn a_search_in_flight_on_the_audit_reader_does_not_hold_up_a_rule_change_and_its_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(
+        Store::open(
+            &dir.path().join("puddle.db"),
+            Arc::new(ManualClock::new(1_000_000)),
+            Limits::default(),
+        )
+        .unwrap(),
+    );
+    let op = NewWorkspaceOp {
+        op: WorkspaceOpKind::Create,
+        workspace: Some(WorkspaceId::new("acme").unwrap()),
+        user: None,
+        outcome: WorkspaceOpOutcome::Succeeded,
+        actor: Actor::Ui,
+        detail: None,
+    };
+    let allow = |store: &Store, host: &str| {
+        store
+            .as_user(UserId::OWNER)
+            .add_rule(&NewRule {
+                scope: Scope::Global,
+                pattern: Pattern::Exact(Host::parse_normalised(host).unwrap()),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Ui,
+            })
+            .map(|_| ())
+    };
+    allow(&store, "seed.example.com").unwrap();
+    let search = |text: &str| {
+        let filter = AuditFilter {
+            q: Some(text.to_owned()),
+            ..AuditFilter::default()
+        };
+        store
+            .audit_query_every_user(
+                &crate::testing::all_users(),
+                &filter,
+                AuditCursor::Before(None),
+                100,
+            )
+            .unwrap()
+    };
+    assert_eq!(search("seed.example.com").len(), 1);
+
+    // A search is a read transaction that stays open while it scans: hold one open here.
+    let reader = store.audit_read();
+    reader.execute_batch("BEGIN").unwrap();
+    let before: i64 = reader
+        .query_row("SELECT count(*) FROM audit", [], |row| row.get(0))
+        .unwrap();
+
+    let (done, finished) = std::sync::mpsc::channel();
+    let writer = Arc::clone(&store);
+    std::thread::spawn(move || {
+        let rule = allow(&writer, "api.example.com");
+        let _ = done.send((rule, writer.record_workspace_op(&op)));
+    });
+    // Generous: a writer that waited for the reader would never finish while it is held.
+    let (rule, op_result) = finished
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the writes finished while a read transaction was open");
+    rule.unwrap();
+    op_result.unwrap();
+
+    // The open read transaction still sees its snapshot; a new one sees the rule's record.
+    let during: i64 = reader
+        .query_row("SELECT count(*) FROM audit", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(during, before);
+    reader.execute_batch("COMMIT").unwrap();
+    drop(reader);
+    assert_eq!(search("api.example.com").len(), 1, "the rule's record");
+    assert_eq!(
+        search("seed.example.com").len(),
+        1,
+        "the first rule's record"
+    );
+}

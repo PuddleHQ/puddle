@@ -124,3 +124,44 @@ fn sizes_read_in_tenths_of_a_mebibyte() {
     assert_eq!(mib(1_572_864), "1.5 MiB");
     assert_eq!(mib(10 * 1024 * 1024 + 104_858), "10.1 MiB");
 }
+
+fn stats(bytes: u64) -> puddle_host::AuditStats {
+    puddle_host::AuditStats {
+        records: 12,
+        bytes,
+        oldest_ts: Some(1),
+        records_last_day: 3,
+        bytes_last_day: 1_048_576,
+        records_last_week: 9,
+        bytes_last_week: 2_097_152,
+        retention_days: 90,
+        warn_bytes: 2_097_152,
+        file_bytes: 4_194_304,
+        free_bytes: 524_288,
+    }
+}
+
+#[test]
+fn the_status_warns_only_past_the_warning_size() {
+    let at = status_text(&stats(2_097_152));
+    assert!(
+        at.starts_with("kept for 90 days\n12 records, 2.0 MiB of text"),
+        "{at}"
+    );
+    assert!(
+        at.contains(
+            "written in the last day: 3 records, 1.0 MiB; in the last week: 9 records, 2.0 MiB"
+        ),
+        "{at}"
+    );
+    assert!(!at.contains("over the"), "{at}");
+    let over = status_text(&stats(2_097_153));
+    assert!(
+        over.ends_with("shorten the days or run `audit prune`."),
+        "{over}"
+    );
+    assert!(
+        over.contains("over the 2.0 MiB where Puddle warns"),
+        "{over}"
+    );
+}

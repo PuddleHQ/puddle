@@ -116,6 +116,32 @@ fn mib(bytes: u64) -> String {
     format!("{}.{} MiB", tenths / 10, tenths % 10)
 }
 
+/// What `status` prints, with a warning when the log is over its warning size.
+fn status_text(s: &puddle_host::AuditStats) -> String {
+    let over = if s.bytes > s.warn_bytes {
+        format!(
+            "\nIt is over the {} where Puddle warns. Nothing is deleted for its size; \
+             shorten the days or run `audit prune`.",
+            mib(s.warn_bytes)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "kept for {} days\n{} records, {} of text; the file holds {} ({} free)\n\
+         written in the last day: {} records, {}; in the last week: {} records, {}{over}",
+        s.retention_days,
+        s.records,
+        mib(s.bytes),
+        mib(s.file_bytes),
+        mib(s.free_bytes),
+        s.records_last_day,
+        mib(s.bytes_last_day),
+        s.records_last_week,
+        mib(s.bytes_last_week),
+    )
+}
+
 fn execute(args: &AuditArgs) -> Result<String, String> {
     let options = effective(&ServeArgs {
         flags: args.flags.clone(),
@@ -126,28 +152,7 @@ fn execute(args: &AuditArgs) -> Result<String, String> {
     match args.action {
         Action::Status => {
             let s = puddle_host::audit_status(&paths).map_err(|e| e.to_string())?;
-            let over = if s.bytes > s.warn_bytes {
-                format!(
-                    "\nIt is over the {} where Puddle warns. Nothing is deleted for its size; \
-                     shorten the days or run `audit prune`.",
-                    mib(s.warn_bytes)
-                )
-            } else {
-                String::new()
-            };
-            Ok(format!(
-                "kept for {} days\n{} records, {} of text; the file holds {} ({} free)\n\
-                 written in the last day: {} records, {}; in the last week: {} records, {}{over}",
-                s.retention_days,
-                s.records,
-                mib(s.bytes),
-                mib(s.file_bytes),
-                mib(s.free_bytes),
-                s.records_last_day,
-                mib(s.bytes_last_day),
-                s.records_last_week,
-                mib(s.bytes_last_week),
-            ))
+            Ok(status_text(&s))
         }
         Action::Prune(days) => {
             let done = puddle_host::prune_audit(&paths, days).map_err(|e| e.to_string())?;

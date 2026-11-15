@@ -381,3 +381,20 @@ fn audit_status_and_prune_work_on_a_data_folder_and_say_when_there_is_none() {
     ]);
     assert_eq!(refused.status.code(), Some(1));
 }
+
+#[test]
+fn audit_without_a_data_dir_looks_in_the_per_user_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .args(["audit", "status"])
+        .env_remove("PUDDLE_DATA_DIR")
+        .env("HOME", home.path())
+        .env("XDG_DATA_HOME", home.path().join("share"))
+        .env("LOCALAPPDATA", home.path().join("local"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("no database at"), "{err}");
+    assert!(err.contains(home.path().to_str().unwrap()), "{err}");
+}

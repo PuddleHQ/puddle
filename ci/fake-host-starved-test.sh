@@ -39,10 +39,6 @@ run() { # run <out> <fail-on> ; prints the script's output, returns its status
         FAKE_HOST_RUNS=3 FAKE_HOST_CPUS="$cpu" FAKE_HOST_BUSY=2 "$here/fake-host-starved.sh"
 }
 
-# count only this script's process group: another worker's stress loop on the same machine must not count
-own_group=$(ps -o pgid= -p $$ | tr -d ' ')
-busy_loops() { pgrep -f -g "$own_group" 'while :; do :; done' | sort || true; }
-busy_before=$(busy_loops)
 rc=0
 run "$tmp/out-red" 2 >"$tmp/red.txt" 2>&1 || rc=$?
 [ "$rc" = 1 ] || fail "a failing run must exit 1, got $rc: $(cat "$tmp/red.txt")"
@@ -65,8 +61,18 @@ grep -q '^FAILED=0$' "$tmp/out-green/result.env" || fail "green result.env"
 
 # nothing leaked: no busy loop (`while :; do :; done` pinned by this script) and no sampler is left
 sleep 1
-# only a loop that appeared during this run is a leak: an earlier test's loop can still be dying when this one starts
-leaked=$(comm -13 <(echo "$busy_before") <(busy_loops))
-[ -z "$leaked" ] || fail "a busy loop outlived the script: $leaked"
+# Only this copy's loops are named (the script puts its output folder on each loop's command line), so a loop of
+# another run on the same machine cannot fail this check.
+! pgrep -f "fake-host-busy $tmp/" >/dev/null || fail "a busy loop outlived the script"
 ! pgrep -f "sample_holders $tmp" >/dev/null || fail "a sampler outlived the script"
+
+# Two copies at once on one machine, as parallel checks are: each must pass although the other's loops are running.
+if [ -z "${FAKE_HOST_STARVED_TEST_COPY:-}" ]; then
+    FAKE_HOST_STARVED_TEST_COPY=1 "$0" >"$tmp/copy-a.txt" 2>&1 &
+    pid_a=$!
+    FAKE_HOST_STARVED_TEST_COPY=1 "$0" >"$tmp/copy-b.txt" 2>&1 &
+    pid_b=$!
+    wait "$pid_a" || fail "a copy run beside another failed: $(cat "$tmp/copy-a.txt")"
+    wait "$pid_b" || fail "a copy run beside another failed: $(cat "$tmp/copy-b.txt")"
+fi
 echo "fake-host-starved-test: ok"

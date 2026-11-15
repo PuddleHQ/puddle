@@ -1016,6 +1016,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/presence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A client's report of itself. Clients send it every 30 seconds and when something in it changes.
+         *     A client that stops reporting is no longer picked after about a minute.
+         */
+        post: operations["report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/problems": {
         parameters: {
             query?: never;
@@ -3112,6 +3132,11 @@ export interface components {
             running: boolean;
         };
         /**
+         * @description What kind of client reports.
+         * @enum {string}
+         */
+        ClientKind: "browser" | "desktop";
+        /**
          * @description What a programmatic clipboard read in the browser window does.
          * @enum {string}
          */
@@ -3654,6 +3679,21 @@ export interface components {
             request: components["schemas"]["PendingSummary"];
             /** @enum {string} */
             type: "pending_opened";
+        } | {
+            /**
+             * @description The picked browser tabs, by the id each reported. A tab raises its notification only
+             *     when its own id is listed.
+             */
+            clients: string[];
+            /**
+             * @description Whether the desktop app's own notification is picked: also true when no client has
+             *     reported, so the app tells its user as it did before clients reported.
+             */
+            desktop: boolean;
+            /** @description The request, as in [`Event::PendingOpened`]. */
+            request: components["schemas"]["PendingSummary"];
+            /** @enum {string} */
+            type: "pending_notify";
         } | {
             /**
              * Format: int64
@@ -4797,6 +4837,29 @@ export interface components {
              *     the workspace stops.
              */
             pinned?: boolean;
+        };
+        /**
+         * @description One client's report: whether it is in front, when it last saw input, and whether the person
+         *     wants notifications there. Sent every 30 seconds and whenever one of them changes.
+         */
+        PresenceReport: {
+            /**
+             * @description A random id the client made for itself (1 to 64 characters: letters, digits, `-`, `_`).
+             *     A browser tab keeps one for as long as it is open.
+             */
+            client: string;
+            /**
+             * Format: int64
+             * @description How long ago the last keystroke, click or touch was, in milliseconds. Sent as an age so
+             *     the client's clock does not matter.
+             */
+            idle_ms: number;
+            /** @description What kind of client this is. */
+            kind: components["schemas"]["ClientKind"];
+            /** @description Whether the person wants notifications on this client (its own switch). */
+            notify: boolean;
+            /** @description Whether the page is in front (visible) now. */
+            visible: boolean;
         };
         /** @description One background problem, as `GET /api/problems` lists it. */
         Problem: {
@@ -10612,6 +10675,73 @@ export interface operations {
             };
             /** @description invalid suffix or expiry */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresenceReport"];
+            };
+        };
+        responses: {
+            /** @description noted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the client id is not 1 to 64 letters, digits, `-` or `_` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };

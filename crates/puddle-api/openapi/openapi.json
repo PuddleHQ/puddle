@@ -5095,6 +5095,80 @@
         }
       }
     },
+    "/api/presence": {
+      "post": {
+        "tags": [
+          "presence"
+        ],
+        "summary": "A client's report of itself. Clients send it every 30 seconds and when something in it changes.\nA client that stops reporting is no longer picked after about a minute.",
+        "operationId": "report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresenceReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "noted"
+          },
+          "400": {
+            "description": "the client id is not 1 to 64 letters, digits, `-` or `_`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/problems": {
       "get": {
         "tags": [
@@ -14130,6 +14204,14 @@
           }
         }
       },
+      "ClientKind": {
+        "type": "string",
+        "description": "What kind of client reports.",
+        "enum": [
+          "browser",
+          "desktop"
+        ]
+      },
       "ClipboardRead": {
         "type": "string",
         "description": "What a programmatic clipboard read in the browser window does.",
@@ -15423,6 +15505,39 @@
                 "type": "string",
                 "enum": [
                   "pending_opened"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Who is to be told about a new open pending request, picked by the server from what the\nclients reported of themselves (`POST /api/presence`) so that nobody is told twice.\nSent right after the [`Event::PendingOpened`] of the same request.",
+            "required": [
+              "request",
+              "clients",
+              "desktop",
+              "type"
+            ],
+            "properties": {
+              "clients": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The picked browser tabs, by the id each reported. A tab raises its notification only\nwhen its own id is listed."
+              },
+              "desktop": {
+                "type": "boolean",
+                "description": "Whether the desktop app's own notification is picked: also true when no client has\nreported, so the app tells its user as it did before clients reported."
+              },
+              "request": {
+                "$ref": "#/components/schemas/PendingSummary",
+                "description": "The request, as in [`Event::PendingOpened`]."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_notify"
                 ]
               }
             }
@@ -18086,6 +18201,42 @@
           "pinned": {
             "type": "boolean",
             "description": "Keep the forward across restarts of the workspace (default false). Asking again with\n`true` pins a forward that is open; with `false` it unpins one and leaves it open until\nthe workspace stops."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PresenceReport": {
+        "type": "object",
+        "description": "One client's report: whether it is in front, when it last saw input, and whether the person\nwants notifications there. Sent every 30 seconds and whenever one of them changes.",
+        "required": [
+          "client",
+          "kind",
+          "visible",
+          "idle_ms",
+          "notify"
+        ],
+        "properties": {
+          "client": {
+            "type": "string",
+            "description": "A random id the client made for itself (1 to 64 characters: letters, digits, `-`, `_`).\nA browser tab keeps one for as long as it is open."
+          },
+          "idle_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long ago the last keystroke, click or touch was, in milliseconds. Sent as an age so\nthe client's clock does not matter.",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ClientKind",
+            "description": "What kind of client this is."
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Whether the person wants notifications on this client (its own switch)."
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "Whether the page is in front (visible) now."
           }
         },
         "additionalProperties": false

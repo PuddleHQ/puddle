@@ -195,8 +195,19 @@ fn pending_rule_and_audit_events_have_fixed_shapes() {
     };
     for (event, json, workspace) in [
         (
-            Event::PendingOpened { request },
+            Event::PendingOpened {
+                request: request.clone(),
+            },
             r#"{"type":"pending_opened","request":{"id":7,"workspace":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
+            Some(name()),
+        ),
+        (
+            Event::PendingNotify {
+                request,
+                clients: vec!["tab-1".into()],
+                desktop: false,
+            },
+            r#"{"type":"pending_notify","request":{"id":7,"workspace":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3},"clients":["tab-1"],"desktop":false}"#,
             Some(name()),
         ),
         (

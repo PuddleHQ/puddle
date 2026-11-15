@@ -678,6 +678,7 @@ impl ApiServer {
             settings: services.settings,
             settings_lock,
             events: services.events,
+            presence: Arc::new(crate::presence::Presence::default()),
             problems: services.problems,
             clock: services.clock,
             workspaces: services.workspaces,
@@ -698,6 +699,13 @@ impl ApiServer {
             ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
+        crate::presence::spawn_picker(
+            state.events.clone(),
+            state.store.clone(),
+            state.presence.clone(),
+            state.clock.clone(),
+            state.shutdown.clone(),
+        );
         // System managed follows the stored setup from the first request on (rules spec R-41).
         crate::system_managed::refresh(&state).await;
         let ui = config

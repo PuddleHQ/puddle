@@ -376,7 +376,9 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
     const WS: Target = T::Workspace("id");
     let (action, target) = match (method.as_str(), path) {
         ("GET", "/api/health" | "/api/openapi.json") => (A::ReadService, T::Service),
-        ("GET", "/api/events" | "/api/problems") => (A::ReadService, T::Own),
+        ("GET", "/api/events" | "/api/problems") | ("POST", "/api/presence") => {
+            (A::ReadService, T::Own)
+        }
         ("GET", "/api/auth/status")
         | (
             "POST",

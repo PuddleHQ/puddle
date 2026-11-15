@@ -26,6 +26,7 @@ mod logins;
 mod network_health;
 mod orphan_volumes;
 mod ports;
+mod presence;
 mod problems;
 mod proxy_sign_in;
 mod remote;

@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::response::sse;
 use futures_util::{Stream, StreamExt};
@@ -25,6 +26,17 @@ pub const DEFAULT_EVENT_BUFFER: usize = 1024;
 #[derive(Debug)]
 pub struct EventHub {
     tx: broadcast::Sender<Event>,
+    /// Receivers the server itself holds, which are not streams.
+    taps: Arc<AtomicUsize>,
+}
+
+/// Keeps a tap from being counted as a stream while it lives.
+pub(crate) struct Tap(Arc<AtomicUsize>);
+
+impl Drop for Tap {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl EventHub {
@@ -32,13 +44,25 @@ impl EventHub {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity.max(1));
-        Self { tx }
+        Self {
+            tx,
+            taps: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
-    /// How many SSE streams are open.
+    /// How many SSE streams are open (the server's own taps, [`EventHub::tap`], are not).
     #[must_use]
     pub fn subscribers(&self) -> usize {
-        self.tx.receiver_count()
+        self.tx
+            .receiver_count()
+            .saturating_sub(self.taps.load(Ordering::SeqCst))
+    }
+
+    /// A receiver for the server's own use; it does not count in [`EventHub::subscribers`] while
+    /// the returned [`Tap`] lives.
+    pub(crate) fn tap(&self) -> (broadcast::Receiver<Event>, Tap) {
+        self.taps.fetch_add(1, Ordering::SeqCst);
+        (self.tx.subscribe(), Tap(self.taps.clone()))
     }
 
     /// A receiver of every event emitted from now on. One that falls behind by more than the

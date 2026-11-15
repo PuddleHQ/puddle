@@ -413,6 +413,8 @@ run_gate() {
         # crate's tests run shows up as uncovered here; the full `coverage` gate then decides (it measures the
         # whole workspace), so a failure here that the full gate would clear is a line to list or to test
         # from its own crate. Untracked new files are invisible to git diff; `git add -N <file>` first.
+        # Nothing to measure ends this gate, not the run: `return`, never `exit` (the serial prefix runs a gate in the main shell, and an
+        # `exit 0` there skipped every gate named after it while the run still passed).
         base=$(diff_base)
         if [ -z "$base" ]; then
             echo "diff-coverage-fast: no base commit to measure the diff from; run \`git fetch origin develop\`" >&2
@@ -421,11 +423,11 @@ run_gate() {
         crates=$(scripts/diff-coverage-crates.sh "$base")
         if [ -z "$crates" ]; then
             echo "diff-coverage-fast: no Rust file changed; nothing to measure"
-            exit 0
+            return 0
         fi
         if [ "$crates" = "*" ]; then
             echo "diff-coverage-fast: a Rust file outside crates/ changed; the coverage gate measures it"
-            exit 0
+            return 0
         fi
         packages=
         filter=
@@ -436,7 +438,7 @@ run_gate() {
         done
         if [ -z "$packages" ]; then
             echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
-            exit 0
+            return 0
         fi
         # The same instrumented target directory as the `coverage` gate (`<target>/llvm-cov-target`), so the third-party
         # crates it builds are built once, not once per gate (15 GB of a host lane when each kept its own copy). A

@@ -596,6 +596,7 @@ fn openapi_schema_is_the_tagged_union() {
             "workspace_progress",
             "workspace_tools",
             "pending_opened",
+            "pending_notify",
             "pending_updated",
             "pending_closed",
             "rules_changed",
@@ -641,7 +642,7 @@ fn openapi_schema_is_the_tagged_union() {
             .any(|r| r == "detail"),
         "detail is always present, null when empty: {progress}"
     );
-    let global = &variants[8];
+    let global = &variants[9];
     assert!(global["properties"].get("workspace").is_none());
     assert_eq!(
         variants[0]["properties"]["workspace"]["$ref"],

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-api"
 description = "Local HTTP API (axum) with SSE and the generated OpenAPI contract"
@@ -16,6 +16,7 @@ publish.workspace = true
 embedded-ui = ["dep:rust-embed"]
 
 [dependencies]
+argon2 = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 futures-util = { workspace = true }
@@ -37,9 +38,11 @@ puddle-upstream = { workspace = true }
 rust-embed = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rustls = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
+tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
 tower-http = { workspace = true }
 tracing = { workspace = true }
@@ -48,12 +51,13 @@ utoipa-axum = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 rcgen = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
-rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time", "test-util"] }

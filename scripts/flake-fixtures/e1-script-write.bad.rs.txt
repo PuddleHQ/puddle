@@ -1,0 +1,17 @@
+// Original shape of a flake: a stand-in script written by this process, then run at once. A sibling
+// test thread that forked in between held a copy of the writable descriptor, so the exec of the
+// script failed with "Text file busy".
+use std::os::unix::fs::PermissionsExt;
+
+fn fake_tool(dir: &Path, body: &str) -> PathBuf {
+    let path = dir.join("tool");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+fn fake_tool_by_chmod(dir: &Path) {
+    let file = dir.join("hook");
+    std::fs::write(&file, "#!/bin/sh\n").unwrap();
+    Command::new("chmod").arg("+x").arg(&file).status().unwrap();
+}

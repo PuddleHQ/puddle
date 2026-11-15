@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-lifecycle"
 description = "Shutdown and reconcile: stop every sandbox with Puddle, clean up after a Puddle that died, one kill-on-close job for Puddle and its VMs"

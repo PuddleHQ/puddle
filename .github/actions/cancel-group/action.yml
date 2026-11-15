@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Fail fast in the merge queue: cancels the rest of the merge group when a job fails (ci/cancel-group.sh).
 # Call it as the last step of a job with `if: ${{ failure() && github.event_name == 'merge_group' }}`
 # and `continue-on-error: true`. The job needs `actions: write`.

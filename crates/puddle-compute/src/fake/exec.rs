@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake's command interpreter: a handful of built-in commands over an in-memory file
 //! system, plus test-supplied handlers.
 
@@ -245,6 +245,9 @@ pub(super) fn builtin(
     ctx: &mut ExecContext<'_>,
     request: &ExecRequest,
 ) -> Result<ExecOutput, ComputeError> {
+    if let Some((probe, args)) = crate::probes::Probe::of(request) {
+        return Ok(super::guest_probes::answer(probe, &args, ctx.spec));
+    }
     let program = request
         .program
         .rsplit('/')
@@ -318,6 +321,7 @@ fn cat(ctx: &ExecContext<'_>, paths: &[&str]) -> ExecOutput {
                 let _ = writeln!(stderr, "cat: {path}: {e}");
             }
             _ => {
+                // writing into a `String` cannot fail
                 let _ = writeln!(stderr, "cat: {path}: No such file or directory");
             }
         }

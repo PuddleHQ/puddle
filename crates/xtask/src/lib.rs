@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Developer and release tasks, run as `cargo xtask <command>` (alias in `.cargo/config.toml`).
 //!
 //! - `runtime`: assembles the bundled msb runtime folder of this OS ([`assemble`]): on Windows the
@@ -14,12 +14,14 @@
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
 //! - `release-features`: fails when a test-only feature is on in a shipped program's tree
 //!   ([`features`]).
+//! - `release-pins`: fails when the pin list has no hash a release build needs for a shipped OS
+//!   ([`release_pins`]).
 //! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
 //!   ([`openapi`]); `--check` fails when either committed file is stale (a `scripts/check.sh`
 //!   gate).
 //!
 //! Needs `cargo-about` (`cargo install cargo-about --locked --features cli`); `runtime` also needs
-//! `gh` and `git` unless `--from` points at a folder with the parts ([`source::DirSource`]).
+//! `git` and `curl` (no `gh`, no sign-in) unless `--from` points at a folder with the parts ([`source::DirSource`]).
 #![forbid(unsafe_code)]
 
 pub mod assemble;
@@ -27,12 +29,21 @@ pub mod checksums;
 pub mod code_server;
 pub mod error;
 pub mod features;
+pub mod github;
 pub mod inventory;
 pub mod notice;
 pub mod openapi;
 pub mod pin;
+pub mod release_pins;
 pub mod source;
 pub mod tools;
+
+// The build script of `puddle-runtime` embeds the expected hashes from the pin list; these two
+// files are its reader and its choice of lines, so `release-pins` asks what the build would embed.
+#[path = "../../puddle-runtime/build/digests.rs"]
+mod digests;
+#[path = "../../puddle-runtime/build/pin_list.rs"]
+mod pin_list;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -55,9 +66,10 @@ commands:
             --msb <file>           Linux only: ship this msb instead of the release's
                                    msb-linux-x86_64 (for a tag whose release has none:
                                    ci/fetch-msb.sh builds one from the tag's source)
-            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256), where the Linux
-                                   firmware version and the libkrunfw fork release it comes from
-                                   (PuddleHQ/libkrunfw, upstream's firmware when none) are read
+            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256): every download
+                                   must match the hash it pins, and on Linux it gives the firmware
+                                   version and the libkrunfw fork release it comes from
+                                   (PuddleHQ/libkrunfw, upstream's firmware when none)
             --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this Puddle runs)
             --upstream-tag <tag>   upstream base tag (default: derived from a -puddle.N tag)
             --fork <owner/name>    fork repository (default: PuddleHQ/microsandbox)
@@ -77,7 +89,12 @@ commands:
   release-features  fail when a test-only feature (`testing`, `fuzzing`) is on in a shipped program
             --target <triple>      only this target (default: every ship target)
             --offline              no network for cargo
-  openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} and ui/src/lib/api/schema.d.ts
+  release-pins  fail when the pin list has no hash for a file a release ships: such a build
+            starts with no check of the runtime files (`DigestStatus::Unpinned`)
+            --os <windows|linux|all>  shipped OS (default: windows, the OS the installer is for)
+            --tag <tag>            fork tag (default: v<BUILT_FOR>)
+            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256)
+  openapi   write crates/puddle-api/openapi/openapi.json and ui/src/lib/api/schema.d.ts
             (needs Node for the types)
             --check                only check that both are current (types skipped without Node
                                    unless CI is set)";
@@ -189,6 +206,9 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
         "release-features" => {
             release_features(&Options::parse(args, &["--target"], &["--offline"])?)
         }
+        "release-pins" => {
+            release_pins_command(&Options::parse(args, &["--os", "--tag", "--pins"], &[])?)
+        }
         "openapi" => openapi_command(&Options::parse(args, &[], &["--check"])?),
         "help" | "--help" | "-h" => Ok(USAGE.to_owned()),
         other => Err(XtaskError::Usage(format!("unknown command {other}"))),
@@ -210,7 +230,7 @@ fn code_server_command(opts: &Options) -> Result<String> {
     let licences = opts.value("--licenses").map(PathBuf::from);
     let source: Box<dyn code_server::CodeServerSource> = match opts.value("--from") {
         Some(dir) => Box::new(code_server::DirReleases(PathBuf::from(dir))),
-        None => Box::new(code_server::GitHubReleases),
+        None => Box::new(code_server::GitHubReleases(github::GitHub::public())),
     };
     let manifest = code_server::assemble(source.as_ref(), pin, &out, licences.as_deref())?;
     Ok(format!(
@@ -239,7 +259,7 @@ fn openapi_command(opts: &Options) -> Result<String> {
         opts.has("--check"),
         types,
         &generator,
-        &[workspace_root().join(openapi::UI_TYPES_PATH)],
+        &workspace_root().join(openapi::UI_TYPES_PATH),
     )?;
     Ok(report.line())
 }
@@ -256,6 +276,29 @@ fn release_features(opts: &Options) -> Result<String> {
             &only
         },
     )
+}
+
+/// The release-pin check ([`release_pins`]): no unhashed runtime file in what ships.
+fn release_pins_command(opts: &Options) -> Result<String> {
+    let built_for = match opts.value("--tag") {
+        Some(tag) => tag.strip_prefix('v').unwrap_or(tag),
+        None => BUILT_FOR,
+    };
+    let oses = match opts.value("--os").unwrap_or("windows") {
+        "all" => vec!["windows", "linux"],
+        name @ ("windows" | "linux") => vec![name],
+        other => {
+            return Err(XtaskError::Usage(format!(
+                "--os is windows, linux or all, not {other}"
+            )));
+        }
+    };
+    let pins_path = opts
+        .value("--pins")
+        .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
+    let pins = std::fs::read_to_string(&pins_path)
+        .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
+    release_pins::check(&pins, built_for, &oses)
 }
 
 /// Puddle's own inventory, computed with cargo-about.
@@ -310,7 +353,12 @@ fn runtime(opts: &Options) -> Result<String> {
         .value("--out")
         .map_or_else(|| target_dir().join("runtime"), PathBuf::from);
     let cargo = Cargo::from_env(opts.has("--offline"));
-    let target = runtime_target(opts, &tag)?;
+    let pins_path = opts
+        .value("--pins")
+        .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
+    let pins = std::fs::read_to_string(&pins_path)
+        .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
+    let target = runtime_target(opts, &tag, &pins)?;
 
     let (source, puddle): (Box<dyn ReleaseSource>, Inventory) = if let Some(dir) =
         opts.value("--from")
@@ -334,10 +382,11 @@ fn runtime(opts: &Options) -> Result<String> {
             work: target_dir().join("xtask-runtime-src"),
             about_config: workspace_root().join("crates/xtask/about/msb.toml"),
             cargo: cargo.clone(),
+            github: github::GitHub::public(),
         };
         (Box::new(source), puddle_inventory(&cargo)?)
     };
-    let manifest = assemble::assemble(source.as_ref(), &expected, &puddle, &target, &out)?;
+    let manifest = assemble::assemble(source.as_ref(), &expected, &puddle, &pins, &target, &out)?;
     Ok(format!(
         "runtime {} assembled in {} ({} sha256 {})",
         manifest.version,
@@ -349,7 +398,7 @@ fn runtime(opts: &Options) -> Result<String> {
 
 /// The runtime folder the options ask for: this OS's unless `--os` says otherwise; Linux needs
 /// the firmware version pinned for `tag`.
-fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
+fn runtime_target(opts: &Options, tag: &str, pins: &str) -> Result<assemble::Target> {
     let os = match opts.value("--os") {
         Some(name) => HostOs::from_target_os(name),
         None => Some(HostOs::current()),
@@ -363,18 +412,11 @@ fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
             }
             Ok(assemble::Target::Windows)
         }
-        Some(HostOs::Linux) => {
-            let pins_path = opts
-                .value("--pins")
-                .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
-            let pins = std::fs::read_to_string(&pins_path)
-                .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
-            Ok(assemble::Target::Linux {
-                msb: opts.value("--msb").map(PathBuf::from),
-                libkrunfw_version: pin::libkrunfw_linux_version(&pins, tag)?,
-                firmware_tag: pin::libkrunfw_linux_tag(&pins, tag),
-            })
-        }
+        Some(HostOs::Linux) => Ok(assemble::Target::Linux {
+            msb: opts.value("--msb").map(PathBuf::from),
+            libkrunfw_version: pin::libkrunfw_linux_version(pins, tag)?,
+            firmware_tag: pin::libkrunfw_linux_tag(pins, tag),
+        }),
         Some(HostOs::MacOs) | None => Err(XtaskError::Usage(
             "runtime folders are built for windows and linux only".into(),
         )),
@@ -390,85 +432,4 @@ fn fixture_puddle_inventory(dir: &Path) -> Option<Result<Inventory>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(list: &[&str]) -> Vec<OsString> {
-        list.iter().map(OsString::from).collect()
-    }
-
-    #[test]
-    fn usage_errors() {
-        for (input, needle) in [
-            (vec![], "no command"),
-            (vec!["frobnicate"], "unknown command frobnicate"),
-            (vec!["runtime", "--out"], "--out needs a value"),
-            (vec!["runtime", "--bogus"], "unknown argument --bogus"),
-            (vec!["notices", "--tag", "x"], "unknown argument --tag"),
-            (
-                vec!["runtime", "--tag", "v0.7.7", "--from", "/nonexistent"],
-                "pass --upstream-tag",
-            ),
-        ] {
-            let err = run(args(&input)).unwrap_err();
-            assert!(matches!(err, XtaskError::Usage(_)), "{input:?}: {err}");
-            let msg = err.to_string();
-            assert!(
-                msg.contains(needle) && msg.contains("usage: cargo xtask"),
-                "{msg}"
-            );
-        }
-        assert!(run(args(&["help"])).unwrap().starts_with("usage:"));
-    }
-
-    #[test]
-    fn the_runtime_folder_is_for_this_os_unless_told_otherwise() {
-        // No `--os`: Linux first needs the firmware version pinned for the tag (a Parse error
-        // for this unpinned one); Windows goes straight on to read the parts (an Io error).
-        let err = run(args(&[
-            "runtime",
-            "--tag",
-            "v0.7.7-puddle.1",
-            "--from",
-            "/nonexistent",
-        ]))
-        .unwrap_err();
-        assert_eq!(
-            matches!(err, XtaskError::Parse { .. }),
-            HostOs::current() == HostOs::Linux,
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn last_value_wins_and_switches_are_seen() {
-        let o = Options::parse(
-            vec![
-                "--out".into(),
-                "a".into(),
-                "--offline".into(),
-                "--out".into(),
-                "b".into(),
-            ],
-            &["--out"],
-            &["--offline"],
-        )
-        .unwrap();
-        assert_eq!(o.value("--out"), Some("b"));
-        assert!(o.has("--offline"));
-        assert!(!o.has("--check"));
-        assert_eq!(o.value("--tag"), None);
-    }
-
-    #[test]
-    fn workspace_root_has_the_workspace_manifest() {
-        let text = std::fs::read_to_string(workspace_root().join("Cargo.toml")).unwrap();
-        assert!(text.contains("[workspace]"));
-        assert!(workspace_root().join("about.toml").is_file());
-        assert!(
-            workspace_root()
-                .join("crates/xtask/about/msb.toml")
-                .is_file()
-        );
-    }
-}
+mod tests;

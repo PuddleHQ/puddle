@@ -1,11 +1,11 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, test-hooks, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
-#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips   (pre-commit hook)
+#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks   (pre-commit hook)
 #   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
@@ -102,6 +102,16 @@ coverage_scrub() {
     find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
     find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
 }
+# Unlinks the read-only files of the instrumented directory (`<target>/llvm-cov-target`) before plain cargo builds in it.
+# mbx restores a cached output as a read-only hard link to its store object, and rustc stops with `output file ... is not
+# writable` when it must rebuild one of them. Unlinking drops only this directory's name for the file: the store object
+# and the other checkouts' links keep their mode and content (never chmod it: rustc would then write into the shared
+# object). Cargo rebuilds what is missing. A directory only plain cargo has built holds none, so this finds nothing.
+coverage_unlock() {
+    [ -d "$1/llvm-cov-target" ] || return 0
+    locked=$(find "$1/llvm-cov-target" -type f ! -perm -u+w -print -delete 2>/dev/null | grep -c . || true)
+    [ "${locked:-0}" = 0 ] || echo "coverage: unlinked $locked read-only file(s) in $1/llvm-cov-target (mbx cache links); cargo rebuilds them" >&2
+}
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
 # extra arguments. Needs a base; without one it fails.
 diff_coverage() {
@@ -113,7 +123,7 @@ diff_coverage() {
         return 1
     fi
     node ui/scripts/diff-coverage.ts --base "$base" --lcov "$lcov" --exts "$exts" \
-        --exclusions scripts/diff-coverage-exclusions.txt --label "$label" "$@"
+        --exclusions scripts/diff-coverage-exclusions --label "$label" "$@"
 }
 
 # Installs the UI's npm packages from the lock file, once per run.
@@ -180,21 +190,22 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
+        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
+            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
-            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh
+            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/fake-host-starved-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
+            ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.
         GIT_ENV_CARGO="$cargo" GIT_ENV_EXCLUDE="$skip_app" scripts/git-env-test.sh
         ;;
     platform-literals)
-        # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
-        # else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
+        # The per-OS runtime file names live in puddle-runtime's table (platform.rs, whose unit tests are
+        # platform/tests.rs and assert the table) and nowhere else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
         # Versioned names (libkrunfw.so.5.6.1) are msb-release facts, not table entries.
-        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' || true)
+        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' ':!crates/puddle-runtime/src/platform/tests.rs' || true)
         if [ -n "$hits" ]; then
             echo "$hits" >&2
             echo "platform-literals: use puddle_runtime::HostOs::runtime_files() instead of these literals" >&2
@@ -202,7 +213,7 @@ run_gate() {
         fi
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
-    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
+    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh && ci/image-pins-test.sh && ci/image-pins.sh check ;;
     # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
     # (the code it covered moved): fails, so a position-keyed exclusion cannot rot unseen. A failed
     # listing is an empty list, which the script refuses. `--colors never`: CI sets CARGO_TERM_COLOR=always,
@@ -223,6 +234,8 @@ run_gate() {
     # A test that returns early because a prerequisite is missing passes without testing; this fails
     # the hidden forms (docs/STANDARDS.md, "Skipped tests").
     silent-skips) scripts/check-silent-skips.sh --self-test && scripts/check-silent-skips.sh ;;
+    early-exit-pipes) scripts/check-early-exit-pipes.sh --self-test && scripts/check-early-exit-pipes.sh ;;
+    test-hooks) scripts/check-test-hooks.sh --self-test && scripts/check-test-hooks.sh ;;
     secrets)
         # gitleaks with the reviewed allowlist (.gitleaks.toml) over HEAD's commits its base lacks
         # (every ref when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
@@ -357,6 +370,7 @@ run_gate() {
         # coverage-baseline workflow raises the baseline in its own pull request).
         ui_install
         target=${CARGO_TARGET_DIR:-target}
+        coverage_unlock "$target"
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
@@ -432,6 +446,7 @@ run_gate() {
         target=${CARGO_TARGET_DIR:-target}
         lcov=$target/diff-coverage-fast.lcov
         echo "diff-coverage-fast: tests with coverage for:$packages"
+        coverage_unlock "$target"
         coverage_scrub "$target"
         trap 'coverage_scrub "$target"; check_tmp_cleanup' EXIT
         # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features
@@ -444,7 +459,7 @@ run_gate() {
         # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
         # not touch: hundreds of lines, so only their count is printed.
         rc=0
-        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs 2>&1) || rc=$?
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs --partial 2>&1) || rc=$?
         printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then
@@ -466,7 +481,7 @@ run_gate() {
 }
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
-fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips"
+fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks"
 all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"
@@ -516,29 +531,76 @@ done
 # Temp dir: cargo, nextest, the tests' fixtures, vitest and Playwright write scratch files to $TMPDIR, by default
 # /tmp, which on a host with a RAM-backed tmpfs is small and shared (one gate run filling it fails every other
 # process there). A run therefore points TMPDIR at a fresh directory under the target dir, when that is outside the repository (CHECK_TMPDIR=DIR uses
-# DIR/chk.* instead), removed when the run ends, also on a failure or a signal. A real run of the test, ui
+# DIR/chk.* instead; a target dir below any other repository, such as the workspace's .scratch/, moves it to the system temp dir), removed when the run ends, also on a failure or a signal. A real run of the test, ui
 # and ui-e2e gates (cargo, nextest, vitest, Playwright with Chromium and WebKit) added nothing to /tmp or /dev/shm.
 # A tool that hardcodes a path still writes there, and a socket path under a deep target dir can pass the 107 bytes
 # of sun_path (the one test that nests two roots uses a short base; mbx binds a socket in TMPDIR, so the directory
 # name stays short: <target dir>/chk.XXXXXX/mbx-session-XXXXXX/cache-agent.sock must fit in 107 bytes).
 check_tmp=
 check_tmp_cleanup() { [ -z "$check_tmp" ] || rm -rf "$check_tmp"; }
+# A unix socket path is at most 107 bytes (sun_path). A bind logger over the whole workspace test run found the
+# longest socket under TMPDIR in two places: puddle-ipc's default endpoint, `/puddle-<16 hex>/<16 hex>.sock`, which
+# sits 46 bytes below TMPDIR when XDG_RUNTIME_DIR is unset or not a directory (it binds under that directory
+# otherwise), and the agent tests' `/pa-editor-nopassword-XXXXXX/route.sock`, 39 bytes below. A longer TMPDIR fails
+# the socket tests with an error that names no cause. Refuse it here, before any gate runs.
+sock_max=107
+tmp_guard() {
+    if [ -d "${XDG_RUNTIME_DIR:-}" ]; then sock_tail=39; else sock_tail=46; fi
+    n=$(printf %s "${TMPDIR:-/tmp}" | wc -c | tr -d ' ')
+    limit=$((sock_max - sock_tail))
+    [ "$n" -le "$limit" ] || {
+        echo "check: TMPDIR is $n bytes, over the $limit-byte limit: a unix socket path is at most $sock_max bytes and the longest one the tests bind adds $sock_tail. Use a shorter CHECK_TMPDIR (or CARGO_TARGET_DIR)." >&2
+        exit 1
+    }
+}
+# enclosing_repo <dir>: prints the nearest directory at or above <dir> that holds a `.git` (a repository or a linked
+# worktree), and succeeds; fails when there is none. Git finds such a repository from any scratch repository
+# or crate a test builds below <dir> that has no `.git` of its own, so a temp dir below one breaks the git fixtures.
+enclosing_repo() {
+    d=$1
+    while :; do
+        [ ! -e "$d/.git" ] || {
+            printf '%s\n' "$d"
+            return 0
+        }
+        [ "$d" != / ] || return 1
+        d=$(dirname "$d")
+    done
+}
 private_tmp() {
     base="${CHECK_TMPDIR:-${CARGO_TARGET_DIR:-target}}"
     case $base in /*) ;; *) base="$PWD/$base" ;; esac
+    sys_tmp="${TMPDIR:-/tmp}"
     # Not inside the repository: tests that build a scratch repository or crate under TMPDIR would find this one
     # above it (the default target dir `target` is inside, so a plain run keeps the system temp dir).
     case $base in "$PWD" | "$PWD"/*)
-        echo "check: the target dir is inside the repository, TMPDIR stays ${TMPDIR:-/tmp} (set CARGO_TARGET_DIR outside it, or CHECK_TMPDIR)" >&2
-        return 0
+        echo "check: the target dir is inside the repository, TMPDIR stays $sys_tmp (set CARGO_TARGET_DIR outside it, or CHECK_TMPDIR)" >&2
+        base=
+        ;;
+    *)
+        mkdir -p "$base"
+        # Nor inside any other repository (a target dir under the enclosing workspace's .scratch/): the temp dir
+        # moves to the system temp dir, where it is still private and removed at the end. When that is inside a
+        # repository too there is nowhere safe to go.
+        if outer=$(enclosing_repo "$(cd "$base" && pwd -P)"); then
+            echo "check: the target dir is inside the repository $outer, the temp dir goes to the system temp dir $sys_tmp instead" >&2
+            base=$sys_tmp
+        fi
         ;;
     esac
-    mkdir -p "$base"
-    check_tmp=$(mktemp -d "$base/chk.XXXXXX")
-    trap check_tmp_cleanup EXIT
-    trap 'check_tmp_cleanup; exit 130' INT
-    trap 'check_tmp_cleanup; exit 143' TERM HUP
-    export TMPDIR="$check_tmp"
+    if [ -n "$base" ]; then
+        mkdir -p "$base"
+        check_tmp=$(mktemp -d "$base/chk.XXXXXX")
+        trap check_tmp_cleanup EXIT
+        trap 'check_tmp_cleanup; exit 130' INT
+        trap 'check_tmp_cleanup; exit 143' TERM HUP
+        export TMPDIR="$check_tmp"
+    fi
+    if outer=$(enclosing_repo "$(cd "${TMPDIR:-/tmp}" && pwd -P)"); then
+        echo "check: TMPDIR ${TMPDIR:-/tmp} is inside the repository $outer, whose .git the tests' scratch repositories would find. Set CHECK_TMPDIR to a directory outside every repository." >&2
+        exit 1
+    fi
+    tmp_guard
 }
 private_tmp
 
@@ -552,7 +614,9 @@ before_concurrent() {
 
 # shellcheck source=scripts/gate-sched.sh
 . scripts/gate-sched.sh
-# The serial prefix. diff-coverage-fast is in it, so in the pre-push set it fails the run before the streams start.
-serial_gates="$fast_gates diff-coverage-fast"
+# The serial prefix: the fast gates but `hooks` (about 2 min of script self-tests, so it runs beside the streams in the misc
+# stream and still fails the run), then diff-coverage-fast, so in the pre-push set a change no test runs fails before the streams start.
+serial_gates=
+for g in $fast_gates diff-coverage-fast; do [ "$g" = hooks ] || serial_gates="$serial_gates $g"; done
 # shellcheck disable=SC2086 # the gate names are words by design
 run_gates $requested

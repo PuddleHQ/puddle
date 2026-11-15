@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
@@ -14,6 +14,7 @@
     type Rule,
     type Sort,
     type SortKey,
+    actorLabel,
   } from "#lib/rules/model.ts";
   import "#lib/theme/controls.css";
 
@@ -124,8 +125,9 @@
           <td>
             <time
               datetime={new Date(rule.created_at).toISOString()}
-              title="{absoluteTime(rule.created_at)} by {rule.created_by}"
-              >{relativeTime(rule.created_at, now)}</time
+              title="{absoluteTime(rule.created_at)} by {actorLabel(
+                rule.created_by,
+              )}">{relativeTime(rule.created_at, now)}</time
             >
           </td>
           {#if onExpiry && onDelete}

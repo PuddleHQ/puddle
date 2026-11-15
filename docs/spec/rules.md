@@ -39,10 +39,11 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
 ## 2. Matching
 
 - **R-1 Nothing is pre-decided.** A fresh install has no rules, allow or deny. Every request
-  with no matching rule becomes pending (§3); there is no built-in deny list. The built-in rule
-  sets ship switched off (R-36); the one thing Puddle allows by itself is the short System managed
-  list, derived from the user's own setup choices and shown with a reason for every host
-  (R-40, R-41). *Note added 2026-10-08.*
+  with no matching rule becomes pending (§3). Every built-in group, one that allows and one that
+  blocks alike, ships switched off (R-36); no built-in rule decides anything until the user
+  switches it on. The one thing Puddle allows by itself is the short System managed list, derived
+  from the user's own setup choices and shown with a reason for every host (R-40, R-41).
+  *Note added 2026-10-08, reworded 2026-11-14.*
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
   later; the port is still recorded on pending rows and in the audit.
 - **R-3 Suffix rules** `.example.com` match every name ending in `.example.com` at any depth, and
@@ -52,7 +53,7 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
   bundled public suffix list (ICANN and private sections) are refused as suffix patterns.
 - **R-5 Applicable rules** for a request: every non-expired `global` rule plus every non-expired
   `workspace` rule of that request's workspace. Another workspace's rules never apply.
-- **R-6 Precedence, most specific wins:** (1) exact beats suffix, and a longer suffix beats a shorter
+- **R-6 Precedence, most specific wins** among rules of the same precedence (R-59, R-60): (1) exact beats suffix, and a longer suffix beats a shorter
   one; (2) at equal pattern specificity, `workspace` beats `global`; (3) at equal scope, `deny` beats
   `allow` *(default)*. So a global deny on `.example.com` can be overridden for one workspace by a
   workspace allow on `.example.com` or an exact allow, but never by a broader pattern.
@@ -65,7 +66,9 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
 - **R-9 The decision says how it matched:** `allow { rule_id, pattern }`, `deny { rule_id }` or
   `pending { pending_id, outcome }` (`outcome`: `new`, `repeat`, `unlisted`: R-45). The proxy needs the
   pattern kind for R-14. A rule set's entry decides as `set_allow { set, rule_id?, pattern }` or
-  `set_deny { set, rule_id, pattern }` (§7).
+  `set_deny { set, rule_id?, pattern }` (§7; `rule_id` is absent for a built-in entry). Once
+  precedence is built (R-59), every decision that a rule made also carries the winning
+  `precedence` and the rules that matched (R-62).
 
 ## 3. Pending requests
 
@@ -138,8 +141,30 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   exact allow counts, and a suffix allow reaches the destination only when "wildcards reach local
   addresses" is on. The toggle allows nothing by itself. On a proxied route the check is made on the
   address the host resolves for the name, with a short timeout. An answer that is public, missing or
-  late does not deny, because the company proxy may be the only resolver.
-  *Added 2026-11-05.*
+  late does not deny, because the company proxy may be the only resolver. The reading of the
+  physical LAN has a third answer, "unread": while the host cannot read its interfaces it cannot
+  rule out that an address is on the LAN, so the address stays local/private (a plain "no" there
+  would move a home-LAN address into the category). Image pulls use the same verdict, with the
+  workspace's name block, and have no rules, so an address whose toggle is on is reachable.
+  **Status:** on Windows the host reads all four signals, read-only: the system's proxy script
+  (asked in the background, so the first request to a name still reads as plain private network and
+  the next one as company network), the adapters and IPv4 routes, and the DNS suffixes and
+  namespaces. A client counts as private-access when an adapter that is up carries the name of
+  Zscaler, Netskope, Cloudflare WARP, Tailscale or Microsoft's private access. On Linux and macOS
+  the host reads none of them, so the category is empty there and the toggle changes nothing; the
+  Settings text says so.
+  Two exceptions belong to the category and have no switch of their own; each use is a
+  `connection` record. (1) A plain-HTTP `GET` or `HEAD` of a certificate distribution point or
+  authority-information-access URL (CRL, issuer certificate, OCSP responder) named in a root the
+  host synced is allowed with no rule and with the toggle off, when the host in the URL resolves
+  only to company-network or private addresses (reason `pki_distribution_point`). The URLs are read
+  from the synced roots at start; the exception covers that exact host, port and path (a request
+  path below the URL counts as a directory, for an OCSP `GET`), never another method, host, port or
+  path, and never loopback, link-local, metadata or a public address. (2) SSH to
+  `ssh.dev.azure.com` port 22 stays refused (`ssh_unsupported`); when the host's own probe of
+  that port fails, the refusal says the company network blocks it and that HTTPS remotes work with
+  Puddle's credentials, instead of only pointing at HTTPS.
+  *Added 2026-11-05; the unread LAN answer 2026-11-13; Windows readers 2026-11-13.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
   allowed name resolves to, before R-14). The proxy looks up each address's own rules
   (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is
@@ -201,13 +226,20 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>` (`toggle:company_network` for the company network), `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `pki_distribution_point`, `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `scrubbed_stand_ins` (the ids of the stand-ins whose real values an answer from one of their
   hosts held and that went to the workspace as the stand-in instead; empty in older records; an
   answer in a content encoding Puddle cannot read is refused with reason `answer_encoding`, one cut
   off because it held a real value in a form that cannot be replaced has reason `answer_withheld`),
+  `foreign_credentials` (the kinds of credential a request carried that Puddle did not add or swap:
+  `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`, `azure_devops_token`,
+  `git_authorization`; each once, never a value; empty in older records and when the warning is off),
+  `answer_credentials` (the kinds of token an answer held that Puddle does not hold, read as the
+  workspace gets it: `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+  `azure_devops_token`, `anthropic_key`, `openai_key`, `jwt_with_refresh_token`; each once, never a
+  value; the same setting turns it off; empty in older records),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
@@ -270,9 +302,15 @@ readable as JSONL (one record per line).
   identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
   plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
-  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed` and
+  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
   `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
-  at boot; `detail` names the file and what was done).
+  at boot; `detail` names the file and what was done) and three for the filtered SSH agent:
+  `ssh_agent_signed` (actor `system`: it signed a login, `detail` names the host, the key family and the
+  key's fingerprint), `ssh_agent_refused` (actor `system`, outcome `failed`: it refused a request, `detail`
+  says why; the same refusal of one workspace is written once a minute, and a key list asked before a
+  session bind, which every `ssh` that does not bind sends, is not written) and `ssh_agent_answered` (the
+  user's answer to the first-use question, actor `cli`, `ui` or `api`; `detail` says which of "allowed once",
+  "allowed run", "allowed always" or "denied", for which key and host).
   A create or a delete is written whether it worked or not; a start or a stop only when it failed
   (a start that worked shows in the workspace's state); a rename when it worked, or when the
   workspace list could not be saved; the identity and repository changes, a new order of the identities included, when they worked. A call
@@ -395,12 +433,18 @@ with its reason. The user's own global and workspace rules (§1) are called *own
 rules are tested in `puddle-store` (`rule_sets_spec`, the engine's property tests), the proxy and
 the API. *Added 2026-10-08.*
 
-- **R-36 Built-in sets ship off, only allow, and update with puddle.** A built-in set is data in
-  Puddle (an id `builtin:<slug>`, a name, a description, entries with a note each), checked at
-  build time against R-4 and for duplicates. It is read-only and never copied into the database, so
-  an update of Puddle updates it. Puddle ships no deny list: built-in entries only allow. Each
-  ships switched off. When an update changes a set's entries, the store writes one
-  `rule_set_changed` record (`added`, `removed`) when it opens, and the set shows when it changed.
+- **R-36 Built-in groups ship off, and update with Puddle.** A built-in set (shown as a *group*,
+  R-59) is data in Puddle (an id `builtin:<slug>`, a name, a description, entries with a note each
+  and an effect each), checked at build time against R-4 and for duplicates. It is read-only and
+  never copied into the database, so an update of Puddle updates it. A built-in group may allow, or
+  block, or hold both. **Every built-in group ships switched off**, whatever it does: Puddle never
+  refuses a request on its own, only because the user switched a group on (principle 2). A
+  refusal by a built-in entry names the group and the entry (R-62, R-53), and the user can switch
+  that one entry off (R-65) or the group. A built-in entry decides at the fixed lowest precedence
+  (R-59), so an own rule that matches the host always beats it. When an update changes a group's
+  entries, the store writes one `rule_set_changed` record (`added`, `removed`) when it opens, and
+  the group shows when it changed. A built-in group can be *hidden* while the feature it serves is off (the "mise tools" group, while the global tools switch is off): a hidden group decides nothing, is left out of the list and answers `409` to a switch; the switches stored for it are kept, so it returns as the user left it. *Reworded 2026-11-14: the earlier text said built-in entries
+  only allow.*
 - **R-37 Switches.** Every set has a switch for every workspace and an override per workspace, each
   on, off or unset; unset passes to the next level (the workspace's, then every workspace's, then the
   set's default: built-in sets off, the user's own sets on). A switch applies to the next request
@@ -412,18 +456,14 @@ the API. *Added 2026-10-08.*
   or by approving or denying a pending request **into the set** (R-15): the set must be on for
   the request's workspace, or the decision is refused (it would not allow the request). Deleting a
   set deletes its entries (`rule_deleted`, reason `set_deleted`) and its switches.
-- **R-39 Precedence: a set never opens what an own rule closes.** For a request, the own rules
-  are ranked as R-6 and the entries of the sets that are on for its workspace are ranked by pattern
-  specificity, then deny over allow. When an own rule matches, it decides, unless a set's deny is
-  strictly more specific than it. When no own rule matches, the most specific set entry decides,
-  deny over allow. So a set's allow only fills gaps; a set's deny acts like a rule at its level of
-  detail, ranked below an own rule of the same detail. Examples: a global own deny of
-  `*.visualstudio.com` beats System managed's `update.code.visualstudio.com`; an own allow of
-  `*.example.com` loses to a set's deny of `ads.example.com`, and an own exact allow of
-  `ads.example.com` wins again. Between two sets the same order applies.
+- **R-39 Precedence of sets and own rules.** Replaced by R-59 and R-60: an own rule, an entry of a
+  group the user made and a built-in entry are ranked by one explicit precedence, not by the kind
+  of list they sit in. Until precedence is built, the earlier ranking stands: own rules are
+  ranked as R-6, set entries by pattern specificity then deny over allow, and an own rule decides
+  unless a set's deny is strictly more specific than it. The examples of R-60 hold in both.
 - **R-40 System managed is shown, with reasons.** The Rules screen lists every System managed
   host with its reason in words and where it applies (every workspace or one). Nothing in it is
-  stored as a rule or hidden. To block one of its hosts, the user adds an own deny (R-39); to
+  stored as a rule or hidden. To block one of its hosts, the user adds an own deny (R-60); to
   remove the reason, the user changes the choice behind it.
 - **R-41 System managed follows the setup.** Puddle derives it from the settings at start and
   after every settings or consent change, and stores only the reasons (so a restart with the same
@@ -437,22 +477,25 @@ the API. *Added 2026-10-08.*
   | Direct SSH is on for a workspace, for Cursor | `cursor.blob.core.windows.net` (server download), `marketplace.cursorapi.com`, `marketplace.cursor-cdn.com` (extensions) | that workspace |
   | Direct SSH is on for a workspace, for JetBrains Gateway | `download.jetbrains.com`, `download-cdn.jetbrains.com`, `download-cf.jetbrains.com`, `cache-redirector.jetbrains.com`, `data.services.jetbrains.com` (IDE backend), `plugins.jetbrains.com`, `downloads.marketplace.jetbrains.com` (plugins) | that workspace |
   | Direct SSH is on for a workspace, for Zed | `github.com`, `release-assets.githubusercontent.com` (remote server download) | that workspace |
+  | The managed tools layer (mise) is on for a workspace: the global switch and the workspace's own | `mise.jdx.dev` (the pinned mise download), `mise-versions.jdx.dev` (version lists) | that workspace |
 
   Open VSX is in force from the first start, on a fresh install with no settings stored: the
   default editor is code-server, so every workspace, including one whose browser editor was never
   opened, can install an extension from the editor's extension view with no rule added and no
   request raised. The registry's API (`open-vsx.org`) and its file host (`openvsx.eclipsecontent.org`,
   where a download is redirected) are both listed, because an install needs both. A user who
-  does not want it adds an own deny (R-39).
+  does not want it adds an own deny (R-60).
 
   Telemetry, experiment and certificate-status hosts are not in it: they are ordinary traffic
   (R-1). When the reasons change, one `system_managed_changed` record per scope says which reasons
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
   Direct SSH is the workspace's effective `direct_ssh` setting (its own value, else the global
-  default).
+  default). The mise hosts follow the managed tools layer the same way: on unless the global
+  switch or the workspace's own switch is off. The hosts of the tools mise installs (`nodejs.org`,
+  `github.com`, ...) are not in the list: the repository and the user choose them.
   Direct SSH has no per-editor choice: switching it on gives the workspace every desktop editor's
   list above, each shown on the Rules screen with its own reason, and an own deny of any host
-  overrides it (R-39). The AI, sign-in, licence and telemetry hosts of these editors are not in
+  overrides it (R-60). The AI, sign-in, licence and telemetry hosts of these editors are not in
   the lists.
   Zed's list holds `github.com` as a whole, because Zed's release download starts there and Puddle
   cannot tell that fetch from another one: with direct SSH on, the workspace can reach any GitHub
@@ -483,11 +526,102 @@ the API. *Added 2026-10-08.*
   its place, the ink on a filled chip is chosen for at least 4.5:1 contrast, and the edge of a
   dot or chip is the theme's border colour, so it shows in the light and the dark theme.
 
+### Groups and precedence
+
+*Specified 2026-11-14; built in slices. R-59 to R-66 replace R-39's ranking when built.*
+
+The Rules screen shows rules in **groups** (what the store calls a rule set, R-38): the locked
+*Built in* group with its parts, System managed under it, the groups the user made, and the rules
+in no group. A group organises rules and switches them together. It never decides an order: what
+decides is each rule's own precedence.
+
+- **R-59 Every rule has a precedence.** An integer from 1 to 999, higher wins, default 500. It is
+  stored on every rule the user can make: a host rule (global or workspace, in a group or in none),
+  a rule on method and path (§8). Built-in entries and System managed hosts sit at the fixed
+  precedence 0, below every rule the user can make; the user cannot change it. A rule keeps its
+  precedence when it moves between groups. A group may hold a default precedence (1 to 999, none
+  means 500) that a new rule in it takes when the request to add it names none; changing the default
+  changes no existing rule. A migration gives every rule that exists before precedence the value 500.
+- **R-60 Decision order.** Of the rules that match a request, the highest precedence decides. A rule
+  matches only when it is switched on (R-65), unexpired (R-7), in scope for the workspace (R-5) and,
+  for an entry of a group, the group is on for that workspace (R-37). Rules of the same precedence
+  are ranked as R-6: (1) pattern specificity, (2) a `workspace` rule over a `global` one (an entry
+  of a group counts as `global`), (3) `deny` over `allow`. Precedence comes first, so an own exact
+  allow at 500 loses to an own `*.example.com` deny at 600, and an own allow of any pattern at 1
+  beats a built-in block at 0. A group's own switches and a request's workspace never change a
+  rule's precedence. Examples: an own deny of `*.visualstudio.com` beats System managed's
+  `update.code.visualstudio.com` (500 over 0); an own deny of `.example.com` and an own exact allow
+  of `a.example.com` at the same precedence: the allow wins by specificity (R-6), and R-63 warns;
+  the same two with the deny at 600: the deny wins. A rule on method and path (§8) is checked after
+  the host's decision, as R-50 says, and refuses whatever the precedence of the host rule that
+  allowed the host: a rule that only refuses cannot open anything. Its precedence is stored, shown
+  and compared only among rules of its own kind, where it has no effect today because they only refuse.
+- **R-61 What the migration changes.** Own rules rank among themselves as before (R-6 is the tie
+  rule), and built-in and System managed entries keep their place below every own rule: no answer
+  changes for them. A built-in entry that blocks and an own allow of the same host used to be
+  decided by pattern specificity; no built-in block has shipped, so no answer changes. The entries of
+  groups the user made move from "below own rules, except a strictly more specific deny" to the same
+  precedence as own rules, so an answer changes only where such an entry and an own rule overlap
+  with opposite effects and one of two cases holds: (A) the group's allow is more specific than
+  an own deny (today the own deny wins, now the allow wins), or (B) the group's deny and a global
+  own allow are equally specific (today the allow wins, now the deny wins). The migration finds
+  every such pair, writes one `precedence_migrated` record that names them with the old and new
+  answer, and shows it once on the Rules screen; setting a precedence restores any answer. The
+  screen and the API say "group" where the store and the routes say "set".
+- **R-62 A request names the rules that matched.** The `connection` record of a request a rule
+  decided (§5; R-25 holds: no query, no header value) carries `precedence` (the winning rule's) and `matches`, a list of every rule that
+  matched it, at most 20 (the winner first, then by precedence, then as R-60), with a count of the
+  rest in `more`. Each item is `{ kind, id, effect, precedence, won }`: `kind` is `rule`, `request_rule`
+  or `builtin`; `id` is the rule's id, the request rule's id, or for a built-in entry its group and
+  pattern; `won` marks the rule that decided. The record also carries a `link` per item, the Rules
+  screen address that opens and highlights that row (`/rules?rule=<id>`, `/rules?request-rule=<id>`,
+  `/rules?builtin=<group>&pattern=<pattern>`); a deleted rule is plain text. A refusal's `403` states
+  the winning rule's precedence in words and in `x-puddle-precedence`; it still does not repeat the
+  path or the query (R-53). A request no rule matched is pending and has no matches. The Activity
+  screen shows the matches and their links.
+- **R-63 Overlap warning.** Two rules **overlap** when both match some host, they can apply to the
+  same workspace (two `workspace` rules of different workspaces never do), both are switched on and
+  unexpired, and their precedence is equal. An overlap is a warning, not a refusal, when the rules
+  have opposite effects or are duplicates (same pattern, scope and effect); two rules of the
+  same effect where one pattern contains the other overlap harmlessly and warn of nothing. The
+  warning says in words which rule decides and why: "decided by specificity: `a.example.com` beats
+  `*.example.com`", "decided by workspace scope", or "deny wins at equal rank", and says that a
+  different precedence makes the order explicit. Giving one of the two another precedence, or
+  switching one off, clears it. Rules on method and path warn only for a duplicate (same host
+  pattern, methods and path pattern); overlap of different path patterns is not judged. The API
+  returns the overlaps of each rule, computed from the engine's index, and an overlap is never an
+  audit record.
+- **R-64 Conflict error.** A rule **conflicts** with another when they have the same pattern and the
+  same scope, opposite effects, equal precedence, and both are switched on and unexpired: the only
+  thing that would decide is "deny wins". That is an error, shown in red on both rows. Saving
+  a rule that would create a conflict (adding, editing, importing, moving, or switching
+  it on, R-65) is refused with `409` and the code `rule_conflict`, naming the other rule: the
+  rule that creates it is not saved, and nothing else is blocked. Switching a group or a built-in
+  entry on is never refused, because a switch is the user's safety control; a conflict that arises
+  that way, and one that already exists after the migration, stays shown as an error, and deny
+  wins meanwhile (R-6). A row of an import that would conflict is skipped, counted and listed in
+  the preview and the result, and the other rows are imported. The fix is another precedence, another
+  scope, or removing a rule. Built-in entries never conflict with the user's rules (precedence 0
+  against 1 to 999); two built-in entries that would conflict fail the build (R-36).
+- **R-65 A rule can be switched off.** Every rule and rule on method and path has an `enabled`
+  flag (default on). A rule that is off never matches, appears in no `matches` list, takes part
+  in no overlap or conflict, and keeps its precedence and place. A single entry of a built-in
+  group has a switch of its own, stored apart from the catalogue (the catalogue is never copied into
+  the database, R-36). Switching a rule on or off applies to the next request (R-8) and writes
+  `rule_switched` (the rule, the new state, the actor). Switching one on closes the open requests
+  it now decides, like a new rule (R-16).
+- **R-66 What is recorded.** `rule_switched` (R-65), `rule_updated` (a rule edited in place:
+  the fields that changed, including precedence, with the actor), `precedence_migrated` (R-61) and
+  `rules_imported` (the group, the counts, the skipped conflicts). They use the actors of §1.
+
 ## 8. Rules on method and path
 
 A rule on a host decides whether a workspace may reach it. A rule on method and path narrows that
 for a host the workspace reaches anyway: "this host, but never `DELETE` on `/repos/**`". It only
-ever refuses, so no rule of this kind can open anything and there is no precedence to settle.
+ever refuses, so no rule of this kind can open anything: it is checked after the host's decision and
+refuses whatever precedence decided it (R-60). It carries a precedence (R-59) so that it sorts and
+warns with the other rules, and so that a rule on method and path that allows can be ranked when
+one exists.
 
 - **R-49 A rule on method and path** names a host (`example.com` or `*.example.com`, the grammar of
   the never-decrypt names), the methods it covers (none named: every method) and a path pattern
@@ -563,7 +697,7 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   and a connection no rule refused names its first request as before. A refused tunnel is
   `decision: blocked`, `reason: request_rule_port`, with `request_rule` the lowest-numbered rule
   on the host (its `403` carries the same id in `x-puddle-request-rule`).
-- **R-55 No rule of this kind is ever made by Puddle.** Automated help may only allow (R-36), so
+- **R-55 No rule of this kind is ever made by Puddle.** Automated help may only allow (principle 2; a built-in group may block hosts, R-36, but never by method and path), so
   rule sets, System managed and the AI judge never create one; every rule on method and path
   was made by the user over the API (a screen for them is not built yet) and shows in the audit with who made it.
 

@@ -1,14 +1,15 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { around, isWelcome, STEPS, stepFor } from "./steps.ts";
 
 describe("first-run steps", () => {
-  it("run welcome, check, certificates, connect, look, first workspace", () => {
+  it("run welcome, check, certificates, connect, interception, look, first workspace", () => {
     expect(STEPS.map((s) => s.id)).toEqual([
       "welcome",
       "check",
       "certificates",
       "connect",
+      "interception",
       "look",
       "workspace",
     ]);
@@ -36,6 +37,10 @@ describe("first-run steps", () => {
     });
     expect(around("connect")).toEqual({
       back: "/welcome/certificates",
+      next: "/welcome/interception",
+    });
+    expect(around("interception")).toEqual({
+      back: "/welcome/connect",
       next: "/welcome/look",
     });
     expect(around("workspace")).toEqual({

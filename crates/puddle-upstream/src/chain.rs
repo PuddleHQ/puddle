@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Connecting through the route [`Discovery`] picked: the hops in order, the `CONNECT`
 //! and absolute-form exchanges with a proxy, and the `407` loop driven by [`ProxyAuth`].
 //!
@@ -22,8 +22,10 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -54,6 +56,10 @@ pub struct ChainConfig {
     /// One request/response exchange with a proxy, so a proxy that accepts and never answers
     /// counts as down.
     pub head_timeout: Duration,
+    /// The host-side name lookup before a proxy is asked to resolve the name itself (see
+    /// [`crate::host::connect`]). A resolver that does not answer must not stall the connection:
+    /// the company's proxy may be the only one that knows the name.
+    pub lookup_timeout: Duration,
     /// `407` rounds before giving up (NTLM needs three legs; a proxy that keeps asking is
     /// broken or hostile).
     pub max_legs: usize,
@@ -64,12 +70,20 @@ impl Default for ChainConfig {
         Self {
             connect_timeout: Duration::from_secs(10),
             head_timeout: Duration::from_secs(15),
+            lookup_timeout: Duration::from_secs(5),
             max_legs: 6,
         }
     }
 }
 
 impl ChainConfig {
+    /// The defaults with another host-side lookup timeout.
+    #[must_use]
+    pub fn with_lookup_timeout(mut self, lookup: Duration) -> Self {
+        self.lookup_timeout = lookup;
+        self
+    }
+
     /// The defaults with other timeouts.
     #[must_use]
     pub fn with_timeouts(mut self, connect: Duration, head: Duration) -> Self {
@@ -166,7 +180,6 @@ pub struct Connected {
 
 /// Why no connection was made.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum ChainError {
     /// Every hop failed to connect. Each entry names the hop and why.
     #[error("no hop could be reached: {}", join(.tried))]
@@ -255,6 +268,35 @@ struct Memo {
     basic: Option<String>,
 }
 
+/// A name lookup that stands in for the system resolver (see [`Chain::with_lookup`]).
+#[derive(Clone)]
+pub struct HostLookup(Arc<LookupFn>);
+
+type LookupAnswer = Pin<Box<dyn Future<Output = io::Result<Vec<SocketAddr>>> + Send>>;
+type LookupFn = dyn Fn(&str, u16) -> LookupAnswer + Send + Sync;
+
+impl HostLookup {
+    /// A lookup that calls `lookup` with the name and port.
+    #[must_use]
+    pub fn new<F, Fut>(lookup: F) -> Self
+    where
+        F: Fn(&str, u16) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
+    {
+        Self(Arc::new(move |name, port| Box::pin(lookup(name, port))))
+    }
+
+    pub(crate) fn call(&self, name: &str, port: u16) -> LookupAnswer {
+        (self.0)(name, port)
+    }
+}
+
+impl fmt::Debug for HostLookup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("HostLookup(..)")
+    }
+}
+
 /// Connects along the route [`Discovery`] picks, authenticating to proxies with [`ProxyAuth`].
 /// Cheap to share: wrap in an [`Arc`].
 #[derive(Debug)]
@@ -262,6 +304,7 @@ pub struct Chain {
     discovery: Arc<Discovery>,
     auth: Arc<dyn ProxyAuth>,
     config: ChainConfig,
+    lookup: Option<HostLookup>,
     memo: Mutex<HashMap<ProxyAddr, Memo>>,
     sign_in_log: SignInLog,
     /// The epoch `auth` was last told about.
@@ -286,10 +329,38 @@ impl Chain {
             discovery,
             auth,
             config,
+            lookup: None,
             memo: Mutex::default(),
             sign_in_log: SignInLog::default(),
             auth_epoch: AtomicU64::new(0),
         })
+    }
+
+    /// Like [`Chain::with_config`] with `lookup` in place of the system resolver for the
+    /// host-side lookup of [`crate::host::connect`], so a test does not depend on the DNS of the
+    /// machine it runs on.
+    #[must_use]
+    pub fn with_lookup(
+        discovery: Arc<Discovery>,
+        auth: Arc<dyn ProxyAuth>,
+        config: ChainConfig,
+        lookup: HostLookup,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            discovery,
+            auth,
+            config,
+            lookup: Some(lookup),
+            memo: Mutex::default(),
+            sign_in_log: SignInLog::default(),
+            auth_epoch: AtomicU64::new(0),
+        })
+    }
+
+    /// The stand-in for the system resolver, if one was given.
+    #[must_use]
+    pub fn host_lookup(&self) -> Option<&HostLookup> {
+        self.lookup.as_ref()
     }
 
     /// What the last sign-in to each proxy came to, for the network-health report. Never holds a
@@ -322,6 +393,12 @@ impl Chain {
             connected.hop.clone(),
             connected.epoch,
         )
+    }
+
+    /// How long the host-side name lookup may take (see [`ChainConfig::lookup_timeout`]).
+    #[must_use]
+    pub fn lookup_timeout(&self) -> Duration {
+        self.config.lookup_timeout
     }
 
     /// The discovery in use.
@@ -806,6 +883,51 @@ async fn drain(stream: &mut TcpStream, len: usize, within: Duration) -> bool {
 /// the next address.
 const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
+/// How many more times a connect is tried when the system could not pick it a local port.
+const PORT_RETRIES: u32 = 6;
+const PORT_RETRY_DELAY: Duration = Duration::from_millis(20);
+
+/// True for a connect that failed because the system could not give it a local port or buffer
+/// right then, not because of the destination. Windows picks a random port from its dynamic range
+/// and answers `WSAENOBUFS` (10055) when its draws keep landing on ports in use, which happens
+/// with thousands of connections open at once; a fresh attempt draws again and usually succeeds.
+fn is_port_pressure(err: &io::Error) -> bool {
+    #[cfg(windows)]
+    const NO_BUFFERS: i32 = 10055;
+    #[cfg(target_os = "linux")]
+    const NO_BUFFERS: i32 = 105;
+    #[cfg(target_os = "macos")]
+    const NO_BUFFERS: i32 = 55;
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    const NO_BUFFERS: i32 = -1;
+    err.raw_os_error() == Some(NO_BUFFERS)
+        || matches!(
+            err.kind(),
+            io::ErrorKind::AddrInUse | io::ErrorKind::AddrNotAvailable
+        )
+}
+
+/// Runs `connect`, and again after a short pause when it failed for want of a local port or
+/// buffer ([`is_port_pressure`]), up to [`PORT_RETRIES`] more times. Any other error returns at once.
+async fn connect_through_port_pressure<F, Fut, T>(mut connect: F) -> io::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = io::Result<T>>,
+{
+    let mut delay = PORT_RETRY_DELAY;
+    for _ in 0..PORT_RETRIES {
+        match connect().await {
+            Err(err) if is_port_pressure(&err) => {
+                tracing::debug!(error = %err, "connect found no local port, trying again");
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+            other => return other,
+        }
+    }
+    connect().await
+}
+
 /// Connects to the first address that answers, racing them as RFC 8305 does: the families alternate
 /// (the first address's first), and each attempt runs alone for 250 ms before the next starts
 /// beside it, or at once when it fails. Each attempt gives up after `per_address`.
@@ -820,11 +942,12 @@ pub async fn connect_first(
     let mut attempts = tokio::task::JoinSet::new();
     let start = |attempts: &mut tokio::task::JoinSet<_>, addr: SocketAddr| {
         attempts.spawn(async move {
-            let connected = tokio::time::timeout(per_address, TcpStream::connect(addr))
-                .await
-                .unwrap_or_else(|_| {
-                    Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out"))
-                });
+            let connected = tokio::time::timeout(
+                per_address,
+                connect_through_port_pressure(|| TcpStream::connect(addr)),
+            )
+            .await
+            .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out")));
             (addr, connected)
         });
     };
@@ -881,26 +1004,4 @@ fn interleaved(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_families_alternate_from_the_first_address_on_each_in_its_own_order() {
-        let a: Vec<SocketAddr> = ["[::1]:1", "[::2]:1", "[::3]:1", "10.0.0.1:1", "10.0.0.2:1"]
-            .iter()
-            .map(|s| s.parse().unwrap())
-            .collect();
-        let order: Vec<String> = interleaved(&a).iter().map(ToString::to_string).collect();
-        assert_eq!(
-            order,
-            ["[::1]:1", "10.0.0.1:1", "[::2]:1", "10.0.0.2:1", "[::3]:1"]
-        );
-        let b: Vec<SocketAddr> = ["10.0.0.1:1", "10.0.0.2:1", "10.0.0.3:1", "[::1]:1"]
-            .iter()
-            .map(|s| s.parse().unwrap())
-            .collect();
-        let order: Vec<String> = interleaved(&b).iter().map(ToString::to_string).collect();
-        assert_eq!(order, ["10.0.0.1:1", "[::1]:1", "10.0.0.2:1", "10.0.0.3:1"]);
-        assert_eq!(interleaved(&[]), Vec::<SocketAddr>::new());
-    }
-}
+mod tests;

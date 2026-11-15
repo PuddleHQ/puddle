@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The port forward and the listening-ports report, through a real agent and the host's session
 //! code over a Unix socket: the host opens a stream to the agent, the agent connects to a port in
 //! "the guest" (this machine's loopback), and the bytes go through both ways.

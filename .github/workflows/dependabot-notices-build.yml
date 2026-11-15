@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # First half of the notices refresh on a Dependabot npm PR (second half: dependabot-notices.yml). A bump of a bundled
 # package makes ui/THIRD-PARTY-NOTICES.txt stale, and the `ui-licences` gate then fails. This half builds the PR the
 # way the gate does and uploads the regenerated file. It runs the PR's code (npm, vite), so it is an ordinary

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/disk-watch.sh with a free-space file in place of df, so each level is set by hand. Cases: a snapshot
 # with room prints df and inodes and walks no directory (a `du` that records its calls proves it); the sizes mode,
 # DISK_WATCH_SIZES=1 and a guard's marker each bring the size walk back; a snapshot under the warning level annotates and goes deep; a guard with

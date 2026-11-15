@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The pre-push gate set (`scripts/check.sh pre-push`: every gate but the UI end-to-end tests, which CI
 # runs after the push) before each push, so develop stays green. Enable: git config core.hooksPath .githooks
 #

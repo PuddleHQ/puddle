@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest and hostile-upstream cases for terminated connections (tier P): a guest that
 //! lies about the host, smuggles requests, or sends malformed framing; an upstream with a bad
 //! certificate, an oversized or slow response, or a response that is more than it should be.

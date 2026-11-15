@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Origins and clients for the corporate-lab tests: an echo server, a TLS origin with a root of
 //! its own, and a TLS client that trusts exactly the roots it is given.
 #![expect(

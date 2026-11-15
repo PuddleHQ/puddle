@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests the sweep cache of scripts/mutants.sh with a fake cargo (no mutation run): a passing run is
 # recorded and skipped next time, a changed crate or a failing run is not skipped, --uncached ignores
 # the cache, a dirty tree never uses it, and a cache hit that now fails reports a MISMATCH. Then the

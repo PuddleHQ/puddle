@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The check behind `BUILT_FOR`, shared by the build script and `tests/built_for.rs`: the msb
 //! runtime version is the `microsandbox` SDK package's version in `Cargo.lock`, which must come
 //! from the fork tag `v<version>`, with every other `microsandbox*` crate from the same source.
@@ -51,4 +51,33 @@ pub(crate) fn built_for(lock: &str) -> Result<String, String> {
         ));
     }
     Ok(version.to_owned())
+}
+
+/// `<major>.<minor>.<patch>-puddle.<n>` as four numbers, so the build script can write the version
+/// into the crate as a `const`. The rule is the one `RuntimeVersion`'s parser applies at run time
+/// (decimal numbers without leading zeros, `n` of 1 or more); a unit test in the crate checks
+/// that the const and the string agree.
+pub(crate) fn parts(version: &str) -> Result<[u32; 4], String> {
+    let bad = || format!("the runtime version {version:?} is not <release>-puddle.N");
+    let number = |s: &str| -> Result<u32, String> {
+        let plain = !s.is_empty()
+            && s.bytes().all(|b| b.is_ascii_digit())
+            && (s.len() == 1 || !s.starts_with('0'));
+        if !plain {
+            return Err(bad());
+        }
+        s.parse().map_err(|_| bad())
+    };
+    let (release, puddle) = version.split_once("-puddle.").ok_or_else(bad)?;
+    let mut fields = release.split('.');
+    let (Some(major), Some(minor), Some(patch), None) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        return Err(bad());
+    };
+    let puddle = number(puddle)?;
+    if puddle == 0 {
+        return Err(bad());
+    }
+    Ok([number(major)?, number(minor)?, number(patch)?, puddle])
 }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's local HTTP API axum on `127.0.0.1`, an SSE event stream, and the
 //! `OpenAPI` contract the UI and CLI are generated from (ADR 0004).
 //!
@@ -22,7 +22,9 @@
 //! before it can present one, but they keep the `Host` and `Origin` checks and carry a strict
 //! `Content-Security-Policy` and no framing.
 //!
-//! The listener binds `127.0.0.1` only; there is no setting for another address. State changes
+//! The listener binds `127.0.0.1`. The one other address is the opt-in network listener of remote
+//! serving ([`Remote::with_network_listener`]): a single named interface (never `0.0.0.0`
+//! or `::`), TLS, and only the listed proxy addresses, checked at accept. State changes
 //! are `POST`/`PUT`/`DELETE` and the ones with a body accept only `application/json`, so no
 //! "simple" cross-site request can reach them.
 //!
@@ -44,8 +46,11 @@
 //! [`puddle_types::EventSink`]: hand the same hub to the components that emit events.
 #![forbid(unsafe_code)]
 
+mod admin;
 mod auth;
+mod authz;
 mod checkouts;
+mod credential_store;
 mod credentials;
 mod dev_cert;
 mod doctor;
@@ -53,15 +58,19 @@ mod error;
 mod events;
 mod extract;
 mod fake_workspaces;
+mod front;
 mod learned;
 mod network_health;
 mod openapi;
 mod ports;
 mod proxy_sign_in;
+mod remote;
 mod repos;
 mod routes;
 mod server;
 mod settings;
+mod signin;
+mod stored_ids;
 mod system_managed;
 mod terminals;
 mod token;
@@ -73,6 +82,7 @@ pub use checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
     check_seen, checkouts_view, why_no_remote,
 };
+pub use credential_store::{CredentialStoreService, NoCredentialStore};
 pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
     NoSecretStore,
@@ -82,6 +92,7 @@ pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, R
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
+pub use front::{NameResolver, NoNames, SystemResolver};
 pub use learned::{FakeLearned, LearnedService, NoLearned};
 pub use network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
@@ -90,9 +101,14 @@ pub use network_health::{
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
 pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService};
+pub use remote::{
+    NetworkEndpoint, NetworkListener, PublicHost, Remote, RemoteError, RemoteServing, TlsIdentity,
+    WorkspaceNames,
+};
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};
 pub use terminals::{
     EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
     SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
@@ -103,12 +119,15 @@ pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
 pub use ui::EmbeddedUi;
 pub use ui::{UiAssets, UiFile};
 pub use workspaces::{
-    AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, DEFAULT_DISK_MIB, DEFAULT_IMAGE,
-    DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget, DisplayName, EditorLogin, EditorSignIn,
-    GitSetup, IdSource, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, LocalSource,
-    MAX_ID_DRAWS, MAX_REPO_URL_LEN, MAX_REPOSITORIES, NameIds, NewRepository, NewWorkspace,
-    NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation, RandomIds, RepoFindings, RepoUrl,
-    Repository, RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
-    WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, label_taken,
+    AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, CheckoutProblem,
+    DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget,
+    DisplayName, DisplayNameError, EditorLogin, EditorSignIn, EntryProblem, GitSetup, IdDrawError,
+    IdSource, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, LocalCheckoutError,
+    LocalSource, MAX_ID_DRAWS, MAX_REPO_URL_LEN, MAX_REPOSITORIES, NameIds, NewRepository,
+    NewWorkspace, NoFreeEntryId, NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation,
+    RandomIds, RepoFindings, RepoUrl, RepoUrlError, Repository, RepositoryDraft,
+    RepositoryListError, ShellInitCheck, StartFolder, StartFolderChange, StartFolderError,
+    WorkspaceError, WorkspaceRecord, WorkspaceService, check_rename, check_repositories,
+    check_repositories_with, check_session_user_change, check_start_folder_change,
+    entry_id_from_text, label_taken, new_entry_id,
 };

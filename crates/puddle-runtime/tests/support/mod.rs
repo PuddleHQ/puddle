@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fixtures shared by the integration tests: a temp dir per test and fake msb binaries.
 
 use std::path::Path;

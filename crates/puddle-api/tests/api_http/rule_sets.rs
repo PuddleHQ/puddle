@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rule sets and System managed through the API, against a real store.
 
 use serde_json::{Value, json};
@@ -9,7 +9,9 @@ use puddle_api::SettingsRepo as _;
 
 use crate::common::{Api, start};
 
+/// What the rules decide for a request of the owner's workspace `workspace`.
 fn decide(api: &Api, workspace: &str, host: &str) -> Decision {
+    api.own(workspace);
     api.store
         .decide(
             &EgressRequest::new(
@@ -456,5 +458,128 @@ async fn every_set_has_a_colour_and_your_own_can_be_chosen_and_changed() {
             .await;
         assert_eq!(refused.status, 422, "{bad}: {}", refused.body);
     }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn mise_hosts_follow_the_two_switches() {
+    let api = start().await;
+    for name in ["tools", "plain"] {
+        let reply = api
+            .send(
+                "POST",
+                "/api/workspaces",
+                Some(&json!({"name": name, "repositories": [{"url": "https://github.com/acme/api.git"}]})),
+            )
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+    }
+    // On by default: both workspaces may reach mise's two hosts, and nothing a tool reaches.
+    for name in ["tools", "plain"] {
+        assert!(decide(&api, name, "mise.jdx.dev").is_allow(), "{name}");
+        assert!(
+            decide(&api, name, "mise-versions.jdx.dev").is_allow(),
+            "{name}"
+        );
+        assert!(!decide(&api, name, "nodejs.org").is_allow(), "{name}");
+    }
+    let list = api.get("/api/rule-sets").await.json();
+    assert!(
+        list["system_managed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["reason"] == "mise" && h["workspace"] == "tools")
+    );
+    // The workspace's own switch drops it for that workspace only.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/workspaces/plain",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!decide(&api, "plain", "mise.jdx.dev").is_allow());
+    assert!(decide(&api, "tools", "mise.jdx.dev").is_allow());
+    // The global switch drops it everywhere.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!decide(&api, "tools", "mise.jdx.dev").is_allow());
+    assert!(!decide(&api, "tools", "mise-versions.jdx.dev").is_allow());
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_mise_tools_set_is_hidden_while_the_global_tools_switch_is_off() {
+    let api = start().await;
+    let ids = |list: &Value| -> Vec<String> {
+        list["sets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let switch = "/api/rule-sets/builtin:mise-tools/switch";
+    // On by default (the layer is on): listed, ships off, switches on.
+    let list = api.get("/api/rule-sets").await.json();
+    let set = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "builtin:mise-tools")
+        .unwrap()
+        .clone();
+    assert_eq!(set["default_on"], false);
+    assert_eq!(set["global"], Value::Null);
+    let reply = api
+        .send("PUT", switch, Some(&json!({"enabled": true})))
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(decide(&api, "box", "nodejs.org").is_allow());
+
+    // Off: gone from the list, decides nothing, 409 on its switch.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let list = api.get("/api/rule-sets").await.json();
+    assert!(!ids(&list).contains(&"builtin:mise-tools".to_owned()));
+    assert!(!decide(&api, "box", "nodejs.org").is_allow());
+    let reply = api
+        .send("PUT", switch, Some(&json!({"enabled": false})))
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+
+    // On again: back as the user left it (switched on).
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let list = api.get("/api/rule-sets").await.json();
+    let set = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "builtin:mise-tools")
+        .unwrap()
+        .clone();
+    assert_eq!(set["global"], true);
+    assert!(decide(&api, "box", "nodejs.org").is_allow());
     api.running.shutdown().await;
 }

@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake's own controls and the built-ins; the shared behaviour is in the contract suite.
 
 use std::time::Duration;
 
-use puddle_types::{GuestPath, ImageRef, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{GuestEnv, GuestPath, ImageRef, SandboxName, VolumeName, WorkspaceStatus};
 
 use super::*;
 use crate::{FileMount, OwnedDisk, VolumeMount};
@@ -84,6 +84,8 @@ async fn every_operation_can_fail() {
         Op::Get,
         Op::SetMemory,
         Op::SetCpus,
+        Op::SetEnv,
+        Op::GrowRootDisk,
         Op::List,
         Op::Remove,
         Op::StaleDirs,
@@ -114,6 +116,8 @@ async fn every_operation_can_fail() {
         rt.get(&n).await.err(),
         rt.set_memory(&n, MemoryMib::MIN).await.err(),
         rt.set_cpus(&n, CpuCount::MIN).await.err(),
+        rt.set_env(&n, &GuestEnv::new()).await.err(),
+        rt.grow_root_disk(&n, DiskSize::mib(99_999)).await.err(),
         rt.list().await.err(),
         rt.remove(&n).await.err(),
         rt.stale_dirs().await.err(),
@@ -489,12 +493,9 @@ async fn start_checks_volumes_again() {
 async fn images_and_probe() {
     let rt = FakeRuntime::with_config(FakeConfig {
         runtime_version: "0.7.7-puddle.1".into(),
-        stale_dir_fixed: true,
-        ssh_reports_signal_exit: true,
     });
     let caps = rt.probe().await.unwrap();
     assert_eq!(caps.runtime_version, "0.7.7-puddle.1");
-    assert!(caps.stale_dir_fixed && caps.ssh_reports_signal_exit);
     let dind = rt
         .pull_image(&ImageRef::new(FakeRuntime::DIND).unwrap())
         .await
@@ -725,4 +726,103 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let volumes = rt.volume_mounts(&name);
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].guest, path("/w"));
+}
+
+#[tokio::test]
+async fn a_running_root_disk_grows_live_and_a_stopped_one_at_the_next_start() {
+    let rt = FakeRuntime::new();
+    let n = name("a");
+    let sb = rt
+        .create(spec("a").with_root_disk(DiskSize::mib(1_000)))
+        .await
+        .unwrap();
+    rt.set_root_disk_use(&n, DiskSize::mib(1_000), DiskSize::mib(10));
+    let live = rt.grow_root_disk(&n, DiskSize::mib(2_000)).await.unwrap();
+    assert_eq!(live, RootDiskGrowth::Live);
+    assert_eq!(rt.root_disk_size(&n), Some(DiskSize::mib(2_000)));
+    let listed = |rt: &FakeRuntime| {
+        let rt = rt.clone();
+        async move { rt.list().await.unwrap()[0].root_disk.unwrap() }
+    };
+    assert_eq!(listed(&rt).await.size, DiskSize::mib(2_000));
+    assert_eq!(listed(&rt).await.used, DiskSize::mib(10));
+    sb.stop().await.unwrap();
+    let off = rt.grow_root_disk(&n, DiskSize::mib(3_000)).await.unwrap();
+    assert_eq!(off, RootDiskGrowth::NextStart);
+    assert_eq!(listed(&rt).await.size, DiskSize::mib(3_000));
+}
+
+#[tokio::test]
+async fn a_runtime_that_cannot_grow_live_waits_for_the_boot() {
+    let rt = FakeRuntime::new();
+    rt.set_live_root_grow(false);
+    let n = name("a");
+    let sb = rt
+        .create(spec("a").with_root_disk(DiskSize::mib(1_000)))
+        .await
+        .unwrap();
+    rt.set_root_disk_use(&n, DiskSize::mib(1_000), DiskSize::mib(10));
+    let got = rt.grow_root_disk(&n, DiskSize::mib(2_000)).await.unwrap();
+    assert_eq!(got, RootDiskGrowth::NextStart);
+    assert_eq!(
+        rt.list().await.unwrap()[0].root_disk.unwrap().size,
+        DiskSize::mib(1_000)
+    );
+    sb.stop().await.unwrap();
+    rt.start(&n).await.unwrap();
+    assert_eq!(
+        rt.list().await.unwrap()[0].root_disk.unwrap().size,
+        DiskSize::mib(2_000)
+    );
+}
+
+#[tokio::test]
+async fn a_root_disk_never_shrinks_and_an_unknown_sandbox_is_not_found() {
+    let rt = FakeRuntime::new();
+    let n = name("a");
+    rt.create(spec("a").with_root_disk(DiskSize::mib(1_000)))
+        .await
+        .unwrap();
+    for size in [500, 1_000] {
+        let err = rt
+            .grow_root_disk(&n, DiskSize::mib(size))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::InvalidSpec { .. }), "{err:?}");
+    }
+    let err = rt
+        .grow_root_disk(&name("nope"), DiskSize::mib(5_000))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ComputeError::NotFound { .. }), "{err:?}");
+}
+
+async fn sweep(sb: &FakeSandbox, cid: &str, ranges: &[&str]) -> ExecOutput {
+    let mut args = vec!["-e", crate::probes::VSOCK_SWEEP, "hello", cid];
+    args.extend(ranges);
+    run(sb, "perl", &args).await
+}
+
+#[tokio::test]
+async fn the_fake_guest_sweeps_ports_and_ranges_of_the_host_only() {
+    use crate::VsockRoute;
+    use crate::probes::VSOCK_SWEEP;
+    let rt = FakeRuntime::new();
+    let sb = rt
+        .create(
+            spec("a")
+                .with_route(VsockRoute::new(5000, "/nonexistent/a"))
+                .with_route(VsockRoute::new(5001, "/nonexistent/b")),
+        )
+        .await
+        .unwrap();
+    let out = sweep(&sb, "2", &["4990-5000", "5001", "9-1"]).await;
+    assert_eq!(out.stdout_text(), "accepted 5000\naccepted 5001\n");
+    assert_eq!(sweep(&sb, "2", &["1-4999"]).await.stdout_text(), "");
+    assert_eq!(sweep(&sb, "3", &["1-65535"]).await.stdout_text(), "");
+    assert_eq!(sweep(&sb, "2", &["x"]).await.stdout_text(), "");
+    let bad_cid = sweep(&sb, "host", &["5000"]).await;
+    assert_eq!(bad_cid.status.code, 2);
+    let no_args = run(&sb, "perl", &["-e", VSOCK_SWEEP]).await;
+    assert_eq!(no_args.status.code, 2);
 }

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-store"
 description = "SQLite storage and the rules engine: rules, grants, pending requests, audit"
@@ -9,6 +9,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[features]
+# `testing`: `puddle_store::testing`, helpers for other crates' tests (never in a shipped program).
+testing = []
 
 [dependencies]
 psl = { workspace = true }
@@ -22,6 +26,8 @@ tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The integration tests set up their workspaces' users through `puddle_store::testing`.
+puddle-store = { path = ".", features = ["testing"] }
 # `hooks` lets tests make single statements fail, to run the error paths.
 puddle-test-kit = { workspace = true }
 rusqlite = { workspace = true, features = ["hooks"] }

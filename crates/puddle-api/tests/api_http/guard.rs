@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guard over real HTTP: token, `Host` and `Origin` refusals, loopback
 //! binding, no CORS, JSON-only state changes.
 
@@ -315,6 +315,7 @@ async fn cors_preflights_get_no_allowance() {
 #[tokio::test]
 async fn state_changes_take_only_json_bodies() {
     let api = start().await;
+    api.own("box");
     let id = api.request("box", "example.com");
     let host = api.host();
     let auth = bearer(&api);

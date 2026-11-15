@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Harness for tests that boot real microVMs through the msb SDK (tiers K, W and R).
 //!
 //! Test code only; never a dependency of product crates.
@@ -33,6 +33,12 @@
 //! `browser.rs`); tests that use them are named `vm_browser_*` so the CI jobs can tell which
 //! partition needs the browser installed.
 //!
+//! # A desktop VS Code client
+//!
+//! [`VsCodeRelease`], [`VsCodeLaunch`] and [`VsCodeWindow`] start the pinned desktop VS Code on
+//! Remote-SSH and drive it over the DevTools Protocol (module docs in `vscode.rs`); tests that use
+//! them are named `vm_vscode_*`, which `ci/vm-filter.sh` keeps out of the partitions: one job runs them.
+//!
 //! # Running
 //!
 //! ```text
@@ -45,13 +51,16 @@
 
 mod browser;
 mod bulk;
+mod driver;
 mod env;
 mod error;
+mod freeze;
 mod host_memory;
 pub mod load;
 mod prefix;
 mod runtime;
 pub mod sockets;
+mod vscode;
 
 pub use browser::{
     BROWSER_MODULES_VAR, BrowserClient, BrowserCookie, BrowserSession, NODE_VAR, Node, NodeOutput,
@@ -60,12 +69,18 @@ pub use browser::{
 pub use bulk::{BulkHost, STALL_AFTER_BYTES};
 pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
+pub use freeze::{FrozenProcess, Gaps, parse_ticks};
+#[cfg(target_os = "linux")]
+pub use host_memory::peak_resident_bytes;
 pub use host_memory::resident_bytes;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};
+pub use vscode::{
+    Attached, VSCODE_DIR_VAR, VsCodeLaunch, VsCodeRelease, VsCodeWindow, local_terminal_probe,
+};
 
 /// The stock devcontainer image every VM tier boots first.
-pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian";
+pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
 
 /// Environment variable naming the directory that holds `msb` and `libkrunfw`.
 pub const RUNTIME_DIR_VAR: &str = "PUDDLE_VM_RUNTIME_DIR";

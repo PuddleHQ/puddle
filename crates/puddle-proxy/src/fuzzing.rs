@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Entry points for the cargo-fuzz targets: what a guest's first bytes reach before any rule is
 //! asked (the request head and its target, host names, the agent's stream preamble). Each function takes arbitrary bytes, never panics, and panics only when an invariant
 //! the proxy's refusals rest on does not hold, which is what a fuzz target is looking for.
@@ -137,4 +137,22 @@ pub fn preamble(bytes: &[u8]) {
         }
         Err(PreambleError::Malformed) => {}
     }
+}
+
+/// Reads `bytes` as an answer for tokens Puddle does not hold, whole and in pieces: the first byte
+/// sets the piece size.
+///
+/// # Panics
+///
+/// When the pieces find other kinds than the whole, a kind is found twice, or the scanner keeps
+/// more between pieces than one run or one `refresh_token` field start.
+pub fn answer_tokens(bytes: &[u8]) {
+    let Some(read) = crate::terminate::read_both_ways(bytes) else {
+        return;
+    };
+    assert!(read.kept <= read.limit, "{} bytes were kept", read.kept);
+    assert_eq!(read.whole, read.split, "pieces of {}", read.size);
+    let mut unique = read.split.clone();
+    unique.dedup();
+    assert_eq!(unique.len(), read.split.len(), "a kind was found twice");
 }

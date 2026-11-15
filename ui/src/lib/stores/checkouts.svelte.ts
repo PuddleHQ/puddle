@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One workspace's checkouts for its Repositories section: the listing of what is on the disk next
 // to the list's entries, and the four calls that change the list (add a clone, manage a checkout
 // that is already there, clone an entry again, remove an entry). The listing is read again when
@@ -140,23 +140,23 @@ export class CheckoutsStore {
     );
   }
 
-  /** Clones an entry whose directory is not on the disk again. */
-  cloneAgain(directory: string): Promise<Result> {
+  /** Clones the entry `entry` (its id, not its directory) whose directory is not on the disk again. */
+  cloneAgain(entry: string): Promise<Result> {
     return this.#send(
       () =>
-        this.#api.POST("/api/workspaces/{id}/repositories/{directory}/clone", {
-          params: { path: { id: this.#id, directory } },
+        this.#api.POST("/api/workspaces/{id}/repositories/{entry}/clone", {
+          params: { path: { id: this.#id, entry } },
         }),
       "Puddle refused to clone it again",
     );
   }
 
-  /** Takes an entry off the list. The folder and its files stay. */
-  remove(directory: string): Promise<Result> {
+  /** Takes the entry `entry` (its id) off the list. The folder and its files stay. */
+  remove(entry: string): Promise<Result> {
     return this.#send(
       () =>
-        this.#api.DELETE("/api/workspaces/{id}/repositories/{directory}", {
-          params: { path: { id: this.#id, directory } },
+        this.#api.DELETE("/api/workspaces/{id}/repositories/{entry}", {
+          params: { path: { id: this.#id, entry } },
         }),
       "Puddle refused to remove it from the list",
     );

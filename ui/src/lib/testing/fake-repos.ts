@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for `GET /api/repos` and `POST /api/repos/refresh`, for unit and component tests, in
 // the shape openapi-fetch returns. It filters by identity and by words and pages like the host
 // does, can be held (a slow list) and records what was asked. Not shipped (tests import it).

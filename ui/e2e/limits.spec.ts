@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The limits a test and its reads get: 90 s and 30 s, times the slowdown the run declares (1
 // outside the stress job), because a starved page's own start is that much dearer.
 import { expect, test } from "@playwright/test";

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The TLS-termination suite: one test binary for every `terminate_*` area, so the shared rigs
 //! compile and link once instead of once per file.
 
@@ -14,6 +14,7 @@ mod docker_login;
 mod entra_logins;
 mod everything;
 mod exchange;
+mod foreign_credentials;
 mod git_inject;
 mod git_ssh;
 mod grpc;
@@ -41,3 +42,4 @@ mod stand_ins_target;
 mod tools;
 mod tunnel_half_close;
 mod unauthorized;
+mod unknown_tokens;

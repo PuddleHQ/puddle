@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Every finding, worded exactly: the report for each faked machine is compared with a file in
 //! `tests/snapshots/` (text, then JSON). After a deliberate wording change, regenerate with
 //! `PUDDLE_UPDATE_SNAPSHOTS=1 cargo nextest run -p puddle-doctor --test snapshots` and review
@@ -14,11 +14,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity,
-    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding,
-    GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
+    AZ_CLI_LIMIT, AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts,
+    CheckId, CodeIntegrity, CodeIntegrityFacts, CredentialStoreFacts, DataEncryption,
+    DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding, GsaFacts, HypervisorApi,
+    HypervisorFacts, JobFacts, KeptLogs, KeySourceTag, LoginSession, Options, Os, Probe,
     ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
-    SwapArea, SwapFacts, WritableFolder, diagnose,
+    StoreHealth, SwapArea, SwapFacts, VaultFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -47,6 +48,8 @@ struct Fake {
     data_path: Option<DataPathFacts>,
     enc: DiskEncryptionFacts,
     ssh: SshAgentFacts,
+    az: AzCliFacts,
+    store: CredentialStoreFacts,
     launches: Cell<u32>,
     boots: Cell<u32>,
 }
@@ -131,8 +134,21 @@ fn windows() -> Fake {
             endpoint: WIN_PIPE.into(),
             families: vec!["ed25519".into(), "rsa".into()],
         },
+        store: os_store(StoreHealth::Working),
+        az: AzCliFacts::Found {
+            version: "2.64.0".into(),
+        },
         launches: Cell::new(0),
         boots: Cell::new(0),
+    }
+}
+
+/// The operating system's store, recorded, with a graphical session.
+fn os_store(health: StoreHealth) -> CredentialStoreFacts {
+    CredentialStoreFacts::Os {
+        recorded: true,
+        health,
+        session: LoginSession::Graphical,
     }
 }
 
@@ -208,6 +224,13 @@ impl Probe for Fake {
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
         assert_eq!(limit, Duration::from_secs(2), "the agent gets 2 s");
         self.ssh.clone()
+    }
+    fn az_cli(&self, limit: Duration) -> AzCliFacts {
+        assert_eq!(limit, AZ_CLI_LIMIT, "the Azure CLI gets its own limit");
+        self.az.clone()
+    }
+    fn credential_store(&self) -> CredentialStoreFacts {
+        self.store
     }
 }
 
@@ -419,6 +442,25 @@ fn windows_runtime_version_mismatch() {
 }
 
 #[test]
+fn windows_runtime_digest_mismatch() {
+    let fake = Fake {
+        runtime: RuntimeState::Unusable(RuntimeError::Digest {
+            path: MSB.into(),
+            expected: "a".repeat(64),
+            found: "b".repeat(64),
+        }),
+        ..windows()
+    };
+    check(
+        "windows_runtime_digest_mismatch",
+        &fake,
+        CheckId::Runtime,
+        Some(Finding::RuntimeDigestMismatch),
+    );
+    assert_eq!((fake.launches.get(), fake.boots.get()), (0, 0));
+}
+
+#[test]
 fn windows_runtime_unreadable() {
     let fake = Fake {
         runtime: RuntimeState::Unusable(RuntimeError::Unreadable {
@@ -450,6 +492,24 @@ fn windows_runtime_permissions() {
         CheckId::Runtime,
         Some(Finding::RuntimePermissions),
     );
+}
+
+#[test]
+fn windows_runtime_dev_override_of_the_files_alone_says_the_files_differ() {
+    let fake = Fake {
+        runtime: RuntimeState::Ready {
+            version: EXPECTED.into(),
+            overridden: true,
+        },
+        ..windows()
+    };
+    let r = check(
+        "windows_runtime_files_overridden",
+        &fake,
+        CheckId::Runtime,
+        Some(Finding::RuntimeOverridden),
+    );
+    assert!(r.ok);
 }
 
 #[test]
@@ -737,7 +797,7 @@ fn windows_boot_spawn_refused() {
 fn windows_boot_setup_failed() {
     let fake = Fake {
         boot: BootFacts::SetupFailed {
-            detail: r"temp dir: Access is denied. (os error 5)".into(),
+            detail: "temp dir: Access is denied. (os error 5)".into(),
         },
         ..windows()
     };
@@ -1183,6 +1243,8 @@ fn json_schema_is_versioned_and_stable() {
             "guest_kernel",
             "disk_encryption",
             "ssh_agent",
+            "az_cli",
+            "credential_store",
             "global_secure_access"
         ]
     );
@@ -1680,6 +1742,26 @@ fn encryption_is_ok_on_an_encrypted_machine_and_with_no_swap() {
 }
 
 #[test]
+fn a_missing_data_folder_is_unknown_not_ok_even_with_no_swap() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::NoFolder,
+            swap: SwapFacts::None,
+        },
+        ..linux()
+    };
+    let r = check(
+        "encryption_no_folder",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskEncryptionUnknown),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert_eq!(c.status, Status::Info);
+    assert!(c.detail.as_deref().unwrap().contains("data folder"));
+}
+
+#[test]
 fn an_unencrypted_drive_warns_and_names_what_it_means_for_secrets() {
     let fake = Fake {
         enc: encryption(
@@ -1807,5 +1889,249 @@ fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
     assert!(
         fix.starts_with("The drive and the swap are not encrypted"),
         "{fix}"
+    );
+}
+
+#[test]
+fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
+    let fake = Fake {
+        az: AzCliFacts::NotFound,
+        ..windows()
+    };
+    let r = check(
+        "az_cli_missing",
+        &fake,
+        CheckId::AzCli,
+        Some(Finding::AzCliMissing),
+    );
+    assert!(r.ok, "the Azure CLI never fails the report");
+    assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Warn);
+}
+
+#[test]
+fn a_credential_store_that_takes_a_write_is_ok() {
+    let r = run(&linux(), &Options::default());
+    let check = r.check(CheckId::CredentialStore).unwrap();
+    assert_eq!(check.status, Status::Ok);
+    assert_eq!(check.finding, None);
+}
+
+#[test]
+fn a_linux_host_with_no_credential_store_gets_the_headless_fix_as_a_warning() {
+    let fake = Fake {
+        store: os_store(StoreHealth::NoProvider),
+        ..linux()
+    };
+    let r = check(
+        "credential_store_missing_linux",
+        &fake,
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreMissing),
+    );
+    assert!(r.ok, "a store that refuses writes does not stop sandboxes");
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(fix.contains("apt install gnome-keyring"), "{fix}");
+    assert!(fix.contains("restart Puddle"), "{fix}");
+}
+
+#[test]
+fn a_locked_credential_store_names_the_unlock_command() {
+    let fake = Fake {
+        store: os_store(StoreHealth::Locked),
+        ..linux()
+    };
+    let r = check(
+        "credential_store_locked_linux",
+        &fake,
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreLocked),
+    );
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(
+        fix.contains("gnome-keyring-daemon --daemonize --login"),
+        "{fix}"
+    );
+}
+
+#[test]
+fn the_windows_credential_store_advice_does_not_name_gnome_keyring() {
+    let fake = Fake {
+        store: os_store(StoreHealth::Locked),
+        ..windows()
+    };
+    let r = run(&fake, &Options::default());
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(!fix.contains("gnome-keyring"), "{fix}");
+}
+
+fn with_store(store: CredentialStoreFacts) -> Fake {
+    Fake { store, ..linux() }
+}
+
+#[test]
+fn a_file_vault_names_its_key_source_and_only_a_key_file_is_more_than_ok() {
+    for (tag, status, words) in [
+        (
+            KeySourceTag::SystemdHostTpm2,
+            Status::Ok,
+            "key sealed with the host key and the TPM2 chip by systemd",
+        ),
+        (
+            KeySourceTag::SystemdHost,
+            Status::Ok,
+            "key sealed with the host key by systemd",
+        ),
+        (
+            KeySourceTag::KeyFile,
+            Status::Info,
+            "key in a file in your config folder",
+        ),
+    ] {
+        let r = run(
+            &with_store(CredentialStoreFacts::File(VaultFacts::Header(tag))),
+            &Options::default(),
+        );
+        let check = r.check(CheckId::CredentialStore).unwrap();
+        assert_eq!(check.status, status, "{tag:?}");
+        assert_eq!(check.finding, None);
+        assert_eq!(check.summary, format!("Puddle's file vault, {words}"));
+    }
+}
+
+#[test]
+fn a_file_vault_with_its_key_in_a_file_says_what_that_means_for_a_copy_of_the_config_folder() {
+    let fake = with_store(CredentialStoreFacts::File(VaultFacts::Header(
+        KeySourceTag::KeyFile,
+    )));
+    let r = check(
+        "credential_store_file_vault_key_file",
+        &fake,
+        CheckId::CredentialStore,
+        None,
+    );
+    let fix = r
+        .check(CheckId::CredentialStore)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(
+        fix.contains("a copy of that folder opens the vault"),
+        "{fix}"
+    );
+}
+
+#[test]
+fn a_vault_file_with_a_header_that_cannot_be_read_is_a_warning_with_the_fix() {
+    let fake = with_store(CredentialStoreFacts::File(VaultFacts::Unreadable));
+    let r = check(
+        "credential_store_vault_unreadable",
+        &fake,
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreVaultUnreadable),
+    );
+    assert!(
+        r.ok,
+        "a vault that does not open stops secrets, not sandboxes"
+    );
+}
+
+#[test]
+fn a_file_vault_not_made_yet_is_info() {
+    let r = run(
+        &with_store(CredentialStoreFacts::File(VaultFacts::NoVaultYet)),
+        &Options::default(),
+    );
+    assert_eq!(
+        r.check(CheckId::CredentialStore).unwrap().status,
+        Status::Info
+    );
+}
+
+#[test]
+fn a_store_record_that_cannot_be_read_is_a_warning() {
+    let r = check(
+        "credential_store_record_unreadable",
+        &with_store(CredentialStoreFacts::Unreadable),
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreRecordUnreadable),
+    );
+    assert!(r.ok);
+}
+
+#[test]
+fn a_working_keyring_on_a_linux_computer_with_no_graphical_session_is_a_warning() {
+    for (recorded, snapshot, fix_has) in [
+        (
+            true,
+            "credential_store_no_desktop_recorded",
+            "does not move them",
+        ),
+        (
+            false,
+            "credential_store_no_desktop_new",
+            "puddle serve --headless",
+        ),
+    ] {
+        let fake = with_store(CredentialStoreFacts::Os {
+            recorded,
+            health: StoreHealth::Working,
+            session: LoginSession::NotGraphical,
+        });
+        let r = check(
+            snapshot,
+            &fake,
+            CheckId::CredentialStore,
+            Some(Finding::CredentialStoreNoDesktop),
+        );
+        let fix = r
+            .check(CheckId::CredentialStore)
+            .unwrap()
+            .fix
+            .clone()
+            .unwrap();
+        assert!(fix.contains(fix_has), "{fix}");
+    }
+}
+
+#[test]
+fn an_unknown_session_and_other_platforms_never_warn_about_the_desktop() {
+    let unknown = with_store(CredentialStoreFacts::Os {
+        recorded: false,
+        health: StoreHealth::Working,
+        session: LoginSession::Unknown,
+    });
+    let r = run(&unknown, &Options::default());
+    assert_eq!(
+        r.check(CheckId::CredentialStore).unwrap().status,
+        Status::Ok
+    );
+    let windows = Fake {
+        store: CredentialStoreFacts::Os {
+            recorded: true,
+            health: StoreHealth::Working,
+            session: LoginSession::NotGraphical,
+        },
+        ..windows()
+    };
+    let r = run(&windows, &Options::default());
+    assert_eq!(
+        r.check(CheckId::CredentialStore).unwrap().status,
+        Status::Ok
     );
 }

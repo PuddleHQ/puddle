@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Entry point of `puddle` / `puddle.exe`.
 #![forbid(unsafe_code)]
 
@@ -22,9 +22,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Command::SshBridge { endpoint }) => puddle::cmd::ssh_bridge::run(&endpoint),
-        Ok(Command::Doctor(args)) => puddle::cmd::doctor::run(args),
+        Ok(Command::Doctor(args)) => puddle::cmd::doctor::run(&args),
         Ok(Command::Backup(args)) => puddle::cmd::backup::run(&args),
         Ok(Command::Serve(args)) => puddle::cmd::serve::run(&args),
+        Ok(Command::User(args)) => puddle::cmd::user::run(&args),
         Err(err) => {
             eprintln!("puddle: {err}\n{USAGE}");
             ExitCode::from(2)

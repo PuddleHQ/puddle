@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   // Renders once in every test file's setup (see vitest.setup.ts): the constructs the pages use,
   // so the first real test does not pay for Svelte's and jsdom's first use of each.

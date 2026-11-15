@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The nightly starved loop of the puddle-host fake_host suite (ci/fake-host-starved.sh). The suite's test binary runs
+# 20 times in a row on 2 CPUs beside busy loops, as one process (the way plain `cargo test` runs it), because a race
+# between test threads of one process, such as a data-folder lock still held by a forked copy of its descriptor, does not
+# exist under nextest's process per test (the nextest runs of stress.yml). A failing run fails the job, which opens
+# "Nightly red: fake-host-starved" through nightly-signal.yml; the job keeps the first failure's log and the processes
+# that held host.lock as an artifact. Not a required check; it runs only on the schedule and by hand.
+name: fake-host-starved
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs of the fake_host binary in a row"
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fake-host-starved-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Line tables only: a panic keeps file:line, builds and the cache stay smaller.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  fake-host-starved:
+    name: fake_host on 2 CPUs with busy loops
+    runs-on: ubuntu-24.04
+    # ~50 s a run starved plus a build: 20 runs fit well inside this.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: stress
+          save-if: false
+      - name: fake_host, runs in a row, pinned to 2 CPUs with 4 busy loops
+        env:
+          FAKE_HOST_RUNS: ${{ inputs.runs || '20' }}
+          # A test whose prerequisite is missing fails here instead of skipping.
+          PUDDLE_REQUIRE_TOOLS: "1"
+        run: ci/fake-host-starved.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: fake-host-starved-first-failure
+          path: |
+            target/fake-host-starved/first-failure.log
+            target/fake-host-starved/first-failure-holders.txt
+            target/fake-host-starved/result.env
+          retention-days: 14
+          if-no-files-found: ignore

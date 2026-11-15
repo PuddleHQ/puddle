@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Telling a long-lived connection that the route it was made over is gone.
 //!
 //! A tunnel can stay open for hours. When the machine changes network (the VPN comes up, the

@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the maps and sets here are bookkeeping that no template reads, so they need no reactivity */
-// The inbox's state: open requests (grouped by registrable domain, R-18), the local toggles that
-// decide whether a local destination can be approved (R-14), and the "decided just now" list with
+// The inbox's state: open requests (grouped by registrable domain, R-18), the local destinations whose
+// toggle is off (R-14, named by the service), and the "decided just now" list with
 // its undo.
 //
 // Live data: it listens to the shell's event stream and applies `pending_*` events in place. Until the API sends them it polls `/api/inbox`; the
@@ -11,7 +11,7 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { asInboxEvent, type InboxEvent } from "#lib/decision/events.ts";
-import { localCategory, type LocalCategory } from "#lib/decision/local.ts";
+import type { LocalCategory } from "#lib/decision/local-labels.ts";
 import type { Decided } from "#lib/decision/decided.ts";
 import { build, type Choice, type Target } from "#lib/decision/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
@@ -37,9 +37,6 @@ export type DecideResult =
 export type UndoResult = { ok: true } | { ok: false; message: string };
 
 export type Status = "loading" | "ready" | "failed";
-
-/** The toggles of one workspace, as far as the inbox needs them. */
-export type Toggles = Record<LocalCategory, boolean>;
 
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "DELETE">;
 
@@ -123,8 +120,6 @@ export class PendingStore {
   rows = $state.raw<Row[]>([]);
   /** The most open requests the service lists per workspace (R-45); a workspace at it has a full list. */
   openLimit = $state(Number.POSITIVE_INFINITY);
-  /** `null` while unknown; a workspace whose settings could not be read is treated as approvable. */
-  toggles = $state.raw<Record<string, Toggles | null>>({});
   decided = $state.raw<Decided[]>([]);
   status = $state<Status>("loading");
   /** Why the last read of the inbox failed; `null` once a read works. */
@@ -170,12 +165,9 @@ export class PendingStore {
     return [...new Set(this.rows.map((r) => r.request.workspace))].sort();
   }
 
-  /** Why a request can't be approved yet: the toggle it needs is off (R-14). */
+  /** Why a request can't be approved yet: the toggle it needs is off (R-14). The service says so. */
   blockedBy(request: PendingRequest): LocalCategory | null {
-    const category = localCategory(request.host);
-    if (category === null) return null;
-    const toggles = this.toggles[request.workspace];
-    return toggles && !toggles[category] ? category : null;
+    return request.blocked_by;
   }
 
   /** Reads everything the screen shows; never throws. Concurrent calls share one run. */
@@ -217,44 +209,10 @@ export class PendingStore {
       if (this.status !== "ready") markOnce("puddle:inbox-data");
       this.#setRows(rows);
       this.status = "ready";
-      await this.#loadToggles();
     } catch {
       this.loadError = SERVICE_DOWN;
       if (this.status === "loading") this.status = "failed";
     }
-  }
-
-  async #loadToggles(): Promise<void> {
-    const wanted = new Set(
-      this.rows
-        .filter((r) => localCategory(r.request.host) !== null)
-        .map((r) => r.request.workspace),
-    );
-    const next: Record<string, Toggles | null> = {};
-    await Promise.all(
-      [...wanted].map(async (workspace) => {
-        try {
-          const { data } = await this.#api.GET(
-            "/api/settings/workspaces/{workspace}",
-            { params: { path: { workspace } } },
-          );
-          const t = data?.effective.local_toggles;
-          next[workspace] = t
-            ? {
-                loopback: t.loopback.value,
-                private: t.private.value,
-                link_local: t.link_local.value,
-                metadata: t.metadata.value,
-                special: t.special.value,
-                company_network: t.company_network.value,
-              }
-            : null;
-        } catch {
-          next[workspace] = null;
-        }
-      }),
-    );
-    this.toggles = next;
   }
 
   #setRows(rows: Row[]): void {
@@ -283,7 +241,8 @@ export class PendingStore {
           return;
         }
         this.#setRows([{ request, domain }, ...this.rows]);
-        if (localCategory(request.host) !== null) void this.#loadToggles();
+        // The short form of an event doesn't say which toggle blocks it; the service does.
+        this.#refetchSoon();
         return;
       }
       case "pending_updated":

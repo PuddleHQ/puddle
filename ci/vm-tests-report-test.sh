@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/vm-tests-report.sh. The `log` cases feed it nextest's own output (lines as nextest 0.9.146 prints
 # them for a failing test, a test killed by the per-test limit, a run stopped by the run deadline, and a slow run
 # that passes), the `run` cases a fake `gh` that answers the two API calls with canned JSON through the real

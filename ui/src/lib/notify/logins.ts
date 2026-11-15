@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The notice for a login made inside a workspace that Puddle could not capture, or could not
 // use after a restart. Capture is on by default and is meant to be invisible, so every case where
 // it does not work says so: the first five fail the login (the real token never reaches the

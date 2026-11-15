@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Captured logins: a login made inside a workspace keeps its real tokens on the host.
 //!
 //! A tool that logs in inside a workspace (`claude` and `/login`, `gh auth login`,
@@ -40,7 +40,7 @@ pub use logins::{
 };
 pub use marker::Marker;
 pub use profile::{
-    Audience, CLAUDE, DOCKER, ENTRA, Endpoint, Field, GITHUB, Method, OPENAI, Profile, Role, Scope,
-    Slot, StandInKind, builtin, path_matches,
+    Audience, CLAUDE, DOCKER, ENTRA, Endpoint, Field, GITHUB, Keep, Method, OPENAI, Profile, Role,
+    Scope, Slot, StandInKind, builtin, path_matches,
 };
 pub use shape::{ShapeError, stand_in_for};

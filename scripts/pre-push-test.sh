@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of .githooks/pre-push: runs the real hook in a scratch repository whose scripts/check.sh
 # is a stub that records it was called. Cases: no pass directory runs the gates; a marker for every
 # pushed commit skips them; a marker for only one of two commits, a marker for another commit and a

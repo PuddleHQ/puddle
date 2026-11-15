@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Frees the Rust cache entry a develop run restored once rust-cache has saved its replacement, so the
 # old and the new 6.7 GB entry sit together in the repo (10 GB cap, cache-gc.yml) for seconds, not
 # until a later workflow run. The cache-drop action (.github/actions/cache-drop) runs it twice around

@@ -25,15 +25,21 @@ it as they would without it.
 *Why:* Puddle can't know what someone's work needs, and a refusal it makes up is a broken build
 nobody can explain.
 
-- **This means:** a fresh install has decided nothing. A request that no rule matches is recorded and
-  waits in the inbox until the user answers; nothing is denied in advance, telemetry hosts included.
-  (How the tool's connection behaves meanwhile, held open or refused with "waiting for approval", is
-  a spec choice; the request itself stays open.) Automated help (rule sets, suggestions, an AI judge)
-  may at most allow what is clearly safe; where it would say no, the user is asked instead.
-- **This rules out:** a built-in deny list; denying a request, or not recording it, because its
-  workspace asks about many hosts; a helper's "no" turned into a deny rule. A workspace flooding the
-  inbox is bounded without refusing: grouping, back-pressure, storage caps that keep requests
-  waiting.
+- **This means:** a fresh install has decided nothing that is on. A request that no rule matches is
+  recorded and waits in the inbox until the user answers; nothing is denied in advance, telemetry
+  hosts included. Puddle may ship rules of any kind, including lists that block, but a shipped rule that
+  refuses is always off until the user switches it on, so Puddle never refuses anything on its own
+  account. A
+  refusal by a shipped rule names the group and the entry, one click switches that entry off, and
+  anything the user allowed themselves beats it. (How the tool's connection behaves meanwhile, held
+  open or refused with "waiting for approval", is a spec choice; the request itself stays open.)
+  Automated help (rule sets, suggestions, an AI judge) may at most allow what is clearly safe; where
+  it would say no, the user is asked instead.
+- **This rules out:** a shipped rule that refuses before the user has switched it on; a shipped
+  refusal that an allow of the user's own cannot override; denying a request, or not recording it,
+  because its workspace asks about many hosts; a helper's "no" turned into a deny rule. A workspace
+  flooding the inbox is bounded without refusing: grouping, back-pressure, storage caps that keep
+  requests waiting.
 
 ## 3. Limits are the user's settings
 

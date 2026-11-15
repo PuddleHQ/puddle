@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The one stream event the network-health screen acts on.
 import type { components } from "#lib/api/schema.d.ts";
 

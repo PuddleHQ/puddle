@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The main window: its label, its start-up script and how it is built.
 
 use std::sync::Arc;
@@ -8,6 +8,8 @@ use tauri::{Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
 use crate::navigation::{Navigation, OriginPolicy};
+#[cfg(windows)]
+use crate::webview_environment;
 
 /// The main window's label. Puddle's one capability file names this label and grants it the folder dialog only;
 /// workspace windows get labels of their own (`vs-<workspace>`), never this one.
@@ -112,117 +114,39 @@ pub fn open_main<R: Runtime, M: Manager<R>>(
             NewWindowResponse::Deny
         });
     #[cfg(windows)]
-    let builder = match debug_port {
-        // WebView2 only takes this from the API (the environment variable is ignored once the
-        // API sets arguments, which wry always does); the first two are wry's own defaults.
-        Some(port) => builder.additional_browser_args(&format!(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port} --remote-allow-origins=*"
-        )),
-        None => builder,
+    let builder = {
+        // WebView2 only takes the arguments from the API (the environment variable is ignored
+        // once the API sets arguments, which wry always does), and our own environment turns the
+        // crash-report upload off; the library ignores `additional_browser_args` once it has one.
+        let debug_arguments = webview_environment::arguments(debug_port);
+        let arguments = debug_arguments
+            .as_deref()
+            .unwrap_or(webview_environment::DEFAULT_ARGUMENTS);
+        let builder = match &debug_arguments {
+            Some(arguments) => builder.additional_browser_args(arguments),
+            None => builder,
+        };
+        // The folder Tauri gives a window that names none; the environment must use the same one.
+        let data_folder = manager.path().app_local_data_dir().ok();
+        match webview_environment::create(manager, data_folder.as_deref(), arguments) {
+            Some(environment) => builder.with_environment(environment),
+            None => builder,
+        }
     };
     #[cfg(not(windows))]
     let _ = debug_port;
-    builder.build()
+    let window = builder.build()?;
+    // The terminal needs F5, Ctrl+R, Ctrl+P and Ctrl+F; WebKitGTK has no such switch.
+    #[cfg(windows)]
+    {
+        crate::accelerators::turn_off(&window);
+        let app = manager.app_handle().clone();
+        crate::accelerators::on_ctrl_q(&window, move || {
+            crate::quit_shortcut::pressed(&app);
+        });
+    }
+    Ok(window)
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use super::*;
-
-    fn recorder() -> (OpenExternal, Arc<Mutex<Vec<String>>>) {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = seen.clone();
-        let open: OpenExternal = Arc::new(move |u: &Url| sink.lock().unwrap().push(u.to_string()));
-        (open, seen)
-    }
-
-    #[test]
-    fn the_script_sets_a_frozen_token_for_the_api_origin_only() {
-        let script = init_script("http://127.0.0.1:4711", "abc123");
-        assert!(script.contains("window.location.origin !== \"http://127.0.0.1:4711\""));
-        assert!(script.contains("Object.freeze({ token: \"abc123\" })"));
-        assert!(script.contains("Object.defineProperty(window, \"__PUDDLE__\""));
-        assert_eq!(script.matches("abc123").count(), 1);
-    }
-
-    #[test]
-    fn the_script_freezes_the_prototype_before_anything_else() {
-        let script = init_script("http://127.0.0.1:4711", "abc123");
-        assert!(
-            script.starts_with("Object.freeze(Object.prototype);"),
-            "{script}"
-        );
-    }
-
-    #[test]
-    fn the_script_keeps_hostile_values_inside_their_string_literals() {
-        let script = init_script("http://x/\"", "a\"b\\c\nd</script>");
-        assert!(script.contains(r#"\"b\\c\nd</script>""#), "{script}");
-        assert!(!script.contains("a\"b"), "{script}");
-        assert!(script.contains(r#"!== "http://x/\"""#), "{script}");
-    }
-
-    #[test]
-    fn the_handler_stays_opens_or_drops() {
-        let api = Url::parse("http://127.0.0.1:4711/").unwrap();
-        let (open, seen) = recorder();
-        let (refused, refusals) = recorder();
-        let handler = navigation_handler(OriginPolicy::new(&api, None), open, refused);
-        assert!(handler(&Url::parse("http://127.0.0.1:4711/inbox").unwrap()));
-        assert!(seen.lock().unwrap().is_empty());
-        assert!(!handler(&Url::parse("https://example.org/a").unwrap()));
-        assert_eq!(*seen.lock().unwrap(), ["https://example.org/a"]);
-        assert!(refusals.lock().unwrap().is_empty());
-        assert!(!handler(&Url::parse("file:///etc/passwd").unwrap()));
-        assert!(!handler(&Url::parse("http://tauri.localhost/").unwrap()));
-        assert_eq!(seen.lock().unwrap().len(), 1);
-        assert_eq!(
-            *refusals.lock().unwrap(),
-            ["file:///etc/passwd", "http://tauri.localhost/"]
-        );
-    }
-
-    #[test]
-    fn a_new_window_opens_the_web_reports_the_refused_and_drops_the_rest() {
-        let api = Url::parse("http://127.0.0.1:4711/").unwrap();
-        let policy = OriginPolicy::new(&api, None);
-        let (open, opened) = recorder();
-        let (refused, refusals) = recorder();
-        for target in [
-            "https://example.org/a",
-            "mailto:a@example.org",
-            "http://127.0.0.1:4711/inbox",
-        ] {
-            new_window_handler(&policy, &Url::parse(target).unwrap(), &open, &refused);
-        }
-        assert_eq!(*opened.lock().unwrap(), ["https://example.org/a"]);
-        assert_eq!(*refusals.lock().unwrap(), ["mailto:a@example.org"]);
-    }
-
-    #[test]
-    fn the_main_window_opens_once_on_the_api_origin() {
-        let app = tauri::test::mock_app();
-        let url = Url::parse("http://127.0.0.1:4711/").unwrap();
-        let (open, _) = recorder();
-        let (refused, _) = recorder();
-        let first = open_main(&app, &url, "t", None, None, open.clone(), refused.clone()).unwrap();
-        assert_eq!(first.label(), MAIN_LABEL);
-        assert_eq!(first.url().unwrap(), url);
-        let second = open_main(&app, &url, "t", None, None, open, refused).unwrap();
-        assert_eq!(second.label(), MAIN_LABEL);
-        assert_eq!(app.webview_windows().len(), 1);
-    }
-
-    #[test]
-    fn a_development_server_replaces_the_start_page() {
-        let app = tauri::test::mock_app();
-        let api = Url::parse("http://127.0.0.1:4711/").unwrap();
-        let dev = Url::parse("http://localhost:5173/").unwrap();
-        let (open, _) = recorder();
-        let (refused, _) = recorder();
-        let window = open_main(&app, &api, "t", Some(&dev), None, open, refused).unwrap();
-        assert_eq!(window.url().unwrap(), dev);
-    }
-}
+mod tests;

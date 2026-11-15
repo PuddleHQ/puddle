@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git through a corporate lab: the real `git`, the real agent, proxy and injector, and between
 //! the proxy and the fake Git host a real Squid that asks for a Basic sign-in. The fake host's name
 //! is one only the company proxy side knows; Squid hands every tunnel to its parent, a small proxy

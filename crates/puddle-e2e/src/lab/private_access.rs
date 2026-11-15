@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A private-access client's network, as the host sees it: the stand-in for Zscaler Private Access,
 //! Netskope, WARP or a similar client, none of which a test can install.
 //!
@@ -55,7 +55,12 @@ impl PrivateAccess {
 
     /// Starts the intranet site and the tunnel to it.
     pub async fn start() -> Self {
-        let web = WebHost::start(&[Self::NAME], WebOptions::default()).await;
+        Self::start_with(WebOptions::default()).await
+    }
+
+    /// [`Self::start`] with the intranet site answering as `options` say.
+    pub async fn start_with(options: WebOptions) -> Self {
+        let web = WebHost::start(&[Self::NAME], options).await;
         let tunnel = NameProxy::start(&[]).await;
         web.register(&tunnel, &[Self::NAME]);
         Self { web, tunnel }
@@ -85,10 +90,29 @@ impl PrivateAccess {
         self.tunnel.port()
     }
 
-    /// The `CONNECT` targets the tunnel carried (`host:port`).
+    /// The certificate authority of the intranet site's TLS certificate.
+    #[must_use]
+    pub fn root(&self) -> &rustls::pki_types::CertificateDer<'static> {
+        self.web.root()
+    }
+
+    /// Every `CONNECT` target the tunnel carried (`host:port`), whatever host it names. The host
+    /// under test also downloads on its own (mise's setup after the first start) through the same
+    /// tunnel, so a test that counts what the tunnel carried uses [`Self::carried_to`] instead; a
+    /// guard test (`company_proxy_counting.rs`) rejects the unfiltered call in the VM tests.
     #[must_use]
     pub fn carried(&self) -> Vec<String> {
         self.tunnel.connects()
+    }
+
+    /// The `CONNECT` targets the tunnel carried for the host `name` only (`name:port`).
+    #[must_use]
+    pub fn carried_to(&self, name: &str) -> Vec<String> {
+        let prefix = format!("{name}:");
+        self.carried()
+            .into_iter()
+            .filter(|c| c.starts_with(&prefix))
+            .collect()
     }
 
     /// The requests the intranet site answered.
@@ -99,19 +123,4 @@ impl PrivateAccess {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_intranet_answer_and_the_route_are_inside_cgnat_and_the_lan_host_is_not() {
-        let adapter = PrivateAccess::adapter();
-        let inside = |ip: Ipv4Addr| {
-            let (net, bits) = adapter.route;
-            u32::from(ip) >> (32 - u32::from(bits)) == u32::from(net) >> (32 - u32::from(bits))
-        };
-        assert!(inside(PrivateAccess::ADDRESS));
-        assert!(inside(adapter.address));
-        assert!(!inside(PrivateAccess::LAN_ADDRESS));
-        assert!(PrivateAccess::NAME.ends_with(adapter.dns_suffix));
-    }
-}
+mod tests;

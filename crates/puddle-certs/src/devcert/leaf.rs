@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's localhost leaf certificate: making it, reading what a certificate says, and the
 //! shape check that gates what is ever added to the Windows trust store.
 
@@ -44,7 +44,7 @@ pub const VALIDITY: Duration = Duration::from_hours(365 * 24);
 pub const RENEW_WITHIN: Duration = Duration::from_hours(30 * 24);
 
 /// A new leaf starts this long before now, so a host with a slow clock still accepts it.
-const BACKDATE: Duration = Duration::from_hours(24);
+pub(crate) const BACKDATE: Duration = Duration::from_hours(24);
 
 /// A freshly generated leaf.
 pub(crate) struct NewLeaf {

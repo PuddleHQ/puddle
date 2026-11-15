@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # cargo-mutants settings (docs/STANDARDS.md, "Mutation testing"; run through scripts/mutants.sh).
 #
 # A surviving mutant is fixed with a better test, never by excluding the code. The one allowed
@@ -30,6 +30,9 @@ exclude_globs = [
 
 # Equivalent mutants, each with its reason:
 exclude_re = [
+    # The filtered SSH agent's `log` only writes log lines (one per answered request); the answer the
+    # guest gets is written by `serve` whatever `log` does.
+    'ssh_agent\.rs:\d+:\d+: replace log with \(\)',
     # `KeyringStore::keep_local` is `Ok(())` outside Windows: its rewrite is `#[cfg(windows)]`, so a
     # Linux mutation run never compiles the match guard (`is_kept_local`, which holds the testable
     # part, is tested) and replacing the body or the guard changes nothing it can run. The trait's
@@ -69,13 +72,14 @@ exclude_re = [
     # `eol` is the offset of a line break or the end of the text, and no comment starts there, so
     # `c.start < eol` and `c.start <= eol` agree.
     'json\.rs:\d+:34: replace < with <= in insert',
-    # `Store::rule_set` reads a user set directly; without that arm it lists every set and finds the
-    # id, which returns the same set, or the same `UnknownRuleSet` error for an id that is not there.
-    "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(user\\) in Store::rule_set",
+    # `Store::rule_set` reads a user set directly; without that arm it lists the user's sets and
+    # finds the id, which returns the same set, or the same `UnknownRuleSet` error for an id that is
+    # not there or another user's.
+    "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(set\\) in Store::rule_set",
     # `close_decided_rows` skips the row it was told to leave (`except`) or one the rule's pattern does
     # not match. The left row is already decided when the query runs, so it is never in the list, and a
     # row the pattern does not match cannot have this rule as its winner, so `||` and `&&` close the same rows.
-    "store\\.rs:\\d+:\\d+: replace \\|\\| with && in close_decided_rows",
+    "rows\\.rs:\\d+:\\d+: replace \\|\\| with && in close_decided_rows",
     # `high << 4 | low` joins two hexadecimal digits (as in `decode_segment` above): both are below 16,
     # so `|` and `^` give the same byte.
     "workspace_git\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_address_segment",
@@ -156,8 +160,10 @@ exclude_re = [
     # buffer after the drop, so a test cannot tell the zeroed buffer from the untouched one.
     'replace <impl Drop for SecretValue>::drop with \(\)',
     # The same holds for the drops of `Wiped`, `WipedKey` and `PullToken`, which only zeroize their
-    # own memory before it is freed.
-    'replace <impl Drop for (Wiped|WipedKey|PullToken)>::drop with \(\)',
+    # own memory before it is freed (one entry each: an entry names one file).
+    'authority\.rs:\d+:\d+: replace <impl Drop for WipedKey>::drop with \(\)',
+    'pull\.rs:\d+:\d+: replace <impl Drop for PullToken>::drop with \(\)',
+    'wiped\.rs:\d+:\d+: replace <impl Drop for Wiped>::drop with \(\)',
     # `Wiped::extend_from_slice` makes the next buffer itself so it can overwrite the old one. Where
     # that branch is skipped (`>` to `==`, or `+` to `*` in the size) the `Vec` grows the same
     # way (to at least double, at least the needed size), so only the overwrite of the freed
@@ -179,6 +185,10 @@ exclude_re = [
     # and return nothing; the fuzz targets call them with arbitrary bytes. A body that does nothing
     # differs from them only for an input that breaks an invariant, and the real code has none.
     'fuzzing\.rs:\d+:\d+: replace (host|preamble) with \(\)',
+    # `fuzzing::answer_tokens` only asserts on what `read_both_ways` returns (which the scanner tests
+    # check field by field); a body that does nothing differs from it only for an input that breaks
+    # one of those assertions, and the scanner has none.
+    'fuzzing\.rs:\d+:\d+: replace answer_tokens with \(\)',
     # The same for `head`: its `clean` check of the parsed head is an oracle that never fires on the
     # real parser (it refuses control characters first), so a weaker oracle fails no input.
     'fuzzing\.rs:\d+:\d+: replace \|\| with && in head',

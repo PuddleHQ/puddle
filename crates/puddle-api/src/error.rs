@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Error responses: one JSON shape for every refusal and failure.
 
 use axum::Json;
@@ -29,6 +29,9 @@ pub enum ErrorCode {
     ForbiddenOrigin,
     /// The bearer token is missing or wrong (401).
     Unauthorized,
+    /// The account may not do this: the install's own settings, or an action that needs the
+    /// install token (403).
+    Forbidden,
     /// The request is malformed: bad JSON, a bad path or query value (400).
     BadRequest,
     /// The body isn't `application/json` (415).
@@ -49,6 +52,8 @@ pub enum ErrorCode {
     /// A stored settings document is damaged or cannot be read, so the settings cannot be shown
     /// or changed until it is fixed or removed (409); the message says what is wrong.
     SettingsUnreadable,
+    /// Too many sign-in attempts: wait for the time in `Retry-After` (429).
+    RateLimited,
     /// The feature isn't available in this build or state (503).
     Unavailable,
     /// Puddle failed; the details are in its log (500).
@@ -64,6 +69,14 @@ pub struct ApiErrorBody {
     pub message: String,
 }
 
+impl std::fmt::Display for ApiErrorBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ApiErrorBody {}
+
 /// An error a handler or the guard returns; becomes a status and an [`ApiErrorBody`].
 #[derive(Debug)]
 pub(crate) struct ApiError {
@@ -72,6 +85,8 @@ pub(crate) struct ApiError {
     /// What went wrong, for the host's own use; never serialized (the client of an internal
     /// error learns only that it failed).
     detail: Option<String>,
+    /// Seconds for `Retry-After`, on a refusal that says to wait.
+    retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -83,18 +98,30 @@ impl ApiError {
                 message: message.into(),
             },
             detail: None,
+            retry_after: None,
         }
+    }
+
+    /// Too many attempts: try again in `seconds`.
+    pub(crate) fn rate_limited(seconds: u64) -> Self {
+        let mut err = Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            ErrorCode::RateLimited,
+            format!("too many sign-in attempts; try again in {seconds} seconds"),
+        );
+        err.retry_after = Some(seconds);
+        err
     }
 
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, ErrorCode::NotFound, message)
     }
 
-    pub(crate) fn invalid(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid(message: impl std::fmt::Display) -> Self {
         Self::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Invalid,
-            message,
+            message.to_string(),
         )
     }
 
@@ -136,8 +163,14 @@ impl ApiError {
     }
 
     /// What the refusal says.
+    #[cfg(test)]
     pub(crate) fn message(&self) -> &str {
         &self.body.message
+    }
+
+    /// The body a client would get.
+    pub(crate) fn into_body(self) -> ApiErrorBody {
+        self.body
     }
 
     #[cfg(test)]
@@ -154,6 +187,11 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = (self.status, Json(self.body)).into_response();
+        if let Some(seconds) = self.retry_after {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(seconds));
+        }
         if self.status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
@@ -168,32 +206,45 @@ impl From<StoreError> for ApiError {
     fn from(err: StoreError) -> Self {
         match err {
             StoreError::UnknownPending(_)
+            | StoreError::UnknownSshAgentAsk(_)
             | StoreError::UnknownRule(_)
             | StoreError::UnknownRequestRule(_)
             | StoreError::UnknownRuleSet(_)
             | StoreError::UnknownIdentity(_)
             | StoreError::UnknownRepo(_)
-            | StoreError::UnknownEnv { .. } => Self::not_found(err.to_string()),
+            | StoreError::UnknownEnv { .. }
+            // Worded as the workspace service words an unknown id, so another user's workspace
+            // answers exactly as one that does not exist.
+            | StoreError::UnknownWorkspace(_) => Self::not_found(err.to_string()),
             StoreError::IdentityCollision(_) => Self::new(
                 StatusCode::CONFLICT,
                 ErrorCode::IdentityCollision,
                 err.to_string(),
             ),
             StoreError::PendingNotOpen { .. }
+            | StoreError::SshAgentAskNotOpen { .. }
             | StoreError::RuleSetOff { .. }
+            | StoreError::RuleSetHidden(_)
             | StoreError::IdentityLabelTaken(_)
             | StoreError::IdentityAttached { .. }
-            | StoreError::RepoListed(_) => {
+            | StoreError::RepoListed(_)
+                        | StoreError::SetupDone
+            | StoreError::OwnerKept => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, err.to_string())
             }
-            StoreError::Pattern(_)
+            StoreError::UserName(_)
+            | StoreError::DeviceName(_)
+            | StoreError::SignInMethod(_)
+            | StoreError::Pattern(_)
             | StoreError::ExpiryNotInFuture
             | StoreError::NotSwitchable
             | StoreError::RuleSetName(_)
             | StoreError::IdentityInvalid(_)
             | StoreError::EnvInvalid(_)
             | StoreError::ShellInitInvalid(_)
-            | StoreError::RequestRuleInvalid(_) => Self::invalid(err.to_string()),
+            | StoreError::RequestRuleInvalid(_)
+            | StoreError::TooManySshAgentHosts(_)
+            | StoreError::TooManySshAgentAsks(_) => Self::invalid(&err),
             _ => Self::internal(&err),
         }
     }
@@ -239,9 +290,7 @@ impl From<NetworkHealthError> for ApiError {
 impl From<ProxySignInError> for ApiError {
     fn from(err: ProxySignInError) -> Self {
         match err {
-            ProxySignInError::BadUser | ProxySignInError::BadPassword => {
-                Self::invalid(err.to_string())
-            }
+            ProxySignInError::BadUser | ProxySignInError::BadPassword => Self::invalid(&err),
             ProxySignInError::Store | ProxySignInError::Unavailable(_) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorCode::Unavailable,
@@ -319,196 +368,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_types::{PendingId, RuleId};
-
-    use super::*;
-
-    #[test]
-    fn ports_refusals_map_to_the_status_a_client_can_act_on() {
-        for (err, status) in [
-            (
-                PortsServiceError::Unavailable("x".into()),
-                StatusCode::SERVICE_UNAVAILABLE,
-            ),
-            (
-                PortsServiceError::NotRunning("x".into()),
-                StatusCode::CONFLICT,
-            ),
-            (PortsServiceError::Taken("x".into()), StatusCode::CONFLICT),
-            (
-                PortsServiceError::Invalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                PortsServiceError::NotForwarded("x".into()),
-                StatusCode::NOT_FOUND,
-            ),
-            (
-                PortsServiceError::Failed("the pinned forwards could not be saved".into()),
-                StatusCode::SERVICE_UNAVAILABLE,
-            ),
-        ] {
-            assert_eq!(ApiError::from(err.clone()).status(), status, "{err}");
-        }
-    }
-
-    #[test]
-    fn store_errors_map_to_client_statuses() {
-        let cases = [
-            (
-                StoreError::UnknownPending(PendingId(1)),
-                StatusCode::NOT_FOUND,
-            ),
-            (StoreError::UnknownRule(RuleId(1)), StatusCode::NOT_FOUND),
-            (StoreError::UnknownRequestRule(1), StatusCode::NOT_FOUND),
-            (
-                StoreError::RequestRuleInvalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                StoreError::UnknownRuleSet("user:1".into()),
-                StatusCode::NOT_FOUND,
-            ),
-            (
-                StoreError::RuleSetOff {
-                    set: "user:1".into(),
-                    workspace: "a".into(),
-                },
-                StatusCode::CONFLICT,
-            ),
-            (StoreError::NotSwitchable, StatusCode::UNPROCESSABLE_ENTITY),
-            (
-                StoreError::RuleSetName("taken".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                StoreError::PendingNotOpen {
-                    id: PendingId(1),
-                    state: puddle_store::PendingState::Allowed,
-                },
-                StatusCode::CONFLICT,
-            ),
-            (
-                StoreError::ExpiryNotInFuture,
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (StoreError::SystemActor, StatusCode::INTERNAL_SERVER_ERROR),
-            (
-                StoreError::UnknownIdentity(puddle_store::IdentityId(1)),
-                StatusCode::NOT_FOUND,
-            ),
-            (StoreError::UnknownRepo(1), StatusCode::NOT_FOUND),
-            (
-                StoreError::UnknownEnv {
-                    scope: "the global environment".into(),
-                    name: "A".into(),
-                },
-                StatusCode::NOT_FOUND,
-            ),
-            (
-                StoreError::EnvInvalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                StoreError::ShellInitInvalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                StoreError::IdentityInvalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                StoreError::IdentityLabelTaken("x".into()),
-                StatusCode::CONFLICT,
-            ),
-            (
-                StoreError::IdentityAttached { label: "x".into() },
-                StatusCode::CONFLICT,
-            ),
-            (StoreError::RepoListed("x".into()), StatusCode::CONFLICT),
-        ];
-        for (err, status) in cases {
-            assert_eq!(ApiError::from(err).status(), status);
-        }
-    }
-
-    #[test]
-    fn settings_errors_map_newer_schema_to_a_conflict() {
-        let newer = ApiError::from(SettingsError::NewerSchema {
-            kind: "global",
-            found: 9,
-            supported: 1,
-        });
-        assert_eq!(newer.status(), StatusCode::CONFLICT);
-        assert_eq!(newer.code(), ErrorCode::NewerSettings);
-        let other = ApiError::from(SettingsError::NotAnObject { kind: "global" });
-        assert_eq!(other.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let damaged = ApiError::settings_unreadable(
-            "the global settings",
-            &"global settings must be an object",
-        );
-        assert_eq!(damaged.status(), StatusCode::CONFLICT);
-        assert_eq!(damaged.code(), ErrorCode::SettingsUnreadable);
-        let repo = ApiError::from(SettingsRepoError::new("disk full"));
-        assert_eq!(repo.code(), ErrorCode::Internal);
-    }
-
-    #[test]
-    fn workspace_errors_map_to_client_statuses() {
-        let cases = [
-            (
-                WorkspaceError::NotFound("x".into()),
-                StatusCode::NOT_FOUND,
-                ErrorCode::NotFound,
-            ),
-            (
-                WorkspaceError::Conflict("x".into()),
-                StatusCode::CONFLICT,
-                ErrorCode::Conflict,
-            ),
-            (
-                WorkspaceError::Invalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-                ErrorCode::Invalid,
-            ),
-            (
-                WorkspaceError::Unavailable("x".into()),
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorCode::Unavailable,
-            ),
-            (
-                WorkspaceError::Internal("disk path /secret".into()),
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ErrorCode::Internal,
-            ),
-        ];
-        for (err, status, code) in cases {
-            let api = ApiError::from(err);
-            assert_eq!(api.status(), status);
-            assert_eq!(api.code(), code);
-            assert!(!api.body.message.contains("secret"));
-        }
-    }
-
-    #[test]
-    fn doctor_errors_map_to_statuses_and_keep_internals_out_of_the_message() {
-        let missing = ApiError::from(DoctorError::Unavailable("not in this build".into()));
-        assert_eq!(missing.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(missing.code(), ErrorCode::Unavailable);
-        let crashed = ApiError::from(DoctorError::Crashed("panic at /secret/path".into()));
-        assert_eq!(crashed.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(crashed.code(), ErrorCode::Internal);
-        assert!(!crashed.body.message.contains("secret"));
-    }
-
-    #[tokio::test]
-    async fn a_panicking_blocking_task_is_a_500() {
-        let err = blocking::<(), _>(|| std::panic::resume_unwind(Box::new("boom")))
-            .await
-            .unwrap_err();
-        assert_eq!(err.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let ok = blocking(|| Ok(7)).await.unwrap();
-        assert_eq!(ok, 7);
-    }
-}
+mod tests;

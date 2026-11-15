@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { Dialog } from "bits-ui";
@@ -19,7 +19,7 @@
     title: string;
     description?: string;
     children: Snippet;
-    onClose?: () => void;
+    onClose?: (() => void) | undefined;
     /** Where focus goes on close, when the dialog was not opened from a control that will take it back. */
     returnFocusTo?: () => HTMLElement | null | undefined;
     /** The element that takes focus on open, when it is not the first tabbable one. */
@@ -66,6 +66,13 @@
 </Dialog.Root>
 
 <style>
+  /* Anchored from the top, not centred: a form that grows (a note under a field, an error) must
+     not move what is above its edge, or a press that began on a button ends on something else. */
+  :global(.confirm-content.form-dialog) {
+    top: max(var(--space-4), 8vh);
+    transform: translateX(-50%);
+    max-height: calc(100vh - max(var(--space-4), 8vh) - var(--space-4));
+  }
   :global(.form-dialog form) {
     display: grid;
     gap: var(--space-4);

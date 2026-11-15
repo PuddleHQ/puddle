@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The negative control of the boot-mounts hostile test (`vm_hostile_boot.rs`): the
 //! judgement that test relies on must fail when the share is writable, or a green VM run would
 //! prove nothing. These tests need no VM, so they run in every gate (the VM test's binary is
@@ -173,6 +173,7 @@ fn every_kind_of_change_to_the_host_files_is_flagged() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        // flake-ok: only the mode bits are compared; the script is never executed
         changed("mode", &|| {
             std::fs::set_permissions(path("agent-supervise.sh"), PermissionsExt::from_mode(0o755))
                 .unwrap();

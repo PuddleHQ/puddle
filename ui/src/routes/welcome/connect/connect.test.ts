@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   cleanup,
   fireEvent,
@@ -61,7 +61,7 @@ describe("connect step", () => {
     );
     expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute(
       "href",
-      "/welcome/look",
+      "/welcome/interception",
     );
   });
 

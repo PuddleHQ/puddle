@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules on the method and path of a request: they only ever refuse.
 //!
 //! A change reaches a running workspace at once: the store announces it and the host reads the
@@ -12,6 +12,7 @@ use puddle_types::{Methods, PathPattern, WorkspaceId};
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
+use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
@@ -39,6 +40,7 @@ pub(crate) struct RequestRuleQuery {
 )]
 pub(crate) async fn list_request_rules(
     State(state): State<AppState>,
+    principal: Principal,
     Query(query): Query<RequestRuleQuery>,
 ) -> Result<Json<RequestRuleList>, ApiError> {
     let workspace = query
@@ -51,7 +53,7 @@ pub(crate) async fn list_request_rules(
         let never = state.store.never_decrypt_names()?;
         Ok(state
             .store
-            .request_rules(workspace.as_ref())?
+            .request_rules(principal.user, workspace.as_ref())?
             .into_iter()
             .map(|rule| RequestRule::new(rule, &never))
             .collect())
@@ -76,8 +78,11 @@ pub(crate) async fn list_request_rules(
 )]
 pub(crate) async fn create_request_rule(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<NewRequestRuleRequest>,
 ) -> Result<(StatusCode, Json<RequestRule>), ApiError> {
+    let (action, resource) = authz::rule_scope(body.workspace.as_ref());
+    authz::check(&state, principal, action, resource).await?;
     let host = pattern(&body.host)?;
     let methods = Methods::parse(body.methods.iter().map(String::as_str))
         .map_err(|err| ApiError::invalid(format!("methods: {err}")))?;
@@ -91,7 +96,7 @@ pub(crate) async fn create_request_rule(
         created_by: Actor::Api,
     };
     let rule = blocking(move || {
-        let rule = state.store.add_request_rule(&new)?;
+        let rule = state.store.as_user(principal.user).add_request_rule(&new)?;
         Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
     })
     .await?;

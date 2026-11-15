@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Plain HTTP: absolute-form `http://` requests, any number of them on one guest connection.
 //!
 //! Each request is handled as if it had come on a connection of its own: decided by the rules for
@@ -233,7 +233,17 @@ where
     let target = &incoming.target;
     let request = EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port)
         .with_protocol(ProtocolHint::Http);
-    let (admitted, mut event) = admit(proxy, &request).await;
+    let (admitted, mut event) = match proxy
+        .admit_distribution_point(
+            &request,
+            incoming.head.method.as_str(),
+            puddle_types::request_path(&incoming.parsed.target),
+        )
+        .await
+    {
+        Some((admitted, event)) => (Ok(admitted), event),
+        None => admit(proxy, &request).await,
+    };
     event.http = Some(HttpRequestLine::new(
         incoming.head.method.as_str(),
         &incoming.parsed.target,
@@ -438,7 +448,9 @@ fn upstream_request(
         None => path.clone(),
     };
     let (body, tx, abort) = ChannelBody::new(incoming.parsed.body);
-    let body: UpBody = body.map_err(|err| Box::new(err) as BoxError).boxed_unsync();
+    let body: UpBody = body
+        .map_err(|err| -> BoxError { Box::new(err) })
+        .boxed_unsync();
     let mut builder = ::http::Request::builder()
         .method(incoming.parsed.method.as_str())
         .uri(uri)

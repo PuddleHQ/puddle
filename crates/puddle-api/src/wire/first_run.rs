@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The first-run flow's state on the wire: whether it has been through, and what it shows about
 //! the development certificate.
 
@@ -63,4 +63,13 @@ pub struct FirstRunRequest {
     /// `true` records that the flow was finished or skipped (the time of the first such call is
     /// kept); `false` makes it run again at the next start.
     pub completed: bool,
+}
+
+/// What the first-run banner's Retry came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialStoreRetry {
+    /// The credential store took a write on this check, so Puddle can save secrets and sign-ins.
+    /// `false` leaves the `credential-store` problem standing with its advice.
+    pub working: bool,
 }

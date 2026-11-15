@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-//! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like msb as observed on msb 0.7.6, for
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like the msb Puddle pins, for
 //! unit tests of everything above the compute plane (feature `fake`).
 //!
 //! What it reproduces (each pinned by a case in [`crate::contract`]):
@@ -13,8 +13,10 @@
 //!   `remove` and reattach with a plain `named()` mount.
 //! - A second attach of a volume held by a running sandbox is refused naming the holder, and
 //!   leaves the refused sandbox behind as a `Stopped` record.
-//! - A create that fails its volume check (missing volume, size mismatch) leaves a stale
-//!   directory that blocks the name, unless [`FakeConfig::stale_dir_fixed`] (an upstream msb bug).
+//! - A create that fails leaves no stale directory ([`FakeRuntime::add_stale_dir`] plants one, as
+//!   a crash would).
+//! - The guest has no network, and only the sandbox's routed vsock ports on the host accept (the
+//!   hostile-guest probes of [`crate::probes`]).
 //! - The SSH server writes an `SSH-2.0-` identification line first.
 //! - Every boot writes `/proc/meminfo` with `MemTotal` = the spec's memory, so a
 //!   [`Runtime::set_memory`] shows only after the next start.
@@ -24,7 +26,7 @@
 //! Test controls: [`FakeRuntime::inject`] makes the next matching call(s) fail
 //! ([`Fault`]), [`FakeRuntime::calls`] returns every call in order, [`FakeRuntime::on_exec`]
 //! adds command handlers, [`FakeRuntime::crash`] kills a VM, [`FakeRuntime::add_image`] adds
-//! pullable images.
+//! pullable images, [`FakeRuntime::wait_in_every_call`] makes every call wait once.
 //!
 //! ```
 //! # tokio_test_block_on(async {
@@ -47,19 +49,23 @@
 //! ```
 
 mod exec;
+mod guest_probes;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
 use crate::{
     Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind,
-    RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
+    RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo,
+    VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -84,6 +90,10 @@ pub enum Op {
     SetMemory,
     /// [`Runtime::set_cpus`].
     SetCpus,
+    /// [`Runtime::set_env`].
+    SetEnv,
+    /// [`Runtime::grow_root_disk`].
+    GrowRootDisk,
     /// [`Runtime::list`].
     List,
     /// [`Runtime::remove`].
@@ -174,24 +184,17 @@ impl Fault {
     }
 }
 
-/// How the fake behaves where msb versions differ.
+/// What a test can set about the fake itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FakeConfig {
     /// Reported by [`Runtime::probe`].
     pub runtime_version: String,
-    /// When `true`, a failed create leaves no stale directory (the upstream msb bug fixed).
-    pub stale_dir_fixed: bool,
-    /// Reported by [`Runtime::probe`]; the fake's SSH server runs no commands either way.
-    pub ssh_reports_signal_exit: bool,
 }
 
 impl Default for FakeConfig {
-    /// msb 0.7.6 as observed: stale directories, signal exit lost over SSH.
     fn default() -> Self {
         Self {
             runtime_version: "fake".into(),
-            stale_dir_fixed: false,
-            ssh_reports_signal_exit: false,
         }
     }
 }
@@ -211,13 +214,30 @@ struct SandboxRecord {
     /// What the root disk "holds on the host", as a test sets it; `None` is a runtime that
     /// cannot say.
     root_disk: Option<RootDiskUse>,
+    /// A size [`Runtime::grow_root_disk`] left for the next boot (the runtime could not grow
+    /// live), applied by [`SandboxRecord::boot`].
+    pending_root: Option<DiskSize>,
+    /// The variables the guest booted with: a [`Runtime::set_env`] on a running sandbox only
+    /// shows at the next boot, as on a real guest.
+    booted_env: GuestEnv,
 }
 
 impl SandboxRecord {
+    /// The reported root disk capacity becomes `size`; the use stays what it was.
+    fn grow_reported(&mut self, size: DiskSize) {
+        if let Some(root) = &mut self.root_disk {
+            root.size = size;
+        }
+    }
+
     /// The guest's view of its memory at boot, like the kernel's `/proc/meminfo`.
     fn boot(&mut self, boot: u64) {
         self.status = WorkspaceStatus::Running;
         self.boot = boot;
+        self.booted_env = self.spec.env.clone();
+        if let Some(size) = self.pending_root.take() {
+            self.grow_reported(size);
+        }
         let kib = u64::from(self.spec.memory.get()) * 1024;
         self.files.insert(
             MEMINFO.to_owned(),
@@ -256,6 +276,10 @@ struct State {
     force_stop: BTreeSet<String>,
     /// [`FakeRuntime::serve_terminals`]: `serve_ssh` runs the pseudo-terminal stand-in.
     terminals: bool,
+    /// [`FakeRuntime::set_live_root_grow`] turned off: a running sandbox grows at its next boot.
+    no_live_root_grow: bool,
+    /// [`FakeRuntime::wait_in_every_call`]: each call waits once before it answers.
+    waits: bool,
 }
 
 impl State {
@@ -361,13 +385,13 @@ impl std::fmt::Debug for FakeRuntime {
 
 impl FakeRuntime {
     /// `mcr.microsoft.com/devcontainers/base:debian`: no ENTRYPOINT, CMD `bash`.
-    pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian";
+    pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
     /// `docker:dind`: ENTRYPOINT `dockerd-entrypoint.sh`.
     pub const DIND: &'static str = "docker:dind";
     /// `alpine:3`: CMD `/bin/sh`.
     pub const ALPINE: &'static str = "alpine:3";
 
-    /// A fake with [`FakeConfig::default`] (msb 0.7.6 behaviour).
+    /// A fake with [`FakeConfig::default`].
     #[must_use]
     pub fn new() -> Self {
         Self::with_config(FakeConfig::default())
@@ -429,6 +453,20 @@ impl FakeRuntime {
     #[must_use]
     pub fn calls(&self) -> Vec<Call> {
         self.lock().calls.clone()
+    }
+
+    /// Makes every call wait once (its future is pending one time) before it answers, the way a
+    /// real runtime's calls wait for msb. A test can then drop the caller at each of its awaits.
+    pub fn wait_in_every_call(&self, on: bool) {
+        self.lock().waits = on;
+    }
+
+    /// The wait [`FakeRuntime::wait_in_every_call`] turns on.
+    async fn turn(&self) {
+        let waits = self.lock().waits;
+        if waits {
+            WaitOnce(false).await;
+        }
     }
 
     /// Makes every sandbox's `serve_ssh` an SSH server with a pseudo-terminal stand-in (see
@@ -555,6 +593,12 @@ impl FakeRuntime {
         }
     }
 
+    /// Whether a running sandbox grows its root disk live (the default). Off, it answers
+    /// [`RootDiskGrowth::NextStart`] and grows at its next boot, as msb does on Windows.
+    pub fn set_live_root_grow(&self, live: bool) {
+        self.lock().no_live_root_grow = !live;
+    }
+
     fn handle(&self, name: &SandboxName, boot: u64, owned: bool) -> FakeSandbox {
         FakeSandbox {
             runtime: self.clone(),
@@ -570,31 +614,22 @@ impl FakeRuntime {
     pub fn force_next_stop(&self, name: &SandboxName) {
         self.lock().force_stop.insert(name.to_string());
     }
-
-    /// Marks a failed create's leftover directory, as msb does until the upstream bug is fixed.
-    fn leave_stale_dir(&self, state: &mut State, name: &SandboxName) {
-        if !self.inner.config.stale_dir_fixed {
-            state.stale_dirs.insert(name.to_string());
-        }
-    }
 }
 
 impl Runtime for FakeRuntime {
     type Sandbox = FakeSandbox;
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn probe(&self) -> Result<Capabilities, ComputeError> {
+        self.turn().await;
         self.lock().enter(Op::Probe, None, None)?;
         let c = &self.inner.config;
         Ok(Capabilities {
             runtime_version: c.runtime_version.clone(),
-            stale_dir_fixed: c.stale_dir_fixed,
-            ssh_reports_signal_exit: c.ssh_reports_signal_exit,
         })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn pull_image(&self, image: &ImageRef) -> Result<ImageConfig, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::PullImage, Some(image.as_str()), None)?;
         state
@@ -607,8 +642,8 @@ impl Runtime for FakeRuntime {
             })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn create(&self, spec: SandboxSpec) -> Result<FakeSandbox, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         let name = spec.name.clone();
         state.enter(Op::Create, Some(name.as_str()), None)?;
@@ -651,7 +686,6 @@ impl Runtime for FakeRuntime {
                 _ => None,
             };
             if let Some(e) = failure {
-                self.leave_stale_dir(&mut state, &name);
                 return Err(e);
             }
         }
@@ -665,6 +699,8 @@ impl Runtime for FakeRuntime {
                     boot: 0,
                     files: Files::new(),
                     root_disk: None,
+                    pending_root: None,
+                    booted_env: GuestEnv::new(),
                 },
             );
             return Err(e);
@@ -688,14 +724,16 @@ impl Runtime for FakeRuntime {
             boot: 0,
             files: Files::new(),
             root_disk: None,
+            pending_root: None,
+            booted_env: GuestEnv::new(),
         };
         record.boot(boot);
         state.sandboxes.insert(name.to_string(), record);
         Ok(self.handle(&name, boot, true))
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn start(&self, name: &SandboxName) -> Result<FakeSandbox, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Start, Some(name.as_str()), None)?;
         let record = state
@@ -729,8 +767,8 @@ impl Runtime for FakeRuntime {
         Ok(self.handle(name, boot, true))
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn get(&self, name: &SandboxName) -> Result<FakeSandbox, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Get, Some(name.as_str()), None)?;
         match state.sandboxes.get(name.as_str()) {
@@ -746,8 +784,8 @@ impl Runtime for FakeRuntime {
         }
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn set_memory(&self, name: &SandboxName, memory: MemoryMib) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::SetMemory, Some(name.as_str()), None)?;
         let record =
@@ -761,8 +799,8 @@ impl Runtime for FakeRuntime {
         Ok(())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn set_cpus(&self, name: &SandboxName, cpus: CpuCount) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::SetCpus, Some(name.as_str()), None)?;
         let record =
@@ -776,8 +814,68 @@ impl Runtime for FakeRuntime {
         Ok(())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
+    async fn set_env(&self, name: &SandboxName, env: &GuestEnv) -> Result<(), ComputeError> {
+        self.turn().await;
+        let mut state = self.lock();
+        state.enter(Op::SetEnv, Some(name.as_str()), None)?;
+        let record =
+            state
+                .sandboxes
+                .get_mut(name.as_str())
+                .ok_or_else(|| ComputeError::NotFound {
+                    sandbox: name.to_string(),
+                })?;
+        record.spec.env = env.clone();
+        Ok(())
+    }
+
+    async fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: DiskSize,
+    ) -> Result<RootDiskGrowth, ComputeError> {
+        self.turn().await;
+        let mut state = self.lock();
+        state.enter(Op::GrowRootDisk, Some(name.as_str()), None)?;
+        let live_capable = !state.no_live_root_grow;
+        let record =
+            state
+                .sandboxes
+                .get_mut(name.as_str())
+                .ok_or_else(|| ComputeError::NotFound {
+                    sandbox: name.to_string(),
+                })?;
+        let current = record
+            .root_disk
+            .map(|r| r.size)
+            .or(record.spec.root_disk)
+            .unwrap_or(DiskSize::mib(0));
+        if size <= current {
+            return Err(ComputeError::InvalidSpec {
+                reason: format!(
+                    "a root disk only grows: {} MiB is not above {} MiB",
+                    size.as_mib(),
+                    current.as_mib()
+                ),
+            });
+        }
+        record.spec.root_disk = Some(size);
+        let running = record.status == WorkspaceStatus::Running;
+        if running && !live_capable {
+            // The guest keeps what it has until the next boot.
+            record.pending_root = Some(size);
+            return Ok(RootDiskGrowth::NextStart);
+        }
+        record.grow_reported(size);
+        Ok(if running {
+            RootDiskGrowth::Live
+        } else {
+            RootDiskGrowth::NextStart
+        })
+    }
+
     async fn list(&self) -> Result<Vec<SandboxInfo>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::List, None, None)?;
         let mut out: Vec<SandboxInfo> = state
@@ -788,20 +886,22 @@ impl Runtime for FakeRuntime {
                 status: r.status,
                 puddle_owned: true,
                 root_disk: r.root_disk,
+                routes: r.spec.routes.clone(),
             })
             .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
                 name: name.clone(),
                 status: *status,
                 puddle_owned: false,
                 root_disk: None,
+                routes: Vec::new(),
             }))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn remove(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Remove, Some(name.as_str()), None)?;
         match state.sandboxes.get(name.as_str()) {
@@ -820,15 +920,15 @@ impl Runtime for FakeRuntime {
         }
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn stale_dirs(&self) -> Result<Vec<String>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::StaleDirs, None, None)?;
         Ok(state.stale_dirs.iter().cloned().collect())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn remove_stale_dir(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::RemoveStaleDir, Some(name.as_str()), None)?;
         if state.stale_dirs.remove(name.as_str()) {
@@ -840,8 +940,8 @@ impl Runtime for FakeRuntime {
         }
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn create_volume(&self, spec: VolumeSpec) -> Result<VolumeInfo, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::CreateVolume, Some(spec.name.as_str()), None)?;
         if spec.size.as_mib() == 0 {
@@ -864,8 +964,8 @@ impl Runtime for FakeRuntime {
         Ok(info)
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn volume(&self, name: &VolumeName) -> Result<Option<VolumeInfo>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Volume, Some(name.as_str()), None)?;
         Ok(state
@@ -874,8 +974,8 @@ impl Runtime for FakeRuntime {
             .map(|v| state.volume_info(name.as_str(), v)))
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn list_volumes(&self) -> Result<Vec<VolumeInfo>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::ListVolumes, None, None)?;
         Ok(state
@@ -885,8 +985,8 @@ impl Runtime for FakeRuntime {
             .collect())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn remove_volume(&self, name: &VolumeName) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::RemoveVolume, Some(name.as_str()), None)?;
         if !state.volumes.contains_key(name.as_str()) {
@@ -950,7 +1050,7 @@ impl FakeSandbox {
                 .ok_or_else(|| ComputeError::NotFound {
                     sandbox: self.name.to_string(),
                 })?;
-        let mut env = record.spec.env.clone();
+        let mut env = record.booted_env.clone();
         env.extend(&request.env);
         let mut ctx = ExecContext {
             sandbox: &self.name,
@@ -979,8 +1079,8 @@ impl Sandbox for FakeSandbox {
         self.forced.load(Ordering::Relaxed)
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn status(&self) -> Result<WorkspaceStatus, ComputeError> {
+        self.runtime.turn().await;
         let mut state = self.runtime.lock();
         state.enter(Op::Status, Some(self.name.as_str()), None)?;
         state
@@ -992,8 +1092,8 @@ impl Sandbox for FakeSandbox {
             })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn stop(&self) -> Result<(), ComputeError> {
+        self.runtime.turn().await;
         let mut state = self.runtime.lock();
         state.enter(Op::Stop, Some(self.name.as_str()), None)?;
         let r =
@@ -1017,8 +1117,8 @@ impl Sandbox for FakeSandbox {
         Ok(())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn exec(&self, request: ExecRequest) -> Result<ExecOutput, ComputeError> {
+        self.runtime.turn().await;
         let mut state = self.runtime.lock();
         let detail = std::iter::once(request.program.as_str())
             .chain(request.args.iter().map(String::as_str))
@@ -1030,6 +1130,7 @@ impl Sandbox for FakeSandbox {
     }
 
     async fn serve_ssh<S: SshStream>(&self, mut stream: S) -> Result<(), ComputeError> {
+        self.runtime.turn().await;
         {
             let mut state = self.runtime.lock();
             state.enter(Op::ServeSsh, Some(self.name.as_str()), None)?;
@@ -1052,6 +1153,25 @@ impl Sandbox for FakeSandbox {
         let mut sink = [0_u8; 4096];
         while stream.read(&mut sink).await.map_err(io)? > 0 {}
         Ok(())
+    }
+}
+
+/// A future that is pending once, asking to be polled again at once, then ready.
+struct WaitOnce(bool);
+
+impl Future for WaitOnce {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            return std::task::Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
     }
 }
 

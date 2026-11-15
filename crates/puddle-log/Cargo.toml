@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-log"
 description = "The log filter of Puddle's programs: Puddle's own crates at the level asked for, dependencies at info unless named"

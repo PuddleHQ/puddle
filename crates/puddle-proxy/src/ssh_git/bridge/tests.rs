@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The bridge against a recording smart-HTTP host: which requests a session turns into, with
 //! which bodies and headers, and what the guest reads back.
 
@@ -132,7 +132,7 @@ async fn session(
     command: &GitSshCommand,
     input: &[u8],
 ) -> (String, Result<(), GitSshFailure>) {
-    let (mut guest, mut ours) = tokio::io::duplex(1 << 20);
+    let (mut guest, mut ours) = tokio::io::duplex(input.len().max(1 << 20));
     guest.write_all(input).await.unwrap();
     guest.shutdown().await.unwrap();
     let result = carry(host, command, &mut ours).await;
@@ -838,134 +838,92 @@ async fn a_host_that_stops_taking_the_push_ends_it_whatever_the_guest_still_send
     }
 }
 
-/// As [`session`] for an input larger than the pipe: written by a task while the bridge reads.
-async fn session_big(
-    host: &mut Host2,
-    command: &GitSshCommand,
-    input: String,
-) -> Result<(), GitSshFailure> {
-    let (mut guest, mut ours) = tokio::io::duplex(1 << 20);
-    let writer = tokio::spawn(async move {
-        let _ = guest.write_all(input.as_bytes()).await;
-        let _ = guest.shutdown().await;
-        guest
-    });
-    let result = carry(host, command, &mut ours).await;
-    drop(ours);
-    drop(writer.await.unwrap());
-    result
-}
-
-#[tokio::test]
-async fn a_request_that_never_flushes_stops_at_the_bound_and_nothing_is_posted() {
-    let over = MAX_REQUEST + 1;
-    let update = format!("{OLD} {NEW} refs/heads/b\n");
-    let cases = [
-        (
-            GitService::Upload,
-            Some("version=2"),
-            pkt("have 1111111111111111111111111111111111111111\n"),
-        ),
-        (
-            GitService::Upload,
-            None,
-            pkt("want 1111111111111111111111111111111111111111\n"),
-        ),
-        (GitService::Receive, None, pkt(&update)),
-    ];
-    for (service, protocol, line) in cases {
-        let mut host = Host2::answering([Reply::Ok(ADVERT_V0)]);
-        let input = line.repeat(over / line.len() + 1);
-        let failure = session_big(&mut host, &command(service, protocol), input)
-            .await
-            .unwrap_err();
-        assert!(failure.message.contains("32 MiB"), "{failure:?}");
-        assert_eq!(host.seen.len(), 1, "only the advertisement went upstream");
+/// Pkt-lines of data with no flush among them, `total` bytes in all (each line at most 65520).
+fn unflushed(total: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(total);
+    let mut left = total;
+    while left > 0 {
+        // Never leave a rest too small to be a line.
+        let size = match left {
+            0..=65_520 => left,
+            65_521..=65_524 => 65_515,
+            _ => 65_520,
+        };
+        out.extend_from_slice(format!("{size:04x}").as_bytes());
+        out.resize(out.len() + size - 4, b'x');
+        left -= size;
     }
-}
-
-#[tokio::test]
-async fn a_v0_fetch_whose_haves_never_flush_stops_at_the_bound() {
-    let mut host = Host2::answering([Reply::Ok(ADVERT_V0), Reply::Ok(b"0008NAK\n")]);
-    let want = pkt("want 1111111111111111111111111111111111111111\n");
-    let have = pkt("have 2222222222222222222222222222222222222222\n");
-    let input = format!("{want}0000{}", have.repeat(MAX_REQUEST / have.len() + 1));
-    let result = session_big(&mut host, &command(GitService::Upload, None), input).await;
-    assert!(result.unwrap_err().message.contains("32 MiB"));
-    assert_eq!(host.seen.len(), 1, "no round was posted");
-}
-
-/// Pkt-lines that add up to exactly `total` bytes, each made by `line` for its own length.
-fn exact(total: usize, line: impl Fn(usize) -> String) -> String {
-    const WHOLE: usize = 60_000;
-    let mut out = String::new();
-    for _ in 0..total / WHOLE {
-        out.push_str(&line(WHOLE));
-    }
-    let rest = total % WHOLE;
-    assert!(rest >= 120, "{rest}");
-    out.push_str(&line(rest));
-    assert_eq!(out.len(), total);
     out
 }
 
-/// A pkt-line of exactly `n` bytes that starts with `head` and ends with a newline.
-fn padded(head: &str, n: usize) -> String {
-    let fill = n - 4 - head.len() - 1;
-    pkt(&format!("{head}{}\n", "a".repeat(fill)))
-}
-
 #[tokio::test]
-async fn a_request_of_exactly_the_bound_is_sent_and_one_byte_more_is_not() {
-    let update = |n: usize| padded(&format!("{OLD} {NEW} refs/heads/"), n);
-    for over in [false, true] {
-        let extra = usize::from(over);
-        let v2 = format!("{}0000", exact(MAX_REQUEST + extra, |n| padded("have ", n)));
-        let v0 = format!(
-            "{}0000{}",
-            exact(MAX_REQUEST + extra, |n| padded("want ", n)),
-            "0009done\n"
-        );
-        // The push's section counts its flush too.
-        let push = format!("{}0000", exact(MAX_REQUEST - 4 + extra, update));
-        for (service, protocol, input) in [
-            (GitService::Upload, Some("version=2"), v2),
-            (GitService::Upload, None, v0),
-            (GitService::Receive, None, push),
-        ] {
-            let mut host = Host2::answering([Reply::Ok(ADVERT_V0), Reply::Ok(b"0008NAK\n")]);
-            let result = session_big(&mut host, &command(service, protocol), input).await;
-            if over {
-                assert!(
-                    result.unwrap_err().message.contains("32 MiB"),
-                    "{service:?}"
-                );
-                assert_eq!(host.seen.len(), 1, "{service:?}: nothing was posted");
-            } else {
-                result.unwrap();
-                assert_eq!(host.seen.len(), 2, "{service:?}: the request was posted");
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn the_wants_and_haves_of_a_v0_fetch_share_one_bound() {
-    let want = pkt("want 1111111111111111111111111111111111111111\n");
-    let held = want.len() + 4;
-    for over in [false, true] {
-        let haves = exact(MAX_REQUEST - held + usize::from(over), |n| {
-            padded("have ", n)
-        });
-        let input = format!("{want}0000{haves}0009done\n");
-        let mut host = Host2::answering([Reply::Ok(ADVERT_V0), Reply::Ok(b"0008NAK\n")]);
-        let result = session_big(&mut host, &command(GitService::Upload, None), input).await;
-        if over {
-            assert!(result.unwrap_err().message.contains("32 MiB"));
-            assert_eq!(host.seen.len(), 1);
+async fn a_request_the_guest_never_flushes_is_refused_at_the_limit_and_nothing_goes_up() {
+    let too_much = unflushed(MAX_REQUEST + 100);
+    let commands = format!("{OLD} {NEW} refs/heads/main\0report-status\n");
+    // Valid update lines, each as long as a line can be, so the section is only too long.
+    let line = pkt(&format!(
+        "{OLD} {NEW} refs/heads/{}\n",
+        "x".repeat(65_520 - 4 - 1 - 2 * 40 - 2 - "refs/heads/".len())
+    ));
+    assert_eq!(line.len(), 65_520);
+    let long_commands = [
+        pkt(&commands).into_bytes(),
+        line.repeat(MAX_REQUEST / 65_520 + 1).into_bytes(),
+    ]
+    .concat();
+    let cases: [(GitService, Option<&str>, Vec<u8>); 4] = [
+        // Protocol version 2: one command that never ends.
+        (GitService::Upload, Some("version=2"), too_much.clone()),
+        // Version 0: a want block that never ends, and rounds of haves that never end.
+        (GitService::Upload, None, too_much.clone()),
+        (
+            GitService::Upload,
+            None,
+            [
+                pkt("want 1111111111111111111111111111111111111111\n").as_bytes(),
+                b"0000",
+                &too_much,
+            ]
+            .concat(),
+        ),
+        // A push whose command section never ends.
+        (GitService::Receive, None, long_commands),
+    ];
+    for (service, protocol, input) in cases {
+        let advert = if service == GitService::Receive {
+            ADVERT_PUSH
         } else {
-            result.unwrap();
-            assert_eq!(host.seen.len(), 2);
-        }
+            ADVERT_V0
+        };
+        let mut host = Host2::answering([Reply::Ok(advert)]);
+        let (_, result) = session(&mut host, &command(service, protocol), &input).await;
+        let message = result.unwrap_err().message;
+        assert!(
+            message.contains("more than 16 MiB"),
+            "{service:?}: {message}"
+        );
+        assert_eq!(
+            host.seen.len(),
+            1,
+            "{service:?}: only the advertisement was asked for"
+        );
     }
+}
+
+#[tokio::test]
+async fn a_request_of_exactly_the_limit_still_goes_up() {
+    let mut host = Host2::answering([
+        Reply::Ok(b"000eversion 2\n0000"),
+        Reply::Ok(b"000dpackfile\n0000"),
+    ]);
+    let mut input = unflushed(MAX_REQUEST - 4);
+    input.extend_from_slice(b"0000");
+    let (_, result) = session(
+        &mut host,
+        &command(GitService::Upload, Some("version=2")),
+        &input,
+    )
+    .await;
+    result.unwrap();
+    assert_eq!(host.seen[1].body.len(), MAX_REQUEST);
 }

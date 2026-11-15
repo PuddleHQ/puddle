@@ -1,23 +1,32 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Pending requests, rules and the audit log through the API, against a real store.
 
 use serde_json::{Value, json};
 
+use puddle_api::ApiConfig;
 use puddle_store::Clock;
 use puddle_types::{EgressRequest, Host, WorkspaceId};
 
 use std::sync::Arc;
 
-use crate::common::{START_MS, start, start_with_company_signals};
+use crate::common::{START_MS, start, start_with, start_with_company_signals};
 
 #[tokio::test]
 async fn health_names_the_versions() {
-    let api = start().await;
+    // No app is served: with the embedded one the build id depends on whether `ui/build` exists
+    // when the test runs, which the host check's `ui` step decides while the tests are running.
+    let mut config = ApiConfig::default();
+    config.ui = None;
+    let api = start_with(config).await;
     let reply = api.get("/api/health").await;
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({ "version": puddle_types::VERSION, "api_version": puddle_api::API_VERSION })
+        json!({
+            "version": puddle_types::VERSION,
+            "api_version": puddle_api::API_VERSION,
+            "ui_build_id": null
+        })
     );
     api.running.shutdown().await;
 }
@@ -25,6 +34,7 @@ async fn health_names_the_versions() {
 #[tokio::test]
 async fn a_pending_request_is_listed_approved_and_then_allowed() {
     let api = start().await;
+    api.own("box");
     let id = api.request("box", "api.example.com");
     let other = api.request("other", "example.org");
 
@@ -182,6 +192,7 @@ async fn bad_decisions_are_refused_without_changing_anything() {
 #[tokio::test]
 async fn rules_are_created_listed_changed_and_deleted() {
     let api = start().await;
+    api.own("box");
     let open = api.request("box", "registry.npmjs.org");
     let reply = api
         .send(
@@ -608,10 +619,31 @@ async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
     api.running.shutdown().await;
 }
 
+/// The UI used to guess the toggle from the address and disagreed with the proxy on these three
+/// (it said "special" for 0.0.0.0 and 100.64/10 and nothing for multicast). It now shows what the
+/// service says, so the service has to say the proxy class for each.
+#[tokio::test]
+async fn the_blocking_toggle_is_the_proxy_class_for_addresses_a_browser_copy_got_wrong() {
+    let api = start().await;
+    let unspecified = api.request("box", "0.0.0.0");
+    let cgnat = api.request("box", "100.64.0.1");
+    let multicast = api.request("box", "224.0.0.1");
+    let one = |id: i64| {
+        let path = format!("/api/pending/{id}");
+        let api = &api;
+        async move { api.get(&path).await.json()["blocked_by"].clone() }
+    };
+    assert_eq!(one(unspecified).await, "loopback");
+    assert_eq!(one(cgnat).await, "private");
+    assert_eq!(one(multicast).await, "special");
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off() {
     let signals = puddle_netpolicy::StaticSignals::new().with_private_access_client();
     let api = start_with_company_signals(Arc::new(signals)).await;
+    api.own("box");
     let company = api.request("box", "100.64.3.7");
     let private = api.request("box", "10.0.0.5");
     let one = |id: i64| {
@@ -620,6 +652,13 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
         async move { api.get(&path).await.json()["blocked_by"].clone() }
     };
     assert_eq!(one(company).await, "company_network");
+    let signal = |id: i64| {
+        let path = format!("/api/pending/{id}");
+        let api = &api;
+        async move { api.get(&path).await.json()["company_signal"].clone() }
+    };
+    assert_eq!(signal(company).await, "private_access_cgnat");
+    assert_eq!(signal(private).await, json!(null));
     // The category comes from the host's signals alone: other private addresses stay private.
     assert_eq!(one(private).await, "private");
     // The private toggle does not free it.
@@ -643,6 +682,54 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
         .await;
     assert_eq!(put.status, 200, "{}", put.body);
     assert_eq!(one(company).await, json!(null));
+    // The signal stays, so a client that reads address ranges still knows it is the company's.
+    assert_eq!(signal(company).await, "private_access_cgnat");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_audit_log_filters_on_the_company_network_category() {
+    use puddle_types::{
+        CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
+    };
+    let api = start().await;
+    let ask = |host: &str| {
+        EgressRequest::new(
+            WorkspaceId::new("box").unwrap(),
+            Host::parse_normalised(host).unwrap(),
+            443,
+        )
+    };
+    let mut company = ConnectionEvent::new(
+        &ask("100.64.3.7"),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    );
+    company.company_network = Some(CompanySignal::VpnRoute);
+    api.store.record(&company);
+    api.store.record(&ConnectionEvent::new(
+        &ask("example.com"),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    ));
+    let hosts = |reply: crate::common::Reply| -> Vec<String> {
+        reply.json()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["record"]["host"].as_str().map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(
+        hosts(api.get("/api/audit?category=company_network").await),
+        ["100.64.3.7"]
+    );
+    // An empty category is no filter; an unknown one is refused.
+    assert_eq!(
+        hosts(api.get("/api/audit?category=").await),
+        ["example.com", "100.64.3.7"]
+    );
+    assert_eq!(api.get("/api/audit?category=other").await.status, 422);
     api.running.shutdown().await;
 }
 

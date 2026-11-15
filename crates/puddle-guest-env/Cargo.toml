@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-guest-env"
 description = "Boot-time proxy config for the guest: proxy env and tool config files as GuestEnv/GuestFiles for the boot hook"

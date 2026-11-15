@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A fake website: a server that answers `200` to any request, over plain HTTP and over TLS
 //! (HTTP/2 or HTTP/1.1 by ALPN), for every name the test gives it. It stands in for "some
 //! allowed host" in tests that only need a host to reach, so they never depend on a public site

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One UDP datagram to the stub's socket: a grammar-built message, a query whose `OPT` record ends at the receive
 //! buffer's limit, or raw bytes. The checks are in `fuzz/checks/dns_transport.rs`.
 #![no_main]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The one error type of the xtask commands.
 
 use std::path::PathBuf;
@@ -28,6 +28,9 @@ pub enum XtaskError {
     /// A test-only feature is on in a shipped program's dependency tree.
     #[error("a test-only feature would ship:\n{0}")]
     Leak(String),
+    /// A release would ship a runtime file the pin list has no hash for.
+    #[error("a release build would not check the runtime files it ships:\n{0}")]
+    Unpinned(String),
     /// Input that should be machine-made didn't parse.
     #[error("cannot parse {what}: {reason}")]
     Parse {

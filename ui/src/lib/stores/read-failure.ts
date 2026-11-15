@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Why a read failed, in words a screen can show: the API's own message when it sent one, else
 // what the status code means, else that the service did not answer.
 import { sentence } from "#lib/rules/model.ts";

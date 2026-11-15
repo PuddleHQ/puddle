@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts the pinned code-server release in <dest-dir>, for the VM tests (PUDDLE_CODE_SERVER_DIR): the
 # folder the host mounts read-only into guests. The download must match the SHA-256 pinned in
 # ci/code-server.sha256. `cargo xtask code-server` builds the same folder for a release; this

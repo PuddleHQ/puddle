@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of answers from a host a secret is for: a real value the server hands back, in a
 //! header or anywhere in the body, split across chunks or frames, compressed or encoded, reaches
 //! the guest as the stand-in it already holds, and the record says so.

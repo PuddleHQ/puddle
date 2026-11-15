@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Browser half of the VM-tier browser client (crates/puddle-vm-tests/src/browser.rs).
 //
 // One headless Chromium with one browser context (one cookie jar, like one window's data folder),

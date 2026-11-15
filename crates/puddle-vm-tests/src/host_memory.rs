@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host-side resident memory of a process, in bytes: the number a VM test reads off the
 //! process that runs a microVM to see whether memory the guest freed went back to the host.
 //!
@@ -15,6 +15,19 @@ use crate::HarnessError;
 /// [`HarnessError::Io`] when the process is gone or its figure can't be read or parsed.
 pub fn resident_bytes(pid: u32) -> Result<u64, HarnessError> {
     read(pid).map_err(|e| HarnessError::io("read resident memory of", format!("pid {pid}"), e))
+}
+
+/// The most resident memory process `pid` has had so far, in bytes (`VmHWM`): a spike that came
+/// and went between two reads of [`resident_bytes`] still shows here.
+///
+/// # Errors
+///
+/// [`HarnessError::Io`] when the process is gone or its figure can't be read or parsed.
+#[cfg(target_os = "linux")]
+pub fn peak_resident_bytes(pid: u32) -> Result<u64, HarnessError> {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .and_then(|status| parse_vm_hwm(&status))
+        .map_err(|e| HarnessError::io("read peak resident memory of", format!("pid {pid}"), e))
 }
 
 fn invalid(what: &str, text: &str) -> std::io::Error {
@@ -58,10 +71,26 @@ fn parse_kib(text: &str) -> std::io::Result<u64> {
     expect(dead_code, reason = "only Linux reads /proc/<pid>/status")
 )]
 fn parse_vm_rss(status: &str) -> std::io::Result<u64> {
+    parse_status_kib(status, "VmRSS:")
+}
+
+#[cfg_attr(
+    not(any(test, target_os = "linux")),
+    expect(dead_code, reason = "only Linux reads /proc/<pid>/status")
+)]
+fn parse_vm_hwm(status: &str) -> std::io::Result<u64> {
+    parse_status_kib(status, "VmHWM:")
+}
+
+#[cfg_attr(
+    not(any(test, target_os = "linux")),
+    expect(dead_code, reason = "only Linux reads /proc/<pid>/status")
+)]
+fn parse_status_kib(status: &str, key: &str) -> std::io::Result<u64> {
     let line = status
         .lines()
-        .find_map(|l| l.strip_prefix("VmRSS:"))
-        .ok_or_else(|| invalid("no VmRSS line in", status))?;
+        .find_map(|l| l.strip_prefix(key))
+        .ok_or_else(|| invalid(&format!("no {} line in", key.trim_end_matches(':')), status))?;
     parse_kib(line.trim())
 }
 
@@ -86,47 +115,4 @@ fn parse_tasklist(csv: &str) -> std::io::Result<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn linux_status_gives_the_rss_line_in_bytes() {
-        let status = "Name:\tmsb\nVmHWM:\t  900 kB\nVmRSS:\t  123456 kB\nThreads:\t4\n";
-        assert_eq!(parse_vm_rss(status).unwrap(), 123_456 * 1024);
-    }
-
-    #[test]
-    fn a_status_without_rss_is_an_error_that_shows_the_text() {
-        let err = parse_vm_rss("Name:\tkthread\n").unwrap_err().to_string();
-        assert!(
-            err.contains("no VmRSS line") && err.contains("kthread"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn tasklist_csv_gives_the_working_set_in_bytes() {
-        let csv = "\"msb.exe\",\"1234\",\"Console\",\"1\",\"123,456 K\"\r\n";
-        assert_eq!(parse_tasklist(csv).unwrap(), 123_456 * 1024);
-    }
-
-    #[test]
-    fn tasklist_with_no_match_is_an_error() {
-        let info = "INFO: No tasks are running which match the specified criteria.\r\n";
-        assert!(parse_tasklist(info).is_err());
-    }
-
-    #[test]
-    #[cfg(any(target_os = "linux", windows))]
-    fn this_process_has_resident_memory() {
-        let bytes = resident_bytes(std::process::id()).unwrap();
-        assert!(bytes > 1024 * 1024, "{bytes}");
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn a_process_that_is_gone_is_an_error() {
-        // The kernel's pid limit is 2^22, so this id is never a live process.
-        assert!(resident_bytes(u32::MAX - 1).is_err());
-    }
-}
+mod tests;

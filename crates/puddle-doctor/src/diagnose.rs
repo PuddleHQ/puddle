@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! From facts to findings: the order of the checks, what depends on what, and the exact text of
 //! every finding and fix. Pure, so every case is tested with a faked [`Probe`].
 
@@ -8,11 +8,13 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    AgentService, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts,
-    DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection, RuntimeFacts,
-    RuntimeState, SshAgentFacts, SwapFacts, WritableFolder,
+    AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
+    CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
+    Protection, RuntimeFacts, RuntimeState, SshAgentFacts, SwapFacts, VaultFacts, WritableFolder,
 };
+use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
+
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
 /// The exit code of the probe program the test VM runs.
@@ -47,6 +49,12 @@ pub trait Probe {
     fn disk_encryption(&self) -> DiskEncryptionFacts;
     /// Asks the SSH agent Puddle would ask for its key list, waiting at most `limit`.
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts;
+    /// Asks the Azure CLI for its version, waiting at most `limit`.
+    fn az_cli(&self, limit: Duration) -> AzCliFacts;
+    /// Which store keeps the secrets and how it is doing: reads the data folder's record, and
+    /// writes a throwaway value to the operating system's store (and deletes it) when that is the
+    /// one in use.
+    fn credential_store(&self) -> CredentialStoreFacts;
 }
 
 /// What to run and how long it may take.
@@ -88,6 +96,9 @@ pub const DEFAULT_DISK_FAIL_BELOW: u64 = 5 * GIB;
 /// How long the SSH agent gets to answer: an agent that asks the user first (1Password, Bitwarden)
 /// is not waited for.
 pub const SSH_AGENT_LIMIT: Duration = Duration::from_secs(2);
+
+/// How long `az --version` gets: a cold `az` is slow, and the answer only names a version.
+pub const AZ_CLI_LIMIT: Duration = Duration::from_secs(10);
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -152,6 +163,8 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     checks.push(disk_encryption(os, &probe.disk_encryption()));
 
     checks.push(ssh_agent(os, &probe.ssh_agent(options.ssh_agent_limit)));
+    checks.push(az_cli(&probe.az_cli(AZ_CLI_LIMIT)));
+    checks.push(credential_store(os, probe.credential_store()));
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -518,8 +531,14 @@ fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
     let id = CheckId::DiskEncryption;
     let mut parts = Vec::new();
     let mut protections: Vec<(&str, &Protection)> = Vec::new();
+    let mut folder_unknown = None;
     match &facts.data {
-        DataEncryption::NoFolder => parts.push("data folder not found".to_owned()),
+        DataEncryption::NoFolder => {
+            parts.push("data folder not found".to_owned());
+            folder_unknown = Some(
+                "Puddle's data folder could not be found, so its drive was not asked".to_owned(),
+            );
+        }
         DataEncryption::Volume { protection, .. } => {
             parts.push(format!("data drive {}", protection_text(protection)));
             protections.push(("data", protection));
@@ -546,9 +565,13 @@ fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
     let swap_bad = protections
         .iter()
         .any(|(k, p)| *k == "swap" && **p == Protection::NotEncrypted);
-    let unknowns: Vec<String> = protections
-        .iter()
-        .filter_map(|(_, p)| unknown_why(p).map(str::to_owned))
+    let unknowns: Vec<String> = folder_unknown
+        .into_iter()
+        .chain(
+            protections
+                .iter()
+                .filter_map(|(_, p)| unknown_why(p).map(str::to_owned)),
+        )
         .chain(match &facts.swap {
             SwapFacts::Unreadable { why } => Some(why.clone()),
             _ => None,
@@ -738,10 +761,16 @@ fn runtime(os: Os, rt: &RuntimeFacts) -> Check {
         } => Check::new(
             id,
             Status::Warn,
-            format!(
-                "msb {version} accepted by the developer override; this build needs {}",
-                rt.expected
-            ),
+            if *version == rt.expected {
+                format!(
+                    "msb {version} accepted by the developer override; its files differ from the ones this build ships with"
+                )
+            } else {
+                format!(
+                    "msb {version} accepted by the developer override; this build needs {}",
+                    rt.expected
+                )
+            },
         )
         .finding(Finding::RuntimeOverridden)
         .fix("Development builds only. Unset PUDDLE_DEV_ANY_RUNTIME to test the shipped combination."),
@@ -771,6 +800,14 @@ and must sit next to Puddle's program file."
                         "Reinstall Puddle so the runtime in {dir} matches this Puddle again. Don't copy an msb \
 from elsewhere into it: Puddle only runs the exact msb {} it was built for.",
                         rt.expected
+                    ),
+                ),
+                RuntimeError::Digest { .. } => (
+                    Finding::RuntimeDigestMismatch,
+                    format!(
+                        "Repair or reinstall Puddle so the runtime in {dir} is the one it shipped with. \
+A file there was changed after install (an update that stopped half way, antivirus, disk trouble, or another \
+program replacing it); Puddle only runs the exact files it was built for."
                     ),
                 ),
                 _ => (
@@ -921,11 +958,8 @@ fn load_failure(os: Os, msb: &Path, code: i32, hypervisor_ready: bool) -> Option
     if os != Os::Windows {
         return None;
     }
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "Windows reports NTSTATUS exit codes as i32; the bits are the code"
-    )]
-    let status = code as u32;
+    // Windows reports NTSTATUS exit codes as i32; the bits are the code.
+    let status = code.cast_unsigned();
     match status {
         codes::STATUS_INVALID_IMAGE_HASH => Some(app_control(msb)),
         codes::STATUS_ACCESS_DENIED => Some(edr(msb)),
@@ -950,11 +984,8 @@ Platform DLLs of a current Windows 10/11."
 
 fn hex_or_dec(os: Os, code: i32) -> String {
     if os == Os::Windows && code < 0 {
-        #[expect(
-            clippy::cast_sign_loss,
-            reason = "Windows reports NTSTATUS exit codes as i32; the bits are the code"
-        )]
-        let status = code as u32;
+        // Windows reports NTSTATUS exit codes as i32; the bits are the code.
+        let status = code.cast_unsigned();
         format!("0x{status:08X}")
     } else {
         code.to_string()
@@ -1217,6 +1248,137 @@ affected."
     )
 }
 
+// ---- Azure CLI ----
+
+/// Warn only: the Azure CLI is optional, needed for the Azure DevOps sources and nothing else.
+fn az_cli(facts: &AzCliFacts) -> Check {
+    let id = CheckId::AzCli;
+    match facts {
+        AzCliFacts::NotFound => Check::new(
+            id,
+            Status::Warn,
+            "not found; needed only for Azure DevOps through `az`",
+        )
+        .finding(Finding::AzCliMissing)
+        .fix("Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az login --tenant <tenant>` in a terminal."),
+        AzCliFacts::Found { version } => Check::new(id, Status::Ok, format!("version {version}")),
+        AzCliFacts::Unknown { detail } => Check::new(
+            id,
+            Status::Warn,
+            format!("found, but its version could not be read: {detail}"),
+        )
+        .fix("Azure DevOps sources need a working `az`; reinstall the Azure CLI if `az --version` fails."),
+    }
+}
+
+// ---- Credential store ----
+
+/// Warn only: a store that refuses writes stops saving secrets and sign-ins, not sandboxes. The
+/// words for the operating system's store come from `puddle-secrets`, which also words the problem
+/// the running service raises.
+fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
+    let id = CheckId::CredentialStore;
+    match facts {
+        CredentialStoreFacts::Os {
+            recorded,
+            health,
+            session,
+        } => os_credential_store(os, recorded, health, session),
+        CredentialStoreFacts::File(vault) => match vault {
+            VaultFacts::Header(tag) => {
+                let check = Check::new(
+                    id,
+                    if tag == KeySourceTag::KeyFile {
+                        Status::Info
+                    } else {
+                        Status::Ok
+                    },
+                    format!("Puddle's file vault, {}", key_words(tag)),
+                );
+                if tag == KeySourceTag::KeyFile {
+                    check.fix(
+                        "The key is a file in your config folder, so a copy of that folder opens the vault. systemd 256 or later seals the key to this machine instead.",
+                    )
+                } else {
+                    check
+                }
+            }
+            VaultFacts::NoVaultYet => Check::new(
+                id,
+                Status::Info,
+                "Puddle's file vault: no vault file yet; Puddle makes it at the next start",
+            ),
+            VaultFacts::Unreadable => Check::new(
+                id,
+                Status::Warn,
+                "Puddle's file vault: the vault file's header cannot be read",
+            )
+            .finding(Finding::CredentialStoreVaultUnreadable)
+            .fix(
+                "Restore `secrets/vault` in the data folder from a copy. If there is none, stop Puddle, move the file aside, start it again and enter the secrets again.",
+            ),
+        },
+        CredentialStoreFacts::Unreadable => Check::new(
+            id,
+            Status::Warn,
+            "`secrets/store.json` cannot be read, so Puddle does not know where it keeps its secrets",
+        )
+        .finding(Finding::CredentialStoreRecordUnreadable)
+        .fix(
+            "Restore the file from a copy. It records the first start's choice of store, and Puddle does not choose again by itself.",
+        ),
+    }
+}
+
+fn key_words(tag: KeySourceTag) -> &'static str {
+    match tag {
+        KeySourceTag::SystemdHost => "key sealed with the host key by systemd",
+        KeySourceTag::SystemdHostTpm2 => {
+            "key sealed with the host key and the TPM2 chip by systemd"
+        }
+        KeySourceTag::KeyFile => "key in a file in your config folder",
+    }
+}
+
+fn os_credential_store(
+    os: Os,
+    recorded: bool,
+    health: StoreHealth,
+    session: LoginSession,
+) -> Check {
+    let id = CheckId::CredentialStore;
+    let Some(advice) = health.advice(os == Os::Linux) else {
+        if os == Os::Linux && session == LoginSession::NotGraphical {
+            return Check::new(
+                id,
+                Status::Warn,
+                "the operating system's credential store works, but this computer has no graphical login session, so its keyring may be locked after a reboot",
+            )
+            .finding(Finding::CredentialStoreNoDesktop)
+            .fix(if recorded {
+                "This data folder keeps its secrets in the operating system's store, and Puddle does not move them to the file vault by itself. If this computer is a server, unlock the keyring after every reboot, or use a new data folder started with `puddle serve --headless`."
+            } else {
+                "If this computer is a server, start `puddle serve --headless` (or set `PUDDLE_HEADLESS=1`) before the first secret is saved: secrets then go in Puddle's file vault, which needs no unlocked keyring."
+            });
+        }
+        return Check::new(
+            id,
+            Status::Ok,
+            "the operating system's credential store: a test write and delete worked",
+        );
+    };
+    let (summary, finding) = match health {
+        StoreHealth::Locked => ("locked: it refuses writes", Finding::CredentialStoreLocked),
+        _ => (
+            "not available: nothing answers where Puddle keeps secrets",
+            Finding::CredentialStoreMissing,
+        ),
+    };
+    Check::new(id, Status::Warn, summary)
+        .finding(finding)
+        .fix(advice.fix)
+}
+
 fn ssh_agent(os: Os, facts: &SshAgentFacts) -> Check {
     let id = CheckId::SshAgent;
     match facts {
@@ -1374,61 +1536,4 @@ fn seconds(d: Duration) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn seconds_has_one_decimal() {
-        assert_eq!(seconds(Duration::from_millis(2345)), "2.3 s");
-        assert_eq!(seconds(Duration::from_millis(40)), "0.0 s");
-    }
-
-    #[test]
-    fn hex_only_for_windows_status_codes() {
-        assert_eq!(hex_or_dec(Os::Windows, -1_073_741_515), "0xC0000135");
-        assert_eq!(hex_or_dec(Os::Windows, 3), "3");
-        assert_eq!(hex_or_dec(Os::Linux, -1), "-1");
-    }
-
-    #[test]
-    fn every_system_integrity_code_is_app_control() {
-        let msb = Path::new("msb");
-        for code in (4550..=4562).chain(4580..=4582).chain([577]) {
-            let b = spawn_failure(Os::Windows, msb, Some(code)).unwrap();
-            assert_eq!(b.finding, Finding::BlockedByAppControl, "{code}");
-        }
-        assert!(spawn_failure(Os::Windows, msb, Some(4563)).is_none());
-        assert!(spawn_failure(Os::Windows, msb, Some(2)).is_none());
-        assert!(spawn_failure(Os::Windows, msb, None).is_none());
-    }
-
-    #[test]
-    fn windows_codes_mean_nothing_elsewhere() {
-        let msb = Path::new("msb");
-        assert!(spawn_failure(Os::Linux, msb, Some(1260)).is_none());
-        assert!(load_failure(Os::Linux, msb, -1_073_741_515, true).is_none());
-        assert_eq!(
-            spawn_failure(Os::Linux, msb, Some(13)).unwrap().finding,
-            Finding::RuntimePermissions
-        );
-    }
-
-    #[test]
-    fn load_failures_by_status() {
-        let msb = Path::new("msb");
-        let f = |status: u32| {
-            #[expect(
-                clippy::cast_possible_wrap,
-                reason = "test: NTSTATUS as Windows reports it"
-            )]
-            let code = status as i32;
-            load_failure(Os::Windows, msb, code, true).map(|b| b.finding)
-        };
-        assert_eq!(f(0xC000_0428), Some(Finding::BlockedByAppControl));
-        assert_eq!(f(0xC000_0022), Some(Finding::ProcessCreationDenied));
-        assert_eq!(f(0xC000_0906), Some(Finding::BlockedByAntivirus));
-        assert_eq!(f(0xC000_0138), Some(Finding::DllMissing));
-        assert_eq!(f(0xC000_0139), Some(Finding::DllMissing));
-        assert_eq!(f(0xC000_0005), None);
-    }
-}
+mod tests;

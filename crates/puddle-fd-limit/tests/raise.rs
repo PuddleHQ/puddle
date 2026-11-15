@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real system call, in a process of its own (one test per binary: the limit is per process).
 #![cfg(unix)]
 

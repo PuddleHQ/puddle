@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Replays the checked-in corpus of every cargo-fuzz target (`fuzz/corpus/<target>/`) through the
 //! same entry points on the stable toolchain, so a plain test run keeps every seed and every
 //! input a nightly fuzz run once crashed on (it is committed there as a regression, see
@@ -99,6 +99,26 @@ fn the_connect_target_corpus_keeps_every_target_invariant() {
 fn the_host_name_corpus_normalises_to_stable_printable_ascii_or_is_refused() {
     for (_, bytes) in corpus("normalise_host") {
         fuzzing::host(&bytes);
+    }
+}
+
+#[test]
+fn the_answer_token_corpus_reads_the_same_whole_and_in_pieces() {
+    for (_, bytes) in corpus("answer_tokens") {
+        fuzzing::answer_tokens(&bytes);
+    }
+    // No bytes at all has no piece size to take: nothing to check.
+    fuzzing::answer_tokens(&[]);
+    // Made here, not kept: a run longer than any token, then a token's start, over every piece size.
+    let long = [vec![b'a'; 4200], b" ghp_".to_vec(), vec![b'b'; 40]].concat();
+    for size in 0..=255u8 {
+        fuzzing::answer_tokens(&[&[size][..], &long].concat());
+    }
+    // A `refresh_token` value still growing when a piece ends is kept with the field's start: the
+    // value of 4083 bytes is where that passed a run's length before the bound allowed for it.
+    let field = [vec![96_u8], b"refresh_token=".to_vec(), vec![b'a'; 4083]].concat();
+    for size in 0..=255u8 {
+        fuzzing::answer_tokens(&[&[size][..], &field].concat());
     }
 }
 

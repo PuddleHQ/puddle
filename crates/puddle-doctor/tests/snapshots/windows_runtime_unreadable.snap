@@ -15,6 +15,8 @@ info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
             there. The Linux runtime's guest kernel is built without /dev/mem.
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Azure CLI (az)        version 2.64.0
+ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
@@ -80,6 +82,16 @@ ok    Global Secure Access  client not installed
       "id": "ssh_agent",
       "status": "ok",
       "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
+    },
+    {
+      "id": "credential_store",
+      "status": "ok",
+      "summary": "the operating system's credential store: a test write and delete worked"
     },
     {
       "id": "global_secure_access",

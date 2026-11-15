@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The ports of a workspace, end to end: a real agent, the host's session code, `Ports` as the
 //! watcher, and a "guest" that is this machine's loopback. What the user sees is the view and the
 //! events; what a program sees is a listener on `127.0.0.1` that carries bytes.
@@ -127,6 +127,24 @@ impl StreamHandler for Route {
     async fn guest_ports(&self, ports: Vec<u16>) {
         self.ports.ports(&self.workspace, ports);
     }
+}
+
+#[tokio::test]
+async fn an_ended_agent_session_is_announced_by_workspace() {
+    let rig = rig("ended").await;
+    let mut ended = rig.ports.agent_sessions_ended();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    assert_eq!(ended.next().await, rig.workspace);
+}
+
+#[tokio::test]
+async fn a_reader_that_fell_behind_still_gets_a_name() {
+    let rig = rig("behind").await;
+    let mut ended = rig.ports.agent_sessions_ended();
+    for _ in 0..200 {
+        GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    }
+    assert_eq!(ended.next().await, rig.workspace);
 }
 
 struct Rig {

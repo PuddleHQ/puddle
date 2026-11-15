@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The lists: which credentials to read, the in-memory cache, one read at a time per credential,
 //! and the back-off when a host limits us.
 //!
@@ -34,11 +34,11 @@ pub trait Secrets: Send + Sync {
 
 impl<F: Fetch + 'static> Secrets for SecretCache<F> {
     fn get<'a>(&'a self, spec: &'a SourceSpec) -> BoxFuture<'a, Result<Credential, SourceError>> {
-        Box::pin(SecretCache::get_for(self, spec, ReadUse::RepositoryList))
+        Box::pin(Self::get_for(self, spec, ReadUse::RepositoryList))
     }
 
     fn invalidate(&self, spec: &SourceSpec) {
-        SecretCache::invalidate(self, spec);
+        Self::invalidate(self, spec);
     }
 }
 
@@ -207,6 +207,7 @@ fn source_organisation(source: &SourceSpec) -> Option<String> {
         SourceSpec::Stored { scope, .. } => {
             scope.org.as_ref().map(|o| o.as_str().to_ascii_lowercase())
         }
+        SourceSpec::AzCli { org, .. } => org.as_ref().map(|o| o.as_str().to_ascii_lowercase()),
         SourceSpec::GitCredential { path, .. } => {
             path.as_str().split('/').next().map(str::to_ascii_lowercase)
         }
@@ -560,7 +561,7 @@ impl Inner {
             .secrets
             .get(&target.source)
             .await
-            .map_err(|err| Problem::from_source(&err))?;
+            .map_err(|err| Problem::from_source(&target.source, &err))?;
         let stored = matches!(target.source, SourceSpec::Stored { .. });
         let result = match &kind {
             Kind::GitHub(endpoint) => {
@@ -650,7 +651,7 @@ impl Inner {
             .secrets
             .get(source)
             .await
-            .map_err(|err| Problem::from_source(&err))?;
+            .map_err(|err| Problem::from_source(source, &err))?;
         let mut exchange = self.exchange("GitHub", source, limits::github, strikes);
         "account".clone_into(&mut exchange.missing);
         let authorization = Authorization::Bearer(credential.secret);
@@ -794,33 +795,4 @@ fn snapshot(meta: Meta, resolved: &Resolved, now: u64) -> SourceList {
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_secrets::{AccountName, HostName, OrgName, StoredId, TokenScope, UrlPath};
-
-    use super::*;
-
-    #[test]
-    fn a_sources_own_organisation_is_the_pasted_tokens_or_the_git_credentials_path_and_no_other_has_one()
-     {
-        let host = HostName::new("dev.azure.com").unwrap();
-        let stored = SourceSpec::Stored {
-            id: StoredId::new("tok-1").unwrap(),
-            scope: TokenScope {
-                host: host.clone(),
-                org: Some(OrgName::new("Acme").unwrap()),
-            },
-        };
-        let git = SourceSpec::GitCredential {
-            host: host.clone(),
-            path: UrlPath::new("Contoso/Fabrikam").unwrap(),
-            username: None,
-        };
-        let gh = SourceSpec::Gh {
-            host,
-            account: AccountName::new("me").unwrap(),
-        };
-        assert_eq!(source_organisation(&stored).as_deref(), Some("acme"));
-        assert_eq!(source_organisation(&git).as_deref(), Some("contoso"));
-        assert_eq!(source_organisation(&gh), None);
-    }
-}
+mod tests;

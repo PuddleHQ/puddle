@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Forgetting a login Puddle kept, from the notice that says it can't be used (fixture scenario
 // `lived-in`). The whole path runs by keyboard; the store's refusal shows its way out in the
 // dialog. Layout is checked by computed styles and box sizes, never by pictures.

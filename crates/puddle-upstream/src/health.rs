@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What discovery reports about itself for the network-health page. Plain data: the API turns it
 //! into JSON, so nothing here can leak more than its fields hold, and no field holds a credential
 //! ([`ProxyAddr`] cannot carry one, the PAC address is cleaned, no script text is kept).

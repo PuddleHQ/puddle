@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A login whose access token is a JWT, through the real proxy: the tool reads the claims of the
 //! stand-in it is given, and the stand-ins it was given in the last few exchanges are each swapped for
 //! the real token of their own exchange toward the service's API host. A fake server stands in for the service.
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_logins::{
-    Audience, Endpoint, Field, LoginNotices, Logins, Method, Problem, Profile, Role, Scope,
+    Audience, Endpoint, Field, Keep, LoginNotices, Logins, Method, Problem, Profile, Role, Scope,
     StandInKind,
 };
 use puddle_proxy::{InjectDecision, StandIns};
@@ -41,6 +41,7 @@ static PROFILE: [Profile; 1] = [Profile {
             only_prefixed: false,
             scope: Scope::Api,
             audience: Audience::Any,
+            keep: Keep::Stored,
         }],
     }],
     api_hosts: &[API_HOST],

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/cancel-group.sh with a fake `gh` over a table of runs ("<branch> <id> <status> [<head sha>]" lines
 # in $FAKE_RUNS). `gh run list --branch` answers the ids of the non-completed runs of that branch, without --branch
 # the "<branch> <id> <head sha>" lines of all of them (what the real --jq prints); `gh run

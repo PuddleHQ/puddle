@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Smoke test of the real shell: starts `puddle-app` with WebView2's remote-debugging port
 // open and checks, over the Chrome DevTools Protocol, that the main window shows the SPA served
 // by the in-process backend, that the page holds the API token, and that it can call no Tauri
@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { onChildEnd } from "./child-end.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -50,7 +51,7 @@ app.stderr.on("data", (chunk) => {
 let appExited = false;
 let appExitCode;
 const exited = new Promise((resolve) =>
-  app.on("exit", (code) => {
+  onChildEnd(app, (code) => {
     appExited = true;
     appExitCode = code;
     console.log(`puddle-app exited (${code})`);
@@ -184,6 +185,12 @@ try {
       return { status: r.status, body: await r.json() };`).catch((err) => ({ error: String(err) }));
     check("the host's workspace list is empty on a fresh data folder", list?.status === 200 && list.body?.workspaces?.length === 0, JSON.stringify(list));
   }
+  // The window runs on an environment Puddle built, with custom crash reporting on (no crash dump
+  // goes to Microsoft); a failure to build one is logged and falls back to the library's.
+  check(
+    "the window runs on Puddle's own WebView2 environment, crash-report upload off",
+    appLog.includes("WebView2 environment with custom crash reporting created") && !appLog.includes("no WebView2 environment of our own"),
+  );
   const banner = await run(`const s = document.querySelector('[role="status"]'); return s ? s.textContent : "";`);
   check("no 'can't sign in' banner", !banner.includes("can't sign in"), banner.trim());
 

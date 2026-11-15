@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/cache-gc.sh with a fake `gh` that serves a fixed cache list and records deletions:
 # a merge queue entry goes whatever its age, a fresh pull request entry and the newest develop entry
 # of a group stay, a superseded develop entry and a stale pull request entry go, and the cargo-xwin

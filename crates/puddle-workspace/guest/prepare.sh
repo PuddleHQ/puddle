@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Makes a workspace volume ready for its session user.
 #
 # Usage: sh prepare.sh <volume mount point> <session user>

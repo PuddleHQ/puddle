@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Builds the guest agent (crates/puddle-agent) as a static Linux binary, linked with the toolchain's
 # own rust-lld so it runs in any guest image (glibc or musl) and builds the same on a Linux or a
 # Windows host (no C toolchain needed). The guest architecture is the host's (msb runs guests of

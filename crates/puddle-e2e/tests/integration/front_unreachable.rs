@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest tries the browser editor's front through the real proxy: the front's listener
 //! on this computer's loopback is one of Puddle's own, so the agent's `CONNECT` to it is refused
 //! with a reason, whatever the loopback toggles and the rules say. Without that, a guest could dial
@@ -59,6 +59,7 @@ struct Rig {
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-front").unwrap());
     let endpoints = PuddleEndpoints::new();
     let ports = Ports::new(
         endpoints.clone(),

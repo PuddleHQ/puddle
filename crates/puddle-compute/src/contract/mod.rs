@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The contract suite: behaviour every [`Runtime`] must share, run against the fake (here, on
 //! every push) and against the msb SDK adapter (`puddle-compute-msb`, on VMs). A difference
 //! between the fake and msb shows up as a red case, not as a surprise in a later VM test
@@ -208,6 +208,7 @@ impl<R: Runtime> Case<'_, R> {
         if let Ok(dirs) = rt.stale_dirs().await {
             for dir in dirs.iter().filter(|d| mine(d)) {
                 if let Ok(name) = SandboxName::new(dir) {
+                    // best-effort sweep of stale leftovers; the next run sweeps again
                     let _ = rt.remove_stale_dir(&name).await;
                 }
             }
@@ -215,6 +216,7 @@ impl<R: Runtime> Case<'_, R> {
         if let Ok(volumes) = rt.list_volumes().await {
             for v in volumes.iter().filter(|v| mine(&v.name)) {
                 if let Some(name) = v.volume_name() {
+                    // best-effort sweep of stale leftovers; the next run sweeps again
                     let _ = rt.remove_volume(&name).await;
                 }
             }
@@ -223,6 +225,7 @@ impl<R: Runtime> Case<'_, R> {
             for entry in entries.flatten() {
                 if mine(&entry.file_name().to_string_lossy()) {
                     let path = entry.path();
+                    // best-effort sweep of stale leftovers; the next run sweeps again
                     let _ = std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir_all(&path));
                 }
             }
@@ -416,20 +419,14 @@ pub const SMOKE_CHECKS: [SmokeCheck; 57] = [
         "puddle-e2e/tests/integration/proxy_agent_store.rs",
         "denied host gets 403 through the route",
     ),
-    elsewhere(
+    case(
         "net.direct_egress_blocked",
-        VM_MSB,
-        "direct DNS fails in the guest",
+        "hg01_guest_has_no_direct_network",
     ),
-    elsewhere(
-        "net.direct_ip_blocked",
-        VM_MSB,
-        "direct IP fails in the guest",
-    ),
-    elsewhere(
+    case("net.direct_ip_blocked", "hg01_guest_has_no_direct_network"),
+    case(
         "net.unrouted_vsock_port_unreachable",
-        VM_MSB,
-        "only routed vsock ports accept",
+        "hg02_only_the_routed_vsock_port_accepts",
     ),
     case("mount_file.readonly", "file_mount_is_read_only"),
     elsewhere("volume.ext4", VM_MSB, "named volume is ext4 in the guest"),
@@ -555,12 +552,17 @@ macro_rules! contract_tests {
             named_volume_survives_restart_and_remove,
             volume_capacity_reads_back,
             second_attach_is_refused_naming_the_holder,
-            failed_create_leaves_a_stale_dir_unless_fixed,
+            failed_create_leaves_no_stale_dir,
             missing_volume_fails_create,
             ssh_server_speaks_first,
             routes_and_no_network_are_accepted,
             memory_change_applies_at_next_start,
             cpus_change_applies_at_next_start,
+            env_change_applies_at_next_start_and_keeps_the_root_disk,
+            hg01_guest_has_no_direct_network,
+            hg01_raw_and_packet_sockets_reach_no_network,
+            hg02_only_the_routed_vsock_port_accepts,
+            hg02_no_other_vsock_address_accepts,
         );
     };
     (@cases $env:path; $($case:ident),* $(,)?) => {
@@ -576,62 +578,4 @@ macro_rules! contract_tests {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::*;
-
-    #[test]
-    fn smoke_map_is_complete_and_points_at_real_cases() {
-        let checks: BTreeSet<_> = SMOKE_CHECKS.iter().map(|c| c.check).collect();
-        assert_eq!(checks.len(), 57, "a check is listed twice");
-        for c in &SMOKE_CHECKS {
-            match c.coverage {
-                Coverage::Case(name) => {
-                    assert!(CASES.contains(&name), "{}: no case {name}", c.check);
-                }
-                Coverage::Elsewhere { file, test } => {
-                    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .join("..")
-                        .join(file);
-                    assert!(path.is_file(), "{}: no file {file}", c.check);
-                    assert!(!test.is_empty(), "{}: no description", c.check);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn every_case_has_a_note_and_a_unique_name() {
-        let names: BTreeSet<_> = CASES.iter().collect();
-        assert_eq!(names.len(), CASES.len());
-        assert_eq!(CASE_NOTES.len(), CASES.len());
-        for (case, note) in CASES.iter().zip(CASE_NOTES.iter()) {
-            assert_eq!(*case, note.0, "CASE_NOTES order differs from CASES");
-            assert_ne!(note.1, "");
-        }
-    }
-
-    #[test]
-    fn prefixes_are_short_dns_labels() {
-        let p = unique_prefix();
-        assert!(p.len() <= 20, "{p}");
-        assert!(SandboxName::new(&format!("{p}-26-second")).is_ok(), "{p}");
-        assert_eq!(base36(0), "0");
-        assert_eq!(base36(35), "z");
-        assert_eq!(base36(36), "10");
-    }
-
-    #[test]
-    fn failure_display_names_the_case() {
-        let f = ContractFailure {
-            case: "x".into(),
-            message: "boom".into(),
-        };
-        assert_eq!(f.to_string(), "contract case x failed: boom");
-        let mut r = ContractReport::default();
-        assert!(r.all_passed());
-        r.failed.push(f);
-        assert!(!r.all_passed());
-    }
-}
+mod tests;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where a captured connection came from, as the agent tells the proxy.
 //!
 //! A client in a container (Docker, Podman, a Kubernetes node) runs in its own network namespace
@@ -20,11 +20,4 @@ pub const ORIGIN_HEADER: &str = "x-puddle-origin";
 pub const CONTAINER: &str = "container";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_header_name_is_lower_case_for_the_proxy_comparison() {
-        assert_eq!(ORIGIN_HEADER, ORIGIN_HEADER.to_ascii_lowercase());
-    }
-}
+mod tests;

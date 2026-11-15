@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The cache: when a list is read again, one read at a time, the back-off when a host limits
 //! requests, stale lists with their reason, and what is forgotten.
 

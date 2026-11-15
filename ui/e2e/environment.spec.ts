@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The Environment, Shell init and Ports tabs, Settings' global environment and the delete check's
 // "what Puddle removes" line, against the real API on the fixture backend, scenario `environment`:
 // web-shop runs (NODE_ENV, the secret NPM_TOKEN, a shell init, ports 3000 and 5432 listening) and

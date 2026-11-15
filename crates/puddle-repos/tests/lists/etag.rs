@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Asking again for a page of a GitHub list with the `ETag` it came with: a `304` is not counted
 //! against the host's rate limit, so it stands in for the page kept from the last read.
 

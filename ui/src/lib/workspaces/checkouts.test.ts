@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { credential, identity } from "#lib/testing/fake-identities.ts";
 import { checkout, listing, workspace } from "#lib/testing/fake-workspaces.ts";
@@ -34,7 +34,11 @@ describe("what a checkout says about itself", () => {
   });
 
   it("notices when the list's address and the checkout's remote are different repositories", () => {
-    const entry = { url: "https://github.com/acme/api.git", directory: "api" };
+    const entry = {
+      entry: "e-api",
+      url: "https://github.com/acme/api.git",
+      directory: "api",
+    };
     expect(remoteDiffers(checkout("api"))).toBe(false);
     expect(
       remoteDiffers(checkout("api", { entry, remote_url: entry.url })),
@@ -63,7 +67,11 @@ describe("what a checkout says about itself", () => {
     expect(
       remoteDiffers(
         checkout("api", {
-          entry: { url: "https://github.com/a/b/c", directory: "api" },
+          entry: {
+            entry: "e-api",
+            url: "https://github.com/a/b/c",
+            directory: "api",
+          },
           remote_url: "https://github.com/a/b/d",
         }),
       ),
@@ -90,8 +98,8 @@ describe("which identity serves a repository", () => {
 
 describe("the list entries that are not on the disk", () => {
   const entries = [
-    { url: "https://github.com/acme/a.git", directory: "a" },
-    { url: "https://github.com/acme/b.git", directory: "b" },
+    { entry: "e-a", url: "https://github.com/acme/a.git", directory: "a" },
+    { entry: "e-b", url: "https://github.com/acme/b.git", directory: "b" },
   ];
 
   it("are the ones the listing names, in list order", () => {

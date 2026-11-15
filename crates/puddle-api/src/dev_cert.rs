@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the development certificate stands, for the first-run flow's certificates step: the
 //! [`DevCertService`] trait the route calls, [`NoDevCert`] when none is wired, and [`FakeDevCert`]
 //! for tests and the UI fixture.

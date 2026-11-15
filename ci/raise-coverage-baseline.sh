@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The nightly coverage-baseline workflow: raises scripts/coverage-baseline.json and ui/coverage-baseline.json from the coverage
 # CI itself measured on develop, in ONE pull request, `build: raise the coverage baseline`, that goes through the merge queue
 # like any other (required checks, no bypass). Pull requests do not carry a raise of their own; this is the only way the floors

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the sets here are bookkeeping that no template reads */
 // The Identities screens' state: the identities in your order, what Puddle found signed in on this
 // computer, what the last check of each credential came to, and what a user does to them (make,
@@ -9,6 +9,7 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
   checkFromLast,
   checkOf,
+  signedOutCheck,
   credentialKey,
   describeSource,
   type AccountProfile,
@@ -44,12 +45,6 @@ export interface IdentitiesDeps {
 }
 
 const DOWN = "Puddle's service isn't answering.";
-
-const SIGNED_OUT: Check = {
-  state: "problem",
-  message: "A workspace asked for it and Puddle couldn't read it.",
-  needsSignIn: true,
-};
 
 export class IdentitiesStore {
   identities = $state.raw<Identity[]>([]);
@@ -144,7 +139,7 @@ export class IdentitiesStore {
     const known = this.checks[credentialKey(credential)];
     if (known && known.state !== "untested") return known;
     if (this.signedOutLines.has(describeSource(credential.source)))
-      return SIGNED_OUT;
+      return signedOutCheck(credential.source);
     return checkFromLast(credential.last_check);
   }
 

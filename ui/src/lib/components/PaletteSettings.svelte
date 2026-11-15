@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   // The colours part of Appearance: a palette, and for Custom the colours to pick, with a warning
   // where a pick makes text, control edges or the focus ring hard to see.

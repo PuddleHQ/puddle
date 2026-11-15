@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests of the widened profile model: a method other than `POST`, a wildcard path segment, a
 //! nested answer field and a slot per resource, on a profile made for the test.
 
@@ -10,7 +10,7 @@ use puddle_types::{Host, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::profile::{
-    Audience, Endpoint, Field, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
+    Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
 };
 use crate::vault::{Vault, slot_id};
 use crate::{LoginNotices, Logins, Marker, Problem};
@@ -30,6 +30,7 @@ const fn field(path: &'static str, role: Role, resource: Option<&'static str>) -
         only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Any,
+        keep: Keep::Stored,
     }
 }
 

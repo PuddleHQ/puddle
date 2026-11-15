@@ -1,0 +1,16 @@
+<idea-plugin>
+  <id>puddle.gateway.probe</id>
+  <name>Puddle Gateway probe</name>
+  <vendor>Puddle</vendor>
+  <version>1</version>
+  <dependencies>
+    <plugin id="com.intellij.platform.ssh"/>
+    <module name="intellij.platform.ssh"/>
+    <module name="intellij.platform.ssh.core"/>
+    <module name="intellij.gateway.core"/>
+    <module name="intellij.gateway.ssh"/>
+  </dependencies>
+  <extensions defaultExtensionNs="com.intellij">
+    <appStarter id="puddleinspect" implementation="puddle.probe.ProbeStarter"/>
+  </extensions>
+</idea-plugin>

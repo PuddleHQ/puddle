@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which destinations and resolved addresses the proxy may connect to (R-14), and how names are
 //! resolved.
 //!
@@ -33,7 +33,7 @@ pub trait AddressCheck: Send + Sync {
         match target.host() {
             Host::Ip(ip) => match self.check(workspace, SocketAddr::new(*ip, port)) {
                 AddressVerdict::Block(reason) => Some(reason),
-                _ => None,
+                AddressVerdict::Allow | AddressVerdict::ExactOnly(_) => None,
             },
             Host::Name(_) => None,
         }
@@ -59,6 +59,13 @@ pub trait AddressCheck: Send + Sync {
     fn company_signal(&self, _host: &Host, _addr: SocketAddr) -> Option<CompanySignal> {
         None
     }
+
+    /// Whether `addr`, an address of `host`, is one a certificate distribution point may be
+    /// fetched from without a rule: on the company or a private network. By default none
+    /// is, so the exception only applies where the check says so.
+    fn pki_address(&self, _host: &Host, _addr: SocketAddr) -> bool {
+        false
+    }
 }
 
 impl AddressCheck for NetPolicy {
@@ -68,7 +75,7 @@ impl AddressCheck for NetPolicy {
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
-        NetPolicy::check_target(self, workspace, target, port)
+        Self::check_target(self, workspace, target, port)
     }
 
     fn check(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
@@ -85,7 +92,11 @@ impl AddressCheck for NetPolicy {
     }
 
     fn company_signal(&self, host: &Host, addr: SocketAddr) -> Option<CompanySignal> {
-        NetPolicy::company_signal(self, Some(host), addr)
+        Self::company_signal(self, Some(host), addr)
+    }
+
+    fn pki_address(&self, host: &Host, addr: SocketAddr) -> bool {
+        Self::pki_address(self, Some(host), addr)
     }
 }
 
@@ -181,117 +192,4 @@ const fn names_nothing(kind: LookupErrorKind) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(windows)]
-    use windows_sys::Win32::Networking::WinSock::{
-        WSA_NOT_ENOUGH_MEMORY, WSAENETDOWN, WSAHOST_NOT_FOUND, WSANO_DATA, WSANO_RECOVERY,
-        WSATRY_AGAIN,
-    };
-
-    #[test]
-    fn a_name_that_does_not_exist_is_told_apart_from_a_lookup_that_failed() {
-        #[cfg(unix)]
-        let codes = [
-            ("EAI_NONAME", libc::EAI_NONAME, true),
-            ("EAI_NODATA", libc::EAI_NODATA, true),
-            ("EAI_AGAIN", libc::EAI_AGAIN, false),
-            ("EAI_FAIL", libc::EAI_FAIL, false),
-            ("EAI_MEMORY", libc::EAI_MEMORY, false),
-            ("EAI_SYSTEM", libc::EAI_SYSTEM, false),
-            ("an unknown code", -9999, false),
-        ];
-        #[cfg(windows)]
-        let codes = [
-            ("WSAHOST_NOT_FOUND", WSAHOST_NOT_FOUND, true),
-            ("WSANO_DATA", WSANO_DATA, true),
-            ("WSATRY_AGAIN", WSATRY_AGAIN, false),
-            ("WSANO_RECOVERY", WSANO_RECOVERY, false),
-            ("WSA_NOT_ENOUGH_MEMORY", WSA_NOT_ENOUGH_MEMORY, false),
-            ("WSAENETDOWN", WSAENETDOWN, false),
-        ];
-        for (label, code, missing) in codes {
-            let err = name_error(LookupError::new(code));
-            assert_eq!(err.kind() == io::ErrorKind::NotFound, missing, "{label}");
-            // The system's own text stays, whichever way it was classified.
-            assert!(!err.to_string().is_empty(), "{label}");
-        }
-    }
-
-    #[tokio::test]
-    async fn a_name_under_invalid_is_no_such_name_without_a_lookup() {
-        for host in [
-            "invalid",
-            "site.invalid",
-            "a.b.invalid",
-            "SITE.Invalid",
-            "site.invalid.",
-        ] {
-            let Ok(name) = DomainName::parse_normalised(host) else {
-                // A form the type refuses never reaches the resolver; the helper still decides it.
-                assert!(is_invalid_name(host), "{host}");
-                continue;
-            };
-            let err = SystemResolver.resolve(&name, 443).await.unwrap_err();
-            assert_eq!(err.kind(), io::ErrorKind::NotFound, "{host}");
-            assert!(err.to_string().contains(".invalid"), "{host}: {err}");
-        }
-    }
-
-    #[test]
-    fn only_the_last_label_makes_a_name_invalid() {
-        for host in [
-            "notinvalid.com",
-            "invalid.example.com",
-            "invalid.com",
-            "my-invalid",
-            "xinvalid",
-            "invalid.test",
-            "localhost",
-            "",
-        ] {
-            assert!(!is_invalid_name(host), "{host}");
-        }
-    }
-
-    #[tokio::test]
-    async fn the_system_resolver_resolves_localhost() {
-        let name = DomainName::parse_normalised("localhost").unwrap();
-        let addrs = SystemResolver.resolve(&name, 8080).await.unwrap();
-        assert_ne!(addrs.len(), 0);
-        assert!(
-            addrs
-                .iter()
-                .all(|a| a.port() == 8080 && a.ip().is_loopback())
-        );
-    }
-
-    /// A double that blocks every address with the reason it was built with, or allows all.
-    struct Fixed(Option<BlockReason>);
-
-    impl AddressCheck for Fixed {
-        fn check(&self, _: &WorkspaceId, _: SocketAddr) -> AddressVerdict {
-            self.0.map_or(AddressVerdict::Allow, AddressVerdict::Block)
-        }
-    }
-
-    #[test]
-    fn the_default_name_stage_blocks_an_ip_literal_the_address_check_blocks() {
-        let workspace = WorkspaceId::new("box").unwrap();
-        let literal = puddle_netpolicy::normalise_host("203.0.113.9").unwrap();
-        let name = puddle_netpolicy::normalise_host("example.com").unwrap();
-        let blocking = Fixed(Some(BlockReason::PuddleEndpoint));
-        assert_eq!(
-            blocking.check_target(&workspace, &literal, 443),
-            Some(BlockReason::PuddleEndpoint)
-        );
-        assert_eq!(blocking.check_target(&workspace, &name, 443), None);
-        assert_eq!(Fixed(None).check_target(&workspace, &literal, 443), None);
-    }
-
-    #[test]
-    fn a_numeric_lookup_gives_one_stream_address_with_the_port() {
-        let addrs = lookup("127.0.0.1", 8080).unwrap();
-        assert_eq!(addrs, ["127.0.0.1:8080".parse::<SocketAddr>().unwrap()]);
-    }
-}
+mod tests;

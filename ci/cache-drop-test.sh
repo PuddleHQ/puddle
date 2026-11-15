@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/cache-drop.sh with a stub `gh` that answers the cache list from a fixture and records
 # every write. Each case states what must be deleted, and most state that nothing may be: a run that is
 # not on develop, a run that saved nothing (an exact hit, a failed save), an entry this run did not

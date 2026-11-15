@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The HTTPS bridge: one SSH command carried out as the smart-HTTP requests `git` itself sends
 //! for the HTTPS remote (gitprotocol-http).
 //!
@@ -38,14 +38,22 @@ const REFUSAL_BYTES: usize = 4096;
 /// Largest piece of a pack read from the guest at once.
 const PIECE: usize = 65_536;
 
-/// Most bytes of one request held before it is sent: a protocol-v2 request, a v0 fetch's wants and
-/// haves, a push's command section. The guest chooses what a request holds, so it has a bound; a
-/// pack is not held at all.
-const MAX_REQUEST: usize = 32 * 1024 * 1024;
+/// Most bytes of one buffered request (a fetch round, or a push's commands) held for the
+/// `POST`. The guest chooses the lines, and every guest shares this process, so the buffer has
+/// a limit. A pack is streamed and not counted.
+const MAX_REQUEST: usize = 16 * 1024 * 1024;
 
-/// The refusal for a request over [`MAX_REQUEST`].
-fn too_long() -> GitSshFailure {
-    GitSshFailure::new("a Git request over 32 MiB is not carried over SSH through Puddle")
+/// Appends `bytes` to the request being built; `elsewhere` is what the same `POST` holds in
+/// other buffers.
+fn add(into: &mut Vec<u8>, elsewhere: usize, bytes: &[u8]) -> Result<(), GitSshFailure> {
+    if (into.len() + elsewhere).saturating_add(bytes.len()) > MAX_REQUEST {
+        return Err(GitSshFailure::new(format!(
+            "the Git client sent more than {} MiB in one request, more than Puddle carries over SSH",
+            MAX_REQUEST / (1024 * 1024)
+        )));
+    }
+    into.extend_from_slice(bytes);
+    Ok(())
 }
 
 /// The smart-HTTP endpoints of one repository, as the bridge reaches them.
@@ -245,13 +253,10 @@ async fn fetch_v2<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     if request.is_empty() {
                         return Ok(());
                     }
-                    request.extend_from_slice(&raw);
+                    add(&mut request, 0, &raw)?;
                     break;
                 }
-                Some(line) => request.extend_from_slice(&line.raw),
-            }
-            if request.len() > MAX_REQUEST {
-                return Err(too_long());
+                Some(line) => add(&mut request, 0, &line.raw)?,
             }
         }
         round(http, command, bytes_body(Bytes::from(request)), out).await?;
@@ -277,7 +282,7 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     // Nothing wanted: the client is up to date and says so with a flush.
                     return Ok(());
                 }
-                wants.extend_from_slice(&raw);
+                add(&mut wants, 0, &raw)?;
                 break;
             }
             Some(Line {
@@ -290,12 +295,9 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                          run it with `git -c protocol.version=2` or use the HTTPS remote",
                     ));
                 }
-                wants.extend_from_slice(&raw);
+                add(&mut wants, 0, &raw)?;
             }
             Some(_) => return Err(not_git(&unexpected())),
-        }
-        if wants.len() > MAX_REQUEST {
-            return Err(too_long());
         }
     }
     let mut haves = Vec::new();
@@ -311,14 +313,12 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     pkt: Pkt::Data(data),
                     ..
                 }) if data == b"done\n" || data == b"done" => break true,
-                Some(line) => haves.extend_from_slice(&line.raw),
-            }
-            if wants.len() + haves.len() > MAX_REQUEST {
-                return Err(too_long());
+                Some(line) => add(&mut haves, wants.len(), &line.raw)?,
             }
         };
         let mut body = wants.clone();
         body.extend_from_slice(&haves);
+        // The closing line is a few bytes past the limit at most.
         body.extend_from_slice(if done { b"0009done\n" } else { b"0000" });
         round(http, command, bytes_body(Bytes::from(body)), out).await?;
         if done {
@@ -396,10 +396,7 @@ async fn section<R: AsyncRead + Unpin>(
         match input.next().await.map_err(|err| not_git(&err))? {
             None => return Ok(None),
             Some(line) => {
-                into.extend_from_slice(&line.raw);
-                if into.len() > MAX_REQUEST {
-                    return Err(too_long());
-                }
+                add(into, 0, &line.raw)?;
                 match line.pkt {
                     Pkt::Flush => return Ok(Some(())),
                     Pkt::Data(data) => each(&data)?,
@@ -462,5 +459,4 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
 }
 
 #[cfg(test)]
-#[path = "bridge/tests.rs"]
 mod tests;

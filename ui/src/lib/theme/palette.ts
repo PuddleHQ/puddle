@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Palettes: the preset colour sets and the user's own, laid over the light or dark base. A palette
 // sets the same custom properties tokens.css declares, on the root element, so components never
 // know which one is active. Pond is tokens.css itself (a test keeps the copy below in step); the

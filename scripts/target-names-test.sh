@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Checks that no target of a workspace crate (an integration test, bin, example or bench) is named
 # like a dependency from the registry or git. `cargo llvm-cov` clears the workspace's old build
 # output before each run by file name (`deps/<target>-*`, `deps/lib<target>-*`), so a test target

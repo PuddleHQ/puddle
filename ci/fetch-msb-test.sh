@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/fetch-msb.sh's git environment: run with the variables a git hook exports
 # (GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE), the script's own `git clone` must not see them, or it
 # would act on the calling repository. A copy of the script runs on Linux x86_64 with a stub `curl`

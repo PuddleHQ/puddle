@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
-"""Fails an `exclude_re` entry of .cargo/mutants.toml that matches no mutant.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Fails an `exclude_re` entry of .cargo/mutants.toml that matches no mutant, or mutants of more than one file.
 
 An exclusion names a mutant by its `cargo mutants --list` line (`file:line:column: description`). It keys
 on the function name and the mutation text, never on a literal line: an edit above the entry would move
 the line and fail an unrelated change. Where two mutants read the same (the Windows and the Unix body of
 one function, three equal comparisons in one function), the code gives them different function names.
 This gate fails an entry that names a literal line, and (listing the mutants without the config) every
-entry that matches none of them, so a deleted or renamed function sends the author back to the entry.
+entry that matches none of them, so a deleted or renamed function sends the author back to the entry. It
+also fails an entry that matches mutants in more than one file: an exclusion is one reviewed reason for
+one place, and a pattern that reaches a second file silently excuses a mutant nobody read.
 
     scripts/check-mutants-exclusions.py --list FILE   FILE (or - for stdin) is the output of `cargo mutants --list --no-config`
     scripts/check-mutants-exclusions.py --self-test   plants a stale entry and shows the check catch it
@@ -27,6 +29,16 @@ CONFIG = Path(".cargo/mutants.toml")
 def stale(patterns, lines):
     """Returns the patterns that match no line."""
     return [p for p in patterns if not any(re.search(p, line) for line in lines)]
+
+
+def spread(patterns, lines):
+    """Returns (pattern, files) for each pattern that matches mutants in more than one file."""
+    out = []
+    for p in patterns:
+        files = sorted({line.split(":", 1)[0] for line in lines if re.search(p, line)})
+        if len(files) > 1:
+            out.append((p, files))
+    return out
 
 
 # `file.rs:` followed by a digit or a group of digits is a line number.
@@ -56,6 +68,11 @@ def self_test():
     assert line_keyed([r"run\.rs:98:5: replace is_executable", r"records\.rs:(124|153):\d+: replace"]) != [], "literal lines fail"
     assert line_keyed([r"run\.rs:98:5: x"]) == [r"run\.rs:98:5: x"], "a literal line number is caught"
     assert line_keyed([r"session\.rs:\d+:8: delete ! in send_and_pump", "replace ask_pipe "]) == [], "text keys pass"
+    twins = lines + ["crates/b/src/run.rs:9:5: replace is_executable -> bool with true"]
+    assert spread(ok, lines) == [], "a pattern that reaches one file passes"
+    both = r"replace is_executable -> bool"
+    assert spread([both], twins) == [(both, ["crates/a/src/run.rs", "crates/b/src/run.rs"])], "two files fail"
+    assert spread([r"b/src/run\.rs:\d+:\d+: replace is_executable"], twins) == [], "a file-keyed pattern passes"
     shifted = ["crates/a/src/run.rs:95:5: replace exists_as_file -> bool with true"]
     assert stale(["replace exists_as_file "], lines + shifted) == [], "a text key survives a moved line"
     print("mutants-exclusions self-test ok")
@@ -90,6 +107,12 @@ def main(argv):
             "give a cfg twin or a lookalike its own function name instead (STANDARDS.md, Mutation testing).",
             file=sys.stderr,
         )
+        return 1
+    wide = spread(patterns, lines)
+    for pattern, files in wide:
+        print(f"mutants-exclusions: matches mutants in {len(files)} files ({', '.join(files[:3])}): {pattern}", file=sys.stderr)
+    if wide:
+        print("mutants-exclusions: name the file in the entry (`file\\.rs:\\d+:\\d+: replace ...`), one entry per file.", file=sys.stderr)
         return 1
     for pattern in dead:
         print(f"mutants-exclusions: matches no mutant: {pattern}", file=sys.stderr)

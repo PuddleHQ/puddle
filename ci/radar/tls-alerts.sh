@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Which TLS alert does each tool send when it refuses a certificate? Puddle decrypts a connection
 # with a certificate from the workspace's own CA; a tool that does not trust that CA refuses it. The
 # proxy can only say "the tool refused the certificate" when the tool sends a certificate alert first;

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  SPDX-License-Identifier: GPL-3.0-or-later
+  SPDX-License-Identifier: AGPL-3.0-or-later
 
   Puddle's installer template for Tauri's WiX 3 bundler (`bundle.windows.wix.template`). It replaces
   Tauri's own because that one installs per machine, under Program Files, for administrators only.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The test boot's process handling against fake `msb` scripts: the real VM boot is a VM test
 //! (`vm_doctor.rs`).
 #![cfg(unix)]
@@ -11,7 +11,6 @@
     )
 )]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -22,8 +21,7 @@ use puddle_doctor::{BootFacts, KeptLogs, PROBE_EXIT_CODE, ProcessOutcome};
 fn runtime(script: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let msb = dir.path().join("msb");
-    std::fs::write(&msb, format!("#!/bin/sh\n{script}\n")).unwrap();
-    std::fs::set_permissions(&msb, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&msb, &format!("#!/bin/sh\n{script}\n"));
     dir
 }
 

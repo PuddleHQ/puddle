@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Corporate root sync.
 //!
 //! Behind a TLS-inspecting corporate proxy, every HTTPS call in the guest fails unless the guest
@@ -36,6 +36,7 @@
 mod der;
 pub mod devcert;
 mod guest;
+mod pki;
 mod platform;
 mod select;
 mod store;

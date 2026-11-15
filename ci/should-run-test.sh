@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/should-run.sh with a fake `gh` that answers from a table of green runs
 # (event:sha lines in $FAKE_RUNS) and records each call: the nightly gate with and without
 # --events, and the develop push gate (--queue-tested) with every condition it checks, API errors

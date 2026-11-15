@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A CDN in front of a registry may hold back the answer to a request that arrives on an HTTP/2
 //! connection busy with another layer's body, then cancel the stream (`RST_STREAM` with
 //! `CANCEL`, before any headers) when its wait runs out. mcr.microsoft.com's data endpoint does

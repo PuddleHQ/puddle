@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the identities screens ask of the host about credentials: the accounts already signed in
 //! here, whether a credential can be read now, a pasted token (write-only) and signing in on a
 //! click. Nothing here returns a secret value.
@@ -9,6 +9,7 @@ use axum::http::StatusCode;
 use puddle_secrets::StoredId;
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::credentials::Check;
 use crate::error::ApiError;
 use crate::extract::Path;
@@ -64,13 +65,17 @@ pub(crate) async fn found_accounts(
 )]
 pub(crate) async fn check_credential(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<CheckRequest>,
 ) -> Result<Json<CheckResult>, ApiError> {
     let source = body.source.into_store()?;
-    Ok(Json(match state.credentials.check(source).await? {
-        Check::Readable => CheckResult::readable(),
-        Check::Problem(err) => CheckResult::from_error(&err),
-    }))
+    crate::stored_ids::check_source(principal.user, &source)?;
+    Ok(Json(
+        match state.credentials.check(source.clone()).await? {
+            Check::Readable => CheckResult::readable(),
+            Check::Problem(err) => CheckResult::from_error(&source, &err),
+        },
+    ))
 }
 
 /// Keeps a pasted token in the operating system's credential store and answers with the source
@@ -88,10 +93,14 @@ pub(crate) async fn check_credential(
 )]
 pub(crate) async fn store_token(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::SecretJson(body): crate::extract::SecretJson<StoreTokenRequest>,
 ) -> Result<(StatusCode, Json<StoredToken>), ApiError> {
     let (scope, token) = body.into_parts()?;
-    let source = state.credentials.store_token(scope, token).await?;
+    let source = state
+        .credentials
+        .store_token(principal.user, scope, token)
+        .await?;
     let source = CredentialSource::from_store(&source)
         .ok_or_else(|| ApiError::internal(&"a stored token came back as another kind of source"))?;
     Ok((StatusCode::CREATED, Json(StoredToken { source })))
@@ -111,11 +120,15 @@ pub(crate) async fn store_token(
 )]
 pub(crate) async fn forget_token(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let id =
         StoredId::new(id).map_err(|_| ApiError::invalid("not a valid stored credential id"))?;
-    state.credentials.forget_token(id).await?;
+    // Another user's entry is left alone and answered as one that is not there.
+    if crate::stored_ids::is_users(principal.user, &id) {
+        state.credentials.forget_token(id).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

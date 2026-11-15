@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-fd-limit"
 description = "Raises a process's open-file limit (RLIMIT_NOFILE soft to hard) at start, and reports what it got"

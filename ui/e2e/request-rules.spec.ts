@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Rules on method and path against the real API on the fixture backend. Every test starts from the
 // `request-rules` scenario on its worker's own backend: a global rule that refuses DELETE on
 // /repos/** at api.example.com, a rule of docs-site's own, and one request the first rule refused

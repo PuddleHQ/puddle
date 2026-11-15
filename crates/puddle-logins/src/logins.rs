@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One workspace's captured logins: what the token endpoints answer, what is kept, what the
 //! workspace holds instead.
 //!
@@ -35,7 +35,9 @@ use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
-use crate::profile::{Audience, Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
+use crate::profile::{
+    Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, path_matches,
+};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 
@@ -134,9 +136,26 @@ struct Inner {
     retired: Mutex<BTreeMap<(&'static str, Slot), VecDeque<String>>>,
 }
 
+/// A token found in an answer: its field, the real token, its stand-in and whether that is new.
+type Planned = (&'static Field, Zeroizing<String>, String, bool);
+
 /// How many earlier stand-ins of a slot stay swapped. A session token lasts about half an hour
 /// and is exchanged again before it ends, so the tool never holds more than the last two.
 pub(crate) const RETIRED_KEPT: usize = 3;
+
+/// How many earlier stand-ins of a [`Keep::Memory`] slot stay swapped. A registry mints a token
+/// per repository for each pull and the client uses it for that pull's minutes, so many pulls at
+/// once (a compose file's images) each hold one; the bound keeps a guest that asks again and
+/// again from growing the registry.
+pub(crate) const MEMORY_KEPT: usize = 64;
+
+/// How many earlier stand-ins of `field`'s slot stay swapped when a new one replaces them.
+const fn earlier_kept(field: &Field) -> usize {
+    match field.keep {
+        Keep::Memory => MEMORY_KEPT,
+        _ => RETIRED_KEPT,
+    }
+}
 
 /// One workspace's captured logins. Cheap to clone.
 #[derive(Clone)]
@@ -321,15 +340,16 @@ impl Logins {
     }
 
     /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
-    /// token behind it, swapped toward the hosts `scope` names. The registry is the one place
-    /// that checks a stand-in and a real value; what it refuses is the error.
+    /// token behind it, swapped toward the hosts `scope` names. The slot's stand-in it replaces
+    /// stays swapped as one of the last `keep_earlier` (none: it goes at once). The registry is the
+    /// one place that checks a stand-in and a real value; what it refuses is the error.
     fn install(
         &self,
         profile: &'static Profile,
         (slot, scope): (Slot, Scope),
         stand_in: &str,
         real: &str,
-        retire: bool,
+        keep_earlier: usize,
     ) -> Result<(), StandInError> {
         let entry = StandIn::new(
             StandInOrigin::CapturedLogin,
@@ -340,8 +360,8 @@ impl Logins {
         )?;
         let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
         if let Some(old) = old {
-            if retire {
-                self.retire(profile, slot, old);
+            if keep_earlier > 0 {
+                self.retire(profile, slot, old, keep_earlier);
             } else {
                 self.inner.registry.remove(&old);
             }
@@ -350,8 +370,8 @@ impl Logins {
     }
 
     /// Keeps `old` swapped as an earlier stand-in of the slot, and stops swapping the oldest ones
-    /// beyond [`RETIRED_KEPT`].
-    fn retire(&self, profile: &Profile, slot: Slot, old: String) {
+    /// beyond `limit`.
+    fn retire(&self, profile: &Profile, slot: Slot, old: String, limit: usize) {
         let mut retired = self
             .inner
             .retired
@@ -359,7 +379,7 @@ impl Logins {
             .unwrap_or_else(PoisonError::into_inner);
         let queue = retired.entry((profile.id, slot)).or_default();
         queue.push_back(old);
-        while queue.len() > RETIRED_KEPT {
+        while queue.len() > limit {
             if let Some(oldest) = queue.pop_front() {
                 self.inner.registry.remove(&oldest);
             }
@@ -389,7 +409,7 @@ impl Logins {
                     Ok(Some(saved)) => {
                         kept.insert(profile.id.to_owned());
                         if self
-                            .install(profile, slot, &saved.stand_in, &saved.real, false)
+                            .install(profile, slot, &saved.stand_in, &saved.real, 0)
                             .is_err()
                         {
                             unreadable.push(profile);
@@ -580,19 +600,11 @@ impl Logins {
             return Ok(false);
         };
         let mut failed = false;
+        for (slot, _) in profile.memory_slots() {
+            self.unregister(profile, slot);
+        }
         for (slot, _) in profile.slots() {
-            if let Some(stand_in) = self.slots().remove(&(profile.id, slot)) {
-                self.inner.registry.remove(&stand_in);
-            }
-            let earlier = self
-                .inner
-                .retired
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&(profile.id, slot));
-            for stand_in in earlier.into_iter().flatten() {
-                self.inner.registry.remove(&stand_in);
-            }
+            self.unregister(profile, slot);
             failed |= self
                 .store(move |vault| vault.delete(profile, slot))
                 .await
@@ -603,6 +615,23 @@ impl Logins {
         } else {
             self.mark(profile, false);
             Ok(true)
+        }
+    }
+
+    /// Stops swapping the stand-ins of `slot`, its current one and the earlier ones.
+    fn unregister(&self, profile: &Profile, slot: Slot) {
+        let current = self.slots().remove(&(profile.id, slot));
+        if let Some(stand_in) = current {
+            self.inner.registry.remove(&stand_in);
+        }
+        let earlier = self
+            .inner
+            .retired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(profile.id, slot));
+        for stand_in in earlier.into_iter().flatten() {
+            self.inner.registry.remove(&stand_in);
         }
     }
 
@@ -683,35 +712,23 @@ impl Logins {
             return Err(Problem::UnusableToken);
         }
         let _one_at_a_time = self.inner.capture.lock().await;
-        let mut planned: Vec<(&'static Field, Zeroizing<String>, String, bool)> = Vec::new();
-        for (field, real) in found {
-            // A session token's fields and a JWT's claims hold its expiry, so a new token gets a
-            // new stand-in; any other token keeps the slot's.
-            let existing = self
-                .slots()
-                .get(&(profile.id, field.slot()))
-                .cloned()
-                .filter(|_| !shape::renews(&real, field));
-            let planned_stand_in = match existing {
-                Some(stand_in) => (stand_in, false),
-                // The system had no random numbers, or the token cannot be copied: either way
-                // there is no stand-in to give.
-                None => (
-                    shape::stand_in_for(&real, field).map_err(|_| Problem::UnusableToken)?,
-                    true,
-                ),
-            };
-            planned.push((field, real, planned_stand_in.0, planned_stand_in.1));
-        }
+        let planned = self.plan(profile, found)?;
         // The credential store first: a token that was not kept is not replaced in the answer.
+        let mut stored = false;
         for (field, real, stand_in, _) in &planned {
+            if field.keep != Keep::Stored {
+                continue;
+            }
             let slot = field.slot();
             let (stand_in, real) = (stand_in.clone(), real.clone());
             self.store(move |vault| vault.write(profile, slot, &stand_in, &real))
                 .await
                 .map_err(|_| Problem::StoreUnavailable)?;
+            stored = true;
         }
-        self.mark(profile, true);
+        if stored {
+            self.mark(profile, true);
+        }
         for (field, real, stand_in, is_new) in &planned {
             let slot = (field.slot(), field.scope);
             // A refresh gives the stand-in a new token without a moment in which it has none; a
@@ -723,7 +740,12 @@ impl Logins {
                     .set_real(stand_in, SecretValue::new(real.as_str()))
                     == Ok(true);
             if !refreshed {
-                self.install(profile, slot, stand_in, real, shape::renews(real, field))
+                let keep_earlier = if shape::renews(real, field) {
+                    earlier_kept(field)
+                } else {
+                    0
+                };
+                self.install(profile, slot, stand_in, real, keep_earlier)
                     .map_err(|_| Problem::UnusableToken)?;
             }
             parsed.set_text_at(field.path, stand_in);
@@ -736,6 +758,45 @@ impl Logins {
             );
         }
         Ok(Some(Bytes::copy_from_slice(&parsed.render())))
+    }
+
+    /// The stand-in each found token gets, and whether it is new: the slot's own for a token that
+    /// keeps it, the one an earlier field of the same answer gave the same token, or a new one.
+    fn plan(
+        &self,
+        profile: &'static Profile,
+        found: Vec<(&'static Field, Zeroizing<String>)>,
+    ) -> Result<Vec<Planned>, Problem> {
+        let mut planned: Vec<Planned> = Vec::new();
+        for (field, real) in found {
+            // Two fields of one answer with the same token in one slot (a registry answers with
+            // `token` and `access_token`) give it one stand-in.
+            let in_answer = planned
+                .iter()
+                .find(|(taken, kept, _, _)| {
+                    taken.slot() == field.slot() && kept.as_str() == real.as_str()
+                })
+                .map(|(_, _, stand_in, _)| stand_in.clone());
+            // A session token's fields and a JWT's claims hold its expiry, so a new token gets a
+            // new stand-in; any other token keeps the slot's.
+            let existing = in_answer.or_else(|| {
+                self.slots()
+                    .get(&(profile.id, field.slot()))
+                    .cloned()
+                    .filter(|_| !shape::renews(&real, field))
+            });
+            let planned_stand_in = match existing {
+                Some(stand_in) => (stand_in, false),
+                // The system had no random numbers, or the token cannot be copied: either way
+                // there is no stand-in to give.
+                None => (
+                    shape::stand_in_for(&real, field).map_err(|_| Problem::UnusableToken)?,
+                    true,
+                ),
+            };
+            planned.push((field, real, planned_stand_in.0, planned_stand_in.1));
+        }
+        Ok(planned)
     }
 }
 
@@ -962,115 +1023,4 @@ impl ExchangeRewriter for Logins {
 }
 
 #[cfg(test)]
-mod refusal_tests {
-    use super::*;
-    use crate::profile::{CLAUDE, Role, Scope};
-
-    fn field(path: &str, kind: FieldKind) -> BodyField {
-        BodyField {
-            name: path.rsplit('.').next().unwrap_or(path).to_owned(),
-            path: path.to_owned(),
-            kind,
-        }
-    }
-
-    #[test]
-    fn every_problem_a_tool_can_be_refused_for_says_its_own_reason() {
-        for (problem, reason) in [
-            (
-                Problem::StoreUnavailable,
-                "credential store is not available",
-            ),
-            (Problem::UnexpectedAnswer, "in a form Puddle does not read"),
-            (Problem::UnusableToken, "cannot give a stand-in for"),
-            (Problem::BoundToken, "ties its token to a key"),
-            (Problem::UnnamedToken, "field Puddle does not know"),
-            (Problem::Unreadable, "could not keep it"),
-        ] {
-            let refusal = refusal_for(&CLAUDE, problem);
-            assert_eq!(refusal.status(), 502);
-            assert!(refusal.message().contains(reason), "{problem:?}");
-        }
-    }
-
-    #[test]
-    fn a_field_name_says_it_holds_a_credential_by_each_of_its_endings_and_words() {
-        for name in [
-            "id_token",
-            "Client_Secret",
-            "password",
-            "key",
-            "api_key",
-            "apikey",
-            "signing_secret_value",
-            "my_password_hash",
-        ] {
-            assert!(token_like(name), "{name}");
-        }
-        for name in [
-            "token_type",
-            "token_expires_in",
-            "token_expires_at",
-            "token_url",
-            "token_uri",
-            "token_endpoint",
-            "token_scope",
-            "token_label",
-            "scope",
-            "keyboard",
-            "account",
-        ] {
-            assert!(!token_like(name), "{name}");
-        }
-    }
-
-    #[test]
-    fn a_field_named_by_a_dotted_path_is_named_at_that_path_only() {
-        static NESTED: [Field; 1] = [Field {
-            path: "data.token",
-            role: Role::Access,
-            resource: None,
-            prefixes: &[],
-            keep_last: 0,
-            stand_in: crate::profile::StandInKind::Shaped,
-            scope: Scope::Api,
-            audience: Audience::Any,
-            only_prefixed: false,
-        }];
-        let mut endpoint = CLAUDE.endpoints[0];
-        endpoint.fields = &NESTED;
-        let long = FieldKind::Text(MIN_TOKEN_LEN);
-        let holds = |fields: Vec<BodyField>| holds_unnamed_token(&endpoint, &fields);
-        assert!(!holds(vec![field("data.token", long)]));
-        assert!(holds(vec![
-            field("data.token", long),
-            field("data.token", long)
-        ]));
-        assert!(holds(vec![field("data.token", FieldKind::Structured)]));
-        assert!(holds(vec![field("other.token", long)]));
-        assert!(holds(vec![field("token", long)]));
-    }
-
-    #[test]
-    fn a_credential_puddle_would_not_replace_is_found_in_the_answers_fields() {
-        let endpoint = &CLAUDE.endpoints[0];
-        let long = FieldKind::Text(MIN_TOKEN_LEN);
-        let short = FieldKind::Text(MIN_TOKEN_LEN - 1);
-        let holds = |fields: Vec<BodyField>| holds_unnamed_token(endpoint, &fields);
-        assert!(!holds(vec![field("access_token", long)]));
-        assert!(holds(vec![
-            field("access_token", long),
-            field("access_token", long)
-        ]));
-        assert!(holds(vec![field("access_token", FieldKind::Structured)]));
-        assert!(holds(vec![field("data.access_token", long)]));
-        assert!(holds(vec![field("id_token", long)]));
-        assert!(!holds(vec![field("id_token", short)]));
-        assert!(!holds(vec![field("id_token", FieldKind::Empty)]));
-        assert!(!holds(vec![field("note", long)]));
-        assert!(!holds(vec![
-            field("access_token", long),
-            field("refresh_token", long)
-        ]));
-    }
-}
+mod refusal_tests;

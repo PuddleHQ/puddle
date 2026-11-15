@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest cases at tier V that need the product's boot hook: the guest runs Puddle's real
 //! `puddle-agent` (started by `boot.sh`, from `PUDDLE_AGENT_BIN`, the static build of
 //! `ci/build-agent.sh`) against a real proxy on the host, and Puddle's own read-only mounts.
@@ -170,6 +170,7 @@ struct HostRig {
 fn host_rig(endpoints: PuddleEndpoints) -> HostRig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("hostile-agent").unwrap());
     let access = LocalCategory::ALL
         .into_iter()
         .fold(LocalAccess::NONE, |a, c| a.with_toggle(c, true))
@@ -231,6 +232,7 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
 
     let rig = host_rig(endpoints);
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("127.0.0.1").unwrap(),
@@ -276,7 +278,11 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
             }
         }
     }
-    let pending = rig.store.open_pending(None).unwrap().len();
+    let pending = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap()
+        .len();
     guest.finish().await;
     pull.shutdown().await;
     assert!(failures.is_empty(), "{failures:#?}");

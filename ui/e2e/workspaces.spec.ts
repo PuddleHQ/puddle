@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The workspace screens against the real API on the fixture backend (fake workspace service).
 // Every test starts from the `lived-in` scenario on its worker's own backend: web-shop running,
 // docs-site stopped with unsaved work, data-tools never started, and requests waiting for each.
@@ -179,6 +179,31 @@ test.describe("creating", () => {
     await expect(dialog).toBeVisible();
     return dialog;
   }
+
+  test("the create button stays where it is when the host note shows", async ({
+    page,
+    backend,
+  }) => {
+    // Hold the service's answer so the position before the note is read before it can arrive.
+    let release: () => void = () => {};
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/api/repository-hosts", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    const create = dialog.getByRole("button", { name: "Create workspace" });
+    await dialog
+      .getByLabel("Git repository (HTTPS)")
+      .fill("https://github.com/acme/Ledger_Service.git");
+    await expect(dialog.getByLabel("Name")).toHaveValue("Ledger_Service");
+    const before = await create.boundingBox();
+    if (before === null) throw new Error("the create button has no box");
+    release();
+    await expect(dialog.getByTestId("hosts-new")).toContainText("github.com");
+    await expect.poll(() => create.boundingBox()).toEqual(before);
+  });
 
   test("creates from a repository URL, naming it after the repository", async ({
     page,
@@ -811,10 +836,12 @@ test.describe("the detail page", () => {
     const tabs = page.getByRole("navigation", { name: "Workspace sections" });
     await expect(tabs.getByRole("link")).toHaveText([
       /Overview/,
+      /Terminal/,
       /Network/,
       /Git/,
       /Environment/,
       /Shell init/,
+      /SSH agent/,
       /Ports/,
       /Settings/,
     ]);
@@ -1376,25 +1403,61 @@ test.describe("the settings tab", () => {
     await expect(page.getByText("Login capture saved.")).toBeVisible();
   });
 
-  test("decrypting every host is off by default; the switch and the never-decrypt names are kept", async ({
+  test("an install that never chose is offered the choice once, and Settings keeps the global mode and learning", async ({
+    page,
+    backend,
+    request,
+  }) => {
+    // The fixture's install has been through setup; a notice flag that is off is an install from
+    // before the choice existed.
+    const reset = await request.put("/api/interception", {
+      headers: auth(backend),
+      data: { notice_seen: false },
+    });
+    expect(reset.ok()).toBe(true);
+    await backend.signIn(page);
+    await page.goto("/workspaces");
+    const notice = page
+      .getByRole("region", { name: "Notices" })
+      .getByText("decrypt every HTTPS host");
+    await expect(notice).toBeVisible();
+    await page.getByRole("button", { name: "Keep it as it is" }).click();
+    await expect(notice).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(notice).toHaveCount(0);
+
+    await page.goto("/settings");
+    const mode = page.getByLabel("Which hosts to decrypt");
+    await expect(mode).toHaveValue("known_only");
+    await mode.selectOption("all_except_curated");
+    await expect(page.getByText("Interception mode saved.")).toBeVisible();
+    await page.getByLabel("Learn from rejections").uncheck();
+    await expect(
+      page.getByText("Learning from rejections saved."),
+    ).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("Which hosts to decrypt")).toHaveValue(
+      "all_except_curated",
+    );
+    await expect(page.getByLabel("Learn from rejections")).not.toBeChecked();
+  });
+
+  test("a workspace follows the global interception mode by default; its own mode and the never-decrypt names are kept", async ({
     page,
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    const decrypt = page.getByRole("switch", { name: "Decrypt every host" });
-    await expect(decrypt).not.toBeChecked();
-    await decrypt.check();
-    await expect(
-      page.getByText("Puddle now decrypts every host."),
-    ).toBeVisible();
+    const mode = page.getByLabel("Interception mode");
+    await expect(mode).toHaveValue("inherit");
+    await mode.selectOption("all");
+    await expect(page.getByText("Interception mode saved.")).toBeVisible();
     const names = page.getByLabel("Never decrypt in this workspace");
     await names.fill("Bank.example\n*.corp.test");
     await page.getByRole("button", { name: "Keep names" }).click();
-    await expect(page.getByText("Saved.")).toBeVisible();
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     await page.reload();
-    await expect(
-      page.getByRole("switch", { name: "Decrypt every host" }),
-    ).toBeChecked();
+    await expect(page.getByLabel("Interception mode")).toHaveValue("all");
     await expect(
       page.getByLabel("Never decrypt in this workspace"),
     ).toHaveValue("*.corp.test\nbank.example");
@@ -1403,12 +1466,15 @@ test.describe("the settings tab", () => {
     await expect(page.getByRole("alert")).toContainText("10.0.0.1");
   });
 
-  test("a host a tool refused Puddle's certificate for is announced, listed and decrypted again", async ({
+  test("a host a tool keeps refusing is listed with its history, announced from the third time and made permanent", async ({
     page,
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
     const notice = page.getByRole("region", { name: "Notices" });
+    const group = page.getByRole("group", {
+      name: "Hosts a tool refused Puddle's certificate for",
+    });
     // The event stream may connect after the page loaded, so ask again until it is heard.
     await expect(async () => {
       await backend.control.step({
@@ -1417,19 +1483,70 @@ test.describe("the settings tab", () => {
         host: "pinned.example",
         expires_in_secs: 600,
       });
+      await expect(group).toContainText("pinned.example", { timeout: 500 });
+    }).toPass();
+    await expect(group).toContainText("refused once");
+    await expect(group).toContainText("in 10 minutes");
+    await expect(notice).not.toContainText("pinned.example");
+    await expect(async () => {
+      await backend.control.step({
+        do: "learned",
+        workspace: "web-shop",
+        host: "pinned.example",
+        expires_in_secs: 600,
+        count: 3,
+      });
       await expect(notice).toContainText(
-        "Puddle stopped decrypting pinned.example: its client refused Puddle's certificate.",
+        "A tool keeps refusing Puddle's certificate for pinned.example",
         { timeout: 500 },
       );
     }).toPass();
-    const group = page.getByRole("group", {
-      name: "Left alone after a tool refused Puddle's certificate",
-    });
-    await expect(group).toContainText("pinned.example");
-    await expect(group).toContainText("in 10 minutes");
-    await notice.getByRole("button", { name: "Decrypt again" }).click();
+    await expect(group).toContainText("refused 3 times");
+    await notice.getByRole("button", { name: "Never decrypt it here" }).click();
     await expect(group).toContainText("None.");
     await expect(notice).not.toContainText("pinned.example");
+    await expect(
+      page.getByLabel("Never decrypt in this workspace"),
+    ).toHaveValue("pinned.example");
+  });
+
+  test("a refused host is tried again from the list and made permanent everywhere", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const group = page.getByRole("group", {
+      name: "Hosts a tool refused Puddle's certificate for",
+    });
+    await expect(async () => {
+      await backend.control.step({
+        do: "learned",
+        workspace: "web-shop",
+        host: "pinned.example",
+        expires_in_secs: 600,
+        count: 2,
+      });
+      await expect(group).toContainText("pinned.example", { timeout: 500 });
+    }).toPass();
+    await group
+      .getByRole("button", { name: "Try decrypting pinned.example again" })
+      .click();
+    await expect(group).toContainText("pinned.example");
+    await expect(group).toContainText("refused 2 times");
+    await expect(
+      group.getByRole("button", {
+        name: "Try decrypting pinned.example again",
+      }),
+    ).toHaveCount(0);
+    await group
+      .getByRole("button", {
+        name: "Never decrypt pinned.example in any workspace",
+      })
+      .click();
+    await expect(group).toContainText("None.");
+    await expect(
+      page.getByText(/Never decrypted in any workspace/),
+    ).toContainText("pinned.example");
   });
 
   test("a refused save says why and puts the choice back", async ({
@@ -1604,6 +1721,7 @@ test.describe("accessibility", () => {
       "git",
       "environment",
       "shell-init",
+      "ssh-agent",
       "ports",
       "settings",
     ]) {
@@ -1689,6 +1807,75 @@ test.describe("a workspace whose volume is gone", () => {
     await confirm.getByRole("button", { name: "Delete workspace" }).click();
     await expect(page).toHaveURL(/\/workspaces$/);
     await expect(card(page, "lost-disk")).toHaveCount(0);
+  });
+});
+
+test.describe("a workspace whose root disk is nearly full, made bigger", () => {
+  test("makes the root disk bigger from the warning, refuses a smaller size, and clears the warning", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("disks-full");
+    await openDetail(page, backend, "full-root");
+    const root = page.getByTestId("disk-warning-root");
+    await expect(root).toContainText("Root disk nearly full");
+    await root.getByRole("button", { name: "Make root disk bigger…" }).click();
+    const dialog = page.getByRole("dialog");
+    const size = dialog.getByRole("textbox", { name: /New size in GiB/ });
+    await expect(size).toHaveValue("20");
+    await expect(dialog).toContainText("has the room when it starts next");
+    await expectNoAxeViolations(page, "grow dialog");
+    await size.fill("8");
+    await expect(dialog.getByRole("alert")).toContainText(
+      "A root disk only grows: choose more than 10 GiB.",
+    );
+    await expectNoAxeViolations(page, "grow dialog with a refusal");
+    await size.fill("24");
+    await dialog.getByRole("button", { name: "Make bigger" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      toast(page, "Made the root disk of full-root bigger."),
+    ).toBeVisible();
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await expect(page.getByText("9.7 GiB of 24 GiB used")).toBeVisible();
+    await expectNoAxeViolations(page, "after the grow");
+  });
+
+  test.describe("at 390 px wide", () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test("the warning and the dialog fit without a horizontal scroll", async ({
+      page,
+      backend,
+    }) => {
+      await backend.control.reset("disks-full");
+      await openDetail(page, backend, "full-root");
+      const overflow = () =>
+        page.evaluate(() => {
+          const width = document.documentElement.clientWidth;
+          const culprits = [...document.body.querySelectorAll("*")]
+            .filter((el) => el.getBoundingClientRect().right > width + 0.5)
+            .slice(0, 6)
+            .map(
+              (el) =>
+                `${el.tagName.toLowerCase()}.${String(el.className)} right=${Math.round(el.getBoundingClientRect().right)}`,
+            );
+          return {
+            by: document.documentElement.scrollWidth - width,
+            culprits,
+          };
+        });
+      const before = await overflow();
+      expect(before.by, before.culprits.join(", ")).toBe(0);
+      await page
+        .getByTestId("disk-warning-root")
+        .getByRole("button", { name: "Make root disk bigger…" })
+        .click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      const during = await overflow();
+      expect(during.by, during.culprits.join(", ")).toBe(0);
+      await expectNoAxeViolations(page, "grow dialog at 390 px");
+    });
   });
 });
 

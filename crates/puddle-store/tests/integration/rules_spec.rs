@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One named test (or more) per rule of `docs/spec/rules.md`, through the store's public API.
 #![expect(
     clippy::unwrap_used,
@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use proptest::prelude::*;
+use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditRecord, Effect, Limits, ManualClock, NewRule, Pattern,
     PatternChoice, PatternError, PendingState, Resolution, Scope, ScopeChoice, Store, StoreError,
@@ -35,7 +36,15 @@ fn fixture() -> (Arc<ManualClock>, Store) {
 fn fixture_with(limits: Limits) -> (Arc<ManualClock>, Store) {
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+    own_workspaces(&store);
     (clock, store)
+}
+
+/// The workspaces these tests use, each the owner's.
+fn own_workspaces(store: &Store) {
+    for name in ["a", "b", "c"] {
+        own(store, &sb(name));
+    }
 }
 
 fn sb(id: &str) -> WorkspaceId {
@@ -63,7 +72,11 @@ fn rule(scope: Option<&str>, pattern: &str, effect: Effect) -> NewRule {
 }
 
 fn add(store: &Store, scope: Option<&str>, pattern: &str, effect: Effect) -> RuleId {
-    store.add_rule(&rule(scope, pattern, effect)).unwrap().id
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&rule(scope, pattern, effect))
+        .unwrap()
+        .id
 }
 
 fn new_pending(decision: Decision) -> PendingId {
@@ -101,7 +114,10 @@ fn allowed_by(decision: Decision) -> Option<RuleId> {
 #[test]
 fn r01_fresh_install_has_no_rules_and_every_request_goes_pending() {
     let (_, store) = fixture();
-    assert_eq!(store.rules(), vec![]);
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        vec![]
+    );
     for host in ["example.com", "localhost", "10.0.0.1", "github.com"] {
         assert!(matches!(
             decide(&store, "a", host),
@@ -130,7 +146,12 @@ fn r02_exact_rule_matches_identical_host_on_any_port() {
 fn r03_suffix_rule_matches_below_but_not_the_apex_nor_ips() {
     let (_, store) = fixture();
     let id = add(&store, None, "*.example.com", Effect::Allow);
-    assert_eq!(store.rules()[0].pattern.to_string(), ".example.com");
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users())[0]
+            .pattern
+            .to_string(),
+        ".example.com"
+    );
     assert_eq!(allowed_by(decide(&store, "a", "a.b.example.com")), Some(id));
     assert!(matches!(
         decide(&store, "a", "example.com"),
@@ -229,7 +250,11 @@ fn r07_expired_rule_never_matches_even_before_the_sweeper() {
     let (clock, store) = fixture();
     let mut temp = rule(None, "example.com", Effect::Allow);
     temp.expires_at = Some(T0 + 1000);
-    let id = store.add_rule(&temp).unwrap().id;
+    let id = store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&temp)
+        .unwrap()
+        .id;
     clock.set(T0 + 999);
     assert_eq!(allowed_by(decide(&store, "a", "example.com")), Some(id));
     clock.set(T0 + 1000);
@@ -238,7 +263,12 @@ fn r07_expired_rule_never_matches_even_before_the_sweeper() {
         Decision::Pending(_)
     ));
     // The sweeper hasn't run: the rule is still stored.
-    assert_eq!(store.rules().len(), 1);
+    assert_eq!(
+        store
+            .rules_every_user(&puddle_store::testing::all_users())
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -247,7 +277,7 @@ fn r07_expiry_in_the_past_is_refused() {
     let mut stale = rule(None, "example.com", Effect::Allow);
     stale.expires_at = Some(T0);
     assert!(matches!(
-        store.add_rule(&stale),
+        store.as_user(puddle_store::UserId::OWNER).add_rule(&stale),
         Err(StoreError::ExpiryNotInFuture)
     ));
     let id = add(&store, None, "example.com", Effect::Allow);
@@ -390,7 +420,13 @@ fn r11_repeats_dedupe_onto_the_open_row() {
         .unwrap();
     assert_ne!(new_pending(other_port), id);
     assert_ne!(new_pending(decide(&store, "b", "example.com")), id);
-    assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 2);
+    assert_eq!(
+        store
+            .open_pending_every_user(&puddle_store::testing::all_users(), Some(&sb("a")))
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -411,6 +447,7 @@ fn r12_pending_rows_are_immutable_and_ids_never_reused() {
     let path = dir.path().join("puddle.db");
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open(&path, clock.clone(), Limits::default()).unwrap();
+    own_workspaces(&store);
     let id = new_pending(decide(&store, "a", "example.com"));
     store
         .resolve_pending(id, &Resolution::deny(), Actor::Cli)
@@ -439,7 +476,7 @@ fn r12_pending_rows_are_immutable_and_ids_never_reused() {
         ("example.com".to_owned(), PendingState::Denied)
     );
     // Deleted rules' ids aren't reused either.
-    let r = store.rules()[0].id;
+    let r = store.rules_every_user(&puddle_store::testing::all_users())[0].id;
     store.delete_rule(r, Actor::Cli).unwrap();
     assert!(add(&store, None, "x.example", Effect::Allow) > r);
     let next = new_pending(decide(&store, "a", "other.example"));
@@ -454,7 +491,13 @@ fn r44_a_workspace_asking_about_many_hosts_is_never_refused_for_the_volume() {
         new_pending(decide(&store, "a", &format!("h{n}.example")));
     }
     new_pending(decide(&store, "b", "h0.example"));
-    assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 300);
+    assert_eq!(
+        store
+            .open_pending_every_user(&puddle_store::testing::all_users(), Some(&sb("a")))
+            .unwrap()
+            .len(),
+        300
+    );
     assert_eq!(audit_of(&store, "pending_suppressed"), Vec::<Value>::new());
 }
 
@@ -474,7 +517,13 @@ fn r45_open_rows_are_capped_without_refusing_and_room_lists_the_next_request() {
             Decision::Pending(PendingOutcome::Unlisted)
         );
     }
-    assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 2);
+    assert_eq!(
+        store
+            .open_pending_every_user(&puddle_store::testing::all_users(), Some(&sb("a")))
+            .unwrap()
+            .len(),
+        2
+    );
     // Another workspace has its own room.
     new_pending(decide(&store, "b", "three.example"));
     // A repeat of a listed row costs nothing at the cap.
@@ -512,8 +561,12 @@ fn r45_a_hundred_thousand_new_hosts_keep_the_store_bounded_and_the_inbox_fast() 
     assert_eq!(listed, cap);
     let ((rows, groups), cpu) = cpu_time(|| {
         (
-            store.open_pending(Some(&sb("a"))).unwrap(),
-            store.inbox().unwrap(),
+            store
+                .open_pending_every_user(&puddle_store::testing::all_users(), Some(&sb("a")))
+                .unwrap(),
+            store
+                .inbox_every_user(&puddle_store::testing::all_users())
+                .unwrap(),
         )
     });
     eprintln!("inbox over the capped open rows: {cpu:?} of CPU");
@@ -582,6 +635,7 @@ fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
     let ip = add(&store, Some("a"), "192.168.1.20", Effect::Allow);
     let deny = add(&store, None, "192.168.1.21", Effect::Deny);
     let expiring = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             expires_at: Some(T0 + DAY),
             ..rule(None, "192.168.1.22", Effect::Allow)
@@ -617,7 +671,13 @@ fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
     assert_eq!(lookup("a", "192.168.1.23"), None);
     clock.advance(DAY);
     assert_eq!(lookup("a", "192.168.1.22"), None);
-    assert_eq!(store.open_pending(None).unwrap().len(), 0);
+    assert_eq!(
+        store
+            .open_pending_every_user(&puddle_store::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -703,14 +763,19 @@ fn r15_invalid_choices_are_refused() {
     let mut system_rule = rule(None, "example.com", Effect::Allow);
     system_rule.created_by = Actor::System;
     assert!(matches!(
-        store.add_rule(&system_rule),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_rule(&system_rule),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
         store.set_rule_expiry(RuleId(1), None, Actor::System),
         Err(StoreError::SystemActor)
     ));
-    assert_eq!(store.rules(), vec![]);
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        vec![]
+    );
 }
 
 #[test]
@@ -771,7 +836,10 @@ fn r17_stale_ids_are_refused_and_nothing_changes() {
     store
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap();
-    let before = (store.rules(), audit(&store).len());
+    let before = (
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        audit(&store).len(),
+    );
     let err = store
         .resolve_pending(id, &Resolution::deny(), Actor::Cli)
         .unwrap_err();
@@ -787,7 +855,13 @@ fn r17_stale_ids_are_refused_and_nothing_changes() {
         .resolve_pending(PendingId(999), &Resolution::allow(), Actor::Cli)
         .unwrap_err();
     assert!(matches!(err, StoreError::UnknownPending(PendingId(999))));
-    assert_eq!((store.rules(), audit(&store).len()), before);
+    assert_eq!(
+        (
+            store.rules_every_user(&puddle_store::testing::all_users()),
+            audit(&store).len()
+        ),
+        before
+    );
     assert!(matches!(
         store.delete_rule(RuleId(999), Actor::Cli),
         Err(StoreError::UnknownRule(RuleId(999)))
@@ -830,7 +904,9 @@ fn r18_inbox_groups_by_registrable_domain() {
         clock.advance(1);
     }
     decide(&store, "b", "c.example.co.uk");
-    let groups = store.inbox().unwrap();
+    let groups = store
+        .inbox_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     let summary: Vec<_> = groups
         .iter()
         .map(|g| (g.registrable_domain.as_str(), g.rows.len()))
@@ -850,13 +926,21 @@ fn r19_sweeper_deletes_expired_rules_and_records_them_whole() {
     let (clock, store) = fixture();
     let mut temp = rule(Some("a"), ".example.com", Effect::Allow);
     temp.expires_at = Some(T0 + 10);
-    let id = store.add_rule(&temp).unwrap().id;
+    let id = store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&temp)
+        .unwrap()
+        .id;
     let keep = add(&store, None, "example.org", Effect::Allow);
     assert_eq!(store.sweep().unwrap().rules_expired, 0);
     clock.advance(10);
     let report = store.sweep().unwrap();
     assert_eq!(report.rules_expired, 1);
-    let ids: Vec<_> = store.rules().iter().map(|r| r.id).collect();
+    let ids: Vec<_> = store
+        .rules_every_user(&puddle_store::testing::all_users())
+        .iter()
+        .map(|r| r.id)
+        .collect();
     assert_eq!(ids, [keep]);
     let records = audit_of(&store, "rule_expired");
     assert_eq!(records.len(), 1);
@@ -896,7 +980,11 @@ fn r21_workspace_deletion_removes_its_rules_and_expires_its_rows() {
     let b_row = new_pending(decide(&store, "b", "x.example"));
     let deletion = store.delete_workspace(&sb("a")).unwrap();
     assert_eq!((deletion.rules_deleted, deletion.pending_expired), (2, 1));
-    let ids: Vec<_> = store.rules().iter().map(|r| r.id).collect();
+    let ids: Vec<_> = store
+        .rules_every_user(&puddle_store::testing::all_users())
+        .iter()
+        .map(|r| r.id)
+        .collect();
     assert_eq!(ids, [global, b_rule]);
     assert_eq!(store.pending(a_row).unwrap().state, PendingState::Expired);
     assert_eq!(store.pending(b_row).unwrap().state, PendingState::Requested);
@@ -949,14 +1037,21 @@ async fn sweeper_task_sweeps_at_start_and_shuts_down() {
     let (clock, store) = fixture();
     let mut temp = rule(None, "example.com", Effect::Allow);
     temp.expires_at = Some(T0 + 1);
-    store.add_rule(&temp).unwrap();
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&temp)
+        .unwrap();
     clock.advance(1);
     let store = Arc::new(store);
     let sweeper = Sweeper::spawn(Arc::clone(&store), Duration::from_secs(3600));
     eventually(
         "sweeper didn't run its first pass",
         Duration::from_secs(10),
-        || store.rules().is_empty(),
+        || {
+            store
+                .rules_every_user(&puddle_store::testing::all_users())
+                .is_empty()
+        },
     )
     .await;
     sweeper.shutdown().await;
@@ -1303,7 +1398,12 @@ fn r24_a_puddle_connection_has_an_origin_and_no_workspace() {
             ..AuditFilter::default()
         };
         store
-            .audit_query(&filter, AuditCursor::After(0), 10)
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &filter,
+                AuditCursor::After(0),
+                10,
+            )
             .unwrap()
             .len()
     };
@@ -1378,6 +1478,7 @@ fn rules_and_rows_survive_a_restart() {
     let path = dir.path().join("puddle.db");
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open(&path, clock.clone(), Limits::default()).unwrap();
+    own_workspaces(&store);
     let id = add(&store, Some("a"), ".example.com", Effect::Allow);
     let row = new_pending(decide(&store, "a", "example.org"));
     drop(store);
@@ -1449,7 +1550,7 @@ proptest! {
                 Step::Advance { ms } => clock.advance(u64::from(ms)),
                 Step::Sweep => { store.sweep().unwrap(); }
             }
-            let open = store.open_pending(None).unwrap();
+            let open = store.open_pending_every_user(&puddle_store::testing::all_users(), None).unwrap();
             let keys: HashSet<_> = open.iter().map(|r| (r.host.to_string(), r.port)).collect();
             prop_assert_eq!(keys.len(), open.len());
         }
@@ -1470,7 +1571,7 @@ proptest! {
         let (clock, store) = fixture();
         let mut temp = rule(Some("a"), "example.com", Effect::Allow);
         temp.expires_at = Some(T0 + lifetime);
-        let id = store.add_rule(&temp).unwrap().id;
+        let id = store.as_user(puddle_store::UserId::OWNER).add_rule(&temp).unwrap().id;
         clock.set(T0 + at);
         if sweep {
             store.sweep().unwrap();

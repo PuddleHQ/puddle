@@ -1,11 +1,12 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the identities screens ask the host about credentials (credentials spec §3, §8): the
 //! accounts already signed in on this computer, whether Puddle can read one now, a pasted token
 //! (write-only), and signing in on a click. No response carries a secret value, and the one request
 //! that carries one never echoes it.
 
 use puddle_secrets::{
-    DiscoveredAccount, HostName, Listing, OrgName, Secret, SignInStart, SourceError, TokenScope,
+    DiscoveredAccount, HostName, Listing, OrgName, Secret, SignInStart, SourceError, SourceSpec,
+    TokenScope,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -99,8 +100,13 @@ pub struct CheckResult {
     /// Why not, in words; `null` when it is readable.
     #[schema(required = true)]
     pub problem: Option<String>,
-    /// True when the way out is for the user to sign in.
+    /// True when the way out is for Puddle to start a sign-in. The Azure CLI never is: the user
+    /// signs in to it in a terminal (see `fix_step`).
     pub needs_sign_in: bool,
+    /// The exact step the user takes to fix it, when there is one (install `az`, run
+    /// `az login --tenant <tenant>`); `null` otherwise.
+    #[schema(required = true)]
+    pub fix_step: Option<String>,
 }
 
 impl CheckResult {
@@ -109,14 +115,16 @@ impl CheckResult {
             readable: true,
             problem: None,
             needs_sign_in: false,
+            fix_step: None,
         }
     }
 
-    pub(crate) fn from_error(err: &SourceError) -> Self {
+    pub(crate) fn from_error(source: &SourceSpec, err: &SourceError) -> Self {
         Self {
             readable: false,
             problem: Some(source_problem(err)),
-            needs_sign_in: err.needs_sign_in(),
+            needs_sign_in: err.needs_sign_in() && !matches!(source, SourceSpec::AzCli { .. }),
+            fix_step: source.fix_step(err),
         }
     }
 }
@@ -209,59 +217,4 @@ impl From<SignInStart> for SignInStarted {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use puddle_secrets::Tool;
-
-    #[test]
-    fn a_pasted_token_never_shows_in_debug_output() {
-        let request: StoreTokenRequest =
-            serde_json::from_str(r#"{"host":"github.com","token":"CANARY-9"}"#).unwrap();
-        assert!(!format!("{request:?}").contains("CANARY-9"));
-        assert!(format!("{request:?}").contains("<redacted>"));
-        assert!(
-            serde_json::from_str::<StoreTokenRequest>(r#"{"host":"h","token":"t","extra":1}"#)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn what_cannot_be_used_is_refused_in_words() {
-        use super::super::identities::{IdentityAuthor, IdentityRequest};
-        let bad = CredentialSource::Gh {
-            host: "not a host".into(),
-            account: "me".into(),
-        };
-        assert_eq!(bad.into_spec().unwrap_err(), "not a valid host");
-        let nameless = IdentityRequest {
-            label: "x".into(),
-            author: IdentityAuthor {
-                name: String::new(),
-                email: String::new(),
-            },
-            credentials: Vec::new(),
-        };
-        assert!(nameless.into_store_draft().is_err());
-    }
-
-    #[test]
-    fn problems_are_worded_for_the_user() {
-        let text = |e: SourceError| CheckResult::from_error(&e);
-        let not_signed_in = text(SourceError::NotSignedIn);
-        assert!(not_signed_in.needs_sign_in);
-        assert_eq!(
-            not_signed_in.problem.as_deref(),
-            Some("not signed in, or the sign-in has expired")
-        );
-        let slow = text(SourceError::Timeout(Tool::Git));
-        assert!(slow.needs_sign_in);
-        assert!(slow.problem.unwrap().contains("git did not answer in time"));
-        let missing = text(SourceError::ToolMissing(Tool::Gh));
-        assert!(!missing.needs_sign_in);
-        assert_eq!(
-            missing.problem.as_deref(),
-            Some("gh is not installed or not on PATH")
-        );
-        assert!(CheckResult::readable().readable);
-    }
-}
+mod tests;

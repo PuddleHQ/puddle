@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! L2 end to end, no VM: a DNS client → the guest agent's stub DNS → a `resolve` stream over the
 //! workspace's real endpoint (a Unix socket) → the real proxy with the real SQLite rules engine.
 //!
@@ -80,6 +80,7 @@ struct Options {
 
 async fn rig_with(options: Options) -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = Arc::new(
         StaticResolver::new()
             .with(
@@ -167,6 +168,7 @@ async fn rig() -> Rig {
 
 fn allow(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
@@ -179,6 +181,7 @@ fn allow(store: &Store, host: &str) {
 
 fn deny(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
@@ -198,7 +201,13 @@ fn footprint(store: &Store) -> (usize, usize) {
         .into_iter()
         .filter(|(_, line)| !line.contains("\"type\":\"rule_"))
         .count();
-    (store.open_pending(None).unwrap().len(), audit)
+    (
+        store
+            .open_pending_every_user(&puddle_store::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        audit,
+    )
 }
 
 // ---- a minimal DNS client ----
@@ -452,7 +461,10 @@ async fn an_srv_target_nothing_allows_is_left_out_and_raised_as_one_request_at_i
     let (udp, _) = rig.agent.dns_addrs().unwrap();
     let srv = dns(udp, "_http._tcp.mirror.example.net", TYPE_SRV).await;
     assert_eq!((srv.rcode, srv.answers, srv.additional), (0, 0, 0));
-    let open = rig.store.open_pending(None).unwrap();
+    let open = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap();
     assert_eq!(open.len(), 1, "{open:?}");
     assert_eq!(
         (open[0].host.to_string(), open[0].port),
@@ -470,7 +482,10 @@ async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_its_base_name
         let srv = dns(udp, "_mongodb._tcp.cluster.example.net", TYPE_SRV).await;
         assert_eq!((srv.rcode, srv.answers), (0, 0));
     }
-    let open = rig.store.open_pending(None).unwrap();
+    let open = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap();
     assert_eq!(open.len(), 1, "three queries, one request");
     assert_eq!(open[0].host.to_string(), "cluster.example.net");
     // The stub answers repeats from its cache for the answer's TTL, so the host sees one.
@@ -485,7 +500,13 @@ async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_its_base_name
     ] {
         dns(udp, name, qtype).await;
     }
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 1);
+    assert_eq!(
+        rig.store
+            .open_pending_every_user(&puddle_store::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(rig.counted.resolver.lookups(), 0);
     assert_eq!(rig.counted.records.lookups(), 0);
     assert_ne!(footprint(&rig.store), before);
@@ -498,7 +519,11 @@ async fn a_flood_of_srv_queries_for_random_names_opens_one_row_each_up_to_the_ca
     for i in 0..400 {
         dns(udp, &format!("_x._tcp.flood-{i}.example.net"), TYPE_SRV).await;
     }
-    let open = rig.store.open_pending(None).unwrap().len();
+    let open = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap()
+        .len();
     assert_eq!(
         open, 400,
         "every name waits, none is refused for the volume"
@@ -672,6 +697,7 @@ async fn a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_gl
         }
     }
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     allow(&store, ".example.com");
     let proxy = Proxy::new(store.clone(), Arc::new(NullSink))
         .with_resolver(Arc::new(Slow))
@@ -742,6 +768,7 @@ async fn a_guest_that_floods_lookups_of_an_allowed_name_over_a_stuck_resolver_hi
         }
     }
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     allow(&store, ".example.com");
     let proxy = Proxy::new(store.clone(), Arc::new(NullSink))
         .with_resolver(Arc::new(Stuck))

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The last step of each stress job (.github/workflows/stress.yml): adds the night's row for one kind to
 # target/stress/yield.tsv (ci/stress-yield.py) and to the job summary, and lists the failing tests.
 # Needs STRESS_JOB_START (epoch seconds, set by the job's first step), GITHUB_SHA, GITHUB_RUN_ID.

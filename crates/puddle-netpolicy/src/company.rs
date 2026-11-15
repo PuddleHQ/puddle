@@ -1,19 +1,38 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The company-network destination category: which signals the host reads, and how they turn a
 //! private address into a company-network one.
 //!
 //! The host reads the signals (the proxy script, DNS suffixes, installed private-access clients,
 //! routes); this module only decides. A signal the host cannot read answers "no", so an unknown
 //! address stays in its local/private category and the company toggle never opens what the
-//! private toggle guards.
+//! private toggle guards. The LAN reading is the one signal whose "no" would widen access (it is
+//! the guard that keeps a home-LAN address out of the category), so it has a third answer,
+//! [`LanReading::Unread`], and that answer also keeps the address out.
+//!
+//! The shipped host gives [`CompanySignals`] on Windows (`puddle_host::HostSignals`); elsewhere it
+//! gives none, so there the category is empty and its toggle changes nothing.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
 
 use puddle_types::CompanySignal;
 
-/// What the host can tell about its company network. Every method answers "no" when the host
-/// cannot read the signal (the defaults), so an unreadable signal never widens access.
+/// Whether an address is on the subnet of a physical LAN interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanReading {
+    /// On a physical LAN's own subnet: local/private, whatever else it matches.
+    OnLan,
+    /// The host read its interfaces and the address is on none of the physical ones.
+    OffLan,
+    /// The host could not read its interfaces, so it cannot rule out that the address is on the
+    /// LAN. Treated like [`LanReading::OnLan`]: the address stays local/private.
+    Unread,
+}
+
+/// What the host can tell about its company network. Every method but
+/// [`CompanySignals::physical_lan`] answers "no" when the host cannot read the signal (the
+/// defaults), so an unreadable signal never widens access. `physical_lan` answers
+/// [`LanReading::Unread`] by default, because there a plain "no" would widen access.
 pub trait CompanySignals: Send + Sync {
     /// Whether the proxy script answers `DIRECT` for `name` while it names proxies for other
     /// URLs.
@@ -39,10 +58,29 @@ pub trait CompanySignals: Send + Sync {
     }
 
     /// Whether `ip` is on the subnet of a physical LAN interface. Such an address is a
-    /// local/private network address, whatever else it matches.
-    fn on_physical_lan(&self, _ip: IpAddr) -> bool {
-        false
+    /// local/private network address, whatever else it matches; so is one the host could not
+    /// tell about ([`LanReading::Unread`]).
+    fn physical_lan(&self, _ip: IpAddr) -> LanReading {
+        LanReading::Unread
     }
+
+    /// What the host found, for a screen that lists it. The default knows the client flag and no
+    /// suffixes; a host that reads suffixes lists them here.
+    fn found(&self) -> CompanyFound {
+        CompanyFound {
+            dns_suffixes: Vec::new(),
+            private_access_client: self.private_access_client(),
+        }
+    }
+}
+
+/// What a host found that drives the company-network category, in words a screen can show.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompanyFound {
+    /// DNS suffixes and name-resolution namespaces of the machine, lower case, each once.
+    pub dns_suffixes: Vec<String>,
+    /// A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active.
+    pub private_access_client: bool,
 }
 
 /// The signals of a host that can read none: the category is empty.
@@ -59,6 +97,7 @@ pub struct StaticSignals {
     private_access_client: bool,
     vpn_routes: Vec<(IpAddr, u8)>,
     lan_subnets: Vec<(IpAddr, u8)>,
+    lan_unread: bool,
 }
 
 fn clean(name: &str) -> String {
@@ -111,6 +150,14 @@ impl StaticSignals {
         self.lan_subnets.push((net, bits));
         self
     }
+
+    /// The host could not read its LAN interfaces: every address answers
+    /// [`LanReading::Unread`], whatever subnets were given.
+    #[must_use]
+    pub fn with_lan_unread(mut self) -> Self {
+        self.lan_unread = true;
+        self
+    }
 }
 
 impl CompanySignals for StaticSignals {
@@ -132,16 +179,34 @@ impl CompanySignals for StaticSignals {
         self.private_access_client
     }
 
+    fn found(&self) -> CompanyFound {
+        let mut dns_suffixes = self.dns_suffixes.clone();
+        dns_suffixes.sort();
+        dns_suffixes.dedup();
+        CompanyFound {
+            dns_suffixes,
+            private_access_client: self.private_access_client,
+        }
+    }
+
     fn vpn_routed(&self, ip: IpAddr) -> bool {
         self.vpn_routes
             .iter()
             .any(|&(net, bits)| in_net(ip, net, bits))
     }
 
-    fn on_physical_lan(&self, ip: IpAddr) -> bool {
-        self.lan_subnets
+    fn physical_lan(&self, ip: IpAddr) -> LanReading {
+        if self.lan_unread {
+            LanReading::Unread
+        } else if self
+            .lan_subnets
             .iter()
             .any(|&(net, bits)| in_net(ip, net, bits))
+        {
+            LanReading::OnLan
+        } else {
+            LanReading::OffLan
+        }
     }
 }
 
@@ -164,7 +229,8 @@ fn in_net(ip: IpAddr, net: IpAddr, bits: u8) -> bool {
 /// or `None`. Only an address that is already in the local/private category qualifies
 /// (`private` is that classification): a public address stays public whatever its name says, and
 /// loopback, link-local, metadata and special-use addresses never qualify. An address on a
-/// physical LAN's own subnet stays local/private.
+/// physical LAN's own subnet stays local/private, and so does any address while the host cannot
+/// read its LAN interfaces.
 #[must_use]
 pub(crate) fn company_signal(
     private: bool,
@@ -180,7 +246,7 @@ pub(crate) fn company_signal(
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
         v4 @ IpAddr::V4(_) => v4,
     };
-    if signals.on_physical_lan(ip) {
+    if signals.physical_lan(ip) != LanReading::OffLan {
         return None;
     }
     let named =
@@ -207,179 +273,4 @@ fn is_cgnat(a: Ipv4Addr) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn dns_namespace_matches_the_suffix_itself_and_names_under_it_only() {
-        let s = StaticSignals::new().with_dns_suffix(".Corp.Example.");
-        assert!(s.in_dns_namespace("corp.example"));
-        assert!(s.in_dns_namespace("nexus.corp.example"));
-        assert!(s.in_dns_namespace("a.b.CORP.example."));
-        assert!(!s.in_dns_namespace("notcorp.example"));
-        assert!(!s.in_dns_namespace("corp.example.evil.test"));
-        assert!(!s.in_dns_namespace("example"));
-    }
-
-    #[test]
-    fn an_empty_suffix_never_matches() {
-        let s = StaticSignals::new()
-            .with_dns_suffix("")
-            .with_dns_suffix(".");
-        assert!(!s.in_dns_namespace("anything.example"));
-        assert!(!s.in_dns_namespace(""));
-    }
-
-    #[test]
-    fn routes_and_subnets_match_their_family_and_prefix_only() {
-        let s = StaticSignals::new()
-            .with_vpn_route(ip("10.8.0.0"), 16)
-            .with_vpn_route(ip("fd00::"), 8)
-            .with_lan_subnet(ip("192.168.1.0"), 24);
-        assert!(s.vpn_routed(ip("10.8.255.255")));
-        assert!(!s.vpn_routed(ip("10.9.0.0")));
-        assert!(s.vpn_routed(ip("fd12::1")));
-        assert!(!s.vpn_routed(ip("fe80::1")));
-        assert!(s.on_physical_lan(ip("192.168.1.77")));
-        assert!(!s.on_physical_lan(ip("192.168.2.1")));
-        // A /0 route covers its whole family and nothing of the other.
-        let all = StaticSignals::new().with_vpn_route(ip("0.0.0.0"), 0);
-        assert!(all.vpn_routed(ip("10.1.1.1")));
-        assert!(!all.vpn_routed(ip("::1")));
-    }
-
-    #[test]
-    fn pac_direct_is_an_exact_case_insensitive_name() {
-        let s = StaticSignals::new().with_pac_direct("Intranet.corp.test");
-        assert!(s.pac_direct("intranet.corp.test"));
-        assert!(!s.pac_direct("x.intranet.corp.test"));
-    }
-
-    #[test]
-    fn no_signals_never_qualify() {
-        let none = NoSignals;
-        for addr in ["10.1.2.3", "100.64.3.7", "fd00::1"] {
-            assert_eq!(
-                company_signal(true, ip(addr), Some("nexus.corp.example"), &none),
-                None
-            );
-        }
-    }
-
-    #[test]
-    fn signals_are_tried_in_the_documented_order() {
-        let all = StaticSignals::new()
-            .with_pac_direct("nexus.corp.example")
-            .with_dns_suffix("corp.example")
-            .with_private_access_client()
-            .with_vpn_route(ip("100.64.0.0"), 10)
-            .with_vpn_route(ip("10.0.0.0"), 8);
-        let signal = |addr: &str, name: Option<&str>| company_signal(true, ip(addr), name, &all);
-        assert_eq!(
-            signal("100.64.3.7", Some("nexus.corp.example")),
-            Some(CompanySignal::PacDirect)
-        );
-        assert_eq!(
-            signal("100.64.3.7", Some("other.corp.example")),
-            Some(CompanySignal::DnsSuffix)
-        );
-        assert_eq!(
-            signal("100.64.3.7", None),
-            Some(CompanySignal::PrivateAccessCgnat)
-        );
-        assert_eq!(signal("10.2.3.4", None), Some(CompanySignal::VpnRoute));
-    }
-
-    #[test]
-    fn cgnat_needs_the_client_and_the_vpn_signal_needs_rfc1918() {
-        let no_client = StaticSignals::new().with_vpn_route(ip("100.64.0.0"), 10);
-        assert_eq!(
-            company_signal(true, ip("100.64.3.7"), None, &no_client),
-            None
-        );
-        let client = StaticSignals::new().with_private_access_client();
-        assert_eq!(
-            company_signal(true, ip("100.64.3.7"), None, &client),
-            Some(CompanySignal::PrivateAccessCgnat)
-        );
-        // The edges of 100.64.0.0/10.
-        assert_eq!(
-            company_signal(true, ip("100.63.255.255"), None, &client),
-            None
-        );
-        assert_eq!(company_signal(true, ip("100.128.0.0"), None, &client), None);
-        // A client says nothing about RFC 1918 addresses.
-        assert_eq!(company_signal(true, ip("10.1.1.1"), None, &client), None);
-    }
-
-    #[test]
-    fn the_physical_lan_wins_over_every_signal() {
-        let s = StaticSignals::new()
-            .with_pac_direct("nas.home.test")
-            .with_dns_suffix("home.test")
-            .with_vpn_route(ip("192.168.0.0"), 16)
-            .with_lan_subnet(ip("192.168.1.0"), 24);
-        assert_eq!(
-            company_signal(true, ip("192.168.1.5"), Some("nas.home.test"), &s),
-            None
-        );
-        assert_eq!(
-            company_signal(true, ip("192.168.7.5"), Some("nas.home.test"), &s),
-            Some(CompanySignal::PacDirect)
-        );
-    }
-
-    #[test]
-    fn only_a_private_class_address_qualifies() {
-        let s = StaticSignals::new()
-            .with_dns_suffix("corp.example")
-            .with_pac_direct("pub.corp.example");
-        assert_eq!(
-            company_signal(false, ip("8.8.8.8"), Some("pub.corp.example"), &s),
-            None
-        );
-    }
-
-    #[test]
-    fn an_ipv4_mapped_address_is_judged_as_the_ipv4_address() {
-        let s = StaticSignals::new().with_vpn_route(ip("10.8.0.0"), 16);
-        assert_eq!(
-            company_signal(true, ip("::ffff:10.8.1.1"), None, &s),
-            Some(CompanySignal::VpnRoute)
-        );
-        assert_eq!(company_signal(true, ip("::ffff:10.9.1.1"), None, &s), None);
-    }
-    #[test]
-    fn a_prefix_longer_than_the_address_matches_nothing() {
-        let s = StaticSignals::new()
-            .with_vpn_route(ip("10.0.0.0"), 33)
-            .with_vpn_route(ip("fd00::"), 129);
-        assert!(!s.vpn_routed(ip("10.0.0.1")));
-        assert!(!s.vpn_routed(ip("fd00::1")));
-    }
-
-    /// A host that can read only the proxy script: the signals it cannot read answer "no".
-    struct PacOnly;
-
-    impl CompanySignals for PacOnly {
-        fn pac_direct(&self, name: &str) -> bool {
-            name == "nexus.corp.example"
-        }
-    }
-
-    #[test]
-    fn a_signal_the_host_cannot_read_never_widens_access() {
-        let signal = |addr: &str, name: &str| company_signal(true, ip(addr), Some(name), &PacOnly);
-        assert_eq!(
-            signal("10.1.2.3", "nexus.corp.example"),
-            Some(CompanySignal::PacDirect)
-        );
-        // Not on a physical LAN as far as it can tell, but no other signal either.
-        assert_eq!(signal("100.64.3.7", "other.corp.example"), None);
-        assert_eq!(signal("10.8.0.9", "other.corp.example"), None);
-    }
-}
+mod tests;

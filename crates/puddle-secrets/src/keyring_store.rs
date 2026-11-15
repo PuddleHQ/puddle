@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The OS credential store through the `keyring` crate: Credential Manager on Windows, Keychain
 //! on macOS, the Secret Service on Linux.
 
 use zeroize::Zeroize;
 
 use crate::name::StoredId;
+use crate::os_store::ensure_os_store;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
 
@@ -42,18 +43,14 @@ impl KeyringStore {
             // Credential Manager's default, "enterprise", lets Windows copy the entry to the
             // user's other computers when the account has a roaming profile.
             let modifiers = std::collections::HashMap::from([("persistence", "local")]);
-            // The wrapper's constructor sets the default store up and takes no modifiers.
-            keyring::Entry::store_status()
-                .as_ref()
-                .map_err(|_| StoreError)?;
+            ensure_os_store()?;
             keyring_core::Entry::new_with_modifiers(service, &user, &modifiers)
                 .map_err(|_| StoreError)
         }
         #[cfg(not(windows))]
         {
-            keyring::Entry::new(service, &user)
-                .map(|entry| entry.inner)
-                .map_err(|_| StoreError)
+            ensure_os_store()?;
+            keyring_core::Entry::new(service, &user).map_err(|_| StoreError)
         }
     }
 }
@@ -62,8 +59,8 @@ impl SecretStore for KeyringStore {
     fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
         match self.entry(id)?.get_password() {
             Ok(value) => Ok(Some(Secret::new(value))),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(keyring::Error::BadEncoding(mut blob)) => {
+            Err(keyring_core::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::BadEncoding(mut blob)) => {
                 // The error carries the stored bytes; overwrite them before they are freed.
                 blob.zeroize();
                 Err(StoreError)
@@ -80,7 +77,7 @@ impl SecretStore for KeyringStore {
 
     fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
         match self.entry(id)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(_) => Err(StoreError),
         }
     }
@@ -97,7 +94,7 @@ impl SecretStore for KeyringStore {
                     let value = entry.get_password().map_err(|_| StoreError)?;
                     entry.set_password(&value).map_err(|_| StoreError)?;
                 }
-                Err(keyring::Error::NoEntry) => {}
+                Err(keyring_core::Error::NoEntry) => {}
                 Err(_) => return Err(StoreError),
             }
         }
@@ -115,59 +112,13 @@ fn is_kept_local(attributes: &std::collections::HashMap<String, String>) -> bool
     attributes.get("persistence").is_some_and(|p| p == "Local")
 }
 
-/// Whether the platform store can be used at all (a Linux host with no Secret Service cannot).
+/// Whether the platform store's service answers (a Linux host with no Secret Service does not).
+/// A locked Secret Service answers and still refuses every write: use [`crate::probe_os_store`]
+/// to know whether a value can be stored.
 #[must_use]
 pub fn keyring_available() -> bool {
-    keyring::Entry::store_status().is_ok()
+    ensure_os_store().is_ok()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn id() -> StoredId {
-        StoredId::new("probe").unwrap()
-    }
-
-    #[test]
-    fn the_store_is_filed_under_puddle_unless_a_test_names_another_service() {
-        assert_eq!(KeyringStore::new().service, None);
-        assert_eq!(
-            KeyringStore::named("puddle-test-x").service.as_deref(),
-            Some("puddle-test-x")
-        );
-    }
-
-    #[test]
-    fn only_an_entry_reported_as_local_is_kept_local() {
-        let with = |value: &str| {
-            std::collections::HashMap::from([("persistence".to_owned(), value.to_owned())])
-        };
-        assert!(is_kept_local(&with("Local")));
-        assert!(!is_kept_local(&with("Enterprise")));
-        assert!(!is_kept_local(&std::collections::HashMap::new()));
-    }
-
-    #[test]
-    fn availability_matches_whether_a_write_to_the_platform_store_works() {
-        let store = KeyringStore::named("puddle-test-availability");
-        let works = store.set(&id(), &Secret::new("v".to_owned())).is_ok();
-        if works {
-            store.delete(&id()).unwrap();
-        }
-        assert_eq!(keyring_available(), works);
-    }
-
-    #[test]
-    fn a_computer_without_a_credential_store_fails_every_call_and_loses_nothing_silently() {
-        if !keyring_available() {
-            let store = KeyringStore::named("puddle-test-unavailable");
-            assert_eq!(store.get(&id()).err(), Some(StoreError));
-            assert_eq!(
-                store.set(&id(), &Secret::new("v".to_owned())),
-                Err(StoreError)
-            );
-            assert_eq!(store.delete(&id()), Err(StoreError));
-        }
-    }
-}
+mod tests;

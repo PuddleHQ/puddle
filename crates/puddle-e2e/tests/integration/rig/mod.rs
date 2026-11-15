@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared pieces of the corporate-lab tests: origins and clients everywhere, the sandbox rig
 //! where the guest agent exists (Unix).
 #![allow(unused_imports, reason = "each test binary uses some of the pieces")]

@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ci/deny-fresh.sh <cargo-deny check arguments...>: refreshes cargo-deny's advisory database and registry
 # index, then runs `cargo deny <arguments>`.
 #

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Windows implementation of [`OsProxy`]: WinHTTP for settings and PAC/WPAD evaluation, the
 //! registry for change notification. This module and its children are the crate's only unsafe
 //! code; each raw resource is owned by a guard that releases it.
@@ -7,11 +7,13 @@
     reason = "FFI to WinHTTP and the registry; each block is small and commented"
 )]
 
+mod network;
 mod pac;
 mod settings;
 mod sspi;
 mod watch;
 
+pub(crate) use network::WinNetwork;
 pub(crate) use sspi::SspiSource;
 
 use crate::hop::Hop;

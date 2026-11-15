@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Run before the first `apt-get` of a CI job. The runner image sends apt to azure.archive.ubuntu.com,
 # a DNS round robin over many backends: most serve 5 to 100 MB/s, but some serve packages at 40 to
 # 90 kB/s (index files at full speed), and a runner gets whichever backend its DNS answer names (a

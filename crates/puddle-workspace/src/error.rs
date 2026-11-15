@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspace lifecycle's error type.
 
 use puddle_compute::ComputeError;
@@ -70,6 +70,15 @@ pub enum WorkspaceError {
         workspace: String,
         /// Why.
         reason: String,
+    },
+    /// The checkout listing needs git and the image has none. A volume's checkouts can't be
+    /// described then, which is a fact about the image and no failure of the listing.
+    #[error(
+        "cannot list the checkouts of workspace {workspace:?}: git is not installed in the image"
+    )]
+    GitMissing {
+        /// The workspace.
+        workspace: String,
     },
     /// `fstrim` failed in the guest.
     #[error("cannot trim workspace {workspace:?}: {reason}")]

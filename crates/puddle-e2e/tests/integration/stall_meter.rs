@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Proof that the stall meter of the transparency bar (`support::stall`) leaves out the kernel's
 //! retransmission backoff and nothing else. The bar is "no gap over 5 s that the transfer's own
 //! parties caused"; it holds only if a pause by a reader still fails it and a dropped segment's

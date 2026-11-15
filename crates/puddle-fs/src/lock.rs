@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One Puddle host process per data folder.
 //!
 //! [`DataLock::acquire`] takes an exclusive advisory lock on a file in the data folder. The
@@ -59,8 +59,17 @@ fn held_message(dir: &Path, holder: Option<u32>) -> String {
 /// The exclusive hold on a data folder; released when dropped or when the process ends.
 #[derive(Debug)]
 pub struct DataLock {
-    // Held for its lock: closing the file releases it.
-    _file: File,
+    // Held for its lock; unlocked and closed on drop.
+    file: File,
+}
+
+impl Drop for DataLock {
+    fn drop(&mut self) {
+        // Closing the file is not enough: a process another thread is spawning holds a copy of
+        // every open descriptor until its exec, and a copy shares the lock, so the folder would
+        // stay refused for that moment. Unlocking releases it for every copy.
+        let _ = self.file.unlock();
+    }
 }
 
 impl DataLock {
@@ -78,25 +87,31 @@ impl DataLock {
         private::create_dir(dir).map_err(io_err(dir))?;
         let lock_path = dir.join(LOCK_FILE);
         let file = open_lock_file(&lock_path).map_err(io_err(&lock_path))?;
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => {
-                return Err(LockError::Held {
-                    dir: dir.to_path_buf(),
-                    holder: read_holder(&dir.join(HOLDER_FILE)),
-                });
-            }
-            Err(TryLockError::Error(source)) => {
-                return Err(LockError::Io {
-                    path: lock_path,
-                    source,
-                });
-            }
-        }
+        lock_outcome(file.try_lock(), dir, &lock_path)?;
         // Only a hint for the next refusal, so a failure to write it never fails the start.
         let note = format!("{}\n", std::process::id());
         let _ = private::write_atomic(&dir.join(HOLDER_FILE), note.as_bytes());
-        Ok(Self { _file: file })
+        Ok(Self { file })
+    }
+}
+
+/// What the operating system's answer to the lock call means for [`DataLock::acquire`]: held by
+/// another process, or refused for another reason (a file system with no locks).
+fn lock_outcome(
+    answer: Result<(), TryLockError>,
+    dir: &Path,
+    lock_path: &Path,
+) -> Result<(), LockError> {
+    match answer {
+        Ok(()) => Ok(()),
+        Err(TryLockError::WouldBlock) => Err(LockError::Held {
+            dir: dir.to_path_buf(),
+            holder: read_holder(&dir.join(HOLDER_FILE)),
+        }),
+        Err(TryLockError::Error(source)) => Err(LockError::Io {
+            path: lock_path.to_path_buf(),
+            source,
+        }),
     }
 }
 
@@ -116,111 +131,4 @@ fn read_holder(path: &Path) -> Option<u32> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_second_lock_on_the_same_folder_is_refused_until_the_first_is_dropped() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = DataLock::acquire(dir.path()).unwrap();
-        let err = DataLock::acquire(dir.path()).unwrap_err();
-        // Same process here, so the note names this one.
-        assert!(
-            matches!(&err, LockError::Held { holder, .. } if *holder == Some(std::process::id())),
-            "{err}"
-        );
-        assert!(
-            err.to_string()
-                .contains(&format!("process ID {}", std::process::id())),
-            "{err}"
-        );
-        drop(first);
-        drop(DataLock::acquire(dir.path()).unwrap());
-    }
-
-    #[test]
-    fn different_folders_do_not_block_each_other() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        let _a = DataLock::acquire(a.path()).unwrap();
-        let _b = DataLock::acquire(b.path()).unwrap();
-    }
-
-    #[test]
-    fn a_missing_folder_is_created() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("new").join("puddle");
-        let _lock = DataLock::acquire(&data).unwrap();
-        assert!(data.join(LOCK_FILE).is_file());
-    }
-
-    #[test]
-    fn a_leftover_lock_file_and_note_do_not_block_and_are_replaced() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(LOCK_FILE), b"").unwrap();
-        std::fs::write(dir.path().join(HOLDER_FILE), b"4000000\n").unwrap();
-        let _lock = DataLock::acquire(dir.path()).unwrap();
-        assert_eq!(
-            read_holder(&dir.path().join(HOLDER_FILE)),
-            Some(std::process::id())
-        );
-    }
-
-    #[test]
-    fn a_refusal_without_a_readable_note_names_no_process() {
-        let dir = tempfile::tempdir().unwrap();
-        let _first = DataLock::acquire(dir.path()).unwrap();
-        std::fs::remove_file(dir.path().join(HOLDER_FILE)).unwrap();
-        let err = DataLock::acquire(dir.path()).unwrap_err();
-        assert!(matches!(err, LockError::Held { holder: None, .. }), "{err}");
-        assert!(
-            err.to_string().contains("another Puddle process is"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn a_data_folder_that_is_a_file_is_an_io_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("f");
-        std::fs::write(&file, b"x").unwrap();
-        let err = DataLock::acquire(&file).unwrap_err();
-        assert!(matches!(err, LockError::Io { .. }), "{err}");
-        assert!(err.to_string().contains("cannot lock"), "{err}");
-    }
-
-    #[test]
-    fn a_lock_path_that_cannot_be_opened_is_an_io_error() {
-        let dir = tempfile::tempdir().unwrap();
-        // A folder where the lock file should be: it exists, and opening it for writing fails.
-        std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
-        let err = DataLock::acquire(dir.path()).unwrap_err();
-        assert!(matches!(err, LockError::Io { .. }), "{err}");
-    }
-
-    #[test]
-    fn a_lock_file_that_cannot_be_created_reports_why() {
-        let dir = tempfile::tempdir().unwrap();
-        // The folder is missing, so creating the file fails for a reason other than "exists".
-        let err = open_lock_file(&dir.path().join("missing").join(LOCK_FILE)).unwrap_err();
-        assert_ne!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_lock_file_that_cannot_be_created_is_not_retried_as_an_existing_one() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
-        // A user who may write in it anyway (root) gets no error at all.
-        let can_write = File::create(dir.path().join("probe")).is_ok();
-        let kind = open_lock_file(&dir.path().join(LOCK_FILE))
-            .err()
-            .map(|e| e.kind());
-        // Opening the missing file instead would say it is not found, hiding why it was not made.
-        assert_eq!(
-            kind,
-            (!can_write).then_some(io::ErrorKind::PermissionDenied)
-        );
-    }
-}
+mod tests;

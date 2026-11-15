@@ -1,13 +1,14 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The store's error type.
 
-use puddle_types::{PendingId, RuleId};
+use puddle_types::{PendingId, RuleId, WorkspaceId};
 
 use crate::identity::{Collision, IdentityId};
 
 use crate::audit::AuditError;
 use crate::pattern::PatternError;
 use crate::pending::PendingState;
+use crate::users::UserId;
 
 /// What went wrong in the store. Messages name ids and states, never secret values.
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +24,19 @@ pub enum StoreError {
         /// The newest version this build knows.
         supported: u32,
     },
+    /// A migration step left a row pointing at a parent that is gone, so it was rolled back.
+    #[error("migration to schema version {version} left {table} rows without their {parent} row")]
+    MigrationBrokeForeignKeys {
+        /// The version the step was taking the database to.
+        version: u32,
+        /// The child table with the orphan.
+        table: String,
+        /// The parent table the orphan points at.
+        parent: String,
+    },
+    /// The copy made before migrating could not be written or pruned.
+    #[error("could not back up the database before migrating: {0}")]
+    Backup(String),
     /// A stored row doesn't parse (edited by hand, or a bug).
     #[error("stored {table} row {id} is invalid: {reason}")]
     Corrupt {
@@ -64,6 +78,9 @@ pub enum StoreError {
         "System managed can't be switched; it follows your setup (add a deny rule to block one of its hosts)"
     )]
     NotSwitchable,
+    /// A built-in set is hidden while the feature that needs it is off, so it can't be switched.
+    #[error("rule set {0} is hidden while the feature it belongs to is off")]
+    RuleSetHidden(String),
     /// A rule set's name is empty, too long, or already used by another set.
     #[error("rule set name: {0}")]
     RuleSetName(String),
@@ -116,10 +133,54 @@ pub enum StoreError {
     /// A rule on method and path was refused; the text says why.
     #[error("{0}")]
     RequestRuleInvalid(String),
+    /// A workspace has the SSH agent on for as many hosts as it may.
+    #[error("at most {0} hosts may use the SSH agent in one workspace")]
+    TooManySshAgentHosts(usize),
+    /// A workspace has as many SSH agent questions open as it may.
+    #[error("at most {0} SSH agent questions may wait in one workspace")]
+    TooManySshAgentAsks(usize),
+    /// No SSH agent question has this id in this workspace.
+    #[error("no SSH agent question {0}")]
+    UnknownSshAgentAsk(i64),
+    /// The SSH agent question was already answered.
+    #[error("the SSH agent question {id} is already {state}")]
+    SshAgentAskNotOpen {
+        /// The question.
+        id: i64,
+        /// Where it is.
+        state: &'static str,
+    },
     /// No rule on method and path has this id.
     #[error("no rule on method and path {0}")]
     UnknownRequestRule(i64),
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),
+    /// No user has this id.
+    #[error("no user {0}")]
+    UnknownUser(UserId),
+    /// The owner is never deleted.
+    #[error("the owner can't be deleted")]
+    OwnerKept,
+    /// A user name was refused; the text says why.
+    #[error("{0}")]
+    UserName(String),
+    /// No workspace of this user has this id (another user's reads the same).
+    #[error("no workspace {0}")]
+    UnknownWorkspace(WorkspaceId),
+    /// The workspace already belongs to another user; a workspace's user never changes.
+    #[error("workspace {0} already belongs to another user")]
+    WorkspaceOwned(WorkspaceId),
+    /// An invite's digest was refused (too short to be a hash).
+    #[error("an invite digest must be at least 16 bytes")]
+    InviteInvalid,
+    /// A device name was refused; the text says why.
+    #[error("{0}")]
+    DeviceName(String),
+    /// The owner account is already made: the first visitor's chance is gone.
+    #[error("the owner account is already set up")]
+    SetupDone,
+    /// Turning a sign-in method off would leave none, or the method does not exist yet.
+    #[error("{0}")]
+    SignInMethod(String),
 }

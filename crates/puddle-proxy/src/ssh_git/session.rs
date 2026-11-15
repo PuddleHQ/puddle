@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One SSH connection from a workspace to a terminated Git host: the server, its channels, the
 //! table check and the audit record.
 #![expect(
@@ -24,9 +24,10 @@ use tokio::time::{Instant, sleep_until, timeout_at};
 use super::cutoff::{CutOnDrop, Cutoff, Cuttable};
 use super::grammar::{self, Command, GitHost, Refused, Repository};
 use super::{GitSsh, GitSshCommand, GitSshContext, GitSshLimits, GitSshUpstream};
-use crate::proxy::{ClientReader, WorkspaceHandler, admit, refuse};
+use crate::proxy::{ClientReader, WorkspaceHandler, admit, apply_reason, refuse};
 use crate::terminate::{
-    InjectContext, InjectDecision, InjectRefusal, Injector, Prefixed, RequestView, Termination,
+    InjectContext, InjectDecision, InjectRefusal, Injector, MAX_UNSWAPPED_STAND_INS, Outcome,
+    Prefixed, RequestView, Termination,
 };
 
 /// The audit code of a command that is none of the grammar's.
@@ -209,17 +210,53 @@ where
         .as_ref()
         .map(|(line, _)| line.clone())
         .or_else(|| summary.first.clone());
+    event.injected = summary.injected;
+    event.binding_id = summary.binding_id.clone();
+    apply_legs(&mut event, &ctx.route.legs());
+    // A refusal Puddle's own server gave is the connection's reason, over a rule's refusal
+    // inside an HTTPS leg.
     if let Some((_, code)) = &summary.refused {
         event.decision = ConnectionDecision::Blocked;
         event.reason = ConnectionReason::Refused(code);
     }
-    event.injected = summary.injected;
-    event.binding_id = summary.binding_id.clone();
-    if let Some(reached) = ctx.route.first_reached() {
-        event.resolved_ip = reached.ip;
-        event.upstream = reached.hop;
-    }
     event
+}
+
+/// Puts what the HTTPS legs of the commands saw on the connection's record, as a decrypted
+/// connection's own end does: the first leg's address, hop and connection outcome, the first
+/// refusal by a rule on method and path, the credentials and stand-ins of every leg. The legs'
+/// request lines stay off the record: it names the SSH command the guest sent.
+fn apply_legs(event: &mut ConnectionEvent, legs: &[Outcome]) {
+    let Some(first) = legs.first() else {
+        return;
+    };
+    event.resolved_ip = first.resolved_ip;
+    event.upstream.clone_from(&first.hop);
+    event.outcome = first.connect;
+    apply_reason(
+        event,
+        legs.iter()
+            .find(|l| l.refused_by_rule.is_some())
+            .unwrap_or(first),
+    );
+    for leg in legs {
+        if leg.injected && !event.injected {
+            event.injected = true;
+            event.binding_id.clone_from(&leg.binding_id);
+        }
+        for (all, more) in [
+            (&mut event.unswapped_stand_ins, &leg.unswapped_stand_ins),
+            (&mut event.scrubbed_stand_ins, &leg.scrubbed_stand_ins),
+            (&mut event.foreign_credentials, &leg.foreign_credentials),
+            (&mut event.answer_credentials, &leg.answer_credentials),
+        ] {
+            for id in more {
+                if all.len() < MAX_UNSWAPPED_STAND_INS && !all.contains(id) {
+                    all.push(id.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Runs the SSH session and closes it when a limit passes.
@@ -293,6 +330,7 @@ impl Drop for Disconnect {
 }
 
 async fn disconnect(handle: russh::server::Handle) {
+    // the guest may have disconnected first; the session is over either way
     let _ = handle
         .disconnect(
             russh::Disconnect::ByApplication,
@@ -721,6 +759,7 @@ async fn lfs_authenticate(
                 "{{\"href\":\"https://{}{}/info/lfs\"}}\n",
                 repository.host, repository.path
             );
+            // best effort: the guest may have gone away, and the refusal is already logged
             let _ = channel.data_bytes(bytes::Bytes::from(href)).await;
             Finish::ok()
         }
@@ -775,7 +814,9 @@ async fn table(
     };
     match ctx.injector.decide(&context, &view).await {
         InjectDecision::Inject(injection) => Ok(Some(injection.binding_id().to_owned())),
-        InjectDecision::PassThrough | InjectDecision::PassThroughNoting(_) => Ok(None),
+        InjectDecision::PassThrough
+        | InjectDecision::PassThroughOwnCredential
+        | InjectDecision::PassThroughNoting(_) => Ok(None),
         InjectDecision::Refuse(refusal) => Err(refusal),
     }
 }
@@ -834,11 +875,13 @@ async fn pump(
     };
     let to_guest = async {
         let copied = tokio::io::copy(&mut from_upstream, &mut out).await;
+        // the guest side may have closed; the copy result is what the caller reports
         let _ = out.flush().await;
         copied
     };
     let mut input = channel.make_reader();
     let from_guest = async {
+        // the guest ending its input is the normal end of a push; only the upstream shutdown matters
         let _ = tokio::io::copy(&mut input, &mut to_upstream).await;
         let _ = to_upstream.shutdown().await;
     };
@@ -875,67 +918,11 @@ async fn end(channel: &Channel<Msg>, finish: Finish) {
             .extended_data_bytes(1, bytes::Bytes::from(line))
             .await;
     }
+    // the guest may have gone away; the channel is finished either way
     let _ = channel.exit_status(finish.status).await;
     let _ = channel.eof().await;
     let _ = channel.close().await;
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_git_protocol_value_is_a_list_of_the_three_versions_and_nothing_else() {
-        assert_eq!(protocol_versions("version=2"), Some(vec![2]));
-        assert_eq!(protocol_versions("version=1:version=2"), Some(vec![1, 2]));
-        assert_eq!(protocol_versions("version=0"), Some(vec![0]));
-        for bad in [
-            "",
-            "version=3",
-            "version=2:",
-            "version=2:foo",
-            "VERSION=2",
-            "version=2 ",
-            "version=0:version=1:version=2:version=2",
-            "version=2\nx=1",
-        ] {
-            assert_eq!(protocol_versions(bad), None, "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn version_0_is_the_absence_of_a_git_protocol() {
-        assert_eq!(git_protocol(&[]), None);
-        assert_eq!(git_protocol(&[0]), None);
-        assert_eq!(git_protocol(&[2]).as_deref(), Some("version=2"));
-        assert_eq!(
-            git_protocol(&[0, 1, 2]).as_deref(),
-            Some("version=1:version=2")
-        );
-    }
-
-    #[test]
-    fn libssh2_is_told_by_its_name_anywhere_in_what_the_guest_sent_first() {
-        assert!(names_libssh2(b"SSH-2.0-libssh2_1.11.0\r\n"));
-        assert!(names_libssh2(b"xxlibssh2"));
-        assert!(!names_libssh2(b"SSH-2.0-OpenSSH_9.6\r\n"));
-        assert!(!names_libssh2(b"libssh"));
-        assert!(!names_libssh2(b""));
-    }
-
-    #[test]
-    fn the_server_answers_as_puddle_with_no_delays_and_no_idle_timeout() {
-        let config = server_config(Vec::new());
-        assert!(
-            matches!(&config.server_id, russh::SshId::Standard(id) if id == "SSH-2.0-Puddle"),
-            "{:?}",
-            config.server_id
-        );
-        assert_eq!(config.auth_rejection_time, std::time::Duration::ZERO);
-        assert_eq!(
-            config.auth_rejection_time_initial,
-            Some(std::time::Duration::ZERO)
-        );
-        assert_eq!(config.inactivity_timeout, None);
-    }
-}
+mod tests;

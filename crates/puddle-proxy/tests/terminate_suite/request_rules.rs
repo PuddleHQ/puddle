@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules on method and path: what a refused request looks like, that every spelling of a path
 //! meets its rule on HTTP/1.1, HTTP/2 and plain HTTP, that a host with a rule is always decrypted
 //! and that nothing of a refused request's query reaches the audit.

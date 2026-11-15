@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The real-tool radar (tests named `vm_radar_*`): apt, npm, pnpm, cargo, go and maven fetch thousands of
 # packages from the real registries through the whole stack in a real microVM, and the tools' answer
 # to a certificate they refuse is recorded. It discovers; it never blocks a merge (it is not a required
@@ -51,7 +51,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
       - name: msb runtime (fork tag; download, verify)
@@ -71,7 +71,22 @@ jobs:
         run: |
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast \
-              -E 'test(/(^|::)vm_radar_/)'
+              -E 'test(/(^|::)vm_radar_/) & not test(/(^|::)vm_radar_forgejo_/)'
+      - name: stage msb logs that still exist
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          src="$RUNNER_TEMP/pvm"
+          dest="$RUNNER_TEMP/msb-logs"
+          mkdir -p "$dest"
+          if [ ! -d "$src" ]; then
+            echo "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          fi
+          cd "$src" || exit 0
+          while IFS= read -r -d '' f; do
+            mkdir -p "$dest/$(dirname "$f")" 2>/dev/null && cp "$f" "$dest/$f" 2>/dev/null || true
+          done < <(find . -path '*/logs/*' -type f -print0 2>/dev/null || true)
       - name: upload test results and msb logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -79,6 +94,6 @@ jobs:
           name: full-test-results
           path: |
             target/nextest/vm/junit.xml
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore

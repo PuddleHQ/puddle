@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Property tests for the normaliser and the classifier: they see guest input.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};

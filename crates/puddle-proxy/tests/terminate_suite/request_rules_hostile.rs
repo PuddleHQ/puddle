@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules on method and path against hostile spellings: each request here reaches a server that
 //! reads it as one the rule names (a router that matches on undecoded segments, a hop that decodes
 //! the path and reads a `?` in it as the start of the query, a parser that takes `//name/` as an

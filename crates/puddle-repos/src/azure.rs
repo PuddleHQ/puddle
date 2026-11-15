@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Azure DevOps: the repositories of one organisation (`GET /{org}/_apis/git/repositories`, one
 //! call for the whole organisation).
 //!
@@ -26,7 +26,7 @@ const MAX_REPOS: usize = 5000;
 pub(crate) fn authorization(token: Arc<Secret>) -> Authorization {
     match azure_devops_scheme(token.expose()) {
         TokenScheme::Bearer => Authorization::Bearer(token),
-        _ => Authorization::BasicPassword(token),
+        TokenScheme::BasicPassword => Authorization::BasicPassword(token),
     }
 }
 

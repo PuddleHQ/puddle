@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A user's own msb setup never leaks into the msb Puddle starts: their `MSB_*` variables are
 //! dropped and an `msb` on `PATH` is never what runs. nextest runs each test in its own
 //! process, so changing the process environment here is safe.
@@ -57,7 +57,6 @@ fn the_dev_override_variable_is_read_from_the_environment() {
 #[test]
 fn a_fake_msb_on_path_never_runs() {
     use std::ffi::OsString;
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let dir = TempDir::new("path");
@@ -76,15 +75,14 @@ fn a_fake_msb_on_path_never_runs() {
         (layout.msb_path(), "bundled"),
         (user_bin.join("msb"), "fake"),
     ] {
-        std::fs::write(&path, script(who)).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        puddle_test_kit::write_executable(&path, &script(who));
     }
 
     let mut user_env: Vec<(OsString, OsString)> = USER_VARS
         .iter()
         .map(|(k, v)| (OsString::from(k), OsString::from(v)))
         .collect();
-    user_env.push(("PATH".into(), user_bin.clone().into_os_string()));
+    user_env.push(("PATH".into(), user_bin.into_os_string()));
     let plan = RuntimeEnv::plan(&layout, user_env.clone());
     let mut cmd = Command::new(layout.msb_path());
     cmd.env_clear().envs(user_env);

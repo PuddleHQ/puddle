@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The network-health screen and the notices against the real API on the fixture backend. Each
 // test has a backend of its own. Waits are on conditions (text on the page, a response), never on
 // time or key order.

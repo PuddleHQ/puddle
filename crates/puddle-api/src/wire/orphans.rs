@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Workspace disks the workspace list does not name, on the wire.
 
 use serde::{Deserialize, Serialize};

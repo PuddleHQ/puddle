@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The vsock load's judge against a real curl on loopback, no VM: the bar passes on a healthy run and
 //! fails on a stream that is deliberately stalled. Without the second, a green nightly would only
 //! mean the detector never fires (the VM tests `vm_perf_vsock_*` use the same script and judge).

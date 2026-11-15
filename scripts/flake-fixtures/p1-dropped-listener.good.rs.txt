@@ -1,0 +1,16 @@
+// The same tests after the fix: the dead address is held for the whole test.
+async fn a_dead_name_gets_a_502() {
+    let closed = puddle_test_kit::ReservedPort::new();
+    let port = closed.port();
+    let (head, _) = send(route.local_addr(), &connect(&format!("127.0.0.1:{port}"), Some(&auth))).await;
+    assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
+}
+
+// A listener the test keeps while it reads the port is not a pick, and neither is one dropped at the end.
+async fn a_held_listener() {
+    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    proxy.resolve_name("target.test", target.local_addr().unwrap());
+    let body = api.get("/x").await;
+    drop(target);
+    body
+}

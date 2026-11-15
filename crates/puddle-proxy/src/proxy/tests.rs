@@ -1,15 +1,21 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Decision, address and refusal logic without a guest stream. The full path over a route is in
 //! `tests/route.rs`.
 
-use std::net::IpAddr;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use puddle_types::{NullSink, PendingId, RuleId, RuleSetId};
-use tokio::net::TcpListener;
+use puddle_agent_proto::host::HostConfig;
+use puddle_netpolicy::LocalCategory;
+use puddle_types::{NullSink, PatternKind, PendingId, PendingOutcome, RuleId, RuleSetId};
+use tokio::net::{TcpListener, TcpStream};
 
+use super::forward::{abort, forward_one_request};
 use super::*;
+use crate::destination::AddressVerdict;
 use crate::testing::{AnyAddress, StaticPolicy, StaticResolver};
+use crate::token_gate;
 
 fn workspace() -> WorkspaceId {
     WorkspaceId::new("box").unwrap()
@@ -84,7 +90,7 @@ impl AddressCheck for Toggles {
                 AddressVerdict::ExactOnly(LocalCategory::Private)
             }
             IpAddr::V4(a) if a.is_loopback() => AddressVerdict::Block(BlockReason::PuddleEndpoint),
-            _ => AddressVerdict::Allow,
+            IpAddr::V4(_) | IpAddr::V6(_) => AddressVerdict::Allow,
         }
     }
 }
@@ -643,11 +649,9 @@ async fn resolve_failures_are_502_and_504() {
 async fn connect_first_skips_addresses_that_refuse() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let good = listener.local_addr().unwrap();
-    // A port that was just free: connecting to it is refused.
-    let closed = {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap()
-    };
+    // A port held without listening: connecting to it is refused and no other test can take it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let (_, addr) = connect_first(&[closed, good], Duration::from_secs(5))
         .await
         .unwrap();
@@ -1630,6 +1634,105 @@ async fn forwarding_one_request_counts_pipelined_bytes_held_in_both_buffers() {
     assert_eq!(dropped, pipelined.len());
 }
 
+/// An upstream stream that holds its answer back until the request side was flushed (the
+/// last thing the upload does), so the upload finishes before the answer can: the order of the
+/// two halves of a forwarded request no longer depends on how the scheduler interleaves them.
+struct AnswersAfterFlush {
+    inner: tokio::io::DuplexStream,
+    flushed: bool,
+    waiting: Option<std::task::Waker>,
+}
+
+impl tokio::io::AsyncRead for AnswersAfterFlush {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        if !self.flushed {
+            self.waiting = Some(cx.waker().clone());
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for AnswersAfterFlush {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let done = std::pin::Pin::new(&mut self.inner).poll_flush(cx);
+        if done.is_ready() {
+            self.flushed = true;
+            if let Some(waker) = self.waiting.take() {
+                waker.wake();
+            }
+        }
+        done
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn an_answer_that_comes_after_the_whole_body_is_still_forwarded_in_full() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (guest, mut guest_peer) = tokio::io::duplex(4096);
+    let (held, mut upstream_peer) = tokio::io::duplex(4096);
+    guest_peer.write_all(b"hello").await.unwrap();
+    upstream_peer.write_all(b"OK").await.unwrap();
+    upstream_peer.shutdown().await.unwrap();
+    let mut client = BufReader::new(guest);
+    let mut upstream = AnswersAfterFlush {
+        inner: held,
+        flushed: false,
+        waiting: None,
+    };
+    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
+        .await
+        .unwrap();
+    assert_eq!(dropped, 0);
+    let mut answer = Vec::new();
+    guest_peer.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(answer, b"OK");
+}
+
+#[tokio::test]
+async fn an_answer_that_ends_before_the_body_is_sent_is_forwarded_and_the_upload_dropped() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (guest, mut guest_peer) = tokio::io::duplex(4096);
+    // One byte of room and a peer that never reads: the body cannot be written to the end.
+    let (mut upstream, mut upstream_peer) = tokio::io::duplex(1);
+    guest_peer.write_all(&[b'x'; 64]).await.unwrap();
+    let server = tokio::spawn(async move {
+        upstream_peer.write_all(b"E").await.unwrap();
+        upstream_peer.shutdown().await.unwrap();
+        upstream_peer
+    });
+    let mut client = BufReader::new(guest);
+    forward_one_request(&mut client, &mut upstream, Body::Length(64))
+        .await
+        .unwrap();
+    let _held_open = server.await.unwrap();
+    let mut answer = Vec::new();
+    guest_peer.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(answer, b"E");
+}
+
 mod company_network {
     use puddle_netpolicy::StaticSignals;
     use puddle_types::CompanySignal;
@@ -1755,7 +1858,7 @@ mod tunnel_end {
         let mut reader = ClientReader::new(Counted::new(near).0);
         reader.fill_buf().await.unwrap();
         drop(peer);
-        let end = tunnel(reader, server, None, None, None).await;
+        let end = tunnel(reader.into(), server, None, None, None, None).await;
         let line = end.http.expect("the early request line is kept");
         assert_eq!((line.method(), line.path()), ("GET", "/early"));
         assert!(!end.ssh && !end.token_endpoint);
@@ -1774,7 +1877,7 @@ mod tunnel_end {
         peer.write_all(b"SSH-2.0-OpenSSH_9.6\r\n").await.unwrap();
         let reader = ClientReader::new(Counted::new(near).0);
         let git = request("github.com");
-        let end = tunnel(reader, server, Some(&git), None, None).await;
+        let end = tunnel(reader.into(), server, Some(&git), None, None, None).await;
         assert!(end.ssh);
         assert!(end.http.is_none() && !end.token_endpoint);
         let mut said = String::new();
@@ -1841,7 +1944,7 @@ mod tunnel_end {
             .unwrap();
         let mut reader = ClientReader::new(Counted::new(near).0);
         reader.fill_buf().await.unwrap();
-        let end = tunnel(reader, server, None, None, Some(termination)).await;
+        let end = tunnel(reader.into(), server, None, None, Some(termination), None).await;
         assert!(end.token_endpoint);
         let mut alert = [0_u8; 7];
         tokio::io::AsyncReadExt::read_exact(&mut peer, &mut alert)

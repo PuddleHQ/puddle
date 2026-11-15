@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { cleanup, configure } from "@testing-library/svelte";
 import "@testing-library/jest-dom/vitest";
 import process from "node:process";

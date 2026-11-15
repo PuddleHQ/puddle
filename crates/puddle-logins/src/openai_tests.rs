@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `OpenAI` Codex profile: the login and the refresh answer with two JWTs and a refresh token, and
 //! the token exchange that trades the identity token for an API key answers in the same
 //! `access_token` field as the login does.

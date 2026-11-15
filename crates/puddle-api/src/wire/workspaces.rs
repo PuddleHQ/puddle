@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Wire types of the workspaces resource.
 
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceStatus,
+    CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceStatus,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -25,6 +25,8 @@ pub enum WorkspaceOperation {
     Reclaiming,
     /// Removing the sandbox so the next start makes a fresh root disk.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Cloning one repository into a running workspace; stop and delete are refused until it
     /// ends.
     Cloning,
@@ -40,6 +42,7 @@ impl From<domain::Operation> for WorkspaceOperation {
             domain::Operation::Stopping => Self::Stopping,
             domain::Operation::Reclaiming => Self::Reclaiming,
             domain::Operation::ResettingRootDisk => Self::ResettingRootDisk,
+            domain::Operation::GrowingRootDisk => Self::GrowingRootDisk,
             domain::Operation::Cloning => Self::Cloning,
             domain::Operation::Deleting => Self::Deleting,
         }
@@ -51,6 +54,10 @@ impl From<domain::Operation> for WorkspaceOperation {
 /// table's spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WorkspaceRepository {
+    /// The entry's id, unique within the workspace: what `/api/workspaces/{id}/repositories/{entry}`
+    /// and the `clone:<id>:<entry>` problem key use. It never changes while the entry is on the
+    /// list.
+    pub entry: EntryId,
     /// The HTTPS address it is cloned from, without credentials.
     pub url: String,
     /// The checkout it is cloned into, directly under the volume root.
@@ -60,6 +67,7 @@ pub struct WorkspaceRepository {
 impl From<domain::Repository> for WorkspaceRepository {
     fn from(r: domain::Repository) -> Self {
         Self {
+            entry: r.entry,
             url: r.url.as_str().to_owned(),
             directory: r.directory,
         }
@@ -134,6 +142,12 @@ pub struct Workspace {
     #[serde(default)]
     #[schema(required = true)]
     pub identities: Vec<crate::wire::NewWorkspaceIdentity>,
+    /// The hosts creating the workspace, or adding a repository to it, allowed for it because no
+    /// rule decided them (each is a rule made by the create, on the Rules screen). Only those
+    /// answers fill it; every other answer has an empty list.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub allowed_hosts: Vec<crate::wire::AllowedHost>,
 }
 
 impl Workspace {
@@ -178,6 +192,7 @@ impl Workspace {
             settings_error: None,
             first_connect_notice_due: false,
             identities: Vec::new(),
+            allowed_hosts: Vec::new(),
         }
     }
 
@@ -192,6 +207,13 @@ impl Workspace {
     #[must_use]
     pub fn with_identities(mut self, identities: Vec<crate::wire::NewWorkspaceIdentity>) -> Self {
         self.identities = identities;
+        self
+    }
+
+    /// The same workspace, with the hosts its create allowed.
+    #[must_use]
+    pub fn with_allowed_hosts(mut self, hosts: Vec<crate::wire::AllowedHost>) -> Self {
+        self.allowed_hosts = hosts;
         self
     }
 
@@ -295,12 +317,17 @@ impl NewWorkspaceRequest {
             .collect()
     }
 
-    /// The checked request; `identity_exists` says whether an identity id names one, and
+    /// The checked request for a workspace of `owner`; `identity_exists` says whether an identity
+    /// id names one, and
     /// `locals` holds what the service found at each [`NewWorkspaceRequest::local_paths`].
     pub(crate) fn into_new(
         self,
+        owner: puddle_store::UserId,
         identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
-        locals: &std::collections::BTreeMap<String, Result<domain::LocalSource, String>>,
+        locals: &std::collections::BTreeMap<
+            String,
+            Result<domain::LocalSource, domain::LocalCheckoutError>,
+        >,
     ) -> Result<domain::NewWorkspace, ApiError> {
         if self.repo_url.is_some() {
             return Err(ApiError::invalid(
@@ -332,14 +359,15 @@ impl NewWorkspaceRequest {
             .as_deref()
             .map(ImageRef::new)
             .transpose()
-            .map_err(|e| ApiError::invalid(e.to_string()))?;
+            .map_err(ApiError::invalid)?;
         let memory = self
             .memory_mib
             .map(MemoryMib::new)
             .transpose()
-            .map_err(|e| ApiError::invalid(e.to_string()))?;
+            .map_err(ApiError::invalid)?;
         let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
         Ok(domain::NewWorkspace {
+            owner,
             name,
             repositories,
             start_folder,
@@ -481,6 +509,16 @@ impl RenameWorkspaceRequest {
     }
 }
 
+/// `POST /api/workspaces/{id}/grow-root-disk`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GrowRootDiskRequest {
+    /// The new root disk size in MiB. It must be above the current size: a root disk only grows.
+    /// Required.
+    #[schema(minimum = 1)]
+    pub size_mib: u32,
+}
+
 /// `PUT /api/workspaces/{id}/session-user`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -525,6 +563,12 @@ pub struct AttachResponse {
     /// installed).
     #[schema(required = true)]
     pub message: Option<String>,
+    /// A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
+    /// for a client on another machine than the host (a browser on a device that reached
+    /// `puddle serve`). Present for a desktop attach, whether or not the host opened a window
+    /// itself; `null` for a browser attach.
+    #[schema(required = true)]
+    pub open_uri: Option<String>,
 }
 
 impl From<domain::Attached> for AttachResponse {
@@ -532,6 +576,7 @@ impl From<domain::Attached> for AttachResponse {
         Self {
             opened: a.opened,
             message: a.message,
+            open_uri: a.open_uri,
         }
     }
 }

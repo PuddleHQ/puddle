@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One workspace's shell init for its tab: the saved script, a save that is refused with what the
 // script printed (nothing is saved then), and the notice that something inside the workspace
 // changed Puddle's copy and Puddle put it back. The page reads the script again on

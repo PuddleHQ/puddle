@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host side of one agent connection: accept the yamux session, serve the control stream,
 //! hand every other stream to the proxy.
 //!
@@ -23,6 +23,7 @@
 
 use std::future::Future;
 use std::io;
+use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,7 +62,7 @@ pub const MAX_TAIL_CHARS: usize = 300;
 /// is then 0).
 pub const UNKNOWN_PROCESS: &str = "unknown";
 
-/// Longest agent version string kept for the log.
+/// Longest agent version string kept for the log and a protocol mismatch report.
 const MAX_VERSION_CHARS: usize = 64;
 
 /// Limits for one session. The defaults suit a real guest; tests shorten them.
@@ -148,6 +149,15 @@ pub trait StreamHandler: Send + Sync + 'static {
         async {}
     }
 
+    /// Serves one client of the guest's SSH agent socket: agent-protocol messages in, answers out
+    /// (the preamble already read). The default closes it with a logged reason: a handler without
+    /// a filtered agent has nothing to answer with.
+    fn ssh_agent(&self, stream: AgentStream) -> impl Future<Output = ()> + Send {
+        tracing::warn!("ssh-agent stream not served by this host, closed");
+        drop(stream);
+        async {}
+    }
+
     /// Takes a report about the workspace (an entrypoint exit, stub DNS trouble, capture rules the
     /// guest tore down or that cannot be installed), already cleaned
     /// and logged by the session. The default does nothing more. The report is the guest's claim:
@@ -205,6 +215,16 @@ pub enum AgentReport {
         /// characters replaced by `?`; `None` when the rules are installed.
         reason: Option<String>,
     },
+    /// The agent's hello named another control protocol than this host speaks. The session
+    /// ignores everything else that agent sends and opens nothing to it, so the report is the
+    /// only sign the host gets that the workspace runs without its agent.
+    ProtocolMismatch {
+        /// The agent's version as it said it, at most 64 characters, control characters replaced
+        /// by `?`.
+        agent_version: String,
+        /// The protocol the agent speaks.
+        protocol: u32,
+    },
 }
 
 /// Who wants to know what a workspace's agent says about the guest. Synchronous and quick: it
@@ -217,6 +237,11 @@ pub trait GuestWatcher: Send + Sync + 'static {
     /// The ports `workspace`'s guest listens on now: the whole set, ascending, no duplicates, at
     /// most [`MAX_PORTS`]. The guest's claim; nothing else is known.
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>);
+
+    /// An agent session of `workspace` ended, however it ended. The guest's agent restarting
+    /// ends one too, so this proves nothing alone; the VM dying is the case it is a fast hint
+    /// for.
+    fn session_ended(&self, workspace: &WorkspaceId);
 }
 
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
@@ -247,6 +272,37 @@ impl AsyncRead for GuestStream {
 }
 
 impl AsyncWrite for GuestStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+/// One `ssh-agent` stream after its preamble, handed to [`StreamHandler::ssh_agent`]. Its bytes
+/// come from the guest: the handler trusts none of them.
+#[derive(Debug)]
+pub struct AgentStream(BufReader<Prefixed<StreamHandle>>);
+
+impl AsyncRead for AgentStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for AgentStream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -434,6 +490,7 @@ async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Sh
             shared.control_open.store(false, Ordering::Release);
         }
         Ok((StreamKind::Resolve, 1)) => serve_resolve(reader, &shared).await,
+        Ok((StreamKind::SshAgent, 1)) => shared.handler.ssh_agent(AgentStream(reader)).await,
         Ok((kind, version)) => {
             tracing::warn!(workspace = %shared.workspace, kind = kind.name(), version, "stream kind not served by this host, closed");
         }
@@ -488,6 +545,7 @@ async fn serve_resolve<H: StreamHandler>(
     };
     let stream = reader.get_mut();
     if stream.write_all(&line).await.is_ok() {
+        // the line is already sent; a failed shutdown only means the peer closed first
         let _ = stream.shutdown().await;
     }
 }
@@ -504,6 +562,9 @@ async fn serve_control<H: StreamHandler>(
         Instant::now(),
     );
     let mut line = Vec::with_capacity(256);
+    // Set by a hello on another protocol: what such an agent sends may mean something else here,
+    // so nothing after it counts. The stream stays open, so the agent does not reopen it in a loop.
+    let mut refused = false;
     loop {
         match control::read_line(&mut reader, &mut line, MAX_LINE).await {
             Ok(true) => {}
@@ -521,7 +582,10 @@ async fn serve_control<H: StreamHandler>(
             limit.suppressed = 0;
         }
         match AgentMessage::from_line(&line) {
-            Ok(msg) => on_message(msg, shared).await,
+            Ok(_) if refused => {
+                tracing::debug!(%workspace, "control message from an agent on another protocol ignored");
+            }
+            Ok(msg) => refused = on_message(msg, shared).await.is_break(),
             Err(err) => tracing::warn!(%workspace, error = %err, "invalid control message ignored"),
         }
     }
@@ -531,7 +595,9 @@ async fn serve_control<H: StreamHandler>(
     }
 }
 
-async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
+/// Acts on one control message. `Break` when the agent speaks another protocol: the caller ignores
+/// the rest of the stream.
+async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) -> ControlFlow<()> {
     let workspace = &shared.workspace;
     match msg {
         AgentMessage::Hello {
@@ -540,7 +606,15 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
         } => {
             let version = clean(&agent_version, MAX_VERSION_CHARS);
             if protocol != PROTOCOL_VERSION {
-                tracing::warn!(%workspace, agent_protocol = protocol, host_protocol = PROTOCOL_VERSION, "guest agent speaks another control protocol; connection kept");
+                tracing::warn!(%workspace, agent_version = %version, agent_protocol = protocol, host_protocol = PROTOCOL_VERSION, "guest agent speaks another control protocol; its reports are ignored and nothing is sent to it");
+                shared
+                    .handler
+                    .agent_report(AgentReport::ProtocolMismatch {
+                        agent_version: version,
+                        protocol,
+                    })
+                    .await;
+                return ControlFlow::Break(());
             }
             tracing::info!(%workspace, agent_version = %version, protocol, "guest agent connected");
             shared.handler.guest_link(shared.link.clone()).await;
@@ -610,6 +684,7 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
             tracing::debug!(%workspace, "unknown control message ignored");
         }
     }
+    ControlFlow::Continue(())
 }
 
 /// The three messages about the capture rules, each becoming a report.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for SSH from a workspace. SSH to a Git host's name is refused at once, whatever the
 //! port, with the reason `ssh_unsupported`; it never reaches the rules, the inbox or the
 //! resolver, and nothing of it reaches a server. SSH to any other name is decided by the rules like
@@ -19,7 +19,7 @@ use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
-use puddle_proxy::{BoxFuture, Proxy, Resolver, Route};
+use puddle_proxy::{BoxFuture, PortProbe, Proxy, Resolver, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, WorkspaceId,
 };
@@ -54,6 +54,15 @@ impl Rig {
     }
 
     fn build(names: &[&str], any_address: bool) -> Self {
+        Self::build_with(names, any_address, |proxy| proxy)
+    }
+
+    /// As [`Self::new`], with `tune` applied to the proxy before it serves.
+    fn with_proxy(names: &[&str], tune: impl FnOnce(Proxy) -> Proxy) -> Self {
+        Self::build_with(names, true, tune)
+    }
+
+    fn build_with(names: &[&str], any_address: bool, tune: impl FnOnce(Proxy) -> Proxy) -> Self {
         let policy = Arc::new(StaticPolicy::new());
         let log = Arc::new(CollectingConnectionLog::new());
         let resolver = names
@@ -66,7 +75,7 @@ impl Rig {
         if any_address {
             proxy = proxy.with_address_check(Arc::new(AnyAddress));
         }
-        let proxy = Arc::new(proxy);
+        let proxy = Arc::new(tune(proxy));
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
         Self {
@@ -266,6 +275,95 @@ async fn an_announced_ssh_connect_to_a_git_host_is_refused_on_any_port_before_an
     assert_ssh_refusals(&rig.events(authorities.len()).await, authorities.len());
 }
 
+/// A probe that answers as set and counts how often it was asked.
+struct FixedProbe {
+    reachable: bool,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl FixedProbe {
+    fn answering(reachable: bool) -> Arc<Self> {
+        Arc::new(Self {
+            reachable,
+            asked: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl PortProbe for FixedProbe {
+    fn reachable<'a>(&'a self, _host: &'a str, _port: u16) -> BoxFuture<'a, bool> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move { self.reachable })
+    }
+}
+
+const AZURE_BLOCKED: &str = "puddle: your company network blocks SSH to ssh.dev.azure.com:22; HTTPS remotes work and need no key: Puddle adds your credentials\n";
+
+#[tokio::test]
+async fn ssh_to_azure_devops_names_the_company_network_when_the_hosts_probe_of_port_22_failed() {
+    let probe = FixedProbe::answering(false);
+    let rig = Rig::with_proxy(&[], |p| p.with_port_probe(probe.clone()));
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("ssh.dev.azure.com:22").await;
+    assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+    assert!(
+        answer.contains("x-puddle-blocked: ssh_unsupported\r\n"),
+        "{answer}"
+    );
+    assert!(answer.ends_with(AZURE_BLOCKED), "{answer}");
+    assert_eq!(probe.asked(), 1);
+    assert_eq!(rig.policy.decisions(), 0, "the rules were never asked");
+    assert_ssh_refusals(&rig.events(1).await, 1);
+}
+
+#[tokio::test]
+async fn ssh_to_azure_devops_keeps_the_ordinary_refusal_when_the_port_is_reachable() {
+    let probe = FixedProbe::answering(true);
+    let rig = Rig::with_proxy(&[], |p| p.with_port_probe(probe.clone()));
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("ssh.dev.azure.com:22").await;
+    assert!(
+        answer.ends_with(
+            "puddle: SSH is not supported yet, use HTTPS: the remote becomes https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO\n"
+        ),
+        "{answer}"
+    );
+    assert_eq!(probe.asked(), 1);
+}
+
+#[tokio::test]
+async fn only_azure_devops_on_port_22_is_probed() {
+    let probe = FixedProbe::answering(false);
+    let rig = Rig::with_proxy(&[], |p| p.with_port_probe(probe.clone()));
+    let mut guest = rig.guest().await;
+    for authority in [
+        "ssh.dev.azure.com:443",
+        "vs-ssh.visualstudio.com:22",
+        "github.com:22",
+        "gitlab.com:22",
+    ] {
+        let answer = guest.announce(authority).await;
+        assert!(
+            answer.contains("puddle: SSH is not supported yet"),
+            "{authority}: {answer}"
+        );
+        assert!(!answer.contains("company network"), "{authority}: {answer}");
+    }
+    assert_eq!(probe.asked(), 0, "no probe for any other destination");
+}
+
+#[tokio::test]
+async fn without_a_probe_azure_devops_gets_the_ordinary_refusal() {
+    let rig = Rig::new(&[]);
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("ssh.dev.azure.com:22").await;
+    assert!(!answer.contains("company network"), "{answer}");
+}
+
 #[tokio::test]
 async fn the_refusal_gives_the_https_form_of_a_known_git_hosts_remote() {
     let rig = Rig::new(&[]);
@@ -418,6 +516,112 @@ async fn an_allowed_name_gets_its_ssh_spliced_end_to_end_on_any_port() {
         assert_eq!(event.decision, ConnectionDecision::Allow, "{event:?}");
         assert_eq!(event.reason, ConnectionReason::Rule, "{event:?}");
     }
+}
+
+/// The refusal a guest gets for SSH to `gitlab.com` inside an allowed tunnel.
+const GITLAB_REFUSAL: &str = "puddle: SSH is not supported yet, use HTTPS: the remote becomes https://gitlab.com/GROUP/PROJECT.git\r\n";
+
+/// Reads `tunnel` to its end; a tunnel the proxy keeps open fails the test instead of hanging it.
+async fn read_to_end(tunnel: &mut StreamHandle) -> String {
+    let mut answer = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), tunnel.read_to_end(&mut answer))
+        .await
+        .expect("the proxy ends the tunnel")
+        .unwrap();
+    String::from_utf8(answer).unwrap()
+}
+
+#[tokio::test]
+async fn hostile_hg58_ssh_to_a_git_host_split_into_small_writes_inside_an_allowed_tunnel_is_still_refused()
+ {
+    let server = Silent::start().await;
+    let rig = Rig::new(&["gitlab.com"]);
+    rig.policy.allow(&host("gitlab.com"));
+    let mut guest = rig.guest().await;
+    let mut tunnel = guest
+        .tunnel(&format!("gitlab.com:{}", server.addr.port()))
+        .await;
+    let (head, rest) = BANNER.split_at(1);
+    let (middle, rest) = rest.split_at(3);
+    // flake-ok: a send loop, not a wait for a condition: it writes each chunk of a split banner.
+    for chunk in [head, middle, rest] {
+        tunnel.write_all(chunk).await.unwrap();
+        tunnel.flush().await.unwrap();
+        // flake-ok: paces the writes so each tends to be its own read at the proxy; the refusal must not depend on it.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert_eq!(read_to_end(&mut tunnel).await, GITLAB_REFUSAL);
+    assert_eq!(
+        server.received(),
+        b"",
+        "nothing of the banner reached the server"
+    );
+}
+
+#[tokio::test]
+async fn hostile_hg58_ssh_to_a_git_host_with_one_byte_behind_the_connect_head_is_still_refused() {
+    let server = Silent::start().await;
+    let rig = Rig::new(&["gitlab.com"]);
+    rig.policy.allow(&host("gitlab.com"));
+    let mut guest = rig.guest().await;
+    let mut tunnel = guest.control.open_stream().await.unwrap();
+    let mut first = connect(&format!("gitlab.com:{}", server.addr.port()), &[]).into_bytes();
+    let (early, rest) = BANNER.split_at(1);
+    first.extend_from_slice(early);
+    tunnel.write_all(&first).await.unwrap();
+    tunnel.flush().await.unwrap();
+    let mut answer = [0u8; 12];
+    tunnel.read_exact(&mut answer).await.unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 200");
+    tunnel.write_all(rest).await.unwrap();
+    tunnel.flush().await.unwrap();
+    let answer = read_to_end(&mut tunnel).await;
+    assert!(answer.ends_with(GITLAB_REFUSAL), "{answer:?}");
+    assert_eq!(
+        server.received(),
+        b"",
+        "nothing of the banner reached the server"
+    );
+}
+
+#[tokio::test]
+async fn first_bytes_to_a_git_host_that_only_start_like_a_banner_pass_unchanged() {
+    // The gate holds a prefix of `SSH-` until the next byte tells; what turns out not to be a
+    // banner, or ends early, reaches the server whole and in order.
+    let server = Silent::start().await;
+    let rig = Rig::new(&["gitlab.com"]);
+    rig.policy.allow(&host("gitlab.com"));
+    let mut guest = rig.guest().await;
+    let authority = format!("gitlab.com:{}", server.addr.port());
+    let sent: [&[&[u8]]; 3] = [&[b"SS", b"H-x rest"], &[b"S", b"QL"], &[b"SSH-"]];
+    let mut expected = Vec::new();
+    for chunks in sent {
+        let mut tunnel = guest.tunnel(&authority).await;
+        // flake-ok: a send loop, not a wait for a condition: it writes each chunk of a split upload.
+        for chunk in chunks {
+            tunnel.write_all(chunk).await.unwrap();
+            tunnel.flush().await.unwrap();
+            // flake-ok: paces the writes so each tends to be its own read at the proxy; the bytes must pass either way.
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            expected.extend_from_slice(chunk);
+        }
+        tunnel.shutdown().await.unwrap();
+        let want = expected.len();
+        puddle_test_kit::eventually(
+            "the server received the bytes",
+            Duration::from_secs(5),
+            || {
+                let got = server.received().len();
+                if got >= want {
+                    Ok(())
+                } else {
+                    Err(format!("{got} of {want} bytes"))
+                }
+            },
+        )
+        .await;
+    }
+    assert_eq!(server.received(), expected);
 }
 
 #[tokio::test]
@@ -609,4 +813,582 @@ async fn a_guest_that_leaves_before_the_200_ends_its_tunnel_quietly() {
     assert_eq!(events.first().unwrap().decision, ConnectionDecision::Allow);
     assert_eq!(server.received().len(), 0);
     driver.abort();
+}
+
+mod filtered_agent {
+    //! The filtered SSH agent end to end: a spliced SSH connection to a host the agent is on for
+    //! shows its key exchange, and an `ssh-agent` stream of the same workspace binds to that
+    //! session and gets a login signed. A Git host's key is refused however the session looks.
+
+    use std::collections::HashMap;
+
+    use puddle_agent_proto::kind::StreamKind;
+    use puddle_ca::CaBuilder;
+    use puddle_proxy::ssh_agent::{AgentGate, ApproveEverything, HostAgent, SshAgents};
+    use puddle_proxy::{NoInjection, Termination, TerminationSet, Terminations};
+    use puddle_ssh_agent::filter::{AllowedKeys, Disapproval, Outcome};
+    use puddle_ssh_agent::request;
+    use puddle_ssh_agent::testing::{
+        TestKey, bind, framed, login, packet, server_kex, sign_request, string,
+    };
+    use puddle_ssh_agent::{AgentError, Identity};
+
+    use super::*;
+
+    const SESSION: [u8; 32] = [0x5e; 32];
+    const GITHUB_ED25519: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+
+    struct FakeAgent {
+        user: Vec<u8>,
+        signed: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl HostAgent for FakeAgent {
+        fn list(&self) -> Result<Vec<Identity>, AgentError> {
+            Ok(vec![Identity::new(self.user.clone(), "me@desk".into())])
+        }
+
+        fn sign(&self, _key: &[u8], data: &[u8], _flags: u32) -> Result<Vec<u8>, AgentError> {
+            self.signed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(data.to_vec());
+            Ok(b"SIGNATURE".to_vec())
+        }
+    }
+
+    /// A server that sends `kex` on every connection and keeps it open.
+    async fn kex_server(kex: Vec<u8>) -> SocketAddr {
+        let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let kex = kex.clone();
+                tokio::spawn(async move {
+                    conn.write_all(&kex).await.unwrap();
+                    let mut buf = [0u8; 1024];
+                    while matches!(conn.read(&mut buf).await, Ok(n) if n > 0) {}
+                });
+            }
+        });
+        addr
+    }
+
+    struct AgentRig {
+        agents: Arc<SshAgents>,
+        agent: Arc<FakeAgent>,
+        user: TestKey,
+        guest: Guest,
+        _route: Route,
+        _root: IpcRoot,
+    }
+
+    /// Workspace `box` may reach `nas.test`, and has the agent on for it with every key.
+    async fn agent_rig() -> AgentRig {
+        agent_rig_with(&puddle_proxy::ProxyConfig::default()).await
+    }
+
+    async fn agent_rig_with(config: &puddle_proxy::ProxyConfig) -> AgentRig {
+        agent_rig_allowing(config, AllowedKeys::All).await
+    }
+
+    async fn agent_rig_allowing(config: &puddle_proxy::ProxyConfig, keys: AllowedKeys) -> AgentRig {
+        agent_rig_gated(config, keys, Arc::new(ApproveEverything)).await
+    }
+
+    /// The user's answer to the first-use question, fixed: no, or no answer in time.
+    struct Unapproved(Disapproval);
+
+    impl AgentGate for Unapproved {
+        fn approve(&self, _: &WorkspaceId, _: &str, _: &[u8]) -> Result<(), Disapproval> {
+            Err(self.0)
+        }
+
+        fn record(&self, _: &WorkspaceId, _: Option<&str>, _: &Outcome) {}
+    }
+
+    async fn agent_rig_gated(
+        config: &puddle_proxy::ProxyConfig,
+        keys: AllowedKeys,
+        gate: Arc<dyn AgentGate>,
+    ) -> AgentRig {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("nas.test"));
+        let user = TestKey::ed25519(2);
+        let agent = Arc::new(FakeAgent {
+            user: user.blob(),
+            signed: Mutex::new(Vec::new()),
+        });
+        let agents = Arc::new(SshAgents::new(agent.clone(), gate));
+        let terminations = Arc::new(Terminations::new());
+        let ca = Arc::new(CaBuilder::new("test").build().unwrap());
+        terminations.insert(
+            WorkspaceId::new("box").unwrap(),
+            Termination::new(TerminationSet::new(), ca, Arc::new(NoInjection))
+                .with_ssh_agent_hosts(HashMap::from([(host("nas.test"), keys)])),
+        );
+        let proxy = Arc::new(
+            Proxy::new(policy, Arc::new(NullSink))
+                .with_resolver(Arc::new(StaticResolver::new().with("nas.test", &[LOCAL])))
+                .with_address_check(Arc::new(AnyAddress))
+                .with_config(*config)
+                .with_termination(terminations, puddle_upstream::TlsClient::new([]).unwrap())
+                .with_ssh_agent(Arc::clone(&agents)),
+        );
+        let root = IpcRoot::new().unwrap();
+        let route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
+        let conn = puddle_ipc::connect(route.endpoint().path()).await.unwrap();
+        let mut session = Session::new_client(conn, client_config());
+        let control = session.control();
+        let driver = tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });
+        AgentRig {
+            agents,
+            agent,
+            user,
+            guest: Guest { control, driver },
+            _route: route,
+            _root: root,
+        }
+    }
+
+    impl AgentRig {
+        /// An announced SSH tunnel to the server at `addr`, read up to the end of `kex`, and the
+        /// filtered agent has the session.
+        async fn spliced(&mut self, addr: SocketAddr, kex: &[u8]) -> StreamHandle {
+            let mut tunnel = self
+                .guest
+                .tunnel_with(
+                    &format!("nas.test:{}", addr.port()),
+                    &["x-puddle-protocol: ssh"],
+                )
+                .await;
+            tunnel.write_all(BANNER).await.unwrap();
+            let mut seen = vec![0u8; kex.len()];
+            tokio::time::timeout(Duration::from_secs(5), tunnel.read_exact(&mut seen))
+                .await
+                .expect("the server's key exchange reaches the guest")
+                .unwrap();
+            assert_eq!(seen, kex, "the guest gets the server's bytes unchanged");
+            assert_eq!(self.agents.seen_sessions(), 1);
+            tunnel
+        }
+
+        async fn agent_stream(&mut self) -> StreamHandle {
+            let mut stream = self.guest.control.open_stream().await.unwrap();
+            stream
+                .write_all(StreamKind::SshAgent.preamble())
+                .await
+                .unwrap();
+            stream
+        }
+    }
+
+    /// The proxy closes `stream` without an answer.
+    async fn closed(mut stream: StreamHandle) {
+        let mut rest = Vec::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+            .await
+            .expect("the proxy closes the stream");
+        assert!(read.is_err() || rest.is_empty(), "{read:?} {rest:?}");
+    }
+
+    #[tokio::test]
+    async fn a_host_without_a_filtered_agent_closes_agent_streams() {
+        let rig = Rig::new(&[]);
+        let mut guest = rig.guest().await;
+        let mut stream = guest.control.open_stream().await.unwrap();
+        stream
+            .write_all(StreamKind::SshAgent.preamble())
+            .await
+            .unwrap();
+        stream.write_all(&framed(&[11])).await.unwrap();
+        closed(stream).await;
+    }
+
+    #[tokio::test]
+    async fn an_agent_stream_over_the_stream_limit_is_closed_and_a_finished_one_frees_its_place() {
+        let mut rig =
+            agent_rig_with(&puddle_proxy::ProxyConfig::default().with_max_streams_per_workspace(1))
+                .await;
+        let mut first = rig.agent_stream().await;
+        assert_eq!(ask(&mut first, &[11]).await, request::identities(&[]));
+        let mut second = rig.agent_stream().await;
+        second.write_all(&framed(&[11])).await.unwrap();
+        closed(second).await;
+        // The guest ends the first; the proxy ends its side too and the place is free again.
+        first.shutdown().await.unwrap();
+        closed(first).await;
+        let mut third = rig.agent_stream().await;
+        assert_eq!(ask(&mut third, &[11]).await, request::identities(&[]));
+    }
+
+    async fn ask(stream: &mut StreamHandle, message: &[u8]) -> Vec<u8> {
+        stream.write_all(&framed(message)).await.unwrap();
+        let mut len = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut len))
+            .await
+            .expect("the filtered agent answers")
+            .unwrap();
+        let mut body = vec![0u8; u32::from_be_bytes(len) as usize];
+        stream.read_exact(&mut body).await.unwrap();
+        framed(&body)
+    }
+
+    #[tokio::test]
+    async fn an_agent_stream_binds_to_a_spliced_session_and_gets_its_login_signed() {
+        let server = TestKey::ed25519(1);
+        let kex = server_kex(&server, &server.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        let tunnel = rig.spliced(addr, &kex).await;
+        let mut agent = rig.agent_stream().await;
+        let the_bind = bind(&server.blob(), &SESSION, &server.sign(&SESSION), false);
+        assert_eq!(ask(&mut agent, &the_bind).await, request::success());
+        let key = rig.user.blob();
+        let listed = Identity::new(key.clone(), String::new());
+        assert_eq!(
+            ask(&mut agent, &[11]).await,
+            request::identities(&[&listed])
+        );
+        let data = login(&SESSION, &key, Some(&server.blob()));
+        assert_eq!(
+            ask(&mut agent, &sign_request(&key, &data, 0)).await,
+            request::signature(b"SIGNATURE")
+        );
+        assert_eq!(
+            *rig.agent
+                .signed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            vec![data]
+        );
+        // Once the tunnel is gone its session binds nothing.
+        drop(tunnel);
+        puddle_test_kit::eventually(
+            "the closed tunnel's session is forgotten",
+            Duration::from_secs(5),
+            || match rig.agents.seen_sessions() {
+                0 => Ok(()),
+                n => Err(format!("{n} kept")),
+            },
+        )
+        .await;
+        let mut late = rig.agent_stream().await;
+        assert_eq!(ask(&mut late, &the_bind).await, request::failure());
+    }
+
+    #[tokio::test]
+    async fn hostile_hg52_a_first_use_the_user_has_not_approved_signs_nothing() {
+        for why in [Disapproval::Denied, Disapproval::Unanswered] {
+            let server = TestKey::ed25519(1);
+            let kex = server_kex(&server, &server.sign(&SESSION));
+            let addr = kex_server(kex.clone()).await;
+            let mut rig = agent_rig_gated(
+                &puddle_proxy::ProxyConfig::default(),
+                AllowedKeys::All,
+                Arc::new(Unapproved(why)),
+            )
+            .await;
+            let _tunnel = rig.spliced(addr, &kex).await;
+            let mut agent = rig.agent_stream().await;
+            let the_bind = bind(&server.blob(), &SESSION, &server.sign(&SESSION), false);
+            assert_eq!(ask(&mut agent, &the_bind).await, request::success());
+            let key = rig.user.blob();
+            // Listing keys is no use of a key: only a signature waits for the user.
+            let listed = Identity::new(key.clone(), String::new());
+            assert_eq!(
+                ask(&mut agent, &[11]).await,
+                request::identities(&[&listed])
+            );
+            let data = login(&SESSION, &key, Some(&server.blob()));
+            assert_eq!(
+                ask(&mut agent, &sign_request(&key, &data, 0)).await,
+                request::failure(),
+                "{why:?}"
+            );
+            assert!(
+                rig.agent
+                    .signed
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_empty(),
+                "{why:?}: the user's agent signed without an approval"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_with_a_git_hosts_key_is_refused_even_when_spliced_and_on() {
+        use ssh_key::PublicKey;
+        let github = PublicKey::from_openssh(GITHUB_ED25519).unwrap();
+        // A server that shows GitHub's host key with a well-formed signature that cannot be
+        // right: the deny list decides before the signature is checked.
+        let signature = [string(b"ssh-ed25519"), string(&[0; 64])].concat();
+        let kex = server_kex_with_blob(&github.to_bytes().unwrap(), &signature);
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        let _tunnel = rig.spliced(addr, &kex).await;
+        let mut agent = rig.agent_stream().await;
+        let the_bind = bind(&github.to_bytes().unwrap(), &SESSION, &signature, false);
+        assert_eq!(ask(&mut agent, &the_bind).await, request::failure());
+        assert_eq!(
+            ask(&mut agent, &[11]).await,
+            request::identities(&[]),
+            "nothing listed without a bind"
+        );
+        assert!(
+            rig.agent
+                .signed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+        );
+    }
+
+    /// What a hostile guest asks the agent in the hope of a signature: each must be answered with
+    /// failure and reach the user's agent never.
+    async fn refused_all(stream: &mut StreamHandle, messages: &[Vec<u8>]) {
+        for message in messages {
+            assert_eq!(
+                ask(stream, message).await,
+                request::failure(),
+                "{message:02x?}"
+            );
+        }
+    }
+
+    fn never_signed(rig: &AgentRig) {
+        assert!(
+            rig.agent
+                .signed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty(),
+            "the user's agent signed nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn hostile_hg52_without_a_bind_or_with_a_bind_for_a_session_that_never_crossed_puddle_nothing_is_signed()
+     {
+        let server = TestKey::ed25519(1);
+        let kex = server_kex(&server, &server.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        let _tunnel = rig.spliced(addr, &kex).await;
+        let key = rig.user.blob();
+        let data = login(&SESSION, &key, Some(&server.blob()));
+        let mut agent = rig.agent_stream().await;
+        // No bind at all: the list is empty and the login is refused.
+        assert_eq!(ask(&mut agent, &[11]).await, request::identities(&[]));
+        refused_all(&mut agent, &[sign_request(&key, &data, 0)]).await;
+        // A bind for a session of another server, one that Puddle never saw: for the jump
+        // host's inner session, a key of the guest's own, and a real host key with a session id
+        // its signature does not cover.
+        let other = TestKey::ed25519(9);
+        let other_session = [0x77; 32];
+        let foreign = [
+            bind(
+                &other.blob(),
+                &other_session,
+                &other.sign(&other_session),
+                false,
+            ),
+            bind(
+                &server.blob(),
+                &other_session,
+                &server.sign(&SESSION),
+                false,
+            ),
+            bind(&server.blob(), &SESSION, &other.sign(&SESSION), false),
+            bind(&server.blob(), &SESSION, &[], false),
+            bind(&[], &SESSION, &server.sign(&SESSION), false),
+        ];
+        refused_all(&mut agent, &foreign).await;
+        assert_eq!(
+            ask(&mut agent, &[11]).await,
+            request::identities(&[]),
+            "a refused bind lists nothing"
+        );
+        refused_all(&mut agent, &[sign_request(&key, &data, 0)]).await;
+        // A bind that forwards, and a second bind on the way to a real one, do not help either.
+        let forwarding = bind(&server.blob(), &SESSION, &server.sign(&SESSION), true);
+        refused_all(&mut agent, &[forwarding]).await;
+        refused_all(&mut agent, &[sign_request(&key, &data, 0)]).await;
+        never_signed(&rig);
+    }
+
+    #[tokio::test]
+    async fn hostile_hg52_a_bound_session_still_gets_no_commit_signature_no_edit_and_no_other_keys()
+    {
+        let server = TestKey::ed25519(1);
+        let kex = server_kex(&server, &server.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        let _tunnel = rig.spliced(addr, &kex).await;
+        let mut agent = rig.agent_stream().await;
+        let the_bind = bind(&server.blob(), &SESSION, &server.sign(&SESSION), false);
+        assert_eq!(ask(&mut agent, &the_bind).await, request::success());
+        let key = rig.user.blob();
+        let sshsig = |namespace: &[u8]| {
+            [
+                b"SSHSIG".as_slice(),
+                &[0, 0, 0, 1],
+                &string(namespace),
+                &string(b""),
+                &string(b"sha512"),
+            ]
+            .concat()
+        };
+        let mut extension = vec![27];
+        extension.extend(string(b"query"));
+        let mut hostile = vec![
+            sign_request(&key, &sshsig(b"git"), 0),
+            sign_request(&key, &sshsig(b"file"), 0),
+            sign_request(&key, b"any other data", 0),
+            sign_request(&key, &login(&[0x01; 32], &key, Some(&server.blob())), 0),
+            sign_request(
+                &key,
+                &login(&SESSION, &key, Some(&TestKey::ed25519(8).blob())),
+                0,
+            ),
+            sign_request(
+                &TestKey::ed25519(7).blob(),
+                &login(&SESSION, &key, Some(&server.blob())),
+                0,
+            ),
+            extension,
+        ];
+        // Add (17, 25), remove (18, 19), lock (22), unlock (23), add-smartcard (20, 26) and
+        // constrained keys, each with an empty body.
+        hostile.extend([17, 18, 19, 20, 21, 22, 23, 25, 26].map(|kind| vec![kind, 0, 0, 0, 0]));
+        refused_all(&mut agent, &hostile).await;
+        never_signed(&rig);
+        // The connection and its bind survive all of it: the real login still works.
+        let data = login(&SESSION, &key, Some(&server.blob()));
+        assert_eq!(
+            ask(&mut agent, &sign_request(&key, &data, 0)).await,
+            request::signature(b"SIGNATURE")
+        );
+    }
+
+    #[tokio::test]
+    async fn hostile_hg52_the_keys_of_another_host_are_neither_listed_nor_signed_with() {
+        let server = TestKey::ed25519(1);
+        let kex = server_kex(&server, &server.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        // The agent holds the user's key; the host may use only another one.
+        let only_other = AllowedKeys::Only(std::collections::BTreeSet::from([
+            TestKey::ed25519(6).fingerprint()
+        ]));
+        let mut rig = agent_rig_allowing(&puddle_proxy::ProxyConfig::default(), only_other).await;
+        let _tunnel = rig.spliced(addr, &kex).await;
+        let mut agent = rig.agent_stream().await;
+        let the_bind = bind(&server.blob(), &SESSION, &server.sign(&SESSION), false);
+        assert_eq!(ask(&mut agent, &the_bind).await, request::success());
+        assert_eq!(ask(&mut agent, &[11]).await, request::identities(&[]));
+        let key = rig.user.blob();
+        let data = login(&SESSION, &key, Some(&server.blob()));
+        refused_all(&mut agent, &[sign_request(&key, &data, 0)]).await;
+        never_signed(&rig);
+    }
+
+    #[tokio::test]
+    async fn hostile_hg53_a_login_to_github_through_the_jump_host_gets_no_signature() {
+        use ssh_key::PublicKey;
+        // `ssh -J jump.example git@github.com`: the jump host's own session is spliced and the
+        // agent is on for it. The inner session to GitHub runs inside a channel of the first, so
+        // Puddle never sees its key exchange; the guest's ssh binds to it with GitHub's host key.
+        let jump = TestKey::ed25519(1);
+        let kex = server_kex(&jump, &jump.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        let _tunnel = rig.spliced(addr, &kex).await;
+        let mut agent = rig.agent_stream().await;
+        let jump_bind = bind(&jump.blob(), &SESSION, &jump.sign(&SESSION), false);
+        assert_eq!(ask(&mut agent, &jump_bind).await, request::success());
+        let github = PublicKey::from_openssh(GITHUB_ED25519)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
+        let inner_session = [0x1d; 32];
+        let key = rig.user.blob();
+        let signature = [string(b"ssh-ed25519"), string(&[0; 64])].concat();
+        // ssh opens one agent connection per session: the inner session's is a second stream.
+        let mut inner = rig.agent_stream().await;
+        let inner_bind = bind(&github, &inner_session, &signature, false);
+        let inner_login = login(&inner_session, &key, Some(&github));
+        refused_all(
+            &mut inner,
+            &[
+                inner_bind.clone(),
+                sign_request(&key, &inner_login, 0),
+                sign_request(&key, &login(&inner_session, &key, None), 0),
+            ],
+        )
+        .await;
+        assert_eq!(ask(&mut inner, &[11]).await, request::identities(&[]));
+        // A guest that sends the inner bind down the jump host's own connection loses that
+        // binding too: nothing is signed there afterwards, for either session.
+        let data = login(&SESSION, &key, Some(&jump.blob()));
+        refused_all(&mut agent, &[inner_bind]).await;
+        refused_all(
+            &mut agent,
+            &[
+                sign_request(&key, &inner_login, 0),
+                sign_request(&key, &data, 0),
+            ],
+        )
+        .await;
+        never_signed(&rig);
+        // The jump host's own login, the one thing the agent is on for, works on a connection
+        // that binds it alone.
+        let mut again = rig.agent_stream().await;
+        assert_eq!(ask(&mut again, &jump_bind).await, request::success());
+        assert_eq!(
+            ask(&mut again, &sign_request(&key, &data, 0)).await,
+            request::signature(b"SIGNATURE")
+        );
+        assert_eq!(
+            *rig.agent
+                .signed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            vec![data],
+            "only the jump host's login was signed"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_an_announced_tunnel_to_a_host_the_agent_is_on_for_is_watched() {
+        let server = TestKey::ed25519(1);
+        let kex = server_kex(&server, &server.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        // Not announced: the same server, the same host, no session kept.
+        let mut tunnel = rig.guest.tunnel(&format!("nas.test:{}", addr.port())).await;
+        tunnel.write_all(BANNER).await.unwrap();
+        let mut seen = vec![0u8; kex.len()];
+        tokio::time::timeout(Duration::from_secs(5), tunnel.read_exact(&mut seen))
+            .await
+            .expect("the server's bytes reach the guest")
+            .unwrap();
+        assert_eq!(seen, kex);
+        assert_eq!(rig.agents.seen_sessions(), 0);
+    }
+
+    /// [`server_kex`] with a host key given as a blob, for a key this test has no private half of.
+    fn server_kex_with_blob(host_key: &[u8], signature: &[u8]) -> Vec<u8> {
+        let mut out = b"SSH-2.0-TestServer\r\n".to_vec();
+        out.extend(packet(&[20; 17]));
+        let mut reply = vec![31];
+        reply.extend(string(host_key));
+        reply.extend(string(&[7; 32]));
+        reply.extend(string(signature));
+        out.extend(packet(&reply));
+        out.extend(packet(&[21]));
+        out
+    }
 }

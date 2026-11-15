@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The full-coverage gate (docs/STANDARDS.md, "Coverage"): in every crate listed in
 // scripts/full-coverage-crates.txt, every executable line under src/ must have run in a test of the
 // workspace run, except the lines scripts/full-coverage-exclusions.txt names with a reason. The

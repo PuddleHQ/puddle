@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #![allow(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 //! The fake tool leaves no coverage profile file: the tests kill it on a timeout, and a kill
 //! during the exit-time write leaves a cut file that fails the whole coverage merge.

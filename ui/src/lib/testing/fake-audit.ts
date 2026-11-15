@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for `GET /api/audit` and `GET /api/workspaces`, for unit and component tests, in the
 // shape openapi-fetch returns them. It filters and pages like the API does. Not shipped (tests
 // import it).
@@ -36,6 +36,8 @@ export function connection(
       injected: false,
       unswapped_stand_ins: [],
       scrubbed_stand_ins: [],
+      foreign_credentials: [],
+      answer_credentials: [],
       refused_address: null,
       refused_reason: null,
       category: null,
@@ -89,6 +91,7 @@ export interface AuditQuery {
   workspace?: string;
   type?: string;
   outcome?: string;
+  category?: string;
   q?: string;
   from?: number;
   to?: number;
@@ -151,6 +154,9 @@ export class FakeAudit {
           workspaceOf(record) === query.workspace) &&
         (query.type === undefined || record.type === query.type) &&
         (query.outcome === undefined || outcomeOf(record) === query.outcome) &&
+        (query.category === undefined ||
+          (record.type === "connection" &&
+            record.category === query.category)) &&
         (query.q === undefined ||
           searchTextOf(record).includes(query.q.toLowerCase())) &&
         (query.from === undefined || record.ts >= query.from) &&

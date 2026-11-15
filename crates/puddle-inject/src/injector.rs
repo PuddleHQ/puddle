@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The injector for one workspace: what happens to each request on a decrypted Git host.
 //!
 //! In order, for a request that reads as a Git request (anything else passes through untouched):
@@ -137,7 +137,7 @@ impl GitInjector {
         }
         if request.header("authorization").is_some() {
             self.authed.mark(owner_key(&path));
-            return InjectDecision::PassThrough;
+            return InjectDecision::PassThroughOwnCredential;
         }
         match covering(&git, &path) {
             CredentialChoice::Covered {
@@ -218,8 +218,9 @@ impl GitInjector {
                         access,
                     });
                 }
+                let name = &repo.repo;
                 format!(
-                    "{verb} {what} is not on this workspace's {list} list; add it, or turn off \"{switch}\" on the workspace's Git tab"
+                    "{verb} {what} is not on this workspace's {list} list yet, as with a repository the workspace just created or forked; click \"Allow {list} for {name}\" in the notice (it works at once, no restart), or turn off \"{switch}\" on the workspace's Git tab, then try again"
                 )
             }
             None => format!(
@@ -420,7 +421,7 @@ impl Injector for GitInjector {
                 access: Access::Batch,
                 ..
             }) => Some(MAX_LFS_BATCH),
-            _ => None,
+            Classified::NotGit | Classified::Ambiguous(_) | Classified::Git(_) => None,
         }
     }
 }

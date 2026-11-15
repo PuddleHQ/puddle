@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-types"
 description = "Shared types for Puddle's crates: validated names, guest files and env, memory size, events, errors"

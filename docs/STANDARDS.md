@@ -93,9 +93,11 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 - **Node** (22 or newer, CI uses 24) for one gate: `scripts/check.sh openapi` regenerates the API
   contract's TypeScript types with `openapi-typescript` (pinned in
   `crates/puddle-api/openapi/package-lock.json`) and compares them with the committed
-  `schema.d.ts`. Without Node the gate checks `openapi.json` only and says so; CI (`CI` set)
-  fails instead. After changing a route or a wire type, run `cargo xtask openapi` and commit
-  both files.
+  `ui/src/lib/api/schema.d.ts`, the one committed copy (a second copy would give every pull request
+  that adds a route two generated files to conflict in). Without Node the gate checks `openapi.json`
+  only and says so; CI (`CI` set) fails instead. After changing a route or a wire type, run
+  `cargo xtask openapi` and commit both files. After a merge conflict in either file, take the
+  other side's version and run the command again: both files are generated, never merged by hand.
 - **Node 24** also runs the UI gates (`ui/`, section 13): `scripts/check.sh ui ui-licences ui-audit
   ui-e2e`. Every npm package is pinned to an exact version in `ui/package.json` and
   `ui/package-lock.json`. `ui-e2e` needs Playwright's browsers (`cd ui && npx playwright install
@@ -124,6 +126,9 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   checkout on mbx's report counts that checkout's files too and fails the ratchet. Only those gates need
   a plain target (about 27 GB per checkout, set `CARGO_TARGET_DIR` for it and delete it when done); every
   other gate, and so `git push`, runs through mbx.
+  If an mbx run already filled `<target>/llvm-cov-target`, its outputs are read-only hard links and plain
+  rustc stops, saying the output file is not writable: the coverage gates unlink those files first
+  (`coverage_unlock` in `scripts/check.sh`; the cache keeps its copy) and cargo rebuilds them.
 
 ## 3. Workflow for agents and humans
 
@@ -204,7 +209,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   `cfg(unix)` is not "Linux".
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
-  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment and each `expect`
+  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment, each `let _ =` outside tests a comment on the line or within three lines above (`let _ = name;` is exempt), and each `expect`
   a message; each fixed sleep in a test (outside a polling loop and a `start_paused` test) a comment saying whether it
   is an absence window, simulated latency or an ordering with no signal to wait on; each `shellcheck disable` a
   `# why` (in `*.sh` and in workflow `run:` blocks), each UI suppression a reason; each `TODO`, `HACK`, `FIXME` names its
@@ -215,8 +220,8 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   missing a reason, and what changed since the day before.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound) or wait loop (`for`, `while` or `loop` that sleeps or yields between looks; `flake-w3`), `file.lock()` in a
-  test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0; the rule reads only addresses of this machine, a measured choice: widening it to any 4 or 5 digit port near a socket call finds 5 lines in tests, all `.test` name authorities handed to a fake proxy or read from a captured list, none a socket, so it would need a `flake-ok:` per site and guard nothing), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
-  position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, a Unix path literal or a path joined by hand with `format!` in a test (`flake-f1`: it passes on Linux and fails on Windows; take a `tempfile` directory and `Path::join`), and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
+  test, `try_recv()`, a port picked and released (`flake-p1`: also a dead address made by dropping a listener, which `ReservedPort` holds for the test; `flake-p3`: a refused connect asserted after a server stopped, which asks what the server answers with `http_status` instead), a literal port bound or connected (bind port 0; the rule reads only addresses of this machine, a measured choice: widening it to any 4 or 5 digit port near a socket call finds 5 lines in tests, all `.test` name authorities handed to a fake proxy or read from a captured list, none a socket, so it would need a `flake-ok:` per site and guard nothing), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
+  position, a script written in-process and then made executable (`flake-e1`: a sibling test's fork copies the open descriptor and the exec fails with `Text file busy`; write it with `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`: a child that exits before it reads closes the pipe and the write fails with `BrokenPipe`; send it with `puddle_test_kit::feed_stdin`), a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, a Unix path literal or a path joined by hand with `format!` in a test (`flake-f1`: it passes on Linux and fails on Windows; take a `tempfile` directory and `Path::join`), and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
   `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or
   reasoned; the rule's file then says `status: failing` and an unreasoned site fails the `quality` gate like the others
@@ -242,9 +247,12 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   clean `HEAD` is not scanned, and a secret already in the base is the CI scan's to catch. Test credentials are made-up values, kept
   recognisable (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags
   them. A flagged fake gets an allowlist entry that fits its exact path and value, with the reason in
-  the entry; the fixture itself stays as it is. The gate's self-test
+  the entry; the fixture itself stays as it is. A canary token and its allowlist entry land in one
+  commit: the full scan reads every ref, and a commit that has the token without the entry fails on
+  its own (bisect, cherry-picks, a branch cut before the entry). The gate's self-test
   (`scripts/check-secrets.sh --self-test`) proves a real-shaped token fails, a listed fake passes, and
-  each scope sees the commits it should (a dirty side branch fails `all`, passes `head`). External scanners (GitGuardian on the public
+  each scope sees the commits it should (a dirty side branch fails `all`, passes `head`), and a commit
+  with only the canary fails while one with both the canary and its entry passes. External scanners (GitGuardian on the public
   repository) may flag fakes the gate doesn't; dismiss those as false positives, don't rewrite the test.
   A real secret that reached a commit is rotated first, then removed.
 
@@ -284,7 +292,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
 | L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
-| L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
+| L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | a sibling `<module>/tests.rs`, declared `#[cfg(test)] mod tests;` (see the placement rule below) | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
 | L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -295,6 +303,12 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 - **New behaviour is tested at the lowest tier that can catch its bug, plus the tier that proves it
   works end to end.** A bug fix starts with a test that reproduces it.
+- **Unit tests live in a sibling file, never inline.** A module `foo.rs` keeps its unit tests in
+  `foo/tests.rs`, declared `#[cfg(test)] mod tests;` (a `lib.rs`, `main.rs` or `mod.rs` takes `tests.rs`
+  beside it). No `#[path]`; the sibling still sees the module's private items. A test helper module gets
+  its own sibling the same way (`foo/<helper>.rs`). An inline `#[cfg(test)] mod name { }` block of any size
+  is not allowed: `scripts/check.sh quality` fails it and names the sibling form. Coverage tools skip
+  `tests.rs` files, so their lines are not in the coverage totals.
 - **Hostile-guest cases** (the hostile-guest suite): every case is a named test (`hostile_<id>_…`)
   asserting on the audit log, the API and the fake upstream's record. Write the tier P version
   with the feature; V and W follow as VM tests on the `puddle-vm-tests` harness, named
@@ -310,6 +324,9 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   `PUDDLE_VM_RUNTIME_DIR` (msb + libkrunfw, from `ci/fetch-msb.sh`), and take `PUDDLE_VM_PREFIX`
   and `PUDDLE_VM_ROOT`; every sandbox name and the private msb home carry the prefix, so up to three
   runs share a host. Real-machine tests are named `vm_machine_*`.
+  A test that drives the pinned desktop VS Code on Remote-SSH (`VsCodeWindow` in `puddle-vm-tests`, Windows only,
+  fetched by `ci/fetch-vscode.sh`, `PUDDLE_VSCODE_DIR`) is named `vm_vscode_*`; it is in no partition
+  (`ci/vm-filter.sh`) and one nightly job of `vm-windows.yml` runs it.
   A test that drives a browser client (`BrowserClient` and `Node` in `puddle-vm-tests`: headless
   Chromium and node on the test host, beside the VM) is named `vm_browser_*`, Linux only, and needs
   `PUDDLE_VM_BROWSER_MODULES` (`ui/node_modules` after `npm ci --ignore-scripts`; Chromium from
@@ -329,6 +346,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   Proxy, transparency and security tests can't be quarantined: a flaky one is the bug.
   The nightly `stress` workflow (`ci/stress.sh`) runs the fast suites repeatedly on a starved machine to find a load-only
   failure a day after merge; add each flake that is fixed to `ci/known-flakes.tsv`, so the yield report can tell a rediscovery from a new one.
+  The nightly `fake-host-starved` workflow (`ci/fake-host-starved.sh`) runs the `fake_host` binary as one process, 20 times on 2 CPUs beside busy loops: a race between test threads of one process (a lock held by a forked copy of its descriptor) does not exist under nextest's process per test.
 - **Skipped tests:** a test that returns early because something is missing passes without testing
   anything (the old second-user test did so on every run, unseen). A missing prerequisite takes one of
   three forms, and `scripts/check.sh silent-skips` fails the rest:
@@ -343,6 +361,19 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   The gate's header lists what it cannot see (a skip deeper than 30 lines into a test, a helper that
   returns `None` without printing, a flag set in a job that does not run the test). A new skip still
   needs the review to ask whether CI runs the test.
+- Tests and DNS: no test waits on a real resolver (2026-11-14: a dead LAN resolver on a build host turned
+  tests red in many pull requests). The coverage gate runs the whole suite through `scripts/dead-resolver.sh`,
+  a private mount namespace whose only nameserver logs each query and never answers; the gate fails and lists
+  the names asked. Fix a failure by injecting the lookup (`HostOptions::host_lookup`, `front_resolver`,
+  `puddle_api::NoNames`, `puddle_proxy::testing::StaticResolver`) or by using a name that needs no query
+  (`localhost`, a name with a space, an IP literal). A built binary that a test runs resolves names itself:
+  `puddle-agent connect` has a `test-lookup` feature that reads `PUDDLE_AGENT_TEST_LOOKUP`, turned on only by
+  the crate's dev-dependency on itself, so a release build lacks it (`scripts/check-test-hooks.sh` proves it
+  with `cargo tree`). A test that starts a real doctor sets `az_search_path` (`SystemProbe::with_az_search_path`),
+  or the doctor runs the machine's `az`, which waits on the network; the same script fails a test file that
+  builds `HostOptions::default()` or a `SystemProbe` without it (`az-ok: <why>` on the site is the exception).
+  Reproduce a lane failure locally with `scripts/dead-resolver.sh cargo nextest run -p <crate>` (needs
+  passwordless sudo and `setpriv`; without them the script says so and runs the command as it is, outside CI).
 - Test names say the behaviour: `denied_request_is_held_until_approved`, not `test_pending_2`.
 - Temp files go through `$TMPDIR`, never a hardcoded `/tmp`: `scripts/check.sh` points it, when the target dir is outside the repository, at a directory under
   the target dir for the run and removes it afterwards (`CHECK_TMPDIR=DIR` picks another base), so a gate run
@@ -393,8 +424,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   working tree against a base commit: locally the merge base with `origin/develop`, in CI the PR's base or
   the push's previous head (`DIFF_BASE`). Tool: `ui/scripts/diff-coverage.ts` (own code, no dependency;
   tests beside it).
-  A line that legitimately can't run in CI goes in `scripts/diff-coverage-exclusions.txt`:
-  `path glob | whole line, or * | [xN |] reason`, one reason per entry, reviewed like code. The text is the
+  A line that legitimately can't run in CI goes in the file of its own crate under
+  `scripts/diff-coverage-exclusions/` (`<crate>.txt`, `ui.txt` for the SPA; the gate refuses an entry
+  whose path glob is outside its file's crate): `path glob | whole line, or * | [xN |] reason`, one
+  reason per entry, reviewed like code. One file per crate keeps two pull requests that touch
+  different crates from conflicting in the same file. The text is the
   whole line, compared trimmed, never a part of one; under 20 characters is refused (a bare `)?;` or `}` is
   pinned to its statement by writing the line above first, joined with `\n`); a backslash escapes the next character (`\|` for a bar of the code, `\\` for a backslash).
   The file may hold at most N matches of the text (`xN`, default 1), so a copy added later stops being excused.
@@ -402,6 +436,18 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   Keep the entries sorted by path glob, then by the whole line (the gate fails an unsorted file and names the line):
   a new entry goes at its sorted place, not at the end, so two pull requests that add entries for different files
   merge without a conflict. The same holds for `scripts/full-coverage-exclusions.txt`.
+  An entry whose text is gone fails the gate on every run, whatever the diff touches, naming the exclusion file
+  and line: no file under its glob holds its text any more. Delete it. An entry also fails when its glob names
+  more than one file of the run's language (an entry is one reason for one file), or when no report of the run
+  lists the one file it names (a line outside the report is never measured, so it cannot fail and the entry
+  excuses nothing; a test file such as `tests.rs` is not in the report). The fast gate's report holds some crates
+  only (`--partial`), so there the second check is a note. An entry a test now runs every line of
+  (judged where the run measured the file) fails only when `--lcov` lists the reports of two or more runs
+  (comma-separated) and every one of them ran every line; a report that misses one line keeps the entry, in any
+  order. One report only prints a note, since a racy line (a `select!` arm, a timing path) reads covered in one run
+  and not the next and a single run cannot tell it from an excuse that rotted. The CI gate has one report, so
+  it fails on text only; to find rotted excuses run the gate by hand on the lcov artifacts of several recent
+  runs (`ci` uploads `target/lcov.info` as `linux-test-results`, kept 14 days).
   What it can't see: lines with no coverage data (comments, declarations, code compiled out of the Linux
   run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
   failed), branch or region detail inside a covered line, and whether a covered line is asserted.
@@ -418,7 +464,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   libraries stay built. Its report is `<target>/diff-coverage-fast.lcov`. A change to `Cargo.toml`, `Cargo.lock`
   or `.cargo/` names no crate; a `.rs` file outside `crates/` skips the gate (the full gate measures it). A line only another
   crate's tests run is reported as uncovered here and cleared by the full `coverage` gate: cover it from its own crate,
-  or list it in `scripts/diff-coverage-exclusions.txt`. It never touches the `coverage` gate's `lcov.info`, and
+  or list it in `scripts/diff-coverage-exclusions/`. It never touches the `coverage` gate's `lcov.info`, and
   `all` (CI) does not run it.
 - **Pure-logic crates stay at 100 % of their lines** (gate `coverage`, tool `ui/scripts/full-coverage.ts`). The
   crates listed in `scripts/full-coverage-crates.txt` (pure logic: no operating-system, network or VM code) fail the run on the first executable line
@@ -481,7 +527,8 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
   that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
   logging line or a timing could catch is not equivalent: assert the line or the timing.
   An entry names the function and the mutation text, never a line number: the `mutants-exclusions` gate fails an entry
-  that names a literal line (an edit above it would fail an unrelated change) and one that matches no mutant. When two
+  that names a literal line (an edit above it would fail an unrelated change), one that matches no mutant and one that
+  matches mutants in more than one file (name the file in the entry, one entry per file). When two
   mutants read alike (the Windows and the Unix body of one function), give each body its own function name.
 - **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
   VM tests, with four threads and a 1 GiB heap limit per test process: a mutant can make a loop allocate without
@@ -545,12 +592,14 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 | `vm-linux.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:07 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 10 partitions on 10 runners, balanced by measured test time (`ci/vm-partition.sh` from `ci/vm-test-timings-linux.tsv`; nextest's name hash when that file is missing or stale, with a warning; refresh with `ci/vm-timings-refresh.sh`); `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `vm-windows.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch, nightly 03:23 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 12 partitions on 12 runners, balanced by measured test time (`ci/vm-test-timings-windows.tsv`, same fallback and refresh); `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `webkit.yml` | nightly 04:53 UTC (skipped if it already has a green run on that commit), manual | `ubuntu-24.04` | the UI end-to-end tests on WebKit alone (`PUDDLE_E2E_PROJECTS=webkit`, `scripts/check.sh ui-e2e`): the half a merge queue run skips with `PUDDLE_TIER=on`. No required check; a red run opens "Nightly red: webkit" |
-| `msi.yml` | PRs to `develop` and `main` that change the installer (the `msi.yml` paths), nightly 03:47 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | builds the per-user MSI (`ci/build-msi.sh`: runtime folder, code-server, guest agent, release shell, WiX), then `ci/msi-install-test.ps1` installs it silently, starts it, runs the system check, upgrades over an older MSI and uninstalls it; the MSI is kept as an artifact. Not a required check |
-| `nightly-signal.yml` | when a scheduled run (or a manual run on `develop`) of `windows`, `vm-linux`, `vm-windows`, `webkit`, `msi`, `fuzz`, `perf`, `mutants`, `full-test`, `coverage-baseline`, `stress` or `live-contracts` completes | `ubuntu-24.04` | `ci/nightly-issue.sh`: a failed run opens or rewrites the issue "Nightly red: <workflow>", a green run closes it, a cancelled run changes nothing. None of these runs is a required check, so this issue is how a red nightly gets seen. `ci/bisect-red.sh <workflow>.yml --good <sha> --bad <sha>` runs the workflow on each commit between the last green nightly and the red one (`--cleanup` deletes its branches); `ci/nightly-issue-test.sh` and `ci/bisect-red-test.sh` are the self-tests, and the first fails when a workflow with a schedule is neither watched nor listed as covered otherwise |
+| `msi.yml` | PRs to `develop` and `main` that change the installer (the `msi.yml` paths), nightly 03:47 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | builds the per-user MSI (`ci/build-msi.sh`: runtime folder, code-server, guest agent, release shell, WiX), then `ci/msi-install-test.ps1` installs it silently, starts it, runs the system check, upgrades over an older MSI and uninstalls it; the MSI is kept as an artifact. The `usable` job then installs that MSI per user on a second runner and drives the installed app's real window with Windows UI Automation (`crates/puddle-app/e2e/usable.mjs`, `uia.mjs`, `uia.ps1`; a release build has no DevTools port), with the REST API for what no screen shows: an SSH remote is refused with the explicit message, the first-run steps and the New workspace form create a workspace from the lab's Forgejo (`puddle-lab-forgejo` over Gitea's pinned Windows release, fetched by `ci/fetch-forgejo.sh`, its root in the machine's store), the forge's request is allowed with the inbox's Allow button, the Connect step opens the browser editor in its own window and the window's content is read, `npm run build` and `npm test` run in the workspace, and `git push` reaches Forgejo with the injected credential while no token is in the guest, the audit log or the API. Not a required check |
+| `nightly-signal.yml` | when a scheduled run (or a manual run on `develop`) of `windows`, `vm-linux`, `vm-windows`, `webkit`, `msi`, `fuzz`, `perf`, `mutants`, `full-test`, `coverage-baseline`, `stress`, `fake-host-starved`, `live-contracts` or `lab-forgejo` completes | `ubuntu-24.04` | `ci/nightly-issue.sh`: a failed run opens or rewrites the issue "Nightly red: <workflow>", a green run closes it, a cancelled run changes nothing. None of these runs is a required check, so this issue is how a red nightly gets seen. `ci/bisect-red.sh <workflow>.yml --good <sha> --bad <sha>` runs the workflow on each commit between the last green nightly and the red one (`--cleanup` deletes its branches); `ci/nightly-issue-test.sh` and `ci/bisect-red-test.sh` are the self-tests, and the first fails when a workflow with a schedule is neither watched nor listed as covered otherwise |
 | `cache-gc.yml` | nightly 03:57 UTC, after each `develop` or merge queue run of `ci`, `windows`, `windows-cache` and the VM workflows, manual | `ubuntu-24.04` | deletes superseded rust-cache entries, stale branch caches and every merge queue cache (`ci/cache-gc.sh`) |
 | `stress.yml` | nightly 04:41 UTC, manual | `ubuntu-24.04` | five jobs of three kinds that run the fast suites repeatedly on a starved machine (`ci/stress.sh`, pinned with `taskset` next to busy loops): nextest `--stress-count 20` on `fake_host`, the proxy suites and the agent's capture tests (two halves, one CPU with 6 busy loops); Playwright `--repeat-each 3` on chromium (CDP CPU throttle, `ui/e2e/cpu-throttle.ts`) and on webkit (a job each, 2 CPUs with 2 loops); vitest with shuffled order and `--repeats 5` (2 CPUs with 2 loops). A failing test fails the job, which `nightly-signal` turns into the issue "Nightly red: stress". Each job uploads a row (`stress-yield-<kind>`: failures, how many are in `ci/known-flakes.tsv`, wall time, runner-min); `ci/stress-yield.py report --download 14` adds a fortnight up. Self-test `ci/stress-test.sh` |
+| `fake-host-starved.yml` | nightly 05:17 UTC, manual | `ubuntu-24.04` | `ci/fake-host-starved.sh` runs the `puddle-host` `fake_host` test binary 20 times in a row as one process (the way plain `cargo test` does; under nextest's process per test a lock copied by `fork` cannot exist) pinned with `taskset` to 2 CPUs beside 4 busy loops. A failing run fails the job, which `nightly-signal` turns into the issue "Nightly red: fake-host-starved". The job keeps the first failure's log and, from a sampler on the other CPUs, the processes that had a `host.lock` open during that run (a holder whose parent also holds it is a forked copy) as the artifact `fake-host-starved-first-failure`. Self-test `ci/fake-host-starved-test.sh` |
 | `perf.yml` | nightly 03:41 UTC, manual | `ubuntu-24.04` | the six `#[ignore]`d `terminate_suite` `perf::` tests in a release build (`--run-ignored only`): each prints its measurement and asserts a ceiling well above a workstation's number. Not a PR check, and nothing is cached |
 | `live-contracts.yml` | nightly 04:23 UTC, manual on any branch, never on a pull request | `ubuntu-24.04` | two jobs against live third parties with made-up credentials (no account, no secret): the real Azure DevOps refusing a made-up token (`puddle-repos` `live_azure`, `#[ignore]`d, `--run-ignored only`; the list must read it as `token_rejected`) and the real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing in a microVM (`vm_radar_login_tools_*`; each tool must call its token host and no host outside its login profile). A third party's outage turns the nightly red, never a pull request. |
+| `lab-forgejo.yml` | nightly 04:41 UTC, manual on any branch, and a pull request (a fork's too) that touches the lab fixture, its pin, the workflow or the VM test; not a required check | `ubuntu-24.04` (job `forgejo`), `windows-2025` (job `windows`) | a real Forgejo with its own SSH server, started for the run (`ci/fetch-forgejo.sh` fetches the release pinned in `ci/forgejo.sha256`; `crates/puddle-e2e/src/lab/forgejo.rs`), with an account, token and SSH keys made for the run: no outside host, account or secret, so a fork's pull request can run it. `forgejo_lab` (the real `git` over HTTPS and `ssh` against it) and `vm_radar_forgejo_*` (in a microVM the guest clones, pushes and deletes a branch through the host's wiring, a push to an unlisted repository is refused, the guest is searched for the token). The `windows` job runs the same two against Gitea's pinned Windows release (Forgejo publishes none; `ci/fetch-forgejo.sh <dir> "" windows`) on a WHP runner, without the `ssh` half of `forgejo_lab`; a runner without WHP skips it as infrastructure, except on a pull request, where it fails. |
 | `dependabot-notices-build.yml` | `pull_request` to `develop` from a Dependabot `/ui` npm PR that changes `ui/package.json` or its lockfile | `ubuntu-24.04` | builds the PR as the `ui-licences` gate does (`npm ci --ignore-scripts`, `npm run build`, `npm run licences`) and uploads `ui/THIRD-PARTY-NOTICES.txt` as an artifact when it changed. Read-only token, no secrets: it runs the PR's code and pushes nothing |
 | `dependabot-notices.yml` | `workflow_run` after the build above succeeds on a Dependabot PR | `ubuntu-24.04` | runs `ci/dependabot-notices.sh` from `develop`, never the PR's code: checks that the PR is an own-repo Dependabot PR whose head is still the built commit, takes the artifact as data, pushes one `github-actions[bot]` commit (that file only, fast-forward) with plain git, dispatches `ci`, `windows`, `vm-linux` and `vm-windows` on the branch (a push with the workflow token starts no checks; a dispatch is the exception, and its checks attach to the head commit by name), and re-arms auto-merge for the new head if the PR had it. A forged file only turns `ui-licences` red, which regenerates and compares. Dependabot stops rebasing a branch with a foreign commit; the merge queue still tests the merge result |
 | `dependabot-auto-merge.yml` | `pull_request_target` on PRs to `develop` from Dependabot | `ubuntu-24.04` | runs `ci/dependabot-auto-merge.sh` from `develop` (the PR's code is never checked out): arms `gh pr merge --auto --squash --match-head-commit` only on the `auto` group of the cargo, `/ui` and openapi-codegen entries, only when every commit is by `dependabot[bot]` and every update in the commit's `updated-dependencies` block is patch or minor (fork pins `microsandbox*`, `msb_krun*`, `libkrun*`, `russh*`, `imago*` and anything unknown stay manual). The PR then needs the required checks and the merge queue like any other |
@@ -656,12 +705,16 @@ before opening the PR.
 The msb runtime they boot is the SDK's fork tag (`ci/msb-tag.sh`, read from `Cargo.lock`): release
 assets pinned by SHA-256 in `ci/msb-runtime.sha256`, on Linux too (`msb-linux-x86_64`, built by the
 fork's release job; a tag with none pinned is built from its pinned commit, with a warning). Bumping the fork tag: see the comment above the SDK lines in
-the root `Cargo.toml`; `puddle-runtime`'s expected version follows from the lock.
+the root `Cargo.toml`; `puddle-runtime`'s expected version follows from the lock. The same pins are built into
+Puddle (`puddle-runtime`'s build script): at start-up `BundledRuntime::open` hashes `msb` and the firmware and refuses
+any other bytes, so a bump of the fork tag needs its lines in `ci/msb-runtime.sha256` or the build has nothing to check
+against (`DigestStatus::Unpinned`). `PUDDLE_DEV_ANY_RUNTIME=1` (development builds) accepts other files and says so in
+`puddle doctor`.
 
 ## 11. Licence headers
 
-Every source file starts with `SPDX-License-Identifier: GPL-3.0-or-later` in its own comment
-syntax (after a shebang, if any); manifests carry `license = "GPL-3.0-or-later"` through the
+Every source file starts with `SPDX-License-Identifier: AGPL-3.0-or-later` in its own comment
+syntax (after a shebang, if any); manifests carry `license = "AGPL-3.0-or-later"` through the
 workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 [CONTRIBUTING.md](../CONTRIBUTING.md#licence-headers).
 
@@ -669,7 +722,7 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 
 - Declare versions once, in `[workspace.dependencies]`; crates use `dep = { workspace = true }`.
   Turn off default features you don't need.
-- `cargo deny check` gates licences (only GPL-3.0-or-later-compatible ones, list in `deny.toml`),
+- `cargo deny check` gates licences (only AGPL-3.0-or-later-compatible ones, list in `deny.toml`),
   advisories (a RustSec vulnerability, unmaintained or unsound advisory in any dependency, direct
   or transitive, or a yanked crate fails; see below for where it runs), bans (no wildcards) and sources (crates.io only;
   Puddle's own forks on GitHub once added). An exception names the advisory or crate, the reason
@@ -716,9 +769,11 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
 | `ui-licences` | every npm package in the bundle is MIT, ISC, Apache-2.0, BSD-2/3-Clause, 0BSD or OFL-1.1, and is in `ui/THIRD-PARTY-NOTICES.txt` (`cd ui && npm run build && npm run licences` rewrites it) |
 | `ui-audit` | `npm audit --omit=dev --audit-level=moderate`, minus `ui/audit-exceptions.json` (id, reason, review-by date); not run on pull requests to `develop` (section 12) |
 
+- **No HTML injection sinks.** `ui/src` has no `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write` outside tests (`ban-html-sink`, a failing kind of the quality gate with no reason escape): the style policy lets the terminal emulator add `<style>` elements, which injected markup could otherwise reach. Render text with `{value}` interpolation or a component.
+
 - **The fixture backend** (`puddle-ui-fixture`, `crates/puddle-e2e/src/ui_fixture/`) is the real
   `puddle-api` router on an in-memory store, a manual clock and in-memory settings, seeded from a JSON
-  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, `corporate-network`, `network-trouble`, or any file) and driven by
+  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, `corporate-network`, `company-network`, `network-trouble`, or any file) and driven by
   scripts and a loopback control server (emit an event, advance the clock, restart, reset). Screens are
   developed with `cd ui && npm run dev:fixture`; e2e tests that only read use the shared server of
   `playwright.config.ts`, tests that change state use `e2e/fixture.ts` (a backend per worker, reset per

@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { covering, type Identity } from "#lib/identities/model.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
@@ -18,7 +18,9 @@
     directoryProblem,
     sameRepositoryKey,
   } from "#lib/workspaces/repo-rows.ts";
+  import type { HostCheck } from "#lib/workspaces/hosts.ts";
   import FormDialog from "./FormDialog.svelte";
+  import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
   import RepoPicker from "./RepoPicker.svelte";
 
   // "Add repository": one row of the create form, for a running workspace. The checks are the
@@ -31,6 +33,8 @@
     onDisk,
     identities = identityStore,
     onSubmit,
+    workspace = undefined,
+    hostCheck = undefined,
   }: {
     open?: boolean;
     /** The list's entries: their directories and addresses are taken. */
@@ -39,7 +43,12 @@
     onDisk: readonly string[];
     identities?: Pick<IdentitiesStore, "identities" | "ensureLoaded">;
     onSubmit: (body: AddRepository) => Promise<string | null>;
+    /** The workspace the repository is for, so its own rules count for the host check. */
+    workspace?: string;
+    /** For tests: the host check. */
+    hostCheck?: HostCheck;
   } = $props();
+  let hostBlocked = $state(false);
 
   const id = $props.id();
   let url = $state("");
@@ -266,8 +275,18 @@
       <button type="button" class="btn" onclick={() => (open = false)}
         >Cancel</button
       >
-      <button type="submit" class="btn primary" disabled={busy}>Clone</button>
+      <button type="submit" class="btn primary" disabled={busy || hostBlocked}
+        >Clone</button
+      >
     </div>
+
+    <!-- Below the buttons, so its late answer cannot move the button under a press. -->
+    <RepositoryHostsNotice
+      urls={[url]}
+      {workspace}
+      {...hostCheck ? { check: hostCheck } : {}}
+      onBlocked={(b) => (hostBlocked = b)}
+    />
   </form>
 </FormDialog>
 

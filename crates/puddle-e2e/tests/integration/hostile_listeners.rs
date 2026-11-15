@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest tier W, a sweep of the process's own listening sockets: everything Puddle's host
 //! side listens on is loopback only, and every such listener is in the endpoint registry, which is
 //! what makes the proxy refuse a guest that dials it (so a listener nobody registered would be
@@ -82,6 +82,7 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
     let store = Arc::new(
         Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
     );
+    puddle_store::testing::own(&store, &WorkspaceId::new("hg26").unwrap());
     let proxy = Arc::new(
         Proxy::new(store, Arc::new(NullSink))
             .with_resolver(Arc::new(StaticResolver::new()))
@@ -100,10 +101,7 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
         Arc::new(NullSink),
     );
     ports.started(&workspace).await;
-    let forward_port = {
-        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
-        probe.local_addr().unwrap().port()
-    };
+    let forward_port = puddle_test_kit::quiet_port();
     ports
         .forward(&workspace, 8080, Some(forward_port), false)
         .await

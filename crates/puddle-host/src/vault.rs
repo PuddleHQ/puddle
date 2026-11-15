@@ -1,13 +1,23 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The credential store Puddle keeps its values in, and the clean-up of what nothing names.
 
 use std::sync::Arc;
 
-use puddle_secrets::{ChunkedStore, IndexedStore, KeyringStore, SecretStore, StoredId, Sweep};
+use puddle_api::CredentialStoreService;
+use puddle_secrets::{
+    ChunkedStore, IndexedStore, KeyringStore, LoginSession, SecretStore, StoreHealth, StoreKind,
+    StoredId, Sweep, probe_os_store, probe_store, reconnect_os_store, write_record,
+};
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
 
 use crate::proxy_passwords::ID_PREFIX;
+
+mod choose;
+
+pub use choose::SecretSetup;
+pub(crate) use choose::{Chosen, open};
+use choose::{Probe, WriteWhenWorking};
 
 /// The operating system's credential store, with long values split over entries and an index of
 /// the ids kept, so [`sweep_in_background`] can find a value its row never named.
@@ -30,7 +40,7 @@ fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> 
         .sweep_orphans(&|id| in_use.contains(id) || id.as_str().starts_with(ID_PREFIX))
         .map_err(|_| {
             tracing::warn!("credential store sweep skipped: the store did not answer");
-            "the operating system's credential store did not answer"
+            "the credential store did not answer"
         })
 }
 
@@ -102,246 +112,177 @@ pub(crate) fn sweep_in_background(
     tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
+/// The problem that stands while the credential store refuses a write. A store that failed once
+/// stays failed for the life of the process, so only a restart ends it.
+const STORE_PROBLEM: &str = "credential-store";
 
-    use puddle_secrets::{MemoryStore, Secret, StoredId};
-    use puddle_store::{EnvDraft, EnvName, EnvScope, Limits, ManualClock, SecretHost};
-
-    use super::*;
-
-    fn id(text: &str) -> StoredId {
-        StoredId::new(text).unwrap()
-    }
-
-    fn put(vault: &dyn SecretStore, name: &str) {
-        vault.set(&id(name), &Secret::new("value".into())).unwrap();
-    }
-
-    /// A shared memory store: one handle for the run that crashed, one for the run after it.
-    struct Shared(Arc<MemoryStore>);
-
-    impl SecretStore for Shared {
-        fn get(&self, id: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
-            self.0.get(id)
-        }
-        fn set(&self, id: &StoredId, s: &Secret) -> Result<(), puddle_secrets::StoreError> {
-            self.0.set(id, s)
-        }
-        fn delete(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
-            self.0.delete(id)
-        }
-        fn keep_local(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
-            self.0.keep_local(id)
-        }
-    }
-
-    #[test]
-    fn a_sweep_removes_what_no_identity_or_variable_names_and_keeps_the_rest() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        store
-            .set_env(
-                &EnvScope::Global,
-                &EnvName::new("TOKEN").unwrap(),
-                EnvDraft::secret(
-                    id("env-named"),
-                    vec![SecretHost::new("a.example.com").unwrap()],
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let disk = Arc::new(MemoryStore::new());
-        let earlier = IndexedStore::new(Shared(disk.clone()));
-        for name in ["env-named", "env-orphan", "tok-orphan"] {
-            put(&earlier, name);
-        }
-        let later = IndexedStore::new(Shared(disk.clone()));
-        assert_eq!(
-            sweep(&later, &store),
-            Ok(Sweep {
-                removed: 2,
-                stuck: 0
-            })
-        );
-        assert!(later.get(&id("env-named")).unwrap().is_some());
-        assert!(later.get(&id("env-orphan")).unwrap().is_none());
-        assert!(later.get(&id("tok-orphan")).unwrap().is_none());
-    }
-
-    #[test]
-    fn a_sweep_keeps_the_proxy_sign_ins_which_no_row_names() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let disk = Arc::new(MemoryStore::new());
-        // An earlier run wrote a sign-in and an orphan; this run sweeps.
-        let earlier = Arc::new(IndexedStore::new(Shared(disk.clone())));
-        let passwords = crate::ProxyPasswords::new(earlier.clone());
-        let proxy = puddle_upstream::ProxyAddr::new("proxy.corp", 8080);
-        passwords
-            .set(&proxy, "alice", &puddle_types::fixture::password("vault"))
-            .unwrap();
-        put(earlier.as_ref(), "tok-orphan");
-        let later = Arc::new(IndexedStore::new(Shared(disk)));
-        assert_eq!(
-            sweep(later.as_ref(), &store),
-            Ok(Sweep {
-                removed: 1,
-                stuck: 0
-            })
-        );
-        let again = crate::ProxyPasswords::new(later);
-        assert_eq!(again.load().unwrap(), 1);
-    }
-
-    #[test]
-    fn a_store_that_does_not_answer_is_left_alone_and_the_sweep_says_so() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let disk = Arc::new(MemoryStore::new());
-        put(&IndexedStore::new(Shared(disk.clone())), "tok-a");
-        disk.break_it();
-        assert_eq!(
-            sweep(&IndexedStore::new(Shared(disk.clone())), &store),
-            Err("the operating system's credential store did not answer")
-        );
-        disk.heal();
-        assert!(disk.get(&id("tok-a")).unwrap().is_some());
-    }
-
-    #[test]
-    fn a_sweep_also_keeps_listed_and_named_values_on_this_computer() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        store
-            .set_env(
-                &EnvScope::Global,
-                &EnvName::new("TOKEN").unwrap(),
-                EnvDraft::secret(
-                    id("env-named"),
-                    vec![SecretHost::new("a.example.com").unwrap()],
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let disk = Arc::new(MemoryStore::new());
-        put(&IndexedStore::new(Shared(disk.clone())), "env-listed");
-        let later = IndexedStore::new(Shared(disk.clone()));
-        sweep(&later, &store).unwrap();
-        let kept = disk.kept_local();
-        assert!(kept.contains(&"env-listed".to_owned()));
-        assert!(kept.contains(&"env-named".to_owned()));
-        assert!(kept.contains(&"puddle-index".to_owned()));
-    }
-
-    #[test]
-    fn a_store_that_cannot_be_rewritten_does_not_stop_the_sweep() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let broken = MemoryStore::new();
-        broken.break_it();
-        keep_local(&broken, [id("a")].iter());
-        assert_eq!(sweep(&broken, &store), Ok(Sweep::default()));
-    }
-
-    #[tokio::test]
-    async fn the_background_sweep_runs_off_the_async_threads() {
-        let store = Arc::new(
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap(),
-        );
-        let disk = Arc::new(MemoryStore::new());
-        put(&IndexedStore::new(Shared(disk.clone())), "tok-a");
-        let sweep = sweep_in_background(
-            Arc::new(IndexedStore::new(Shared(disk.clone()))),
-            store,
-            Arc::new(Problems::new(Arc::new(puddle_types::NullSink))),
-        );
-        sweep.await.unwrap();
-        puddle_test_kit::eventually("the sweep ran", std::time::Duration::from_secs(5), || {
-            disk.get(&id("tok-a")).unwrap().is_none()
-        })
-        .await;
-    }
-
-    /// A store that will not delete one id.
-    struct Stuck(Arc<MemoryStore>);
-
-    impl SecretStore for Stuck {
-        fn get(&self, id: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
-            self.0.get(id)
-        }
-        fn set(&self, id: &StoredId, s: &Secret) -> Result<(), puddle_secrets::StoreError> {
-            self.0.set(id, s)
-        }
-        fn delete(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
-            if id.as_str() == "tok-stuck" {
-                return Err(puddle_secrets::StoreError);
-            }
-            self.0.delete(id)
-        }
-    }
-
-    fn problems() -> Problems {
-        Problems::new(Arc::new(puddle_types::NullSink))
-    }
-
-    #[test]
-    fn a_sweep_that_leaves_a_value_behind_raises_a_problem_until_a_later_sweep_removes_it() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let disk = Arc::new(MemoryStore::new());
-        let earlier = IndexedStore::new(Shared(disk.clone()));
-        put(&earlier, "tok-stuck");
-        put(&earlier, "tok-gone");
-        let list = problems();
-
-        report(
-            sweep(&IndexedStore::new(Stuck(disk.clone())), &store),
-            &list,
-        );
-        let raised = list.list();
-        assert_eq!(raised.len(), 1, "{raised:?}");
-        assert_eq!(raised[0].key, SWEEP_PROBLEM);
-        assert_eq!(
-            raised[0].title,
-            "Puddle could not remove 1 leftover value from the credential store"
-        );
-        assert!(disk.get(&id("tok-gone")).unwrap().is_none());
-
-        // The store lets it go on the next start: the problem ends by itself.
-        report(
-            sweep(&IndexedStore::new(Shared(disk.clone())), &store),
-            &list,
-        );
-        assert_eq!(list.list(), Vec::new());
-        assert!(disk.get(&id("tok-stuck")).unwrap().is_none());
-    }
-
-    #[test]
-    fn a_sweep_that_cannot_run_raises_a_problem_naming_why_and_a_clean_one_raises_none() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let disk = Arc::new(MemoryStore::new());
-        put(&IndexedStore::new(Shared(disk.clone())), "tok-a");
-        let list = problems();
-
-        disk.break_it();
-        report(
-            sweep(&IndexedStore::new(Shared(disk.clone())), &store),
-            &list,
-        );
-        let raised = list.list();
-        assert_eq!(raised.len(), 1);
-        assert!(raised[0].detail.contains("credential store did not answer"));
-        disk.heal();
-
-        report(
-            sweep(&IndexedStore::new(Shared(disk.clone())), &store),
-            &list,
-        );
-        assert_eq!(list.list(), Vec::new());
-        report(sweep(&IndexedStore::new(Shared(disk)), &store), &list);
-        assert_eq!(list.list(), Vec::new());
+/// Raises the one problem that names why `health` is not [`StoreHealth::Working`], worded for
+/// Linux when `linux` is set; a working store raises none.
+fn report_health(health: StoreHealth, linux: bool, problems: &Problems) {
+    match health.advice(linux) {
+        None => problems.clear(STORE_PROBLEM),
+        Some(advice) => problems.raise(Problem::new(STORE_PROBLEM, advice.title, advice.fix)),
     }
 }
+
+/// The problem for a file vault that does not take a write: unlike the operating system's store
+/// it has no lock and no service, so the usual cause is the disk.
+fn report_file_health(health: StoreHealth, problems: &Problems) {
+    if health == StoreHealth::Working {
+        problems.clear(STORE_PROBLEM);
+    } else {
+        problems.raise(Problem::new(
+            STORE_PROBLEM,
+            "Puddle cannot save secrets: its file vault does not take a write",
+            "The vault opened but a test write failed. Check the free space and the permissions of the `secrets` folder in the data folder, then restart Puddle.",
+        ));
+    }
+}
+
+impl Chosen {
+    /// Writes and deletes a throwaway value in the store this start chose, off the async threads
+    /// (a locked keyring may be slow to answer), and raises a problem naming the cause when the
+    /// write fails. It writes the decision down once the operating system's store works, and
+    /// logs the headless warning.
+    pub(crate) fn check_in_background(
+        &self,
+        problems: Arc<Problems>,
+    ) -> tokio::task::JoinHandle<()> {
+        run_check(
+            self.probe.clone(),
+            self.record_when_working.clone(),
+            self.warn_without_flag,
+            problems,
+        )
+    }
+}
+
+/// Whether a start without the headless flag deserves the warning: it has no graphical login
+/// session, or its credential store does not take a write.
+fn warns(session: LoginSession, health: StoreHealth) -> bool {
+    session == LoginSession::NotGraphical || health != StoreHealth::Working
+}
+
+fn run_check(
+    probe: Probe,
+    record_when_working: Option<WriteWhenWorking>,
+    warn_without_flag: Option<LoginSession>,
+    problems: Arc<Problems>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let Some(health) = check_now(&probe, false, &problems) else {
+            return;
+        };
+        if health == StoreHealth::Working
+            && let Some(decision) = record_when_working
+            && write_record(&decision.data, StoreKind::Os, decision.rule).is_err()
+        {
+            tracing::warn!(
+                "could not write which store keeps the secrets; the next start tries again"
+            );
+        }
+        if let Some(session) = warn_without_flag
+            && warns(session, health)
+        {
+            tracing::warn!(
+                graphical_session = session != LoginSession::NotGraphical,
+                store_works = health == StoreHealth::Working,
+                "Puddle was started without --headless and keeps its secrets in the operating \
+                 system's credential store, which has no unlocked keyring to rely on here. On a \
+                 server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
+                 in Puddle's own file vault; that takes effect only for a data folder that has \
+                 not recorded a store yet (`secrets/store.json`)"
+            );
+        }
+    })
+}
+
+/// One check of the chosen store: probes it and raises or clears the problem to match. `None`
+/// when there is nothing to probe. `reconnect` connects to the operating system's store afresh
+/// first, which is what lets a Puddle that began with a locked or missing store use it once the
+/// user has unlocked it.
+fn check_now(probe: &Probe, reconnect: bool, problems: &Problems) -> Option<StoreHealth> {
+    let health = match probe {
+        Probe::Store(store) => probe_store(store.as_ref(), || true),
+        Probe::Os => {
+            if reconnect {
+                // A refused reconnect shows in the probe below as the failure it is.
+                let _ = reconnect_os_store();
+            }
+            probe_os_store()
+        }
+        Probe::File(store) => {
+            let health = probe_store(store.as_ref(), || true);
+            report_file_health(health, problems);
+            return Some(health);
+        }
+        Probe::Skip => return None,
+    };
+    report_health(health, cfg!(target_os = "linux"), problems);
+    Some(health)
+}
+
+/// The check behind the first-run banner's Retry.
+pub(crate) struct StoreRetry {
+    probe: Probe,
+    problems: Arc<Problems>,
+}
+
+impl Chosen {
+    /// The check the first-run banner's Retry runs against the store this start chose.
+    pub(crate) fn retry_check(&self, problems: Arc<Problems>) -> StoreRetry {
+        StoreRetry {
+            probe: self.probe.clone(),
+            problems,
+        }
+    }
+}
+
+impl CredentialStoreService for StoreRetry {
+    fn retry(&self) -> Option<bool> {
+        check_now(&self.probe, true, &self.problems).map(|health| health == StoreHealth::Working)
+    }
+}
+
+/// How long shutdown waits for the sweep: a locked keyring may take far longer, and a quit must
+/// not hang on it. The sweep goes on in the background; the next start repeats whatever it left.
+pub(crate) const SWEEP_SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How the wait for the sweep at shutdown ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SweepEnd {
+    Finished,
+    /// The sweep task panicked (a panic inside the sweep is not reported anywhere else).
+    Panicked,
+    /// Still running after the wait.
+    StillRunning,
+}
+
+/// Waits up to `within` for the sweep started by [`sweep_in_background`], and logs a panic or a
+/// sweep that is still running.
+pub(crate) async fn finish_sweep(
+    sweep: tokio::task::JoinHandle<()>,
+    within: std::time::Duration,
+) -> SweepEnd {
+    let end = match tokio::time::timeout(within, sweep).await {
+        Ok(Ok(())) => SweepEnd::Finished,
+        Ok(Err(_)) => SweepEnd::Panicked,
+        Err(_) => SweepEnd::StillRunning,
+    };
+    match end {
+        SweepEnd::Finished => {}
+        SweepEnd::Panicked => {
+            tracing::warn!("the credential store sweep panicked; the next start repeats it");
+        }
+        SweepEnd::StillRunning => {
+            tracing::warn!(
+                waited = ?within,
+                "the credential store did not answer while quitting; the sweep is left running"
+            );
+        }
+    }
+    end
+}
+
+#[cfg(test)]
+mod tests;

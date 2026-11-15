@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The repository lists and the account profile over real HTTP, against a real store and the
 //! fake host: one list for the Identities tab and the create form, how current each credential's
 //! list is and why one is not, refreshing, and prefilling an identity.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { asWorkspaceEvent } from "./events.ts";
 
@@ -26,6 +26,29 @@ describe("asWorkspaceEvent", () => {
     };
     expect(asWorkspaceEvent(disk)).toEqual(disk);
     expect(asWorkspaceEvent(progress)).toEqual(progress);
+  });
+
+  it("accepts each state of the tool install and rejects a malformed one", () => {
+    const states = [
+      { phase: "installing", done: 0, total: 2, tools: ["node"] },
+      { phase: "ready" },
+      { phase: "failed", tools: ["node"], waiting_on: [] },
+    ];
+    for (const state of states) {
+      const event = { type: "workspace_tools", workspace: "w", state };
+      expect(asWorkspaceEvent(event)).toEqual(event);
+    }
+    for (const state of [
+      null,
+      { phase: "other" },
+      { phase: "installing", done: "1", total: 2, tools: [] },
+      { phase: "installing", done: 1, total: 2, tools: [1] },
+      { phase: "failed", tools: [] },
+    ]) {
+      expect(
+        asWorkspaceEvent({ type: "workspace_tools", workspace: "w", state }),
+      ).toBeNull();
+    }
   });
 
   it("accepts a change to a workspace's list of repositories", () => {

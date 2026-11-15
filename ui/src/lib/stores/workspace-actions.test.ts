@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   FakeWorkspaces,
@@ -120,6 +120,37 @@ describe("renaming", () => {
   });
 });
 
+describe("growing the root disk", () => {
+  it("sends the size in MiB, marks the workspace busy and says nothing yet", async () => {
+    api.list = [
+      workspace("up", { status: "running", root_disk_size_mib: 10_240 }),
+    ];
+    await store.refresh();
+    expect(await actions.growRootDisk(w("up"), 20)).toBeNull();
+    expect(api.calls).toContain("POST /api/workspaces/{id}/grow-root-disk");
+    expect(api.bodies.at(-1)).toEqual({ size_mib: 20_480 });
+    expect(w("up").busy).toBe("growing_root_disk");
+    expect(w("up").root_disk_size_mib).toBe(20_480);
+    expect(messages()).toEqual([]);
+  });
+
+  it("hands the service's refusal back to the dialog, with no toast", async () => {
+    api.list = [workspace("up", { root_disk_size_mib: 10_240 })];
+    await store.refresh();
+    const message = await actions.growRootDisk(w("up"), 5);
+    expect(message).toContain("a root disk only grows");
+    expect(w("up").busy).toBeNull();
+    expect(messages()).toEqual([]);
+  });
+
+  it("says the service is not answering when it is down", async () => {
+    api.down = true;
+    expect(await actions.growRootDisk(w("up"), 20)).toBe(
+      "Puddle's service isn't answering.",
+    );
+  });
+});
+
 describe("connecting", () => {
   it("opens the connect step for a workspace and opens nothing yet", () => {
     actions.connect(w("up"));
@@ -147,6 +178,7 @@ describe("connecting", () => {
   it("keeps the other overrides of the workspace when it turns direct SSH on", async () => {
     api.overrides["w-up"] = {
       capture_logins: null,
+      warn_foreign_credentials: null,
       clipboard_read: null,
       direct_ssh: null,
       local_toggles: {
@@ -252,6 +284,7 @@ describe("opening in VS Code", () => {
     api.attachReply = {
       opened: false,
       message: "VS Code isn't installed.",
+      open_uri: null,
     };
     actions.openDesktop(w("trusted"));
     await expect
@@ -263,7 +296,7 @@ describe("opening in VS Code", () => {
   });
 
   it("has words of its own when the service gave none", async () => {
-    api.attachReply = { opened: false, message: null };
+    api.attachReply = { opened: false, message: null, open_uri: null };
     actions.openDesktop(w("trusted"));
     await expect
       .poll(() => messages())
@@ -282,6 +315,58 @@ describe("opening in VS Code", () => {
   });
 });
 
+describe("opening from another computer than the host", () => {
+  const link = "vscode://vscode-remote/ssh-remote+puddle-up/workspaces/up";
+  let followed: string[];
+  beforeEach(() => {
+    followed = [];
+    actions = new WorkspaceActions(store, toasts, async () => removed, {
+      assign: (uri: string | URL) => void followed.push(String(uri)),
+    });
+  });
+
+  it("follows the link the host gives when it opened no editor itself", async () => {
+    api.attachReply = {
+      opened: false,
+      message: "VS Code is not installed",
+      open_uri: link,
+    };
+    actions.openDesktop(w("up"));
+    await expect
+      .poll(() => messages())
+      .toEqual(["Opening up in VS Code on this computer."]);
+    expect(followed).toEqual([link]);
+    expect(toasts.items[0]?.tone).toBe("info");
+  });
+
+  it("follows nothing when the host opened the editor", async () => {
+    api.attachReply = { opened: true, message: null, open_uri: link };
+    actions.openDesktop(w("up"));
+    await expect.poll(() => messages()).toEqual(["Opening up in VS Code."]);
+    expect(followed).toEqual([]);
+  });
+
+  it("shows the host's words when it gave no link", async () => {
+    api.attachReply = {
+      opened: false,
+      message: "direct SSH is on but the ssh config could not be written",
+      open_uri: null,
+    };
+    actions.openDesktop(w("up"));
+    await expect.poll(() => toasts.items[0]).toMatchObject({ tone: "error" });
+    expect(followed).toEqual([]);
+  });
+
+  it("never follows a link for the browser editor", async () => {
+    api.attachReply = { opened: false, message: "no window", open_uri: link };
+    actions.openBrowser(w("up"));
+    await expect
+      .poll(() => toasts.items[0])
+      .toMatchObject({ message: "no window" });
+    expect(followed).toEqual([]);
+  });
+});
+
 describe("opening in the browser", () => {
   it("asks for a browser attach and says the window is opening", async () => {
     actions.openBrowser(w("up"));
@@ -294,6 +379,7 @@ describe("opening in the browser", () => {
     api.attachReply = {
       opened: false,
       message: "the browser editor opens from the desktop app",
+      open_uri: null,
     };
     actions.openBrowser(w("up"));
     await expect
@@ -305,7 +391,7 @@ describe("opening in the browser", () => {
   });
 
   it("has words of its own when the service gave none, naming the browser editor", async () => {
-    api.attachReply = { opened: false, message: null };
+    api.attachReply = { opened: false, message: null, open_uri: null };
     actions.openBrowser(w("up"));
     await expect
       .poll(() => messages())
@@ -528,6 +614,10 @@ describe("settledMessage", () => {
     [
       { operation: "resetting_root_disk", failed: false, detail: null },
       "Reset the root disk of w; it is made again at the next start.",
+    ],
+    [
+      { operation: "growing_root_disk", failed: false, detail: null },
+      "Made the root disk of w bigger.",
     ],
     [
       { operation: "cloning", failed: false, detail: null },

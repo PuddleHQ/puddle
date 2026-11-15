@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rule sets and System managed on the wire (rules spec §7).
 
 use puddle_store as store;
@@ -25,6 +25,8 @@ pub enum SystemReason {
     DirectSshJetBrains,
     /// Direct SSH is on for the workspace, for Zed.
     DirectSshZed,
+    /// Puddle manages tools with mise in the workspace.
+    Mise,
 }
 
 impl SystemReason {
@@ -36,6 +38,7 @@ impl SystemReason {
             store::SystemReason::DirectSshCursor => Self::DirectSshCursor,
             store::SystemReason::DirectSshJetBrains => Self::DirectSshJetBrains,
             store::SystemReason::DirectSshZed => Self::DirectSshZed,
+            store::SystemReason::Mise => Self::Mise,
             _ => return None,
         })
     }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The whole host on fakes: the sandbox runtime is `FakeRuntime` with a scripted guest, the
 //! machine is a fake that records what it was asked, and everything else (store, proxies, the
 //! workspace service, the API, the UI route, the event stream) is the real code.
@@ -11,6 +11,14 @@
 
 mod support;
 
+#[path = "fake_host/dropped_requests.rs"]
+mod dropped_requests;
+#[path = "fake_host/grow_room.rs"]
+mod grow_room;
+#[path = "fake_host/tools_install.rs"]
+mod tools_install;
+
+use std::fmt::Write as _;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -41,7 +49,7 @@ use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
-use support::{Api, TestDevCert, ended, hermetic_options};
+use support::{Api, TestDevCert, ended, hermetic_options, named_id_options};
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -67,7 +75,12 @@ impl FakePlatform {
     fn call(&self, what: &'static str) -> Result<(), HostError> {
         self.log.lock().unwrap().push(what.to_owned());
         if self.refuse == Some(what) {
-            return Err(HostError::Roots(format!("{what} refused")));
+            return Err(HostError::Roots(
+                puddle_certs::StoreError::DisallowedUnreadable {
+                    store: SOURCES[0],
+                    reason: format!("{what} refused"),
+                },
+            ));
         }
         Ok(())
     }
@@ -181,6 +194,27 @@ struct Guest {
     during_boot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// What the shell-init check answers, as exit code and stdout, instead of "quiet".
     check_answer: Mutex<Option<(i32, &'static str)>>,
+    /// What `puddle-agent mise-fetch` answers on standard error with exit code 1, instead of
+    /// success.
+    mise_failure: Mutex<Option<&'static str>>,
+    /// Every `puddle-agent mise-fetch` as (arguments, user).
+    mise_fetches: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// The tools `puddle-agent mise-install` finds missing; a good install clears them.
+    tools_missing: Mutex<Vec<String>>,
+    /// What an install (not a report) answers on standard error with exit code 1, leaving the
+    /// tools missing, instead of installing them.
+    tools_failure: Mutex<Option<&'static str>>,
+    /// Runs inside every install (not a report), before it answers: what the tools asked of the
+    /// network while it ran.
+    at_install: Mutex<Option<Box<dyn Fn() + Send>>>,
+    /// Every `puddle-agent mise-install` as (arguments, user), reports included.
+    tools_runs: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// A report (`--missing`) answers with lines that are not the agent's.
+    tools_report_garbled: AtomicBool,
+    /// How often the trust step for a new JDK ran, and as whom.
+    java_trusts: Mutex<Vec<Option<String>>>,
+    /// The trust step for a new JDK fails.
+    java_trust_fails: AtomicBool,
     /// The script (stdin) of every shell-init check, and what the guest saw at the mounted file
     /// while it ran.
     checks: Mutex<Vec<(String, Option<String>)>>,
@@ -207,6 +241,8 @@ struct Guest {
     fail_import: AtomicBool,
     /// The listing script fails the way it does for a volume it cannot enter.
     fail_listing: AtomicBool,
+    /// The listing script finds no git in the image (it exits 4 and says so).
+    git_missing: AtomicBool,
     /// Checkouts the listing reports as unreadable, by directory and message.
     unreadable: Mutex<Vec<(String, String)>>,
     /// The next listing waits here before it answers, and says so in `listing_waits`.
@@ -226,7 +262,10 @@ impl Guest {
 
     fn answer(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> Option<ExecOutput> {
         let second = r.args.get(1).map(String::as_str);
-        if let Some(answer) = self.answer_volume_question(r) {
+        if let Some(answer) = self
+            .answer_volume_question(r)
+            .or_else(|| self.answer_tools(r))
+        {
             return Some(answer);
         }
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
@@ -324,6 +363,89 @@ impl Guest {
         })
     }
 
+    /// The managed tools commands: the mise fetch, the install and the trust step for a new JDK.
+    /// They run in the background after a start, so their place among the commands a test counts
+    /// is a race: they stay out of the command log and have logs of their own.
+    fn answer_tools(&self, r: &ExecRequest) -> Option<ExecOutput> {
+        Some(
+            match (r.program.as_str(), r.args.first().map(String::as_str)) {
+                ("/puddle/puddle-agent", Some("mise-fetch")) => self.answer_mise_fetch(r),
+                ("/puddle/puddle-agent", Some("mise-install")) => self.answer_mise_install(r),
+                ("sh", Some(puddle_certs::JAVA_STEP_PATH)) => {
+                    self.java_trusts.lock().unwrap().push(r.user.clone());
+                    if self.java_trust_fails.load(Ordering::SeqCst) {
+                        ExecOutput::new(1, "", "keytool: permission denied")
+                    } else {
+                        ExecOutput::new(0, "java-trust: 1 store updated\n", "")
+                    }
+                }
+                _ => return None,
+            },
+        )
+    }
+
+    /// Records a `mise-fetch` and answers as set up.
+    fn answer_mise_fetch(&self, r: &ExecRequest) -> ExecOutput {
+        self.mise_fetches
+            .lock()
+            .unwrap()
+            .push((r.args.clone(), r.user.clone()));
+        match *self.mise_failure.lock().unwrap() {
+            Some(said) => ExecOutput::new(1, "", said),
+            None => ExecOutput::new(0, "installed\n", ""),
+        }
+    }
+
+    /// Records a `mise-install` and answers like the agent: the missing tools, and for an install
+    /// what landed or failed, then `end`.
+    fn answer_mise_install(&self, r: &ExecRequest) -> ExecOutput {
+        self.tools_runs
+            .lock()
+            .unwrap()
+            .push((r.args.clone(), r.user.clone()));
+        let report_only = r.args.get(2).map(String::as_str) == Some("--missing");
+        if report_only && self.tools_report_garbled.load(Ordering::SeqCst) {
+            return ExecOutput::new(0, "Segmentation fault\n", "");
+        }
+        let before = self.tools_missing.lock().unwrap().clone();
+        let mut out = String::new();
+        for tool in &before {
+            writeln!(out, "missing {tool}").unwrap();
+        }
+        if report_only || before.is_empty() {
+            out.push_str("end\n");
+            return ExecOutput::new(0, out, "");
+        }
+        if let Some(during) = self.at_install.lock().unwrap().as_ref() {
+            during();
+        }
+        let failure = *self.tools_failure.lock().unwrap();
+        let word = if failure.is_some() {
+            "failed"
+        } else {
+            "installed"
+        };
+        for tool in &before {
+            writeln!(out, "{word} {tool}").unwrap();
+        }
+        out.push_str("end\n");
+        if let Some(said) = failure {
+            return ExecOutput::new(1, out, said);
+        }
+        self.tools_missing.lock().unwrap().clear();
+        ExecOutput::new(0, out, "")
+    }
+
+    /// The installs (not the reports) `mise-install` ran.
+    fn tool_installs(&self) -> usize {
+        self.tools_runs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(args, _)| args.len() == 2)
+            .count()
+    }
+
     /// Records the script a shell-init check ran and the file it saw, then answers as set up.
     fn answer_shell_init_check(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> ExecOutput {
         let seen = ctx
@@ -378,6 +500,9 @@ impl Guest {
             return None;
         }
         match r.args.get(2).map(String::as_str) {
+            Some("puddle-checkouts") if r.args.get(4).map(String::as_str) == Some("--names") => {
+                Some(self.list_volume_names())
+            }
             Some("puddle-checkouts") => Some(self.list_volume(r.args.get(4).cloned())),
             Some("puddle-exists") => {
                 let dir = r
@@ -398,6 +523,9 @@ impl Guest {
         if let Some(hold) = hold {
             self.listing_waits.store(true, Ordering::SeqCst);
             wait_for(&hold);
+        }
+        if self.git_missing.load(Ordering::SeqCst) {
+            return ExecOutput::new(4, "E\t.\tgit is not installed in the image\n", "");
         }
         if self.fail_listing.load(Ordering::SeqCst) {
             return ExecOutput::new(3, "E\t.\tcannot enter /workspaces/adds\n", "");
@@ -427,6 +555,25 @@ impl Guest {
         }
         out.push_str("D\n");
         self.listings.lock().unwrap().push(only);
+        ExecOutput::new(0, out, "")
+    }
+
+    /// What the listing script prints with `--names`: the checkout directories alone, from any
+    /// image (it runs no git).
+    fn list_volume_names(&self) -> ExecOutput {
+        let mut dirs: Vec<String> = self
+            .volume
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(d, _)| d.clone())
+            .collect();
+        dirs.sort();
+        let mut out = String::new();
+        for dir in dirs {
+            writeln!(out, "C\t{dir}\t\t\t\t0").unwrap();
+        }
+        out.push_str("O\t0\nD\n");
         ExecOutput::new(0, out, "")
     }
 
@@ -587,6 +734,9 @@ struct RecordingLauncher {
     forget_fails_with: Mutex<Option<String>>,
     /// The ids the shell says it keeps browser data under.
     data_under: Mutex<Vec<String>>,
+    /// A path to make unwritable when a window is asked to close: the first thing a delete does
+    /// once its mark is saved.
+    unwritable_on_close: Mutex<Option<PathBuf>>,
 }
 
 impl Launcher for RecordingLauncher {
@@ -623,7 +773,12 @@ impl Launcher for RecordingLauncher {
         &'a self,
         workspace: &'a WorkspaceId,
     ) -> futures_util::future::BoxFuture<'a, ()> {
-        Box::pin(async move { self.closed.lock().unwrap().push(workspace.to_string()) })
+        Box::pin(async move {
+            self.closed.lock().unwrap().push(workspace.to_string());
+            if let Some(path) = self.unwritable_on_close.lock().unwrap().take() {
+                make_unwritable(&path);
+            }
+        })
     }
 
     fn forget_browser<'a>(
@@ -677,16 +832,35 @@ struct Rig {
     rewrite_gate: Mutex<Option<RewriteGate>>,
     /// Starts the host with SSH host keys for Git over SSH.
     git_ssh: AtomicBool,
-    /// Where new ids come from, for a test about them; else ids made from names.
+    /// Where new ids come from, for a test about them; else random ids, as on a real host.
     ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
+    /// Whether the managed tools layer is on. Off by default: its background download runs a
+    /// command at a moment no test chose, which would move the count of commands that a test
+    /// injects a fault after.
+    mise_on: AtomicBool,
+    /// Starts the host the way `puddle serve --headless` does: no store handed in, so the choice
+    /// of store runs and picks the file vault, whose key is a file in this rig's config folder.
+    file_vault: AtomicBool,
+    /// With `file_vault`: leaves the headless flag off, as a restart of a recorded install does.
+    without_headless_flag: AtomicBool,
+    /// The drive the host reads its free space from, when a test sets one; else a fixed figure.
+    free_space: Mutex<Option<Arc<dyn puddle_host::Space>>>,
 }
 
 impl Rig {
+    /// A rig whose workspaces get ids made from their names (`acme` gets `acme`), for a test that
+    /// writes those ids into paths and URLs itself.
+    fn named_ids() -> Self {
+        let rig = Self::new();
+        *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::NameIds));
+        rig
+    }
+
     fn new() -> Self {
         let runtime = FakeRuntime::new();
         let guest = Arc::new(Guest::default());
         guest.install(&runtime);
-        Self {
+        let rig = Self {
             dev_cert: Arc::new(TestDevCert::new()),
             dir: support::scratch_dir(),
             log: Log::default(),
@@ -698,7 +872,17 @@ impl Rig {
             rewrite_gate: Mutex::new(None),
             git_ssh: AtomicBool::new(false),
             ids: Mutex::new(None),
-        }
+            mise_on: AtomicBool::new(false),
+            file_vault: AtomicBool::new(false),
+            without_headless_flag: AtomicBool::new(false),
+            free_space: Mutex::new(None),
+        };
+        // A host that restarts reuses the port its front stored. A port the first run took from
+        // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
+        // take it before the restart binds (a flaky `front-port-moved` problem), so every rig starts
+        // on a quiet port, below the ephemeral ranges.
+        store_front_port(&rig, puddle_test_kit::quiet_port());
+        rig
     }
 
     fn config(&self) -> HostConfig {
@@ -737,6 +921,15 @@ impl Rig {
 
     async fn start_with(&self, config: HostConfig) -> Host<FakeRuntime> {
         let prepared = prepare(config, &FakePlatform::new(&self.log)).unwrap();
+        if !self.mise_on.load(Ordering::SeqCst) {
+            let dir = self.dir.path().join("data").join("settings");
+            let file = dir.join("global.json");
+            if !file.exists() {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&file, br#"{"schema_version": 2, "tools": {"mise": false}}"#)
+                    .unwrap();
+            }
+        }
         let mut options = hermetic_options();
         options.launcher = if self.windowless.load(Ordering::SeqCst) {
             Arc::new(DesktopOnly(self.launcher.clone()))
@@ -744,6 +937,13 @@ impl Rig {
             self.launcher.clone()
         };
         options.secret_store = Some(self.secrets.clone());
+        if self.file_vault.load(Ordering::SeqCst) {
+            options.secret_store = None;
+            options.secret_setup.headless = !self.without_headless_flag.load(Ordering::SeqCst);
+            options.secret_setup.key_home = Some(self.dir.path().join("config"));
+            options.secret_setup.tools = Some(puddle_secrets::ToolPaths::default());
+            options.secret_setup.session = Some(puddle_secrets::LoginSession::NotGraphical);
+        }
         options.git_ssh = self.git_ssh.load(Ordering::SeqCst);
         options
             .rewrite_gate
@@ -751,6 +951,9 @@ impl Rig {
         options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
         if let Some(ids) = self.ids.lock().unwrap().clone() {
             options.workspace_ids = Some(ids);
+        }
+        if let Some(space) = self.free_space.lock().unwrap().clone() {
+            options.free_space = Some(space);
         }
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
@@ -887,6 +1090,51 @@ async fn a_missing_agent_stops_the_start_before_anything_is_reconciled() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn remote_serving_gives_the_host_a_network_listener_with_its_own_certificate_only_when_asked()
+{
+    use std::net::{IpAddr, Ipv4Addr};
+    let serving = || {
+        puddle_api::RemoteServing::new(
+            vec![puddle_api::PublicHost::parse("puddle.example.org").unwrap()],
+            None,
+        )
+        .unwrap()
+    };
+    let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.api.remote = Some(puddle_host::RemoteSettings {
+        serving: serving(),
+        network: None,
+    });
+    let host = rig.start_with(config).await;
+    assert_eq!(
+        host.remote_listener(),
+        None,
+        "a front on this machine needs none"
+    );
+    host.shutdown().await;
+
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.api.remote = Some(puddle_host::RemoteSettings {
+        serving: serving(),
+        network: Some(puddle_api::NetworkEndpoint::new(loopback, 0, vec![loopback]).unwrap()),
+    });
+    let host = rig.start_with(config).await;
+    let listener = host.remote_listener().expect("a network listener").clone();
+    assert_eq!(listener.addr.ip(), loopback);
+    assert_eq!(listener.fingerprint.len(), 64);
+    assert!(
+        listener.certificate_file.is_file(),
+        "{:?}",
+        listener.certificate_file
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
     let rig = Rig::new();
     let first = rig.start().await;
@@ -908,7 +1156,7 @@ async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_host_on_the_same_data_folder_is_refused_and_the_first_is_untouched() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let first = rig.start().await;
     let api = api(&first);
     let mut events = api.events().await;
@@ -953,7 +1201,7 @@ async fn a_second_host_on_the_same_data_folder_is_refused_and_the_first_is_untou
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_serves_the_api_the_ui_and_the_event_stream() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
 
@@ -1084,7 +1332,7 @@ async fn the_apis_address_is_registered_so_no_guest_can_ask_the_proxy_for_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_not_running() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1108,7 +1356,7 @@ async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1138,7 +1386,7 @@ async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_round_of_build_switches_asks_only_microsoft_workspaces_without_a_window() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -1330,8 +1578,46 @@ async fn the_system_check_looks_at_the_runtime_folder_the_host_was_started_with(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
+async fn an_ssh_agent_named_in_the_settings_is_the_one_the_system_check_asks() {
     let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let agent_line = |report: serde_json::Value| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "ssh_agent")
+            .unwrap_or_else(|| panic!("no ssh_agent check in {report}"))
+            .to_string()
+    };
+    let named = rig.dir.path().join("my-agent").display().to_string();
+    let before = agent_line(api.get("/api/doctor?boot=false").await.json());
+    assert!(!before.contains("my-agent"), "{before}");
+
+    let body = json!({"ui": {"ssh_agent_pipe": format!("  {named}  ")}});
+    let put = api.put("/api/settings", &body.to_string()).await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(put.json()["ui"]["ssh_agent_pipe"], named);
+    let after = agent_line(api.get("/api/doctor?boot=false").await.json());
+    // The line is JSON text, so a Windows path's backslashes show doubled.
+    let escaped = json!(named).to_string();
+    let escaped = escaped.trim_matches('"');
+    assert!(after.contains(escaped), "the doctor asks {named}: {after}");
+
+    let cleared = json!({"ui": {"ssh_agent_pipe": "  "}});
+    assert_eq!(
+        api.put("/api/settings", &cleared.to_string()).await.status,
+        200
+    );
+    let again = agent_line(api.get("/api/doctor?boot=false").await.json());
+    assert!(!again.contains("my-agent"), "{again}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
+    let rig = Rig::named_ids();
     rig.guest.fail_sync.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -1369,13 +1655,39 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     host.shutdown().await;
 }
 
+/// The id of the list entry in `dir` on `workspace`'s list. Entry ids are generated, so a test
+/// reads them from the workspace.
+async fn entry_of(api: &Api, workspace: &str, dir: &str) -> String {
+    let ws = api
+        .get(&format!("/api/workspaces/{workspace}"))
+        .await
+        .json();
+    let found = ws["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == dir)
+        .unwrap();
+    found["entry"].as_str().unwrap().to_owned()
+}
+
+/// A list of repositories without its generated entry ids.
+fn without_entries(list: &serde_json::Value) -> serde_json::Value {
+    let mut list = list.clone();
+    for r in list.as_array_mut().unwrap() {
+        r.as_object_mut().unwrap().remove("entry");
+    }
+    list
+}
+
 /// The only problem standing is the failed clone of `url` into `workspace`'s `dir`, with git's
 /// error first and the way out last.
 async fn the_one_problem_names_the_clone(api: &Api, workspace: &str, dir: &str, url: &str) {
+    let entry = entry_of(api, workspace, dir).await;
     let problems = problems_of(api).await;
     assert_eq!(problems.len(), 1, "{problems:?}");
     let (key, about, title, detail) = &problems[0];
-    assert_eq!(key, &format!("clone:{workspace}:{dir}"));
+    assert_eq!(key, &format!("clone:{workspace}:{entry}"));
     assert_eq!(about.as_deref(), Some(workspace));
     assert_eq!(
         title,
@@ -1437,7 +1749,7 @@ async fn make_work_identity(api: &Api) {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_its_git_settings() {
     const DOWN: &str = "https://unreachable.example/acme/docs.git";
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.fail_clone_of.lock().unwrap() = Some(DOWN.to_owned());
     let host = rig.start().await;
     let seen = git_settings_at_each_clone(&rig, &host, "trio");
@@ -1498,7 +1810,7 @@ async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_it
     let ws = api.get("/api/workspaces/trio").await.json();
     assert_eq!(ws["status"], "running");
     assert_eq!(
-        ws["repositories"],
+        without_entries(&ws["repositories"]),
         json!([
             {"url": REPO, "directory": "api"},
             {"url": DOWN, "directory": "docs"},
@@ -1572,7 +1884,7 @@ async fn checkouts_of(api: &Api, name: &str) -> serde_json::Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_listed_after() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     make_work_identity(&api).await;
@@ -1648,7 +1960,7 @@ async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_lis
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_clears_it() {
     const DOWN: &str = "https://unreachable.example/acme/docs.git";
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1671,8 +1983,17 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
 
     // Cloning again while the directory is empty works and the problem goes.
     *rig.guest.fail_clone_of.lock().unwrap() = None;
+    let docs = entry_of(&api, "adds", "docs").await;
+    // A directory is no entry id, so the way a client used to name the entry is a 404 now.
     let reply = api
         .post("/api/workspaces/adds/repositories/docs/clone", "")
+        .await;
+    assert_eq!(reply.status, 404, "{}", reply.body);
+    let reply = api
+        .post(
+            &format!("/api/workspaces/adds/repositories/{docs}/clone"),
+            "",
+        )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     events.until(ended("adds"), Duration::from_secs(20)).await;
@@ -1680,20 +2001,31 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
     assert_eq!(checkouts_of(&api, "adds").await["missing"], json!([]));
     // An entry that is on the disk is not cloned over.
     let reply = api
-        .post("/api/workspaces/adds/repositories/docs/clone", "")
+        .post(
+            &format!("/api/workspaces/adds/repositories/{docs}/clone"),
+            "",
+        )
         .await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     let reply = api
-        .post("/api/workspaces/adds/repositories/nope/clone", "")
+        .post("/api/workspaces/adds/repositories/a0000000/clone", "")
         .await;
     assert_eq!(reply.status, 404, "{}", reply.body);
     host.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
-    const MOVED: &str = "https://example.org/acme/moved.git";
-    let rig = Rig::new();
+const MOVED_REMOTE: &str = "https://example.org/acme/moved.git";
+
+/// A running host with workspace `adds` and two foreign checkouts, `legacy` (https) and `ssh`.
+struct ManagedRig {
+    rig: Rig,
+    host: Host<FakeRuntime>,
+    api: Api,
+    events: support::Events,
+}
+
+async fn managed_checkouts_rig() -> ManagedRig {
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     make_work_identity(&api).await;
@@ -1703,13 +2035,19 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         .put_checkout("legacy", "https://example.org/acme/legacy.git");
     rig.guest
         .put_checkout("ssh", "git@example.org:acme/ssh.git");
-    let clones = rig.guest.clone_commands().len();
-    let commands = rig.guest.commands().len();
+    ManagedRig {
+        rig,
+        host,
+        api,
+        events,
+    }
+}
 
-    // The listing offers it; then its remote changes before the call.
+/// The listing offers `legacy`; then its remote changes, so the user's view is stale.
+async fn move_the_legacy_remote(m: &ManagedRig) {
     // A listing made at the same millisecond as the call would be shared with it.
     tokio::time::sleep(Duration::from_millis(20)).await;
-    let list = checkouts_of(&api, "adds").await;
+    let list = checkouts_of(&m.api, "adds").await;
     let legacy = list["checkouts"]
         .as_array()
         .unwrap()
@@ -1719,40 +2057,32 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         .clone();
     assert_eq!(legacy["entry"], serde_json::Value::Null);
     assert_eq!(legacy["manage"]["offered"], true);
-    rig.guest.put_checkout("legacy", MOVED);
+    m.rig.guest.put_checkout("legacy", MOVED_REMOTE);
+}
 
-    // The user saw the old address: a swapped remote is refused, naming both, and adds nothing.
-    let swapped = add_and_wait(
-        &api,
-        &mut events,
+async fn manage_legacy_at_its_new_remote(m: &mut ManagedRig) -> support::Reply {
+    add_and_wait(
+        &m.api,
+        &mut m.events,
         "adds",
-        json!({"kind": "existing", "url": "https://example.org/acme/legacy.git", "directory": "legacy"}),
+        json!({"kind": "existing", "url": MOVED_REMOTE, "directory": "legacy"}),
     )
-    .await;
-    assert_eq!(swapped.status, 409, "{}", swapped.body);
-    assert!(
-        swapped.body.contains("legacy.git") && swapped.body.contains(MOVED),
-        "{}",
-        swapped.body
-    );
-    let record = api.get("/api/workspaces/adds").await.json();
-    assert_eq!(
-        record["repositories"].as_array().unwrap().len(),
-        1,
-        "{record}"
-    );
-    let listings = rig.guest.listings.lock().unwrap().len();
+    .await
+}
 
-    let reply = add_and_wait(
-        &api,
-        &mut events,
-        "adds",
-        json!({"kind": "existing", "url": MOVED, "directory": "legacy"}),
-    )
-    .await;
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
+    let mut m = managed_checkouts_rig().await;
+    let clones = m.rig.guest.clone_commands().len();
+    let commands = m.rig.guest.commands().len();
+    move_the_legacy_remote(&m).await;
+    let listings = m.rig.guest.listings.lock().unwrap().len();
+
+    let reply = manage_legacy_at_its_new_remote(&mut m).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(
-        rig.guest
+        m.rig
+            .guest
             .listings
             .lock()
             .unwrap()
@@ -1762,20 +2092,23 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         Some("legacy"),
         "its remote was read again for this call"
     );
-    assert_eq!(rig.guest.listings.lock().unwrap().len(), listings + 1);
+    assert_eq!(m.rig.guest.listings.lock().unwrap().len(), listings + 1);
     let entries = reply.json()["repositories"].clone();
-    assert_eq!(entries[1], json!({"url": MOVED, "directory": "legacy"}));
     assert_eq!(
-        rig.guest.clone_commands().len(),
+        without_entries(&json!([entries[1]])),
+        json!([{"url": MOVED_REMOTE, "directory": "legacy"}])
+    );
+    assert_eq!(
+        m.rig.guest.clone_commands().len(),
         clones,
         "nothing was cloned"
     );
     assert_eq!(
-        rig.guest.commands().len(),
+        m.rig.guest.commands().len(),
         commands,
         "no command but the reads ran in the guest"
     );
-    let git = api.get("/api/workspaces/adds/git").await.json();
+    let git = m.api.get("/api/workspaces/adds/git").await.json();
     let rows: Vec<_> = git["repos"]
         .as_array()
         .unwrap()
@@ -1787,24 +2120,61 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
         ["api", "moved"],
         "the new row is the one read just now"
     );
+    m.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_a_checkout_whose_remote_was_swapped_is_refused_naming_both_and_adds_nothing() {
+    let mut m = managed_checkouts_rig().await;
+    move_the_legacy_remote(&m).await;
+
+    // The user saw the old address: a swapped remote is refused, naming both, and adds nothing.
+    let swapped = add_and_wait(
+        &m.api,
+        &mut m.events,
+        "adds",
+        json!({"kind": "existing", "url": "https://example.org/acme/legacy.git", "directory": "legacy"}),
+    )
+    .await;
+    assert_eq!(swapped.status, 409, "{}", swapped.body);
+    assert!(
+        swapped.body.contains("legacy.git") && swapped.body.contains(MOVED_REMOTE),
+        "{}",
+        swapped.body
+    );
+    let record = m.api.get("/api/workspaces/adds").await.json();
+    assert_eq!(
+        record["repositories"].as_array().unwrap().len(),
+        1,
+        "{record}"
+    );
+    m.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_something_that_is_not_a_checkout_has_an_ssh_remote_or_is_listed_is_refused() {
+    let mut m = managed_checkouts_rig().await;
+    move_the_legacy_remote(&m).await;
+    let reply = manage_legacy_at_its_new_remote(&mut m).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
 
     // One that is not a checkout, one with an SSH remote and one already listed are refused.
     for dir in ["missing", "ssh", "legacy"] {
         let refused = add_and_wait(
-            &api,
-            &mut events,
+            &m.api,
+            &mut m.events,
             "adds",
             json!({"kind": "existing", "url": "https://example.org/acme/x.git", "directory": dir}),
         )
         .await;
         assert_eq!(refused.status, 409, "{dir}: {}", refused.body);
     }
-    host.shutdown().await;
+    m.host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     make_work_identity(&api).await;
@@ -1812,8 +2182,16 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
     create(&api, &mut events, "adds").await;
     let rows_before = api.get("/api/workspaces/adds/git").await.json();
 
-    let reply = api
+    let api_entry = entry_of(&api, "adds", "api").await;
+    let by_directory = api
         .delete("/api/workspaces/adds/repositories/api", None)
+        .await;
+    assert_eq!(by_directory.status, 404, "{}", by_directory.body);
+    let reply = api
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["repositories"], json!([]));
@@ -1830,7 +2208,10 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
         rows_before
     );
     let gone = api
-        .delete("/api/workspaces/adds/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(gone.status, 404, "{}", gone.body);
 
@@ -1848,7 +2229,7 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clone() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1913,7 +2294,7 @@ async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1952,8 +2333,12 @@ async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
     .await;
     assert_eq!(add.status, 409, "{}", add.body);
     // Taking an entry off the list works while stopped.
+    let api_entry = entry_of(&api, "adds", "api").await;
     let removed = api
-        .delete("/api/workspaces/adds/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(removed.status, 200, "{}", removed.body);
     host.shutdown().await;
@@ -1983,7 +2368,7 @@ async fn after_boot_listing(rig: &Rig) {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_read_cannot_be_managed()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2046,7 +2431,7 @@ async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_rea
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_listing_the_guest_cannot_make_is_a_problem_in_the_answer_not_an_error() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2070,7 +2455,7 @@ async fn a_listing_the_guest_cannot_make_is_a_problem_in_the_answer_not_an_error
 
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_that_wait_for_a_listing_share_the_one_that_starts_after_they_asked() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api0 = api(&host);
     let mut events = api0.events().await;
@@ -2111,15 +2496,19 @@ async fn calls_that_wait_for_a_listing_share_the_one_that_starts_after_they_aske
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "adds").await;
+    let api_entry = entry_of(&api, "adds", "api").await;
     make_unwritable(&list_path(&rig));
 
     let reply = api
-        .delete("/api/workspaces/adds/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(reply.status, 503, "{}", reply.body);
     assert!(reply.body.contains("nothing changed"), "{}", reply.body);
@@ -2130,7 +2519,7 @@ async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2152,7 +2541,7 @@ async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing
 
 #[tokio::test(flavor = "multi_thread")]
 async fn nothing_is_added_once_shutdown_has_begun() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2171,7 +2560,7 @@ async fn nothing_is_added_once_shutdown_has_begun() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2182,8 +2571,12 @@ async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
     }));
     let reply = api.post("/api/workspaces", &new_workspace("late")).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
+    let late_entry = entry_of(&api, "late", "api").await;
     let refused = api
-        .delete("/api/workspaces/late/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/late/repositories/{late_entry}"),
+            None,
+        )
         .await;
     assert_eq!(refused.status, 409, "{}", refused.body);
     assert!(refused.body.contains("creating"), "{}", refused.body);
@@ -2194,7 +2587,7 @@ async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2226,7 +2619,7 @@ async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2258,7 +2651,7 @@ async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves_nothing() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2308,7 +2701,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
         .await
         .unwrap()
         .into_iter()
-        .map(|v| v.name.clone())
+        .map(|v| v.name)
         .collect();
     assert_eq!(volumes, ["ws-probe"], "the failed create's volume is gone");
     host.shutdown().await;
@@ -2332,7 +2725,7 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
     let api = api(&host);
     let ws = api.get("/api/workspaces/acme").await.json();
     assert_eq!(
-        ws["repositories"],
+        without_entries(&ws["repositories"]),
         json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
     );
     assert_eq!(ws["start_folder"], "shop");
@@ -2348,8 +2741,12 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(saved["version"], 3);
     assert_eq!(
-        saved["workspaces"][0]["repositories"],
+        without_entries(&saved["workspaces"][0]["repositories"]),
         json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
+    );
+    assert_eq!(
+        saved["workspaces"][0]["repositories"][0]["entry"], ws["repositories"][0]["entry"],
+        "the id given on read is the one saved"
     );
     assert_eq!(saved["workspaces"][0]["start_folder"], "shop");
     assert_eq!(saved["workspaces"][0]["name"], "Shop");
@@ -2363,7 +2760,7 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_boot_leaves_nothing_behind_and_a_failed_start_says_crashed() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2402,7 +2799,7 @@ async fn a_failed_boot_leaves_nothing_behind_and_a_failed_start_says_crashed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dirty_workspace_is_deleted_only_with_the_fingerprint_the_user_saw() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2449,7 +2846,7 @@ async fn a_dirty_workspace_is_deleted_only_with_the_fingerprint_the_user_saw() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_running_workspace_cannot_be_deleted_and_busy_ones_refuse_a_second_operation() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2474,7 +2871,7 @@ async fn a_running_workspace_cannot_be_deleted_and_busy_ones_refuse_a_second_ope
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reclaim_trims_the_running_workspace() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2489,7 +2886,7 @@ async fn reclaim_trims_the_running_workspace() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn attach_opens_the_desktop_editor_through_the_launcher() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2508,6 +2905,24 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         )
         .await;
     assert_eq!(refused.status, 409, "direct SSH is off: {}", refused.body);
+    assert_eq!(
+        refused.json()["message"],
+        "direct SSH is off for this workspace; allow it first"
+    );
+    // The host refuses it itself too, for a caller that did not pass the API's check.
+    let attached = host
+        .workspaces()
+        .attach(
+            &WorkspaceId::new("acme").unwrap(),
+            puddle_api::AttachMode::Desktop,
+        )
+        .await
+        .unwrap();
+    assert!(!attached.opened);
+    assert_eq!(
+        attached.message.as_deref(),
+        Some("direct SSH is off for this workspace; allow it first")
+    );
     assert!(rig.launcher.opened.lock().unwrap().is_empty());
     allow_direct_ssh(&api, "acme", true).await;
     let reply = api
@@ -2518,6 +2933,11 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["opened"], true);
+    let uri = reply.json()["open_uri"].as_str().unwrap().to_owned();
+    assert!(
+        uri.starts_with("vscode://vscode-remote/ssh-remote+puddle-acme/"),
+        "{uri}"
+    );
     assert_eq!(*rig.launcher.opened.lock().unwrap(), ["acme"]);
     let browser = api
         .post(
@@ -2606,12 +3026,21 @@ async fn window_gets(origin: &str) -> String {
 
 /// The raw answer to one request a window sends to the front at `origin`.
 async fn window_sends(origin: &str, method: &str, path: &str) -> String {
+    window_try_sends(origin, method, path).await.unwrap()
+}
+
+/// What [`window_gets`] gets, or `None` when nothing listens or the connection breaks.
+async fn window_try(origin: &str) -> Option<String> {
+    window_try_sends(origin, "GET", "/").await
+}
+
+async fn window_try_sends(origin: &str, method: &str, path: &str) -> Option<String> {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let authority = origin.strip_prefix("http://").unwrap();
     let port: u16 = authority.rsplit(':').next().unwrap().parse().unwrap();
     let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
-        .unwrap();
+        .ok()?;
     conn.write_all(
         format!(
             "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -2619,10 +3048,10 @@ async fn window_sends(origin: &str, method: &str, path: &str) -> String {
         .as_bytes(),
     )
     .await
-    .unwrap();
+    .ok()?;
     let mut answer = Vec::new();
-    conn.read_to_end(&mut answer).await.unwrap();
-    String::from_utf8_lossy(&answer).into_owned()
+    conn.read_to_end(&mut answer).await.ok()?;
+    Some(String::from_utf8_lossy(&answer).into_owned())
 }
 
 /// Waits until the front carries a request at `origin` to the editor, and returns the answer.
@@ -2664,7 +3093,7 @@ async fn browser_origin(rig: &Rig, api: &Api, workspace: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_hands_the_launcher_the_fronts_origin_and_the_front_carries_a_request_to_the_editor()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2700,7 +3129,7 @@ async fn a_browser_attach_hands_the_launcher_the_fronts_origin_and_the_front_car
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_the_password() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     write_global_settings(
         &rig,
         &json!({"schema_version": 2, "workspace_defaults": {"zoom_hotkeys": false}}),
@@ -2744,7 +3173,7 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_the_password() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2791,7 +3220,7 @@ async fn browser_attach_over_damaged_settings(rig: &Rig) -> (Host<FakeRuntime>, 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_says_why() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     // A user who turned the clipboard prompt off must never get a window that asks: with the
     // settings unreadable no window opens at all.
     let file = damage_global_settings(&rig);
@@ -2821,7 +3250,7 @@ async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_sa
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_window() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     write_global_settings(
         &rig,
         &json!({"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}),
@@ -2867,7 +3296,7 @@ async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_wi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_token() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -2887,7 +3316,7 @@ async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_desktop_app() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.windowless.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -2905,7 +3334,8 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
         reply.json(),
         json!({
             "opened": false,
-            "message": "the browser editor opens from the desktop app"
+            "message": "the browser editor opens from the desktop app",
+            "open_uri": null
         })
     );
     host.shutdown().await;
@@ -2913,7 +3343,7 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_cannot_open_says_why_in_the_browser_attach_answer() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2966,7 +3396,7 @@ async fn delete_and_wait(api: &Api, events: &mut support::Events, workspace: &'s
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_a_workspace_closes_its_editor_windows() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2989,7 +3419,7 @@ async fn stopping_a_workspace_closes_its_editor_windows() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_headless_host_stops_and_deletes_with_no_window_to_close() {
     // `puddle serve` has no window: stopping and deleting work as they did.
-    let headless = Rig::new();
+    let headless = Rig::named_ids();
     headless.windowless.store(true, Ordering::SeqCst);
     let host = headless.start().await;
     let api = api(&host);
@@ -3003,7 +3433,7 @@ async fn a_headless_host_stops_and_deletes_with_no_window_to_close() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_data() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -3050,7 +3480,7 @@ async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_da
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3081,7 +3511,7 @@ async fn a_new_workspace_clears_browser_data_under_its_own_id_and_leaves_an_earl
     // folder and the key half behind. The id is never drawn again, so the data stays where it
     // is; the create still clears under its own id, a second guard for data a window wrote after
     // the draw. The recording launcher only notes the ask; the key half is a real file.
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let key = HostPaths::new(rig.dir.path().join("data"))
         .front_keys()
         .join("acme.key");
@@ -3098,7 +3528,7 @@ async fn a_new_workspace_clears_browser_data_under_its_own_id_and_leaves_an_earl
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_alone() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3112,7 +3542,7 @@ async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_a
 
 #[tokio::test(flavor = "multi_thread")]
 async fn browser_data_a_delete_could_not_remove_stays_under_an_id_no_new_workspace_gets() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3145,7 +3575,7 @@ async fn browser_data_a_delete_could_not_remove_stays_under_an_id_no_new_workspa
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
@@ -3216,6 +3646,8 @@ fn stored_front_port(rig: &Rig) -> Option<u16> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_run_stores_the_port_its_front_took() {
     let rig = Rig::new();
+    // A rig starts with a stored quiet port; this one is a data folder that never ran Puddle.
+    std::fs::remove_file(HostPaths::new(rig.dir.path().join("data")).front_port_file()).unwrap();
     let host = rig.start().await;
     assert_eq!(
         stored_front_port(&rig),
@@ -3303,6 +3735,7 @@ async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
     let rig = Rig::new();
     // A folder where the file belongs: it cannot be read as a port or replaced by one.
     let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::remove_file(&file).unwrap();
     std::fs::create_dir_all(&file).unwrap();
     let host = rig.start().await;
     let port = front_port_of(&host);
@@ -3314,7 +3747,7 @@ async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3365,7 +3798,7 @@ async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -3392,7 +3825,7 @@ async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the_host() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3402,18 +3835,21 @@ async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the
     let answer = served_at(&origin).await;
     assert!(!answer.contains("puddle-secret-half="), "{answer}");
     host.shutdown().await;
-    let port: u16 = origin.rsplit(':').next().unwrap().parse().unwrap();
+    // Not "the port refuses connections": the front's number can be another test's by now. The
+    // same request that got the editor's 200 above (same name in `Host`) no longer does: a
+    // stranger on the old port does not know the name.
+    let after = window_try(&origin).await;
     assert!(
-        tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_err(),
-        "the front's listener is gone after shutdown"
+        after
+            .as_deref()
+            .is_none_or(|a| !a.starts_with("HTTP/1.1 200")),
+        "the front's listener is gone after shutdown: {after:?}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_gets_the_memory_the_settings_name() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3457,7 +3893,7 @@ async fn online_cpus(rig: &Rig, name: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_at_the_next_start()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3506,7 +3942,7 @@ fn damage_global_settings(rig: &Rig) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_that_needs_the_default_memory_is_refused_while_the_settings_are_unreadable() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let file = damage_global_settings(&rig);
     let host = rig.start().await;
     let api = api(&host);
@@ -3592,12 +4028,22 @@ fn api_for(host: &Host<FakeRuntime>) -> Api {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_runs_the_steps_in_order_and_trims_then_stops_every_sandbox() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     create(&api, &mut events, "beta").await;
+    // The probe after the shutdown only proves a stop when it can see the running API.
+    assert_eq!(
+        puddle_test_kit::http_status(
+            ([127, 0, 0, 1], host.url().port().unwrap()).into(),
+            "/api/workspaces",
+            host.token()
+        ),
+        Some(200),
+        "the running API answers its own token"
+    );
 
     let down = host.shutdown().await;
     assert_eq!(down.steps, SHUTDOWN_STEPS);
@@ -3630,13 +4076,15 @@ async fn shutdown_runs_the_steps_in_order_and_trims_then_stops_every_sandbox() {
         assert!(info.status.is_down(), "{info:?}");
     }
     // The API is gone, and a second shutdown returns the first result.
-    assert!(
-        tokio::net::TcpStream::connect((
-            host.url().host_str().unwrap(),
-            host.url().port().unwrap()
-        ))
-        .await
-        .is_err()
+    // Not "the port refuses connections": the API's number can be another test's by now. A stopped
+    // host no longer answers its own token.
+    assert_ne!(
+        puddle_test_kit::http_status(
+            ([127, 0, 0, 1], host.url().port().unwrap()).into(),
+            "/api/workspaces",
+            host.token()
+        ),
+        Some(200)
     );
     assert_eq!(host.shutdown().await, down);
     assert_eq!(
@@ -3698,6 +4146,23 @@ impl Runtime for SlowPull {
         cpus: puddle_types::CpuCount,
     ) -> impl Future<Output = Result<(), puddle_compute::ComputeError>> + Send {
         self.0.set_cpus(name, cpus)
+    }
+
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
+    ) -> impl Future<Output = Result<(), puddle_compute::ComputeError>> + Send {
+        self.0.set_env(name, env)
+    }
+
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: puddle_compute::DiskSize,
+    ) -> impl Future<Output = Result<puddle_compute::RootDiskGrowth, puddle_compute::ComputeError>> + Send
+    {
+        self.0.grow_root_disk(name, size)
     }
 
     fn set_memory(
@@ -3833,13 +4298,14 @@ async fn operations_are_refused_once_shutdown_has_begun() {
 // ---- after a restart ----------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_volume() {
-    let rig = Rig::new();
+async fn a_restart_keeps_the_workspaces_and_the_sandbox_with_its_root_disk() {
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
     let created_at = api1.get("/api/workspaces/acme").await.json()["created_at"].clone();
+    let route = rig.runtime.routes(&SandboxName::new("acme").unwrap());
     host.shutdown().await;
     // The next start is a new process: the first one's hold on the data folder ends.
     drop(host);
@@ -3859,7 +4325,8 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
     );
     assert!(again.reconcile_report().volumes_removed.is_empty());
 
-    // This process does not serve the old sandbox's route, so starting rebuilds the sandbox.
+    // This process serves the route the sandbox was made with, so starting keeps the sandbox, and
+    // with it the root disk: no new sandbox, none removed, the same route, no notice.
     let mut events = api2.events().await;
     api2.post("/api/workspaces/acme/start", "").await;
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
@@ -3868,15 +4335,120 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
         status_of(&api2.get("/api/workspaces/acme").await),
         "running"
     );
-    let creates = rig
-        .runtime
-        .calls()
-        .iter()
-        .filter(|c| format!("{:?}", c.op) == "Create")
-        .count();
-    assert_eq!(creates, 2);
+    assert_eq!(calls_of(&rig, "Create"), 1);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(
+        rig.runtime.routes(&SandboxName::new("acme").unwrap()),
+        route
+    );
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again"))
+    });
+    assert!(!said, "a kept sandbox needs no warning");
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+
+    // The workspace works after the takeover: it stops and starts again in the same sandbox.
+    api2.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 1);
     again.shutdown().await;
+}
+
+/// A changed variable and a restart together: the stopped sandbox of the earlier run takes the new
+/// variables, and still keeps its root disk.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_with_a_changed_variable_writes_it_to_the_kept_sandbox() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    api1.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    put_env(
+        &api1,
+        "/api/env/EDITOR",
+        json!({"kind": "plain", "value": "nano"}),
+    )
+    .await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 1);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("EDITOR"),
+        Some("nano")
+    );
+    again.shutdown().await;
+}
+
+/// A sandbox whose route this run does not serve (its install id is gone, as after a copy of the
+/// data folder or a sandbox from before routes were stable) is made again on the same volume,
+/// and the user is told what that costs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says_so() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    // A new install id: every route name changes.
+    std::fs::write(
+        rig.dir.path().join("data/ipc-id"),
+        "0123456789abcdef0123456789abcdef",
+    )
+    .unwrap();
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again") && d.contains("volume"))
+    });
+    assert!(said, "no notice that the sandbox was made again");
+    assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+    // The new sandbox has the new run's stable route: a second restart keeps it.
+    again.shutdown().await;
+    drop(again);
+    drop(events);
+    let third = rig.start().await;
+    let api3 = api(&third);
+    let mut events = api3.events().await;
+    api3.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    third.shutdown().await;
 }
 
 /// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
@@ -3884,7 +4456,7 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
 /// the workspace volume never carries it.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_does_not() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -3945,7 +4517,7 @@ async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_d
 /// start keeps that sandbox (a start never names a size, so a sandbox made at 4 GiB stays there).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspaces_sandbox_gets_a_16_gib_root_disk_and_a_start_keeps_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3969,7 +4541,7 @@ async fn a_new_workspaces_sandbox_gets_a_16_gib_root_disk_and_a_start_keeps_it()
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -3994,8 +4566,67 @@ async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_vm_that_dies_while_puddle_runs_shows_crashed_and_start_recovers_it() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+
+    // The VM process dies (out of memory, a monitor crash) with no request to Puddle.
+    assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
+    // The list reads the sandboxes, as the host's pass every minute does.
+    let listed = api.get("/api/workspaces").await.json()["workspaces"][0].clone();
+    assert_eq!(listed["status"], "crashed", "{listed}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    events
+        .until(
+            |e| e["type"] == "status_changed" && e["status"] == "crashed",
+            Duration::from_secs(5),
+        )
+        .await;
+
+    // What the VM held is released, so a start works and the workspace runs again.
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let id = WorkspaceId::new("acme").unwrap();
+
+    // The agent restarting ends a session too: the VM is up, so nothing changes.
+    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+
+    // The VM dies and its session ends: the host reads the sandboxes by itself, no list asked.
+    assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
+    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    events
+        .until(
+            |e| e["type"] == "status_changed" && e["status"] == "crashed",
+            Duration::from_secs(15),
+        )
+        .await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    // The re-reads stop at the next gap, now that the workspace no longer shows Running.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4033,7 +4664,7 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_runs_as_agent_and_a_switch_to_root_applies_at_the_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4115,6 +4746,117 @@ async fn a_workspace_saved_before_session_users_keeps_root() {
     let host = rig.start().await;
     let got = api(&host).get("/api/workspaces/old").await.json();
     assert_eq!(got["session_user"], "root", "{got}");
+    host.shutdown().await;
+}
+
+/// The workspaces listed when this build first starts were made before every create recorded its
+/// user: they become the owner's. Only then: one added to the list by hand later has no user, so
+/// no one reaches it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later_one() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let entry = |id: &str| {
+        json!({
+            "id": id, "name": id, "repositories": [], "start_folder": null,
+            "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+        })
+    };
+    for id in ["old", "later"] {
+        rig.runtime
+            .create_volume(puddle_compute::VolumeSpec {
+                name: WorkspaceId::new(id).unwrap().volume_name(),
+                size: puddle_compute::DiskSize::mib(1024),
+            })
+            .await
+            .unwrap();
+    }
+    let book = json!({"version": 3, "workspaces": [entry("old")]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let host = rig.start().await;
+    assert_eq!(
+        host.store()
+            .workspace_owner(&WorkspaceId::new("old").unwrap())
+            .unwrap(),
+        Some(puddle_store::UserId::OWNER)
+    );
+    // The host took the reach across every user before it served anything, so nothing the API
+    // is handed can take it after.
+    assert!(host.store().take_all_users().is_none());
+    let listed = api(&host).get("/api/workspaces").await.json();
+    assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
+    host.shutdown().await;
+    drop(host);
+
+    let mut book: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(data.join("workspaces.json")).unwrap()).unwrap();
+    book["workspaces"]
+        .as_array_mut()
+        .unwrap()
+        .push(entry("later"));
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    assert_eq!(api.get("/api/workspaces/old").await.status, 200);
+    assert_eq!(api.get("/api/workspaces/later").await.status, 404);
+    let listed = api.get("/api/workspaces").await.json();
+    let ids: Vec<&str> = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["old"], "{listed}");
+    host.shutdown().await;
+}
+
+/// A first start that cannot record whose the listed workspaces are stops, saying so, rather than
+/// serve workspaces no user reaches; the next start tries again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_tries_again() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    damage_database(
+        &rig,
+        "INSERT INTO workspace_owners_adoption (id) VALUES (1);
+         CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("old").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let book = json!({"version": 3, "workspaces": [{
+        "id": "old", "name": "old", "repositories": [], "start_folder": null,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(
+        rig.dir.path().join("data").join("workspaces.json"),
+        book.to_string(),
+    )
+    .unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        hermetic_options(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("whose the listed workspaces are could not be recorded"),
+        "{err}"
+    );
+    damage_database(&rig, "DROP TRIGGER no_owner;");
+    let host = rig.start().await;
+    assert_eq!(api(&host).get("/api/workspaces/old").await.status, 200);
     host.shutdown().await;
 }
 
@@ -4340,9 +5082,185 @@ fn list_path(rig: &Rig) -> PathBuf {
     rig.dir.path().join("data").join("workspaces.json")
 }
 
+/// Creates `acme` with a secret of its own and a settings file, then stops Puddle: what a
+/// delete has to clear besides the runtime. Returns the secrets that exist for it.
+async fn acme_with_leftovers(rig: &Rig) -> usize {
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/API_KEY",
+        secret_body(Some(REAL), &["api.example.org"]),
+    )
+    .await;
+    allow_direct_ssh(&api, "acme", true).await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let secrets = rig.secrets.ids().len();
+    assert_eq!(secrets, 1);
+    host.shutdown().await;
+    drop(host);
+    secrets
+}
+
+fn acme_settings_file(rig: &Rig) -> PathBuf {
+    rig.dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json")
+}
+
+fn read_list(rig: &Rig) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(list_path(rig)).unwrap()).unwrap()
+}
+
+fn mark_acme_as_being_deleted(rig: &Rig) {
+    let mut book = read_list(rig);
+    book["workspaces"][0]["deleting"] = json!(true);
+    std::fs::write(list_path(rig), book.to_string()).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_finished_delete_leaves_the_list_without_the_entry_and_with_the_id_retired() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    let book = read_list(&rig);
+    assert_eq!(book["workspaces"], json!([]), "{book}");
+    assert_eq!(book["retired_ids"], json!(["acme"]), "{book}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_went_as_far_as_the_volume_is_finished_at_the_next_start() {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    // Puddle died after the volume went, before the cleanup: the entry is still marked.
+    mark_acme_as_being_deleted(&rig);
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+    assert!(acme_settings_file(&rig).is_file());
+    assert!(
+        !rig.runtime.list().await.unwrap().is_empty(),
+        "the sandbox is still there"
+    );
+
+    let host = rig.start().await;
+    let api = api(&host);
+    assert_eq!(api.get("/api/workspaces/acme").await.status, 404);
+    // The sweep runs in the background: wait for its last step, then check all of them.
+    eventually("the browser data of acme forgotten", APPLY, || {
+        rig.launcher
+            .forgotten
+            .lock()
+            .unwrap()
+            .contains(&"acme".to_owned())
+            .then_some(())
+    })
+    .await;
+    assert!(rig.secrets.ids().is_empty(), "the secret of acme is left");
+    assert!(!acme_settings_file(&rig).exists());
+    assert!(
+        rig.runtime.list().await.unwrap().is_empty(),
+        "the sandbox of acme is left"
+    );
+    let book = read_list(&rig);
+    assert_eq!(book["workspaces"], json!([]), "{book}");
+    assert_eq!(book["retired_ids"], json!(["acme"]), "{book}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_never_reached_the_volume_leaves_the_workspace_as_it_was() {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    mark_acme_as_being_deleted(&rig);
+
+    let host = rig.start().await;
+    let api = api(&host);
+    let got = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(got["status"], "stopped", "{got}");
+    let book = read_list(&rig);
+    assert!(book["workspaces"][0].get("deleting").is_none(), "{book}");
+    assert_eq!(book.get("retired_ids"), None, "{book}");
+    // Nothing of it was cleared, and it starts.
+    assert_eq!(rig.secrets.ids().len(), 1);
+    assert!(acme_settings_file(&rig).is_file());
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retired_id_whose_cleanup_failed_is_cleaned_at_the_next_start() {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    // An earlier Puddle deleted acme completely except for its own secret and settings file
+    // (the cleanup only left notices): the list has it retired, the volume is gone.
+    let mut book = read_list(&rig);
+    book["workspaces"] = json!([]);
+    book["retired_ids"] = json!(["acme"]);
+    std::fs::write(list_path(&rig), book.to_string()).unwrap();
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+
+    let host = rig.start().await;
+    eventually("the leftovers of acme gone", APPLY, || {
+        (rig.secrets.ids().is_empty() && !acme_settings_file(&rig).exists()).then_some(())
+    })
+    .await;
+    assert_eq!(read_list(&rig)["retired_ids"], json!(["acme"]));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_of_a_deleted_workspace_that_cannot_be_removed_is_a_problem_and_the_rest_is_still_cleaned()
+ {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    let mut book = read_list(&rig);
+    book["workspaces"] = json!([]);
+    book["retired_ids"] = json!(["acme"]);
+    std::fs::write(list_path(&rig), book.to_string()).unwrap();
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+    rig.runtime.inject(
+        Op::Remove,
+        Fault::always(disk_error("remove")).only_for("acme"),
+    );
+
+    let host = rig.start().await;
+    let problem = wait_for_problem(&host, "left-sandbox:acme").await;
+    assert!(problem.title.contains("acme"), "{problem:?}");
+    assert!(problem.detail.contains("no space left"), "{problem:?}");
+    // The sandbox stays, and the other leftovers are cleared all the same.
+    eventually("the leftovers of acme gone", APPLY, || {
+        (rig.secrets.ids().is_empty() && !acme_settings_file(&rig).exists()).then_some(())
+    })
+    .await;
+    assert_eq!(rig.runtime.list().await.unwrap().len(), 1);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missing_workspace_list_keeps_every_workspace_volume() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4371,7 +5289,7 @@ async fn a_missing_workspace_list_keeps_every_workspace_volume() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_volume_no_listed_workspace_claims_is_kept() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4431,7 +5349,7 @@ async fn a_create_is_refused_when_the_workspace_list_cannot_be_saved() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4455,9 +5373,48 @@ fn name_body(shown: &str) -> String {
     json!({"name": shown}).to_string()
 }
 
+/// A save of the workspace list writes each name into the store's database. The store has one
+/// connection that proxy decisions and audit searches share, so a busy database must not hold up
+/// every reader of the workspace list: no write to it happens under the list's lock.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_saves() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    after_boot_listing(&rig).await;
+    // Another connection holds the write lock: the name write waits for it (up to 5 s).
+    let db = rusqlite::Connection::open(rig.dir.path().join("data").join("puddle.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let body = name_body("Acme shop");
+    let rename = api.patch("/api/workspaces/acme", &body);
+    let id = WorkspaceId::new("acme").unwrap();
+    let probe = async {
+        // flake-ok: nothing signals that the rename has reached its write to the database; a late probe only makes the test pass where the old code would fail
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The list's lock is a plain mutex, so a reader that has to wait blocks its thread:
+        // measure how long the read took rather than time it out.
+        let started = std::time::Instant::now();
+        let read = host.workspaces().get(&id).await;
+        let took = started.elapsed();
+        db.execute_batch("COMMIT").unwrap();
+        (read, took)
+    };
+    let (renamed, (read, took)) = tokio::join!(rename, probe);
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    assert!(read.is_ok());
+    // flake-ok: the bar is 4 s against the 5 s the database makes a writer wait; a read of the list takes microseconds
+    assert!(
+        took < Duration::from_secs(4),
+        "the workspace list waited {took:?} for a write to the database"
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4501,7 +5458,7 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4534,7 +5491,7 @@ async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_allowed_while_a_start_runs() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4558,7 +5515,7 @@ async fn a_rename_is_allowed_while_a_start_runs() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_refused_once_shutdown_has_begun() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4575,7 +5532,7 @@ async fn a_rename_is_refused_once_shutdown_has_begun() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4617,7 +5574,7 @@ fn op_summary(record: &serde_json::Value) -> (String, String, String) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_created_and_a_deleted_workspace_are_in_the_activity_log_with_who_asked() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4664,7 +5621,7 @@ async fn deleting_a_workspace_whose_volume_was_already_gone_says_so_in_the_activ
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_create_start_and_stop_are_failures_in_the_activity_log_that_the_filter_finds() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4732,7 +5689,7 @@ async fn a_failed_start_is_in_the_activity_log_and_a_start_that_worked_is_not() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_started_and_stopped_workspace_leaves_no_start_or_stop_records() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4753,7 +5710,7 @@ async fn a_started_and_stopped_workspace_leaves_no_start_or_stop_records() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_in_the_activity_log_and_so_is_one_that_could_not_be_saved() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4834,7 +5791,7 @@ async fn a_version_2_list_of_the_previous_release_starts_with_the_display_name_a
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_activity_record_keeps_the_name_the_workspace_had_when_it_was_written() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4889,9 +5846,77 @@ async fn a_workspace_list_with_a_bad_name_stops_the_start() {
     assert!(rig.runtime.calls().is_empty());
 }
 
+/// The delete check boots an image of its own, and the first pull of that image takes longer than
+/// a request may: it is downloaded when a workspace stops, not when the delete asks for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
+    const CHECK_IMAGE: &str = puddle_workspace::WorkspaceConfig::DEFAULT_MAINTENANCE_IMAGE;
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let pulls = || {
+        rig.runtime
+            .calls()
+            .iter()
+            .filter(|c| c.op == Op::PullImage && c.target.as_deref() == Some(CHECK_IMAGE))
+            .count()
+    };
+    create(&api, &mut events, "acme").await;
+    // The create pulled the workspace's own image, which here is the same one.
+    let before = pulls();
+    // The download fails here: the check and the delete go on, and say why themselves.
+    rig.runtime.inject(
+        Op::PullImage,
+        Fault::once(puddle_compute::ComputeError::ImagePull {
+            image: CHECK_IMAGE.into(),
+            reason: "offline".into(),
+        })
+        .only_for(CHECK_IMAGE),
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually(
+        "the check image is requested",
+        Duration::from_secs(5),
+        || pulls() > before,
+    )
+    .await;
+    assert_eq!(pulls(), before + 1, "{:?}", rig.runtime.calls());
+    let check = api.get("/api/workspaces/acme/delete-check").await;
+    assert_eq!(check.status, 200, "{}", check.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_fails_and_cannot_save_the_list_says_both() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    rig.runtime
+        .inject(Op::RemoveVolume, Fault::always(disk_error("remove volume")));
+    // The delete's mark is saved; its failure then finds the list unwritable.
+    *rig.launcher.unwritable_on_close.lock().unwrap() = Some(list_path(&rig));
+
+    let confirm = json!({"confirm": true}).to_string();
+    let accepted = api.delete("/api/workspaces/acme", Some(&confirm)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(detail.contains("no space left"), "the cause: {detail}");
+    assert!(detail.contains("workspace list"), "the save: {detail}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "stopped");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4927,7 +5952,7 @@ async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4943,7 +5968,7 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_same_name() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4975,7 +6000,7 @@ async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_s
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5013,7 +6038,7 @@ async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes
 /// name, so the delete waits for it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_file_back() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5053,7 +6078,7 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
 /// is told through the event stream.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_ssh_session_the_runtime_cannot_serve_reaches_the_user_as_an_event() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5113,7 +6138,7 @@ async fn create_with_direct_ssh(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5140,7 +6165,7 @@ async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_the_switch() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     // The settings are read once and kept, so the damage is there from the start; the workspace
     // names its memory, so the damaged file does not refuse the create.
     damage_global_settings(&rig);
@@ -5171,7 +6196,7 @@ async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_th
 
 #[tokio::test(flavor = "multi_thread")]
 async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5203,7 +6228,7 @@ async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn login_capture_is_on_by_default_and_a_workspace_can_turn_it_off_for_its_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5268,7 +6293,7 @@ async fn login_capture_is_on_by_default_and_a_workspace_can_turn_it_off_for_its_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5295,7 +6320,7 @@ async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_kept_logins_list_says_nothing_is_kept_and_does_not_wait_on_the_credential_store() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5317,7 +6342,7 @@ async fn the_kept_logins_list_says_nothing_is_kept_and_does_not_wait_on_the_cred
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5360,10 +6385,10 @@ fn ssh_hosts(rig: &Rig) -> Vec<String> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let factory = FakeFactory::new(&rig.runtime, &rig.log);
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     options.secret_store = Some(rig.secrets.clone());
     options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
     let host = Host::start(prepared, &factory, options).await.unwrap();
@@ -5424,7 +6449,7 @@ async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint()
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_that_follows_the_global_default_gets_its_entry_and_one_that_overrides_it_does_not()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5454,7 +6479,7 @@ async fn an_entry_left_by_a_crashed_run_is_gone_when_the_host_starts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entry_that_cannot_be_written_is_a_problem_that_ends_when_it_can() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5495,7 +6520,7 @@ async fn an_entry_that_cannot_be_written_is_a_problem_that_ends_when_it_can() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_written() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5522,7 +6547,7 @@ async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_wr
 #[tokio::test(flavor = "multi_thread")]
 async fn a_problem_with_direct_ssh_ends_when_the_switch_goes_off_or_the_workspace_stops() {
     for ending in ["off", "stop"] {
-        let rig = Rig::new();
+        let rig = Rig::named_ids();
         let host = rig.start().await;
         let api = api(&host);
         let mut events = api.events().await;
@@ -5546,7 +6571,7 @@ async fn a_problem_with_direct_ssh_ends_when_the_switch_goes_off_or_the_workspac
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_the_puddle_program_says_why_direct_ssh_has_no_entry() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut config = rig.config();
     config.ssh.bridge_program = None;
     let host = rig.start_with(config).await;
@@ -5562,7 +6587,7 @@ async fn a_host_without_the_puddle_program_says_why_direct_ssh_has_no_entry() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the_workspaces_ssh_host()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5607,10 +6632,82 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     host.shutdown().await;
 }
 
+/// An image with no git can't describe checkouts; the editor still opens the volume root and the
+/// attach raises no problem about it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_on_an_image_without_git_opens_the_folder_and_raises_no_problem() {
+    let rig = Rig::named_ids();
+    rig.guest.git_missing.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+    let target = rig
+        .launcher
+        .targets
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(target.path, "/workspaces/acme");
+    assert!(!target.is_workspace_file);
+    assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+    host.shutdown().await;
+}
+
+/// On an image with no git, two checkouts still open the multi-root window: the editor's listing
+/// falls back to the checkout names, which need no git.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_on_an_image_without_git_with_two_checkouts_opens_the_multi_root_window() {
+    let rig = Rig::named_ids();
+    rig.guest.git_missing.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+    let target = rig
+        .launcher
+        .targets
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        target.path,
+        "/workspaces/acme/.puddle/editor/acme.code-workspace"
+    );
+    assert!(target.is_workspace_file);
+    assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+    // The checkouts screen still says why it has nothing to show.
+    let list = checkouts_of(&api, "acme").await;
+    assert!(list["problem"].as_str().unwrap().contains("git"), "{list}");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_the_server_already_running()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5642,7 +6739,7 @@ async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_launcher_that_fails_says_why_in_the_answer() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5664,7 +6761,7 @@ async fn a_launcher_that_fails_says_why_in_the_answer() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_endpoint_that_cannot_open_is_reported_and_ends_when_it_can() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5784,7 +6881,7 @@ async fn an_image_pull_is_audited_as_puddles_own_connection() {
 
 /// Seeds a workspace the list names whose volume is gone, then returns the rig and its host.
 async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRuntime>) {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -5891,7 +6988,7 @@ async fn a_restart_shows_a_workspace_whose_volume_is_gone_as_volume_missing_befo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_keeps_a_workspace_with_its_volume_stopped() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -5973,7 +7070,7 @@ async fn a_restored_volume_lets_a_volume_missing_workspace_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_stays() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let paths = HostPaths::new(rig.dir.path().join("data"));
     let id = |s: &str| WorkspaceId::new(s).unwrap();
     // Before the start: a kept volume, a key half, a settings file, a login marker and a
@@ -6041,7 +7138,11 @@ async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_
 struct Always(&'static str);
 
 impl puddle_api::IdSource for Always {
-    fn draw(&self, _name: &puddle_api::DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(
+        &self,
+        _name: &puddle_api::DisplayName,
+        _attempt: u32,
+    ) -> Result<WorkspaceId, puddle_api::IdDrawError> {
         Ok(WorkspaceId::new(self.0).unwrap())
     }
 }
@@ -6240,7 +7341,7 @@ fn calls_of(rig: &Rig, op: &str) -> usize {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_only_the_login_hosts_yet()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6300,7 +7401,7 @@ async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_only
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_restart() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6386,17 +7487,14 @@ fn agent_settings(plan: &[u8]) -> std::collections::BTreeMap<String, String> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut config = rig.config();
     config.guest.code_server = Some(fake_code_server(&rig));
     let host = rig.start_with(config).await;
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let installed = rig
-        .dir
-        .path()
-        .join("data/guest-share/puddle/code-server-9.9.9");
+    let installed = rig.dir.path().join("data/guest-share/puddle/code-server");
     assert!(installed.join("bin/code-server").is_file());
     assert!(installed.join(".puddle-installed").is_file());
     let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
@@ -6447,8 +7545,67 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_guest_gets_its_ssh_agent_socket_from_the_first_start_with_a_host_switched_on() {
+    const SSH_CONFIG: &str = "/etc/ssh/ssh_config.d/00-puddle.conf";
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let n = rig.guest.boots() - 1;
+    let seen = agent_settings(&rig.guest.plan_bytes(n));
+    assert_eq!(seen.get("PUDDLE_AGENT_SSH_AGENT"), None, "{seen:?}");
+    let files = rig.guest.plan_files(n);
+    let ssh = String::from_utf8_lossy(&files[SSH_CONFIG]).into_owned();
+    assert!(!ssh.contains("IdentityAgent"), "{ssh}");
+    assert!(
+        files
+            .values()
+            .all(|bytes| !String::from_utf8_lossy(bytes).contains("SSH_AUTH_SOCK")),
+        "no socket, no variable"
+    );
+
+    // The switch applies to the proxy at once; the guest's socket waits for the next start.
+    let put = api
+        .put(
+            "/api/workspaces/acme/ssh-agent/build.example.com",
+            &json!({"keys": null}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    for step in ["stop", "start"] {
+        let reply = api.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    let n = rig.guest.boots() - 1;
+    let seen = agent_settings(&rig.guest.plan_bytes(n));
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_SSH_AGENT").map(String::as_str),
+        Some("/run/puddle/ssh-agent.sock")
+    );
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_SSH_AGENT_USER").map(String::as_str),
+        Some("agent")
+    );
+    let files = rig.guest.plan_files(n);
+    let ssh = String::from_utf8_lossy(&files[SSH_CONFIG]).into_owned();
+    assert!(
+        ssh.contains("    IdentityAgent \"/run/puddle/ssh-agent.sock\"\n"),
+        "{ssh}"
+    );
+    assert!(
+        files
+            .values()
+            .any(|bytes| String::from_utf8_lossy(bytes).contains("SSH_AUTH_SOCK")),
+        "the variable reaches the guest"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut config = rig.config();
     config.guest.code_server = Some(fake_code_server(&rig));
     let host = rig.start_with(config).await;
@@ -6506,7 +7663,7 @@ async fn editor_env_of_a_new_workspace(
 #[tokio::test(flavor = "multi_thread")]
 async fn microsofts_server_runs_after_consent_with_its_own_folder_and_the_telemetry_choice() {
     for (telemetry, auto_update) in [(false, true), (true, false)] {
-        let rig = Rig::new();
+        let rig = Rig::named_ids();
         let mut doc = microsoft_chosen(puddle_settings::MICROSOFT_TERMS_VERSION, telemetry);
         doc["vscode_server"]["auto_update"] = json!(auto_update);
         write_global_settings(&rig, &doc);
@@ -6551,7 +7708,7 @@ async fn microsofts_server_never_starts_on_the_choice_alone() {
             json!({"vscode_server": {"state": "granted", "at": 1, "terms_version": "https://example.test/old"}}),
         ),
     ] {
-        let rig = Rig::new();
+        let rig = Rig::named_ids();
         write_global_settings(
             &rig,
             &json!({
@@ -6576,7 +7733,7 @@ async fn microsofts_server_never_starts_on_the_choice_alone() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_code_server_and_without_microsofts_choice_runs_no_editor_server() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     // Consent recorded, choice not made: code-server, which this host does not bundle.
     write_global_settings(
         &rig,
@@ -6591,7 +7748,7 @@ async fn a_host_without_code_server_and_without_microsofts_choice_runs_no_editor
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_code_server_starts_guests_without_an_editor_server() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6603,7 +7760,7 @@ async fn a_host_without_code_server_starts_guests_without_an_editor_server() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6673,7 +7830,7 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
 /// CRLF unless it is made with LF on purpose).
 #[tokio::test(flavor = "multi_thread")]
 async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6717,7 +7874,7 @@ async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_has_no_ca_and_each_start_makes_a_new_one() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6806,7 +7963,7 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
             }
         }
     }
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6888,10 +8045,10 @@ impl puddle_proxy::Injector for MarkedInjector {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_store() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let built = Arc::new(Mutex::new(Vec::new()));
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     let record = built.clone();
     options.injector = Some(Arc::new(
         move |inputs: &puddle_host::InjectorInputs, workspace: &WorkspaceId| {
@@ -6936,7 +8093,7 @@ async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_stor
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6963,7 +8120,7 @@ async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_it_starts() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7004,14 +8161,14 @@ async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_
 #[tokio::test(flavor = "multi_thread")]
 async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     // A host with company roots starts: the TLS client for decrypted hosts is built with them.
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut platform = FakePlatform::new(&rig.log);
     platform.roots = company_roots();
     let prepared = prepare(rig.config(), &platform).unwrap();
     let host = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        hermetic_options(),
+        named_id_options(),
     )
     .await
     .unwrap();
@@ -7074,7 +8231,7 @@ const UNREADABLE_GIT_ROW: &str = "INSERT INTO workspace_repos \
 
 #[tokio::test(flavor = "multi_thread")]
 async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while_running() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7145,7 +8302,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_its_host() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7191,7 +8348,7 @@ fn problem_of(host: &Host<FakeRuntime>, key: &str) -> puddle_types::Problem {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let odd = ImageRef::new("example.org/odd:1").unwrap();
     rig.runtime.add_image(
         &odd,
@@ -7233,11 +8390,14 @@ fn attach_a_new_identity(store: &puddle_store::Store, workspace: &WorkspaceId) {
     )
     .unwrap();
     let identity = store
-        .create_identity(puddle_store::IdentityDraft {
-            label: "Ada".to_owned(),
-            author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
-            credentials: vec![credential],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            puddle_store::IdentityDraft {
+                label: "Ada".to_owned(),
+                author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
+                credentials: vec![credential],
+            },
+        )
         .unwrap();
     // The first identity becomes the default, which a new workspace gets at its create; attach
     // is idempotent for this test's purpose.
@@ -7255,7 +8415,7 @@ fn attach_during_the_next_boot(rig: &Rig, host: &Host<FakeRuntime>, workspace: &
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_git_over_ssh_each_start_lists_its_own_host_keys_under_the_git_hosts() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.git_ssh.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -7307,7 +8467,7 @@ async fn with_git_over_ssh_each_start_lists_its_own_host_keys_under_the_git_host
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_git_over_ssh_an_identity_on_another_host_adds_that_name_and_keeps_the_keys() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.git_ssh.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -7336,7 +8496,7 @@ async fn with_git_over_ssh_an_identity_on_another_host_adds_that_name_and_keeps_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn without_git_over_ssh_the_guest_boots_with_no_host_keys() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7347,7 +8507,7 @@ async fn without_git_over_ssh_the_guest_boots_with_no_host_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7368,7 +8528,7 @@ async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_made_while_a_stopped_workspace_starts_again_reaches_it_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7390,7 +8550,7 @@ async fn a_change_made_while_a_stopped_workspace_starts_again_reaches_it_once_it
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_that_turn_unreadable_during_a_boot_do_not_fail_the_boot() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7409,7 +8569,7 @@ async fn settings_that_turn_unreadable_during_a_boot_do_not_fail_the_boot() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_change_retries() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7459,7 +8619,7 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_next_change_ends() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7523,7 +8683,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7570,7 +8730,7 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7601,7 +8761,7 @@ async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_repaired() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7679,7 +8839,7 @@ async fn problem_settles(host: &Host<FakeRuntime>, key: &str, want: bool) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plan_rewrite_in_a_running_workspace_raises_and_ends_the_merge_notice() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7717,7 +8877,7 @@ async fn a_plan_rewrite_in_a_running_workspace_raises_and_ends_the_merge_notice(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7753,7 +8913,7 @@ fn old_binding_on_port(host_name: &str) -> puddle_store::CredentialBinding {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one_is_a_problem() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7780,11 +8940,14 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
     // One a database from before already holds is said to be useless, while its workspace runs.
     let old = host
         .store()
-        .create_identity(puddle_store::IdentityDraft {
-            label: "Old".to_owned(),
-            author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
-            credentials: vec![old_binding_on_port("ghe.example:8443")],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            puddle_store::IdentityDraft {
+                label: "Old".to_owned(),
+                author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
+                credentials: vec![old_binding_on_port("ghe.example:8443")],
+            },
+        )
         .unwrap();
     host.store()
         .attach_identity(&name("acme"), old.id, None)
@@ -7857,7 +9020,7 @@ impl HeldRewrite {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_settings() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let held = Arc::new(HeldRewrite::default());
     *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
     let host = rig.start().await;
@@ -7867,11 +9030,14 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
     let booted = rig.guest.boots();
     let old = host
         .store()
-        .create_identity(puddle_store::IdentityDraft {
-            label: "Old".to_owned(),
-            author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
-            credentials: vec![old_binding_on_port("ghe.example:8443")],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            puddle_store::IdentityDraft {
+                label: "Old".to_owned(),
+                author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
+                credentials: vec![old_binding_on_port("ghe.example:8443")],
+            },
+        )
         .unwrap();
 
     // The store announces each change itself. The rewrite for the attach starts first and waits at the gate.
@@ -7905,11 +9071,48 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writes_nothing() {
+    let rig = Rig::named_ids();
+    let held = Arc::new(HeldRewrite::default());
+    *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    let booted = rig.guest.boots();
+
+    // The attach's rewrite starts while the workspace runs and waits at the gate; the workspace
+    // is stopped before it looks at it.
+    held.armed.store(true, Ordering::SeqCst);
+    host.store()
+        .attach_identity(&name("acme"), puddle_store::IdentityId(identity), None)
+        .unwrap();
+    eventually("the attach rewrite waits", APPLY, || {
+        held.arrived.load(Ordering::SeqCst)
+    })
+    .await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    held.release.notify_one();
+    eventually("the attach rewrite ends", APPLY, || {
+        held.ended.load(Ordering::SeqCst)
+    })
+    .await;
+    assert_eq!(rig.guest.boots(), booted, "a stopped guest was written to");
+    assert!(
+        !has_problem(&host, "git-credentials:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test]
 async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_again() {
     // One thread: the host's tasks cannot run while this test emits, so the follower falls
     // behind the event buffer.
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7984,7 +9187,7 @@ fn guest_has(rig: &Rig, needle: &str) -> bool {
 async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_and_the_real_value_never_reaches_the_guest()
  {
     let logs = support::capture_logs();
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8060,16 +9263,57 @@ async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_an
     );
 }
 
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
- {
-    let rig = Rig::new();
+/// A running host with two running workspaces, `acme` and `beta`.
+struct TwoWorkspaces {
+    rig: Rig,
+    host: Host<FakeRuntime>,
+    api: Api,
+}
+
+async fn acme_and_beta() -> TwoWorkspaces {
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     create(&api, &mut events, "beta").await;
+    TwoWorkspaces { rig, host, api }
+}
+
+/// A secret for a host the workspace has never used and no identity names.
+async fn put_acme_api_key(w: &TwoWorkspaces) {
+    put_env(
+        &w.api,
+        "/api/workspaces/acme/env/API_KEY",
+        secret_body(Some(REAL), &["api.example.org"]),
+    )
+    .await;
+    eventually("the secret's host is decrypted", APPLY, || {
+        decrypts(&w.host, "acme", "api.example.org")
+    })
+    .await;
+}
+
+async fn put_global_shared(w: &TwoWorkspaces) {
+    put_env(
+        &w.api,
+        "/api/env/SHARED",
+        secret_body(Some(REAL), &["shared.example.org"]),
+    )
+    .await;
+    for workspace in ["acme", "beta"] {
+        eventually("the global secret's host is decrypted", APPLY, || {
+            decrypts(&w.host, workspace, "shared.example.org")
+        })
+        .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
+ {
+    let w = acme_and_beta().await;
+    let (rig, host) = (&w.rig, &w.host);
     let ca_before = host
         .workspaces()
         .termination(&name("acme"))
@@ -8085,23 +9329,13 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         .filter(|c| c.starts_with("beta "))
         .count();
     let (creates, starts, stops) = (
-        calls_of(&rig, "Create"),
-        calls_of(&rig, "Start"),
-        calls_of(&rig, "Stop"),
+        calls_of(rig, "Create"),
+        calls_of(rig, "Start"),
+        calls_of(rig, "Stop"),
     );
-    assert!(!decrypts(&host, "acme", "api.example.org"));
+    assert!(!decrypts(host, "acme", "api.example.org"));
 
-    // A host the workspace has never used and no identity names.
-    put_env(
-        &api,
-        "/api/workspaces/acme/env/API_KEY",
-        secret_body(Some(REAL), &["api.example.org"]),
-    )
-    .await;
-    eventually("the secret's host is decrypted", APPLY, || {
-        decrypts(&host, "acme", "api.example.org")
-    })
-    .await;
+    put_acme_api_key(&w).await;
     let after = host.workspaces().termination(&name("acme")).unwrap();
     assert_eq!(after.stand_ins().ids(), ["stand-in:secret:API_KEY"]);
     // The same CA and the same registry: the guest's trust is unchanged and open connections see
@@ -8111,7 +9345,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     // Only that workspace, and nothing was started or stopped. (The login-shell file is rewritten
     // for a change to the variables, which runs the boot plan again in that guest alone; the next
     // test is about that.)
-    assert!(!decrypts(&host, "beta", "api.example.org"));
+    assert!(!decrypts(host, "beta", "api.example.org"));
     assert_eq!(
         rig.guest
             .commands()
@@ -8123,41 +9357,43 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     );
     assert_eq!(
         (
-            calls_of(&rig, "Create"),
-            calls_of(&rig, "Start"),
-            calls_of(&rig, "Stop")
+            calls_of(rig, "Create"),
+            calls_of(rig, "Start"),
+            calls_of(rig, "Stop")
         ),
         (creates, starts, stops)
     );
+    w.host.shutdown().await;
+}
 
-    // A global secret reaches every running workspace.
-    put_env(
-        &api,
-        "/api/env/SHARED",
-        secret_body(Some(REAL), &["shared.example.org"]),
-    )
-    .await;
-    for workspace in ["acme", "beta"] {
-        eventually("the global secret's host is decrypted", APPLY, || {
-            decrypts(&host, workspace, "shared.example.org")
-        })
-        .await;
-    }
+#[tokio::test(flavor = "multi_thread")]
+async fn a_global_secret_reaches_every_running_workspace_with_its_own_stand_in() {
+    let w = acme_and_beta().await;
+    put_global_shared(&w).await;
     // Each holds its own stand-in for it.
     assert_ne!(
-        stand_in_of(&host, "acme", "SHARED"),
-        stand_in_of(&host, "beta", "SHARED")
+        stand_in_of(&w.host, "acme", "SHARED"),
+        stand_in_of(&w.host, "beta", "SHARED")
     );
+    w.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn changed_hosts_move_the_decrypted_host_and_removing_the_secrets_takes_them_out_again() {
+    let w = acme_and_beta().await;
+    let (rig, host, api) = (&w.rig, &w.host, &w.api);
+    put_acme_api_key(&w).await;
+    put_global_shared(&w).await;
 
     // Changed hosts move the decrypted host; removing the secret takes it out again.
     put_env(
-        &api,
+        api,
         "/api/workspaces/acme/env/API_KEY",
         secret_body(None, &["other.example.org"]),
     )
     .await;
     eventually("the hosts moved", APPLY, || {
-        decrypts(&host, "acme", "other.example.org") && !decrypts(&host, "acme", "api.example.org")
+        decrypts(host, "acme", "other.example.org") && !decrypts(host, "acme", "api.example.org")
     })
     .await;
     assert_eq!(
@@ -8168,9 +9404,9 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     );
     assert_eq!(api.delete("/api/env/SHARED", None).await.status, 204);
     eventually("removed secrets are not decrypted", APPLY, || {
-        !decrypts(&host, "acme", "other.example.org")
-            && !decrypts(&host, "acme", "shared.example.org")
-            && !decrypts(&host, "beta", "shared.example.org")
+        !decrypts(host, "acme", "other.example.org")
+            && !decrypts(host, "acme", "shared.example.org")
+            && !decrypts(host, "beta", "shared.example.org")
     })
     .await;
     assert!(
@@ -8185,13 +9421,21 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         rig.secrets.ids().is_empty(),
         "no value left in the credential store"
     );
-    host.shutdown().await;
+    w.host.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_volume_and_an_unchanged_one_restarts_it()
- {
-    let rig = Rig::new();
+/// A running host with the global variable `EDITOR=vim` and a running workspace `acme` made under it.
+struct EditorRig {
+    rig: Rig,
+    host: Host<FakeRuntime>,
+    api: Api,
+    events: support::Events,
+    volumes: Vec<String>,
+    creates: usize,
+}
+
+async fn editor_rig() -> EditorRig {
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8207,64 +9451,123 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
         rig.guest.boot_envs.lock().unwrap()[0].get("EDITOR"),
         Some("vim")
     );
-
-    // Nothing changed: the stopped sandbox is started again, not made again.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
     let creates = calls_of(&rig, "Create");
-    api.post("/api/workspaces/acme/start", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(calls_of(&rig, "Create"), creates);
-    assert_eq!(calls_of(&rig, "Remove"), 0);
+    EditorRig {
+        rig,
+        host,
+        api,
+        events,
+        volumes,
+        creates,
+    }
+}
 
-    // A changed variable: a sandbox keeps the environment it was made with, so the start makes
-    // a new one; the volume with the work is the same.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
+async fn stop_acme(e: &mut EditorRig) {
+    e.api.post("/api/workspaces/acme/stop", "").await;
+    e.events.until(ended("acme"), Duration::from_secs(20)).await;
+}
+
+async fn start_acme(e: &mut EditorRig) -> serde_json::Value {
+    e.api.post("/api/workspaces/acme/start", "").await;
+    e.events.until(ended("acme"), Duration::from_secs(20)).await
+}
+
+async fn set_editor(e: &EditorRig, value: &str) {
     put_env(
-        &api,
+        &e.api,
         "/api/env/EDITOR",
-        json!({"kind": "plain", "value": "nano"}),
+        json!({"kind": "plain", "value": value}),
     )
     .await;
-    api.post("/api/workspaces/acme/start", "").await;
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(end["step"], "done", "{end}");
-    assert_eq!(calls_of(&rig, "Create"), creates + 1);
-    assert_eq!(calls_of(&rig, "Remove"), 1);
-    // Puddle says what it did: the sandbox was made again, the volume kept.
-    let said = events.seen.iter().any(|e| {
-        e["type"] == "workspace_progress"
-            && e["detail"]
-                .as_str()
-                .is_some_and(|d| d.contains("variables changed") && d.contains("volume"))
-    });
-    assert!(said, "no notice that the sandbox was made again");
-    assert_eq!(
-        rig.guest
-            .boot_envs
-            .lock()
-            .unwrap()
-            .last()
-            .unwrap()
-            .get("EDITOR"),
-        Some("nano")
-    );
-    assert_eq!(volume_names(&rig).await, volumes);
-    assert!(host.workspaces().termination(&name("acme")).is_some());
+}
 
-    // And from then on that is the environment the sandbox was made with.
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    api.post("/api/workspaces/acme/start", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(calls_of(&rig, "Create"), creates + 1);
-    host.shutdown().await;
+fn last_boot_env(e: &EditorRig, var: &str) -> Option<String> {
+    e.rig
+        .guest
+        .boot_envs
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .get(var)
+        .map(str::to_owned)
+}
+
+fn said_made_again(e: &EditorRig, also: &str) -> bool {
+    e.events.seen.iter().any(|ev| {
+        ev["type"] == "workspace_progress"
+            && ev["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again") && d.contains(also))
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unchanged_environment_starts_the_stopped_sandbox_again_and_does_not_make_it_again() {
+    let mut e = editor_rig().await;
+    stop_acme(&mut e).await;
+    start_acme(&mut e).await;
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates);
+    assert_eq!(calls_of(&e.rig, "Remove"), 0);
+    e.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_changed_variable_is_written_to_the_stopped_sandbox_and_keeps_the_root_disk() {
+    let mut e = editor_rig().await;
+    stop_acme(&mut e).await;
+    set_editor(&e, "nano").await;
+    let set_envs = calls_of(&e.rig, "SetEnv");
+    let end = start_acme(&mut e).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates);
+    assert_eq!(calls_of(&e.rig, "Remove"), 0);
+    assert_eq!(calls_of(&e.rig, "SetEnv"), set_envs + 1);
+    assert!(
+        !said_made_again(&e, ""),
+        "a kept root disk needs no warning"
+    );
+    assert_eq!(last_boot_env(&e, "EDITOR").as_deref(), Some("nano"));
+    // Puddle's own variables are written with them, not dropped.
+    assert_eq!(
+        last_boot_env(&e, "HTTPS_PROXY").as_deref(),
+        Some("http://127.0.0.1:3128")
+    );
+    assert_eq!(volume_names(&e.rig).await, e.volumes);
+
+    // The same variables at the next start write nothing more.
+    stop_acme(&mut e).await;
+    start_acme(&mut e).await;
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates);
+    assert_eq!(calls_of(&e.rig, "SetEnv"), set_envs + 1);
+    e.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_environment_write_falls_back_to_a_new_sandbox_on_the_same_volume_and_says_so() {
+    let mut e = editor_rig().await;
+    stop_acme(&mut e).await;
+    set_editor(&e, "emacs").await;
+    e.rig.runtime.inject(
+        Op::SetEnv,
+        Fault::once(disk_error("set the environment of")),
+    );
+    let end = start_acme(&mut e).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&e.rig, "Create"), e.creates + 1);
+    assert_eq!(calls_of(&e.rig, "Remove"), 1);
+    assert!(
+        said_made_again(&e, "volume"),
+        "no notice that the sandbox was made again"
+    );
+    assert_eq!(last_boot_env(&e, "EDITOR").as_deref(), Some("emacs"));
+    assert_eq!(volume_names(&e.rig).await, e.volumes);
+    e.host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stand_in_is_the_same_at_every_start_so_files_the_workspace_wrote_with_it_keep_working() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8323,7 +9626,7 @@ async fn a_stand_in_is_the_same_at_every_start_so_files_the_workspace_wrote_with
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_whose_secret_cannot_be_read_fails_naming_it_and_works_once_it_is_set_again() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8368,7 +9671,7 @@ async fn a_start_whose_secret_cannot_be_read_fails_naming_it_and_works_once_it_i
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_stay_puddles() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8388,6 +9691,7 @@ async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_
     // favour of Puddle's own value.
     host.store()
         .set_env(
+            puddle_store::UserId::OWNER,
             &puddle_store::EnvScope::Global,
             &puddle_store::EnvName::existing("HTTPS_PROXY").unwrap(),
             puddle_store::EnvDraft::plain("http://elsewhere:1").unwrap(),
@@ -8413,7 +9717,7 @@ async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_own_secrets() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8437,6 +9741,7 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     )
     .await;
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {
             scope: puddle_store::Scope::Workspace(name("acme")),
             pattern: puddle_store::Pattern::parse("example.org").unwrap(),
@@ -8465,18 +9770,26 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     .await;
     assert!(
         host.store()
-            .env_entries(&puddle_store::EnvScope::Workspace(name("acme")))
+            .env_entries(
+                puddle_store::UserId::OWNER,
+                &puddle_store::EnvScope::Workspace(name("acme"))
+            )
             .unwrap()
             .is_empty()
     );
     assert_eq!(
         host.store()
-            .env_entries(&puddle_store::EnvScope::Global)
+            .env_entries(puddle_store::UserId::OWNER, &puddle_store::EnvScope::Global)
             .unwrap()
             .len(),
         1
     );
-    assert!(host.store().rules().is_empty(), "its rules went with it");
+    assert!(
+        host.store()
+            .rules_every_user(&puddle_store::testing::all_users())
+            .is_empty(),
+        "its rules went with it"
+    );
 
     // A new workspace of the same name (another id) starts clean, with the global secret only.
     create_as(&api, &mut events, "acme", "acme-2").await;
@@ -8516,7 +9829,7 @@ async fn problems_of(api: &Api) -> Vec<(String, Option<String>, String, String)>
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_sync_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.guest.fail_sync.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -8540,7 +9853,7 @@ async fn a_failed_sync_that_cannot_be_cleaned_up_names_what_is_left_in_the_failu
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.guest.fail_boot.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -8559,7 +9872,7 @@ async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failu
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stale_git_locks_that_could_not_be_cleared_are_a_problem_until_a_boot_clears_them() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.locks_answer.lock().unwrap() = Some((3, "E\t.\tcannot enter /workspaces/acme\n"));
     let host = rig.start().await;
     let api = api(&host);
@@ -8586,7 +9899,7 @@ async fn stale_git_locks_that_could_not_be_cleared_are_a_problem_until_a_boot_cl
 #[tokio::test(flavor = "multi_thread")]
 async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problems_the_next_run_ends()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8623,7 +9936,7 @@ async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problem
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_trim_that_failed_when_puddle_quit_is_a_problem_at_the_next_start_until_a_trim_works() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8669,7 +9982,7 @@ async fn a_trim_that_failed_when_puddle_quit_is_a_problem_at_the_next_start_unti
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_quit_whose_trim_works_leaves_no_note_and_a_foreign_note_file_is_ignored() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8940,7 +10253,7 @@ async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddl
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8966,7 +10279,7 @@ async fn a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_that_cannot_make_its_folder_is_taken_down_again_and_the_leftovers_are_named() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9014,7 +10327,7 @@ async fn a_workspace_that_cannot_make_its_folder_is_taken_down_again_and_the_lef
 
 #[tokio::test(flavor = "multi_thread")]
 async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.locks_answer.lock().unwrap() =
         Some((0, "E\tapi/.git/index.lock\tPermission denied\nD\n"));
     let host = rig.start().await;
@@ -9034,7 +10347,7 @@ async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn git_files_repaired_at_boot_are_audited_and_told_in_plain_words() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.locks_answer.lock().unwrap() = Some((
         0,
         "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\n\
@@ -9378,6 +10691,93 @@ async fn a_credential_store_that_cannot_be_read_at_start_is_a_problem_until_the_
     again.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_store_that_refuses_a_write_at_start_is_one_problem_naming_the_cause() {
+    let rig = Rig::new();
+    rig.secrets.break_it();
+    let host = rig.start().await;
+    eventually(
+        "the credential store problem raised",
+        Duration::from_secs(5),
+        || {
+            host.problems()
+                .list()
+                .iter()
+                .any(|p| p.key == "credential-store")
+        },
+    )
+    .await;
+    let ours: Vec<_> = problems_of(&api(&host))
+        .await
+        .into_iter()
+        .filter(|(key, ..)| key == "credential-store")
+        .collect();
+    assert_eq!(ours.len(), 1, "{ours:?}");
+    assert!(ours[0].3.contains("restart Puddle"), "{ours:?}");
+    host.shutdown().await;
+    drop(host);
+
+    // The store works at the next start: nothing is raised, and the probe left no entry behind.
+    rig.secrets.heal();
+    let again = rig.start().await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        again
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "credential-store"),
+        "{:?}",
+        again.problems().list()
+    );
+    assert_eq!(rig.secrets.ids(), Vec::<String>::new());
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retry_after_the_store_is_unlocked_clears_the_problem_in_the_same_process() {
+    let rig = Rig::new();
+    rig.secrets.break_it();
+    let host = rig.start().await;
+    let api = api(&host);
+    eventually(
+        "the credential store problem raised",
+        Duration::from_secs(5),
+        || {
+            host.problems()
+                .list()
+                .iter()
+                .any(|p| p.key == "credential-store")
+        },
+    )
+    .await;
+
+    // Still locked: the retry says so and the problem stands, once.
+    let refused = api.post("/api/credential-store/retry", "").await;
+    assert_eq!(refused.status, 200, "{}", refused.body);
+    assert_eq!(refused.json()["working"], false, "{}", refused.body);
+    let ours = problems_of(&api)
+        .await
+        .into_iter()
+        .filter(|(key, ..)| key == "credential-store")
+        .count();
+    assert_eq!(ours, 1);
+
+    // Unlocked while Puddle runs: the same process picks it up and the problem ends.
+    rig.secrets.heal();
+    let worked = api.post("/api/credential-store/retry", "").await;
+    assert_eq!(worked.status, 200, "{}", worked.body);
+    assert_eq!(worked.json()["working"], true, "{}", worked.body);
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|(key, ..)| key != "credential-store")
+    );
+    assert_eq!(rig.secrets.ids(), Vec::<String>::new());
+    host.shutdown().await;
+}
+
 // ---- shell init -------------------------------------------------------------------------------
 
 /// The folder the guest sees a workspace's shell init in, on the host.
@@ -9404,7 +10804,7 @@ fn is_event(kind: &'static str, workspace: &'static str) -> impl Fn(&serde_json:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_file_puddle_owns() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9475,7 +10875,7 @@ async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_script_that_prints_or_does_not_parse_is_refused_with_what_was_seen_and_nothing_is_saved()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9510,7 +10910,7 @@ async fn a_script_that_prints_or_does_not_parse_is_refused_with_what_was_seen_an
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_takes_a_save_unchecked_and_the_start_mounts_it_checks_it_and_raises_a_problem_if_it_prints()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9571,7 +10971,7 @@ async fn a_stopped_workspace_takes_a_save_unchecked_and_the_start_mounts_it_chec
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_tells_the_user() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9637,7 +11037,7 @@ async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_list_and_one_workspace_say_what_the_volume_takes_when_the_runtime_knows() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9686,7 +11086,7 @@ fn disk_warning(kind: &'static str) -> impl Fn(&serde_json::Value) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_drops_below() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9752,7 +11152,7 @@ async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_dro
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9773,7 +11173,7 @@ async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_full_volume_is_flagged_and_the_threshold_is_a_validated_setting() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9811,7 +11211,7 @@ async fn a_full_volume_is_flagged_and_the_threshold_is_a_validated_setting() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9867,9 +11267,405 @@ async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume(
     host.shutdown().await;
 }
 
+/// Grows the root disk of `acme` to `size_mib` and waits for the operation to end; returns the
+/// last progress event.
+async fn grow_root_disk(
+    api: &Api,
+    events: &mut support::Events,
+    size_mib: u64,
+) -> serde_json::Value {
+    let reply = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            &format!(r#"{{"size_mib": {size_mib}}}"#),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(reply.json()["busy"], "growing_root_disk");
+    events.until(ended("acme"), Duration::from_secs(20)).await
+}
+
+fn gib(n: u32) -> puddle_compute::DiskSize {
+    puddle_compute::DiskSize::gib(n)
+}
+
+/// The last `root_disk_grown` record of the activity log: (outcome, detail).
+async fn grown_record(api: &Api) -> (String, String) {
+    let ops = workspace_ops("workspace=acme", api).await;
+    // No record fails the callers' outcome assertion, which prints this detail.
+    ops.iter()
+        .rev()
+        .find(|r| r["op"] == "root_disk_grown")
+        .map_or_else(
+            || (String::new(), "no root_disk_grown record".to_owned()),
+            |last| {
+                (
+                    last["outcome"].as_str().unwrap().to_owned(),
+                    last["detail"].as_str().unwrap().to_owned(),
+                )
+            },
+        )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_workspaces_root_disk_grows_live_and_the_audit_log_says_so() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["root_disk_size_mib"], 20_480, "{w}");
+    assert_eq!(w["status"], "running", "{w}");
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(20_480))
+    );
+    assert!(
+        rig.runtime.calls().iter().all(|c| c.op != Op::Stop),
+        "a live grow does not stop the workspace"
+    );
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded");
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 20480 MiB, while it ran"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_root_disk_never_shrinks_and_never_grows_past_the_free_space() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    // The host reads the figures again when an operation ends.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["root_disk_size_mib"], 16_384, "{w}");
+    for size in [1_u64, 16_384] {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/grow-root-disk",
+                &format!(r#"{{"size_mib": {size}}}"#),
+            )
+            .await;
+        assert_eq!(reply.status, 422, "{}", reply.body);
+        assert!(reply.body.contains("only grows"), "{}", reply.body);
+    }
+    let huge = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            &format!(r#"{{"size_mib": {}}}"#, u32::MAX),
+        )
+        .await;
+    assert_eq!(huge.status, 422, "{}", huge.body);
+    assert!(huge.body.contains("free"), "{}", huge.body);
+    let missing = api
+        .post(
+            "/api/workspaces/nope/grow-root-disk",
+            r#"{"size_mib": 20000}"#,
+        )
+        .await;
+    assert_eq!(missing.status, 404, "{}", missing.body);
+    assert!(
+        workspace_ops("workspace=acme", &api)
+            .await
+            .iter()
+            .all(|r| r["op"] != "root_disk_grown"),
+        "a refused request is not a grow"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grow_that_adds_most_of_the_free_space_is_allowed_with_a_warning() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let free_mib = support::FIXED_FREE_BYTES / (1024 * 1024);
+    let size = 16_384 + free_mib * 3 / 4;
+    let end = grow_root_disk(&api, &mut events, size).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = problems_of(&api).await;
+    assert!(
+        problems
+            .iter()
+            .any(|(key, ws, title, _)| key == "root-room:acme"
+                && ws.as_deref() == Some("acme")
+                && title.contains("bigger than most of the free space")),
+        "{problems:?}"
+    );
+    // A small grow after it takes the warning away.
+    let end = grow_root_disk(&api, &mut events, size + 1).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|(key, ..)| key != "root-room:acme")
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_workspaces_root_disk_grows_at_the_next_start_with_a_warning_and_a_reset_keeps_the_size()
+ {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(24_576))
+    );
+    let (_, detail) = grown_record(&api).await;
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 24576 MiB, at its next start"
+    );
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "stopped", "{w}");
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .any(|(key, _, title, _)| key == "root-copy:acme" && title.contains("old root disk")),
+    );
+
+    // A reset removes the sandbox and the warning; the fresh root disk is the grown size.
+    let reply = api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|(key, ..)| key != "root-copy:acme")
+    );
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(24_576))
+    );
+
+    // The size is in the saved list, so a new Puddle makes it again after a reset.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let again = rig.start().await;
+    let api = Api::new(again.url(), again.token());
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(24_576))
+    );
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_that_cannot_grow_live_gets_a_restart_that_loses_nothing() {
+    let rig = Rig::named_ids();
+    rig.runtime.set_live_root_grow(false);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(20_480))
+    );
+    let ops: Vec<Op> = rig.runtime.calls().iter().map(|c| c.op).collect();
+    assert!(
+        ops.contains(&Op::Stop) && ops.iter().filter(|o| **o == Op::Start).count() == 1,
+        "{ops:?}"
+    );
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded");
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 20480 MiB, with a restart"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_grow_changes_nothing_and_is_audited() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    rig.runtime.inject(
+        Op::GrowRootDisk,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "grow",
+            message: "disk full".into(),
+        }),
+    );
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+    assert_eq!(w["busy"], serde_json::Value::Null, "{w}");
+    assert_eq!(rig.runtime.root_disk_size(&sandbox), Some(gib(16)));
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "failed");
+    assert!(
+        detail.starts_with("root disk not grown from 16384 MiB to 20480 MiB: "),
+        "{detail}"
+    );
+    // The size was not kept: a reset makes the default one.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(rig.runtime.root_disk_size(&sandbox), Some(gib(16)));
+    host.shutdown().await;
+}
+
+/// The disk size the runtime reports can lag a grow that applies at the next start; the size
+/// Puddle saved does not. A request is measured against the larger, so one between the two is
+/// refused up front and not accepted with a 202 and refused by the runtime afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_grow_is_measured_against_the_saved_size_when_the_reported_one_lags() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "done", "{end}");
+    // The runtime still reports the old disk until the next start.
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let between = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            r#"{"size_mib": 18432}"#,
+        )
+        .await;
+    assert_eq!(between.status, 422, "{}", between.body);
+    assert!(between.body.contains("only grows"), "{}", between.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_start_would() {
+    let rig = Rig::named_ids();
+    rig.runtime.set_live_root_grow(false);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // The stop fails: the workspace is still running.
+    rig.runtime.inject(
+        Op::Stop,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "stop",
+            message: "stuck".into(),
+        }),
+    );
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+    // The grow was saved and the runtime applies it at the next start, so the log calls it done
+    // and names the failed restart on its own.
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded", "{detail}");
+    assert!(
+        detail.starts_with(
+            "root disk grown from 16384 MiB to 20480 MiB, with a restart; the restart failed: "
+        ) && detail.contains("stuck"),
+        "{detail}"
+    );
+    // The start fails: the workspace is crashed, and a start brings it back.
+    rig.runtime.inject(
+        Op::Start,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "start",
+            message: "no memory".into(),
+        }),
+    );
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "crashed", "{w}");
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_with_no_sandbox_yet_keeps_the_grown_size_for_its_first_start() {
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.runtime
+        .remove(&SandboxName::new("acme").unwrap())
+        .await
+        .unwrap();
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded");
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 20480 MiB, for the first start"
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_did_not() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9910,9 +11706,48 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
     host.shutdown().await;
 }
 
+/// The id a real host draws is eight random characters, and the user never sees it: a problem's
+/// title and detail name the workspace as the user wrote it.
+#[tokio::test(flavor = "multi_thread")]
+async fn problem_text_names_a_workspace_by_its_display_name_never_by_its_random_id() {
+    let rig = Rig::new();
+    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::RandomIds));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: entrypoint exited with status 127: dockerd: not found\n\
+         puddle-boot: session user cannot become root: no sudo\n"
+            .to_owned();
+    let reply = api
+        .post("/api/workspaces", &new_workspace("Acme shop"))
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let id = reply.json()["id"].as_str().unwrap().to_owned();
+    assert_ne!(id, "acme-shop", "{id}");
+    events.until(ended(&id), Duration::from_secs(20)).await;
+    let problems = host.problems().list();
+    let titles: Vec<_> = problems.iter().map(|p| p.title.as_str()).collect();
+    assert!(
+        titles.contains(&"Acme shop has no sudo, so its user cannot become root"),
+        "{titles:?}"
+    );
+    assert!(
+        titles.contains(&"The image's entrypoint in Acme shop stopped"),
+        "{titles:?}"
+    );
+    for problem in &problems {
+        assert!(
+            !problem.title.contains(&id) && !problem.detail.contains(&id),
+            "the random id {id} is in a problem the user reads: {problem:?}"
+        );
+    }
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_image_with_no_sudo_is_a_problem_until_a_start_that_finds_sudo() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9997,7 +11832,7 @@ async fn an_image_with_no_sudo_is_a_problem_until_a_start_that_finds_sudo() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10022,7 +11857,7 @@ async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_changed_variable_reaches_the_login_shell_file_of_a_running_workspace_without_a_restart()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10093,7 +11928,7 @@ async fn a_changed_variable_reaches_the_login_shell_file_of_a_running_workspace_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10109,6 +11944,14 @@ async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
         api.get("/api/workspaces/acme/shell-init").await.json()["saved"],
         false
     );
+
+    // A runtime that fails the check's exec is no verdict either, and says why.
+    *rig.guest.check_answer.lock().unwrap() = None;
+    rig.runtime
+        .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
+    let saved = put_shell_init(&api, "acme", "export A=1\n").await;
+    assert_eq!(saved.status, 503, "{}", saved.body);
+    assert!(saved.body.contains("no space left"), "{}", saved.body);
 
     // Starting: the same failure is a problem on the workspace and the start goes on.
     *rig.guest.check_answer.lock().unwrap() = None;
@@ -10155,7 +11998,7 @@ fn block_shell_init_folder(rig: &Rig, workspace: &str) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_shell_init_that_cannot_reach_the_running_guest_is_a_problem_until_a_save_gets_through() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10182,7 +12025,7 @@ async fn a_shell_init_that_cannot_reach_the_running_guest_is_a_problem_until_a_s
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_workspace_stopped() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10198,7 +12041,7 @@ async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_wo
         end["detail"]
             .as_str()
             .unwrap()
-            .contains("acme's shell init"),
+            .contains("cannot write the shell init"),
         "{end}"
     );
 
@@ -10211,7 +12054,7 @@ async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_wo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_the_change() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10242,7 +12085,7 @@ async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothing_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10267,7 +12110,7 @@ async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10275,6 +12118,7 @@ async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_i
     *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
         store
             .set_env(
+                puddle_store::UserId::OWNER,
                 &puddle_store::EnvScope::Workspace(name("acme")),
                 &puddle_store::EnvName::new("EDITOR").unwrap(),
                 puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10304,7 +12148,7 @@ fn during_the_next_boot_from_another_thread(rig: &Rig, change: impl FnOnce() + S
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10312,6 +12156,7 @@ async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_
     during_the_next_boot_from_another_thread(&rig, move || {
         store
             .set_env(
+                puddle_store::UserId::OWNER,
                 &puddle_store::EnvScope::Workspace(name("acme")),
                 &puddle_store::EnvName::new("EDITOR").unwrap(),
                 puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10331,7 +12176,7 @@ async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10343,6 +12188,7 @@ async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_
     during_the_next_boot_from_another_thread(&rig, move || {
         store
             .set_env(
+                puddle_store::UserId::OWNER,
                 &puddle_store::EnvScope::Workspace(name("acme")),
                 &puddle_store::EnvName::new("EDITOR").unwrap(),
                 puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10370,7 +12216,7 @@ async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_identity_attached_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10388,7 +12234,7 @@ async fn an_identity_attached_before_the_first_boot_returns_reaches_the_guest_on
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10399,6 +12245,7 @@ async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back()
         "puddle-boot: replaced /etc/profile.d/02-puddle-shell-init.sh\n".to_owned();
     host.store()
         .set_env(
+            puddle_store::UserId::OWNER,
             &puddle_store::EnvScope::Workspace(name("acme")),
             &puddle_store::EnvName::new("EDITOR").unwrap(),
             puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10416,7 +12263,7 @@ async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back()
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at_its_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.dev_cert.give();
     let host = rig.start().await;
     let api = api(&host);
@@ -10467,7 +12314,7 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
 /// attach: closing an editor window and opening one again must not raise it a second time.
 #[tokio::test(flavor = "multi_thread")]
 async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.dev_cert.give();
     let host = rig.start().await;
     let api = api(&host);
@@ -10490,7 +12337,7 @@ async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the_guest() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10519,7 +12366,7 @@ fn last_plan(rig: &Rig) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_problem_until_it_exists()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10604,7 +12451,7 @@ async fn stop_and_start(api: &Api, events: &mut support::Events, name: &'static 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_cannot_parse_is_a_problem()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10679,6 +12526,51 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     assert!(!detail.contains("docker"), "{detail}");
 }
 
+/// Setting a start folder on a running workspace replaces the multi-root window at once: the plan
+/// the guest gets no longer holds the file, and when the next attach cannot list the checkouts the
+/// editor still opens the folder, not the file the folder replaced.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_folder_set_on_a_running_workspace_drops_the_multi_root_file_before_any_attach() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let attach = || async {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": "desktop"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+        rig.launcher
+            .targets
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap()
+    };
+    let file = ".puddle/editor/acme.code-workspace";
+    assert!(attach().await.is_workspace_file);
+
+    let reply = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let plan = last_plan(&rig);
+    assert!(!plan.contains(file), "{plan}");
+
+    rig.guest.fail_listing.store(true, Ordering::SeqCst);
+    let target = attach().await;
+    assert_eq!(target.path, "/workspaces/acme/api");
+    assert!(!target.is_workspace_file);
+    host.shutdown().await;
+}
+
 /// A workspace that runs, with nothing else going on in its guest.
 async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, Api) {
     let host = rig.start().await;
@@ -10691,7 +12583,7 @@ async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, A
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_cannot_look_for_the_start_folder_is_a_problem_until_it_can() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     // The login-shell file is written (the first command); the look for the folder is the next.
     rig.runtime.inject(
@@ -10713,7 +12605,7 @@ async fn a_guest_that_cannot_look_for_the_start_folder_is_a_problem_until_it_can
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_folder_the_guest_cannot_be_given_is_a_problem_until_a_change_reaches_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     rig.runtime
         .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
@@ -10738,7 +12630,7 @@ async fn a_start_folder_the_guest_cannot_be_given_is_a_problem_until_a_change_re
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_folder_changed_while_the_workspace_is_stopped_ends_the_problems_about_the_old_one()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     rig.runtime
         .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
@@ -10765,7 +12657,7 @@ async fn a_start_folder_changed_while_the_workspace_is_stopped_ends_the_problems
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attach_that_cannot_list_or_write_the_editors_file_says_so_until_one_works() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     let attach = || async {
         let reply = api
@@ -10832,7 +12724,7 @@ async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_guest_cannot_widen() {
     use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10888,7 +12780,7 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
 async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_install_works_or_it_stops()
  {
     use puddle_agent_proto::{AgentMessage, EditorProblemKind};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10963,7 +12855,7 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
 async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_one_until_a_look_works()
  {
     use puddle_agent_proto::{AgentMessage, EditorProblemKind};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11015,7 +12907,7 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
 async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_until_a_start_finds_the_user()
  {
     use puddle_agent_proto::{AgentMessage, EditorProblemKind};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11066,7 +12958,7 @@ async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_un
 async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_until_they_are_fixed_or_it_stops()
  {
     use puddle_agent_proto::AgentMessage;
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11131,7 +13023,7 @@ async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_u
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_count() {
     use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11157,16 +13049,14 @@ async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_co
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    // A port of this computer nobody has right now.
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // A port of this computer nobody has right now: a quiet one, since a port 0 port given up is free
+    // for any parallel test's port 0 or source port before the host binds it.
+    let port = puddle_test_kit::quiet_port();
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let ports = |reply: support::Reply| reply.json();
 
@@ -11305,7 +13195,7 @@ fn files_of(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is_left_as_it_was() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let tmp = support::scratch_dir();
@@ -11378,7 +13268,7 @@ async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let tmp = support::scratch_dir();
@@ -11432,7 +13322,7 @@ async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists(
 #[tokio::test(flavor = "multi_thread")]
 async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_import_leaves_no_volume()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let tmp = support::scratch_dir();
@@ -11453,11 +13343,12 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
         .await;
     assert_eq!(end["step"], "done", "{end}");
     let problems = api.get("/api/problems").await.json();
+    let shop = entry_of(&api, "refused", "shop").await;
     let problem = problems["problems"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|p| p["key"] == "clone:refused:shop")
+        .find(|p| p["key"] == format!("clone:refused:{shop}"))
         .unwrap_or_else(|| panic!("{problems}"))
         .clone();
     assert!(
@@ -11634,6 +13525,33 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     again.shutdown().await;
 }
 
+/// A restore boots the same maintenance image a delete check does, so it waits for that image's
+/// download like the check: nothing boots before the pull of the image has been asked for.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_asks_for_the_maintenance_image_before_it_boots_it() {
+    const CHECK_IMAGE: &str = puddle_workspace::WorkspaceConfig::DEFAULT_MAINTENANCE_IMAGE;
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    let restored = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(restored.status, 201, "{}", restored.body);
+    let calls = rig.runtime.calls();
+    let pulled = calls
+        .iter()
+        .position(|c| c.op == Op::PullImage && c.target.as_deref() == Some(CHECK_IMAGE));
+    let booted = calls.iter().position(|c| {
+        c.op == Op::Create && c.target.as_deref().is_some_and(|t| t.starts_with("m--"))
+    });
+    assert!(
+        pulled.is_some() && booted.is_some() && pulled < booted,
+        "pull at {pulled:?}, maintenance boot at {booted:?}: {calls:?}"
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restore_whose_list_cannot_be_saved_leaves_no_entry_and_the_disk_unclaimed() {
     let rig = Rig::new();
@@ -11691,7 +13609,7 @@ async fn a_restore_asks_for_an_address_when_the_disk_has_none_and_the_last_one_e
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restore_never_overwrites_a_list_entry_or_takes_a_disk_a_sandbox_holds() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -11810,7 +13728,7 @@ async fn terminal_output_until(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped_reason() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.runtime.serve_terminals();
     let host = rig.start().await;
     let api = api(&host);
@@ -11836,12 +13754,19 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         .unwrap();
     let reached = terminal_output_until(&mut link, &format!("{user}\r\n")).await;
     assert_eq!(reached.reason, puddle_api::EndReason::Exited, "{reached:?}");
+    assert_eq!(service.open_terminals(), 1, "the shell counts as open");
 
     let stop = api.post("/api/workspaces/acme/stop", "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);
     let end = terminal_output_until(&mut link, "never printed").await;
     assert_eq!(end.reason, puddle_api::EndReason::Stopped, "{end:?}");
     events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually(
+        "a stop leaves no terminal open",
+        Duration::from_secs(10),
+        || service.open_terminals() == 0,
+    )
+    .await;
 
     // A stopped workspace has no terminal to open.
     let refused = puddle_api::TerminalService::open(service, &id, size)
@@ -11856,4 +13781,436 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         Err(puddle_api::TerminalError::NotRunning(_))
     ));
     host.shutdown().await;
+}
+
+// ---- the managed tools' environment -----------------------------------------------------------
+
+const MISE_SUDOERS: &str = "/etc/sudoers.d/puddle-mise";
+
+/// The variables the latest start gave the sandbox, as (name, value).
+fn last_boot_guest_env(rig: &Rig) -> GuestEnv {
+    rig.guest.boot_envs.lock().unwrap().last().cloned().unwrap()
+}
+
+fn mise_names(env: &GuestEnv) -> Vec<String> {
+    env.iter()
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with("MISE_"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The global switch for managed tools, set before any workspace exists.
+async fn global_mise(api: &Api, on: bool) {
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": on}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
+    api.post(&format!("/api/workspaces/{id}/stop"), "").await;
+    events.until(ended(id), Duration::from_secs(20)).await;
+    api.post(&format!("/api/workspaces/{id}/start"), "").await;
+    events.until(ended(id), Duration::from_secs(20)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_keep_list() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    let env = last_boot_guest_env(&rig);
+    let dir = "/workspaces/acme/.puddle/mise";
+    assert_eq!(
+        env.get("MISE_DATA_DIR"),
+        Some(format!("{dir}/data").as_str())
+    );
+    assert_eq!(
+        env.get("MISE_CACHE_DIR"),
+        Some(format!("{dir}/cache").as_str())
+    );
+    assert_eq!(
+        env.get("MISE_STATE_DIR"),
+        Some(format!("{dir}/state").as_str())
+    );
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(
+        env.get("MISE_TRUSTED_CONFIG_PATHS"),
+        Some("/workspaces/acme"),
+        "the repository's own code is trusted by default"
+    );
+    assert_eq!(env.get("MISE_DISABLE_UPDATE_WARNING"), Some("1"));
+    assert_eq!(env.get("MISE_USE_VERSIONS_HOST_TRACK"), Some("0"));
+    let path = env.get("PATH").unwrap();
+    assert!(path.starts_with(&format!("{dir}/data/shims:")), "{path}");
+    assert!(path.ends_with(&format!(":{dir}/bin")), "{path}");
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let sudoers = pem_of(&files, MISE_SUDOERS);
+    for name in mise_names(&env) {
+        assert!(sudoers.contains(&name), "{name} in {sudoers}");
+    }
+    assert!(
+        sudoers.contains(&format!("secure_path=\"{path}\"")),
+        "{sudoers}"
+    );
+    // Login shells get the same PATH after Debian's /etc/profile reset it.
+    assert!(
+        pem_of(&files, "/etc/profile.d/00-puddle-path.sh").contains(path),
+        "00-puddle-path.sh"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_workspace_follows_at_its_next_start()
+ {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    assert!(
+        last_boot_guest_env(&rig)
+            .get("MISE_TRUSTED_CONFIG_PATHS")
+            .is_some()
+    );
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": true, "repo_code": false}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    let env = last_boot_guest_env(&rig);
+    assert_eq!(env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!pem_of(&files, MISE_SUDOERS).contains("TRUSTED"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the_guest() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, false).await;
+    create(&api, &mut events, "acme").await;
+    let env = last_boot_guest_env(&rig);
+    assert_eq!(mise_names(&env), Vec::<String>::new());
+    assert_eq!(env.get("PATH"), None, "the image's PATH stays as it is");
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!files.contains_key(MISE_SUDOERS));
+    // A workspace's own switch off does the same under a global switch that is on.
+    global_mise(&api, true).await;
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": false, "repo_code": true}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    assert_eq!(mise_names(&last_boot_guest_env(&rig)), Vec::<String>::new());
+    // Switched on, the next start has it.
+    let reply = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"tools": {"mise": true, "repo_code": true}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    restart(&api, &mut events, "acme").await;
+    assert!(last_boot_guest_env(&rig).get("MISE_DATA_DIR").is_some());
+    host.shutdown().await;
+}
+
+// ---- mise after a start -----------------------------------------------------------------------
+
+const MISE_FAILURE: &str = "could not download mise: curl failed (exit status: 56): 403";
+
+fn mise_fetches(rig: &Rig) -> Vec<(Vec<String>, Option<String>)> {
+    rig.guest.mise_fetches.lock().unwrap().clone()
+}
+
+fn tools_problem(
+    problems: &[(String, Option<String>, String, String)],
+) -> Option<&(String, Option<String>, String, String)> {
+    problems.iter().find(|p| p.0 == "tools:acme")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mise_is_fetched_in_the_background_after_the_start_and_a_good_fetch_raises_nothing() {
+    let rig = Rig::named_ids();
+    rig.mise_on.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    eventually("the guest is asked for mise", APPLY, || {
+        !mise_fetches(&rig).is_empty()
+    })
+    .await;
+    let fetches = mise_fetches(&rig);
+    assert_eq!(fetches.len(), 1, "{fetches:?}");
+    assert_eq!(
+        fetches[0].0,
+        ["mise-fetch", "/workspaces/acme/.puddle/mise"]
+    );
+    assert_eq!(
+        fetches[0].1.as_deref(),
+        Some("agent"),
+        "as the session user"
+    );
+    assert_eq!(tools_problem(&problems_of(&api).await), None);
+    // Every start asks again: the agent finds the binary current and does nothing.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually("the second start asks too", APPLY, || {
+        mise_fetches(&rig).len() == 2
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_mise_fetch_is_a_problem_with_the_blocking_rule_and_the_start_still_ends_done() {
+    let rig = Rig::named_ids();
+    rig.mise_on.store(true, Ordering::SeqCst);
+    *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    puddle_store::testing::own(host.store(), &name("acme"));
+    host.store()
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&puddle_store::NewRule {
+            scope: puddle_store::Scope::Workspace(name("acme")),
+            pattern: puddle_store::Pattern::parse("mise.jdx.dev").unwrap(),
+            effect: puddle_store::Effect::Deny,
+            expires_at: None,
+            created_by: puddle_store::Actor::Cli,
+        })
+        .unwrap();
+    create(&api, &mut events, "acme").await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+    eventually("the problem is raised", APPLY, || {
+        // Polled on the host's own state: the API call below is async.
+        host.problems().list().iter().any(|p| p.key == "tools:acme")
+    })
+    .await;
+    let problems = problems_of(&api).await;
+    let (_, workspace, title, detail) = tools_problem(&problems).unwrap();
+    assert_eq!(workspace.as_deref(), Some("acme"));
+    assert!(title.contains("mise"), "{title}");
+    assert!(detail.contains(MISE_FAILURE), "{detail}");
+    assert!(detail.contains("works without them"), "{detail}");
+    assert!(
+        detail.contains("deny mise.jdx.dev"),
+        "names the rule: {detail}"
+    );
+    // The next start finds the download working and the problem ends.
+    *rig.guest.mise_failure.lock().unwrap() = None;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually("the problem ends", APPLY, || {
+        !host.problems().list().iter().any(|p| p.key == "tools:acme")
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_mise_fetch_without_an_own_rule_names_no_rule() {
+    let rig = Rig::named_ids();
+    rig.mise_on.store(true, Ordering::SeqCst);
+    *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    eventually("the problem is raised", APPLY, || {
+        host.problems().list().iter().any(|p| p.key == "tools:acme")
+    })
+    .await;
+    let problems = problems_of(&api).await;
+    let (_, _, _, detail) = tools_problem(&problems).unwrap();
+    assert!(!detail.contains("A rule you made"), "{detail}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
+    for switch in ["global", "workspace"] {
+        let rig = Rig::named_ids();
+        rig.mise_on.store(true, Ordering::SeqCst);
+        *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
+        let host = rig.start().await;
+        let api = api(&host);
+        let mut events = api.events().await;
+        create(&api, &mut events, "acme").await;
+        eventually("the problem is raised", APPLY, || {
+            host.problems().list().iter().any(|p| p.key == "tools:acme")
+        })
+        .await;
+        let before = mise_fetches(&rig).len();
+        let reply = if switch == "global" {
+            api.put(
+                "/api/settings",
+                &json!({"tools": {"mise": false}}).to_string(),
+            )
+            .await
+        } else {
+            api.put(
+                "/api/settings/workspaces/acme",
+                &json!({"tools": {"mise": false}}).to_string(),
+            )
+            .await
+        };
+        assert_eq!(reply.status, 200, "{switch}: {}", reply.body);
+        api.post("/api/workspaces/acme/stop", "").await;
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+        api.post("/api/workspaces/acme/start", "").await;
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+        eventually("the old problem ends", APPLY, || {
+            !host.problems().list().iter().any(|p| p.key == "tools:acme")
+        })
+        .await;
+        assert_eq!(mise_fetches(&rig).len(), before, "{switch}: no new fetch");
+    }
+}
+
+#[cfg(target_os = "linux")]
+/// Everything under `dir` that holds `needle`, as the files' relative paths.
+fn files_holding(dir: &std::path::Path, needle: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if std::fs::read(&path)
+                .is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle.as_bytes()))
+            {
+                found.push(path.strip_prefix(dir).unwrap().display().to_string());
+            }
+        }
+    }
+    found
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_headless_host_keeps_an_environment_secret_a_pasted_token_and_a_proxy_sign_in_in_the_file_vault()
+ {
+    let rig = Rig::new();
+    rig.file_vault.store(true, Ordering::SeqCst);
+    let proxy = puddle_upstream::ProxyAddr::new("proxy.corp", 8080);
+    let sign_in = fixture::password("vault");
+    let token = "ghp_CANARY-pasted-token-in-the-file-vault";
+
+    let host = rig.start().await;
+    proxy_sign_ins_loaded(&host, 0).await;
+    let first = api(&host);
+    put_env(
+        &first,
+        "/api/env/GLOBAL_TOKEN",
+        secret_body(Some(REAL), &["api.example.org"]),
+    )
+    .await;
+    add_github_identity(&first, token).await;
+    host.proxy_passwords().set(&proxy, "svc", &sign_in).unwrap();
+    assert!(
+        problems_of(&first).await.is_empty(),
+        "no credential-store problem"
+    );
+    let record = std::fs::read_to_string(rig.dir.path().join("data/secrets/store.json")).unwrap();
+    assert!(record.contains("\"store\": \"file\""), "{record}");
+    host.shutdown().await;
+    drop(host);
+
+    // The values are in the vault file and nowhere else: not in the memory store the other tests
+    // hand in, and no file of the run holds one in the clear.
+    assert!(rig.secrets.ids().is_empty());
+    for canary in [REAL, token, sign_in.as_str()] {
+        assert_eq!(files_holding(rig.dir.path(), canary), Vec::<String>::new());
+    }
+    let vault_file = puddle_secrets::vault_path(&rig.dir.path().join("data"));
+    assert!(vault_file.is_file());
+    let held = open_the_vault(&rig, &vault_file).await;
+    for canary in [REAL, token] {
+        assert!(
+            held.iter().any(|value| value == canary),
+            "{canary} not in the vault"
+        );
+    }
+
+    // A start without the flag reads the record, opens the same vault and finds the sign-in.
+    rig.without_headless_flag.store(true, Ordering::SeqCst);
+    let again = rig.start().await;
+    proxy_sign_ins_loaded(&again, 1).await;
+    assert_eq!(
+        again.proxy_passwords().proxies(),
+        [(proxy, "svc".to_owned())]
+    );
+    assert!(problems_of(&api(&again)).await.is_empty());
+    again.shutdown().await;
+    drop(again);
+
+    // A vault whose key is gone does not stop the host: it starts, says why secrets cannot be
+    // saved, and leaves the vault file as it was.
+    let before = std::fs::read(&vault_file).unwrap();
+    std::fs::remove_file(rig.dir.path().join("config/puddle/vault.key")).unwrap();
+    let keyless = rig.start().await;
+    let problems = problems_of(&api(&keyless)).await;
+    assert!(
+        problems.iter().any(|p| p.0 == "credential-store"),
+        "{problems:?}"
+    );
+    assert_eq!(std::fs::read(&vault_file).unwrap(), before);
+    keyless.shutdown().await;
+}
+
+#[cfg(target_os = "linux")]
+/// Every value in the vault at `file`, opened with the key the rig's host kept in its config
+/// folder: what a restart of the host would read.
+async fn open_the_vault(rig: &Rig, file: &std::path::Path) -> Vec<String> {
+    let keys = puddle_secrets::VaultKeys::new(
+        &rig.dir.path().join("config"),
+        file,
+        puddle_secrets::ToolPaths::default(),
+    );
+    let found = keys.find_or_make().await.unwrap();
+    let vault = puddle_secrets::FileVault::open(file, found.key).unwrap();
+    vault
+        .ids()
+        .unwrap()
+        .iter()
+        .filter_map(|id| {
+            vault
+                .get(&puddle_secrets::StoredId::new(id.as_str()).unwrap())
+                .unwrap()
+        })
+        .map(|secret| secret.expose().to_owned())
+        .collect()
 }

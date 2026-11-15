@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle doctor` on a real host with the real runtime (tiers K and W): all green with
 //! the runtime CI installed, including a test boot, in under 30 s; and a missing runtime, another
 //! version and a runtime file this user may not run (a deny ACE on Windows, no execute bit on
@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_doctor::{
-    BootFacts, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts,
-    GsaFacts, HypervisorFacts, JobFacts, Os, Probe, ProcessOutcome, Protection, RuntimeFacts,
-    SshAgentFacts, SwapArea, SwapFacts,
+    AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts,
+    DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, LoginSession, Os, Probe,
+    ProcessOutcome, Protection, RuntimeFacts, SshAgentFacts, StoreHealth, SwapArea, SwapFacts,
 };
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
 use puddle_runtime::{
@@ -36,12 +36,20 @@ fn ci_runtime() -> RuntimePair {
     RuntimePair::find_in(&settings().runtime_dir).expect("runtime pair")
 }
 
-/// The real probe with one fact fixed: the disk encryption of the machine the test runs on.
-/// Whether a CI runner's disk and swap are encrypted says nothing about the runtime, the
-/// test boot or the paths this test checks, and the hosted runners are not encrypted, so the
-/// "every check ok or info" bar below would depend on the runner image. The probe's own
-/// answer on the real machine is tested in `puddle-doctor`'s `system_probe` tests.
-struct EncryptedHost(SystemProbe);
+/// The real probe with three facts of the machine the test runs on fixed: its disk encryption,
+/// its Azure CLI and its credential store. Whether a CI runner's disk and swap are encrypted
+/// says nothing about the runtime, the test boot or the paths this test checks, and the hosted
+/// runners are not encrypted, so the "every check ok or info" bar below would depend on the
+/// runner image. The same goes for `az`: the real one is a slow Python CLI that a cold, busy
+/// runner can take over the doctor's 10 s limit to answer, which made this test flake. The
+/// probe's own answers on the real machine are tested in `puddle-doctor`'s `system_probe`
+/// tests.
+///
+/// The credential store is fixed the same way: a hosted runner is headless and has no Secret
+/// Service, so the real answer there is "not available" (a warning, by design) and says
+/// nothing about the runtime. [`credential_store_warns_and_nothing_else_does`] covers that
+/// answer; the real probe's own is tested in `puddle-secrets`.
+struct EncryptedHost(SystemProbe, StoreHealth);
 
 impl Probe for EncryptedHost {
     fn os(&self) -> Os {
@@ -98,6 +106,18 @@ impl Probe for EncryptedHost {
     }
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
         self.0.ssh_agent(limit)
+    }
+    fn az_cli(&self, _limit: Duration) -> AzCliFacts {
+        AzCliFacts::Found {
+            version: "fixed for this test".into(),
+        }
+    }
+    fn credential_store(&self) -> CredentialStoreFacts {
+        CredentialStoreFacts::Os {
+            recorded: true,
+            health: self.1,
+            session: LoginSession::Graphical,
+        }
     }
 }
 
@@ -157,6 +177,15 @@ fn assert_firmware_names(dir: &Path) {
 }
 
 fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
+    run_with_store(dir, expected, options, StoreHealth::Working)
+}
+
+fn run_with_store(
+    dir: PathBuf,
+    expected: RuntimeVersion,
+    options: &Options,
+    store: StoreHealth,
+) -> Report {
     // A failed test boot's msb logs land beside the other kept sandbox logs (the CI artifact).
     // The data folder sits beside the runtime folder, under the test's tempdir, so the Linux
     // data-folder check runs on a real folder instead of reporting that none was given.
@@ -170,8 +199,10 @@ fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
     }
     let probe = EncryptedHost(
         SystemProbe::new(dir, expected, DevOverride::none())
+            .with_az_search_path(Some(std::ffi::OsString::new()))
             .with_data_dir(data)
             .with_keep_boot_logs(settings().kept_logs()),
+        store,
     );
     let report = diagnose(&probe, options, "vm-test");
     eprintln!("{}", report.to_text());
@@ -184,6 +215,34 @@ fn status(report: &Report, id: CheckId) -> Status {
 
 fn finding(report: &Report, id: CheckId) -> Option<Finding> {
     report.check(id).and_then(|c| c.finding)
+}
+
+/// A headless host with no Secret Service (every hosted runner) gets one warning on the
+/// credential store, the report stays ok, and the runtime checks are unaffected.
+#[test]
+fn credential_store_warns_and_nothing_else_does() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = runtime_copy(root.path());
+    let report = run_with_store(
+        dir,
+        RuntimeVersion::built_for(),
+        &Options::default(),
+        StoreHealth::NoProvider,
+    );
+    assert_eq!(
+        finding(&report, CheckId::CredentialStore),
+        Some(Finding::CredentialStoreMissing)
+    );
+    assert_eq!(status(&report, CheckId::CredentialStore), Status::Warn);
+    let others: Vec<_> = report
+        .checks
+        .iter()
+        .filter(|c| c.id != CheckId::CredentialStore)
+        .filter(|c| !matches!(c.status, Status::Ok | Status::Info))
+        .collect();
+    assert!(others.is_empty(), "{others:?}");
+    assert_eq!(status(&report, CheckId::TestBoot), Status::Ok);
+    assert!(report.ok);
 }
 
 #[test]
@@ -326,8 +385,9 @@ fn vm_doctor_names_a_folder_above_the_data_folder_that_another_user_owns() {
     };
     let dir = root.path().join(RUNTIME_DIR_NAME);
     std::fs::create_dir_all(&dir).unwrap();
-    let probe =
-        SystemProbe::new(dir, RuntimeVersion::built_for(), DevOverride::none()).with_data_dir(data);
+    let probe = SystemProbe::new(dir, RuntimeVersion::built_for(), DevOverride::none())
+        .with_az_search_path(Some(std::ffi::OsString::new()))
+        .with_data_dir(data);
     let report = diagnose(&probe, &Options::default(), "vm-test");
     eprintln!("{}", report.to_text());
     let check = report.check(CheckId::DataPath).unwrap();

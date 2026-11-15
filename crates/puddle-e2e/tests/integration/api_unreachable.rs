@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest tries Puddle's own API through the real proxy: the guest agent's CONNECT to the
 //! API's address and port is refused with a reason, whatever the loopback toggle and the rules
 //! say.
@@ -44,6 +44,7 @@ struct Rig {
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-api").unwrap());
     let endpoints = PuddleEndpoints::new();
     let services = Services::new(
         store.clone(),
@@ -129,6 +130,7 @@ async fn a_guest_cannot_reach_the_api_even_with_every_local_toggle_on_and_an_all
     let port = rig.api.local_addr().port();
     // An exact allow for the literal doesn't help either: Puddle's own listeners come first.
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("127.0.0.1").unwrap(),
@@ -160,5 +162,11 @@ async fn a_guest_cannot_reach_the_api_even_with_every_local_toggle_on_and_an_all
             "{authority}: the refusal must say why: {body:?}"
         );
     }
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
+    assert_eq!(
+        rig.store
+            .open_pending_every_user(&puddle_store::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0
+    );
 }

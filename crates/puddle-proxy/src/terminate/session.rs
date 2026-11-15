@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One terminated connection, from the `CONNECT` answer to the last response.
 
 use std::io;
@@ -9,7 +9,9 @@ use std::sync::atomic::Ordering;
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
-use puddle_types::{ConnectionOutcome, Host, HttpRequestLine, WorkspaceId};
+use puddle_types::{
+    ConnectionOutcome, EgressRequest, ForeignCredentialKind, Host, HttpRequestLine, WorkspaceId,
+};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use zeroize::Zeroizing;
@@ -23,19 +25,20 @@ use super::guest::{
     read_hello, scan_hello, server_config,
 };
 use super::inject::{
-    Forwarding, InjectContext, InjectRefusal, Injection, RequestView, Unauthorized, body_too_large,
+    Forwarding, InjectContext, InjectRefusal, RequestView, Unauthorized, body_too_large,
 };
 use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
 use super::request_rules::{self, Refused};
 use super::stand_in::{
-    ANSWER_WITHHELD, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal,
-    answer_failed_refusal, limit_accept_encoding, scrub_answer,
+    ANSWER_WITHHELD, AnswerReport, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal,
+    answer_failed_refusal, limit_accept_encoding, scan_answer, scrub_answer,
 };
 use super::streams::Activity;
 use super::{Mode, Termination, h2, response, ws};
 use crate::http::{self, HeadError};
-use crate::proxy::{ClientReader, Proxy, ProxyConfig, Refusal, refuse};
+use crate::opened::Opened;
+use crate::proxy::{Proxy, ProxyConfig, Refusal, refuse};
 use crate::target::Target;
 use crate::upstream::{Admitted, connect_out};
 
@@ -55,6 +58,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     tracing::info!(host = %cx.target.host, "TLS handshake refused: the client asked for another name");
+    // the refusal is best effort; the connection closes whether or not the alert goes out
     let _ = async {
         let (refuse_config, _) =
             server_config(cx.termination.ca(), &cx.target.host, &[ALPN_HTTP11]).ok()?;
@@ -73,7 +77,7 @@ where
 pub(crate) const MAX_UNSWAPPED_STAND_INS: usize = 16;
 
 /// What a connection did, for the audit record.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each flag is one independent fact the connection record carries"
@@ -93,6 +97,12 @@ pub(crate) struct Outcome {
     /// The ids of the stand-ins whose real values an answer held and got back as the stand-in,
     /// each once, at most [`MAX_UNSWAPPED_STAND_INS`].
     pub(crate) scrubbed_stand_ins: Vec<String>,
+    /// The kinds of credential the requests carried that Puddle did not add or swap, each once
+    /// (`github_token`, ...); empty when the workspace turned the warning off.
+    pub(crate) foreign_credentials: Vec<String>,
+    /// The kinds of token the answers held that Puddle does not hold, each once
+    /// (`github_token`, ...); empty when the workspace turned the warning off.
+    pub(crate) answer_credentials: Vec<String>,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -117,6 +127,9 @@ pub(crate) struct Outcome {
     /// The code of the limit that ended the connection or cut one of its streams or pipes
     /// (`limit:<code>`), when one did.
     pub(crate) ended: Option<&'static str>,
+    /// The connection was passed through, and its first bytes began SSH to a Git host's name: they
+    /// were not passed on, and the guest got the SSH refusal.
+    pub(crate) ssh: bool,
 }
 
 impl Outcome {
@@ -138,6 +151,28 @@ impl Outcome {
         }
     }
 
+    /// Notes the credentials a request carried that Puddle did not add or swap, unless the
+    /// workspace turned the warning off: the kinds join the record and the notice is raised.
+    pub(crate) fn record_foreign(&mut self, cx: &Context, kinds: &[ForeignCredentialKind]) {
+        cx.termination.foreign_warning().note(
+            &cx.workspace,
+            &cx.target.host,
+            cx.proxy.sink.as_ref(),
+            &mut self.foreign_credentials,
+            kinds,
+        );
+    }
+
+    /// Notes the kinds of token the answers held that Puddle does not hold (see
+    /// [`scan_answer`]).
+    pub(crate) fn record_unknown_tokens(&mut self, report: &AnswerReport) {
+        for kind in report.kinds() {
+            if !self.answer_credentials.contains(&kind) {
+                self.answer_credentials.push(kind);
+            }
+        }
+    }
+
     /// Notes what the scrub of the answers did: the stand-ins put back, and an answer cut off
     /// because it held a real value that cannot be replaced.
     pub(crate) fn record_scrubbed(&mut self, notes: &ScrubNotes) {
@@ -152,6 +187,20 @@ impl Outcome {
             self.refused.get_or_insert(ANSWER_WITHHELD);
         }
     }
+}
+
+/// The kind to warn about when the swap found a stand-in of Puddle's own that its registry does
+/// not hold (see [`super::stale`]).
+pub(crate) fn stale_kind(reports: &[&Swapped]) -> Option<ForeignCredentialKind> {
+    reports
+        .iter()
+        .any(|report| {
+            report
+                .unswapped
+                .iter()
+                .any(|id| id.starts_with("stale-stand-in:"))
+        })
+        .then_some(ForeignCredentialKind::StaleStandIn)
 }
 
 /// What a terminated connection runs on.
@@ -185,7 +234,7 @@ fn note_handshake_failure(
     } else if let Some(alert) = super::handshake::rejected_certificate(err) {
         outcome.certificate_refused = true;
         tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
-        if cx.mode == Mode::Everything {
+        if cx.mode == Mode::Everything && cx.termination.interception().is_learning() {
             outcome.learned = true;
             cx.termination
                 .interception()
@@ -198,23 +247,19 @@ fn note_handshake_failure(
     }
 }
 
-/// Terminates `reader`'s connection (a `CONNECT` whose head was just read). The guest's
+/// Terminates `guest`'s connection (a `CONNECT` whose head was read). The guest's
 /// `ClientHello` is read first and its name checked; then the real server is connected to, offering
 /// the protocols the guest offered, and the guest is offered what the server chose.
-pub(crate) async fn run<S>(cx: Arc<Context>, reader: ClientReader<S>) -> Outcome
+pub(crate) async fn run<S>(cx: Arc<Context>, mut guest: Opened<S>) -> Outcome
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let mut outcome = Outcome::default();
-    let early = reader.buffer().to_vec();
-    let mut stream = reader.into_inner();
-    if let Err(err) = stream
-        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .await
-    {
+    if let Err(err) = guest.answer().await {
         tracing::debug!(error = %err, "guest went away before the TLS handshake");
         return outcome;
     }
+    let Opened { stream, early, .. } = guest;
     let config = cx.proxy.config;
     let (start, hello, first, deferred) = match cx.mode {
         Mode::Bound => {
@@ -296,6 +341,7 @@ where
                 upstream,
                 deferred,
                 outcome,
+                unknown_tokens: Arc::new(AnswerReport::of(&cx)),
                 first: true,
             };
             conn.serve().await;
@@ -383,6 +429,7 @@ where
             && cx.termination.is_token_endpoint(&name)
         {
             tracing::info!(workspace = %cx.workspace, "connection refused: the TLS hello asks for a token endpoint");
+            // best effort: the peer may already have closed, and nothing else depends on this write
             let _ = stream.write_all(&crate::token_gate::ALERT).await;
             let _ = stream.shutdown().await;
             outcome.refused = Some(crate::token_gate::CODE);
@@ -433,7 +480,7 @@ where
 /// then both directions copied. `code` is why, for the audit.
 async fn pass_through<S>(
     cx: &Context,
-    mut guest: S,
+    guest: S,
     replay: Vec<u8>,
     code: &'static str,
     outcome: &mut Outcome,
@@ -462,21 +509,17 @@ async fn pass_through<S>(
     outcome.connect = Some(ConnectionOutcome::Connected);
     outcome.resolved_ip = out.addr.map(|addr| addr.ip());
     outcome.hop = out.hop;
-    let (mut server, mut watch) = (out.stream, out.watch);
-    if let Err(err) = server.write_all(&replay).await {
-        tracing::debug!(error = %err, "pass-through failed before the splice");
-        crate::proxy::abort(&server);
-        return;
-    }
-    match crate::proxy::splice_watched(&mut server, &mut guest, watch.as_mut()).await {
-        Some(Ok((up, down))) => tracing::debug!(
-            bytes_up = up + replay.len() as u64,
-            bytes_down = down,
-            "pass-through closed"
-        ),
-        Some(Err(err)) => tracing::debug!(error = %err, "pass-through aborted"),
-        None => crate::proxy::abort(&server),
-    }
+    // SSH to a Git host's name is refused here as in any tunnel: what is not TLS on port 443 of
+    // such a name (`ssh.github.com`) is passed through only when it is not SSH.
+    let request = EgressRequest::new(cx.workspace.clone(), cx.target.host.clone(), cx.target.port);
+    let ssh_for = Some(&request).filter(|request| cx.proxy.is_git_ssh_name(request));
+    let guest = Opened {
+        stream: guest,
+        early: replay,
+        answered: true,
+    };
+    let end = crate::proxy::tunnel(guest, out.stream, ssh_for, out.watch, None, None).await;
+    outcome.ssh = end.ssh;
 }
 
 /// Whether a connection goes on after a request.
@@ -497,6 +540,8 @@ struct Conn<'a, R, W> {
     /// Why the real server could not be used at the handshake; answered by the first request.
     deferred: Option<Refusal>,
     outcome: Outcome,
+    /// The tokens the answers held that Puddle does not hold; they join the outcome too.
+    unknown_tokens: Arc<AnswerReport>,
     first: bool,
 }
 
@@ -602,21 +647,19 @@ where
         if let Err(refusal) = self.ensure_upstream().await {
             return self.refuse(&refusal).await;
         }
-        let (
-            Forwarding {
-                injection,
-                unauthorized,
-            },
-            prefetched,
-        ) = match self.consult_injector(&parsed, &head).await {
+        let (forwarding, prefetched) = match self.consult_injector(&parsed, &head).await {
             Ok(decided) => decided,
             Err(flow) => return flow,
         };
-        let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
+        let headers = match request::upstream_headers(
+            &head,
+            &self.cx.target,
+            forwarding.injection.as_ref(),
+        ) {
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
-        let (headers, target) = self.add_credentials(headers, &parsed.target, injection.as_ref());
+        let (headers, target) = self.add_credentials(headers, &parsed.target, &forwarding);
         let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
         let (headers, prefetched, mut exchange) = match self
             .begin_exchange(&parsed, &view, headers, prefetched)
@@ -631,7 +674,7 @@ where
                 .as_ref()
                 .map_or(parsed.target.as_str(), |target| target.as_str()),
             headers,
-            unauthorized.as_ref(),
+            forwarding.unauthorized.as_ref(),
             prefetched,
             exchange.as_mut(),
         )
@@ -783,8 +826,10 @@ where
         &mut self,
         mut headers: ::http::HeaderMap,
         target: &str,
-        injection: Option<&Injection>,
+        forwarding: &Forwarding,
     ) -> (::http::HeaderMap, Option<Zeroizing<String>>) {
+        let injection = forwarding.injection.as_ref();
+        let own_git_credential = forwarding.own_git_credential;
         if let Some(injection) = injection {
             self.outcome.injected = true;
             self.outcome
@@ -792,6 +837,11 @@ where
                 .get_or_insert_with(|| injection.binding_id().to_owned());
         }
         let host = &self.cx.target.host;
+        let mut foreign = self.cx.termination.stand_ins().foreign_credentials(
+            &headers,
+            injection,
+            own_git_credential,
+        );
         let swapped = self
             .cx
             .termination
@@ -800,6 +850,8 @@ where
         self.outcome.record_stand_ins(host, &swapped);
         let (target, in_target) = self.cx.termination.stand_ins().swap_target(target, host);
         self.outcome.record_stand_ins(host, &in_target);
+        foreign.extend(stale_kind(&[&swapped, &in_target]));
+        self.outcome.record_foreign(self.cx, &foreign);
         if self.cx.termination.stand_ins().scrubs_answers_from(host) {
             limit_accept_encoding(&mut headers);
         }
@@ -1072,7 +1124,15 @@ where
         )
         .await;
         let written = match scrubbed {
-            Ok(response) => self.write_response(response, parsed, &config).await,
+            Ok(response) => {
+                let response = scan_answer(
+                    self.cx.termination.stand_ins(),
+                    response,
+                    parsed.method.eq_ignore_ascii_case("HEAD"),
+                    &self.unknown_tokens,
+                );
+                self.write_response(response, parsed, &config).await
+            }
             Err(why) => {
                 self.upstream = None;
                 let refusal = match why {
@@ -1083,6 +1143,7 @@ where
             }
         };
         self.outcome.record_scrubbed(&notes);
+        self.outcome.record_unknown_tokens(&self.unknown_tokens);
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {
@@ -1117,7 +1178,9 @@ fn upstream_request(
             ::http::HeaderValue::from_static("websocket"),
         );
     }
-    let body: UpBody = body.map_err(|err| Box::new(err) as BoxError).boxed_unsync();
+    let body: UpBody = body
+        .map_err(|err| -> BoxError { Box::new(err) })
+        .boxed_unsync();
     let mut builder = ::http::Request::builder()
         .method(parsed.method.as_str())
         .uri(target)
@@ -1211,7 +1274,9 @@ pub(crate) fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal
         TlsConnectError::Certificate(reason) => {
             format!("the certificate of {name} was not accepted ({reason}); nothing was sent")
         }
-        other => format!("could not set up TLS with {name} ({other})"),
+        TlsConnectError::InvalidName(_) | TlsConnectError::Handshake(_) => {
+            format!("could not set up TLS with {name} ({err})")
+        }
     };
     Refusal::new("502 Bad Gateway", message)
         .header("x-puddle-blocked-by", "upstream-tls")
@@ -1219,48 +1284,4 @@ pub(crate) fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn unswapped(ids: &[String]) -> Swapped {
-        Swapped {
-            unswapped: ids.to_vec(),
-            ..Swapped::default()
-        }
-    }
-
-    #[test]
-    fn the_record_lists_each_unswapped_stand_in_once_and_stops_at_the_cap() {
-        let host = Host::parse_normalised("bound.test").unwrap();
-        let mut outcome = Outcome::default();
-        let ids: Vec<String> = (0..MAX_UNSWAPPED_STAND_INS + 5)
-            .map(|n| format!("stand-in:secret:S{n}"))
-            .collect();
-        outcome.record_stand_ins(&host, &unswapped(&ids[..3]));
-        outcome.record_stand_ins(&host, &unswapped(&ids[1..4]));
-        assert_eq!(outcome.unswapped_stand_ins, ids[..4]);
-        outcome.record_stand_ins(&host, &unswapped(&ids));
-        assert_eq!(outcome.unswapped_stand_ins, ids[..MAX_UNSWAPPED_STAND_INS]);
-    }
-
-    #[test]
-    fn the_record_lists_each_scrubbed_stand_in_once_and_stops_at_the_cap() {
-        let ids: Vec<String> = (0..MAX_UNSWAPPED_STAND_INS + 5)
-            .map(|n| format!("stand-in:secret:S{n}"))
-            .collect();
-        let notes = |ids: &[String]| {
-            let notes = ScrubNotes::default();
-            for id in ids {
-                notes.note(id);
-            }
-            notes
-        };
-        let mut outcome = Outcome::default();
-        outcome.record_scrubbed(&notes(&ids[..3]));
-        outcome.record_scrubbed(&notes(&ids[1..4]));
-        assert_eq!(outcome.scrubbed_stand_ins, ids[..4]);
-        outcome.record_scrubbed(&notes(&ids));
-        assert_eq!(outcome.scrubbed_stand_ins, ids[..MAX_UNSWAPPED_STAND_INS]);
-        assert!(outcome.refused.is_none());
-    }
-}
+mod tests;

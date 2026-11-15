@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Sourced (`. "$here/fetch-retry.sh"`) by the ci/fetch-*.sh scripts that download a pinned file.
 # download <label> <url> <out> <max-seconds>: curl with a retry window sized for a GitHub download
 # outage, which lasts minutes, not seconds (one merge-queue run lost three partitions to

@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the API's global settings and consents endpoints, in the shape openapi-fetch
 // returns them. Like the API it refuses Microsoft's server without a granted consent. Not
 // shipped (tests import it).
 import type { components } from "#lib/api/schema.d.ts";
+import { FakeInterception } from "./fake-interception.ts";
 import { needsMicrosoftConsent } from "#lib/settings/model.ts";
 
 type S = components["schemas"];
@@ -25,6 +26,7 @@ const noLayer = (): S["SettingsLayer"] => ({
   zoom_hotkeys: null,
   direct_ssh: null,
   capture_logins: null,
+  warn_foreign_credentials: null,
 });
 
 const noUi = (): S["UiPrefs"] => ({
@@ -49,6 +51,7 @@ const noUi = (): S["UiPrefs"] => ({
   notify_low_disk_space: null,
   disk_warn_free_gb: null,
   disk_fail_free_gb: null,
+  ssh_agent_pipe: null,
   confirm_global_rules: null,
   inbox_shortcuts: null,
   start_at_login: null,
@@ -64,6 +67,7 @@ export class FakeSettings {
     auto_update: null,
   };
   ui: S["UiPrefs"] = noUi();
+  tools: S["GlobalTools"] = { mise: null };
   /** The user's own app icon, as the PNG text the API would send; `null` until one is stored. */
   customIcon: string | null = null;
   consent: S["Consent"] = { state: "not_asked" };
@@ -88,12 +92,17 @@ export class FakeSettings {
   version = "0.1.0";
 
   /** Back to a fresh backend, keeping the object (a module mock holds on to it). */
+  /** The global interception setting, answered on `/api/interception`. */
+  interception = new FakeInterception();
+
   reset(): void {
+    this.interception.reset();
     const fresh = new FakeSettings();
     this.layer = fresh.layer;
     this.unknown = [];
     this.vscode = fresh.vscode;
     this.ui = fresh.ui;
+    this.tools = fresh.tools;
     this.customIcon = null;
     this.consent = fresh.consent;
     this.neverDecrypt = [];
@@ -140,6 +149,7 @@ export class FakeSettings {
       workspace_defaults: l,
       vscode_server: this.vscode,
       ui: this.ui,
+      tools: this.tools,
       unknown_fields: this.unknown,
       effective: {
         memory: {
@@ -166,6 +176,7 @@ export class FakeSettings {
         zoom_hotkeys: this.pick(l.zoom_hotkeys, true),
         direct_ssh: this.pick(l.direct_ssh),
         capture_logins: this.pick(l.capture_logins, true),
+        warn_foreign_credentials: this.pick(l.warn_foreign_credentials, true),
         clipboard_read: {
           value: l.clipboard_read ?? "ask",
           source: l.clipboard_read === null ? "default" : "global",
@@ -192,6 +203,8 @@ export class FakeSettings {
         return this.reply(200, this.view());
       case "/api/consents":
         return this.reply(200, this.consents());
+      case "/api/interception":
+        return this.interception.GET(path);
       case "/api/interception/never-decrypt":
         return this.reply(200, { never_decrypt: this.neverDecrypt });
       case "/api/interception/learned-limits":
@@ -211,7 +224,11 @@ export class FakeSettings {
           custom_png_base64: this.customIcon,
         } satisfies S["AppIcons"]);
       case "/api/health":
-        return this.reply(200, { version: this.version, api_version: "0.3.0" });
+        return this.reply(200, {
+          version: this.version,
+          api_version: "0.3.0",
+          ui_build_id: null,
+        });
     }
     throw new Error(`unexpected GET ${path}`);
   };
@@ -225,6 +242,9 @@ export class FakeSettings {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/interception") {
+      return this.interception.PUT(path, init as never);
+    }
     if (path === "/api/interception/learned-limits") {
       this.learnedLimits = init.body as S["LearnedLimits"];
       return this.reply(200, this.learnedLimits);
@@ -303,6 +323,7 @@ export class FakeSettings {
       ...b.vscode_server,
     };
     this.ui = { ...noUi(), ...b.ui };
+    this.tools = { mise: null, ...b.tools };
     return this.reply(200, this.view());
   };
 

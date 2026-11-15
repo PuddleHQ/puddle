@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The red signal for runs that no ruleset requires (.github/workflows/nightly-signal.yml). Usage:
 #   ci/nightly-issue.sh <workflow name> <conclusion> <run url> <head sha>
 # Keeps one issue per workflow, titled "Nightly red: <workflow>". A failed run (failure, timed_out,

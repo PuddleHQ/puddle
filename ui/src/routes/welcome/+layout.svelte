@@ -1,11 +1,16 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from "$app/state";
+  import CredentialStoreBanner from "#lib/components/CredentialStoreBanner.svelte";
   import DuckMark from "#lib/components/DuckMark.svelte";
   import { APP_NAME } from "#lib/nav.ts";
+  import { credentialStore } from "#lib/stores/credential-store.svelte.ts";
   import { STEPS, stepFor } from "#lib/welcome/steps.ts";
 
   let { children } = $props();
+
+  // The banner follows the host's problem list for as long as the flow is open.
+  $effect(() => credentialStore.start());
 
   const at = $derived(
     STEPS.findIndex((step) => step.id === stepFor(page.url.pathname)?.id),
@@ -34,6 +39,7 @@
       {/each}
     </ol>
   {/if}
+  <CredentialStoreBanner store={credentialStore} />
   <div class="step">
     {@render children()}
   </div>

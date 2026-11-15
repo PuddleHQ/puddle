@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts the pinned gitleaks release for this host in <dest-dir> (gitleaks, or gitleaks.exe on
 # Windows); the secrets gate (scripts/check-secrets.sh) needs it on PATH. The download must match
 # the SHA-256 pinned in ci/gitleaks.sha256. Usage: ci/fetch-gitleaks.sh <dest-dir>

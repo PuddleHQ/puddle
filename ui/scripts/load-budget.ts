@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // How much longer a UI test may take because the machine is busy. Chromium and the test runner
 // share their cores with whatever else runs: with 300 busy loops on 16 cores a one-second settings
 // test took 15 to 30 s, and with 600 three of 23 went over their 30 s with nothing wrong with the

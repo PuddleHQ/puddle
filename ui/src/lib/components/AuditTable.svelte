@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -191,6 +191,11 @@
           <td>
             {#if row.outcome}
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
+            {/if}
+            {#if row.company}
+              <span class="chip neutral" title={row.company.title}
+                >{row.company.label}</span
+              >
             {/if}
           </td>
           <td class="muted" title={row.detail}>

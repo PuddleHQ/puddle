@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import InterceptionSetting from "#lib/components/InterceptionSetting.svelte";
   import KeptLoginsList from "#lib/components/KeptLoginsList.svelte";
@@ -6,7 +6,10 @@
   import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
-  import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import {
+    LOCAL_LABELS,
+    type LocalCategory,
+  } from "#lib/decision/local-labels.ts";
   import { CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import { KeptLogins } from "#lib/stores/kept-logins.svelte.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
@@ -74,6 +77,7 @@
   const CATEGORIES: LocalCategory[] = [
     "loopback",
     "private",
+    "company_network",
     "link_local",
     "metadata",
     "special",
@@ -164,6 +168,36 @@
     restartHint = false;
     cpusHint = false;
     captureHint = ok && workspace?.status === "running";
+  }
+
+  async function saveForeignWarning(select: HTMLSelectElement) {
+    await save(
+      { warn_foreign_credentials: toggleFromChoice(select.value) },
+      "Credential warning",
+      () => {
+        select.value = toggleToChoice(
+          settings.overrides?.warn_foreign_credentials ?? null,
+        );
+      },
+    );
+  }
+
+  /** The tool switches are plain checkboxes; a refusal puts the box back to what is stored. */
+  async function saveTool(
+    key: "mise" | "repo_code",
+    box: HTMLInputElement,
+    what: string,
+  ) {
+    const stored = settings.tools[key] ?? true;
+    saved = null;
+    problem = null;
+    const result = await settings.changeTools({ [key]: box.checked });
+    if (result.ok) {
+      saved = `${what} saved.`;
+    } else {
+      problem = result.message;
+      box.checked = stored;
+    }
   }
 
   async function saveClipboard(select: HTMLSelectElement) {
@@ -362,7 +396,89 @@
       />
     </section>
 
+    <section class="card" aria-labelledby="foreign-h">
+      <h2 id="foreign-h">Credentials Puddle did not add</h2>
+      <div class="setting">
+        <div class="grow">
+          <label for="ws-foreign-warning"
+            >Warn when a tool sends a token of its own</label
+          >
+          <p class="desc" id="ws-foreign-warning-desc">
+            When a tool in this workspace sends a token Puddle did not add (one
+            you pasted, or a login Puddle does not keep) to a website, the
+            request goes through as it always did. With the warning on you also
+            get a notice and a flag in the Activity log that names the website
+            and what kind of token it looked like, never the token itself.
+            Puddle cannot tell your own token from one that leaked, so this
+            catches mistakes, not a workspace that hides what it sends. The same
+            switch covers a token of a known kind that a website sends this
+            workspace in an answer and Puddle does not hold. A change applies to
+            the next request.
+            <span class="chip"
+              >{sourceLabel(effective.warn_foreign_credentials.source)}</span
+            >
+          </p>
+        </div>
+        <select
+          id="ws-foreign-warning"
+          aria-describedby="ws-foreign-warning-desc"
+          value={toggleToChoice(overrides.warn_foreign_credentials)}
+          onchange={(e) => void saveForeignWarning(e.currentTarget)}
+        >
+          {#each switchOptions(global.warn_foreign_credentials.value) as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+    </section>
+
     <InterceptionSetting id={workspace.id} />
+
+    {#if settings.globalMise}
+      <section class="card" aria-labelledby="tools-h" id="tools">
+        <h2 id="tools-h">Tools</h2>
+        <div class="setting">
+          <div class="grow">
+            <label for="ws-mise">Manage this workspace's tools with mise</label>
+            <p class="desc" id="ws-mise-desc">
+              On by default. Turning it off leaves the tools and mise.toml as
+              they are.
+            </p>
+          </div>
+          <input
+            id="ws-mise"
+            type="checkbox"
+            aria-describedby="ws-mise-desc"
+            checked={settings.tools.mise ?? true}
+            onchange={(e) =>
+              void saveTool("mise", e.currentTarget, "Tools with mise")}
+          />
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="ws-repo-code"
+              >Let mise run the repository's own code</label
+            >
+            <p class="desc" id="ws-repo-code-desc">
+              A repository's mise.toml can run hooks and templates. With this
+              off, mise does not trust that file. On by default.
+            </p>
+          </div>
+          <input
+            id="ws-repo-code"
+            type="checkbox"
+            aria-describedby="ws-repo-code-desc"
+            checked={settings.tools.repo_code ?? true}
+            onchange={(e) =>
+              void saveTool(
+                "repo_code",
+                e.currentTarget,
+                "Running repository code",
+              )}
+          />
+        </div>
+      </section>
+    {/if}
 
     <section class="card" aria-labelledby="clip-h">
       <h2 id="clip-h">Clipboard</h2>

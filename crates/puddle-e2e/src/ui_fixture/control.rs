@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The control server: a second loopback listener next to the API, so a test or a developer can
 //! change what the page sees while it is open. It exists only in the fixture; the product has
 //! nothing like it. It takes the same bearer token as the API.
@@ -23,7 +23,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use puddle_types::{Event, EventSink};
+use puddle_types::Event;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -120,8 +120,8 @@ async fn state(State(fixture): State<Arc<Fixture>>) -> Json<ControlState> {
 }
 
 async fn emit(State(fixture): State<Arc<Fixture>>, Json(event): Json<Event>) -> Response {
-    fixture.event_sink().await.emit(event);
-    StatusCode::NO_CONTENT.into_response()
+    let emitted = fixture.emit(event).await;
+    emitted.map_or_else(failed, |()| StatusCode::NO_CONTENT.into_response())
 }
 
 async fn advance(State(fixture): State<Arc<Fixture>>, Json(body): Json<Advance>) -> Response {

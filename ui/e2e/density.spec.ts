@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The density setting (comfortable / compact) against the real API on the fixture backend:
 // chosen in Settings, kept by Puddle, applied live, still accessible in both densities, with the
 // layout of each read from computed styles. Waits are on conditions, never on time.

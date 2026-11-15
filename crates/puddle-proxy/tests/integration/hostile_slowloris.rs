@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Ten thousand streams on one route, spread over a hundred agent sessions, each stop halfway
 //! through a request head and stay silent (slowloris). The workspace's cap of 1000 holds: the first
 //! 1000 are cut off at the head deadline with a `408` that names it, every other stream is refused

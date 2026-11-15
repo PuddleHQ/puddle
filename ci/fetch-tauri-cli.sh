@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts the pinned Tauri command line (`cargo-tauri.exe`, the tool that builds the MSI) in <dest-dir>
 # so `cargo tauri` finds it on PATH. The download must match the SHA-256 pinned in
 # ci/tauri-cli.sha256; building it with `cargo install` takes about ten minutes, this takes seconds.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The rules on method and path (`/api/request-rules`) and the two things a user does to one: add
 // it and delete it. It refetches on `request_rules_changed` and on a resync, and polls slowly as a
 // safety net for a dropped event stream.

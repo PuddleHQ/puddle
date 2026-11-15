@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Unix: sockets mode `0600` inside a fresh directory mode `0700`.
 //!
 //! The directory is the real barrier: it is created by Puddle under a random name (`mkdir` fails
@@ -7,7 +7,7 @@
 
 use std::fs::{self, Permissions};
 use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,6 +29,9 @@ pub(crate) type Stream = UnixStream;
 #[derive(Debug, Clone)]
 pub(crate) struct Root {
     dir: Arc<RootDir>,
+    /// A root whose folder and names outlive this process: its names are asked for by name, and
+    /// a socket file a dead process left is replaced.
+    stable: bool,
 }
 
 /// Owns the directory; removes it (if empty) when the last root clone and listener are gone.
@@ -59,7 +62,53 @@ impl Root {
         puddle_fs::private::create_new_dir(&path).map_err(root_err)?;
         Ok(Self {
             dir: Arc::new(RootDir { path }),
+            stable: false,
         })
+    }
+
+    pub(crate) fn stable(install_id: &str) -> Result<Self, IpcError> {
+        Self::stable_in(&default_parent(), install_id)
+    }
+
+    /// The root folder `puddle-<first 8 digits of the install id>` below `parent`, made `0700` if
+    /// it is missing and otherwise trusted only when it is a real folder (not a symlink) of this
+    /// user with exactly that mode: anything else could have been put there by someone else.
+    pub(crate) fn stable_in(parent: &Path, install_id: &str) -> Result<Self, IpcError> {
+        let path = parent.join(format!(
+            "puddle-{}",
+            install_id.get(..8).unwrap_or(install_id)
+        ));
+        let root_err = |source| IpcError::Root {
+            path: path.clone(),
+            source,
+        };
+        match fs::symlink_metadata(&path) {
+            Ok(meta) => {
+                let ours = meta.is_dir()
+                    && meta.uid() == rustix::process::geteuid().as_raw()
+                    && meta.permissions().mode() & 0o777 == 0o700;
+                if !ours {
+                    return Err(root_err(io::Error::other(
+                        "it exists and is not a folder of this user with mode 0700",
+                    )));
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                puddle_fs::private::create_new_dir(&path).map_err(root_err)?;
+            }
+            Err(e) => return Err(root_err(e)),
+        }
+        Ok(Self {
+            dir: Arc::new(RootDir { path }),
+            stable: true,
+        })
+    }
+
+    pub(crate) fn named_path(&self, name: &str) -> Result<PathBuf, IpcError> {
+        if !self.stable {
+            return Err(IpcError::NotStable);
+        }
+        Ok(self.dir.path.join(format!("{name}.sock")))
     }
 
     pub(crate) fn dir(&self) -> &Path {
@@ -83,7 +132,14 @@ impl Root {
             endpoint: path.to_path_buf(),
             source,
         };
-        let std_listener = std::os::unix::net::UnixListener::bind(path).map_err(|source| {
+        let bound = match std::os::unix::net::UnixListener::bind(path) {
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse && self.stable && is_stale(path) => {
+                fs::remove_file(path).map_err(|source| io_err("remove the stale", source))?;
+                std::os::unix::net::UnixListener::bind(path)
+            }
+            other => other,
+        };
+        let std_listener = bound.map_err(|source| {
             if source.kind() == io::ErrorKind::AddrInUse {
                 IpcError::NameTaken {
                     endpoint: path.to_path_buf(),
@@ -122,6 +178,16 @@ fn default_parent() -> PathBuf {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute() && p.is_dir())
         .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Whether the file at `path` is a socket nobody listens on any more: what a Puddle that was
+/// killed leaves in its private folder. A socket that accepts is a live process, which is never
+/// replaced.
+fn is_stale(path: &Path) -> bool {
+    matches!(
+        std::os::unix::net::UnixStream::connect(path),
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused
+    )
 }
 
 fn check_length(path: &Path) -> Result<(), IpcError> {
@@ -196,48 +262,4 @@ async fn connect_as(path: &Path, own_uid: u32) -> Result<Stream, IpcError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn a_server_run_by_another_user_is_refused_and_ours_is_not() {
-        let root = crate::IpcRoot::new().unwrap();
-        let listener = root.listen().unwrap();
-        let path = listener.endpoint().path().to_path_buf();
-        let own = rustix::process::geteuid().as_raw();
-        connect_as(&path, own).await.unwrap();
-        let err = connect_as(&path, own.wrapping_add(1)).await.unwrap_err();
-        assert!(matches!(err, IpcError::WrongOwner { .. }), "{err}");
-        // The public entry point asks for the real user.
-        crate::connect(&path).await.unwrap();
-    }
-
-    #[test]
-    fn long_paths_are_refused_before_bind() {
-        let long = PathBuf::from(format!("/{}", "a".repeat(MAX_SOCKET_PATH)));
-        let err = check_length(&long).unwrap_err();
-        assert!(matches!(err, IpcError::PathTooLong { len, .. } if len == MAX_SOCKET_PATH + 1));
-        let ok = PathBuf::from(format!("/{}", "a".repeat(MAX_SOCKET_PATH - 1)));
-        check_length(&ok).unwrap();
-    }
-
-    #[test]
-    fn default_parent_is_an_existing_absolute_dir() {
-        let p = default_parent();
-        assert!(p.is_absolute() && p.is_dir(), "{}", p.display());
-    }
-
-    #[test]
-    fn a_root_in_a_missing_parent_fails_with_the_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let parent = tmp.path().join("missing");
-        let err = Root::new_in(&parent).unwrap_err();
-        match err {
-            IpcError::Root { path, source } => {
-                assert!(path.starts_with(&parent));
-                assert_eq!(source.kind(), io::ErrorKind::NotFound);
-            }
-            other => panic!("unexpected {other}"),
-        }
-    }
-}
+mod tests;

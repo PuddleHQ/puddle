@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What Puddle puts into a guest: paths, files and environment variables.
 //!
 //! Providers (proxy config, corporate roots, the per-workspace CA) produce [`GuestFile`]s and
@@ -14,6 +14,96 @@ use crate::merge::MergeSpec;
 
 /// Longest accepted guest path (Linux `PATH_MAX`).
 const MAX_PATH_LEN: usize = 4096;
+
+/// Whether `path` is a valid [`GuestPath`], as a `const fn` so a literal is checked at compile time
+/// (see [`GuestPathLit`]). [`GuestPath::new`] agrees with it (a unit test compares them).
+const fn is_valid_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let [b'/', after_root @ ..] = bytes else {
+        return false;
+    };
+    if bytes.len() > MAX_PATH_LEN {
+        return false;
+    }
+    if after_root.is_empty() {
+        return true;
+    }
+    // A component is valid unless it is empty, `.` or `..`.
+    let mut len = 0_usize;
+    let mut only_dots = true;
+    let mut rest = after_root;
+    while let [byte, tail @ ..] = rest {
+        rest = tail;
+        match *byte {
+            0 => return false,
+            b'/' => {
+                if len == 0 || (only_dots && len <= 2) {
+                    return false;
+                }
+                len = 0;
+                only_dots = true;
+            }
+            other => {
+                len += 1;
+                if other != b'.' {
+                    only_dots = false;
+                }
+            }
+        }
+    }
+    len != 0 && !(only_dots && len <= 2)
+}
+
+/// A guest path written in the source and checked when the crate is built, not when it runs.
+///
+/// Use [`guest_path!`](crate::guest_path) for a constant; a path that comes from input goes
+/// through [`GuestPath::new`], which returns the error.
+///
+/// ```
+/// use puddle_types::{GuestPath, guest_path};
+/// const AGENT: &str = "/opt/puddle/agent";
+/// let p: GuestPath = guest_path!(AGENT);
+/// assert_eq!(p.as_str(), "/opt/puddle/agent");
+/// ```
+///
+/// A relative one does not compile:
+///
+/// ```compile_fail
+/// use puddle_types::guest_path;
+/// let _ = guest_path!("relative");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuestPathLit(&'static str);
+
+impl GuestPathLit {
+    /// Checks `path`.
+    ///
+    /// # Panics
+    ///
+    /// When `path` is not a valid [`GuestPath`]. In a `const` context that is a build error.
+    #[must_use]
+    pub const fn new(path: &'static str) -> Self {
+        assert!(is_valid_path(path), "not a valid guest path");
+        Self(path)
+    }
+}
+
+impl From<GuestPathLit> for GuestPath {
+    fn from(lit: GuestPathLit) -> Self {
+        Self(lit.0.to_owned())
+    }
+}
+
+/// A [`GuestPath`] from a constant string, checked at build time: no `Result`, no `expect`.
+///
+/// The argument must be a literal or a `const`; the check runs in a `const` block, so an invalid
+/// path stops the build.
+#[macro_export]
+macro_rules! guest_path {
+    ($path:expr) => {
+        $crate::GuestPath::from(const { $crate::GuestPathLit::new($path) })
+    };
+}
 
 /// An absolute, normalised path inside the guest (always `/`-separated, whatever the host OS).
 ///
@@ -77,13 +167,13 @@ impl GuestPath {
     /// Whether this path is `dir` itself or lies below it (component-wise, so `/ab` is not within
     /// `/a`).
     #[must_use]
-    pub fn is_within(&self, dir: &GuestPath) -> bool {
+    pub fn is_within(&self, dir: &Self) -> bool {
         self.relative_to(dir).is_some()
     }
 
     /// This path relative to `dir` (`""` for `dir` itself), or `None` if it isn't within `dir`.
     #[must_use]
-    pub fn relative_to(&self, dir: &GuestPath) -> Option<&str> {
+    pub fn relative_to(&self, dir: &Self) -> Option<&str> {
         if dir.0 == "/" {
             return Some(self.0.trim_start_matches('/'));
         }
@@ -119,8 +209,54 @@ impl TryFrom<&str> for GuestPath {
 }
 
 impl From<GuestPath> for String {
-    fn from(p: GuestPath) -> String {
+    fn from(p: GuestPath) -> Self {
         p.0
+    }
+}
+
+/// Permission bits of a [`GuestFile`]: within `0o7777`.
+///
+/// ```
+/// use puddle_types::FileMode;
+/// const SECRET: FileMode = FileMode::new(0o600);
+/// assert_eq!(SECRET.bits(), 0o600);
+/// assert!(FileMode::try_new(0o10000).is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileMode(u32);
+
+impl FileMode {
+    /// Checks `mode`, in a `const` it stops the build.
+    ///
+    /// # Panics
+    ///
+    /// When `mode` has bits outside `0o7777`.
+    #[must_use]
+    pub const fn new(mode: u32) -> Self {
+        assert!(mode & !0o7777 == 0, "a file mode is within 0o7777");
+        Self(mode)
+    }
+
+    /// Checks a mode that comes from input.
+    ///
+    /// # Errors
+    ///
+    /// When `mode` has bits outside `0o7777`.
+    pub fn try_new(mode: u32) -> Result<Self, ValidationError> {
+        if mode & !0o7777 != 0 {
+            return Err(ValidationError::new(
+                "file mode",
+                &format!("{mode:o}"),
+                "must be within 0o7777",
+            ));
+        }
+        Ok(Self(mode))
+    }
+
+    /// The permission bits.
+    #[must_use]
+    pub const fn bits(self) -> u32 {
+        self.0
     }
 }
 
@@ -133,10 +269,9 @@ impl From<GuestPath> for String {
 /// disk like the rest, so only put one here when the guest has to hold it.
 ///
 /// ```
-/// use puddle_types::{GuestFile, GuestPath};
+/// use puddle_types::{FileMode, GuestFile, GuestPath};
 /// let f = GuestFile::new(GuestPath::new("/etc/profile.d/01-puddle-env.sh").unwrap(), b"export A=1\n".to_vec())
-///     .with_mode(0o644)
-///     .unwrap();
+///     .with_mode(FileMode::new(0o644));
 /// assert_eq!(f.mode(), 0o644);
 /// ```
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,20 +375,10 @@ impl GuestFile {
     }
 
     /// The same file with permission bits `mode`.
-    ///
-    /// # Errors
-    ///
-    /// When `mode` has bits outside `0o7777`.
-    pub fn with_mode(mut self, mode: u32) -> Result<Self, ValidationError> {
-        if mode & !0o7777 != 0 {
-            return Err(ValidationError::new(
-                "file mode",
-                &format!("{mode:o}"),
-                "must be within 0o7777",
-            ));
-        }
-        self.mode = mode;
-        Ok(self)
+    #[must_use]
+    pub fn with_mode(mut self, mode: FileMode) -> Self {
+        self.mode = mode.bits();
+        self
     }
 
     /// Where the file goes in the guest.
@@ -335,7 +460,7 @@ impl GuestEnv {
     }
 
     /// Adds every variable of `other`; `other` wins on equal names.
-    pub fn extend(&mut self, other: &GuestEnv) {
+    pub fn extend(&mut self, other: &Self) {
         self.0
             .extend(other.0.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
@@ -377,7 +502,7 @@ impl TryFrom<BTreeMap<String, String>> for GuestEnv {
     type Error = ValidationError;
 
     fn try_from(map: BTreeMap<String, String>) -> Result<Self, Self::Error> {
-        let mut env = GuestEnv::new();
+        let mut env = Self::new();
         for (k, v) in &map {
             env.set(k, v)?;
         }
@@ -392,151 +517,4 @@ impl From<GuestEnv> for BTreeMap<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn p(s: &str) -> GuestPath {
-        GuestPath::new(s).unwrap()
-    }
-
-    #[test]
-    fn an_owner_only_file_never_prints_its_contents() {
-        let secret = GuestFile::new(p("/etc/puddle/key"), b"CANARY-KEY".to_vec())
-            .with_mode(0o600)
-            .unwrap();
-        let shown = format!("{secret:?}");
-        let leaked_text = shown.contains("CANARY");
-        let leaked_bytes = shown.contains("67, 65");
-        assert!(!leaked_text, "the Debug output spells the contents");
-        assert!(!leaked_bytes, "the Debug output lists the content bytes");
-        assert!(
-            shown.contains("10 bytes"),
-            "the Debug output omits the size"
-        );
-        let public = GuestFile::new(p("/etc/puddle/cert"), b"PUBLIC".to_vec());
-        assert!(format!("{public:?}").contains("80, 85, 66"));
-    }
-
-    #[test]
-    fn a_plain_file_replaces_and_a_merged_file_starts_from_the_specs_fresh_text() {
-        use crate::{MergeEntry, MergeFormat};
-        let plain = GuestFile::new(p("/etc/a"), b"x".to_vec());
-        assert!(matches!(plain.apply(), ApplyKind::Replace));
-        let spec = MergeSpec::new(
-            MergeFormat::Json,
-            vec![MergeEntry::json(&["a"], &serde_json::json!(1))],
-        )
-        .unwrap();
-        let merged = GuestFile::merged(p("/root/.docker/config.json"), spec.clone());
-        assert_eq!(merged.path(), &p("/root/.docker/config.json"));
-        assert_eq!(merged.contents(), b"{\n\t\"a\": 1\n}\n");
-        assert_eq!(merged.mode(), GuestFile::DEFAULT_MODE);
-        assert!(matches!(merged.apply(), ApplyKind::Merge(s) if *s == spec));
-    }
-
-    #[test]
-    fn guest_path_accepts_normalised_absolute_paths() {
-        for ok in [
-            "/",
-            "/a",
-            "/a/b.c",
-            "/.hidden",
-            "/a/..b",
-            "/workspaces/acme",
-        ] {
-            assert_eq!(p(ok).as_str(), ok);
-            assert_eq!(p(ok).to_string(), ok);
-        }
-    }
-
-    #[test]
-    fn guest_path_rejects_everything_else() {
-        let cases = [
-            ("", "absolute"),
-            ("a/b", "absolute"),
-            ("/a/", "normalised"),
-            ("//a", "normalised"),
-            ("/a//b", "normalised"),
-            ("/a/./b", "normalised"),
-            ("/a/../b", "normalised"),
-            ("/..", "normalised"),
-            ("/a\0b", "NUL"),
-        ];
-        for (bad, reason) in cases {
-            let err = GuestPath::new(bad).unwrap_err();
-            assert!(err.reason().contains(reason), "{bad:?}: {err}");
-        }
-        let long = format!("/{}", "a".repeat(MAX_PATH_LEN));
-        assert!(GuestPath::new(&long).unwrap_err().reason().contains("4096"));
-    }
-
-    #[test]
-    fn within_is_component_wise() {
-        assert!(p("/a/b").is_within(&p("/a")));
-        assert!(p("/a").is_within(&p("/a")));
-        assert!(p("/a").is_within(&p("/")));
-        assert!(!p("/ab").is_within(&p("/a")));
-        assert!(!p("/a").is_within(&p("/a/b")));
-        assert_eq!(p("/a/b/c").relative_to(&p("/a")), Some("b/c"));
-        assert_eq!(p("/a").relative_to(&p("/a")), Some(""));
-        assert_eq!(p("/a/b").relative_to(&p("/")), Some("a/b"));
-        assert_eq!(p("/").relative_to(&p("/")), Some(""));
-    }
-
-    #[test]
-    fn guest_path_conversions() {
-        assert_eq!(GuestPath::try_from("/x").unwrap(), p("/x"));
-        assert_eq!(GuestPath::try_from(String::from("/x")).unwrap(), p("/x"));
-        assert_eq!(String::from(p("/x")), "/x");
-        assert!(serde_json::from_str::<GuestPath>(r#""/a/../b""#).is_err());
-        assert_eq!(serde_json::to_string(&p("/x")).unwrap(), r#""/x""#);
-    }
-
-    #[test]
-    fn guest_file_defaults_and_mode_check() {
-        let f = GuestFile::new(p("/etc/x"), b"hi".to_vec());
-        assert_eq!(f.mode(), GuestFile::DEFAULT_MODE);
-        assert_eq!(f.path(), &p("/etc/x"));
-        assert_eq!(f.contents(), b"hi");
-        assert_eq!(f.clone().with_mode(0o4755).unwrap().mode(), 0o4755);
-        let err = f.with_mode(0o10000).unwrap_err();
-        assert_eq!(err.what(), "file mode");
-    }
-
-    #[test]
-    fn guest_env_names_and_values_are_checked() {
-        let mut env = GuestEnv::new();
-        assert!(env.is_empty());
-        for ok in ["A", "_", "a_1", "NODE_EXTRA_CA_CERTS"] {
-            env.set(ok, "v").unwrap();
-        }
-        for bad in ["", "1A", "A-B", "A B", "Ä"] {
-            assert!(env.set(bad, "v").is_err(), "{bad:?}");
-        }
-        assert!(env.set("A", "nul\0").is_err());
-        assert_eq!(env.len(), 4);
-    }
-
-    #[test]
-    fn guest_env_later_values_win() {
-        let mut a = GuestEnv::new();
-        a.set("X", "1").unwrap();
-        a.set("Y", "1").unwrap();
-        let mut b = GuestEnv::new();
-        b.set("X", "2").unwrap();
-        a.extend(&b);
-        assert_eq!(a.get("X"), Some("2"));
-        assert_eq!(a.get("Y"), Some("1"));
-        assert_eq!(a.get("Z"), None);
-        let pairs: Vec<_> = a.iter().collect();
-        assert_eq!(pairs, [("X", "2"), ("Y", "1")]);
-    }
-
-    #[test]
-    fn guest_env_serde_validates() {
-        let env: GuestEnv = serde_json::from_str(r#"{"A":"1"}"#).unwrap();
-        assert_eq!(env.get("A"), Some("1"));
-        assert_eq!(serde_json::to_string(&env).unwrap(), r#"{"A":"1"}"#);
-        assert!(serde_json::from_str::<GuestEnv>(r#"{"A-B":"1"}"#).is_err());
-    }
-}
+mod tests;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Azure CLI (`az login --use-device-code`) signing in through the proxy and the real login
 //! capture, against fake Microsoft servers. No account is involved and nothing leaves the machine.
 //!

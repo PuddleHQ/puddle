@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Puddle's boot hook. Puddle runs it as root through the runtime's
 # exec after every create and every start, and serves no SSH or exec to anyone until it exits 0.

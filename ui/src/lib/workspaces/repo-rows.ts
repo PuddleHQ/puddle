@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The create form's list of repositories without the DOM: which directory an address gets, which
 // rows clash, how a start folder is checked, and which row a refusal of the service is about.
 // The service checks all of this again; these checks only tell the user sooner, in the same words.

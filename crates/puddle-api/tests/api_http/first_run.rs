@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `GET` and `PUT /api/first-run`: the flag lives in the global settings document and survives
 //! the Settings screen's own saves.
 
@@ -224,5 +224,14 @@ async fn trusting_may_outlast_the_usual_request_limit_because_the_user_answers_a
     let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["dev_certificate"], "trusted");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn retrying_the_credential_store_without_a_check_wired_is_unavailable() {
+    let api = start().await;
+    let reply = api.send("POST", "/api/credential-store/retry", None).await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert_eq!(reply.json()["error"], "unavailable", "{}", reply.body);
     api.running.shutdown().await;
 }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's credential injector for Git hosts (`docs/arch/spec/credentials.md` §6 to §8).
 //!
 //! One [`GitInjector`] serves one workspace. For each request on a host Puddle decrypts it reads
@@ -12,6 +12,7 @@
 //! only answers the proxy's [`puddle_proxy::Injector`] questions.
 
 #![forbid(unsafe_code)]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 mod git_path;
 mod header;

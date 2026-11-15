@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces the API serves: the [`WorkspaceService`] trait the routes call, the domain
 //! types it speaks, and the [`Launcher`] that opens a desktop editor.
 //!
@@ -9,20 +9,33 @@
 //! workspace with [`WorkspaceRecord::busy`] set, and reports the rest through
 //! [`puddle_types::Event::StatusChanged`] and [`puddle_types::Event::WorkspaceProgress`].
 
-use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_store::{IdentityId, RepoRef};
+use puddle_store::UserId;
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
+    CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
     WorkspaceStatus,
 };
 use sha2::{Digest, Sha256};
 
-use crate::checkouts::{AddRepository, Checkouts};
+mod launch;
+mod repositories;
+mod service;
+
+pub use launch::{
+    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
+    Launcher, OpenTarget,
+};
+pub use repositories::{
+    CheckoutProblem, EntryProblem, LocalCheckoutError, LocalSource, MAX_REPO_URL_LEN,
+    MAX_REPOSITORIES, NewRepository, NoFreeEntryId, RepoUrl, RepoUrlError, Repository,
+    RepositoryDraft, RepositoryListError, check_repositories, check_repositories_with,
+    new_entry_id,
+};
+pub use service::{
+    KeptLogin, KeptLogins, NoWorkspaces, ShellInitCheck, WorkspaceError, WorkspaceService,
+};
 
 /// The long operation a workspace is in the middle of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -37,6 +50,8 @@ pub enum Operation {
     Reclaiming,
     /// Removing the sandbox so the next start makes a fresh root disk.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Cloning one repository into a running workspace.
     Cloning,
     /// Checking for unsaved work and removing the workspace.
@@ -51,6 +66,7 @@ impl fmt::Display for Operation {
             Self::Stopping => "stopping",
             Self::Reclaiming => "reclaiming",
             Self::ResettingRootDisk => "resetting_root_disk",
+            Self::GrowingRootDisk => "growing_root_disk",
             Self::Cloning => "cloning",
             Self::Deleting => "deleting",
         })
@@ -91,6 +107,9 @@ pub struct WorkspaceRecord {
     pub root_disk_size_mib: Option<u64>,
     /// What the root disk holds now in MiB, when known.
     pub root_disk_used_mib: Option<u64>,
+    /// The size in MiB the user grew the root disk to, kept so a reset makes the fresh root disk
+    /// this big; `None` when it was never grown.
+    pub root_disk_grown_mib: Option<u32>,
 }
 
 impl WorkspaceRecord {
@@ -112,6 +131,7 @@ impl WorkspaceRecord {
             disk_used_mib: None,
             root_disk_size_mib: None,
             root_disk_used_mib: None,
+            root_disk_grown_mib: None,
         }
     }
 }
@@ -157,6 +177,21 @@ impl WorkspaceRecord {
     }
 }
 
+/// Why a workspace name is refused. The messages are for the user.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DisplayNameError {
+    /// Nothing but white space.
+    #[error("the name must not be empty")]
+    Empty,
+    /// More than [`DisplayName::MAX_CHARS`] characters.
+    #[error("the name is longer than {} characters", DisplayName::MAX_CHARS)]
+    TooLong,
+    /// A control character, a line break included.
+    #[error("the name must not contain line breaks or control characters")]
+    ControlCharacter,
+}
+
 /// A workspace's name: free text of 1 to [`DisplayName::MAX_CHARS`]
 /// characters, trimmed, with no control characters (a line break included).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -170,20 +205,17 @@ impl DisplayName {
     ///
     /// # Errors
     ///
-    /// A message for the user when the name is empty, too long or has control characters.
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// [`DisplayNameError`] when the name is empty, too long or has control characters.
+    pub fn parse(text: &str) -> Result<Self, DisplayNameError> {
         let text = text.trim();
         if text.is_empty() {
-            return Err("the name must not be empty".into());
+            return Err(DisplayNameError::Empty);
         }
         if text.chars().count() > Self::MAX_CHARS {
-            return Err(format!(
-                "the name is longer than {} characters",
-                Self::MAX_CHARS
-            ));
+            return Err(DisplayNameError::TooLong);
         }
         if text.chars().any(char::is_control) {
-            return Err("the name must not contain line breaks or control characters".into());
+            return Err(DisplayNameError::ControlCharacter);
         }
         Ok(Self(text.to_owned()))
     }
@@ -262,8 +294,9 @@ pub(crate) fn lookup<'a>(
         .collect()
 }
 
-/// The image a workspace gets when the request names none.
-pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
+/// The image a workspace gets when the request names none, pinned by digest so a registry change reaches users
+/// only through a reviewed update (`ci/image-pins.sh`).
+pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
 
 /// The volume size a new workspace gets (32 GiB, sparse on the host apart from the 64 MiB journal
 /// written when the volume is made).
@@ -271,298 +304,6 @@ pub const DEFAULT_DISK_MIB: u64 = 32 * 1024;
 
 /// The root disk size the fake workspaces show: msb's default writable layer.
 pub const DEFAULT_ROOT_DISK_MIB: u64 = 4 * 1024;
-
-/// A checked HTTPS repository URL: no credentials, no whitespace, a host.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepoUrl(String);
-
-/// Longest repository URL accepted.
-pub const MAX_REPO_URL_LEN: usize = 2048;
-
-impl RepoUrl {
-    /// Checks a repository URL.
-    ///
-    /// # Errors
-    ///
-    /// A message for the user: SSH remotes get the "not supported yet" one, anything else that
-    /// is not a plain `https://` URL says what to change.
-    pub fn parse(url: &str) -> Result<Self, String> {
-        let url = url.trim();
-        let lower = url.to_ascii_lowercase();
-        if lower.starts_with("ssh://") || is_scp_like(url) {
-            return Err(
-                "SSH remotes are not supported yet; use the repository's HTTPS URL instead".into(),
-            );
-        }
-        if url.len() > MAX_REPO_URL_LEN {
-            return Err(format!(
-                "the repository URL is longer than {MAX_REPO_URL_LEN} characters"
-            ));
-        }
-        if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
-            return Err("the repository URL must not contain spaces or control characters".into());
-        }
-        let Some(rest) = lower.strip_prefix("https://") else {
-            return Err("use an https:// URL for the repository".into());
-        };
-        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-        if authority.contains('@') {
-            return Err(
-                "remove the user name and password from the URL; Puddle supplies credentials itself"
-                    .into(),
-            );
-        }
-        let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
-        if host.is_empty() {
-            return Err("the repository URL has no host".into());
-        }
-        Ok(Self(url.to_owned()))
-    }
-
-    /// The URL.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// `git@host:owner/repo`-style remotes: no scheme, a `:` before any `/`.
-fn is_scp_like(url: &str) -> bool {
-    if url.contains("://") || url.to_ascii_lowercase().starts_with("http") {
-        return false;
-    }
-    match (url.find(':'), url.find('/')) {
-        // A colon at index 1 is a Windows drive letter, not a host.
-        (Some(colon), Some(slash)) => colon > 1 && colon < slash,
-        (Some(colon), None) => colon > 1,
-        _ => false,
-    }
-}
-
-impl fmt::Display for RepoUrl {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// One repository Puddle manages for a workspace: the address it is cloned from
-/// and the checkout directly under the volume root it is cloned into. Its identity and its Pull
-/// and Push toggles are not part of it: they are the workspace's Git settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Repository {
-    /// Where it is cloned from.
-    pub url: RepoUrl,
-    /// The checkout it is cloned into.
-    pub directory: CheckoutDir,
-}
-
-impl Repository {
-    /// The entry for `url` in the directory `git clone` would pick.
-    #[must_use]
-    pub fn at_default_directory(url: RepoUrl) -> Self {
-        let directory = CheckoutDir::from_url(url.as_str());
-        Self { url, directory }
-    }
-}
-
-/// Most repositories one workspace holds (where the delete check stops counting checkouts).
-pub const MAX_REPOSITORIES: usize = 100;
-
-/// A repository a create asks for: the entry, and the Git settings it starts with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewRepository {
-    /// The entry on the workspace's list.
-    pub repository: Repository,
-    /// The identity the user picked for it; `None` lets Puddle choose.
-    pub identity: Option<IdentityId>,
-    /// Pull on its new repository table row.
-    pub pull: bool,
-    /// Push on its new repository table row.
-    pub push: bool,
-    /// The `.git` directory of the checkout on this computer it is cloned from (canonical), or
-    /// `None` to clone from its address.
-    pub local: Option<PathBuf>,
-}
-
-/// A checkout on this computer, as the service found it (see
-/// [`WorkspaceService::local_checkout`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalSource {
-    /// The canonical path of its `.git` directory.
-    pub git_dir: PathBuf,
-    /// The name of its folder, the default directory of its clone.
-    pub folder_name: String,
-    /// The HTTPS address of its `origin` remote, or why there is none Puddle can use.
-    pub origin: Result<String, String>,
-}
-
-/// A repository as a request names it, before [`check_repositories`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RepositoryDraft {
-    /// The address as typed.
-    pub url: String,
-    /// The checkout's directory as typed; `None` takes the one the address gives.
-    pub directory: Option<String>,
-    /// The identity picked for it.
-    pub identity: Option<IdentityId>,
-    /// Pull; `None` is on.
-    pub pull: Option<bool>,
-    /// Push; `None` is on.
-    pub push: Option<bool>,
-    /// A checkout on this computer to clone from, as given; [`RepositoryDraft::url`] may then be
-    /// empty (the checkout's `origin` is used).
-    pub local: Option<String>,
-}
-
-/// Checks a create's repository list as a whole, before anything exists. Each
-/// refusal names the entry by its place in the list and its address: an address the create
-/// checks refuse, a bad directory, two entries with one directory (with a free name to use
-/// instead), the same repository twice in the repository table's spelling, an identity
-/// `identity_exists` does not know, or more than [`MAX_REPOSITORIES`].
-///
-/// # Errors
-///
-/// The message for the user.
-pub fn check_repositories(
-    drafts: &[RepositoryDraft],
-    identity_exists: impl Fn(IdentityId) -> bool,
-) -> Result<Vec<NewRepository>, String> {
-    check_repositories_with(drafts, identity_exists, &BTreeMap::new())
-}
-
-/// [`check_repositories`] for a list that may name checkouts on this computer: `locals` holds
-/// what the service found for each [`RepositoryDraft::local`] (a draft whose entry is missing is
-/// refused as not looked at). A local entry's address is its draft's `url` when given, else the
-/// checkout's `origin`; its directory defaults to the checkout's folder name.
-///
-/// # Errors
-///
-/// The message for the user, as [`check_repositories`], and the reason a checkout can't be used.
-pub fn check_repositories_with(
-    drafts: &[RepositoryDraft],
-    identity_exists: impl Fn(IdentityId) -> bool,
-    locals: &BTreeMap<String, Result<LocalSource, String>>,
-) -> Result<Vec<NewRepository>, String> {
-    if drafts.len() > MAX_REPOSITORIES {
-        return Err(format!(
-            "a workspace holds at most {MAX_REPOSITORIES} repositories; this list has {}",
-            drafts.len()
-        ));
-    }
-    let mut checked: Vec<NewRepository> = Vec::with_capacity(drafts.len());
-    for (n, draft) in (1..).zip(drafts) {
-        let local = match &draft.local {
-            None => None,
-            Some(path) => {
-                let named =
-                    |reason: &str| format!("repository {n} (the checkout {path}): {reason}");
-                let found = locals
-                    .get(path)
-                    .ok_or_else(|| named("it was not looked at"))?
-                    .as_ref()
-                    .map_err(|e| named(e))?;
-                Some(found)
-            }
-        };
-        let typed = draft.url.trim();
-        let address = match local {
-            Some(found) if typed.is_empty() => found.origin.clone().map_err(|why| {
-                format!(
-                    "repository {n} (the checkout {}): {why}",
-                    found.git_dir.parent().unwrap_or(&found.git_dir).display()
-                )
-            })?,
-            _ => draft.url.clone(),
-        };
-        let named = |reason: &str| format!("repository {n} ({}): {reason}", shown(&address));
-        let url = RepoUrl::parse(&address).map_err(|e| named(&e))?;
-        let directory = match (&draft.directory, local) {
-            (Some(dir), _) => CheckoutDir::new(dir).map_err(|e| named(e.reason()))?,
-            (None, Some(found)) => CheckoutDir::new(&found.folder_name)
-                .unwrap_or_else(|_| CheckoutDir::from_url(url.as_str())),
-            (None, None) => CheckoutDir::from_url(url.as_str()),
-        };
-        if let Some(id) = draft.identity
-            && !identity_exists(id)
-        {
-            return Err(named(&format!("there is no identity {}", id.0)));
-        }
-        checked.push(NewRepository {
-            repository: Repository { url, directory },
-            identity: draft.identity,
-            pull: draft.pull.unwrap_or(true),
-            push: draft.push.unwrap_or(true),
-            local: local.map(|found| found.git_dir.clone()),
-        });
-    }
-    for (i, a) in checked.iter().enumerate() {
-        for (j, b) in checked.iter().enumerate().skip(i + 1) {
-            let (an, bn) = (i + 1, j + 1);
-            if a.repository.directory == b.repository.directory {
-                let dir = &a.repository.directory;
-                return Err(format!(
-                    "repositories {an} ({}) and {bn} ({}) both go into {dir}; give one of them \
-                     another directory, such as {}",
-                    a.repository.url,
-                    b.repository.url,
-                    free_directory(dir, &checked)
-                ));
-            }
-            if let (Ok(ra), Ok(rb)) = (table_spelling(a), table_spelling(b))
-                && ra == rb
-            {
-                return Err(format!(
-                    "repositories {an} ({}) and {bn} ({}) are the same repository, {ra}; list it once",
-                    a.repository.url, b.repository.url
-                ));
-            }
-        }
-    }
-    Ok(checked)
-}
-
-/// `url` as an error message may quote it: trimmed, cut to a readable length, and with any user
-/// name or password replaced by `***`, so a refusal never echoes a credential.
-fn shown(url: &str) -> String {
-    const MAX_SHOWN: usize = 200;
-    let url = url.trim();
-    let shown = match url.split_once("://") {
-        Some((scheme, rest)) => {
-            let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-            match rest.get(..end).and_then(|authority| authority.rfind('@')) {
-                Some(at) => format!("{scheme}://***{}", rest.get(at..).unwrap_or_default()),
-                None => url.to_owned(),
-            }
-        }
-        None => url.to_owned(),
-    };
-    if shown.chars().count() > MAX_SHOWN {
-        let cut: String = shown.chars().take(MAX_SHOWN).collect();
-        format!("{cut}…")
-    } else {
-        shown
-    }
-}
-
-/// How the repository table spells an entry's repository, when its address names one.
-pub(crate) fn table_spelling(
-    repository: &NewRepository,
-) -> Result<RepoRef, puddle_store::StoreError> {
-    RepoRef::from_https_url(repository.repository.url.as_str())
-}
-
-/// `<dir>-2`, `<dir>-3`, ...: the first that no entry uses (cut so it stays a valid name).
-fn free_directory(dir: &CheckoutDir, taken: &[NewRepository]) -> CheckoutDir {
-    (2..)
-        .find_map(|n| {
-            let suffix = format!("-{n}");
-            let keep = CheckoutDir::MAX_LEN - suffix.len();
-            let base: String = dir.as_str().chars().take(keep).collect();
-            let candidate = CheckoutDir::new(&format!("{base}{suffix}")).ok()?;
-            (!taken.iter().any(|t| t.repository.directory == candidate)).then_some(candidate)
-        })
-        .unwrap_or_else(|| dir.clone())
-}
 
 /// Whether the start folder of workspace `id` may change now.
 ///
@@ -629,6 +370,36 @@ impl StartFolderChange {
     }
 }
 
+/// Why a start folder is refused. The messages are for the user and name the rule broken.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum StartFolderError {
+    /// An empty path.
+    #[error("the start folder must not be empty; use null for the volume root")]
+    Empty,
+    /// Longer than [`StartFolder::MAX_BYTES`].
+    #[error("the start folder is longer than {} bytes", StartFolder::MAX_BYTES)]
+    TooLong,
+    /// A leading `/`.
+    #[error("the start folder is a path under the volume, without a leading /")]
+    Absolute,
+    /// A control character or a backslash.
+    #[error("the start folder must not contain control characters or \\")]
+    ControlCharacter,
+    /// An empty, `.` or `..` part.
+    #[error("the start folder has an empty, . or .. part ({path}); name each folder")]
+    BadPart {
+        /// The path as given.
+        path: String,
+    },
+    /// Inside a folder Puddle keeps for itself.
+    #[error("the start folder must not be inside {folder}")]
+    Reserved {
+        /// The reserved first part.
+        folder: String,
+    },
+}
+
 /// A start folder: a relative path under the volume root, `/` between its
 /// parts, no part empty, `.` or `..`, no control character or `\`, not inside `.puddle` or
 /// `lost+found`, at most [`StartFolder::MAX_BYTES`] bytes.
@@ -643,33 +414,32 @@ impl StartFolder {
     ///
     /// # Errors
     ///
-    /// A message for the user that says which rule the path breaks.
-    pub fn parse(path: &str) -> Result<Self, String> {
+    /// [`StartFolderError`], which says which rule the path breaks.
+    pub fn parse(path: &str) -> Result<Self, StartFolderError> {
         if path.is_empty() {
-            return Err("the start folder must not be empty; use null for the volume root".into());
+            return Err(StartFolderError::Empty);
         }
         if path.len() > Self::MAX_BYTES {
-            return Err(format!(
-                "the start folder is longer than {} bytes",
-                Self::MAX_BYTES
-            ));
+            return Err(StartFolderError::TooLong);
         }
         if path.starts_with('/') {
-            return Err("the start folder is a path under the volume, without a leading /".into());
+            return Err(StartFolderError::Absolute);
         }
         if path.chars().any(|c| c.is_control() || c == '\\') {
-            return Err("the start folder must not contain control characters or \\".into());
+            return Err(StartFolderError::ControlCharacter);
         }
         for part in path.split('/') {
             if matches!(part, "" | "." | "..") {
-                return Err(format!(
-                    "the start folder has an empty, . or .. part ({path}); name each folder"
-                ));
+                return Err(StartFolderError::BadPart {
+                    path: path.to_owned(),
+                });
             }
         }
         let first = path.split('/').next().unwrap_or_default();
         if first == ".puddle" || first == CheckoutDir::LOST_AND_FOUND {
-            return Err(format!("the start folder must not be inside {first}"));
+            return Err(StartFolderError::Reserved {
+                folder: first.to_owned(),
+            });
         }
         Ok(Self(path.to_owned()))
     }
@@ -703,6 +473,18 @@ pub const MAX_ID_DRAWS: u32 = 16;
 #[non_exhaustive]
 pub struct NoFreeId;
 
+/// Why an [`IdSource`] gave no id for one draw. That draw counts, and the create draws again.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum IdDrawError {
+    /// The operating system's random source failed.
+    #[error("no randomness: {0}")]
+    Random(getrandom::Error),
+    /// The text made from the name is not an id.
+    #[error(transparent)]
+    Invalid(#[from] puddle_types::ValidationError),
+}
+
 /// Where new workspace ids come from.
 pub trait IdSource: Send + Sync {
     /// Draw number `attempt` (counted from 0) for a new workspace called `name`. A create
@@ -710,8 +492,8 @@ pub trait IdSource: Send + Sync {
     ///
     /// # Errors
     ///
-    /// When the source gave nothing, with the reason. That draw counts.
-    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String>;
+    /// [`IdDrawError`] when the source gave nothing. That draw counts.
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError>;
 }
 
 /// The operating system's random source, five bytes a draw ([`WorkspaceId::from_random`]);
@@ -720,9 +502,9 @@ pub trait IdSource: Send + Sync {
 pub struct RandomIds;
 
 impl IdSource for RandomIds {
-    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, IdDrawError> {
         let mut bytes = [0_u8; 5];
-        getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
+        getrandom::fill(&mut bytes).map_err(IdDrawError::Random)?;
         Ok(WorkspaceId::from_random(bytes))
     }
 }
@@ -736,17 +518,30 @@ impl IdSource for RandomIds {
 pub struct NameIds;
 
 impl IdSource for NameIds {
-    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
-        let base = id_for_name(name).map_err(|e| e.to_string())?;
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError> {
+        let base = id_for_name(name)?;
         if attempt == 0 {
             return Ok(base);
         }
         let suffix = format!("-{}", attempt + 1);
         let room = WorkspaceId::MAX_LEN - suffix.len();
         let stem: String = base.as_str().chars().take(room).collect();
-        WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))
-            .map_err(|e| e.to_string())
+        Ok(WorkspaceId::new(&format!(
+            "{}{suffix}",
+            stem.trim_end_matches('-')
+        ))?)
     }
+}
+
+/// An entry id made from `text` (a hash of it), for tests and the UI fixture, which need the same
+/// entry to get the same id on every run. Nothing in it spells the text.
+#[must_use]
+pub fn entry_id_from_text(text: &str) -> EntryId {
+    let mut bytes = [0_u8; 5];
+    for (slot, byte) in bytes.iter_mut().zip(Sha256::digest(text.as_bytes())) {
+        *slot = byte;
+    }
+    EntryId::from_random(bytes)
 }
 
 /// The name as an id, for [`NameIds`].
@@ -766,6 +561,7 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
     }
     let digest = Sha256::digest(name.as_str().to_lowercase().as_bytes());
     let hex = digest.iter().take(4).fold(String::new(), |mut out, b| {
+        // writing into a `String` cannot fail
         let _ = fmt::Write::write_fmt(&mut out, format_args!("{b:02x}"));
         out
     });
@@ -776,6 +572,9 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
+    /// Whose it is: recorded before the workspace is listed, saved or announced anywhere, and
+    /// never changed after.
+    pub owner: UserId,
     /// The workspace's name: display text. The id is drawn apart from it (see [`NewWorkspace::id`]).
     pub name: DisplayName,
     /// What to clone, in order, with the Git settings each starts with.
@@ -789,10 +588,11 @@ pub struct NewWorkspace {
 }
 
 impl NewWorkspace {
-    /// A request for a workspace with the defaults.
+    /// A request for a workspace of `owner` with the defaults.
     #[must_use]
-    pub fn new(name: DisplayName, repositories: Vec<NewRepository>) -> Self {
+    pub fn new(owner: UserId, name: DisplayName, repositories: Vec<NewRepository>) -> Self {
         Self {
+            owner,
             name,
             repositories,
             start_folder: None,
@@ -843,6 +643,16 @@ pub trait GitSetup: Send + Sync {
         workspace: &'a WorkspaceId,
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()>;
+
+    /// Records that the new workspace `workspace` is `owner`'s ([`NewWorkspace::owner`]). A
+    /// create calls it once its id is drawn and before the workspace is listed, saved or announced
+    /// anywhere, so nothing about it is ever seen as another user's. A workspace with no recorded
+    /// user is nobody's: no user reaches it.
+    ///
+    /// # Errors
+    ///
+    /// The record could not be written; the create stops and nothing of it exists.
+    fn claim(&self, workspace: &WorkspaceId, owner: UserId) -> Result<(), WorkspaceError>;
 }
 
 /// A [`GitSetup`] that sets nothing up, for services and tests with no store.
@@ -852,6 +662,11 @@ pub struct NoGitSetup;
 impl GitSetup for NoGitSetup {
     fn set_up<'a>(&'a self, _: &'a WorkspaceId, _: &'a [NewRepository]) -> BoxFuture<'a, ()> {
         Box::pin(async {})
+    }
+
+    /// No store, so nothing to record: only for a service whose workspaces no user reaches.
+    fn claim(&self, _: &WorkspaceId, _: UserId) -> Result<(), WorkspaceError> {
+        Ok(())
     }
 }
 
@@ -974,6 +789,9 @@ pub struct Attached {
     pub opened: bool,
     /// Why nothing was opened, when that is not an error.
     pub message: Option<String>,
+    /// What a client on another machine can open to reach the editor itself: the `vscode://` link
+    /// of a desktop attach. `None` when there is nothing a client could open (a browser attach).
+    pub open_uri: Option<String>,
 }
 
 impl Attached {
@@ -983,6 +801,7 @@ impl Attached {
         Self {
             opened: true,
             message: None,
+            open_uri: None,
         }
     }
 
@@ -992,593 +811,15 @@ impl Attached {
         Self {
             opened: false,
             message: Some(message.into()),
+            open_uri: None,
         }
     }
-}
 
-/// Why a workspace call failed. Messages are for the user: lower case, no trailing period.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum WorkspaceError {
-    /// No such workspace.
-    #[error("{0}")]
-    NotFound(String),
-    /// The workspace is in a state that doesn't allow this: running, busy, name taken, or
-    /// changed since the user looked.
-    #[error("{0}")]
-    Conflict(String),
-    /// A value was refused.
-    #[error("{0}")]
-    Invalid(String),
-    /// The service can't do it now (no runtime, not wired in).
-    #[error("{0}")]
-    Unavailable(String),
-    /// Puddle failed; the text goes to the log, not to the client.
-    #[error("{0}")]
-    Internal(String),
-}
-
-/// What running a shell init in a throwaway shell in the workspace showed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellInitCheck {
-    /// It parsed and printed nothing.
-    Passed,
-    /// It was not run, for the reason given (the workspace is stopped, say).
-    NotRun(String),
-    /// It does not parse, or printed something, or ran too long: the text says what, for the user.
-    Refused(String),
-}
-
-/// A service Puddle keeps a login for in a workspace: names and a time, never a value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptLogin {
-    /// The service as the API names it (`claude`, `github`): what forgetting takes.
-    pub service: String,
-    /// What the user calls it (`Claude Code`).
-    pub name: String,
-    /// Epoch ms Puddle first noted the login as kept; `None` when it does not know.
-    pub since: Option<u64>,
-}
-
-/// The logins kept for a workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptLogins {
-    /// The services with a login kept.
-    pub logins: Vec<KeptLogin>,
-    /// `false` when the credential store did not answer and Puddle had no record of its own: the
-    /// list is empty because it is not known.
-    pub store_readable: bool,
-}
-
-/// The workspaces resource. Implemented by the application over the runtime, and by
-/// [`crate::FakeWorkspaces`].
-///
-/// Contract:
-///
-/// - Calls return after the request is checked and accepted, not after the work: the record they
-///   return has [`WorkspaceRecord::busy`] set. Progress and the end of the operation arrive as
-///   events; a failure is a [`puddle_types::WorkspaceStep::Failed`] event, not a late error.
-/// - [`WorkspaceError::Conflict`] when the workspace is busy or already in the wanted state.
-/// - [`WorkspaceService::delete`] never removes work the user hasn't seen: see its docs.
-pub trait WorkspaceService: Send + Sync {
-    /// Every workspace, ordered by id.
-    fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>>;
-
-    /// One workspace.
-    fn get<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Creates a workspace: its volume, then a clone of each repository, one at a time. Once the
-    /// create is accepted and before the first clone it runs `git` for the new repositories.
-    /// [`WorkspaceError::Conflict`] if the name is taken. A clone that fails fails only its
-    /// repository (a background problem names it); the create still ends done.
-    fn create<'a>(
-        &'a self,
-        new: NewWorkspace,
-        git: &'a dyn GitSetup,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Looks at the folder `path` on this computer as a checkout to start a workspace from
-    /// (blocking: it reads the file system). The default says it is not available.
-    ///
-    /// # Errors
-    ///
-    /// Why the folder can't be used, for the user.
-    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
-        let _ = path;
-        Err("starting from a checkout on this computer is not available here".into())
-    }
-
-    /// Boots a workspace that is down.
-    fn start<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Shuts a running workspace down.
-    fn stop<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Gives freed disk space back to the host.
-    fn reclaim<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Removes the stopped workspace's sandbox, and with it the root disk (home directory, tool
-    /// caches, installed packages); the next start makes a fresh one. The volume is untouched.
-    fn reset_root_disk<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Looks for what deleting the workspace would lose. Works on a running or a stopped
-    /// workspace.
-    fn delete_check<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<DeleteCheck, WorkspaceError>>;
-
-    /// Deletes a workspace that is stopped. It checks again first: with `fingerprint` it goes
-    /// ahead only if the fresh check has exactly that fingerprint (the user saw this report);
-    /// without one it goes ahead only if the fresh check is clean. Otherwise
-    /// [`WorkspaceError::Conflict`] and nothing is deleted.
-    fn delete<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-        fingerprint: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Renames the workspace. Only the name changes: the id, the volume and the sandbox stay,
-    /// so this works on a running workspace and does not restart anything. [`WorkspaceError::Conflict`] when another
-    /// workspace already goes by that name (ignoring case), or while this one is being created
-    /// or deleted.
-    fn rename<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-        name: DisplayName,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Sets where new terminals land and what the editor opens: a path under the volume, or
-    /// `None` for the volume root. The folder need not exist yet. In a running workspace the
-    /// login-shell file follows at once and the answer says whether the folder exists; the
-    /// editor's server picks the folder at its next start. [`WorkspaceError::Conflict`] while the
-    /// workspace is being created or deleted.
-    fn set_start_folder<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-        start_folder: Option<StartFolder>,
-    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>>;
-
-    /// Sets the guest user the workspace's sessions, browser editor and clones run as. It takes
-    /// effect at the next start: a running guest keeps the user it booted with.
-    /// [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
-    fn set_session_user<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-        user: SessionUser,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
-
-    /// Opens the workspace in an editor. The workspace must be running.
-    fn attach<'a>(
-        &'a self,
-        id: &'a WorkspaceId,
-        mode: AttachMode,
-    ) -> BoxFuture<'a, Result<Attached, WorkspaceError>>;
-
-    /// Runs a shell init `script` once in a throwaway shell in the running workspace `id` and says
-    /// whether it parsed and printed nothing. The default does not check: a build with no guest
-    /// to run it in.
-    fn check_shell_init<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-        _script: &'a str,
-    ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
-        Box::pin(async {
-            Ok(ShellInitCheck::NotRun(
-                "this Puddle has no workspace to run it in".to_owned(),
-            ))
-        })
-    }
-
-    /// The logins Puddle keeps for workspace `id`, from its own record of them (the credential
-    /// store is asked only when there is none yet), so a locked store does not stall the answer.
-    ///
-    /// # Errors
-    /// [`WorkspaceError::NotFound`] for no such workspace, [`WorkspaceError::Unavailable`] when
-    /// this Puddle keeps no logins.
-    fn kept_logins<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
-        Box::pin(async {
-            Err(WorkspaceError::Unavailable(
-                "this Puddle keeps no logins".to_owned(),
-            ))
-        })
-    }
-
-    /// Forgets the login Puddle kept for `service` (`claude`, `github`) in workspace `id`: the
-    /// real tokens leave the credential store, and a notice that the login is kept but unused
-    /// ends with it. The workspace's own copy is only a stand-in and is left alone.
-    ///
-    /// # Errors
-    /// [`WorkspaceError::NotFound`] for no such workspace or no such service,
-    /// [`WorkspaceError::Unavailable`] when the credential store refused a deletion (what was
-    /// deleted stays deleted; ask again after it answers).
-    fn forget_login<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-        _service: &'a str,
-    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
-        Box::pin(async {
-            Err(WorkspaceError::Unavailable(
-                "this Puddle keeps no logins".to_owned(),
-            ))
-        })
-    }
-
-    /// The workspace disks Puddle keeps whose workspace its list does not name, in id order. The
-    /// list is read fresh each time, so a disk a workspace has since claimed is not in it. Puddle
-    /// cannot tell from outside whether such a disk holds any files.
-    ///
-    /// # Errors
-    /// [`WorkspaceError::Unavailable`] when the runtime cannot list its disks.
-    fn orphan_volumes(&self) -> BoxFuture<'_, Result<Vec<WorkspaceId>, WorkspaceError>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    /// Adds a list entry for the unclaimed workspace disk `id`, named after the disk. The entry's
-    /// repositories are the checkouts on the disk that have a readable remote address (so the
-    /// disk has to be read in a short-lived maintenance sandbox); when there is none, `repository`
-    /// is the address to use. Nothing is written to the disk, and an entry that already exists is
-    /// never replaced. The new workspace is stopped.
-    ///
-    /// # Errors
-    /// [`WorkspaceError::NotFound`] when the disk does not exist,
-    /// [`WorkspaceError::Conflict`] when the list already names the workspace or something holds
-    /// the disk, [`WorkspaceError::Invalid`] when no address could be read and none was given,
-    /// [`WorkspaceError::Unavailable`] when the list cannot be saved.
-    fn restore_orphan<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-        _repository: Option<RepoUrl>,
-        _git: &'a dyn GitSetup,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async {
-            Err(WorkspaceError::Unavailable(
-                "this Puddle keeps no workspace disks".to_owned(),
-            ))
-        })
-    }
-
-    /// The checkouts under the workspace's volume root, each with the list entry that has its
-    /// directory. A running workspace lists them now (calls at the same
-    /// moment share one listing); a stopped one answers the last listing this run made, or says
-    /// to start it. A listing that cannot be made or read is a [`Checkouts::problem`], not an
-    /// error.
-    fn checkouts<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<Checkouts, WorkspaceError>> {
-        unavailable()
-    }
-
-    /// Adds a repository to a running workspace's list. A clone is
-    /// accepted like any operation: the record returned is busy `cloning`. Managing a checkout
-    /// that is already on the volume answers at once with the changed record. `git` sets up the
-    /// repository's identity and table row once the request is accepted and before any clone.
-    /// [`WorkspaceError::Conflict`] when the workspace is not running or busy, the list is full,
-    /// the repository or directory is listed, the directory exists (clone) or is no checkout or
-    /// has no usable remote (existing); [`WorkspaceError::NotFound`] for an unknown workspace.
-    fn add_repository<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-        _add: AddRepository,
-        _git: &'a dyn GitSetup,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-
-    /// Clones a list entry whose directory is not on the volume again. Accepted
-    /// like [`WorkspaceService::add_repository`] with a clone.
-    fn clone_again<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-        _directory: &'a CheckoutDir,
-        _git: &'a dyn GitSetup,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-
-    /// Takes an entry off the list and nothing else: the checkout, the
-    /// repository table row and the identities stay. [`WorkspaceError::NotFound`] for an unknown
-    /// entry; [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
-    fn remove_repository<'a>(
-        &'a self,
-        _id: &'a WorkspaceId,
-        _directory: &'a CheckoutDir,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-
-    /// Tells the service that settings changed, so it can apply what takes effect at once (the
-    /// SSH endpoint of a running workspace opens or closes with its `direct_ssh` setting).
-    /// The default does nothing.
-    fn settings_changed(&self) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-
-    /// The lock the settings routes hold from reading a settings document to writing it, when the
-    /// service also writes settings documents itself (a delete removes a workspace's): it takes
-    /// the same lock, so the two never interleave. `None` when it writes none.
-    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
-        None
-    }
-}
-
-/// Opens VS Code on the desktop for a workspace; the desktop shell implements it.
-pub trait Launcher: Send + Sync {
-    /// Opens an editor window attached to the workspace.
-    ///
-    /// # Errors
-    ///
-    /// [`LaunchError`] with a message for the user (VS Code is not installed, the remote
-    /// extension is missing, ...).
-    fn open_desktop<'a>(
-        &'a self,
-        workspace: &'a WorkspaceRecord,
-        target: &'a DesktopTarget,
-    ) -> BoxFuture<'a, Result<(), LaunchError>>;
-
-    /// Opens the workspace's browser editor in a window of the desktop shell. The default is for
-    /// a launcher with no window (`puddle serve`): it says so, because the editor's password is
-    /// handed to a window the shell controls and to nothing else.
-    ///
-    /// # Errors
-    ///
-    /// [`LaunchError`] with a message for the user (no window here, the editor gave no session,
-    /// the window could not be built).
-    fn open_browser<'a>(
-        &'a self,
-        _workspace: &'a WorkspaceRecord,
-        _target: &'a BrowserTarget,
-    ) -> BoxFuture<'a, Result<(), LaunchError>> {
-        Box::pin(async {
-            Err(LaunchError::new(
-                "the browser editor opens from the desktop app",
-            ))
-        })
-    }
-
-    /// Closes the workspace's editor windows the way a user would, because its guest is about to
-    /// stop or go. Asks and returns: a window that is slow to close is not waited for. The default
-    /// has no window.
-    fn close_browser<'a>(&'a self, _workspace: &'a WorkspaceId) -> BoxFuture<'a, ()> {
-        Box::pin(async {})
-    }
-
-    /// Removes what the shell kept for a workspace that is deleted: its windows' browser data and
-    /// sign-in. A workspace made later under the same name must start with none of it.
-    ///
-    /// # Errors
-    ///
-    /// [`LaunchError`] with a message for the user when something could not be removed (a window
-    /// still holds it).
-    fn forget_browser<'a>(
-        &'a self,
-        _workspace: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<(), LaunchError>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    /// Whether the shell keeps browser data under `workspace`'s id (a window's data folder). A
-    /// new workspace never gets an id that has some. The default keeps none.
-    fn has_browser_data(&self, _workspace: &WorkspaceId) -> bool {
-        false
-    }
-}
-
-/// What a browser editor window needs: where the editor is and how to sign in to it.
-#[derive(Clone)]
-pub struct BrowserTarget {
-    /// The editor's origin on the front, `http://<workspace>.localhost:<port>`.
-    pub origin: String,
-    /// The front's address, for the sign-in.
-    pub front: std::net::SocketAddr,
-    /// The workspace's settings, of which a window uses zoom and the clipboard prompt.
-    pub settings: puddle_settings::Effective,
-    /// How the window signs in to the editor server; `None` when no server is known to run.
-    pub login: Option<EditorSignIn>,
-    /// What the window opens in the running server, the same place a desktop editor opens; `None`
-    /// when the workspace has no running guest to name one, and the window opens the server's own
-    /// start page.
-    pub open: Option<OpenTarget>,
-}
-
-/// A place in a running workspace an editor opens: a checkout, the volume root, or the multi-root
-/// file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenTarget {
-    /// The absolute path in the guest.
-    pub path: String,
-    /// Whether `path` is a `.code-workspace` file rather than a folder.
-    pub is_workspace_file: bool,
-}
-
-/// How a window signs in to a workspace's editor server. Either way the window carries the
-/// editor's password (or what it buys) in a cookie set before it navigates, never in a URL.
-#[derive(Clone)]
-pub enum EditorSignIn {
-    /// code-server: the password goes in a login form POST to `/login` on the editor's origin, and
-    /// the window gets the session cookie the answer sets.
-    Form(Arc<dyn EditorLogin>),
-    /// Microsoft's server: the password is its connection token, which the window carries in the
-    /// cookie [`CONNECTION_TOKEN_COOKIE`]. The server refuses every request without it, and the
-    /// workbench's script reads it from the cookie for its socket's handshake, so it can't be
-    /// `HttpOnly`.
-    ConnectionToken(Arc<dyn EditorLogin>),
-}
-
-/// The cookie Microsoft's server reads its connection token from.
-pub const CONNECTION_TOKEN_COOKIE: &str = "vscode-tkn";
-
-impl EditorSignIn {
-    /// The way to the password, whichever the use.
+    /// The same result, naming what a client can open itself.
     #[must_use]
-    pub fn reader(&self) -> &Arc<dyn EditorLogin> {
-        match self {
-            Self::Form(login) | Self::ConnectionToken(login) => login,
-        }
-    }
-}
-
-impl fmt::Debug for BrowserTarget {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BrowserTarget")
-            .field("origin", &self.origin)
-            .field("front", &self.front)
-            .finish_non_exhaustive()
-    }
-}
-
-/// The editor's password, read when a window signs in. Never log what it returns.
-pub trait EditorLogin: Send + Sync {
-    /// The password of this boot of the workspace's editor server.
-    ///
-    /// # Errors
-    ///
-    /// [`LaunchError`] when the workspace is not running or its agent has none yet.
-    fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>>;
-}
-
-/// What a desktop editor opens: a place in a workspace, reached through its ssh host entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DesktopTarget {
-    /// The workspace's host name in the ssh config (`puddle-<workspace>`).
-    pub ssh_host: String,
-    /// The absolute path in the guest to open: a checkout, the volume root, or the multi-root
-    /// file.
-    pub path: String,
-    /// Whether `path` is a `.code-workspace` file rather than a folder.
-    pub is_workspace_file: bool,
-}
-
-/// The desktop editor could not be opened.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{message}")]
-pub struct LaunchError {
-    message: String,
-}
-
-impl LaunchError {
-    /// An error with this message for the user.
-    #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-/// The service when none is wired in: every call says so. The API uses it until the
-/// application provides the real one.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoWorkspaces;
-
-pub(crate) fn unavailable<T: Send + 'static>() -> BoxFuture<'static, Result<T, WorkspaceError>> {
-    Box::pin(async {
-        Err(WorkspaceError::Unavailable(
-            "workspaces are not available in this build yet".into(),
-        ))
-    })
-}
-
-impl WorkspaceService for NoWorkspaces {
-    fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>> {
-        unavailable()
-    }
-    fn get<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn create<'a>(
-        &'a self,
-        _: NewWorkspace,
-        _: &'a dyn GitSetup,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn start<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn stop<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn reclaim<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn reset_root_disk<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn delete_check<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<DeleteCheck, WorkspaceError>> {
-        unavailable()
-    }
-    fn delete<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-        _: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn rename<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-        _: DisplayName,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn set_start_folder<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-        _: Option<StartFolder>,
-    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
-        unavailable()
-    }
-    fn set_session_user<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-        _: SessionUser,
-    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        unavailable()
-    }
-    fn attach<'a>(
-        &'a self,
-        _: &'a WorkspaceId,
-        _: AttachMode,
-    ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
-        unavailable()
+    pub fn with_open_uri(mut self, uri: impl Into<String>) -> Self {
+        self.open_uri = Some(uri.into());
+        self
     }
 }
 
@@ -1614,849 +855,11 @@ fn fingerprint(check: &DeleteCheck) -> String {
         .iter()
         .fold(String::with_capacity(64), |mut out, byte| {
             use std::fmt::Write as _;
+            // writing into a `String` cannot fail
             let _ = write!(out, "{byte:02x}");
             out
         })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct SecretLogin(String);
-
-    impl EditorLogin for SecretLogin {
-        fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
-            Box::pin(async move { Ok(self.0.clone()) })
-        }
-    }
-
-    struct NoWindow;
-
-    impl Launcher for NoWindow {
-        fn open_desktop<'a>(
-            &'a self,
-            _: &'a WorkspaceRecord,
-            _: &'a DesktopTarget,
-        ) -> BoxFuture<'a, Result<(), LaunchError>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    fn sized(root: Option<(u64, u64)>, volume: Option<u64>) -> WorkspaceRecord {
-        let mut record = WorkspaceRecord::new(
-            WorkspaceId::new("demo").unwrap(),
-            DisplayName::parse("demo").unwrap(),
-            vec![],
-        );
-        record.root_disk_used_mib = root.map(|(used, _)| used);
-        record.root_disk_size_mib = root.map(|(_, size)| size);
-        record.disk_size_mib = 1000;
-        record.disk_used_mib = volume;
-        record
-    }
-
-    #[test]
-    fn a_root_disk_reset_names_itself_on_the_wire() {
-        assert_eq!(
-            Operation::ResettingRootDisk.to_string(),
-            "resetting_root_disk"
-        );
-    }
-
-    #[test]
-    fn disk_percent_rounds_down_caps_at_full_and_needs_both_figures() {
-        let t = |root, volume| {
-            let r = sized(root, volume);
-            (
-                r.disk_percent(DiskKind::Root),
-                r.disk_percent(DiskKind::Volume),
-            )
-        };
-        assert_eq!(t(Some((949, 1000)), Some(999)), (Some(94), Some(99)));
-        assert_eq!(t(Some((5000, 1000)), Some(0)), (Some(100), Some(0)));
-        assert_eq!(t(None, None), (None, None));
-        let mut zero = sized(Some((1, 0)), None);
-        assert_eq!(zero.disk_percent(DiskKind::Root), None);
-        zero.root_disk_size_mib = Some(1000);
-        zero.root_disk_used_mib = None;
-        assert_eq!(zero.disk_percent(DiskKind::Root), None);
-    }
-
-    #[test]
-    fn a_disk_warns_exactly_at_the_threshold_and_an_unknown_one_never() {
-        use puddle_settings::DiskWarningPercent;
-        let at = |n| DiskWarningPercent::new(n).unwrap();
-        let both = sized(Some((950, 1000)), Some(950));
-        assert_eq!(
-            both.disk_warnings(at(95)),
-            [DiskKind::Root, DiskKind::Volume]
-        );
-        assert_eq!(both.disk_warnings(at(96)), []);
-        let root_only = sized(Some((950, 1000)), Some(100));
-        assert_eq!(root_only.disk_warnings(at(95)), [DiskKind::Root]);
-        let volume_only = sized(Some((100, 1000)), Some(960));
-        assert_eq!(volume_only.disk_warnings(at(95)), [DiskKind::Volume]);
-        assert_eq!(sized(None, None).disk_warnings(at(50)), []);
-        // 100 % warns only on a full disk.
-        assert_eq!(
-            sized(Some((999, 1000)), Some(1000)).disk_warnings(at(100)),
-            [DiskKind::Volume]
-        );
-    }
-
-    #[test]
-    fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
-        let name = DisplayName::parse("demo").unwrap();
-        let record = WorkspaceRecord::new(WorkspaceId::new("demo").unwrap(), name.clone(), vec![]);
-        let desktop = DesktopTarget {
-            ssh_host: "puddle-demo".into(),
-            path: "/".into(),
-            is_workspace_file: false,
-        };
-        futures_util::FutureExt::now_or_never(NoWindow.open_desktop(&record, &desktop))
-            .unwrap()
-            .unwrap();
-        futures_util::FutureExt::now_or_never(
-            NoWindow.close_browser(&WorkspaceId::new("demo").unwrap()),
-        )
-        .unwrap();
-        futures_util::FutureExt::now_or_never(
-            NoWindow.forget_browser(&WorkspaceId::new("demo").unwrap()),
-        )
-        .unwrap()
-        .unwrap();
-        // A shell with no window keeps no browser data under any id.
-        assert!(!NoWindow.has_browser_data(&WorkspaceId::new("demo").unwrap()));
-    }
-
-    #[test]
-    fn a_browser_target_shows_where_the_editor_is_and_never_the_way_to_its_password() {
-        let secret = "debug-form-secret-value".to_owned();
-        let target = BrowserTarget {
-            origin: "http://demo.localhost:4100".into(),
-            front: "127.0.0.1:4100".parse().unwrap(),
-            settings: puddle_settings::resolve(
-                &puddle_settings::GlobalSettings::default(),
-                None::<&puddle_settings::WorkspaceSettings>,
-            ),
-            login: Some(EditorSignIn::Form(Arc::new(SecretLogin(secret.clone())))),
-            open: None,
-        };
-        let login = target.login.as_ref().unwrap().reader();
-        assert_eq!(
-            futures_util::FutureExt::now_or_never(login.password())
-                .unwrap()
-                .unwrap(),
-            secret
-        );
-        let shown = format!("{target:?}");
-        assert!(shown.contains("http://demo.localhost:4100"), "{shown}");
-        assert!(shown.contains("127.0.0.1:4100"), "{shown}");
-        assert!(!shown.contains(&secret), "{shown}");
-        assert!(!shown.contains("SecretLogin"), "{shown}");
-    }
-
-    #[test]
-    fn https_urls_pass() {
-        for ok in [
-            "https://github.com/acme/api",
-            "https://github.com/acme/api.git",
-            "HTTPS://GitHub.com/acme/api",
-            "https://dev.azure.com/org/proj/_git/repo",
-            "https://git.example.com:8443/a/b",
-            "  https://github.com/acme/api  ",
-        ] {
-            assert_eq!(RepoUrl::parse(ok).unwrap().as_str(), ok.trim());
-        }
-    }
-
-    #[test]
-    fn ssh_remotes_get_the_not_supported_message() {
-        for ssh in [
-            "git@github.com:acme/api.git",
-            "ssh://git@github.com/acme/api.git",
-            "SSH://github.com/acme/api",
-            "github.com:acme/api",
-            "user@host:path",
-        ] {
-            let err = RepoUrl::parse(ssh).unwrap_err();
-            assert!(
-                err.contains("SSH remotes are not supported yet"),
-                "{ssh}: {err}"
-            );
-            assert!(err.contains("HTTPS"), "{err}");
-        }
-    }
-
-    #[test]
-    fn other_urls_say_what_to_change() {
-        let cases = [
-            ("http://github.com/a/b", "https://"),
-            ("git://github.com/a/b", "https://"),
-            ("/home/me/repo", "https://"),
-            ("C:\\repos\\api", "https://"),
-            ("file:///repo", "https://"),
-            ("", "https://"),
-            ("https://", "no host"),
-            ("https:///path", "no host"),
-            ("https://:443/x", "no host"),
-            (
-                "https://user:secret@github.com/a/b",
-                "user name and password",
-            ),
-            ("https://token@github.com/a/b", "user name and password"),
-            ("https://github.com/a b", "spaces"),
-            ("https://github.com/a\nb", "control"),
-        ];
-        for (url, wants) in cases {
-            let err = RepoUrl::parse(url).unwrap_err();
-            assert!(err.contains(wants), "{url:?}: {err}");
-            assert!(!err.contains("secret"), "{err}");
-        }
-        let long = format!("https://github.com/{}", "a".repeat(MAX_REPO_URL_LEN));
-        assert!(RepoUrl::parse(&long).unwrap_err().contains("longer than"));
-    }
-
-    #[test]
-    fn a_check_is_clean_only_without_findings_or_errors() {
-        let id = WorkspaceId::new("w").unwrap();
-        let mut check = DeleteCheck {
-            workspace: id,
-            repos: vec![RepoFindings::default()],
-            other: Listing::default(),
-            errors: vec![],
-            removes_sandbox: None,
-            volume_missing: false,
-            fingerprint: String::new(),
-        };
-        assert!(check.is_clean());
-        check.repos[0].stashes.more = 1;
-        assert!(!check.is_clean());
-        check.repos[0].stashes.more = 0;
-        check.other.items.push("notes.txt".into());
-        assert!(!check.is_clean());
-        check.other = Listing::default();
-        check.errors.push("repo: unreadable".into());
-        assert!(!check.is_clean());
-    }
-
-    #[test]
-    fn a_missing_volume_changes_the_fingerprint() {
-        let id = WorkspaceId::new("w").unwrap();
-        let plain = DeleteCheck::new(id, vec![], Listing::default(), vec![], None);
-        let gone = plain.clone().with_volume_missing();
-        assert!(gone.volume_missing && gone.is_clean());
-        assert_ne!(plain.fingerprint, gone.fingerprint);
-    }
-
-    #[tokio::test]
-    async fn the_empty_service_says_it_is_unavailable() {
-        let svc = NoWorkspaces;
-        let id = WorkspaceId::new("w").unwrap();
-        let name = DisplayName::parse("w").unwrap();
-        let dir = CheckoutDir::new("a").unwrap();
-        let url = RepoUrl::parse("https://example.com/a").unwrap();
-        let repos = vec![NewRepository {
-            repository: Repository::at_default_directory(url),
-            identity: None,
-            pull: true,
-            push: true,
-            local: None,
-        }];
-        let all = [
-            svc.list().await.map(|_| ()),
-            svc.get(&id).await.map(|_| ()),
-            svc.create(NewWorkspace::new(name, repos), &NoGitSetup)
-                .await
-                .map(|_| ()),
-            svc.start(&id).await.map(|_| ()),
-            svc.stop(&id).await.map(|_| ()),
-            svc.reclaim(&id).await.map(|_| ()),
-            svc.reset_root_disk(&id).await.map(|_| ()),
-            svc.delete_check(&id).await.map(|_| ()),
-            svc.delete(&id, None).await.map(|_| ()),
-            svc.rename(&id, DisplayName::parse("x").unwrap())
-                .await
-                .map(|_| ()),
-            svc.set_session_user(&id, SessionUser::Root)
-                .await
-                .map(|_| ()),
-            svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
-            svc.checkouts(&id).await.map(|_| ()),
-            svc.add_repository(
-                &id,
-                AddRepository::Existing {
-                    directory: dir.clone(),
-                    seen: RepoUrl::parse("https://github.com/o/r").unwrap(),
-                    identity: None,
-                    pull: true,
-                    push: true,
-                },
-                &NoGitSetup,
-            )
-            .await
-            .map(|_| ()),
-            svc.clone_again(&id, &dir, &NoGitSetup).await.map(|_| ()),
-            svc.remove_repository(&id, &dir).await.map(|_| ()),
-        ];
-        for result in all {
-            assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
-        }
-    }
-
-    #[tokio::test]
-    async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() {
-        let id = WorkspaceId::new("w").unwrap();
-        let listed = NoWorkspaces.kept_logins(&id).await;
-        assert!(
-            matches!(listed, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
-            "{listed:?}"
-        );
-        let forgotten = NoWorkspaces.forget_login(&id, "claude").await;
-        assert!(
-            matches!(forgotten, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
-            "{forgotten:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_service_with_no_guest_does_not_check_shell_init() {
-        let id = WorkspaceId::new("w").unwrap();
-        let check = NoWorkspaces.check_shell_init(&id, "echo hi\n").await;
-        assert!(
-            matches!(check, Ok(ShellInitCheck::NotRun(ref why)) if why.contains("no workspace")),
-            "{check:?}"
-        );
-    }
-
-    #[test]
-    fn display_names_are_trimmed_and_bounded() {
-        assert_eq!(
-            DisplayName::parse("  Web shop ").unwrap().as_str(),
-            "Web shop"
-        );
-        assert_eq!(
-            DisplayName::parse("Café 日本").unwrap().as_str(),
-            "Café 日本"
-        );
-        assert!(DisplayName::parse("a".repeat(60).as_str()).is_ok());
-        for (bad, wants) in [
-            ("", "empty"),
-            ("   ", "empty"),
-            (&"a".repeat(61), "longer than 60"),
-            ("two\nlines", "line breaks"),
-            ("tab\there", "control"),
-        ] {
-            let err = DisplayName::parse(bad).unwrap_err();
-            assert!(err.contains(wants), "{bad:?}: {err}");
-        }
-        // Sixty multi-byte characters are within the limit: it counts characters, not bytes.
-        assert!(DisplayName::parse(&"é".repeat(60)).is_ok());
-    }
-
-    #[test]
-    fn a_label_is_taken_ignoring_case_and_the_workspace_itself() {
-        let mk = |id: &str, shown: &str| {
-            WorkspaceRecord::new(
-                WorkspaceId::new(id).unwrap(),
-                DisplayName::parse(shown).unwrap(),
-                Vec::new(),
-            )
-        };
-        let all = [mk("alpha", "alpha"), mk("beta", "Web Shop")];
-        assert_eq!(all[1].label(), "Web Shop");
-        let beta = WorkspaceId::new("beta").unwrap();
-        assert_eq!(label_taken(&all, "web shop", None).unwrap().id, beta);
-        assert_eq!(
-            label_taken(&all, "ALPHA", None).unwrap().name.as_str(),
-            "alpha"
-        );
-        assert!(label_taken(&all, "web shop", Some(&beta)).is_none());
-        // The id is no name: nothing goes by "beta".
-        assert!(label_taken(&all, "beta", None).is_none());
-    }
-
-    #[test]
-    fn an_id_for_a_name_is_a_label_the_same_every_time() {
-        let id = |s: &str| {
-            id_for_name(&DisplayName::parse(s).unwrap())
-                .unwrap()
-                .to_string()
-        };
-        assert_eq!(id("Shop API \u{fc}"), "shop-api");
-        assert_eq!(id("  --My  Project__2--"), "my-project-2");
-        assert_eq!(id("acme"), "acme");
-        let long = id(&"ab ".repeat(20));
-        assert!(
-            long.len() <= WorkspaceId::MAX_LEN && !long.ends_with('-'),
-            "{long}"
-        );
-        for odd in ["\u{65e5}\u{672c}", "!!!", "tauri", "ipc"] {
-            let one = id(odd);
-            assert!(
-                one.starts_with("workspace-") && one.len() == 18,
-                "{odd}: {one}"
-            );
-            assert_eq!(one, id(odd));
-        }
-        assert_ne!(id("\u{65e5}\u{672c}"), id("\u{4e2d}\u{6587}"));
-    }
-
-    #[test]
-    fn the_name_source_numbers_its_later_draws_and_cuts_the_label_for_the_number() {
-        let new = |name: &str| NewWorkspace::new(DisplayName::parse(name).unwrap(), Vec::new());
-        let taken =
-            |ids: &'static [&'static str]| move |id: &WorkspaceId| ids.contains(&id.as_str());
-        assert_eq!(
-            new("Shop").id(&NameIds, taken(&[])).unwrap().as_str(),
-            "shop"
-        );
-        assert_eq!(
-            new("Shop").id(&NameIds, taken(&["shop"])).unwrap().as_str(),
-            "shop-2"
-        );
-        assert_eq!(
-            new("shop!")
-                .id(&NameIds, taken(&["shop", "shop-2"]))
-                .unwrap()
-                .as_str(),
-            "shop-3"
-        );
-        // The number fits under the longest id: the label is cut, never the number.
-        let long = "a".repeat(DisplayName::MAX_CHARS);
-        let full = WorkspaceId::new(&long).unwrap();
-        let second = new(&long).id(&NameIds, |id| *id == full).unwrap();
-        assert_eq!(second.as_str().len(), WorkspaceId::MAX_LEN);
-        assert!(second.as_str().ends_with("-2"), "{second}");
-    }
-
-    /// A source that gives the same id every time, or nothing at all, and counts its draws.
-    struct Stuck {
-        id: Option<WorkspaceId>,
-        draws: std::sync::atomic::AtomicU32,
-    }
-
-    impl IdSource for Stuck {
-        fn draw(&self, _name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
-            assert_eq!(
-                attempt,
-                self.draws.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            );
-            self.id
-                .clone()
-                .ok_or_else(|| "the source is empty".to_owned())
-        }
-    }
-
-    #[test]
-    fn a_stuck_source_is_given_up_on_after_sixteen_draws() {
-        let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
-        let stuck = WorkspaceId::new("a0000000").unwrap();
-        for id in [Some(stuck.clone()), None] {
-            let source = Stuck {
-                id,
-                draws: std::sync::atomic::AtomicU32::new(0),
-            };
-            let err = new.id(&source, |id| *id == stuck).unwrap_err();
-            assert_eq!(source.draws.into_inner(), MAX_ID_DRAWS);
-            assert_eq!(MAX_ID_DRAWS, 16);
-            assert_eq!(
-                err.to_string(),
-                "no free workspace id was found; the system's random source may be broken"
-            );
-        }
-        // A free id on the last draw is still taken up.
-        let source = Stuck {
-            id: Some(stuck.clone()),
-            draws: std::sync::atomic::AtomicU32::new(0),
-        };
-        let seen = std::sync::atomic::AtomicU32::new(0);
-        let last = new
-            .id(&source, |_| {
-                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 < MAX_ID_DRAWS
-            })
-            .unwrap();
-        assert_eq!(last, stuck);
-    }
-
-    #[test]
-    fn the_random_source_draws_generated_ids_whatever_the_name() {
-        let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
-        let first = new.id(&RandomIds, |_| false).unwrap();
-        assert_eq!(first.as_str().len(), WorkspaceId::GENERATED_LEN);
-        assert_ne!(first.as_str(), "acme");
-        // A taken id is drawn again, not numbered: the first draw is refused, the second taken up.
-        let asked = std::sync::atomic::AtomicU32::new(0);
-        let second = new
-            .id(&RandomIds, |_| {
-                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
-            })
-            .unwrap();
-        assert_eq!(asked.into_inner(), 2);
-        // Two random draws are not compared: `asked` shows the second came from a new draw.
-        assert_eq!(second.as_str().len(), WorkspaceId::GENERATED_LEN);
-    }
-
-    #[test]
-    fn a_lookup_finds_an_id_or_a_name_ignoring_case_and_counts_a_workspace_once() {
-        let mk = |id: &str, name: &str| {
-            WorkspaceRecord::new(
-                WorkspaceId::new(id).unwrap(),
-                DisplayName::parse(name).unwrap(),
-                Vec::new(),
-            )
-        };
-        let all = [
-            mk("shop", "Shop"),
-            mk("k7m2x9qa", "Web Shop \u{fc}"),
-            mk("web", "x"),
-        ];
-        let ids =
-            |q: &str| -> Vec<String> { lookup(&all, q).iter().map(|r| r.id.to_string()).collect() };
-        assert_eq!(ids("k7m2x9qa"), ["k7m2x9qa"]);
-        assert_eq!(ids("  WEB shop \u{dc} "), ["k7m2x9qa"]);
-        assert_eq!(
-            ids("shop"),
-            ["shop"],
-            "an id that is also the name is one match"
-        );
-        assert_eq!(ids("nothing"), Vec::<String>::new());
-        // One workspace's id is another's name: two matches.
-        assert_eq!(ids("web"), ["web"]);
-        let all = [mk("shop", "Shop"), mk("k7m2x9qa", "shop")];
-        let found: Vec<_> = lookup(&all, "shop")
-            .iter()
-            .map(|r| r.id.to_string())
-            .collect();
-        assert_eq!(found, ["shop", "k7m2x9qa"]);
-    }
-
-    #[test]
-    fn a_rename_is_refused_while_creating_or_deleting_and_on_a_clash() {
-        let mk = |id: &str| {
-            WorkspaceRecord::new(
-                WorkspaceId::new(id).unwrap(),
-                DisplayName::parse(id).unwrap(),
-                Vec::new(),
-            )
-        };
-        let (mut a, b) = (mk("alpha"), mk("beta"));
-        let name = |s: &str| DisplayName::parse(s).unwrap();
-        let ida = a.id.clone();
-        let check = |a: &WorkspaceRecord, to: &DisplayName| check_rename([a, &b], &ida, to);
-        assert!(check(&a, &name("Web")).is_ok());
-        assert!(
-            check(&a, &name("alpha")).is_ok(),
-            "its own name is not a clash"
-        );
-        assert!(matches!(
-            check(&a, &name("BETA")),
-            Err(WorkspaceError::Conflict(m)) if m.contains("already called beta")
-        ));
-        a.busy = Some(Operation::Creating);
-        assert!(
-            matches!(check(&a, &name("Web")), Err(WorkspaceError::Conflict(m)) if m.contains("creating"))
-        );
-        a.busy = Some(Operation::Deleting);
-        assert!(matches!(
-            check(&a, &name("Web")),
-            Err(WorkspaceError::Conflict(_))
-        ));
-        for busy in [
-            Operation::Starting,
-            Operation::Stopping,
-            Operation::Reclaiming,
-            Operation::ResettingRootDisk,
-        ] {
-            a.busy = Some(busy);
-            assert!(check(&a, &name("Web")).is_ok(), "{busy}");
-        }
-        let missing = WorkspaceId::new("nope").unwrap();
-        assert!(matches!(
-            check_rename([&a, &b], &missing, &name("x")),
-            Err(WorkspaceError::NotFound(_))
-        ));
-
-        // The start folder and the session user change on a settled workspace only.
-        a.busy = Some(Operation::Creating);
-        assert!(matches!(
-            check_session_user_change([&a, &b], &ida),
-            Err(WorkspaceError::Conflict(m)) if m == "alpha is creating; change the user it runs as when that is done"
-        ));
-        assert!(matches!(
-            check_start_folder_change([&a, &b], &ida),
-            Err(WorkspaceError::Conflict(m)) if m.ends_with("change its start folder when that is done")
-        ));
-        a.busy = Some(Operation::Starting);
-        assert!(check_session_user_change([&a, &b], &ida).is_ok());
-        assert!(matches!(
-            check_session_user_change([&a, &b], &missing),
-            Err(WorkspaceError::NotFound(_))
-        ));
-    }
-
-    fn draft(url: &str) -> RepositoryDraft {
-        RepositoryDraft {
-            url: url.to_owned(),
-            ..RepositoryDraft::default()
-        }
-    }
-
-    #[test]
-    fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
-        let source = |folder: &str, origin: Result<&str, &str>| LocalSource {
-            // flake-ok: only compared as a value, never opened as a path
-            git_dir: PathBuf::from(format!("/home/u/{folder}/.git")),
-            folder_name: folder.into(),
-            origin: origin.map(str::to_owned).map_err(str::to_owned),
-        };
-        let local = |path: &str, url: &str| RepositoryDraft {
-            url: url.to_owned(),
-            local: Some(path.to_owned()),
-            ..RepositoryDraft::default()
-        };
-        let mut locals = BTreeMap::new();
-        locals.insert(
-            "/home/u/Shop".to_owned(),
-            Ok(source("Shop", Ok("https://github.com/acme/shop.git"))),
-        );
-        locals.insert(
-            "/home/u/none".to_owned(),
-            Ok(source("none", Err("it has no origin remote"))),
-        );
-        locals.insert(
-            "/home/u/plain".to_owned(),
-            Err("/home/u/plain is not a git checkout: it has no .git".to_owned()),
-        );
-        let checked = check_repositories_with(
-            &[
-                local("/home/u/Shop", ""),
-                local("/home/u/none", "https://example.org/acme/x.git"),
-            ],
-            |_| false,
-            &locals,
-        )
-        .unwrap();
-        assert_eq!(
-            checked[0].repository.url.as_str(),
-            "https://github.com/acme/shop.git"
-        );
-        assert_eq!(checked[0].repository.directory.as_str(), "Shop");
-        // flake-ok: only compared as a value, never opened as a path
-        assert_eq!(checked[0].local, Some(PathBuf::from("/home/u/Shop/.git")));
-        // A given address stands in for a missing origin.
-        assert_eq!(
-            checked[1].repository.url.as_str(),
-            "https://example.org/acme/x.git"
-        );
-        assert!(checked.iter().all(|r| r.pull && r.push));
-        let refused =
-            |d: RepositoryDraft| check_repositories_with(&[d], |_| false, &locals).unwrap_err();
-        assert_eq!(
-            refused(local("/home/u/none", "")),
-            "repository 1 (the checkout /home/u/none): it has no origin remote"
-        );
-        assert_eq!(
-            refused(local("/home/u/plain", "")),
-            "repository 1 (the checkout /home/u/plain): /home/u/plain is not a git checkout: it has no .git"
-        );
-        assert_eq!(
-            refused(local("/home/u/unseen", "")),
-            "repository 1 (the checkout /home/u/unseen): it was not looked at"
-        );
-        // The address still passes the create's checks.
-        assert!(refused(local("/home/u/Shop", "http://example.org/x")).contains("https://"));
-        // Without a draft that names one, the plain check needs no service.
-        assert_eq!(
-            check_repositories(&[draft("https://github.com/a/b")], |_| false).unwrap()[0].local,
-            None
-        );
-    }
-
-    #[test]
-    fn the_default_service_has_no_checkouts_on_this_computer() {
-        let err = NoWorkspaces.local_checkout("/home/u/shop").unwrap_err();
-        assert!(err.contains("not available"), "{err}");
-    }
-
-    #[test]
-    fn a_repository_list_takes_defaults_and_keeps_its_order() {
-        let checked = check_repositories(
-            &[
-                draft("https://github.com/acme/api.git"),
-                RepositoryDraft {
-                    directory: Some("site".into()),
-                    identity: Some(IdentityId(4)),
-                    pull: Some(false),
-                    ..draft("https://github.com/acme/web")
-                },
-            ],
-            |id| id == IdentityId(4),
-        )
-        .unwrap();
-        let shape: Vec<_> = checked
-            .iter()
-            .map(|r| {
-                (
-                    r.repository.url.as_str(),
-                    r.repository.directory.as_str(),
-                    r.identity,
-                    r.pull,
-                    r.push,
-                )
-            })
-            .collect();
-        assert_eq!(
-            shape,
-            [
-                ("https://github.com/acme/api.git", "api", None, true, true),
-                (
-                    "https://github.com/acme/web",
-                    "site",
-                    Some(IdentityId(4)),
-                    false,
-                    true
-                ),
-            ]
-        );
-        assert_eq!(check_repositories(&[], |_| false).unwrap(), []);
-    }
-
-    #[test]
-    fn a_repository_list_is_refused_naming_the_entry() {
-        let refused =
-            |drafts: &[RepositoryDraft]| check_repositories(drafts, |_| false).unwrap_err();
-        let clash = refused(&[
-            draft("https://github.com/acme/api"),
-            draft("https://github.com/acme/web"),
-            draft("https://gitlab.com/other/api.git"),
-        ]);
-        assert_eq!(
-            clash,
-            "repositories 1 (https://github.com/acme/api) and 3 (https://gitlab.com/other/api.git) \
-             both go into api; give one of them another directory, such as api-2"
-        );
-        let taken = refused(&[
-            draft("https://github.com/acme/api"),
-            RepositoryDraft {
-                directory: Some("api-2".into()),
-                ..draft("https://github.com/acme/web")
-            },
-            draft("https://gitlab.com/other/api.git"),
-        ]);
-        assert!(taken.ends_with("such as api-3"), "{taken}");
-        let twice = refused(&[
-            draft("https://github.com/Acme/API.git"),
-            RepositoryDraft {
-                directory: Some("again".into()),
-                ..draft("https://github.com/acme/api/")
-            },
-        ]);
-        assert_eq!(
-            twice,
-            "repositories 1 (https://github.com/Acme/API.git) and 2 (https://github.com/acme/api/) \
-             are the same repository, github.com/acme/api; list it once"
-        );
-        let ghost = refused(&[
-            draft("https://github.com/acme/api"),
-            RepositoryDraft {
-                identity: Some(IdentityId(9)),
-                ..draft("https://github.com/acme/web")
-            },
-        ]);
-        assert_eq!(
-            ghost,
-            "repository 2 (https://github.com/acme/web): there is no identity 9"
-        );
-        let ssh = refused(&[draft("git@github.com:acme/api.git")]);
-        assert!(
-            ssh.starts_with("repository 1 (git@github.com:acme/api.git): SSH remotes"),
-            "{ssh}"
-        );
-        let bad_dir = refused(&[RepositoryDraft {
-            directory: Some("../up".into()),
-            ..draft("https://github.com/acme/api")
-        }]);
-        assert!(bad_dir.contains("must not start with"), "{bad_dir}");
-        let many: Vec<_> = (0..=MAX_REPOSITORIES)
-            .map(|n| draft(&format!("https://github.com/acme/r{n}")))
-            .collect();
-        assert_eq!(
-            refused(&many),
-            "a workspace holds at most 100 repositories; this list has 101"
-        );
-        assert!(check_repositories(&many[..MAX_REPOSITORIES], |_| false).is_ok());
-    }
-
-    #[test]
-    fn a_refused_address_is_named_without_its_credentials() {
-        let err = check_repositories(&[draft("  https://me:tok@github.com/a/b  ")], |_| false)
-            .unwrap_err();
-        assert!(
-            err.starts_with("repository 1 (https://***@github.com/a/b): remove the user name"),
-            "{err}"
-        );
-        assert!(!err.contains("tok"), "{err}");
-        let long = format!("https://github.com/{}", "a".repeat(3000));
-        let err = check_repositories(&[draft(&long)], |_| false).unwrap_err();
-        assert!(err.len() < 400, "{}", err.len());
-    }
-
-    #[test]
-    fn a_long_directory_still_gets_a_free_name_that_fits() {
-        let long = "a".repeat(CheckoutDir::MAX_LEN);
-        let refused = check_repositories(
-            &[
-                RepositoryDraft {
-                    directory: Some(long.clone()),
-                    ..draft("https://github.com/acme/one")
-                },
-                RepositoryDraft {
-                    directory: Some(long.clone()),
-                    ..draft("https://github.com/acme/two")
-                },
-            ],
-            |_| false,
-        )
-        .unwrap_err();
-        let suggested = refused.rsplit(' ').next().unwrap();
-        assert_eq!(suggested, format!("{}-2", "a".repeat(98)));
-    }
-
-    #[test]
-    fn a_start_folder_is_a_plain_path_under_the_volume() {
-        for ok in ["api", "api/src", "web site/app", "a.b/c_d"] {
-            assert_eq!(StartFolder::parse(ok).unwrap().as_str(), ok);
-        }
-        assert!(StartFolder::parse(&"a".repeat(255)).is_ok());
-        for (bad, why) in [
-            ("", "empty"),
-            ("/api", "leading /"),
-            ("api/", "empty, . or .."),
-            ("a//b", "empty, . or .."),
-            ("./api", "empty, . or .."),
-            ("api/../..", "empty, . or .."),
-            ("..", "empty, . or .."),
-            ("a\\b", "control characters"),
-            ("a\nb", "control characters"),
-            (".puddle", "inside .puddle"),
-            (".puddle/editor", "inside .puddle"),
-            ("lost+found/x", "inside lost+found"),
-            (&"a".repeat(256), "255 bytes"),
-        ] {
-            let err = StartFolder::parse(bad).unwrap_err();
-            assert!(err.contains(why), "{bad:?}: {err}");
-        }
-        assert_eq!(
-            StartFolder::of_checkout(&CheckoutDir::new("src").unwrap()).as_str(),
-            "src"
-        );
-    }
-
-    #[test]
-    fn operations_have_wire_names() {
-        assert_eq!(Operation::Reclaiming.to_string(), "reclaiming");
-        assert_eq!(Operation::Deleting.to_string(), "deleting");
-    }
-}
+mod tests;

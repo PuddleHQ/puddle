@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Rules on the method and path of a request as pure data: how one reads, the checks the form runs
 // before it asks (the same ones the API applies, so a typing slip is caught at the field), and how
 // the API's refusals map back to a field. No layout and no API calls here.

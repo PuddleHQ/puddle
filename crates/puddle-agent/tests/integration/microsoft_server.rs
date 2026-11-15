@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for Microsoft's editor server: the agent finds the newest build, downloads it, checks
 //! the service's SHA-256, unpacks it on the volume and starts it with a connection token, the
 //! accepted terms and the telemetry choice. A fake update service and a shell script inside a
@@ -20,10 +20,11 @@ use std::time::Duration;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use puddle_agent::download::{Downloader, Fetch};
 use puddle_agent::editor::{self, Control, EditorConfig, UpdateTimes};
 use puddle_agent::microsoft::{
-    Downloader, Fetch, InstallError, Update, confirm, current_build, download_url, ensure_build,
-    install_latest, latest_url, on_trial, roll_back, stage_update, switch_to_staged, versions_url,
+    InstallError, Update, confirm, current_build, download_url, ensure_build, install_latest,
+    latest_url, on_trial, roll_back, stage_update, switch_to_staged, versions_url,
 };
 use puddle_agent_proto::editor::EditorServer;
 use sha2::{Digest as _, Sha256};
@@ -478,8 +479,7 @@ async fn a_half_made_build_is_not_a_build() {
 /// A script that stands in for `curl` or `wget`.
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
     path
 }
 

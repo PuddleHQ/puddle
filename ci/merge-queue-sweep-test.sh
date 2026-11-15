@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/merge-queue-sweep.sh with a fake `gh` serving a GraphQL answer ($FAKE_PRS) and recording each call:
 # which PRs it acts on (armed, CLEAN, not queued, last check older than SWEEP_MIN) and the fallback when the direct
 # merge request fails. Prints ok only when every case passes.
@@ -75,6 +75,13 @@ run "unreadable GitHub: exit 1, nothing changed" 1 "" FAKE_READ_FAIL=1
 run "nothing stuck" 0 "" FAKE_X=1
 echo '{"data": {}}' >"$tmp/prs"
 run "unexpected answer: exit 1" 1 "" FAKE_X=1
+
+# The sweep's App token must carry Contents write: with Pull requests write alone GitHub answered "Resource not accessible
+# by integration" to enqueuePullRequest and disablePullRequestAutoMerge (PR 915, 2026-11-13).
+wf="$here/../.github/workflows/merge-queue-sweep.yml"
+for perm in permission-contents permission-pull-requests; do
+    grep -qE "^ +$perm: write$" "$wf" || bad "$wf: the App token does not request $perm: write"
+done
 
 if [ "$fail" = 0 ]; then
     echo "merge-queue-sweep-test: ok"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Writes a timing file for ci/vm-partition.sh from nextest junit.xml files: per test the median of its passing seconds.
 # A failed or skipped test has no self-closing <testcase/> line and is left out, so a bad run adds no wrong time.
 #

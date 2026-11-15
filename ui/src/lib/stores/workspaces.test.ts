@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import {
@@ -117,7 +117,11 @@ describe("events", () => {
         ? {
             ...w,
             repositories: [
-              { url: "https://github.com/acme/x.git", directory: "x" },
+              {
+                entry: "e-x",
+                url: "https://github.com/acme/x.git",
+                directory: "x",
+              },
             ],
           }
         : w,
@@ -139,6 +143,26 @@ describe("events", () => {
       process: "node",
     });
     expect(store.oom["w-a-shop"]).toEqual({ process: "node", pid: 9, at: 777 });
+  });
+
+  it("keeps the last tool install state of a workspace and drops it when the workspace goes down", () => {
+    store.handleEvent({
+      type: "workspace_tools",
+      workspace: "w-a-shop",
+      state: { phase: "installing", done: 0, total: 2, tools: ["node"] },
+    });
+    store.handleEvent({
+      type: "workspace_tools",
+      workspace: "w-a-shop",
+      state: { phase: "ready" },
+    });
+    expect(store.tools["w-a-shop"]).toEqual({ phase: "ready" });
+    store.handleEvent({
+      type: "status_changed",
+      workspace: "w-a-shop",
+      status: "stopped",
+    });
+    expect(store.tools["w-a-shop"]).toBeUndefined();
   });
 
   it("reads the list again when a disk reaches the warning threshold", async () => {
@@ -346,6 +370,26 @@ describe("actions", () => {
       expect(store.progress["w-b-site"]).toBeUndefined();
     },
   );
+
+  it("growRootDisk sends the size in MiB and marks the workspace busy at once", async () => {
+    api.list = [workspace("b-site", { root_disk_size_mib: 10_240 })];
+    await store.refresh();
+    const result = await store.growRootDisk("w-b-site", 20_480);
+    expect(result.ok).toBe(true);
+    expect(api.bodies.at(-1)).toEqual({ size_mib: 20_480 });
+    expect(store.byId("w-b-site")).toMatchObject({
+      busy: "growing_root_disk",
+      root_disk_size_mib: 20_480,
+    });
+  });
+
+  it("growRootDisk hands a refusal back and leaves the workspace alone", async () => {
+    api.list = [workspace("b-site", { root_disk_size_mib: 10_240 })];
+    await store.refresh();
+    const result = await store.growRootDisk("w-b-site", 10_240);
+    expect(result).toMatchObject({ ok: false });
+    expect(store.byId("w-b-site")?.busy).toBeNull();
+  });
 
   it("takes the operation from its first step when the answer to the request is late", async () => {
     // The service finished before its answer reached the page: steps, then done.

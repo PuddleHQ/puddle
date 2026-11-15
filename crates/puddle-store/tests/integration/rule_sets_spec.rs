@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rule sets and System managed (`docs/spec/rules.md` §7, R-36 to R-43), through the store's
 //! public API.
 #![expect(
@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use puddle_store::testing::own;
 use puddle_store::{
     Actor, BUILT_IN_SETS, Effect, Limits, ManualClock, NewRule, Pattern, PendingState, Resolution,
     Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason, parse_rule_set,
@@ -20,12 +21,21 @@ use puddle_types::{
 };
 use serde_json::Value;
 
+const OWNER: puddle_store::UserId = puddle_store::UserId::OWNER;
 const T0: u64 = 1_800_000_000_000;
 
 fn fixture() -> (Arc<ManualClock>, Store) {
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
+    own_workspaces(&store);
     (clock, store)
+}
+
+/// The workspaces these tests use, each the owner's.
+fn own_workspaces(store: &Store) {
+    for name in ["a", "b", "c", "gone", "ssh"] {
+        own(store, &sb(name));
+    }
 }
 
 fn sb(id: &str) -> WorkspaceId {
@@ -70,7 +80,11 @@ fn audit_of(store: &Store, kind: &str) -> Vec<Value> {
 }
 
 fn user_set(store: &Store, name: &str) -> i64 {
-    match store.create_rule_set(name, "", None, Actor::Ui).unwrap().id {
+    match store
+        .create_rule_set(OWNER, name, "", None, Actor::Ui)
+        .unwrap()
+        .id
+    {
         RuleSetId::User(id) => id,
         other => panic!("{other:?}"),
     }
@@ -83,13 +97,14 @@ fn plan(everywhere: &[SystemReason], per: &[(&str, &[SystemReason])]) -> SystemP
             .iter()
             .map(|(s, r)| (sb(s), r.iter().copied().collect::<BTreeSet<_>>()))
             .collect::<BTreeMap<_, _>>(),
+        ..SystemPlan::default()
     }
 }
 
 #[test]
 fn r36_built_in_sets_are_listed_read_only_and_ship_off() {
     let (_, store) = fixture();
-    let sets = store.rule_sets().unwrap();
+    let sets = store.rule_sets(OWNER).unwrap();
     assert_eq!(sets.len(), BUILT_IN_SETS.len());
     for (set, shipped) in sets.iter().zip(BUILT_IN_SETS) {
         assert_eq!(set.id, RuleSetId::BuiltIn(shipped.slug));
@@ -108,7 +123,7 @@ fn r36_built_in_sets_are_listed_read_only_and_ship_off() {
     ));
     // A built-in set has no rule rows to delete or rename.
     assert!(matches!(
-        store.update_rule_set(1, "x", "", None, Actor::Ui),
+        store.update_rule_set(OWNER, 1, "x", "", None, Actor::Ui),
         Err(StoreError::UnknownRuleSet(_))
     ));
 }
@@ -139,7 +154,7 @@ fn r36_an_update_that_changes_a_built_in_set_is_recorded() {
             .unwrap()
             .contains(&Value::from("api.github.com"))
     );
-    let github = store.rule_set(RuleSetId::BuiltIn("github")).unwrap();
+    let github = store.rule_set(OWNER, RuleSetId::BuiltIn("github")).unwrap();
     assert_eq!(github.changed_at, Some(T0 + 5_000));
     // Opening again with the same catalogue records nothing new.
     drop(store);
@@ -155,10 +170,10 @@ fn r37_switches_apply_globally_with_a_per_workspace_override_and_close_waiting_r
     let waiting_b = pending(decide(&store, "b", "api.github.com"));
     // Off for b first, then on everywhere: only a's request closes.
     store
-        .switch_rule_set(github, Some(&sb("b")), Some(false), Actor::Ui)
+        .switch_rule_set(OWNER, github, Some(&sb("b")), Some(false), Actor::Ui)
         .unwrap();
     let closed = store
-        .switch_rule_set(github, None, Some(true), Actor::Ui)
+        .switch_rule_set(OWNER, github, None, Some(true), Actor::Ui)
         .unwrap();
     assert_eq!(closed, vec![waiting_a]);
     let row = store.pending(waiting_a).unwrap();
@@ -183,11 +198,11 @@ fn r37_switches_apply_globally_with_a_per_workspace_override_and_close_waiting_r
     ));
     // b back to following the global switch.
     let closed = store
-        .switch_rule_set(github, Some(&sb("b")), None, Actor::Ui)
+        .switch_rule_set(OWNER, github, Some(&sb("b")), None, Actor::Ui)
         .unwrap();
     assert_eq!(closed, vec![waiting_b]);
-    let info = store.rule_set(github).unwrap();
-    assert_eq!((info.global, info.overrides.clone()), (Some(true), vec![]));
+    let info = store.rule_set(OWNER, github).unwrap();
+    assert_eq!((info.global, info.overrides), (Some(true), vec![]));
     let switched = audit_of(&store, "rule_set_switched");
     assert_eq!(switched.len(), 3);
     assert_eq!(switched[1]["workspace_id"], Value::Null);
@@ -196,7 +211,7 @@ fn r37_switches_apply_globally_with_a_per_workspace_override_and_close_waiting_r
     assert_eq!(switched[2]["actor"], "ui");
     // Off again: the next request goes pending (R-8 applies).
     store
-        .switch_rule_set(github, None, Some(false), Actor::Ui)
+        .switch_rule_set(OWNER, github, None, Some(false), Actor::Ui)
         .unwrap();
     assert!(matches!(
         decide(&store, "a", "api.github.com"),
@@ -208,19 +223,26 @@ fn r37_switches_apply_globally_with_a_per_workspace_override_and_close_waiting_r
 fn r37_only_real_sets_switch_and_only_users_switch_them() {
     let (_, store) = fixture();
     assert!(matches!(
-        store.switch_rule_set(RuleSetId::System, None, Some(false), Actor::Ui),
+        store.switch_rule_set(OWNER, RuleSetId::System, None, Some(false), Actor::Ui),
         Err(StoreError::NotSwitchable)
     ));
     assert!(matches!(
-        store.switch_rule_set(RuleSetId::User(42), None, Some(true), Actor::Ui),
+        store.switch_rule_set(OWNER, RuleSetId::User(42), None, Some(true), Actor::Ui),
         Err(StoreError::UnknownRuleSet(id)) if id == "user:42"
     ));
     assert!(matches!(
-        store.switch_rule_set(RuleSetId::BuiltIn("nope"), None, Some(true), Actor::Ui),
+        store.switch_rule_set(
+            OWNER,
+            RuleSetId::BuiltIn("nope"),
+            None,
+            Some(true),
+            Actor::Ui
+        ),
         Err(StoreError::UnknownRuleSet(_))
     ));
     assert!(matches!(
         store.switch_rule_set(
+            OWNER,
             RuleSetId::BuiltIn("github"),
             None,
             Some(true),
@@ -234,10 +256,11 @@ fn r37_only_real_sets_switch_and_only_users_switch_them() {
 fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     let (_, store) = fixture();
     let azure = user_set(&store, "Azure work");
-    let info = store.rule_set(RuleSetId::User(azure)).unwrap();
+    let info = store.rule_set(OWNER, RuleSetId::User(azure)).unwrap();
     assert!(info.on_by_default() && info.entries.is_empty() && info.created_at == Some(T0));
     // An entry added directly.
     let entry = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Set(azure), "*.azure.com", Effect::Allow))
         .unwrap();
     assert!(matches!(
@@ -255,7 +278,7 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     assert_eq!(decided.also_closed, vec![in_b]);
     assert_eq!(
         store
-            .rule_set(RuleSetId::User(azure))
+            .rule_set(OWNER, RuleSetId::User(azure))
             .unwrap()
             .entries
             .len(),
@@ -264,6 +287,7 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     // Not into a set that is off for the row's workspace: that would allow nothing.
     store
         .switch_rule_set(
+            OWNER,
             RuleSetId::User(azure),
             Some(&sb("c")),
             Some(false),
@@ -283,7 +307,9 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
         Err(StoreError::UnknownRuleSet(_))
     ));
     assert!(matches!(
-        store.add_rule(&new_rule(Scope::Set(999), "x.example", Effect::Allow)),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .add_rule(&new_rule(Scope::Set(999), "x.example", Effect::Allow)),
         Err(StoreError::UnknownRuleSet(_))
     ));
 }
@@ -292,7 +318,10 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
 fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
     let (_, store) = fixture();
     let one = user_set(&store, "  Work  ");
-    assert_eq!(store.rule_set(RuleSetId::User(one)).unwrap().name, "Work");
+    assert_eq!(
+        store.rule_set(OWNER, RuleSetId::User(one)).unwrap().name,
+        "Work"
+    );
     for (name, why) in [
         ("", "a name is needed"),
         ("work", "another rule set has this name"),
@@ -300,24 +329,31 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
         ("bad\nname", "no control characters"),
     ] {
         assert!(
-            matches!(store.create_rule_set(name, "", None, Actor::Ui), Err(StoreError::RuleSetName(w)) if w == why),
+            matches!(store.create_rule_set(OWNER, name, "", None, Actor::Ui), Err(StoreError::RuleSetName(w)) if w == why),
             "{name:?}"
         );
     }
     assert!(matches!(
-        store.create_rule_set(&"x".repeat(65), "", None, Actor::Ui),
+        store.create_rule_set(OWNER, &"x".repeat(65), "", None, Actor::Ui),
         Err(StoreError::RuleSetName(_))
     ));
     assert!(matches!(
-        store.create_rule_set("ok", &"d".repeat(501), None, Actor::Ui),
+        store.create_rule_set(OWNER, "ok", &"d".repeat(501), None, Actor::Ui),
         Err(StoreError::RuleSetName(_))
     ));
     assert!(matches!(
-        store.create_rule_set("sys", "", None, Actor::System),
+        store.create_rule_set(OWNER, "sys", "", None, Actor::System),
         Err(StoreError::SystemActor)
     ));
     let renamed = store
-        .update_rule_set(one, "Client X", "hosts for client X", None, Actor::Api)
+        .update_rule_set(
+            OWNER,
+            one,
+            "Client X",
+            "hosts for client X",
+            None,
+            Actor::Api,
+        )
         .unwrap();
     assert_eq!(
         (renamed.name.as_str(), renamed.description.as_str()),
@@ -325,17 +361,23 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
     );
     // Renaming to its own name in another case is fine.
     store
-        .update_rule_set(one, "client x", "", None, Actor::Api)
+        .update_rule_set(OWNER, one, "client x", "", None, Actor::Api)
         .unwrap();
     let r = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Set(one), "x.example", Effect::Deny))
         .unwrap();
     store
-        .switch_rule_set(RuleSetId::User(one), None, Some(true), Actor::Ui)
+        .switch_rule_set(OWNER, RuleSetId::User(one), None, Some(true), Actor::Ui)
         .unwrap();
-    let deleted = store.delete_rule_set(one, Actor::Ui).unwrap();
+    let deleted = store.delete_rule_set(OWNER, one, Actor::Ui).unwrap();
     assert_eq!(deleted.entries.len(), 1);
-    assert!(store.rules().iter().all(|rule| rule.id != r.id));
+    assert!(
+        store
+            .rules_every_user(&puddle_store::testing::all_users())
+            .iter()
+            .all(|rule| rule.id != r.id)
+    );
     assert!(matches!(
         decide(&store, "a", "x.example"),
         Decision::Pending(_)
@@ -351,7 +393,7 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
     );
     assert_eq!(audit_of(&store, "rule_set_updated").len(), 2);
     assert!(matches!(
-        store.delete_rule_set(one, Actor::Ui),
+        store.delete_rule_set(OWNER, one, Actor::Ui),
         Err(StoreError::UnknownRuleSet(_))
     ));
     // The name is free again.
@@ -366,6 +408,7 @@ fn r39_your_own_rules_decide_before_any_set() {
         .unwrap();
     // E1: your global deny of *.visualstudio.com beats System managed's exact allow.
     let deny = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Global, "*.visualstudio.com", Effect::Deny))
         .unwrap();
     assert_eq!(
@@ -379,9 +422,11 @@ fn r39_your_own_rules_decide_before_any_set() {
     // E2: your allow of *.example.com; your set blocks ads.example.com; your exact allow wins.
     let blocks = user_set(&store, "Trackers");
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Global, "*.example.com", Effect::Allow))
         .unwrap();
     let block = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(
             Scope::Set(blocks),
             "ads.example.com",
@@ -397,6 +442,7 @@ fn r39_your_own_rules_decide_before_any_set() {
         }
     );
     let mine = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(
             Scope::Workspace(sb("a")),
             "ads.example.com",
@@ -422,6 +468,7 @@ fn r39_a_set_may_hold_allows_and_denies_and_the_most_specific_entry_wins() {
     let mixed = user_set(&store, "Mixed");
     let entry = |pattern: &str, effect| {
         store
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&new_rule(Scope::Set(mixed), pattern, effect))
             .unwrap()
     };
@@ -495,7 +542,9 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
         decide(&store, "a", "marketplace.visualstudio.com"),
         Decision::Pending(_)
     ));
-    let hosts = store.system_managed().unwrap();
+    let hosts = store
+        .system_managed_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert!(hosts.iter().any(|h| h.pattern == "open-vsx.org"
         && h.reason == SystemReason::CodeServer
         && h.workspace.is_none()));
@@ -536,7 +585,12 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
     assert!(decide(&store, "a", "marketplace.visualstudio.com").is_allow());
     // Nothing chosen: nothing allowed.
     store.set_system_managed(&SystemPlan::default()).unwrap();
-    assert_eq!(store.system_managed().unwrap(), Vec::new());
+    assert_eq!(
+        store
+            .system_managed_every_user(&puddle_store::testing::all_users())
+            .unwrap(),
+        Vec::new()
+    );
     assert!(matches!(
         decide(&store, "a", "marketplace.visualstudio.com"),
         Decision::Pending(_)
@@ -551,6 +605,7 @@ fn r41_deleting_a_workspace_removes_its_switches_and_system_reasons() {
         .unwrap();
     store
         .switch_rule_set(
+            OWNER,
             RuleSetId::BuiltIn("github"),
             Some(&sb("gone")),
             Some(true),
@@ -558,8 +613,13 @@ fn r41_deleting_a_workspace_removes_its_switches_and_system_reasons() {
         )
         .unwrap();
     store.delete_workspace(&sb("gone")).unwrap();
-    assert_eq!(store.system_managed().unwrap(), Vec::new());
-    let github = store.rule_set(RuleSetId::BuiltIn("github")).unwrap();
+    assert_eq!(
+        store
+            .system_managed_every_user(&puddle_store::testing::all_users())
+            .unwrap(),
+        Vec::new()
+    );
+    let github = store.rule_set(OWNER, RuleSetId::BuiltIn("github")).unwrap();
     assert_eq!(github.overrides, Vec::new());
 }
 
@@ -567,7 +627,13 @@ fn r41_deleting_a_workspace_removes_its_switches_and_system_reasons() {
 fn r42_set_allows_need_an_exact_rule_of_your_own_for_local_destinations() {
     let (_, store) = fixture();
     store
-        .switch_rule_set(RuleSetId::BuiltIn("github"), None, Some(true), Actor::Ui)
+        .switch_rule_set(
+            OWNER,
+            RuleSetId::BuiltIn("github"),
+            None,
+            Some(true),
+            Actor::Ui,
+        )
         .unwrap();
     // After a local address, the proxy asks again without wildcard-like allows: no match.
     let again = store
@@ -576,6 +642,7 @@ fn r42_set_allows_need_an_exact_rule_of_your_own_for_local_destinations() {
     assert!(matches!(again, Decision::Pending(_)));
     // Your own exact allow does count.
     let mine = store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&new_rule(Scope::Global, "github.com", Effect::Allow))
         .unwrap();
     assert_eq!(
@@ -605,7 +672,11 @@ fn r43_connection_records_name_the_set_that_decided() {
     assert_eq!(record["rule_id"], Value::Null);
     assert_eq!(record["rule_set"], "system");
     assert_eq!(event.decision, ConnectionDecision::Allow);
-    let rows: Vec<RuleId> = store.rules().iter().map(|r| r.id).collect();
+    let rows: Vec<RuleId> = store
+        .rules_every_user(&puddle_store::testing::all_users())
+        .iter()
+        .map(|r| r.id)
+        .collect();
     assert!(rows.is_empty(), "System managed writes no rule rows");
 }
 
@@ -615,7 +686,9 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
     store
         .set_system_managed(&plan(&[SystemReason::MicrosoftServer], &[]))
         .unwrap();
-    let hosts = store.system_managed().unwrap();
+    let hosts = store
+        .system_managed_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert_eq!(hosts.len(), SystemReason::MicrosoftServer.hosts().len());
     for host in &hosts {
         assert_eq!(host.reason, SystemReason::MicrosoftServer);
@@ -627,10 +700,13 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
             .describe()
             .contains("Microsoft's VS Code server")
     );
-    assert_eq!(store.rules(), Vec::new());
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        Vec::new()
+    );
     // Not a set: it can't be listed or switched as one.
     assert!(matches!(
-        store.rule_set(RuleSetId::System),
+        store.rule_set(OWNER, RuleSetId::System),
         Err(StoreError::UnknownRuleSet(_))
     ));
 }
@@ -655,7 +731,7 @@ fn r38_the_list_has_your_sets_after_the_built_in_ones_and_only_users_change_them
     let b = user_set(&store, "b set");
     let a = user_set(&store, "A set");
     let ids: Vec<RuleSetId> = store
-        .rule_sets()
+        .rule_sets(OWNER)
         .unwrap()
         .into_iter()
         .map(|s| s.id)
@@ -666,11 +742,11 @@ fn r38_the_list_has_your_sets_after_the_built_in_ones_and_only_users_change_them
         [RuleSetId::User(a), RuleSetId::User(b)]
     );
     assert!(matches!(
-        store.update_rule_set(a, "x", "", None, Actor::System),
+        store.update_rule_set(OWNER, a, "x", "", None, Actor::System),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
-        store.delete_rule_set(a, Actor::System),
+        store.delete_rule_set(OWNER, a, Actor::System),
         Err(StoreError::SystemActor)
     ));
 }
@@ -680,13 +756,13 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.db");
     let clock = Arc::new(ManualClock::new(T0));
-    drop(Store::open(&path, clock.clone(), Limits::default()).unwrap());
+    own_workspaces(&Store::open(&path, clock.clone(), Limits::default()).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at) VALUES
-            ('builtin:gone', NULL, 1, 1),
-            ('builtin:github', 'Not A Name', 1, 1),
-            ('builtin:github', 'a', 1, 1);
+        "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id) VALUES
+            ('builtin:gone', NULL, 1, 1, 1),
+            ('builtin:github', 'Not A Name', 1, 1, 1),
+            ('builtin:github', 'a', 1, 1, 1);
          INSERT INTO system_reasons (workspace_id, reason) VALUES
             (NULL, 'a_later_reason'),
             ('Not A Name', 'code_server'),
@@ -698,7 +774,9 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     // The readable rows count; the others are skipped.
     assert!(decide(&store, "a", "github.com").is_allow());
     assert!(!decide(&store, "b", "github.com").is_allow());
-    let hosts = store.system_managed().unwrap();
+    let hosts = store
+        .system_managed_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert!(hosts.iter().all(|h| h.workspace == Some(sb("a"))));
     assert!(decide(&store, "a", "open-vsx.org").is_allow());
 }
@@ -709,33 +787,35 @@ fn r37_a_workspace_override_beats_the_global_switch_which_beats_the_default() {
     let id = user_set(&store, "Layers");
     let set = RuleSetId::User(id);
     let (a, b) = (sb("a"), sb("b"));
-    let is_on = |w: &WorkspaceId| store.rule_set(set).unwrap().is_on(w);
+    let is_on = |w: &WorkspaceId| store.rule_set(OWNER, set).unwrap().is_on(w);
     // A set the user made is on by default, for everyone.
     assert!(is_on(&a) && is_on(&b));
     // The global switch decides where no override says otherwise.
     store
-        .switch_rule_set(set, None, Some(false), Actor::Ui)
+        .switch_rule_set(OWNER, set, None, Some(false), Actor::Ui)
         .unwrap();
     assert!(!is_on(&a) && !is_on(&b));
     // An override turns one workspace on, and only that one.
     store
-        .switch_rule_set(set, Some(&a), Some(true), Actor::Ui)
+        .switch_rule_set(OWNER, set, Some(&a), Some(true), Actor::Ui)
         .unwrap();
     assert!(is_on(&a) && !is_on(&b));
     // An override turns one off while the rest follow a global on.
     store
-        .switch_rule_set(set, None, Some(true), Actor::Ui)
+        .switch_rule_set(OWNER, set, None, Some(true), Actor::Ui)
         .unwrap();
     store
-        .switch_rule_set(set, Some(&a), Some(false), Actor::Ui)
+        .switch_rule_set(OWNER, set, Some(&a), Some(false), Actor::Ui)
         .unwrap();
     assert!(!is_on(&a) && is_on(&b));
     // Back to following the global switch, then the default.
     store
-        .switch_rule_set(set, Some(&a), None, Actor::Ui)
+        .switch_rule_set(OWNER, set, Some(&a), None, Actor::Ui)
         .unwrap();
     assert!(is_on(&a));
-    store.switch_rule_set(set, None, None, Actor::Ui).unwrap();
+    store
+        .switch_rule_set(OWNER, set, None, None, Actor::Ui)
+        .unwrap();
     assert!(is_on(&a) && is_on(&b));
 }
 
@@ -743,21 +823,25 @@ fn r37_a_workspace_override_beats_the_global_switch_which_beats_the_default() {
 fn r38_a_name_of_64_characters_and_a_description_of_500_are_the_longest_allowed() {
     let (_, store) = fixture();
     let longest = store
-        .create_rule_set(&"x".repeat(64), &"d".repeat(500), None, Actor::Ui)
+        .create_rule_set(OWNER, &"x".repeat(64), &"d".repeat(500), None, Actor::Ui)
         .unwrap();
     assert_eq!(longest.name.chars().count(), 64);
     assert_eq!(longest.description.chars().count(), 500);
     // Counted in characters, not bytes.
     store
-        .create_rule_set(&"é".repeat(64), &"é".repeat(500), None, Actor::Ui)
+        .create_rule_set(OWNER, &"é".repeat(64), &"é".repeat(500), None, Actor::Ui)
         .unwrap();
 }
 
 #[test]
 fn a_set_without_a_chosen_colour_gets_the_default_of_its_number() {
     let (_, store) = fixture();
-    let one = store.create_rule_set("One", "", None, Actor::Ui).unwrap();
-    let two = store.create_rule_set("Two", "", None, Actor::Ui).unwrap();
+    let one = store
+        .create_rule_set(OWNER, "One", "", None, Actor::Ui)
+        .unwrap();
+    let two = store
+        .create_rule_set(OWNER, "Two", "", None, Actor::Ui)
+        .unwrap();
     assert_eq!(one.fill, Fill::default_for_user_set(1));
     assert_eq!(two.fill, Fill::default_for_user_set(2));
     assert_ne!(one.fill, two.fill);
@@ -775,7 +859,7 @@ fn a_chosen_colour_is_kept_changed_and_audited() {
     let teal = Fill::solid(Rgb::new(0x0a, 0x6a, 0x85));
     let rose = Fill::solid(Rgb::new(0xc0, 0x4f, 0x7a));
     let made = store
-        .create_rule_set("Client", "", Some(teal), Actor::Ui)
+        .create_rule_set(OWNER, "Client", "", Some(teal), Actor::Ui)
         .unwrap();
     assert_eq!(made.fill, teal);
     let RuleSetId::User(id) = made.id else {
@@ -783,15 +867,15 @@ fn a_chosen_colour_is_kept_changed_and_audited() {
     };
     // A rename that names no colour keeps the one it has.
     let renamed = store
-        .update_rule_set(id, "Client X", "", None, Actor::Ui)
+        .update_rule_set(OWNER, id, "Client X", "", None, Actor::Ui)
         .unwrap();
     assert_eq!(renamed.fill, teal);
     let recoloured = store
-        .update_rule_set(id, "Client X", "", Some(rose), Actor::Ui)
+        .update_rule_set(OWNER, id, "Client X", "", Some(rose), Actor::Ui)
         .unwrap();
     assert_eq!(recoloured.fill, rose);
     // It survives a read of the list and shows in the audit before and after.
-    let listed = store.rule_sets().unwrap();
+    let listed = store.rule_sets(OWNER).unwrap();
     assert_eq!(listed.iter().find(|s| s.id == made.id).unwrap().fill, rose);
     let updated = audit_of(&store, "rule_set_updated");
     assert_eq!(
@@ -807,7 +891,7 @@ fn a_chosen_colour_is_kept_changed_and_audited() {
 #[test]
 fn every_built_in_set_shows_its_catalogue_colour() {
     let (_, store) = fixture();
-    let listed = store.rule_sets().unwrap();
+    let listed = store.rule_sets(OWNER).unwrap();
     for built in BUILT_IN_SETS {
         let shown = listed
             .iter()
@@ -815,4 +899,150 @@ fn every_built_in_set_shows_its_catalogue_colour() {
             .unwrap();
         assert_eq!(shown.fill, built.fill, "{}", built.slug);
     }
+}
+
+fn hide_mise() -> SystemPlan {
+    SystemPlan {
+        hidden_sets: [puddle_store::MISE_TOOLS_SLUG].into(),
+        ..SystemPlan::default()
+    }
+}
+
+fn mise_set() -> RuleSetId {
+    RuleSetId::BuiltIn(puddle_store::MISE_TOOLS_SLUG)
+}
+
+#[test]
+fn m8_the_mise_tools_set_ships_off_with_the_measured_hosts() {
+    let (_, store) = fixture();
+    let sets = store.rule_sets(OWNER).unwrap();
+    let set = sets.iter().find(|s| s.id == mise_set()).unwrap();
+    assert!(!set.on_by_default());
+    let mut hosts: Vec<&str> = set.entries.iter().map(|e| e.pattern.as_str()).collect();
+    hosts.sort_unstable();
+    assert_eq!(
+        hosts,
+        [
+            "dl.google.com",
+            "github.com",
+            "mise-java.jdx.dev",
+            "mise-versions.jdx.dev",
+            "mise.jdx.dev",
+            "nodejs.org",
+            "release-assets.githubusercontent.com",
+            "tuf-repo-cdn.sigstore.dev",
+        ]
+    );
+    assert!(matches!(
+        decide(&store, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    for host in ["mise.jdx.dev", "nodejs.org", "dl.google.com"] {
+        assert!(decide(&store, "a", host).is_allow(), "{host}");
+    }
+}
+
+#[test]
+fn m8_a_hidden_set_decides_nothing_and_is_not_listed() {
+    let (_, store) = fixture();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    assert!(decide(&store, "a", "nodejs.org").is_allow());
+    store.set_system_managed(&hide_mise()).unwrap();
+    assert!(matches!(
+        decide(&store, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+    let sets = store.rule_sets(OWNER).unwrap();
+    assert_eq!(sets.len(), BUILT_IN_SETS.len() - 1);
+    assert!(sets.iter().all(|s| s.id != mise_set()));
+    assert!(matches!(
+        store.rule_set(OWNER, mise_set()),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    // Another built-in set that shares a host still decides: only the hidden set's own entries go.
+    store
+        .switch_rule_set(
+            OWNER,
+            RuleSetId::BuiltIn("github"),
+            None,
+            Some(true),
+            Actor::Ui,
+        )
+        .unwrap();
+    assert!(decide(&store, "a", "github.com").is_allow());
+}
+
+#[test]
+fn m8_a_hidden_set_cannot_be_switched_and_its_stored_switch_survives() {
+    let (_, store) = fixture();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    store
+        .switch_rule_set(OWNER, mise_set(), Some(&sb("a")), Some(false), Actor::Ui)
+        .unwrap();
+    store.set_system_managed(&hide_mise()).unwrap();
+    assert!(matches!(
+        store.switch_rule_set(OWNER, mise_set(), None, Some(false), Actor::Ui),
+        Err(StoreError::RuleSetHidden(id)) if id == "builtin:mise-tools"
+    ));
+    // Showing it again returns the set as the user left it: on everywhere, off in "a".
+    store.set_system_managed(&SystemPlan::default()).unwrap();
+    let sets = store.rule_sets(OWNER).unwrap();
+    let set = sets.iter().find(|s| s.id == mise_set()).unwrap();
+    assert_eq!(set.global, Some(true));
+    assert_eq!(set.overrides, [(sb("a"), false)]);
+    assert!(decide(&store, "b", "nodejs.org").is_allow());
+    assert!(matches!(
+        decide(&store, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+}
+
+#[test]
+fn m8_showing_a_switched_on_set_again_closes_the_requests_it_now_allows() {
+    let (_, store) = fixture();
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    store.set_system_managed(&hide_mise()).unwrap();
+    let waiting = pending(decide(&store, "a", "nodejs.org"));
+    let closed = store.set_system_managed(&SystemPlan::default()).unwrap();
+    assert_eq!(closed, [waiting]);
+}
+
+#[test]
+fn m8_the_hidden_state_is_stored_and_a_repeated_plan_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let clock = Arc::new(ManualClock::new(T0));
+    let store = Store::open(&path, clock.clone(), Limits::default()).unwrap();
+    own(&store, &sb("a"));
+    store
+        .switch_rule_set(OWNER, mise_set(), None, Some(true), Actor::Ui)
+        .unwrap();
+    store.set_system_managed(&hide_mise()).unwrap();
+    drop(store);
+    let reopened = Store::open(&path, clock, Limits::default()).unwrap();
+    assert!(matches!(
+        decide(&reopened, "a", "nodejs.org"),
+        Decision::Pending(_)
+    ));
+    let closed = reopened.set_system_managed(&hide_mise()).unwrap();
+    assert_eq!(closed.len(), 0);
+    // A slug this version doesn't ship is not stored.
+    let plan = SystemPlan {
+        hidden_sets: ["nope"].into(),
+        ..SystemPlan::default()
+    };
+    reopened.set_system_managed(&plan).unwrap();
+    assert_eq!(
+        reopened.rule_sets(OWNER).unwrap().len(),
+        BUILT_IN_SETS.len()
+    );
 }

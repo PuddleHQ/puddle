@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   credential,
@@ -310,6 +310,7 @@ describe("credentials", () => {
       readable: true,
       problem: null,
       needs_sign_in: false,
+      fix_step: null,
       checked_at: 1_000,
       by: "injection" as const,
       ...over,
@@ -321,6 +322,7 @@ describe("credentials", () => {
         readable: false,
         problem: "not signed in",
         needs_sign_in: true,
+        fix_step: null,
         by: "repository_list",
       }),
     });
@@ -344,6 +346,7 @@ describe("credentials", () => {
         readable: false,
         problem: "not signed in",
         needs_sign_in: true,
+        fix_step: null,
         checked_at: 1,
         by: "injection",
       },
@@ -373,6 +376,7 @@ describe("credentials", () => {
         readable: true,
         problem: null,
         needs_sign_in: false,
+        fix_step: null,
         checked_at: 5,
         by: "test",
       },

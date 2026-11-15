@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The kill-on-close job object Puddle and every process it starts run in (Windows).
 //!
 //! [`contain_this_process`] creates one job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, puts the
@@ -47,11 +47,4 @@ pub(crate) fn release_kill_on_close() -> Result<(), LifecycleError> {
 }
 
 #[cfg(all(test, not(windows)))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outside_windows_there_is_no_job() {
-        assert_eq!(contain_this_process().unwrap(), Containment::NotNeeded);
-    }
-}
+mod tests;

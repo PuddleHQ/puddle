@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `Alt-Svc` on decrypted responses: the HTTP/3 entries are removed on both HTTP versions and
 //! every other entry and header reaches the guest as the server sent it; a spliced connection is
 //! not touched.

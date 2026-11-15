@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/raise-coverage-baseline.sh: a bare origin, a checkout of its develop, the real ratchet and ci/scope.sh, and a
 # fake `gh` over a table of green ci runs and their coverage summaries. Cases: a raise opens one pull request with one commit
 # and arms auto-merge; the same raise again does nothing; a higher one updates the branch and opens no second pull request;

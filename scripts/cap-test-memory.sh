@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Runs a command with its heap limited, so one runaway test process dies by itself. nextest runs
 # every test through this wrapper in the `mutants` profile (.config/nextest.toml).
 #

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The hostile cases of login capture on a real microVM (K on Linux KVM, W on Windows WHP): what a
 //! guest that is root can do to the login machinery from inside, with the real proxy, the real
 //! agent and a fake token endpoint behind the company proxy.
@@ -29,7 +29,7 @@ use puddle_e2e::lab::{NameProxy, Seen, WebAnswer, WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest, start_vm_host_platform, web_internet};
 
 const TOKEN_HOST: &str = "platform.claude.com";
@@ -165,7 +165,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
             responder: Some(Arc::new(token_endpoint)),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let vm = start_vm_host_platform(tag, internet.options, &internet.platform, |_| {}).await;
@@ -176,8 +176,10 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
         let name = format!("{}-{tag}-{suffix}", vm.settings.prefix.as_str());
         let workspace = WorkspaceId::new(&name).unwrap();
         for site in SITES {
+            puddle_store::testing::own(vm.host.store(), &workspace);
             vm.host
                 .store()
+                .as_user(puddle_store::UserId::OWNER)
                 .add_rule(&NewRule {
                     scope: Scope::Workspace(workspace.clone()),
                     pattern: Pattern::parse(site).unwrap(),

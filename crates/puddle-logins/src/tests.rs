@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests of the capture of one workspace's logins: what a token endpoint's answer becomes, what
 //! is kept, what survives a restart and what is never done.
 
@@ -893,7 +893,7 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
             + GITHUB.roles().len()
             + crate::profile::ENTRA.slots().len()
             + OPENAI.roles().len()
-            + DOCKER.roles().len()
+            + DOCKER.slots().len()
     );
 }
 

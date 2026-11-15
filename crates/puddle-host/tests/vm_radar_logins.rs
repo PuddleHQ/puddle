@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing from inside a real
 //! microVM, against the real services, with credentials made up for the test. No account is
 //! involved: a made-up code, refresh token or access token is refused, and the refusal is what
@@ -33,7 +33,7 @@ use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_test_kit::eventually;
 use puddle_types::{Host as HostName, WorkspaceId};
 use serde_json::{Value, json};
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
 
 /// The versions CI runs the other login tests against; Dependabot bumps them.
@@ -194,6 +194,30 @@ fn hosts_since(vm: &VmHost, before: usize) -> BTreeSet<(String, String)> {
         .collect()
 }
 
+/// How long the audit must stay unchanged before a flow counts as over.
+const QUIET: Duration = Duration::from_secs(5);
+
+/// Waits until the audit has written no connection record for `QUIET` and returns how many there are.
+///
+/// A record is written when its connection ends, and a tool can leave connections behind it: the
+/// proxy sees them close a moment after the tool exited (2026-11-08: a claude refresh's last
+/// `api.anthropic.com` record landed in the window of the `gh` flow that followed). Starting the
+/// next flow only after the audit is quiet keeps each flow's records in its own window.
+async fn settled(vm: &VmHost) -> usize {
+    let mut count = connections(&vm.host).len();
+    let mut quiet_since = tokio::time::Instant::now();
+    // flake-ok: waits for the absence of new records over a fixed quiet period, which `eventually` (a probe that turns true) cannot express.
+    while quiet_since.elapsed() < QUIET {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let now = connections(&vm.host).len();
+        if now != count {
+            count = now;
+            quiet_since = tokio::time::Instant::now();
+        }
+    }
+    count
+}
+
 /// Whether the profile named `profile` has `host` among the hosts it swaps stand-ins toward.
 fn in_profile(profile: &str, host: &str) -> bool {
     let profile = builtin().iter().find(|p| p.id == profile).unwrap();
@@ -224,13 +248,15 @@ fn outside_profile(profile: &str, seen: &BTreeSet<(String, String)>) -> Vec<Stri
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
     // No fake names: every name goes to the real internet through the company proxy.
-    let net = web_internet(&[], WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&[], WebOptions::default(), named_id_options()).await;
     let vm = start_vm_host_platform("logintools", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-tools", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in INSTALL_HOSTS.iter().chain(PROFILE_HOSTS) {
+        puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(workspace.clone()),
                 pattern: Pattern::parse(site).unwrap(),
@@ -272,7 +298,7 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
 
     let mut failures = Vec::new();
     for flow in flows() {
-        let before = connections(&vm.host).len();
+        let before = settled(&vm).await;
         let out = guest_within(
             &vm.runtime,
             &workspace,
@@ -281,8 +307,8 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
         )
         .await;
         // A connection's record is written when it ends, after the tool exited: wait for the one
-        // the flow must have made. Records that arrive later than that one are not seen.
-        let seen = eventually(
+        // the flow must have made.
+        eventually(
             &format!("{}: a connection record for {}", flow.name, flow.must_call),
             Duration::from_secs(60),
             || {
@@ -299,6 +325,9 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
             },
         )
         .await;
+        // Late records of this flow's own connections belong to it; the next flow starts after them.
+        settled(&vm).await;
+        let seen = hosts_since(&vm, before);
         let outside = outside_profile(flow.profile, &seen);
         eprintln!(
             "{}: {} host(s) called: {seen:?}\n  output: {}",

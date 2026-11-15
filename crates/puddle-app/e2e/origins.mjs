@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a real webview (WebView2, so Windows only) keeps for a workspace's origins, which the host's
 // fake-launcher tests can only assume: local storage, IndexedDB and a cookie on `<id>.localhost`
 // and on a forwarded port's `<port>.<id>.localhost`, kept under the workspace's own data folder.
@@ -29,8 +29,9 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { setTimeout as sleep } from "node:timers/promises";
 import { connect } from "./cdp.mjs";
+import { onChildEnd } from "./child-end.mjs";
+import { GiveUp, until } from "./poll.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -44,21 +45,6 @@ const failures = [];
 function check(name, ok, detail = "") {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
   if (!ok) failures.push(name);
-}
-
-/**
- * Polls `probe` until it returns something truthy, for `within` ms. DevTools has no event for "the
- * window is listed", "the page has loaded" or "the process has exited", so these are bounded polls
- * with the reason at each call, never a fixed sleep.
- */
-async function until(what, probe, within = 60_000) {
-  const deadline = Date.now() + within;
-  for (;;) {
-    const value = await probe().catch(() => undefined);
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await sleep(250);
-  }
 }
 
 // Every path of every host answers with a blank page: the origin is the point, not the content.
@@ -162,7 +148,7 @@ async function session(n, id, forget, body) {
     process.stderr.write(chunk);
   });
   let exited = false;
-  app.on("exit", () => {
+  onChildEnd(app, () => {
     exited = true;
   });
   const opened = [];
@@ -170,7 +156,7 @@ async function session(n, id, forget, body) {
   // listed from its first navigation, so also wait for the page to have loaded.
   const pageOn = async (debug, host) => {
     const target = await until(`a window on ${host}`, async () => {
-      if (exited) throw new Error("puddle-app exited early");
+      if (exited) throw new GiveUp("puddle-app exited early");
       return (await listPages(debug)).find((t) => t.url.startsWith(`http://${host}:${sitePort}/`));
     });
     const page = await connect(target.webSocketDebuggerUrl);

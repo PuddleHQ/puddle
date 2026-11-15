@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -219,5 +219,44 @@ describe("the Add repository dialog", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe("AddRepositoryDialog host check", () => {
+  it("names the host it will allow and greys out Clone when a rule blocks it", async () => {
+    const hostCheck = vi.fn(async (urls: string[]) => [
+      urls[0]?.includes("blocked")
+        ? {
+            host: "blocked.example",
+            state: "blocked" as const,
+            blocked_by: "blocked.example is blocked by a deny rule (7).",
+          }
+        : { host: "github.com", state: "new" as const, blocked_by: null },
+    ]);
+    render(AddRepositoryDialog, {
+      props: {
+        open: true,
+        entries: [],
+        onDisk: [],
+        identities: { identities: [work], ensureLoaded: async () => {} },
+        onSubmit: async () => null,
+        hostCheck,
+      },
+    } as never);
+    const url = screen.getByLabelText("Git repository (HTTPS)");
+    await fireEvent.input(url, {
+      target: { value: "https://github.com/acme/web.git" },
+    });
+    expect(await screen.findByTestId("hosts-new")).toHaveTextContent(
+      "github.com",
+    );
+    expect(screen.getByRole("button", { name: "Clone" })).toBeEnabled();
+    await fireEvent.input(url, {
+      target: { value: "https://blocked.example/a/b.git" },
+    });
+    expect(await screen.findByTestId("hosts-blocked")).toHaveTextContent(
+      "deny rule (7)",
+    );
+    expect(screen.getByRole("button", { name: "Clone" })).toBeDisabled();
   });
 });

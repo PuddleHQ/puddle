@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # This repo must read as a standalone project: nothing in a tracked file may point into a private
 # planning workspace (task and decision IDs, plan package names, workspace paths, "laptop" for a
 # developer's own machine; CONTRIBUTING.md). Say the reason in words, or cite an ADR

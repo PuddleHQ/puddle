@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The ports the API serves: the [`PortsService`] trait the routes call, [`NoPorts`] for a build
 //! without it, and [`FakePorts`] for tests and the UI fixture.
 

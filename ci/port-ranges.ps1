@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 <#
 .SYNOPSIS
 Prints the TCP port ranges Windows keeps back, and says when they cover the ports the tests pick.

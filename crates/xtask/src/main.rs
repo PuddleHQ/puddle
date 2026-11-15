@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `cargo xtask`: see the library docs.
 #![forbid(unsafe_code)]
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tells a stall of Puddle's own from the kernel backing off after it dropped a loopback segment.
 //!
 //! A Linux kernel from 6.16 on (the runners' 6.17) can drop a segment that sits inside the

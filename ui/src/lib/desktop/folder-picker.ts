@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The desktop app's native folder dialog. Only the app's main window may call it (its one Tauri
 // permission, `dialog:allow-open`); a browser tab has no such bridge, so the page shows no
 // button there. The plugin is loaded on first use, so the browser build never fetches it.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's ports on the wire: what listens in it, what is forwarded to this computer, what
 //! is pinned. Every field is always present (ADR 0002).
 

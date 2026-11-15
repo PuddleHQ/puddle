@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Discovery with faked OS answers: order of sources, per-epoch caching, PAC failure memory,
 //! dead-proxy demotion and debounced change notification.
 

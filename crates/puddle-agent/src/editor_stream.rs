@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest end of the host's `editor` streams ([`puddle_agent_proto::editor_stream`]): the host
 //! asks for a connection to the editor server, or for its password, and nothing else.
 //!

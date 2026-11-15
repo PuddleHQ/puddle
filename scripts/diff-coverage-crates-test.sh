@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of scripts/diff-coverage-crates.sh in a scratch repository with three crates. Cases: no change,
 # a change that adds a file to one crate (the crate alone), changes in two crates (both, sorted by package
 # name, which differs from the directory name for one), a crate's tests/ file (its crate), workspace-wide

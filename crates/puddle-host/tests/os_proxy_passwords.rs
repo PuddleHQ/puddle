@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The proxy sign-ins against the real operating system credential store, through entries no real
 //! Puddle uses (the prefix has this process's id in it). It runs where a store exists (the Windows
 //! job, a desktop session) and says so where it does not, unless `PUDDLE_REQUIRE_OS_CREDENTIAL_STORE`

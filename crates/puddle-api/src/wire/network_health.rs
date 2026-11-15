@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Wire types of the network-health report.
 //!
 //! Safe to show by construction: proxies are `host:port` (no user info), the PAC address has no
@@ -315,6 +315,19 @@ pub struct NetworkHealth {
     pub pull_proxy: PullProxyReport,
     /// Routes chosen so far in this network epoch, sorted by host (at most 100).
     pub routes: Vec<RouteDecision>,
+    /// What drives the company-network destination category.
+    pub company_network: CompanyNetworkReport,
+}
+
+/// What Puddle found on this computer that puts a destination on the company network. Both are
+/// empty when this computer can't be read for them, which leaves the category empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyNetworkReport {
+    /// A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active.
+    pub private_access_client: bool,
+    /// The DNS suffixes and namespaces of this computer, lower case, each once.
+    pub dns_suffixes: Vec<String>,
 }
 
 impl NetworkHealth {
@@ -358,45 +371,10 @@ impl NetworkHealth {
                 via_upstream: false,
             },
             routes: Vec::new(),
+            company_network: CompanyNetworkReport::default(),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn the_values_for_a_state_this_build_cannot_name_are_called_unknown_on_the_wire() {
-        assert_eq!(
-            serde_json::to_value(ProxyDetected::Unknown).unwrap(),
-            json!("unknown")
-        );
-        assert_eq!(
-            serde_json::to_value(PacState::Unknown).unwrap(),
-            json!("unknown")
-        );
-        assert_eq!(
-            serde_json::to_value(ProxyMode::Unknown).unwrap(),
-            json!("unknown")
-        );
-        assert_eq!(
-            serde_json::to_value(SignInResult::Unknown).unwrap(),
-            json!("unknown")
-        );
-        assert_eq!(
-            serde_json::to_value(RouteSource::Unknown).unwrap(),
-            json!("unknown")
-        );
-        assert_eq!(
-            serde_json::to_value(RootKind::Unknown).unwrap(),
-            json!("unknown")
-        );
-        assert_eq!(
-            serde_json::from_value::<RootKind>(json!("unknown")).unwrap(),
-            RootKind::Unknown
-        );
-    }
-}
+mod tests;

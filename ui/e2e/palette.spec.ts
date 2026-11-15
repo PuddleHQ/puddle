@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The colour palettes against the real API on the fixture backend: chosen in Settings, kept by
 // Puddle, applied live over the light or dark theme without a Content-Security-Policy violation,
 // and accessible (axe's colour contrast included) in every palette and both themes.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puddle's unsaved-work check before a workspace is deleted (ADR 0006 point 3).
 #
 # Usage: sh delete-check.sh <volume mount point>

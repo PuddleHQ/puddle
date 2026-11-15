@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guard in front of every route: `Host`, then `Origin`, then the bearer token.
 //! See the crate docs for why each check exists.
 
@@ -9,8 +9,38 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use crate::authz::Principal;
 use crate::error::{ApiError, ErrorCode};
+use crate::remote::RemoteServing;
+use crate::signin::SignIn;
 use crate::token::ApiToken;
+
+/// Which listener a guard stands in front of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Listener {
+    /// The loopback listener: the desktop app, a CLI, or a reverse proxy on this machine.
+    Loopback,
+    /// The network listener for a reverse proxy on another machine. A peer there can never mean
+    /// `127.0.0.1`, so a loopback `Host` is refused outright.
+    Network,
+}
+
+/// What kind of `Host` a request names. The install token is accepted only for [`Self::Loopback`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostClass {
+    Loopback,
+    Public,
+}
+
+/// What remote serving adds to a guard.
+#[derive(Clone)]
+struct Remote {
+    listener: Listener,
+    /// The exact public authorities, lower case.
+    hosts: Vec<String>,
+    /// `https://` plus each authority.
+    origins: Vec<String>,
+}
 
 /// What a request must match. Built once per server, after the port is known.
 #[derive(Clone)]
@@ -18,6 +48,7 @@ pub(crate) struct Guard {
     inner: Arc<Inner>,
 }
 
+#[derive(Clone)]
 struct Inner {
     token: ApiToken,
     /// `127.0.0.1:<port>` and `localhost:<port>`, lower case.
@@ -26,6 +57,34 @@ struct Inner {
     serves_ui: bool,
     /// The API's own origins plus the configured extra ones, lower case.
     origins: Vec<String>,
+    /// Set when remote serving is on.
+    remote: Option<Remote>,
+    /// Who the holder of the token is.
+    principal: Principal,
+    /// Browser sign-in, when the API has accounts: a bearer token that is not the install token is
+    /// looked up here, on public addresses.
+    sign_in: Option<Arc<SignIn>>,
+}
+
+/// Marks a request that came in under a public name (through the reverse proxy). The sign-in
+/// routes answer only these: the desktop window and the command line never sign in.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReachedPublicly;
+
+/// What a request presented, once the head checks passed.
+enum Credential {
+    /// Nothing: a public file or a public sign-in route.
+    None,
+    /// The install token.
+    Install(Principal),
+    /// A bearer token that is not the install token: a browser's access token, to look up.
+    Bearer(String),
+}
+
+/// What the guard let through.
+struct Admitted {
+    credential: Credential,
+    public: bool,
 }
 
 /// Why a request was refused. The reason is logged; header values never are.
@@ -33,7 +92,12 @@ struct Inner {
 pub(crate) enum Refusal {
     Host,
     Origin,
+    /// An `Origin` request whose `Sec-Fetch-Site` says the browser did not make it from the
+    /// page's own origin.
+    FetchSite,
     Token,
+    /// A token that is valid but not accepted for this kind of `Host`.
+    CredentialHost,
 }
 
 impl Refusal {
@@ -41,7 +105,9 @@ impl Refusal {
         match self {
             Self::Host => "host",
             Self::Origin => "origin",
+            Self::FetchSite => "fetch-site",
             Self::Token => "token",
+            Self::CredentialHost => "credential-host",
         }
     }
 }
@@ -49,17 +115,22 @@ impl Refusal {
 impl From<Refusal> for ApiError {
     fn from(refusal: Refusal) -> Self {
         match refusal {
-            Refusal::Host => ApiError::new(
+            Refusal::Host => Self::new(
                 StatusCode::MISDIRECTED_REQUEST,
                 ErrorCode::MisdirectedHost,
                 "the Host header must be 127.0.0.1:<port> or localhost:<port>",
             ),
-            Refusal::Origin => ApiError::new(
+            Refusal::Origin | Refusal::FetchSite => Self::new(
                 StatusCode::FORBIDDEN,
                 ErrorCode::ForbiddenOrigin,
                 "requests from this origin are not allowed",
             ),
-            Refusal::Token => ApiError::new(
+            Refusal::CredentialHost => Self::new(
+                StatusCode::UNAUTHORIZED,
+                ErrorCode::Unauthorized,
+                "this credential is not accepted on this address",
+            ),
+            Refusal::Token => Self::new(
                 StatusCode::UNAUTHORIZED,
                 ErrorCode::Unauthorized,
                 "missing or wrong bearer token",
@@ -79,8 +150,34 @@ impl Guard {
                 hosts,
                 serves_ui: false,
                 origins,
+                remote: None,
+                principal: Principal::INSTALL,
+                sign_in: None,
             }),
         }
+    }
+
+    /// Adds remote serving: the exact public authorities and their `https://` origins, for the
+    /// listener this guard stands in front of.
+    pub(crate) fn remote(mut self, remote: &RemoteServing, listener: Listener) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            let hosts: Vec<String> = remote
+                .public_hosts()
+                .iter()
+                .map(crate::remote::PublicHost::authority)
+                .collect();
+            let origins = remote
+                .public_hosts()
+                .iter()
+                .map(crate::remote::PublicHost::origin)
+                .collect();
+            inner.remote = Some(Remote {
+                listener,
+                hosts,
+                origins,
+            });
+        }
+        self
     }
 
     /// Lets `GET`/`HEAD` outside `/api` through without a token (the app's own files). The
@@ -92,55 +189,110 @@ impl Guard {
         self
     }
 
-    /// Checks one request's head.
-    pub(crate) fn check(&self, uri: &Uri, headers: &HeaderMap) -> Result<(), Refusal> {
-        self.check_host(uri, headers)?;
-        self.check_origin(headers)?;
-        self.check_token(headers)
+    /// Makes the token's holder `principal` instead of the owner (tests call the routes as
+    /// another user this way).
+    pub(crate) fn acting_as(mut self, principal: Principal) -> Self {
+        Arc::make_mut(&mut self.inner).principal = principal;
+        self
     }
 
-    /// Like [`Guard::check`], but a read of the app's own files needs no token.
+    /// Lets browsers sign in: their access tokens are accepted on public addresses.
+    pub(crate) fn signing_in(mut self, sign_in: Arc<SignIn>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.sign_in = Some(sign_in);
+        }
+        self
+    }
+
+    /// Checks one request's head. A bearer token that is not the install token is not looked up
+    /// here (that needs the database): it counts as unknown.
+    #[cfg(test)]
+    pub(crate) fn check(&self, uri: &Uri, headers: &HeaderMap) -> Result<(), Refusal> {
+        let class = self.check_host(uri, headers)?;
+        self.check_origin(headers, class)?;
+        match self.check_token(headers, class)? {
+            Credential::Bearer(_) => Err(Refusal::Token),
+            Credential::None | Credential::Install(_) => Ok(()),
+        }
+    }
+
+    /// Like [`Guard::check`], but a read of the app's own files needs no token, and the sign-in
+    /// routes (on a public address) need none either.
     fn check_request(
         &self,
         method: &Method,
         uri: &Uri,
         headers: &HeaderMap,
-    ) -> Result<(), Refusal> {
+    ) -> Result<Admitted, Refusal> {
         let is_read = method == Method::GET || method == Method::HEAD;
-        if method == Method::GET && is_terminal_socket(uri.path()) {
+        let class = self.check_host(uri, headers)?;
+        self.check_origin(headers, class)?;
+        let public = class == HostClass::Public;
+        let credential = if public && is_public_sign_in(method, uri.path()) {
+            // These routes set or use the session cookie. A browser always names its origin on a
+            // `POST`, and `check_origin` has held it to the page's own: a request that names
+            // none is not a page of ours, and cannot use the cookie.
+            if method == Method::POST && !headers.contains_key(header::ORIGIN) {
+                return Err(Refusal::Origin);
+            }
+            Credential::None
+        } else if method == Method::GET && is_terminal_socket(uri.path()) {
             // The ticket in `Sec-WebSocket-Protocol` stands in for the token (a browser cannot
             // send it on a WebSocket); the route checks it, after these two.
-            self.check_host(uri, headers)?;
-            self.check_origin(headers)
+            Credential::None
         } else if self.inner.serves_ui && is_read && !is_api_path(uri.path()) {
-            self.check_host(uri, headers)?;
-            self.check_origin(headers)
+            Credential::None
         } else {
-            self.check(uri, headers)
-        }
+            self.check_token(headers, class)?
+        };
+        Ok(Admitted { credential, public })
     }
 
-    fn check_host(&self, uri: &Uri, headers: &HeaderMap) -> Result<(), Refusal> {
+    /// The principal behind a bearer token that is not the install token.
+    async fn session_principal(&self, token: &str) -> Option<Principal> {
+        self.inner.sign_in.as_ref()?.principal_for(token).await
+    }
+
+    fn check_host(&self, uri: &Uri, headers: &HeaderMap) -> Result<HostClass, Refusal> {
         let host = single(headers, &header::HOST).ok_or(Refusal::Host)?;
         let host = host.to_str().map_err(|_| Refusal::Host)?;
-        if !self.is_own_host(host) {
-            return Err(Refusal::Host);
-        }
-        // An absolute-form target (`GET http://other/ HTTP/1.1`) must name us too.
+        let class = self.host_class(host).ok_or(Refusal::Host)?;
+        // An absolute-form target (`GET http://other/ HTTP/1.1`) must name us too, the same way.
         match uri.authority() {
-            Some(authority) if !self.is_own_host(authority.as_str()) => Err(Refusal::Host),
-            _ => Ok(()),
+            Some(authority) if self.host_class(authority.as_str()) != Some(class) => {
+                Err(Refusal::Host)
+            }
+            _ => Ok(class),
         }
     }
 
-    fn is_own_host(&self, host: &str) -> bool {
-        self.inner
-            .hosts
-            .iter()
-            .any(|own| own.eq_ignore_ascii_case(host))
+    /// What kind of own `Host` this is, if it is one.
+    fn host_class(&self, host: &str) -> Option<HostClass> {
+        let matches = |own: &String| own.eq_ignore_ascii_case(host);
+        let loopback = || {
+            self.inner
+                .hosts
+                .iter()
+                .any(matches)
+                .then_some(HostClass::Loopback)
+        };
+        match &self.inner.remote {
+            None => loopback(),
+            Some(remote) => {
+                let public = remote
+                    .hosts
+                    .iter()
+                    .any(matches)
+                    .then_some(HostClass::Public);
+                public.or_else(|| match remote.listener {
+                    Listener::Loopback => loopback(),
+                    Listener::Network => None,
+                })
+            }
+        }
     }
 
-    fn check_origin(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+    fn check_origin(&self, headers: &HeaderMap, class: HostClass) -> Result<(), Refusal> {
         let mut values = headers.get_all(header::ORIGIN).iter();
         let Some(origin) = values.next() else {
             // Not a browser, or a same-origin GET: the token still decides.
@@ -150,19 +302,27 @@ impl Guard {
             return Err(Refusal::Origin);
         }
         let origin = origin.to_str().map_err(|_| Refusal::Origin)?;
-        if self
-            .inner
-            .origins
-            .iter()
-            .any(|own| own.eq_ignore_ascii_case(origin))
-        {
-            Ok(())
-        } else {
-            Err(Refusal::Origin)
+        let own = match (class, &self.inner.remote) {
+            (HostClass::Public, Some(remote)) => &remote.origins,
+            _ => &self.inner.origins,
+        };
+        if !own.iter().any(|own| own.eq_ignore_ascii_case(origin)) {
+            return Err(Refusal::Origin);
         }
+        // Behind a front, a browser says whether the page that made the request is the same
+        // origin; anything else is a page of another site driving the user's browser. A client
+        // that is not a browser sends no such header.
+        if class == HostClass::Public {
+            match headers.get("sec-fetch-site") {
+                None => {}
+                Some(site) if site.as_bytes().eq_ignore_ascii_case(b"same-origin") => {}
+                Some(_) => return Err(Refusal::FetchSite),
+            }
+        }
+        Ok(())
     }
 
-    fn check_token(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+    fn check_token(&self, headers: &HeaderMap, class: HostClass) -> Result<Credential, Refusal> {
         let value = single(headers, &header::AUTHORIZATION).ok_or(Refusal::Token)?;
         let value = value.as_bytes();
         // The scheme is case-insensitive (RFC 9110 §11.1); exactly one space before the token.
@@ -170,10 +330,20 @@ impl Guard {
         if !scheme.eq_ignore_ascii_case(b"bearer ") {
             return Err(Refusal::Token);
         }
-        if self.inner.token.matches(token) {
-            Ok(())
-        } else {
-            Err(Refusal::Token)
+        if !self.inner.token.matches(token) {
+            // A browser's access token, which only a public address accepts.
+            return match (class, &self.inner.sign_in) {
+                (HostClass::Public, Some(_)) => std::str::from_utf8(token)
+                    .map(|token| Credential::Bearer(token.to_owned()))
+                    .map_err(|_| Refusal::Token),
+                _ => Err(Refusal::Token),
+            };
+        }
+        // The install token is the desktop app's and the CLI's. It is not a credential for a
+        // browser that came in through a public name.
+        match class {
+            HostClass::Loopback => Ok(Credential::Install(self.inner.principal)),
+            HostClass::Public => Err(Refusal::CredentialHost),
         }
     }
 }
@@ -198,224 +368,64 @@ fn is_terminal_socket(path: &str) -> bool {
     )
 }
 
+/// The routes a browser uses to sign in, before it has a token: they carry no bearer token, and
+/// the ones that use the session cookie are `POST`s that must name the page's own origin.
+fn is_public_sign_in(method: &Method, path: &str) -> bool {
+    match *method {
+        Method::GET => path == "/api/auth/status",
+        Method::POST => matches!(
+            path,
+            "/api/auth/setup"
+                | "/api/auth/sign-in"
+                | "/api/auth/invite"
+                | "/api/auth/refresh"
+                | "/api/auth/sign-out"
+        ),
+        _ => false,
+    }
+}
+
 /// Whether `path` is the API (`/api` or below), whose every route needs the token.
 pub(crate) fn is_api_path(path: &str) -> bool {
     path == "/api" || path.starts_with("/api/")
 }
 
 /// axum middleware running [`Guard::check_request`] before the route.
-pub(crate) async fn guard(State(guard): State<Guard>, request: Request, next: Next) -> Response {
-    match guard.check_request(request.method(), request.uri(), request.headers()) {
-        Ok(()) => next.run(request).await,
-        Err(refusal) => {
-            tracing::warn!(
-                reason = refusal.reason(),
-                method = %request.method(),
-                path = request.uri().path(),
-                "api request refused"
-            );
-            ApiError::from(refusal).into_response()
-        }
+pub(crate) async fn guard(
+    State(guard): State<Guard>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let admitted = match guard.check_request(request.method(), request.uri(), request.headers()) {
+        Ok(admitted) => admitted,
+        Err(refusal) => return refuse(&request, refusal),
+    };
+    let principal = match admitted.credential {
+        Credential::None => None,
+        Credential::Install(principal) => Some(principal),
+        Credential::Bearer(token) => match guard.session_principal(&token).await {
+            Some(principal) => Some(principal),
+            None => return refuse(&request, Refusal::Token),
+        },
+    };
+    if let Some(principal) = principal {
+        request.extensions_mut().insert(principal);
     }
+    if admitted.public {
+        request.extensions_mut().insert(ReachedPublicly);
+    }
+    next.run(request).await
+}
+
+fn refuse(request: &Request, refusal: Refusal) -> Response {
+    tracing::warn!(
+        reason = refusal.reason(),
+        method = %request.method(),
+        path = request.uri().path(),
+        "api request refused"
+    );
+    ApiError::from(refusal).into_response()
 }
 
 #[cfg(test)]
-mod tests {
-    use axum::http::HeaderValue;
-
-    use super::*;
-
-    const PORT: u16 = 4321;
-
-    fn guard() -> (Guard, ApiToken) {
-        let token = ApiToken::generate().unwrap();
-        (
-            Guard::new(token.clone(), PORT, &["tauri://localhost".to_owned()]),
-            token,
-        )
-    }
-
-    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        for (k, v) in pairs {
-            h.append(
-                header::HeaderName::from_bytes(k.as_bytes()).unwrap(),
-                HeaderValue::from_str(v).unwrap(),
-            );
-        }
-        h
-    }
-
-    fn check(pairs: &[(&str, &str)]) -> Result<(), Refusal> {
-        let (g, _) = guard();
-        g.check(&Uri::from_static("/api/health"), &headers(pairs))
-    }
-
-    #[test]
-    fn host_must_be_our_loopback_address_and_port() {
-        let (g, token) = guard();
-        let auth = format!("Bearer {}", token.expose());
-        let uri = Uri::from_static("/api/health");
-        for ok in ["127.0.0.1:4321", "localhost:4321", "LOCALHOST:4321"] {
-            assert_eq!(
-                g.check(&uri, &headers(&[("host", ok), ("authorization", &auth)])),
-                Ok(()),
-                "{ok}"
-            );
-        }
-        for bad in [
-            "127.0.0.1",
-            "localhost",
-            "127.0.0.1:4322",
-            "[::1]:4321",
-            "evil.example:4321",
-            "127.0.0.1.nip.io:4321",
-            "",
-        ] {
-            assert_eq!(
-                g.check(&uri, &headers(&[("host", bad), ("authorization", &auth)])),
-                Err(Refusal::Host),
-                "{bad}"
-            );
-        }
-        assert_eq!(
-            g.check(&uri, &headers(&[("authorization", &auth)])),
-            Err(Refusal::Host)
-        );
-        assert_eq!(
-            check(&[("host", "127.0.0.1:4321"), ("host", "127.0.0.1:4321")]),
-            Err(Refusal::Host)
-        );
-        let non_utf8 = {
-            let mut h = HeaderMap::new();
-            h.insert(header::HOST, HeaderValue::from_bytes(b"\xff:4321").unwrap());
-            h
-        };
-        assert_eq!(g.check(&uri, &non_utf8), Err(Refusal::Host));
-    }
-
-    #[test]
-    fn an_absolute_target_must_name_us_too() {
-        let (g, token) = guard();
-        let auth = format!("Bearer {}", token.expose());
-        let h = headers(&[("host", "127.0.0.1:4321"), ("authorization", &auth)]);
-        let evil: Uri = "http://evil.example/api/health".parse().unwrap();
-        assert_eq!(g.check(&evil, &h), Err(Refusal::Host));
-        let own: Uri = "http://127.0.0.1:4321/api/health".parse().unwrap();
-        assert_eq!(g.check(&own, &h), Ok(()));
-    }
-
-    #[test]
-    fn origin_when_present_must_be_ours_or_configured() {
-        let (g, token) = guard();
-        let auth = format!("Bearer {}", token.expose());
-        let uri = Uri::from_static("/api/health");
-        let with = |origin: &str| {
-            g.check(
-                &uri,
-                &headers(&[
-                    ("host", "127.0.0.1:4321"),
-                    ("origin", origin),
-                    ("authorization", &auth),
-                ]),
-            )
-        };
-        for ok in [
-            "http://127.0.0.1:4321",
-            "http://localhost:4321",
-            "tauri://localhost",
-        ] {
-            assert_eq!(with(ok), Ok(()), "{ok}");
-        }
-        for bad in [
-            "null",
-            "http://evil.example",
-            "http://127.0.0.1:4322",
-            "https://127.0.0.1:4321",
-            "http://127.0.0.1:4321/",
-            "http://localhost",
-        ] {
-            assert_eq!(with(bad), Err(Refusal::Origin), "{bad}");
-        }
-        assert_eq!(
-            g.check(
-                &uri,
-                &headers(&[
-                    ("host", "127.0.0.1:4321"),
-                    ("origin", "http://127.0.0.1:4321"),
-                    ("origin", "http://127.0.0.1:4321"),
-                    ("authorization", &auth),
-                ])
-            ),
-            Err(Refusal::Origin)
-        );
-    }
-
-    #[test]
-    fn token_must_be_a_single_exact_bearer_header() {
-        let (g, token) = guard();
-        let uri = Uri::from_static("/api/health");
-        let with = |values: &[&str]| {
-            let mut pairs = vec![("host", "127.0.0.1:4321")];
-            pairs.extend(values.iter().map(|v| ("authorization", *v)));
-            g.check(&uri, &headers(&pairs))
-        };
-        let t = token.expose();
-        assert_eq!(with(&[&format!("Bearer {t}")]), Ok(()));
-        assert_eq!(with(&[&format!("bearer {t}")]), Ok(()));
-        for bad in [
-            String::new(),
-            "Bearer".to_owned(),
-            "Bearer ".to_owned(),
-            format!("Basic {t}"),
-            format!("Bearer  {t}"),
-            format!("Bearer {t} "),
-            format!("Bearer {}", &t[..63]),
-            format!("Bearer {}", "0".repeat(64)),
-            t.to_owned(),
-        ] {
-            assert_eq!(with(&[&bad]), Err(Refusal::Token), "{bad:?}");
-        }
-        assert_eq!(with(&[]), Err(Refusal::Token));
-        let good = format!("Bearer {t}");
-        assert_eq!(with(&[&good, &good]), Err(Refusal::Token));
-    }
-
-    #[test]
-    fn host_is_checked_before_origin_before_token() {
-        assert_eq!(
-            check(&[("host", "evil:1"), ("origin", "http://evil")]),
-            Err(Refusal::Host)
-        );
-        assert_eq!(
-            check(&[("host", "127.0.0.1:4321"), ("origin", "http://evil")]),
-            Err(Refusal::Origin)
-        );
-        assert_eq!(check(&[("host", "127.0.0.1:4321")]), Err(Refusal::Token));
-    }
-
-    #[test]
-    fn refusals_map_to_statuses_and_codes() {
-        for (refusal, status, code) in [
-            (
-                Refusal::Host,
-                StatusCode::MISDIRECTED_REQUEST,
-                ErrorCode::MisdirectedHost,
-            ),
-            (
-                Refusal::Origin,
-                StatusCode::FORBIDDEN,
-                ErrorCode::ForbiddenOrigin,
-            ),
-            (
-                Refusal::Token,
-                StatusCode::UNAUTHORIZED,
-                ErrorCode::Unauthorized,
-            ),
-        ] {
-            let err = ApiError::from(refusal);
-            assert_eq!(err.status(), status);
-            assert_eq!(err.code(), code);
-        }
-    }
-}
+mod tests;

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-host"
 description = "The host process: one start-up and shutdown sequence that wires the store, proxies, runtime, workspaces, lifecycle and API; embedded by the desktop app and run by `puddle serve`"
@@ -43,6 +43,7 @@ puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
+puddle-ssh-agent = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true }
 puddle-upstream = { workspace = true }
@@ -59,9 +60,12 @@ url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 puddle-proxy = { workspace = true, features = ["testing"] }
+puddle-ssh-agent = { workspace = true, features = ["testing"] }
 microsandbox = { workspace = true }
 puddle-agent = { workspace = true }
 puddle-e2e = { workspace = true }
@@ -80,6 +84,18 @@ tracing-subscriber = { workspace = true }
 # test runner's `--list` itself.
 [[test]]
 name = "vm_desktop_attach"
+harness = false
+
+# JetBrains Gateway's own SSH client against the same entry: this binary is the bridge program, and
+# it answers the test runner's `--list` itself.
+[[test]]
+name = "vm_gateway_attach"
+harness = false
+
+# The same, for the desktop VS Code test: this binary is the ssh config entry's bridge program, and it
+# answers the runner's `--list` itself.
+[[test]]
+name = "vm_vscode"
 harness = false
 
 [lints]

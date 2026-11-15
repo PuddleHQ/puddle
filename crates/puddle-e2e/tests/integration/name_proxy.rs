@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake internet's company proxy: a tunnel to a name it holds goes to that name's server, and
 //! any other name is connected to as it stands.
 #![expect(
@@ -71,9 +71,8 @@ async fn a_held_name_goes_to_its_server_and_any_other_name_is_connected_to_as_it
     assert_eq!(got, "hello from elsewhere");
 
     // A name nothing answers on: 502.
-    let dead = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let dead_port = dead.local_addr().unwrap().port();
-    drop(dead);
+    let dead = puddle_test_kit::ReservedPort::new();
+    let dead_port = dead.port();
     let (_, line) = connect(&proxy, &format!("127.0.0.1:{dead_port}")).await;
     assert!(line.starts_with("HTTP/1.1 502"), "{line}");
     assert_eq!(

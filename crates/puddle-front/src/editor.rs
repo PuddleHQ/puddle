@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the front needs of a workspace: a way to reach its editor server, and which server it is.
 
 use std::future::Future;
@@ -48,11 +48,11 @@ impl From<OpenError> for Unreachable {
 /// The agent's `editor` stream is the way in ([`puddle_agent_proto::editor_stream`]).
 impl Editor for GuestLink {
     fn connect(&self) -> BoxFuture<'_, Result<Io, Unreachable>> {
-        Box::pin(async move { Ok(Box::new(self.open_editor().await?) as Io) })
+        Box::pin(async move { Ok::<Io, _>(Box::new(self.open_editor().await?)) })
     }
 
     fn connect_port(&self, port: u16) -> BoxFuture<'_, Result<Io, Unreachable>> {
-        Box::pin(async move { Ok(Box::new(self.open_forward(port).await?) as Io) })
+        Box::pin(async move { Ok::<Io, _>(Box::new(self.open_forward(port).await?)) })
     }
 
     fn password(&self) -> BoxFuture<'_, Result<String, Unreachable>> {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: `puddle-agent merge-file` as the boot hook calls it.
 #![cfg(unix)]
 #![expect(
@@ -6,7 +6,6 @@
     reason = "helpers outside #[test] fns, only in tests"
 )]
 
-use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -20,7 +19,7 @@ fn agent(args: &[&str], stdin: &[u8]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    puddle_test_kit::feed_stdin(&mut child, stdin);
     child.wait_with_output().unwrap()
 }
 

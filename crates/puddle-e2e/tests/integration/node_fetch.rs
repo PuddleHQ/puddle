@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Regression test, L2 with a real client: Node `fetch` with `NODE_USE_ENV_PROXY=1` (what
 //! `puddle-guest-env` sets in the guest) sends a plain `http://` URL as a `CONNECT host:port`
 //! tunnel, not as an absolute-form request. Through the real agent, proxy and SQLite store, such a
@@ -47,6 +47,7 @@ struct Rig {
 
 async fn rig() -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = StaticResolver::new()
         .with("node.test", &[LOCAL])
         .with("new.test", &[LOCAL]);
@@ -196,7 +197,10 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
     // Unknown name: Node's CONNECT is refused and the name is waiting in the inbox.
     let (ok, out) = node_fetch(agent, url.clone()).await;
     assert!(!ok, "fetch passed before any rule: {out}");
-    let pending = rig.store.open_pending(Some(&workspace())).unwrap();
+    let pending = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(&workspace()))
+        .unwrap();
     assert_eq!(pending.len(), 1, "{pending:?}");
     let records = connection_records(&rig.store, 1).await;
     assert_eq!(
@@ -218,6 +222,7 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
 
     // Allowed: the request reaches the server unchanged and is audited with method and path.
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse("node.test").unwrap(),

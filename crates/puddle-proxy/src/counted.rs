@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Byte counts of a guest stream, for the audit's `bytes_up` / `bytes_down` (R-24).
 //!
 //! Counting on the guest side covers every path (refusal, `CONNECT` splice, plain-HTTP forward)
@@ -60,7 +60,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
     ) -> Poll<io::Result<()>> {
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if let Poll::Ready(Ok(())) = polled {
+        if matches!(polled, Poll::Ready(Ok(()))) {
             let n = buf.filled().len().saturating_sub(before);
             self.counts.read.fetch_add(n as u64, Ordering::Relaxed);
         }
@@ -91,39 +91,4 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
 }
 
 #[cfg(test)]
-mod tests {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    use super::*;
-
-    #[tokio::test]
-    async fn counts_both_directions_and_outlive_the_stream() {
-        let (near, mut far) = tokio::io::duplex(64);
-        let (mut stream, counts) = Counted::new(near);
-        far.write_all(b"hello").await.unwrap();
-        let mut buf = [0; 5];
-        stream.read_exact(&mut buf).await.unwrap();
-        stream.write_all(b"abc").await.unwrap();
-        stream.flush().await.unwrap();
-        stream.shutdown().await.unwrap();
-        drop(stream);
-        let mut back = Vec::new();
-        far.read_to_end(&mut back).await.unwrap();
-        assert_eq!(back, b"abc");
-        assert_eq!((counts.read(), counts.written()), (5, 3));
-    }
-
-    #[tokio::test]
-    async fn a_flush_reaches_the_stream_underneath() {
-        let (near, mut far) = tokio::io::duplex(64);
-        let (mut stream, _) = Counted::new(tokio::io::BufWriter::new(near));
-        stream.write_all(b"abc").await.unwrap();
-        stream.flush().await.unwrap();
-        let mut got = [0; 3];
-        tokio::time::timeout(std::time::Duration::from_secs(5), far.read_exact(&mut got))
-            .await
-            .expect("the flush pushed the buffered bytes out")
-            .unwrap();
-        assert_eq!(&got, b"abc");
-    }
-}
+mod tests;

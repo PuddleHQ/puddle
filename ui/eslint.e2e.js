@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // `expect(await read)` asserts a page value once, before the page has settled, which is how a spec
 // passes on an idle machine and fails on a loaded one. ui/scripts/flake-eslint.test.ts proves the

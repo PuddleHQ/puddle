@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings and consents (`puddle-settings`). Documents are read through their versioning rules:
 //! an older one is migrated and written back, unknown fields are kept and logged, one from a
 //! newer Puddle is refused with 409.
@@ -46,7 +46,7 @@ pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettin
         tracing::warn!(fields = ?loaded.unknown_fields, "global settings have fields this Puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         tracing::info!(from, "global settings migrated");
     }
     Ok(loaded)
@@ -66,7 +66,7 @@ pub(crate) fn load_workspace(
         tracing::warn!(%workspace, fields = ?loaded.unknown_fields, "workspace settings have fields this Puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_workspace(workspace, loaded.settings.to_document())?;
+        repo.save_workspace(workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, from, "workspace settings migrated");
     }
     Ok(loaded)
@@ -80,6 +80,7 @@ fn workspace_view(
     WorkspaceSettingsView {
         workspace,
         overrides: SettingsLayer::from(&loaded.settings.overrides),
+        tools: (&loaded.settings.tools).into(),
         effective: resolve(global, Some(&loaded.settings)).into(),
         unknown_fields: loaded.unknown_fields.clone(),
     }
@@ -144,7 +145,7 @@ pub(crate) async fn put_global(
                 "ui.app_icon: give Puddle an image before choosing your own icon",
             ));
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         Ok(loaded)
     })
     .await?;
@@ -165,6 +166,7 @@ pub(crate) async fn put_global(
     responses(
         (status = OK, description = "the workspace's settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
         (status = CONFLICT, description = "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
@@ -193,6 +195,7 @@ pub(crate) async fn get_workspace_settings(
     responses(
         (status = OK, description = "the workspace's new settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
+        (status = NOT_FOUND, description = "no such workspace; settings are never stored ahead of a create", body = ApiErrorBody),
         (status = CONFLICT, description = "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a value out of range", body = ApiErrorBody)
     )
@@ -210,7 +213,9 @@ pub(crate) async fn put_workspace_settings(
         let global = load_global(repo)?;
         let mut loaded = load_workspace(repo, &workspace)?;
         body.overrides.apply_to(&mut loaded.settings.overrides)?;
-        repo.save_workspace(&workspace, loaded.settings.to_document())?;
+        loaded.settings.tools.mise = body.tools.mise;
+        loaded.settings.tools.repo_code = body.tools.repo_code;
+        repo.save_workspace(&workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, "workspace settings changed");
         Ok(workspace_view(workspace, &global.settings, &loaded))
     })
@@ -276,7 +281,7 @@ pub(crate) async fn put_consent(
         {
             loaded.settings.vscode_server.server = Some(puddle_settings::ServerChoice::CodeServer);
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         Ok(Consents::from(&loaded.settings.consents))
     })
     .await?;
@@ -287,71 +292,4 @@ pub(crate) async fn put_consent(
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::error::ErrorCode;
-    use crate::settings::SettingsRepoError;
-
-    use super::*;
-
-    /// A repo whose reads fail, like a file that cannot be read.
-    struct Unreadable;
-
-    impl SettingsRepo for Unreadable {
-        fn load_global(&self) -> Result<Option<Value>, SettingsRepoError> {
-            Err(SettingsRepoError::new(
-                "/data/global.json is not valid JSON",
-            ))
-        }
-        fn save_global(&self, _: Value) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn load_workspace(&self, _: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
-            Err(SettingsRepoError::new("permission denied"))
-        }
-        fn save_workspace(&self, _: &WorkspaceId, _: Value) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn delete_workspace(&self, _: &WorkspaceId) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
-            Ok(None)
-        }
-        fn save_app_icon(&self, _: &[u8]) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn delete_app_icon(&self) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn the_unreadable_repo_still_accepts_saves() {
-        Unreadable.save_global(json!({})).unwrap();
-        let name = WorkspaceId::new("box").unwrap();
-        Unreadable.save_workspace(&name, json!({})).unwrap();
-        assert_eq!(Unreadable.load_app_icon().unwrap(), None);
-        Unreadable.save_app_icon(b"x").unwrap();
-        Unreadable.delete_app_icon().unwrap();
-        Unreadable.delete_workspace(&name).unwrap();
-    }
-
-    #[test]
-    fn a_repo_that_cannot_read_says_so_with_the_cause() {
-        let err = load_global(&Unreadable).unwrap_err();
-        assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
-        let message = err.message();
-        assert!(message.contains("the global settings"));
-        assert!(message.contains("/data/global.json is not valid JSON"));
-        // The bare cause is what other reports (the workspace record) wrap in their own words.
-        let reason = err.reason();
-        assert!(!reason.contains("Puddle cannot read"));
-
-        let name = WorkspaceId::new("box").unwrap();
-        let err = load_workspace(&Unreadable, &name).unwrap_err();
-        assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
-        let message = err.message();
-        assert!(message.contains("workspace box"));
-        assert!(message.contains("permission denied"));
-    }
-}
+mod tests;

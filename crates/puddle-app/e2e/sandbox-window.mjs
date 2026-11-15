@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Smoke test of a workspace window in the real shell (WebView2, so Windows only): the shell opens
 // one on a page this script serves from `probe.localhost`, standing in for a workspace's editor,
 // and the page attacks the shell the way hostile guest script would. Driven over WebView2's DevTools
@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { connect } from "./cdp.mjs";
+import { onChildEnd } from "./child-end.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -61,7 +62,7 @@ app.stderr.on("data", (chunk) => {
   process.stderr.write(chunk);
 });
 let appExited = false;
-app.on("exit", () => {
+onChildEnd(app, () => {
   appExited = true;
 });
 

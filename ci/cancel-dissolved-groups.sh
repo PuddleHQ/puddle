@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Cancels the runs of merge groups the queue has dissolved. When an entry leaves the queue without a failed job
 # (removed by hand, dequeued by a newer push, a lost race), ci/cancel-group.sh never runs, and the old group keeps
 # its four workflows going on runners nothing needs; one such group held 216 runner minutes. .github/workflows/

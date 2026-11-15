@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
@@ -27,6 +27,9 @@ import {
   parseExclusions,
   readExclusions,
   parseLcov,
+  mergeCoverage,
+  staleExclusions,
+  staleMessage,
   run,
   runFromArgs,
   type Options,
@@ -156,6 +159,29 @@ describe("exclusions file", () => {
     ).toBeUndefined();
     expect(exclusionOrderError("a.rs | c | r\na.rs | b | r")).toMatch(/line 2/);
   });
+  it("readExclusions reads a folder of per-crate files and refuses another crate's entry", () => {
+    const dir = mkdtempSync(join(tmpdir(), "excl-"));
+    try {
+      writeFileSync(join(dir, "a.txt"), "# h\ncrates/a/src/x.rs | * | r\n");
+      writeFileSync(join(dir, "ui.txt"), "ui/src/y.ts | * | r\n");
+      writeFileSync(join(dir, "notes.md"), "not an exclusion file");
+      expect(readExclusions(dir).map((e) => e.glob)).toEqual([
+        "crates/a/src/x.rs",
+        "ui/src/y.ts",
+      ]);
+      writeFileSync(join(dir, "a.txt"), "crates/b/src/x.rs | * | r\n");
+      expect(() => readExclusions(dir)).toThrow(
+        /a\.txt: "crates\/b\/src\/x\.rs" is not under crates\/a\//,
+      );
+      writeFileSync(
+        join(dir, "a.txt"),
+        "crates/a/z.rs | * | r\ncrates/a/y.rs | * | r\n",
+      );
+      expect(() => readExclusions(dir)).toThrow(/a\.txt: .*belongs before/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("readExclusions refuses an unsorted file and reads a sorted one", () => {
     const dir = mkdtempSync(join(tmpdir(), "excl-"));
     try {
@@ -169,20 +195,16 @@ describe("exclusions file", () => {
     }
   });
   it("keeps the committed files sorted", () => {
-    for (const name of ["diff", "full"]) {
-      const file = join(
-        import.meta.dirname,
-        `../../scripts/${name}-coverage-exclusions.txt`,
-      );
-      expect(exclusionOrderError(readFileSync(file, "utf8"))).toBeUndefined();
-    }
-  });
-  it("accepts every entry of the committed file", () => {
     const file = join(
       import.meta.dirname,
-      "../../scripts/diff-coverage-exclusions.txt",
+      "../../scripts/full-coverage-exclusions.txt",
     );
-    const entries = parseExclusions(readFileSync(file, "utf8"));
+    expect(exclusionOrderError(readFileSync(file, "utf8"))).toBeUndefined();
+  });
+  it("accepts every entry of the committed folder, each in its own crate's file", () => {
+    const entries = readExclusions(
+      join(import.meta.dirname, "../../scripts/diff-coverage-exclusions"),
+    );
     expect(entries.length).toBeGreaterThan(100);
     // A whole-file `*` is a deliberate, reviewed choice; keep the list short.
     expect(entries.filter((e) => e.lines === "*").length).toBeLessThan(15);
@@ -539,6 +561,12 @@ describe("run on a real git repository", () => {
       ['t: note: exclusion "src/zzz.rs | *" matched nothing in this diff'],
     ]);
     expect(err.mock.calls).toEqual([
+      [
+        "t: 1 stale exclusion(s); an excuse that excuses nothing fails the gate:",
+      ],
+      [
+        `  ${join(dir, "ex.txt")}:2: stale exclusion "src/zzz.rs | *": no file matches its path glob; delete the entry`,
+      ],
       ["t: 1 added or changed line(s) never ran in a test:"],
       ["  src/a.rs:4: let three = compute_three();"],
       [
@@ -591,7 +619,7 @@ describe("run on a real git repository", () => {
 describe("runFromArgs", () => {
   it("refuses a call without --base, --lcov and --exts, naming the usage", () => {
     expect(() => runFromArgs(["--base", "HEAD", "--lcov", "x"])).toThrow(
-      /^usage: diff-coverage\.ts --base <rev> --lcov <file> --exts/,
+      /^usage: diff-coverage\.ts --base <rev> --lcov <file>\[,<file>\.\.\.\] --exts/,
     );
   });
 
@@ -641,5 +669,378 @@ describe("cleanGitEnv", () => {
       PATH: "p",
     });
     expect(env).toEqual({ PATH: "p" });
+  });
+});
+
+describe("mergeCoverage", () => {
+  it("keeps the highest count per line over all the reports", () => {
+    const a = new Map([
+      [
+        "f.rs",
+        new Map([
+          [1, 0],
+          [2, 5],
+        ]),
+      ],
+    ]);
+    const b = new Map([
+      [
+        "f.rs",
+        new Map([
+          [1, 3],
+          [2, 1],
+        ]),
+      ],
+      ["g.rs", new Map([[9, 0]])],
+    ]);
+    expect(mergeCoverage([a, b])).toEqual(
+      new Map([
+        [
+          "f.rs",
+          new Map([
+            [1, 3],
+            [2, 5],
+          ]),
+        ],
+        ["g.rs", new Map([[9, 0]])],
+      ]),
+    );
+  });
+});
+
+describe("staleExclusions", () => {
+  const file = [
+    "fn a() {",
+    "    let excused_line = compute_one()?;",
+    "    let other_line = compute_two()?;",
+    "}",
+  ];
+  const source = (path: string) => (path === "src/a.rs" ? file : undefined);
+  const files = ["src/a.rs", "src/b.rs"];
+  const entries = (text: string) => parseExclusions(text);
+  const never = new Map([["src/a.rs", new Map([[2, 0]])]]);
+
+  it("keeps an entry whose line is still in the file and still never runs", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
+    expect(staleExclusions(e, files, never, source)).toEqual([]);
+  });
+
+  it("keeps an entry whose line the report lists as not executable (code compiled out of this run)", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
+    const cov = new Map([["src/a.rs", new Map([[3, 1]])]]);
+    expect(staleExclusions(e, files, cov, source)).toEqual([]);
+  });
+
+  it("flags an entry whose text is gone from every file under its glob, naming the file and line", () => {
+    const text = "src/a.rs | let removed_line = compute_one()?; | why\n";
+    const e = entries(text);
+    e[0]!.file = "scripts/ex/crate.txt";
+    const stale = staleExclusions(e, files, never, source);
+    expect(stale.map((s) => s.why)).toEqual([
+      "no file under its path glob holds its text any more",
+    ]);
+    expect(staleMessage(stale[0]!)).toBe(
+      'scripts/ex/crate.txt:1: stale exclusion "src/a.rs | let removed_line = compute_one()?;": no file under its path glob holds its text any more; delete the entry',
+    );
+  });
+
+  it("names an entry without a file or a number as line ? of the text", () => {
+    const entry = entries(
+      "src/a.rs | let excused_line = compute_one()?; | why",
+    )[0]!;
+    delete entry.no;
+    expect(staleMessage({ entry, why: "w", fails: true })).toBe(
+      'line ?: stale exclusion "src/a.rs | let excused_line = compute_one()?;": w; delete the entry',
+    );
+    expect(
+      staleMessage({ entry: { ...entry, no: 4 }, why: "w", fails: true }),
+    ).toMatch(/^line 4:/);
+    expect(
+      staleMessage({
+        entry: { ...entry, file: "ex/c.txt" },
+        why: "w",
+        fails: true,
+      }),
+    ).toMatch(/^ex\/c\.txt:\?:/);
+  });
+
+  it("flags an entry whose line was rewritten into a different line", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one(); | why");
+    expect(staleExclusions(e, files, never, source)).toHaveLength(1);
+  });
+
+  it("keeps a multi-line entry while one of its lines never runs, even if the last one does", () => {
+    const two = {
+      "src/m.rs": ["if first {", "    second()?;", "}"],
+    };
+    const src = (path: string) => two[path as keyof typeof two];
+    const e = entries("src/m.rs | if first {\\nsecond()?;\\n} | why");
+    const race = new Map([
+      [
+        "src/m.rs",
+        new Map([
+          [1, 4],
+          [2, 0],
+          [3, 4],
+        ]),
+      ],
+    ]);
+    expect(staleExclusions(e, ["src/m.rs"], race, src)).toEqual([]);
+    const all = new Map([
+      [
+        "src/m.rs",
+        new Map([
+          [1, 4],
+          [2, 1],
+          [3, 4],
+        ]),
+      ],
+    ]);
+    expect(staleExclusions(e, ["src/m.rs"], all, src)).toHaveLength(1);
+  });
+
+  it("flags an entry whose line a test now runs", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
+    const cov = new Map([["src/a.rs", new Map([[2, 3]])]]);
+    const stale = staleExclusions(e, files, cov, source);
+    expect(stale.map((s) => s.why)).toEqual([
+      "a test now runs every line it excuses",
+    ]);
+  });
+
+  it("judges a racy line the same whatever the order or number of the reports that ran it", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
+    const ran = new Map([["src/a.rs", new Map([[2, 7]])]]);
+    const missed = new Map([["src/a.rs", new Map([[2, 0]])]]);
+    for (const reports of [
+      [ran, missed],
+      [missed, ran],
+      [ran, ran, missed],
+      [missed, ran, ran],
+    ]) {
+      expect(staleExclusions(e, files, reports, source)).toEqual([]);
+    }
+  });
+
+  it("fails an entry only when every one of several reports ran it, and only notes it for one report", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
+    const ran = new Map([["src/a.rs", new Map([[2, 7]])]]);
+    const [one] = staleExclusions(e, files, [ran], source);
+    expect(one).toMatchObject({
+      why: "a test now runs every line it excuses",
+      fails: false,
+    });
+    const [two] = staleExclusions(e, files, [ran, ran], source);
+    expect(two).toMatchObject({
+      why: "a test ran every line it excuses in all 2 reports",
+      fails: true,
+    });
+  });
+
+  it("keeps an entry when one of several reports does not measure the file", () => {
+    const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
+    const ran = new Map([["src/a.rs", new Map([[2, 7]])]]);
+    expect(staleExclusions(e, files, [ran, new Map()], source)).toEqual([]);
+  });
+
+  it("keeps an entry while one of its places still never runs", () => {
+    const twice = [...file, "    let excused_line = compute_one()?;"];
+    const e = entries(
+      "src/a.rs | let excused_line = compute_one()?; | x2 | why",
+    );
+    const cov = new Map([
+      [
+        "src/a.rs",
+        new Map([
+          [2, 1],
+          [5, 0],
+        ]),
+      ],
+    ]);
+    expect(staleExclusions(e, files, cov, () => twice)).toEqual([]);
+  });
+
+  it("flags a whole-file entry only when no file matches its glob", () => {
+    expect(
+      staleExclusions(entries("src/a.rs | * | why"), files, never, source),
+    ).toEqual([]);
+    expect(
+      staleExclusions(entries("src/gone.rs | * | why"), files, never, source),
+    ).toHaveLength(1);
+  });
+
+  it("flags an entry whose glob names more than one file", () => {
+    const e = entries("src/*.rs | let excused_line = compute_one()?; | why");
+    const [stale] = staleExclusions(e, files, never, source, [".rs"]);
+    expect(stale?.fails).toBe(true);
+    expect(stale?.why).toBe(
+      "its path glob matches 2 files (src/a.rs, src/b.rs); name the one file",
+    );
+  });
+
+  it("counts only the files of the run's own languages when it names the files", () => {
+    const e = entries("src/* | let excused_line = compute_one()?; | why");
+    const mixed = ["src/a.rs", "src/a.ts"];
+    expect(staleExclusions(e, mixed, never, source, [".rs"])).toEqual([]);
+    expect(
+      staleExclusions(e, mixed, never, source, [".rs", ".ts"]),
+    ).toHaveLength(1);
+  });
+
+  it("flags an entry for a file no report lists, since its lines are never measured", () => {
+    const e = entries("src/b.rs | * | why");
+    const [stale] = staleExclusions(e, files, never, source, [".rs"]);
+    expect(stale?.fails).toBe(true);
+    expect(stale?.why).toBe(
+      "no coverage report lists src/b.rs, so its lines are never measured and cannot fail",
+    );
+  });
+
+  it("only notes it when the report is of some crates (the fast gate)", () => {
+    const e = entries("src/b.rs | * | why");
+    const [stale] = staleExclusions(e, files, never, source, [".rs"], false);
+    expect(stale?.fails).toBe(false);
+  });
+
+  it("leaves an entry of another language to that language's run", () => {
+    const e = entries("src/c.ts | * | why");
+    expect(
+      staleExclusions(e, [...files, "src/c.ts"], never, source, [".rs"]),
+    ).toEqual([]);
+  });
+
+  it("reads the glob across directories and ignores a file that is not on disk", () => {
+    const e = entries("src/**/*.rs | let excused_line = compute_one()?; | why");
+    expect(
+      staleExclusions(e, ["src/x/a.rs"], never, () => undefined),
+    ).toHaveLength(1);
+  });
+});
+
+describe("run fails a stale exclusion", () => {
+  let dir = "";
+  beforeAll(() => {
+    dir = realpathSync.native(
+      mkdtempSync(join(tmpdir(), "diff-coverage-stale-")),
+    );
+    const g = (...a: string[]) =>
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@example.com", "-c", "user.name=t", ...a],
+        { cwd: dir, env: cleanGitEnv() },
+      );
+    g("init", "-q");
+    mkdirSync(join(dir, "src"));
+    writeFileSync(
+      join(dir, "src/a.rs"),
+      "fn a() {\n    let excused_line = compute_one()?;\n}\n",
+    );
+    g("add", ".");
+    g("commit", "-q", "-m", "base");
+  }, HOOK_MS);
+  afterAll(() => rmSync(dir, { recursive: true, force: true }), HOOK_MS);
+  afterEach(() => vi.restoreAllMocks());
+
+  const gate = (lcov: string, exclusions: string): [number, string] => {
+    writeFileSync(join(dir, "l.info"), lcov);
+    writeFileSync(join(dir, "ex.txt"), exclusions);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = run(
+      {
+        base: "HEAD",
+        lcov: join(dir, "l.info"),
+        exts: [".rs"],
+        prefix: "",
+        label: "t",
+        exclusions: join(dir, "ex.txt"),
+      },
+      dir,
+    );
+    return [code, err.mock.calls.flat().join("\n")];
+  };
+  const lcov = (hits: number) =>
+    `SF:${dir}/src/a.rs\nDA:2,${hits}\nend_of_record\n`;
+  const live = "src/a.rs | let excused_line = compute_one()?; | why\n";
+
+  it("passes while the excused line is in the file and never runs, though the diff is empty", () => {
+    expect(gate(lcov(0), live)).toEqual([0, ""]);
+  });
+
+  it("fails with the exclusion file and line when the text is gone", () => {
+    const [code, out] = gate(
+      lcov(0),
+      "# header\nsrc/a.rs | let long_gone_line = compute_one()?; | why\n",
+    );
+    expect(code).toBe(1);
+    expect(out).toContain(
+      `${join(dir, "ex.txt")}:2: stale exclusion "src/a.rs | let long_gone_line = compute_one()?;"`,
+    );
+  });
+
+  const gateMany = (lcovs: string[], exclusions: string): [number, string] => {
+    const files = lcovs.map((text, i) => {
+      const f = join(dir, `l${i}.info`);
+      writeFileSync(f, text);
+      return f;
+    });
+    writeFileSync(join(dir, "ex.txt"), exclusions);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = run(
+      {
+        base: "HEAD",
+        lcov: files.join(","),
+        exts: [".rs"],
+        prefix: "",
+        label: "t",
+        exclusions: join(dir, "ex.txt"),
+      },
+      dir,
+    );
+    return [code, err.mock.calls.flat().join("\n")];
+  };
+
+  it("gives the same verdict on two reports that disagree about a racy line, in either order", () => {
+    expect(gateMany([lcov(4), lcov(0)], live)).toEqual([0, ""]);
+    expect(gateMany([lcov(0), lcov(4)], live)).toEqual([0, ""]);
+  });
+
+  it("fails an entry that every one of several reports ran, naming the entry", () => {
+    const [code, out] = gateMany([lcov(4), lcov(1)], live);
+    expect(code).toBe(1);
+    expect(out).toContain("a test ran every line it excuses in all 2 reports");
+    expect(out).toContain(`${join(dir, "ex.txt")}:1: stale exclusion`);
+  });
+
+  it("names the report that is missing", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    writeFileSync(join(dir, "l.info"), lcov(0));
+    writeFileSync(join(dir, "ex.txt"), live);
+    const code = run(
+      {
+        base: "HEAD",
+        lcov: `${join(dir, "l.info")},${join(dir, "gone.info")}`,
+        exts: [".rs"],
+        prefix: "",
+        label: "t",
+        exclusions: join(dir, "ex.txt"),
+      },
+      dir,
+    );
+    expect(code).toBe(1);
+    expect(err.mock.calls.flat().join("\n")).toContain("gone.info not found");
+  });
+
+  it("only reports, and passes, when a test now runs the excused line", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(gate(lcov(4), live)).toEqual([0, ""]);
+      expect(log.mock.calls.flat().join("\n")).toContain(
+        "a test now runs every line it excuses",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 });

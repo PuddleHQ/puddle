@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The chain against a scripted proxy on loopback: `CONNECT`, absolute form, `407` rounds on one
 //! connection, dead-hop fallback, and what a hop is never allowed to reach.
 #![expect(
@@ -587,7 +587,15 @@ async fn host_side_connections_use_the_same_route_and_let_the_proxy_resolve_unkn
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Open).await;
     proxy.resolve_name("telemetry.nowhere.invalid", echo.addr);
-    let chain = chain(vec![via(&proxy)], Arc::new(puddle_upstream::NoAuth));
+    // The host's own lookup finds nothing, at once, whatever the machine's resolver is doing.
+    let chain = Chain::with_lookup(
+        discovery(vec![via(&proxy)]),
+        Arc::new(puddle_upstream::NoAuth),
+        fast(),
+        puddle_upstream::HostLookup::new(|_, _| async {
+            Err(std::io::Error::other("no such name"))
+        }),
+    );
     let dest = https("telemetry.nowhere.invalid");
     let mut connected = puddle_upstream::host::connect(&chain, &dest, Form::Tunnel)
         .await
@@ -930,4 +938,25 @@ async fn unreachable_says_whether_every_hop_failed_by_not_answering_in_time() {
         ),
         "{err:?}"
     );
+}
+
+#[tokio::test]
+async fn puddles_own_connection_goes_by_name_when_the_system_resolver_never_answers() {
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    proxy.resolve_name("registry.corp.test", echo.addr);
+    let config = fast().with_lookup_timeout(Duration::from_millis(100));
+    let chain = Chain::with_lookup(
+        discovery(vec![via(&proxy)]),
+        Arc::new(puddle_upstream::NoAuth),
+        config,
+        puddle_upstream::HostLookup::new(|_, _| std::future::pending()),
+    );
+    let mut connected =
+        puddle_upstream::host::connect(&chain, &https("registry.corp.test"), Form::Tunnel)
+            .await
+            .unwrap();
+    assert_eq!(connected.hop, via(&proxy));
+    assert_eq!(proxy.seen()[0].target, "registry.corp.test:443");
+    round_trip(&mut connected.stream, b"by name after a lookup that hung").await;
 }

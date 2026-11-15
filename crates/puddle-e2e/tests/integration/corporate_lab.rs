@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The corporate-lab fixtures against the sandbox proxy: a guest TCP client → the real guest agent →
 //! the real proxy (SQLite rules and audit) → upstream chaining → a lab fixture → a local origin.
 //!

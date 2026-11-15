@@ -1,18 +1,19 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals over a real WebSocket: the ticket, the limits, the messages and the ends.
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use puddle_api::{
-    EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL, TerminalEnd,
-    TerminalError,
+    ApiConfig, EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL,
+    TerminalEnd, TerminalError,
 };
+use puddle_api::{PublicHost, Remote, RemoteServing};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-use crate::common::{Api, STEP, start};
+use crate::common::{Api, RawSocket, STEP, start, start_with};
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -177,6 +178,37 @@ async fn a_terminal_echoes_follows_a_resize_and_ends_with_the_shells_status() {
     assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }
 
+/// A page that keeps acknowledging output while the shell ends (it does not know yet) must still be
+/// told how the shell ended: closing a socket with unread data from the peer resets the connection,
+/// and the reset throws away the end message the page has not read yet.
+#[tokio::test]
+async fn the_end_reaches_a_page_that_was_still_sending_when_the_shell_exited() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    socket
+        .send(Message::Binary(b"exit 4\r".to_vec().into()))
+        .await
+        .unwrap();
+    // flake-ok: a producer pacing its sends so some land after the server's close, not a wait for a condition.
+    for _ in 0..60 {
+        let ack = json!({"type": "ack", "bytes": 1}).to_string();
+        if socket.send(Message::Text(ack.into())).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    read_until(&mut socket, "exit 4").await;
+    let Message::Text(ended) = next(&mut socket).await else {
+        panic!("the end is a text message");
+    };
+    let ended: Value = serde_json::from_str(&ended).unwrap();
+    assert_eq!(ended["status"], 4);
+    assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
+}
+
 #[tokio::test]
 async fn a_ticket_works_once_and_only_for_its_own_terminal_and_a_foreign_origin_is_refused_first() {
     let api = start().await;
@@ -235,6 +267,55 @@ async fn a_ticket_works_once_and_only_for_its_own_terminal_and_a_foreign_origin_
     )
     .await;
     assert!(own.is_ok(), "the API's own origin is allowed");
+}
+
+#[tokio::test]
+async fn a_caller_without_a_ticket_cannot_tell_an_unknown_workspace_from_a_known_one() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, _ticket) = ticket(&api, "shop").await;
+    let offer = format!("{SUBPROTOCOL}, ticket.{}", "0".repeat(64));
+    let mut answers = Vec::new();
+    for name in ["shop", "nobody", "Bad!Name"] {
+        let result = connect_with(&api, name, terminal, &offer, None).await;
+        let Err(tokio_tungstenite::tungstenite::Error::Http(response)) = result else {
+            panic!("{name}: expected a refusal");
+        };
+        answers.push((
+            response.status().as_u16(),
+            response.body().clone().unwrap_or_default(),
+        ));
+    }
+    assert_eq!(answers[0].0, 401);
+    assert!(answers.iter().all(|a| a == &answers[0]), "{answers:?}");
+}
+
+#[tokio::test]
+async fn a_ticket_does_not_open_a_shell_under_a_public_name_and_stays_good_for_loopback() {
+    let mut config = ApiConfig::default();
+    config.remote = Some(Remote::new(
+        RemoteServing::new(vec![PublicHost::parse("puddle.example.org").unwrap()], None).unwrap(),
+    ));
+    let api = start_with(config).await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    // Any 16 bytes in base64 will do; built in two parts so a secret scanner does not read it as a key.
+    let key = ["dGhlIHNhbXBs", "ZSBub25jZQ=="].concat();
+    let under = |host: &str| {
+        format!(
+            "GET /api/workspaces/shop/terminals/{terminal} HTTP/1.1\r\nHost: {host}\r\n\
+             Connection: close, Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Key: {key}\r\nOrigin: https://{host}\r\n\
+             Sec-Fetch-Site: same-origin\r\n\
+             Sec-WebSocket-Protocol: {SUBPROTOCOL}, ticket.{ticket}\r\n\r\n"
+        )
+    };
+    let public = crate::common::raw(api.addr, under("puddle.example.org").as_bytes()).await;
+    assert_eq!(public.status, 401, "{public:?}");
+    assert_ne!(public.status, 101);
+    // The refusal came before the ticket was read, so it is still good on loopback.
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
 }
 
 #[tokio::test]
@@ -373,6 +454,25 @@ async fn an_unknown_or_oversized_message_closes_the_socket_with_1008() {
     }
 }
 
+/// The host's close of a refused page is a handshake: it waits for the page's close before it drops
+/// the connection, so a page that is still sending is not reset.
+#[tokio::test]
+async fn a_refusal_waits_for_the_page_to_answer_the_close() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = RawSocket::open(
+        api.addr,
+        &format!("/api/workspaces/shop/terminals/{terminal}"),
+        None,
+        &format!("{SUBPROTOCOL}, ticket.{ticket}"),
+    )
+    .await;
+    socket.send(0x1, b"not json").await;
+    assert_eq!(socket.read_close().await, 1008);
+    socket.answer_close_after_a_pause().await;
+}
+
 #[tokio::test]
 async fn a_message_far_over_the_limit_is_cut_off_by_the_socket_itself() {
     let api = start().await;
@@ -383,12 +483,33 @@ async fn a_message_far_over_the_limit_is_cut_off_by_the_socket_itself() {
     let _ = socket
         .send(Message::Binary(vec![b'x'; MAX_MESSAGE_BYTES * 2].into()))
         .await;
-    // The socket drops the connection without the policy close that a message inside its own
-    // limit gets.
+    // Past the socket's own limit there is no policy refusal, but the page still gets a close
+    // frame, with the code for a message that is too big.
     loop {
-        match socket.next().await {
-            Some(Ok(Message::Binary(_))) => {}
-            Some(Err(_)) | None => break,
+        match next(&mut socket).await {
+            Message::Binary(_) => {}
+            Message::Close(frame) => {
+                assert_eq!(frame.map(|f| f.code), Some(CloseCode::Size));
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// A close from the page is answered with a close frame, so the page sees a clean end.
+#[tokio::test]
+async fn a_close_from_the_page_is_answered_with_a_close_frame() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    socket.send(Message::Close(None)).await.unwrap();
+    loop {
+        match next(&mut socket).await {
+            Message::Binary(_) => {}
+            Message::Close(_) => break,
             other => panic!("{other:?}"),
         }
     }
@@ -407,6 +528,27 @@ async fn a_shutdown_ends_the_terminals_with_quitting() {
     };
     let ended: Value = serde_json::from_str(&ended).unwrap();
     assert_eq!(ended, json!({"type": "ended", "reason": "quitting"}));
+}
+
+/// The quitting end is a handshake too.
+#[tokio::test]
+async fn a_shutdown_waits_for_the_page_to_answer_the_close() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = RawSocket::open(
+        api.addr,
+        &format!("/api/workspaces/shop/terminals/{terminal}"),
+        None,
+        &format!("{SUBPROTOCOL}, ticket.{ticket}"),
+    )
+    .await;
+    let page = async {
+        // The text message of the end, then the close.
+        assert_eq!(socket.read_close().await, 1000);
+        socket.answer_close_after_a_pause().await;
+    };
+    tokio::join!(api.running.shutdown(), page);
 }
 
 #[tokio::test]
@@ -516,4 +658,5 @@ async fn a_session_that_vanishes_without_an_end_is_a_crash_and_pings_are_ignored
             other => panic!("unexpected {other:?}"),
         }
     }
+    assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }

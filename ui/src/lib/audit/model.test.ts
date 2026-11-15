@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { connection } from "#lib/testing/fake-audit.ts";
 import {
@@ -61,6 +61,7 @@ describe("filters and the API query", () => {
       workspace: "shop",
       type: "connection",
       outcome: "deny",
+      category: "company_network",
       q: "  github  ",
       range: "1h",
     };
@@ -68,6 +69,7 @@ describe("filters and the API query", () => {
       workspace: "shop",
       type: "connection",
       outcome: "deny",
+      category: "company_network",
       q: "github",
       from: 10_000_000 - 3_600_000,
     });
@@ -79,6 +81,7 @@ describe("filters and the API query", () => {
       { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
+      { category: "company_network" },
       { q: "x" },
       { range: "7d" },
     ] as Partial<Filter>[]) {
@@ -96,6 +99,7 @@ describe("isNarrowed", () => {
       { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
+      { category: "company_network" },
       { q: "x" },
     ] as Partial<Filter>[]) {
       expect(isNarrowed({ ...NO_FILTER, range: "all", ...change })).toBe(true);
@@ -121,6 +125,7 @@ describe("the page address", () => {
       workspace: "shop",
       type: "rule_created",
       outcome: "blocked",
+      category: "company_network",
       q: "a&b=c d",
       range: "all",
     };
@@ -171,6 +176,25 @@ describe("a record as a row", () => {
       outcome: { label: "Allowed", tone: "allow" },
     });
     expect(view.detail).toBe("rule 1 · 2.0 KB up, 3.0 MB down");
+  });
+  it("marks a company-network connection with a chip that says why, and names the toggle that refused it", () => {
+    const view = row(
+      connection(1, {
+        decision: "blocked",
+        reason: "toggle:company_network",
+        rule_id: null,
+        category: "company_network",
+        signal: "dns_suffix",
+      }).record,
+    );
+    expect(view.company).toEqual({
+      label: "Company network",
+      title: "Its name ends in one of the company's DNS suffixes.",
+    });
+    expect(view.detail).toBe(
+      "because company network destinations are switched off",
+    );
+    expect(row(connection(2, {}).record).company).toBeUndefined();
   });
   it("explains a block, a waiting request and a request line", () => {
     const blocked = row(
@@ -327,6 +351,32 @@ describe("a record as a row", () => {
     );
     expect(view.detail).not.toContain("went out unchanged (check");
   });
+  it("says which kinds of credential the workspace sent that Puddle did not add, never a value", () => {
+    const view = row(
+      connection(1, {
+        foreign_credentials: ["github_token", "git_authorization", "odd_kind"],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the workspace sent a GitHub token, a login for a Git repository, odd_kind that Puddle did not add; it went out as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("did not add");
+  });
+  it("says which kinds of token the answer held that Puddle does not hold, never a value", () => {
+    const view = row(
+      connection(1, {
+        answer_credentials: [
+          "github_token",
+          "jwt_with_refresh_token",
+          "odd_kind",
+        ],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the answer held a GitHub token, a sign-in token with a refresh token, odd_kind that Puddle does not hold; the workspace got it as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("does not hold");
+  });
   it("names the refused address of a mixed answer, apart from the one connected to", () => {
     const view = row(
       connection(1, {
@@ -341,10 +391,19 @@ describe("a record as a row", () => {
     const raw = row(
       connection(2, {
         refused_address: "127.0.0.1",
+        refused_reason: "a_later_reason",
+      }).record,
+    );
+    expect(raw.detail).toContain("127.0.0.1 (a_later_reason)");
+    const toggled = row(
+      connection(4, {
+        refused_address: "127.0.0.1",
         refused_reason: "toggle:loopback",
       }).record,
     );
-    expect(raw.detail).toContain("127.0.0.1 (toggle:loopback)");
+    expect(toggled.detail).toContain(
+      "127.0.0.1 (this computer's own addresses are switched off)",
+    );
     expect(row(connection(3, {}).record).detail).not.toContain("answer");
   });
   it("names an address that a rule on the address denied", () => {
@@ -379,7 +438,7 @@ describe("a record as a row", () => {
     const detail = (reason: string) =>
       row(connection(1, { reason, rule_id: null }).record).detail;
     expect(detail("push_denied")).toBe(
-      'because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+      'because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
     );
     for (const reason of [
       "push_denied",
@@ -461,7 +520,7 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
     expect(refused.detail).toBe(
-      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
     );
     const http = row(
       connection(2, {
@@ -530,6 +589,20 @@ describe("a record as a row", () => {
     );
     expect(unknown.detail).toContain("failed: new_code");
   });
+  it("names the certificate-check exception by what it is", () => {
+    const view = row(
+      connection(1, {
+        host: "pki.corp.example",
+        port: 80,
+        decision: "allow",
+        reason: "pki_distribution_point",
+        rule_id: null,
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "because a certificate check address named in your company's root certificates",
+    );
+  });
   it("leaves the outcome and the address out when the record has none", () => {
     const view = row(
       connection(1, { decision: null, host: null, port: null }).record,
@@ -596,6 +669,15 @@ describe("a record as a row", () => {
         } as unknown as AuditRecord),
       ).toMatchObject({ detail });
     }
+  });
+  it("says a rule made by a workspace create was made by the create", () => {
+    expect(
+      row({
+        ts: 1,
+        type: "rule_created",
+        rule: { ...rule, created_by: "workspace_create" },
+      } as AuditRecord),
+    ).toMatchObject({ detail: "allow for workspace shop, by the create" });
   });
   it("shows rule changes by pattern and scope, with no outcome", () => {
     const base = { ts: 1, rule };
@@ -735,10 +817,43 @@ describe("a record as a row", () => {
       "repo_added",
       "repo_switched",
       "repo_removed",
+      "root_disk_grown",
       "git_repaired",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }
+  });
+  it("words a root disk grow with both sizes, and a failed one with its reason", () => {
+    const op = (fields: Record<string, unknown>) =>
+      row({
+        type: "workspace_op",
+        ts: 5,
+        workspace_id: "shop",
+        op: "root_disk_grown",
+        outcome: "succeeded",
+        actor: "api",
+        detail: null,
+        ...fields,
+      } as AuditRecord);
+    expect(
+      op({
+        detail: "root disk grown from 10240 MiB to 20480 MiB, while it ran",
+      }),
+    ).toMatchObject({
+      outcome: { label: "Succeeded", tone: "allow" },
+      detail:
+        "Root disk made bigger: root disk grown from 10240 MiB to 20480 MiB, while it ran, by api",
+    });
+    expect(
+      op({
+        outcome: "failed",
+        detail: "root disk not grown from 10240 MiB to 20480 MiB: no room",
+      }),
+    ).toMatchObject({
+      outcome: { label: "Failed", tone: "deny" },
+      detail:
+        "Making the root disk bigger failed: root disk not grown from 10240 MiB to 20480 MiB: no room, by api",
+    });
   });
   it("filters on the workspace operation type and its two outcomes", () => {
     const filter = {

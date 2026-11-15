@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of scripts/coverage-run.sh with the real compiler and the real `llvm-profdata`: a tiny instrumented
 # program writes a good `.profraw` file, a copy cut to 100 bytes (and an empty file) plays the file of a process
 # that stopped mid-write, and a stub "cargo llvm-cov" merges the files the way cargo-llvm-cov does, in batches of
@@ -97,7 +97,7 @@ run() {
     (
         # shellcheck disable=SC2016 # the script text is for the inner shell
         env -u LLVM_PROFDATA_FLAGS -u GITHUB_ACTIONS -u PROPTEST_RNG_SEED PROFILES="$tmp/$name" TARGET="$tmp/target-$name" "$@" sh -c '
-            "$0/scripts/coverage-run.sh" "$1" --workspace && "$1" llvm-cov report --lcov' "$here" "$tmp/cargo"
+            COVERAGE_RUN_NO_DEAD_RESOLVER=1 "$0/scripts/coverage-run.sh" "$1" --workspace && "$1" llvm-cov report --lcov' "$here" "$tmp/cargo"
     ) >"$tmp/$name.out" 2>&1
     echo $? >"$tmp/$name.rc"
     set -e

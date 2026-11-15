@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Builds the Linux runtime folder from the msb that ci/fetch-msb.sh installed, through
 # `cargo xtask runtime --msb`, and checks what the VM jobs' own layout leaves unchecked: the folder
 # holds msb, libkrunfw.so.5 and the firmware under the versioned name pinned in

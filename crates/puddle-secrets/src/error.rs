@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Why a source could not supply a secret. No variant carries a secret or tool output.
 
 /// A tool Puddle runs.
@@ -11,6 +11,10 @@ pub enum Tool {
     Git,
     /// The Azure CLI.
     Az,
+    /// `systemd-creds`, which seals the file vault's key (Linux).
+    SystemdCreds,
+    /// `loginctl`, which says whether the user has a graphical login session (Linux).
+    Loginctl,
 }
 
 impl Tool {
@@ -21,6 +25,8 @@ impl Tool {
             Self::Gh => "gh",
             Self::Git => "git",
             Self::Az => "az",
+            Self::SystemdCreds => "systemd-creds",
+            Self::Loginctl => "loginctl",
         }
     }
 }
@@ -86,14 +92,4 @@ impl SourceError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Tool;
-
-    #[test]
-    fn a_tool_is_named_the_way_the_user_knows_it() {
-        assert_eq!(
-            (Tool::Gh.name(), Tool::Git.name(), Tool::Az.name()),
-            ("gh", "git", "az")
-        );
-    }
-}
+mod tests;

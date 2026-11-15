@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The three icon calls against a stand-in service that sees the raw requests.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

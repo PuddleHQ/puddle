@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle doctor`: checks what Puddle needs on this machine and what can get in its
 //! way, and says plainly what is wrong and the exact fix. Dev-focused: no admin rights needed to
 //! run it, and no IT-process advice.
@@ -14,8 +14,9 @@
 //! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout; says where a failed boot's logs were kept, or why not |
 //! | Disk space | free bytes on the drive that holds Puddle's data folder ([`puddle_fs::free_bytes`]) | under 20 GB warns, under 5 GB fails (both lines are settings) |
 //! | Data folder path (Linux) | the mode of every folder from `/` down to Puddle's data folder, by msb's own rule | a group- or world-writable folder that is not sticky: names it and the `chmod g-w` that fixes it |
-//! | Disk encryption | `BitLocker` (Windows, read with `PowerShell`), `dm-crypt` below the data folder's drive and swap (Linux, `/sys`), `FileVault` and encrypted swap (macOS) | data drive or swap not encrypted: a secret paged out or kept on disk is readable from the disk; unreadable: an info line |
+//! | Disk encryption | `BitLocker` (Windows, read with `PowerShell`; unknown unless the process is elevated), `dm-crypt` below the data folder's drive and swap (Linux, `/sys`), `FileVault` and encrypted swap (macOS) | data drive or swap not encrypted: a secret paged out or kept on disk is readable from the disk; unreadable: an info line |
 //! | SSH agent | one key-list request to the agent's pipe or socket ([`puddle_ssh_agent`]), 2 s limit; on Windows also the OpenSSH Authentication Agent service | no agent, locked, no keys, slow to answer (info or warning, never a failure) |
+//! | Credential store | a write and delete of a throwaway value, through [`puddle_secrets::probe_os_store`] | no Secret Service provider or a locked keyring (a headless Linux host): saving secrets and sign-ins fails; names the fix and says to choose Retry in Puddle or restart it |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
 //! | Guest kernel (Windows) | none: a fact of the Windows runtime | its guest kernel has `/dev/mem` (info): guest root can map device registers |
 //!
@@ -46,16 +47,18 @@ mod sys;
 mod system;
 
 pub use diagnose::{
-    DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE, Probe,
-    SSH_AGENT_LIMIT, diagnose,
+    AZ_CLI_LIMIT, DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE,
+    Probe, SSH_AGENT_LIMIT, diagnose,
 };
 pub use facts::{
-    AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
-    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts,
-    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection,
-    RuntimeFacts, RuntimeState, ServiceState, SshAgentFacts, SwapArea, SwapFacts, WritableFolder,
+    AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
+    CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
+    Protection, RuntimeFacts, RuntimeState, ServiceState, SshAgentFacts, SwapArea, SwapFacts,
+    VaultFacts, WritableFolder,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;
+pub use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
 pub use report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 pub use system::SystemProbe;

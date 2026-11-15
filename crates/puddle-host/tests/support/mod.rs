@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Helpers the host tests share: a minimal HTTP client for the API and a reader of its event
 //! stream, written on raw sockets so they depend on nothing the API's own tests do not.
 #![expect(
@@ -428,12 +428,41 @@ impl puddle_api::DevCertService for NoDevCert {
     }
 }
 
-/// Options that touch nothing of this machine's. A workspace's id is made from its name (`acme`
-/// gets `acme`), so a test can name its paths; a test about generated ids sets
-/// `workspace_ids` back to `None`.
+/// Options that touch nothing of this machine's. A workspace's id is drawn at random, as on a real
+/// host, so a test that prints the id where the user reads the name fails. A test that must name
+/// its paths before the workspace exists sets `workspace_ids` to [`puddle_api::NameIds`].
 pub(crate) fn hermetic_options() -> HostOptions {
     let mut options = HostOptions::default();
     options.dev_cert = Some(Arc::new(NoDevCert));
+    options.free_space = Some(Arc::new(FixedSpace(FIXED_FREE_BYTES)));
+    // No name resolves on this machine's DNS and no `az` runs: a resolver that is slow or down
+    // must not decide how long a test takes.
+    options.host_lookup = Some(puddle_upstream::HostLookup::new(|_, _| async {
+        Err(std::io::Error::other("no names resolve in a hermetic host"))
+    }));
+    options.front_resolver = Some(Arc::new(puddle_api::NoNames));
+    options.az_search_path = Some(std::ffi::OsString::new());
+    options
+}
+
+/// [`hermetic_options`] with ids made from names (`acme` gets `acme`), for a test that writes
+/// those ids into paths and URLs itself before the workspace exists. Every test that can read the
+/// id from the reply uses [`hermetic_options`] instead.
+pub(crate) fn named_id_options() -> HostOptions {
+    let mut options = hermetic_options();
     options.workspace_ids = Some(Arc::new(puddle_api::NameIds));
     options
+}
+
+/// The free space every hermetic host sees on its drive: a test about a grow never depends on
+/// the machine it runs on.
+pub(crate) const FIXED_FREE_BYTES: u64 = 512 * 1024 * 1024 * 1024;
+
+/// A drive with a fixed figure of free space.
+pub(crate) struct FixedSpace(pub(crate) u64);
+
+impl puddle_host::Space for FixedSpace {
+    fn free_bytes(&self) -> std::io::Result<u64> {
+        Ok(self.0)
+    }
 }

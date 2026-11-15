@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! System managed: which hosts Puddle allows because of the user's own setup (rules spec R-41).
 //! Derived from the settings here and handed to the store, at start and after every settings
 //! or consent change, so the allows follow the choices that justify them.
 
-use puddle_settings::{GlobalSettings, ServerChoice};
-use puddle_store::{SystemPlan, SystemReason};
+use puddle_settings::{GlobalSettings, MiseMode, ServerChoice, WorkspaceSettings, mise_mode};
+use puddle_store::{MISE_TOOLS_SLUG, SystemPlan, SystemReason};
 use puddle_types::{Problem, WorkspaceId};
 
 use puddle_settings::resolve;
@@ -28,10 +28,18 @@ const DIRECT_SSH_REASONS: [SystemReason; 4] = [
 ///   bundled code-server gives Open VSX.
 /// - `direct_ssh`: the workspaces with direct SSH on, which get the hosts of the desktop editors
 ///   for themselves (VS Code installs Microsoft's server and extensions there; Cursor, `JetBrains` Gateway and Zed, their own).
+/// - `mise`: the workspaces with mise on (the global switch and their own), which get the two
+///   hosts of the pinned download and the version lists.
+///
+/// - the "mise tools" set is hidden while the global tools switch is off.
 ///
 /// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]
-pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceId]) -> SystemPlan {
+pub(crate) fn plan(
+    global: &GlobalSettings,
+    direct_ssh: &[WorkspaceId],
+    mise: &[WorkspaceId],
+) -> SystemPlan {
     let mut plan = SystemPlan::default();
     match global.editor_server() {
         ServerChoice::Microsoft => {
@@ -43,11 +51,21 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceId]) -> Syste
             plan.everywhere.insert(SystemReason::CodeServer);
         }
     }
+    // The managed tools layer's hosts are a built-in set only while the layer is on.
+    if !global.tools.mise() {
+        plan.hidden_sets.insert(MISE_TOOLS_SLUG);
+    }
     for workspace in direct_ssh {
         plan.workspaces
             .entry(workspace.clone())
             .or_default()
             .extend(DIRECT_SSH_REASONS);
+    }
+    for workspace in mise {
+        plan.workspaces
+            .entry(workspace.clone())
+            .or_default()
+            .insert(SystemReason::Mise);
     }
     plan
 }
@@ -70,17 +88,24 @@ pub(crate) async fn refresh(state: &AppState) {
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;
-        let direct: Vec<WorkspaceId> = names
-            .into_iter()
-            .filter(|name| {
-                load_workspace(repo, name).is_ok_and(|own| {
-                    resolve(&global.settings, Some(&own.settings))
-                        .direct_ssh
-                        .value
-                })
-            })
-            .collect();
-        Ok(store.set_system_managed(&plan(&global.settings, &direct))?)
+        let mut direct = Vec::new();
+        let mut mise = Vec::new();
+        for name in names {
+            // A workspace whose settings cannot be read gets neither: an allow is only ever dropped.
+            let Ok(own) = load_workspace(repo, &name) else {
+                continue;
+            };
+            if resolve(&global.settings, Some(&own.settings))
+                .direct_ssh
+                .value
+            {
+                direct.push(name.clone());
+            }
+            if mise_on(&global.settings, &own.settings) {
+                mise.push(name);
+            }
+        }
+        Ok(store.set_system_managed(&plan(&global.settings, &direct, &mise))?)
     })
     .await;
     match (result, list_error) {
@@ -112,81 +137,12 @@ pub(crate) async fn refresh(state: &AppState) {
     }
 }
 
+fn mise_on(global: &GlobalSettings, own: &WorkspaceSettings) -> bool {
+    matches!(mise_mode(global, Some(own)), MiseMode::On { .. })
+}
+
 /// The key of the problem a failed [`refresh`] raises.
 const PROBLEM_KEY: &str = "system-managed";
 
 #[cfg(test)]
-mod tests {
-    use puddle_settings::{
-        Consent, ConsentKind, MICROSOFT_TERMS_VERSION, TermsVersion, UnixMillis,
-    };
-
-    use super::*;
-
-    fn microsoft(consent: bool) -> GlobalSettings {
-        let mut global = GlobalSettings::default();
-        global.vscode_server.server = Some(ServerChoice::Microsoft);
-        if consent {
-            global.consents.set(
-                ConsentKind::VsCodeServer,
-                Consent::Granted {
-                    at: UnixMillis(1),
-                    terms_version: TermsVersion::new(MICROSOFT_TERMS_VERSION).unwrap(),
-                },
-            );
-        }
-        global
-    }
-
-    #[test]
-    fn r41_code_server_by_default_gives_open_vsx_only() {
-        let plan = plan(&GlobalSettings::default(), &[]);
-        assert_eq!(
-            plan.everywhere.into_iter().collect::<Vec<_>>(),
-            [SystemReason::CodeServer]
-        );
-        assert_eq!(plan.workspaces.len(), 0);
-    }
-
-    #[test]
-    fn r41_microsoft_server_needs_the_consent() {
-        let with = plan(&microsoft(true), &[]);
-        assert_eq!(
-            with.everywhere.into_iter().collect::<Vec<_>>(),
-            [SystemReason::MicrosoftServer]
-        );
-        // Chosen without a consent: the editor runs code-server, so that is what is allowed.
-        assert_eq!(
-            plan(&microsoft(false), &[]),
-            plan(&GlobalSettings::default(), &[])
-        );
-    }
-
-    #[test]
-    fn r41_a_consent_to_other_terms_does_not_open_microsofts_hosts() {
-        let mut global = microsoft(true);
-        global.consents.set(
-            ConsentKind::VsCodeServer,
-            Consent::Granted {
-                at: UnixMillis(1),
-                terms_version: TermsVersion::new("https://example.test/older-terms").unwrap(),
-            },
-        );
-        let plan = plan(&global, &[]);
-        assert!(!plan.everywhere.contains(&SystemReason::MicrosoftServer));
-        assert!(plan.everywhere.contains(&SystemReason::CodeServer));
-    }
-
-    #[test]
-    fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
-        let ssh = WorkspaceId::new("ssh").unwrap();
-        let plan = plan(&GlobalSettings::default(), std::slice::from_ref(&ssh));
-        assert_eq!(
-            plan.workspaces
-                .get(&ssh)
-                .map(|r| r.iter().copied().collect::<Vec<_>>()),
-            Some(DIRECT_SSH_REASONS.to_vec())
-        );
-        assert!(!plan.everywhere.contains(&SystemReason::DirectSsh));
-    }
-}
+mod tests;

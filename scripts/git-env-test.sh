@@ -1,11 +1,11 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Gate-level check that the gates leave the repository of a calling git hook alone. A hook exports
 # GIT_DIR, GIT_INDEX_FILE and GIT_WORK_TREE; a gate that runs a mutating git command (`git init`,
 # `git config`, `git add`) without stripping them rewrites that repository. This runs the gates
 # that spawn git under those variables, pointed at throwaway repositories, and asserts each victim's
 # config, index and HEAD are byte-identical afterwards:
-#   - `scripts/check.sh fast` (fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips), which
+#   - `scripts/check.sh fast` (fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks), which
 #     covers every git-touching gate of the pre-commit list and the cheap ones of the pre-push list.
 #     The `fast` run before this gate had no hook variables, so it proves nothing here; this one is
 #     the pre-commit hook's situation. It runs beside the tests below, on its own victim;

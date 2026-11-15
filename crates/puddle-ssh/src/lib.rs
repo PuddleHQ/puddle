@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The SSH endpoint of a sandbox and the `puddle ssh-bridge` relay.
 //!
 //! An IDE or `ssh` reaches a sandbox like this:

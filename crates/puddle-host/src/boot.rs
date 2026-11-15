@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What every sandbox is built from: Puddle's boot files, the egress route and the guest's proxy
 //! and trust configuration.
 
@@ -14,17 +14,42 @@ use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{DiskSize, FileMount, ImageConfig, OwnedDisk, SandboxSpec, VsockRoute};
-use puddle_guest_env::{ProxySettings, guest_proxy_config, ssh_known_hosts_file};
-use puddle_ipc::IpcRoot;
+use puddle_guest_env::{
+    MiseSettings, ProxySettings, guest_proxy_config, mise_config, ssh_known_hosts_file,
+};
+use puddle_ipc::{IpcError, IpcRoot};
 use puddle_proxy::{Proxy, Route};
+use puddle_settings::MiseMode;
 use puddle_store::Store;
-use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId};
-use puddle_workspace::Layout;
+use puddle_types::{
+    GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, guest_path,
+};
+use puddle_workspace::{Layout, WORKSPACES_ROOT};
 
 use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::{Authors, SshListing};
 use crate::shell_init::{self, Copies};
 use crate::{GuestSettings, HostError};
+
+/// Why a sandbox's boot inputs could not be made. The messages are for the user.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum BootInputError {
+    /// The egress route's endpoint could not be opened.
+    #[error(transparent)]
+    Route(#[from] IpcError),
+    /// The session user's home is not a guest path.
+    #[error(transparent)]
+    Home(#[from] puddle_types::ValidationError),
+    /// A guest file could not be rendered.
+    #[error(transparent)]
+    GuestFiles(#[from] puddle_guest_env::ConfigError),
+    /// The boot plan is refused.
+    #[error(transparent)]
+    Plan(#[from] puddle_boot::PlanError),
+    /// The workspace's folders could not be worked out.
+    #[error(transparent)]
+    Layout(#[from] puddle_workspace::WorkspaceError),
+}
 
 /// The guest vsock port the agent connects to; the route of every sandbox listens behind it.
 pub(crate) const AGENT_ROUTE_PORT: u32 = 5000;
@@ -56,15 +81,18 @@ const DOCKER_DISK_SIZE: DiskSize = DiskSize::gib(20);
 /// made before this size existed keeps the 4 GiB it was made with.
 const WORKSPACE_ROOT_DISK_SIZE: DiskSize = DiskSize::gib(16);
 
+/// The root disk a workspace's sandbox is made with: the default, or the size the user grew it to
+/// when that is more, so a reset or a made-again sandbox keeps what was grown.
+pub(crate) fn root_disk_size(grown_mib: Option<u32>) -> DiskSize {
+    grown_mib.map_or(WORKSPACE_ROOT_DISK_SIZE, |mib| {
+        WORKSPACE_ROOT_DISK_SIZE.max(DiskSize::mib(mib))
+    })
+}
+
 /// The disk Docker's data lives on: one per sandbox, deleted with it.
 fn docker_disk() -> OwnedDisk {
-    #[expect(
-        clippy::expect_used,
-        reason = "invariant: DOCKER_DATA_DIR is a fixed absolute path"
-    )]
-    let guest = GuestPath::new(DOCKER_DATA_DIR).expect("the Docker data folder is a guest path");
     OwnedDisk {
-        guest,
+        guest: guest_path!(DOCKER_DATA_DIR),
         size: DOCKER_DISK_SIZE,
     }
 }
@@ -83,6 +111,10 @@ pub(crate) struct BootKit {
     shell_init: Copies,
     dev_cert: Option<Arc<dyn GuestCertSource>>,
 }
+
+/// Where the agent listens for the guest's SSH clients when the workspace uses the user's SSH
+/// agent for a host.
+const GUEST_SSH_AGENT_SOCKET: &str = "/run/puddle/ssh-agent.sock";
 
 /// How long a start waits for the development certificate: the system's one-time confirmation
 /// may be open on the user's desktop. After that the workspace starts without it (and gets it at
@@ -116,6 +148,34 @@ pub(crate) struct GuestInputs<'a> {
     /// The guest user sessions run as: the boot hook adds it, and per-user settings go to its
     /// home.
     pub(crate) session_user: SessionUser,
+    /// Whether the guest gets its SSH agent socket, which carries each client to the user's agent
+    /// on the host (for the hosts the workspace has it on for).
+    pub(crate) ssh_agent: bool,
+    /// The managed mise layer, when it is on for this workspace.
+    pub(crate) mise: Option<&'a MiseLayer>,
+}
+
+/// Where the managed mise layer lives in one workspace and what it may trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MiseLayer {
+    /// `/workspaces/<id>/.puddle/mise`.
+    pub(crate) dir: GuestPath,
+    /// The workspace's volume when the repository's own code is trusted (`repo_code`).
+    pub(crate) trusted: Option<GuestPath>,
+}
+
+impl MiseLayer {
+    /// The layer of workspace `id` for `mode`; `None` while the layer is off.
+    pub(crate) fn of(id: &WorkspaceId, mode: MiseMode) -> Result<Option<Self>, BootInputError> {
+        let MiseMode::On { trust } = mode else {
+            return Ok(None);
+        };
+        let layout = Layout::new(id)?;
+        Ok(Some(Self {
+            dir: layout.mise_dir()?,
+            trusted: trust.then(|| layout.mount().clone()),
+        }))
+    }
 }
 
 impl BootKit {
@@ -127,6 +187,7 @@ impl BootKit {
         proxy: Arc<Proxy>,
         roots: &CorporateRoots,
         store: Arc<Store>,
+        state_dir: &Path,
     ) -> Result<Self, HostError> {
         let io = |what: &str, e: std::io::Error| HostError::GuestFiles(format!("{what}: {e}"));
         if !guest.agent_binary.is_file() {
@@ -148,7 +209,15 @@ impl BootKit {
             .map(|release| install_code_server(release, &dir))
             .transpose()
             .map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))?;
-        let ipc = IpcRoot::new().map_err(|e| HostError::GuestFiles(e.to_string()))?;
+        // Stable routes keep every sandbox across a restart of this process. Without them (the
+        // runtime folder is unusable) the routes are random again, and a restart rebuilds sandboxes.
+        let ipc = match IpcRoot::stable(state_dir) {
+            Ok(root) => root,
+            Err(e) => {
+                tracing::warn!(error = %e, "no stable sandbox routes: a restart of Puddle will make every sandbox again");
+                IpcRoot::new().map_err(|e| HostError::GuestFiles(e.to_string()))?
+            }
+        };
         Ok(Self {
             proxy,
             ipc,
@@ -185,11 +254,27 @@ impl BootKit {
         &self.hook
     }
 
-    /// Starts the egress route of `sandbox`: a fresh owner-only endpoint served by the shared
-    /// proxy. It lives as long as the returned [`Route`].
-    pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, String> {
-        let listener = self.ipc.listen().map_err(|e| e.to_string())?;
+    /// Starts the egress route of `workspace`: an owner-only endpoint served by the shared proxy,
+    /// the same one at every run of Puddle, so a sandbox made by an earlier run finds its route
+    /// where its spec says. A name that cannot be had (taken by another process, no stable root)
+    /// gets a random endpoint instead: that route is not the one an older sandbox has, so such a
+    /// sandbox is made again. It lives as long as the returned [`Route`].
+    pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, BootInputError> {
+        let listener = match self.ipc.listen_named(workspace.as_str()) {
+            Ok(listener) => listener,
+            Err(e) => {
+                tracing::warn!(%workspace, error = %e, "the workspace's stable route is not available, so it gets a random one");
+                self.ipc.listen()?
+            }
+        };
         Ok(self.proxy.serve_route(listener, workspace.clone()))
+    }
+
+    /// Whether a sandbox made with `routes` starts with `route`: its agent route is this endpoint.
+    pub(crate) fn serves(routes: &[VsockRoute], route: &Route) -> bool {
+        routes
+            .iter()
+            .any(|r| r.guest_port == AGENT_ROUTE_PORT && r.host == route.endpoint().path())
     }
 
     /// The boot plan and the environment for a sandbox of `image`. The same inputs give the same
@@ -198,18 +283,23 @@ impl BootKit {
         &self,
         image: &ImageConfig,
         guest: &GuestInputs<'_>,
-    ) -> Result<(BootPlan, GuestEnv), String> {
+    ) -> Result<(BootPlan, GuestEnv), BootInputError> {
         // The user's variables count as the image's here, so the few that Puddle adds to (not
         // replaces) keep the user's value and the files that follow `GRADLE_USER_HOME` and
         // `DOCKER_CONFIG` land where the user pointed them.
         let mut image_env = image.env.clone();
         image_env.extend(guest.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         let user = guest.session_user;
+        let ssh_agent = guest
+            .ssh_agent
+            .then(|| GuestPath::new(GUEST_SSH_AGENT_SOCKET))
+            .transpose()?;
         let settings = ProxySettings {
-            home: GuestPath::new(user.home()).map_err(|e| e.to_string())?,
+            home: GuestPath::new(user.home())?,
+            ssh_agent: ssh_agent.clone(),
             ..ProxySettings::default()
         };
-        let proxy = guest_proxy_config(&settings, &image_env).map_err(|e| e.to_string())?;
+        let proxy = guest_proxy_config(&settings, &image_env)?;
         let mut trust =
             GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone())).for_user(user);
         if let Some(dev) = guest.dev_cert {
@@ -218,11 +308,31 @@ impl BootKit {
         let mut env = guest.env.clone();
         env.extend(&proxy.env);
         env.extend(&trust.env());
+        let mise = guest
+            .mise
+            .map(|layer| {
+                mise_config(&MiseSettings {
+                    dir: layer.dir.clone(),
+                    ceiling: GuestPath::new(WORKSPACES_ROOT)?,
+                    trusted: layer.trusted.clone(),
+                    image_path: image_env
+                        .iter()
+                        .rev()
+                        .find(|(name, _)| name == "PATH")
+                        .map(|(_, value)| value.clone()),
+                })
+                .map_err(BootInputError::from)
+            })
+            .transpose()?;
+        if let Some(mise) = &mise {
+            env.extend(&mise.env);
+        }
         let mut builder = BootPlan::builder(image)
             .session_user(user)
             .env(&env)
             .files(proxy.files)
             .files(trust.guest_files())
+            .files(mise.map(|m| m.files).unwrap_or_default())
             .file(shell_init::loader())
             .file(puddle_boot::start_folder_file(
                 guest.root,
@@ -232,7 +342,7 @@ impl BootKit {
             builder = builder.file(file.clone());
         }
         if let Some(lines) = guest.ssh.and_then(SshListing::lines) {
-            builder = builder.file(ssh_known_hosts_file(&lines).map_err(|e| e.to_string())?);
+            builder = builder.file(ssh_known_hosts_file(&lines)?);
         }
         for step in trust.boot_steps() {
             builder = builder.step(step);
@@ -249,7 +359,12 @@ impl BootKit {
                 builder = builder.agent_env(name, value);
             }
         }
-        let plan = builder.build().map_err(|e| e.to_string())?;
+        if let Some(socket) = &ssh_agent {
+            builder = builder
+                .agent_env("PUDDLE_AGENT_SSH_AGENT", socket.as_str())
+                .agent_env("PUDDLE_AGENT_SSH_AGENT_USER", user.name());
+        }
+        let plan = builder.build()?;
         Ok((plan, env))
     }
 
@@ -266,7 +381,6 @@ impl BootKit {
     ) -> SandboxSpec {
         let spec = SandboxSpec::new(name.sandbox_name(), image)
             .with_memory(memory)
-            .with_root_disk(WORKSPACE_ROOT_DISK_SIZE)
             .with_env(env)
             .with_route(VsockRoute::new(AGENT_ROUTE_PORT, route.endpoint().path()))
             .with_owned_disk(docker_disk());
@@ -286,12 +400,12 @@ impl BootKit {
         id: &WorkspaceId,
         grace_secs: u32,
         kind: ServerKind,
-    ) -> Result<Option<EditorServer>, String> {
+    ) -> Result<Option<EditorServer>, BootInputError> {
         if self.code_server.is_none() && kind == ServerKind::CodeServer {
             return Ok(None);
         }
-        let layout = Layout::new(id).map_err(|e| e.to_string())?;
-        let data = layout.puddle_dir().map_err(|e| e.to_string())?;
+        let layout = Layout::new(id)?;
+        let data = layout.puddle_dir()?;
         let mount = layout.mount().to_string();
         let mut server = match kind {
             ServerKind::CodeServer => {
@@ -318,14 +432,21 @@ impl BootKit {
     }
 }
 
-/// Puts the code-server release at `release` below `dir` (inside the guest share, the only place
-/// msb mounts from) and returns where. The folder is named for the release's version, so two
-/// versions never mix and a sandbox that still mounts the old one keeps working; a folder that
-/// is already complete is reused. Files are hard-linked where the folders share a disk, else
-/// copied.
+/// The folder below the guest share that holds the code-server release the guests mount. It has
+/// one name for every release: a sandbox keeps the mount source it was made with, so a name that
+/// changed with the version would make every sandbox of an earlier run unstartable after an
+/// update (and a restart that keeps sandboxes would have to make them again).
+const CODE_SERVER_DIR: &str = "code-server";
+
+/// Puts the code-server release at `release` in [`CODE_SERVER_DIR`] below `dir` (inside the guest
+/// share, the only place msb mounts from) and returns where. A folder that is complete for this
+/// release is reused; another release replaces it in place, which is safe because this runs when
+/// the host starts, before any sandbox of this run exists (one host runs per data folder, and the
+/// sandboxes of an earlier run are stopped). Files are hard-linked where the folders share a disk,
+/// else copied.
 fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     let manifest = std::fs::read_to_string(release.join("code-server.json"))?;
-    let version = serde_json::from_str::<serde_json::Value>(&manifest)
+    serde_json::from_str::<serde_json::Value>(&manifest)
         .ok()
         .and_then(|m| m.get("version")?.as_str().map(ToOwned::to_owned))
         .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
@@ -335,52 +456,38 @@ fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
                 release.join("code-server.json").display()
             ))
         })?;
-    let target = dir.join(format!("code-server-{version}"));
+    let target = dir.join(CODE_SERVER_DIR);
+    remove_legacy_releases(dir);
     let done = target.join(INSTALLED_MARKER);
-    if done.is_file() {
+    if std::fs::read_to_string(&done).is_ok_and(|installed| installed == manifest) {
         return Ok(target);
     }
-    let partial = dir.join(format!("code-server-{version}.partial"));
+    let partial = dir.join(format!("{CODE_SERVER_DIR}.partial"));
     if partial.exists() {
         std::fs::remove_dir_all(&partial)?;
-    }
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
     }
     tracing::info!(from = %release.display(), to = %target.display(), "installing code-server for the guests");
     link_or_copy_tree(release, &partial, &|from, to| std::fs::hard_link(from, to))?;
     std::fs::write(partial.join(INSTALLED_MARKER), &manifest)?;
+    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
     std::fs::rename(&partial, &target)?;
-    prune_old_releases(dir, &target);
     Ok(target)
 }
 
-/// How many releases besides the newest stay in the guest share: a sandbox that is still running
-/// from before an update mounts the one before.
-const KEPT_OLD_RELEASES: usize = 1;
-
-/// Removes the `code-server-<version>` folders below `dir` except `keep` and the newest
-/// [`KEPT_OLD_RELEASES`] others (by the time they were installed). Failing to remove one only
-/// leaves it for the next install.
-fn prune_old_releases(dir: &Path, keep: &Path) {
-    let mut old: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+/// Removes what earlier versions of Puddle left below `dir`: the `code-server-<version>` folders
+/// (a sandbox of that time is made again at its next start, since its route is not a stable one
+/// either). Failing to remove one only leaves it for the next start.
+fn remove_legacy_releases(dir: &Path) {
+    let legacy: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("code-server-"))
         .map(|e| e.path())
-        .filter(|p| p != keep)
-        .map(|p| {
-            // Folders that never completed (no marker) count as oldest, so they go first.
-            let installed = std::fs::metadata(p.join(INSTALLED_MARKER))
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            (installed, p)
-        })
         .collect();
-    old.sort();
-    let drop_count = old.len().saturating_sub(KEPT_OLD_RELEASES);
-    for (_, path) in old.into_iter().take(drop_count) {
+    for path in legacy {
         let gone = if path.is_dir() {
             std::fs::remove_dir_all(&path)
         } else {
@@ -414,172 +521,4 @@ fn link_or_copy_tree(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn release(dir: &Path, version: &str) -> PathBuf {
-        let release = dir.join("release");
-        std::fs::create_dir_all(release.join("bin")).unwrap();
-        std::fs::write(release.join("bin/code-server"), "#!/bin/sh\n").unwrap();
-        std::fs::write(
-            release.join("code-server.json"),
-            format!("{{\"version\": \"{version}\"}}"),
-        )
-        .unwrap();
-        release
-    }
-
-    #[test]
-    fn dockers_disk_is_20_gib_at_var_lib_docker() {
-        let disk = docker_disk();
-        assert_eq!(disk.guest.as_str(), "/var/lib/docker");
-        assert_eq!(disk.size, DiskSize::gib(20));
-    }
-
-    #[test]
-    fn the_release_is_installed_under_its_version_and_reused_when_complete() {
-        let tmp = tempfile::tempdir().unwrap();
-        let share = tmp.path().join("share");
-        std::fs::create_dir(&share).unwrap();
-        let release = release(tmp.path(), "4.1.0");
-        let target = install_code_server(&release, &share).unwrap();
-        assert_eq!(target, share.join("code-server-4.1.0"));
-        assert!(target.join("bin/code-server").is_file());
-        assert!(target.join(INSTALLED_MARKER).is_file());
-        // A second start finds it complete and leaves it alone.
-        std::fs::write(target.join("sentinel"), "x").unwrap();
-        assert_eq!(install_code_server(&release, &share).unwrap(), target);
-        assert!(target.join("sentinel").is_file());
-        // Another version sits beside it.
-        let newer = release.with_file_name("newer");
-        std::fs::create_dir(&newer).unwrap();
-        std::fs::write(newer.join("code-server.json"), r#"{"version":"4.2.0"}"#).unwrap();
-        assert_eq!(
-            install_code_server(&newer, &share).unwrap(),
-            share.join("code-server-4.2.0")
-        );
-        assert!(target.is_dir());
-    }
-
-    #[test]
-    fn older_releases_go_except_the_one_before_the_newest() {
-        let tmp = tempfile::tempdir().unwrap();
-        let share = tmp.path().join("share");
-        std::fs::create_dir(&share).unwrap();
-        let mut installed = Vec::new();
-        for (n, version) in ["4.1.0", "4.2.0", "4.3.0", "4.4.0"].into_iter().enumerate() {
-            let release = release(tmp.path(), version);
-            installed.push(install_code_server(&release, &share).unwrap());
-            // Installed one after the other, as releases are: the marker's time orders them.
-            let marker = installed[n].join(INSTALLED_MARKER);
-            let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000 * (n as u64 + 1));
-            std::fs::File::options()
-                .write(true)
-                .open(&marker)
-                .unwrap()
-                .set_modified(at)
-                .unwrap();
-        }
-        // A fifth install drops everything older than the release before it, and only releases.
-        std::fs::write(share.join("puddle-agent"), "agent").unwrap();
-        std::fs::create_dir(share.join("code-server-9.9.9.partial")).unwrap();
-        let fifth = install_code_server(&release(tmp.path(), "4.5.0"), &share).unwrap();
-        assert!(fifth.is_dir());
-        assert!(installed.iter().take(3).all(|old| !old.exists()));
-        assert!(!share.join("code-server-9.9.9.partial").exists());
-        assert!(installed[3].is_dir(), "the release before the newest stays");
-        assert!(share.join("puddle-agent").is_file());
-    }
-
-    #[test]
-    fn cleaning_up_a_missing_folder_does_nothing_and_a_stray_file_is_removed() {
-        let tmp = tempfile::tempdir().unwrap();
-        prune_old_releases(&tmp.path().join("missing"), &tmp.path().join("keep"));
-        std::fs::write(
-            tmp.path().join("code-server-1.0.0"),
-            "a file, not a release",
-        )
-        .unwrap();
-        std::fs::create_dir(tmp.path().join("code-server-2.0.0")).unwrap();
-        prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
-        // The folder without a marker counts as oldest and goes; one old release is kept.
-        let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().flatten().collect();
-        assert_eq!(left.len(), 1, "{left:?}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_release_that_cannot_be_removed_is_left_and_the_others_still_go() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let tmp = tempfile::tempdir().unwrap();
-        let stuck = tmp.path().join("code-server-1.0.0");
-        std::fs::create_dir_all(stuck.join("inner")).unwrap();
-        std::fs::write(stuck.join("inner/file"), "x").unwrap();
-        std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o555))
-            .unwrap();
-        // Root removes it anyway; the test is for a user the folder's mode binds.
-        let binds = std::fs::write(stuck.join("inner/probe"), "").is_err();
-        for name in ["code-server-2.0.0", "code-server-3.0.0"] {
-            std::fs::create_dir(tmp.path().join(name)).unwrap();
-        }
-        prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
-        std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
-        assert!(!binds || stuck.join("inner/file").is_file());
-        assert!(tmp.path().join("code-server-3.0.0").is_dir());
-    }
-
-    #[test]
-    fn a_half_installed_folder_is_made_again() {
-        let tmp = tempfile::tempdir().unwrap();
-        let share = tmp.path().join("share");
-        std::fs::create_dir_all(share.join("code-server-4.1.0.partial")).unwrap();
-        std::fs::create_dir_all(share.join("code-server-4.1.0")).unwrap();
-        std::fs::write(share.join("code-server-4.1.0/stale"), "x").unwrap();
-        let target = install_code_server(&release(tmp.path(), "4.1.0"), &share).unwrap();
-        assert!(!target.join("stale").exists());
-        assert!(target.join(INSTALLED_MARKER).is_file());
-        assert!(!share.join("code-server-4.1.0.partial").exists());
-    }
-
-    #[test]
-    fn a_release_without_a_usable_version_is_refused() {
-        let tmp = tempfile::tempdir().unwrap();
-        let share = tmp.path().join("share");
-        std::fs::create_dir(&share).unwrap();
-        let empty = tmp.path().join("empty");
-        std::fs::create_dir(&empty).unwrap();
-        assert!(install_code_server(&empty, &share).is_err());
-        for bad in [
-            "not json",
-            r#"{"version": "../x"}"#,
-            r#"{"version": ""}"#,
-            "{}",
-        ] {
-            std::fs::write(empty.join("code-server.json"), bad).unwrap();
-            let err = install_code_server(&empty, &share).unwrap_err().to_string();
-            assert!(err.contains("no usable version"), "{bad}: {err}");
-        }
-    }
-
-    #[test]
-    fn files_are_copied_where_a_link_is_not_possible() {
-        let tmp = tempfile::tempdir().unwrap();
-        let from = release(tmp.path(), "4.1.0");
-        let to = tmp.path().join("copy");
-        let no_links = |_: &Path, _: &Path| Err(std::io::Error::other("different disks"));
-        link_or_copy_tree(&from, &to, &no_links).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(to.join("bin/code-server")).unwrap(),
-            "#!/bin/sh\n"
-        );
-    }
-
-    #[test]
-    fn the_guest_mount_is_the_path_the_agent_is_told() {
-        assert_eq!(
-            puddle_boot::CODE_SERVER_GUEST,
-            puddle_agent_proto::editor::GUEST_DIR
-        );
-    }
-}
+mod tests;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows only: Puddle's SSPI sign-in against a fake corporate proxy whose server side
 //! is Windows' own SSPI (`AcceptSecurityContext`). So the tokens are checked by the real NTLM and
 //! Negotiate packages, as the logged-on user of the runner, instead of by a stand-in that

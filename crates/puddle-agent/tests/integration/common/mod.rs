@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared harness: a host over a Unix socket (yamux server, control stream, allow-all CONNECT
 //! endpoint) and an agent pointed at it.
 #![expect(

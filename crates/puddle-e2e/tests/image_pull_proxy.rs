@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I test of the image-pull path (P1/P2 without a VM): the msb adapter's real
 //! `pull_image` (the SDK's registry client) → the client's own proxy setting
 //! ([`MsbConfig::with_registry_proxy`]) → Puddle's [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
@@ -194,7 +194,12 @@ async fn assert_pulls_are_audited(store: &Store, token: &str) {
 /// The `connection` records `filter` matches, oldest first.
 fn connection_records(store: &Store, filter: &AuditFilter) -> Vec<puddle_store::ConnectionRecord> {
     store
-        .audit_query(filter, AuditCursor::After(0), 500)
+        .audit_query_every_user(
+            &puddle_store::testing::all_users(),
+            filter,
+            AuditCursor::After(0),
+            500,
+        )
         .unwrap()
         .iter()
         .filter_map(|(_, line)| match serde_json::from_str(line).unwrap() {

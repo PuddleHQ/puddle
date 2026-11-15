@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The sign-ins Puddle holds for company proxies that ask for a user name and password. The list
 // names proxies and users only: the password goes out once and is never read back, and is not
 // kept here after the call.

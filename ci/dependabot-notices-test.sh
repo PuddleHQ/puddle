@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/dependabot-notices.sh with a fake `gh` and a local bare repository as the remote. The main case is
 # the stale-header one from a real npm group PR: ci/fixtures/dependabot-notices/stale.txt is the notices file at the
 # Dependabot head and fresh.txt what `npm run licences` made of it (a 5-line diff of version headers). Checks that

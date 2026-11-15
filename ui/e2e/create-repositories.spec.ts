@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The create form with a list of repositories, on the fixture backend (scenario `lived-in`): rows
 // added and removed by keyboard, a directory clash flagged before the submit, the progress line
 // naming each clone, and the notice for a clone that failed while the create still finished.
@@ -23,7 +23,15 @@ const auth = (backend: Backend) => ({
 interface Made {
   name: string;
   start_folder: string | null;
-  repositories: { url: string; directory: string }[];
+  repositories: { entry: string; url: string; directory: string }[];
+}
+
+/** The list without its generated entry ids, after checking each has one and no two share it. */
+function listed(made: Made): { url: string; directory: string }[] {
+  const ids = made.repositories.map((r) => r.entry);
+  expect(new Set(ids).size).toBe(ids.length);
+  for (const id of ids) expect(id).toMatch(/^[0-9a-hjkmnp-tv-z]{8}$/);
+  return made.repositories.map(({ url, directory }) => ({ url, directory }));
 }
 
 async function workspace(
@@ -144,7 +152,7 @@ test.describe("the list of repositories", () => {
     await backend.control.step({ do: "release_workspaces" });
     await expect(created).toContainText("Not started");
     const made = await workspace(request, backend, "api");
-    expect(made.repositories).toEqual([
+    expect(listed(made)).toEqual([
       { url: API, directory: "api" },
       { url: CLI, directory: "cli-tool" },
       { url: DOCS, directory: "docs" },
@@ -168,9 +176,7 @@ test.describe("the list of repositories", () => {
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(card(page, "scratch")).toContainText("No repository");
-    expect((await workspace(request, backend, "scratch")).repositories).toEqual(
-      [],
-    );
+    expect(listed(await workspace(request, backend, "scratch"))).toEqual([]);
   });
 
   test("a directory two rows share is flagged before the submit, with a free name, and clears when one changes", async ({
@@ -424,6 +430,11 @@ for (const scheme of ["light", "dark"] as const) {
       await rowOf(page, 2)
         .getByRole("button", { name: /^Remove/ })
         .click();
+      // The host note under the buttons drops gitlab.com 300 ms later and loses a line; the dialog
+      // is scrolled to its end, so row 1 moves down with it and a press under way ends on nothing.
+      await expect(dialog.getByTestId("hosts-new")).toContainText(
+        "allows github.com for this workspace",
+      );
       await rowOf(page, 1)
         .getByRole("button", { name: /^Remove/ })
         .click();
@@ -489,7 +500,7 @@ test.describe("a checkout on this computer", () => {
       await expect(dialogOf(page)).toHaveCount(0);
       await expect(card(page, "shop")).toBeVisible();
       const made = await workspace(request, backend, "shop");
-      expect(made.repositories).toEqual([
+      expect(listed(made)).toEqual([
         { url: "https://github.com/acme/shop.git", directory: "shop" },
       ]);
     } finally {

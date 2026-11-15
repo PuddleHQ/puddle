@@ -1,117 +1,96 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading the settings documents for the host's own decisions (direct SSH, local destinations,
 //! the default memory). A missing document is a fresh install and means the defaults; one that
-//! exists but cannot be read or understood is an `Err` naming what is wrong, so each caller picks
+//! exists but cannot be read or understood is a [`SettingsReadError`] naming what is wrong, so each caller picks
 //! fail-closed, refuse or report instead of treating damage as "nothing set".
 
 use puddle_api::SettingsRepo;
-use puddle_settings::{GlobalSettings, WorkspaceSettings};
+use puddle_settings::{GlobalSettings, MiseMode, WorkspaceSettings, mise_mode};
 use puddle_types::WorkspaceId;
 use serde_json::json;
 
+/// Why a settings document could not be used.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SettingsReadError {
+    /// The global document could not be read from the store.
+    #[error("the global settings cannot be read: {0}")]
+    GlobalUnreadable(#[source] puddle_api::SettingsRepoError),
+    /// The global document is damaged.
+    #[error("the global settings are not valid: {0}")]
+    GlobalInvalid(#[source] puddle_settings::SettingsError),
+    /// A workspace's document could not be read from the store.
+    #[error("the settings of workspace {name} cannot be read: {source}")]
+    WorkspaceUnreadable {
+        /// The workspace.
+        name: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: puddle_api::SettingsRepoError,
+    },
+    /// A workspace's document is damaged.
+    #[error("the settings of workspace {name} are not valid: {source}")]
+    WorkspaceInvalid {
+        /// The workspace.
+        name: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: puddle_settings::SettingsError,
+    },
+}
+
 /// The global settings; the defaults when none were ever saved.
-pub(crate) fn global(repo: &dyn SettingsRepo) -> Result<GlobalSettings, String> {
+pub(crate) fn global(repo: &dyn SettingsRepo) -> Result<GlobalSettings, SettingsReadError> {
     let doc = repo
         .load_global()
-        .map_err(|e| format!("the global settings cannot be read: {e}"))?
+        .map_err(SettingsReadError::GlobalUnreadable)?
         .unwrap_or_else(|| json!({}));
     GlobalSettings::from_document(doc)
         .map(|loaded| loaded.settings)
-        .map_err(|e| format!("the global settings are not valid: {e}"))
+        .map_err(SettingsReadError::GlobalInvalid)
 }
 
 /// One workspace's own settings; empty when it has none.
 pub(crate) fn workspace(
     repo: &dyn SettingsRepo,
     name: &WorkspaceId,
-) -> Result<WorkspaceSettings, String> {
+) -> Result<WorkspaceSettings, SettingsReadError> {
     let doc = repo
         .load_workspace(name)
-        .map_err(|e| format!("the settings of workspace {name} cannot be read: {e}"))?
+        .map_err(|source| SettingsReadError::WorkspaceUnreadable {
+            name: name.clone(),
+            source,
+        })?
         .unwrap_or_else(|| json!({}));
     WorkspaceSettings::from_document(doc)
         .map(|loaded| loaded.settings)
-        .map_err(|e| format!("the settings of workspace {name} are not valid: {e}"))
+        .map_err(|source| SettingsReadError::WorkspaceInvalid {
+            name: name.clone(),
+            source,
+        })
+}
+
+/// What the managed mise layer does in one workspace: [`MiseMode::Off`] while the global switch is
+/// off, whatever the workspace stores.
+pub(crate) fn mise(
+    repo: &dyn SettingsRepo,
+    name: &WorkspaceId,
+) -> Result<MiseMode, SettingsReadError> {
+    let global = global(repo)?;
+    if !global.tools.mise() {
+        // Off needs no workspace document, so a damaged one cannot turn the layer back on.
+        return Ok(MiseMode::Off);
+    }
+    Ok(mise_mode(&global, Some(&workspace(repo, name)?)))
+}
+
+/// [`mise`] for a start: settings that cannot be read leave the layer off, which is what the
+/// workspace had before it existed, so a damaged file never turns it on.
+pub(crate) fn mise_or_off(repo: &dyn SettingsRepo, name: &WorkspaceId) -> MiseMode {
+    mise(repo, name).unwrap_or_else(|reason| {
+        tracing::warn!(workspace = %name, %reason, "managed tools stay off: the settings cannot be read");
+        MiseMode::Off
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_api::{MemorySettings, SettingsRepoError};
-    use serde_json::{Value, json};
-
-    use super::*;
-
-    /// A repo whose reads fail, like a file that cannot be read.
-    struct Unreadable;
-
-    impl SettingsRepo for Unreadable {
-        fn load_global(&self) -> Result<Option<Value>, SettingsRepoError> {
-            Err(SettingsRepoError::new(
-                "/data/global.json is not valid JSON",
-            ))
-        }
-        fn save_global(&self, _: Value) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn load_workspace(&self, _: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
-            Err(SettingsRepoError::new(
-                "/data/workspaces/a.json is not valid JSON",
-            ))
-        }
-        fn save_workspace(&self, _: &WorkspaceId, _: Value) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn delete_workspace(&self, _: &WorkspaceId) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
-            Ok(None)
-        }
-        fn save_app_icon(&self, _: &[u8]) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-        fn delete_app_icon(&self) -> Result<(), SettingsRepoError> {
-            Ok(())
-        }
-    }
-
-    fn a() -> WorkspaceId {
-        WorkspaceId::new("a").unwrap()
-    }
-
-    #[test]
-    fn the_unreadable_repo_still_accepts_saves() {
-        Unreadable.save_global(json!({})).unwrap();
-        Unreadable.save_workspace(&a(), json!({})).unwrap();
-        assert_eq!(Unreadable.load_app_icon().unwrap(), None);
-        Unreadable.save_app_icon(b"x").unwrap();
-        Unreadable.delete_app_icon().unwrap();
-        Unreadable.delete_workspace(&a()).unwrap();
-    }
-
-    #[test]
-    fn a_missing_document_is_the_defaults() {
-        let repo = MemorySettings::default();
-        assert_eq!(global(&repo).unwrap(), GlobalSettings::default());
-        assert!(workspace(&repo, &a()).is_ok());
-    }
-
-    #[test]
-    fn an_unreadable_document_names_the_file() {
-        let g = global(&Unreadable).unwrap_err();
-        assert!(g.contains("global settings cannot be read"), "{g}");
-        assert!(g.contains("/data/global.json"), "{g}");
-        let w = workspace(&Unreadable, &a()).unwrap_err();
-        assert!(w.contains("workspace a cannot be read"), "{w}");
-        assert!(w.contains("/data/workspaces/a.json"), "{w}");
-    }
-
-    #[test]
-    fn a_document_that_is_not_settings_is_an_error_not_the_defaults() {
-        let repo = MemorySettings::default();
-        repo.save_global(json!("text")).unwrap();
-        repo.save_workspace(&a(), json!([1])).unwrap();
-        assert!(global(&repo).unwrap_err().contains("not valid"));
-        assert!(workspace(&repo, &a()).unwrap_err().contains("not valid"));
-    }
-}
+mod tests;

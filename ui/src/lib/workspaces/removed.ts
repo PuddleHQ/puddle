@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What deleting a workspace removes from Puddle's own records, beside what is on its disk: its own
 // variables and secrets (a secret's value leaves the credential store too) and its rules. The delete
 // check of the disk does not know these, so the screen counts them from the lists it already has.

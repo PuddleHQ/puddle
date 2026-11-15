@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests ci/fetch-gitleaks.sh with a fake `curl` and `sleep` on PATH (no network, no waiting):
 # retries that end well, a download that never works (the cause is named, as a CI annotation
 # too), a wrong checksum, and the cache folder.

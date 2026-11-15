@@ -113,7 +113,7 @@ snapshots and extensions are still later (after v1, and only if users ask for th
 
 ## Amendment 2026-10-06: written fresh, no Huddle material
 
-Puddle is a personal project of its author, licensed GPL-3.0-or-later, and takes only ideas from
+Puddle is a personal project of its author, licensed AGPL-3.0-or-later, and takes only ideas from
 Huddle; no Huddle code is copied. Translating code counts as modifying it under copyright law, so a
 Svelte reimplementation made with the Angular original open beside it would still derive from
 Huddle.

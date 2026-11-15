@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shutdown and reconcile on real microVMs (tiers K and W).
 //!
 //! The "puddle" under test is this test binary itself, started again in the role of a host

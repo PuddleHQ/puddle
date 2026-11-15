@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the Repositories section says about a workspace's checkouts, decided without the server:
 // the words for a branch and for a checkout the list does not know, and which identity serves a
 // listed repository. Every string in a listing came from the guest, so these only build text;

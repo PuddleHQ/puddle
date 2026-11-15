@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's ports: what listens in it, the forwards to this computer, and pinned forwards.
 //!
 //! A forward is a listener on `127.0.0.1` of this computer that leads to one port of the

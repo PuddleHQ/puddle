@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { documentTitle, NAV, sectionFor } from "./nav.ts";
 
 describe("nav", () => {
-  it("has the six top-level sections, in order", () => {
+  it("has the top-level sections, in order, the owner's Admin last", () => {
     expect(NAV.map((n) => n.label)).toEqual([
       "Workspaces",
       "Inbox",
@@ -11,6 +11,7 @@ describe("nav", () => {
       "Activity",
       "Identities",
       "Settings",
+      "Admin",
     ]);
     expect(new Set(NAV.map((n) => n.href)).size).toBe(NAV.length);
   });

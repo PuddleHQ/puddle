@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests with real clients: OpenSSH `ssh` and `git` in a guest-like setup, through the
 //! `puddle-agent connect` binary as `ProxyCommand` (the drop-in `puddle-guest-env` writes), the
 //! agent's listener, a Unix socket route and the real proxy. Every SSH connection is refused with
@@ -155,6 +155,7 @@ impl Rig {
             Command::new(program)
                 .args(args)
                 .env("PUDDLE_AGENT_LISTEN", listen)
+                .env("PUDDLE_AGENT_TEST_LOOKUP", "hosts-only")
                 .env("HOME", home)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -379,10 +380,9 @@ async fn what_is_inside_the_workspace_stays_direct_and_the_users_own_proxy_comma
     }
     // A closed port on loopback: the connection is the agent's own, refused by the kernel and
     // said so; the proxy never heard of it.
-    let closed = {
-        let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
-        listener.local_addr().unwrap().port().to_string()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = held.port().to_string();
     for target in ["me@localhost", "me@127.0.0.1"] {
         let out = rig.ssh(&config, &["-p", &closed, target]).await;
         assert!(
@@ -488,12 +488,14 @@ async fn the_connect_command_carries_what_is_not_ssh() {
     let mut child = tokio::process::Command::new(AGENT)
         .args(["connect", "echo.test", &port.to_string(), "alias"])
         .env("PUDDLE_AGENT_LISTEN", listen)
+        .env("PUDDLE_AGENT_TEST_LOOKUP", "hosts-only")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
+    // flake-ok: the command echoes until its stdin ends, so it is still reading when this write lands
     stdin.write_all(b"hello, not ssh\n").await.unwrap();
     stdin.shutdown().await.unwrap();
     drop(stdin);
@@ -539,13 +541,13 @@ fn the_connect_command_with_a_bad_environment_says_so() {
 
 #[test]
 fn the_connect_command_with_no_agent_listening_says_so() {
-    let closed = {
-        let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
-        listener.local_addr().unwrap()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let out = Command::new(AGENT)
         .args(["connect", "github.com", "22"])
         .env("PUDDLE_AGENT_LISTEN", closed.to_string())
+        .env("PUDDLE_AGENT_TEST_LOOKUP", "hosts-only")
         .stdin(Stdio::null())
         .output()
         .unwrap();

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // "3 minutes ago", via Intl in the OS locale (English only for now, no i18n framework).
 
 const STEPS: readonly [Intl.RelativeTimeFormatUnit, number][] = [

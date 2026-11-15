@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the host knows about each workspace's ports: which ones listen in the guest, which are
 //! forwarded to this computer, which are pinned.
 //!
@@ -128,6 +128,26 @@ struct Entry {
     failed: BTreeMap<u16, Failed>,
 }
 
+/// Which workspaces' agent sessions ended, from [`Ports::agent_sessions_ended`].
+#[derive(Debug)]
+pub struct EndedSessions(tokio::sync::broadcast::Receiver<WorkspaceId>);
+
+impl EndedSessions {
+    /// The workspace of the next agent session that ended. A receiver that fell behind skips
+    /// to the oldest name still held; when the ports are gone it never returns.
+    pub async fn next(&mut self) -> WorkspaceId {
+        loop {
+            match self.0.recv().await {
+                Ok(workspace) => return workspace,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    }
+}
+
 struct Active {
     host_port: u16,
     forward: Forward,
@@ -139,16 +159,19 @@ struct Inner {
     events: Arc<dyn EventSink>,
     programs: Arc<dyn ProgramLookup>,
     host: Arc<dyn HostAddrs>,
-    max_connections: usize,
     entries: Mutex<HashMap<WorkspaceId, Entry>>,
     /// Serialises the calls that change forwards, so two of them never race for one port.
     changing: tokio::sync::Mutex<()>,
+    /// The workspaces whose agent session ended, for whoever wants to check on the VM.
+    ended: tokio::sync::broadcast::Sender<WorkspaceId>,
 }
 
 /// The ports of every workspace. Cheap to clone; clones share everything.
 #[derive(Clone)]
 pub struct Ports {
     inner: Arc<Inner>,
+    /// Connections one forward carries at once; set before the ports are shared.
+    max_connections: usize,
 }
 
 impl std::fmt::Debug for Ports {
@@ -184,25 +207,27 @@ impl Ports {
                 events,
                 programs,
                 host: Arc::new(OwnAddresses),
-                max_connections: MAX_CONNECTIONS,
                 entries: Mutex::new(HashMap::new()),
                 changing: tokio::sync::Mutex::new(()),
+                ended: tokio::sync::broadcast::channel(64).0,
             }),
+            max_connections: MAX_CONNECTIONS,
         }
     }
 
     /// The same ports with a forward carrying at most `limit` connections at once.
-    ///
-    /// # Panics
-    ///
-    /// When called on a clone: it must be the only handle, before the ports are shared.
+    /// Call it before the ports are cloned: a clone made earlier keeps the old limit.
     #[must_use]
-    pub fn with_connection_limit(mut self, limit: usize) -> Self {
-        match Arc::get_mut(&mut self.inner) {
-            Some(inner) => inner.max_connections = limit,
-            None => unreachable!("with_connection_limit is for a fresh Ports"),
-        }
+    pub const fn with_connection_limit(mut self, limit: usize) -> Self {
+        self.max_connections = limit;
         self
+    }
+
+    /// Says which workspace's agent session ended, each time one does. A receiver that falls
+    /// behind loses the oldest names; it is a hint to look, never the only way to find out.
+    #[must_use]
+    pub fn agent_sessions_ended(&self) -> EndedSessions {
+        EndedSessions(self.inner.ended.subscribe())
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<WorkspaceId, Entry>> {
@@ -469,7 +494,7 @@ impl Ports {
             pin.guest_port,
             &link,
             &self.inner.endpoints,
-            self.inner.max_connections,
+            self.max_connections,
         )
         .map_err(|err| self.bind_failed(pin.host_port, &err))?;
         let old = {
@@ -522,21 +547,26 @@ impl Ports {
     }
 
     fn bind_failed(&self, host_port: u16, err: &std::io::Error) -> PortsError {
-        if err.kind() == std::io::ErrorKind::AddrInUse {
-            let program = self.inner.programs.program(host_port);
-            return PortsError::Taken {
-                host_port,
-                owner: PortOwner::Program(program),
-            };
-        }
-        PortsError::Cannot {
+        bind_failure(host_port, err, self.inner.programs.as_ref())
+    }
+}
+
+/// What a refused bind of `host_port` means to the user: the port is taken (and by which program),
+/// or the system will not open it.
+fn bind_failure(host_port: u16, err: &std::io::Error, programs: &dyn ProgramLookup) -> PortsError {
+    if err.kind() == std::io::ErrorKind::AddrInUse {
+        return PortsError::Taken {
             host_port,
-            reason: if err.kind() == std::io::ErrorKind::PermissionDenied {
-                "the system does not let Puddle use it (ports below 1024 and ranges the system reserves are closed to programs without special rights)".to_owned()
-            } else {
-                err.to_string()
-            },
-        }
+            owner: PortOwner::Program(programs.program(host_port)),
+        };
+    }
+    PortsError::Cannot {
+        host_port,
+        reason: if err.kind() == std::io::ErrorKind::PermissionDenied {
+            "the system does not let Puddle use it (ports below 1024 and ranges the system reserves are closed to programs without special rights)".to_owned()
+        } else {
+            err.to_string()
+        },
     }
 }
 
@@ -548,6 +578,11 @@ impl GuestWatcher for Ports {
             .link
             .get_or_insert_with(link_cell)
             .send_replace(Some(link));
+    }
+
+    fn session_ended(&self, workspace: &WorkspaceId) {
+        // No receiver is fine: nobody is watching.
+        let _ = self.inner.ended.send(workspace.clone());
     }
 
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
@@ -566,3 +601,6 @@ impl GuestWatcher for Ports {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

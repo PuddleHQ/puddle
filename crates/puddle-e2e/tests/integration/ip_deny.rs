@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! R-27 end to end, no VM: an exact deny of an address wins over every rule for a name, with the
 //! real agent, proxy and SQLite rules engine. A guest TCP client → the real guest agent → the
 //! real proxy → servers on `127.0.0.1` (allowed) and `127.0.0.2` (denied by an IP rule).
@@ -49,6 +49,7 @@ struct Rig {
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = StaticResolver::new()
         .with("named.test", &[DENIED])
         .with("a.wild.test", &[DENIED])
@@ -86,6 +87,7 @@ fn rule(
     expires_at: Option<u64>,
 ) -> Rule {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope,
             pattern: Pattern::parse(pattern).unwrap(),
@@ -184,7 +186,14 @@ async fn assert_denied_by(rig: &Rig, name: &str, port: u16, rule: &Rule) {
         headers.contains(&format!("x-puddle-rule: {}", rule.id)),
         "{name}: {headers:?}"
     );
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0, "{name}");
+    assert_eq!(
+        rig.store
+            .open_pending_every_user(&puddle_store::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0,
+        "{name}"
+    );
 }
 
 /// Echoes `ping` over an open tunnel.
@@ -260,7 +269,11 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
         .await
         .unwrap();
     assert_eq!(code, 403);
-    let row = rig.store.open_pending(None).unwrap()[0].id;
+    let row = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap()[0]
+        .id;
     rig.store
         .resolve_pending(row, &Resolution::allow(), Actor::Cli)
         .unwrap();

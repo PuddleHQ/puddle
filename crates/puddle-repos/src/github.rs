@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! GitHub: the repositories a token reaches (`GET /user/repos`, paged), and who it is (`GET /user`,
 //! `GET /user/orgs`).
 //!

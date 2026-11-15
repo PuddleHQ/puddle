@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The front process: starts the worker with a hidden console, relays its output, and turns
 //! console events into a shutdown request on the worker's stdin.
 
@@ -119,6 +119,7 @@ pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
     }
     if cause.is_deadline() {
         let exited = front.exited.lock().unwrap_or_else(PoisonError::into_inner);
+        // a timeout here just ends the wait; the shutdown goes on either way
         let _ = front
             .exited_cv
             .wait_timeout_while(exited, DEADLINE_WAIT, |exited| !*exited);
@@ -127,24 +128,4 @@ pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_console_event_is_a_shutdown_cause() {
-        assert_eq!(cause(CTRL_C_EVENT), Some(ShutdownCause::Interrupt));
-        assert_eq!(cause(CTRL_BREAK_EVENT), Some(ShutdownCause::Break));
-        assert_eq!(cause(CTRL_CLOSE_EVENT), Some(ShutdownCause::ConsoleClose));
-        assert_eq!(cause(CTRL_LOGOFF_EVENT), Some(ShutdownCause::Logoff));
-        assert_eq!(
-            cause(CTRL_SHUTDOWN_EVENT),
-            Some(ShutdownCause::SystemShutdown)
-        );
-        assert_eq!(cause(99), None);
-    }
-
-    #[test]
-    fn without_a_front_events_go_to_the_default_handler() {
-        assert!(!on_console_event(CTRL_C_EVENT));
-    }
-}
+mod tests;

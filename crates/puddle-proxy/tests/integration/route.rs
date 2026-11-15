@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests: a fake guest (yamux client with the agent's settings) on a real per-workspace endpoint
 //! (`puddle-ipc`), the real proxy behind it, an in-memory policy and local servers.
 #![expect(
@@ -65,15 +65,25 @@ impl Rig {
         resolver: StaticResolver,
         check: Arc<dyn AddressCheck>,
     ) -> Self {
+        Self::with_proxy(config, resolver, check, |proxy| proxy)
+    }
+
+    /// As [`Self::with_checks`], with `tune` applied to the proxy before it serves.
+    pub(crate) fn with_proxy(
+        config: &ProxyConfig,
+        resolver: StaticResolver,
+        check: Arc<dyn AddressCheck>,
+        tune: impl FnOnce(Proxy) -> Proxy,
+    ) -> Self {
         let policy = Arc::new(StaticPolicy::new());
         let log = Arc::new(CollectingConnectionLog::new());
-        let proxy = Arc::new(
+        let proxy = Arc::new(tune(
             Proxy::new(policy.clone(), Arc::new(NullSink))
                 .with_connection_log(log.clone())
                 .with_resolver(Arc::new(resolver))
                 .with_address_check(check)
                 .with_config(*config),
-        );
+        ));
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
         Self {
@@ -820,10 +830,9 @@ async fn bytes_sent_with_the_connect_reach_the_server() {
 
 #[tokio::test]
 async fn an_unreachable_server_is_a_502() {
-    let closed = {
-        let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
-        l.local_addr().unwrap()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
@@ -1191,10 +1200,9 @@ async fn an_allowed_connect_is_reported_with_address_and_bytes() {
 /// refused before that (no destination) is not.
 #[tokio::test]
 async fn refused_connections_are_reported_with_decision_and_reason() {
-    let closed = {
-        let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
-        l.local_addr().unwrap()
-    };
+    // Held without listening: refused, and no other test can start a server on it.
+    let held = puddle_test_kit::ReservedPort::new();
+    let closed = SocketAddr::from(([127, 0, 0, 1], held.port()));
     let rig = Rig::new(&ProxyConfig::default());
     let deny = rig.policy.deny_host(&host("bad.test"));
     let allow = rig.policy.allow(&host("127.0.0.1"));
@@ -1473,6 +1481,7 @@ impl AgentReports for KeptReports {
 struct Watched {
     link: std::sync::Mutex<Option<(WorkspaceId, puddle_agent_proto::forward::GuestLink)>>,
     ports: std::sync::Mutex<Vec<(WorkspaceId, Vec<u16>)>>,
+    ended: std::sync::Mutex<Vec<WorkspaceId>>,
 }
 
 impl puddle_agent_proto::host::GuestWatcher for Watched {
@@ -1482,6 +1491,10 @@ impl puddle_agent_proto::host::GuestWatcher for Watched {
 
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
         self.ports.lock().unwrap().push((workspace.clone(), ports));
+    }
+
+    fn session_ended(&self, workspace: &WorkspaceId) {
+        self.ended.lock().unwrap().push(workspace.clone());
     }
 }
 
@@ -1567,6 +1580,17 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
     );
     let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
     assert_eq!(linked, Some(workspace("box")));
+
+    // The session ends with the guest's connection, and the watcher hears of it.
+    drop(control);
+    drop(guest);
+    puddle_test_kit::eventually(
+        "the end of the agent session arrived",
+        Duration::from_secs(5),
+        || !watched.ended.lock().unwrap().is_empty(),
+    )
+    .await;
+    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
 }
 
 /// Whether anything still accepts on `path`.

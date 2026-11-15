@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { FakeSettings } from "#lib/testing/fake-settings.ts";
 import {
@@ -84,6 +84,14 @@ describe("the host-loopback toggle help", () => {
   });
 });
 
+describe("the company-network toggle help", () => {
+  it("says the signals are read on Windows only, so elsewhere the switch changes nothing", () => {
+    expect(LOCAL_EXPLAIN.company_network).toContain(
+      "reads those signals on Windows only",
+    );
+  });
+});
+
 describe("choices", () => {
   it("serverOf defaults to code-server", async () => {
     const v = await view();
@@ -158,6 +166,7 @@ describe("bodyFrom", () => {
       workspace_defaults: v.workspace_defaults,
       vscode_server: v.vscode_server,
       ui: v.ui,
+      tools: v.tools,
     });
   });
 });

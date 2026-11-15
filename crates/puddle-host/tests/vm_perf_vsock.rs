@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The vsock egress path under load, on a real microVM (K on Linux KVM, W on Windows WHP): 256 parallel
 //! downloads from a host-side server go through the guest agent, the vsock, and the host's proxy, and
 //! every one must complete with every byte and none may go 5 s without progress (the bar of the
@@ -31,7 +31,7 @@ use puddle_types::WorkspaceId;
 use puddle_vm_tests::BulkHost;
 use puddle_vm_tests::load::{Report, Route, parse_transfers, script};
 use serde_json::json;
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
 
 /// The fake site's name: no real name, so nothing leaves the machine.
@@ -62,7 +62,7 @@ struct Rig {
 /// `/gate/` bodies wait for `gate` askers.
 async fn rig(tag: &str, gate: usize) -> Rig {
     let bulk = BulkHost::start(gate).await.expect("the bulk server");
-    let internet = web_internet(&[FILLER], WebOptions::default(), hermetic_options()).await;
+    let internet = web_internet(&[FILLER], WebOptions::default(), named_id_options()).await;
     internet
         .proxy
         .route(&format!("{BULK_HOST}:80"), bulk.addr());
@@ -70,8 +70,10 @@ async fn rig(tag: &str, gate: usize) -> Rig {
         start_vm_host_platform(tag, internet.options.clone(), &internet.platform, |_| {}).await;
     let name = format!("{}-{tag}", host.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.host.store(), &sandbox);
     host.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(BULK_HOST).unwrap(),

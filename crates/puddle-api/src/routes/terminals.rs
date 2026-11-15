@@ -1,9 +1,11 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals: a shell in a running workspace, reached over a WebSocket.
 //!
 //! `POST` asks for one and answers with a single-use ticket; the socket then opens with the
 //! ticket in `Sec-WebSocket-Protocol`, never in the URL. Bytes travel as binary messages, control
 //! as JSON text messages.
+
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::State;
@@ -16,6 +18,8 @@ use tokio::sync::watch;
 use utoipa::ToSchema;
 
 use crate::ApiErrorBody;
+use crate::auth::ReachedPublicly;
+use crate::authz::{Principal, Via};
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
@@ -98,6 +102,7 @@ impl From<TerminalError> for ApiError {
 )]
 pub(crate) async fn create_terminal(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     BodyJson(body): BodyJson<TerminalRequest>,
 ) -> Result<(StatusCode, Json<TerminalTicket>), ApiError> {
@@ -112,6 +117,9 @@ pub(crate) async fn create_terminal(
         .map_err(|limit| {
             ApiError::new(StatusCode::CONFLICT, ErrorCode::Conflict, limit.to_string())
         })?;
+    if let Via::Device(device) = principal.via {
+        state.terminals.bind(terminal, device);
+    }
     Ok((
         StatusCode::CREATED,
         Json(TerminalTicket { terminal, ticket }),
@@ -123,6 +131,7 @@ fn new_ticket() -> Result<String, ApiError> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| ApiError::internal(&e))?;
     Ok(bytes.iter().fold(String::with_capacity(64), |mut out, b| {
+        // writing into a `String` cannot fail
         let _ = write!(out, "{b:02x}");
         out
     }))
@@ -144,7 +153,8 @@ fn ticket_of(headers: &HeaderMap) -> Option<&str> {
 
 /// Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this
 /// one path the single-use ticket stands in for the token; the `Host` and `Origin` checks run
-/// before it is read.
+/// before it is read, and the ticket is checked before the workspace is looked up, so a caller
+/// without one learns nothing about which workspaces exist.
 #[utoipa::path(
     get,
     path = "/api/workspaces/{id}/terminals/{terminal}",
@@ -155,40 +165,55 @@ fn ticket_of(headers: &HeaderMap) -> Option<&str> {
     ),
     responses(
         (status = SWITCHING_PROTOCOLS, description = "the socket: binary messages carry the terminal's bytes (at most 64 KiB), text messages are JSON (`resize`, `ack` from the page; `ended` from the host)"),
-        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
-        (status = UNAUTHORIZED, description = "a wrong, used or late ticket", body = ApiErrorBody)
+        (status = UNAUTHORIZED, description = "a wrong, used or late ticket, or a loopback ticket used under a public name", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn terminal_socket(
     State(state): State<AppState>,
     Path((id, terminal)): Path<(String, u64)>,
     headers: HeaderMap,
+    public: Option<axum::Extension<ReachedPublicly>>,
     upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
-    let workspace = workspace(&state, &id).await?;
     let upgrade = match upgrade {
         Ok(upgrade) => upgrade,
         Err(rejection) => return Ok(rejection.into_response()),
     };
-    let size = ticket_of(&headers)
-        .and_then(|ticket| {
-            state
-                .terminals
-                .claim(&workspace, terminal, ticket.as_bytes())
-        })
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                ErrorCode::Unauthorized,
-                "missing, wrong, used or late ticket",
-            )
-        })?;
+    // The registry holds the workspace a ticket was issued for, so a claim also proves it exists;
+    // a malformed id and an unknown one both fail the claim, with the same answer.
+    // Under a public name only a ticket a signed-in browser asked for counts: one made with the
+    // install token on loopback is not bound to a device and never opens a shell there.
+    let admitted = public.is_none() || state.terminals.device_of(terminal).is_some();
+    let claimed = WorkspaceId::new(&id)
+        .ok()
+        .filter(|_| admitted)
+        .and_then(|workspace| {
+            let size = ticket_of(&headers).and_then(|ticket| {
+                state
+                    .terminals
+                    .claim(&workspace, terminal, ticket.as_bytes())
+            })?;
+            Some((workspace, size))
+        });
+    let (workspace, size) = claimed.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            ErrorCode::Unauthorized,
+            "missing, wrong, used or late ticket",
+        )
+    })?;
     let shutdown = state.shutdown.clone();
+    // A terminal made for a signed-in browser ends when that browser is signed out.
+    let ended: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =
+        match (state.terminals.device_of(terminal), &state.sign_in) {
+            (Some(device), Some(sign_in)) => Box::pin(sign_in.clone().ended(device)),
+            _ => Box::pin(std::future::pending()),
+        };
     Ok(upgrade
         .protocols([SUBPROTOCOL])
         .max_message_size(MAX_MESSAGE_BYTES + 1024)
         .on_upgrade(move |socket| async move {
-            run(socket, &state, &workspace, size, shutdown).await;
+            run(socket, &state, &workspace, size, shutdown, ended).await;
             state.terminals.release(terminal);
         }))
 }
@@ -199,6 +224,7 @@ async fn run(
     workspace: &WorkspaceId,
     size: TerminalSize,
     shutdown: watch::Receiver<bool>,
+    ended: impl Future<Output = ()> + Unpin,
 ) {
     let link = match state.terminal_service.open(workspace, size).await {
         Ok(link) => link,
@@ -215,7 +241,7 @@ async fn run(
             return;
         }
     };
-    pump(&mut socket, link, shutdown).await;
+    pump(&mut socket, link, shutdown, ended).await;
 }
 
 async fn finish(socket: &mut WebSocket, end: &TerminalEnd) {
@@ -234,15 +260,31 @@ async fn finish(socket: &mut WebSocket, end: &TerminalEnd) {
             reason: "".into(),
         })))
         .await;
+    await_close(socket).await;
+}
+
+/// How long a closed socket waits for the page's own close.
+const CLOSE_WAIT: Duration = Duration::from_secs(2);
+
+/// Reads what the page still sends until the closing handshake ends. Dropping a socket with unread
+/// data from the page resets the connection, and the reset throws away what the page has not read
+/// yet: the end message, which would then show as a broken connection instead of how the shell ended.
+async fn await_close(socket: &mut WebSocket) {
+    let _ = tokio::time::timeout(CLOSE_WAIT, async {
+        while let Some(Ok(_)) = socket.recv().await {}
+    })
+    .await;
 }
 
 async fn refuse(socket: &mut WebSocket) {
+    // the page may already be gone; the socket closes after this either way
     let _ = socket
         .send(Message::Close(Some(CloseFrame {
             code: close_code::POLICY,
             reason: "bad message".into(),
         })))
         .await;
+    await_close(socket).await;
 }
 
 /// What one message from the page asks for.
@@ -276,17 +318,46 @@ fn from_page(message: Message) -> FromPage {
     FromPage::Input(input)
 }
 
-async fn pump(socket: &mut WebSocket, link: TerminalLink, mut shutdown: watch::Receiver<bool>) {
+async fn pump(
+    socket: &mut WebSocket,
+    link: TerminalLink,
+    mut shutdown: watch::Receiver<bool>,
+    mut ended: impl Future<Output = ()> + Unpin,
+) {
     let TerminalLink { input, mut output } = link;
     loop {
         tokio::select! {
+            () = &mut ended => {
+                // The browser was signed out: close at once, with no word of what the shell said.
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: "signed out".into(),
+                    })))
+                    .await;
+                await_close(socket).await;
+                return;
+            }
             () = async { let _ = shutdown.wait_for(|stop| *stop).await; } => {
                 finish(socket, &TerminalEnd::of(EndReason::Quitting)).await;
                 return;
             }
             message = socket.recv() => {
-                let Some(Ok(message)) = message else { return };
+                // A message past the socket's own limit: say so before the connection goes. When
+                // the stream simply ended, the send fails and nothing is lost.
+                let Some(Ok(message)) = message else {
+                    let _ = socket
+                        .send(Message::Close(Some(CloseFrame {
+                            code: close_code::SIZE,
+                            reason: "message too big".into(),
+                        })))
+                        .await;
+                    return;
+                };
                 if matches!(message, Message::Close(_)) {
+                    // The page started the closing handshake. Reading on sends the reply the socket
+                    // queued; without it the page sees the connection reset, not a clean end.
+                    await_close(socket).await;
                     return;
                 }
                 match from_page(message) {
@@ -326,14 +397,4 @@ async fn pump(socket: &mut WebSocket, link: TerminalLink, mut shutdown: watch::R
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_service_that_is_unavailable_or_ended_answers_with_the_status_a_client_can_act_on() {
-        let unavailable = ApiError::from(TerminalError::Unavailable("later".into()));
-        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let ended = ApiError::from(TerminalError::Ended(TerminalEnd::of(EndReason::BootFailed)));
-        assert_eq!(ended.status(), StatusCode::CONFLICT);
-    }
-}
+mod tests;

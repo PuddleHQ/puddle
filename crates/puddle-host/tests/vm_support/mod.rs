@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the VM tests of the host share (`vm_host.rs`, `vm_capture.rs`, `vm_git.rs`): a host on a
 //! real msb runtime in the test's own scratch home, and a command run as root in a workspace's guest.
 #![expect(
@@ -8,6 +8,12 @@
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
+#![allow(
+    clippy::indexing_slicing,
+    reason = "VM test: JSON read from the API, a missing key fails the test"
+)]
+
+pub(crate) mod kit;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,9 +31,12 @@ use puddle_host::{
 use puddle_proxy::{BoxFuture, Resolver, SystemResolver};
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
+use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
+use puddle_test_kit::eventually;
 use puddle_types::{DomainName, WorkspaceId};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig, ProxyRules};
 use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
+use serde_json::json;
 
 /// The harness has set the environment and checked the runtime pair already.
 #[derive(Default)]
@@ -130,9 +139,14 @@ pub(crate) fn with_fake_names<'a>(
 
 /// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
 /// knows the fake hosts' names).
-pub(crate) fn through_company_proxy(mut options: HostOptions, proxy: &NameProxy) -> HostOptions {
+pub(crate) fn through_company_proxy(options: HostOptions, proxy: &NameProxy) -> HostOptions {
+    through_company_proxy_port(options, proxy.port())
+}
+
+/// [`through_company_proxy`] for a company proxy that is only known by its port on `127.0.0.1`.
+pub(crate) fn through_company_proxy_port(mut options: HostOptions, port: u16) -> HostOptions {
     let os = FakeOs::new(ProxyConfig {
-        rules: ProxyRules::parse(&format!("http://127.0.0.1:{}", proxy.port())),
+        rules: ProxyRules::parse(&format!("http://127.0.0.1:{port}")),
         ..ProxyConfig::default()
     });
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
@@ -260,7 +274,7 @@ pub(crate) async fn github_internet(options: HostOptions) -> GithubInternet {
 /// [`start_vm_host_config`] on a fake `github.com`: the host clones from it, never from the real
 /// one. Keep the returned internet alive while the host runs.
 pub(crate) async fn start_vm_host_github(tag: &str) -> (VmHost, GithubInternet) {
-    let net = github_internet(crate::support::hermetic_options()).await;
+    let net = github_internet(crate::support::named_id_options()).await;
     let vm = start_vm_host_platform(tag, net.options.clone(), &net.platform, |_| {}).await;
     (vm, net)
 }
@@ -292,12 +306,41 @@ pub(crate) fn harness_config(
     config
 }
 
+/// The folder the guest tools of the VM tests are kept in between runs: `PUDDLE_VM_TOOLS_CACHE` (CI
+/// restores it) or `~/.cache/puddle-vm-tools`; `None` when neither can be named (every run is cold).
+pub(crate) fn cache_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("PUDDLE_VM_TOOLS_CACHE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| std::path::Path::new(&h).join(".cache/puddle-vm-tools"))
+        })
+}
+
+/// Points the run's msb image cache at `PUDDLE_VM_IMAGE_CACHE` when that is set, so the images the
+/// tests pull (`docker:dind`, the devcontainers base) come from disk after the first run and no
+/// registry is asked. msb looks an image up in its cache first. Left alone when the run's cache
+/// already exists (an earlier test of the run made it) or the variable is unset (a cold run).
+fn share_image_cache(settings: &Settings) {
+    #[cfg(unix)]
+    if let Some(shared) = std::env::var_os("PUDDLE_VM_IMAGE_CACHE").map(std::path::PathBuf::from) {
+        let link = settings.home().join("cache");
+        if std::fs::symlink_metadata(&link).is_err() {
+            std::fs::create_dir_all(&shared).unwrap();
+            // Another test of the run may have made the link meanwhile; either way it points here.
+            let _ = std::os::unix::fs::symlink(&shared, &link);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = settings;
+}
+
 /// Starts a host over its own store and workspace folder, named by `tag` (a few characters), so
 /// what one test creates (an identity, a rule, a workspace) is never in another's host. Tests of
 /// one binary share the run's prefix, and a host over a shared folder reads the identities an
 /// earlier test left.
 pub(crate) async fn start_vm_host(tag: &str) -> VmHost {
-    start_vm_host_with(tag, crate::support::hermetic_options()).await
+    start_vm_host_with(tag, crate::support::named_id_options()).await
 }
 
 pub(crate) async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
@@ -326,6 +369,7 @@ pub(crate) async fn start_vm_host_platform(
         .try_init();
     let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
     let pair = settings.prepare().expect("msb runtime pair");
+    share_image_cache(&settings);
     let root = settings
         .claim_scratch_home(tag, &test_owner())
         .expect("one scratch home tag per test");
@@ -350,6 +394,47 @@ pub(crate) async fn start_vm_host_platform(
         .await
         .expect("the host starts");
     assert_eq!(host.steps(), START_STEPS);
+    let runtime = factory.opened.lock().unwrap().clone().unwrap();
+    VmHost {
+        host,
+        runtime,
+        settings,
+        root,
+        secrets,
+    }
+}
+
+/// Quits `vm`'s host and starts a new one over the same data folder and runtime, as a quit and a
+/// launch of Puddle do (or a reboot of the computer): the sandboxes stay in the runtime, stopped.
+pub(crate) async fn restart_vm_host(vm: VmHost) -> VmHost {
+    let VmHost {
+        host,
+        settings,
+        root,
+        secrets,
+        ..
+    } = vm;
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+    drop(host);
+    let pair = settings.prepare().expect("msb runtime pair");
+    let agent = std::path::PathBuf::from(
+        std::env::var_os("PUDDLE_AGENT_BIN")
+            .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
+    );
+    let config = harness_config(&settings, &pair, &root, agent);
+    let factory = HarnessFactory {
+        settings: settings.clone(),
+        msb: pair.msb.clone(),
+        libkrunfw: pair.libkrunfw.clone(),
+        opened: std::sync::Mutex::new(None),
+    };
+    let prepared = prepare(config, &HarnessPlatform::default()).unwrap();
+    let mut options = crate::support::named_id_options();
+    options.secret_store = Some(secrets.clone());
+    let host = Host::start(prepared, &factory, options)
+        .await
+        .expect("the host starts again");
     let runtime = factory.opened.lock().unwrap().clone().unwrap();
     VmHost {
         host,
@@ -454,13 +539,9 @@ pub(crate) async fn guest_as(
 /// of the VMM would, and waits until the runtime sees it down.
 pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceId) {
     let harness = VmEnv::new(settings.clone()).await.unwrap();
-    let handle = harness
-        .scope(Box::pin(microsandbox::Sandbox::get(sandbox.as_str())))
+    let pid = harness
+        .process_id_of(sandbox.as_str())
         .await
-        .unwrap();
-    let pid = handle
-        .local()
-        .and_then(|l| l.pid)
         .expect("msb records the VM pid");
     let status = if cfg!(windows) {
         std::process::Command::new("taskkill")
@@ -491,4 +572,176 @@ pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: 
         },
     )
     .await;
+}
+
+/// What `puddle ssh-bridge <endpoint>` does: relay standard input and output to the endpoint. A test binary that
+/// is its own `ProxyCommand` (the ssh config entry names it as the bridge program) calls this for `ssh-bridge <endpoint>`.
+#[expect(
+    clippy::print_stderr,
+    reason = "the bridge's own message to ssh, which shows it"
+)]
+pub(crate) fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
+    let Some(endpoint) = endpoint else {
+        eprintln!("puddle: missing endpoint");
+        return std::process::ExitCode::from(2);
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = rt.block_on(puddle_ssh::bridge::run(
+        std::path::Path::new(endpoint),
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+    ));
+    rt.shutdown_background();
+    match result {
+        Ok(_) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("puddle: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// [`create_workspace`] with `extra` fields (an image, a memory size) in the request.
+pub(crate) async fn create_workspace_from(
+    vm: &VmHost,
+    api: &crate::support::Api,
+    tag: &str,
+    allowed: &[&str],
+    extra: serde_json::Value,
+) -> WorkspaceId {
+    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
+    let workspace = WorkspaceId::new(&name).unwrap();
+    for site in allowed {
+        puddle_store::testing::own(vm.host.store(), &workspace);
+        vm.host
+            .store()
+            .as_user(puddle_store::UserId::OWNER)
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(workspace.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let mut events = api.events().await;
+    let reply = api
+        .post("/api/workspaces", &{
+            let mut body = extra;
+            body["name"] = json!(name);
+            body.to_string()
+        })
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name: &'static str = Box::leak(name.into_boxed_str());
+    let end = events
+        .until(crate::support::ended(name), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    workspace
+}
+
+/// Shell prelude of every command the Docker test runs as the session user: a millisecond clock
+/// and a Docker config of its own, so no proxy variable from the CLI's config reaches a container.
+/// `dsudo` is `sudo docker` where the image has `sudo`, and plain `docker` (the `docker` group,
+/// which the boot grants the session user) where it has none, as `docker:dind` has not.
+pub(crate) const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
+export DOCKER_CONFIG=/tmp/docker-without-proxy
+mkdir -p "$DOCKER_CONFIG"
+dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; else docker "$@"; fi; }
+"#;
+
+/// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
+/// own files, and nothing else. No registry is involved.
+pub(crate) const PROBE_IMAGE: &str = r"d=/tmp/probe-image
+mkdir -p $d/rootfs/bin $d/rootfs/lib
+cp /bin/busybox $d/rootfs/bin/busybox
+for l in /lib/ld-musl-*.so.1; do cp -L $l $d/rootfs/lib/; done
+printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
+dsudo build -q -t probe:local $d";
+
+/// Runs `script` as `agent` (the session user) with [`DOCKER_PRELUDE`] first.
+pub(crate) async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
+    guest_as(
+        &vm.runtime,
+        workspace,
+        "agent",
+        &format!("{DOCKER_PRELUDE}{script}"),
+        Duration::from_secs(180),
+    )
+    .await
+}
+
+/// The value after `key=` on the first line of `text` that has it.
+pub(crate) fn field<'a>(text: &'a str, key: &str) -> &'a str {
+    text.lines()
+        .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
+        .unwrap_or_else(|| panic!("no {key} in: {text}"))
+}
+
+/// How many requests the fake website saw with `Host: host`.
+pub(crate) fn reached_by_host(web: &WebHost, host: &str) -> usize {
+    web.seen()
+        .iter()
+        .filter(|r| r.headers_named("host") == [host])
+        .count()
+}
+
+/// The number of allowed connection records to `host:port` in the audit.
+pub(crate) fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
+    vm.host
+        .store()
+        .audit_lines(0, 100_000)
+        .unwrap()
+        .iter()
+        .filter(|(_, line)| {
+            let record: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+            record["type"] == "connection"
+                && record["host"] == host
+                && record["port"] == port
+                && record["decision"] == "allow"
+        })
+        .count()
+}
+
+/// Waits until the audit holds more allowed connection records to `host:port` than `before`.
+///
+/// The proxy writes a connection's record when the connection ends, which is after the guest
+/// tool that opened it has exited and the test has read its output, so reading the audit
+/// right away races the proxy's write.
+pub(crate) async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
+    eventually(
+        &format!("a connection record for {host}:{port}"),
+        Duration::from_secs(20),
+        || {
+            if allowed_connections(vm, host, port) > before {
+                return Ok(());
+            }
+            let lines: Vec<String> = vm
+                .host
+                .store()
+                .audit_lines(0, 100_000)
+                .unwrap()
+                .into_iter()
+                .map(|(_, line)| line)
+                .filter(|line| line.contains(host))
+                .collect();
+            Err(format!("audit lines naming it: {lines:#?}"))
+        },
+    )
+    .await;
+}
+
+/// A container's fetch of `url` on `network`: what proxy variables it sees, then wget's output, the
+/// exit code and the milliseconds it took.
+pub(crate) fn container_fetch(docker: &str, network: &str, url: &str) -> String {
+    format!(
+        "s=$(now); {docker} run --rm --pull=never --network {network} probe:local /bin/busybox \
+         sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
+         echo \"exit=$? ms=$(( $(now) - s ))\""
+    )
 }

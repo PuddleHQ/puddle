@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Shows that two coverage runs of the crates in scripts/full-coverage-crates.txt execute the same lines.
 # Their 100 % gate fails the build when one line stops running, so a line that a random property-test case
 # reaches only now and then makes a pull request fail by chance. scripts/coverage-run.sh fixes the proptest

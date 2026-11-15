@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `GET /api/doctor` over real HTTP: the fake, the real service over a canned check, the refusals.
 
 use std::sync::Arc;

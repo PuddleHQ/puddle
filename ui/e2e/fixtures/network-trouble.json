@@ -55,6 +55,7 @@
       "active": true,
       "via_upstream": true
     },
+    "company_network": { "private_access_client": false, "dns_suffixes": [] },
     "routes": [
       {
         "scheme": "https",

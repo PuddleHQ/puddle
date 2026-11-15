@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
@@ -6,14 +6,20 @@
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
+  import SshAgentAsks from "#lib/components/SshAgentAsks.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import { decidedPattern, decidedSentence } from "#lib/decision/decided.ts";
-  import { LOCAL_LABELS } from "#lib/decision/local.ts";
+  import { LOCAL_LABELS } from "#lib/decision/local-labels.ts";
   import { narrowest, type Effect } from "#lib/decision/model.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { limitGroups, pending, slices } from "#lib/stores/pending.svelte.ts";
   import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
+  import {
+    sshAgentAsks,
+    type SshAgentAnswer,
+    type SshAgentAsk,
+  } from "#lib/stores/ssh-agent-asks.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -38,12 +44,14 @@
   onMount(() => {
     const stop = pending.start();
     const stopSets = ruleSets.start();
+    const stopAsks = sshAgentAsks.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stop();
       stopSets();
+      stopAsks();
       clearInterval(clock);
     };
   });
@@ -99,6 +107,11 @@
     currentId = id;
     afterPaint(() => rowElement(id)?.focus());
   });
+
+  async function answerAsk(ask: SshAgentAsk, answer: SshAgentAnswer) {
+    const result = await sshAgentAsks.answer(ask, answer);
+    if (!result.ok) toasts.push(result.message, { tone: "error", ms: 8000 });
+  }
 
   function request(id: number | null) {
     return pending.rows.find((r) => r.request.id === id);
@@ -224,12 +237,15 @@
   <p class="muted">Loading requests&hellip;</p>
 {:else if pending.status === "failed"}
   <LoadNotice what="the requests" message={pending.loadError} />
-{:else if pending.groups.length === 0}
+{:else if pending.groups.length === 0 && sshAgentAsks.asks.length === 0}
   <section class="empty">
     <h2>All quiet</h2>
     <p>Nothing is waiting. New requests from your workspaces appear here.</p>
   </section>
 {:else}
+  {#if sshAgentAsks.asks.length > 0}
+    <SshAgentAsks asks={sshAgentAsks.asks} {now} onAnswer={answerAsk} />
+  {/if}
   {#each shownGroups as group (group.domain)}
     <section class="group" aria-labelledby="group-{group.domain}">
       <div class="group-head">
@@ -280,7 +296,9 @@
           <button
             type="button"
             class="btn"
-            aria-label="Undo: {decidedSentence(d)}"
+            aria-label="Undo: {decidedSentence(d, undefined, (id) =>
+              workspaces.spokenLabelOf(id),
+            )}"
             onclick={() => void flow?.undo(d)}
           >
             <Undo2 aria-hidden="true" size={16} />Undo

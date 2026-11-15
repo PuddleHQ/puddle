@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host: one start-up sequence and one shutdown sequence for the whole process.
 //!
 //! Starting has two phases because one step has to run before the process has any other thread:
@@ -14,34 +14,27 @@
 
 use crate::agent_reports::ReportDesk;
 use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
-    ProxySignInService, RunningApi, Services, SettingsRepo, forward_network_changes,
-    forward_proxy_sign_in_failures,
+    EventHub, HostCredentials, HostNetworkHealth, Launcher, ProxySignInService, RunningApi,
+    Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
 };
 use puddle_certs::CorporateRoots;
-use puddle_compute::{Runtime, SandboxInfo};
+use puddle_compute::Runtime;
 use puddle_front::Front;
 use puddle_fs::DataLock;
-use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
-use puddle_netpolicy::{CompanySignals, LocalAccess, NetPolicy, NoSignals, PuddleEndpoints};
+use puddle_lifecycle::{Lifecycle, ShutdownReport};
+use puddle_netpolicy::{CompanySignals, LocalAccess, PuddleEndpoints};
 use puddle_ports::Ports;
-use puddle_proxy::{
-    GitSsh, GitSshAccounts, GitSshHttps, Proxy, ProxyUrl, PullProxy, PullRoute, Resolver,
-    Terminations, Upstream,
-};
-use puddle_repos::{HostApi, Repos};
-use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
+use puddle_proxy::{PortProbe, ProxyUrl, PullProxy, PullRoute, Resolver};
+use puddle_secrets::{SecretStore, ToolPaths};
 use puddle_settings::resolve;
-use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
-use puddle_types::{
-    ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceId, WorkspaceStatus,
+use puddle_store::{
+    AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
 };
-use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, Watching, system_auth};
+use puddle_types::{Problems, WorkspaceId, WorkspaceStatus};
+use puddle_upstream::{Chain, Discovery, Watching};
 use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
@@ -51,235 +44,31 @@ use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::front::Flavours;
-use crate::injection::{
-    Injection, InjectorFactory, InjectorInputs, credential_read_log, forward_sign_in_needed,
-};
+use crate::injection::InjectorFactory;
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::proxy_sign_ins::HostProxySignIns;
 use crate::quit_trims::QuitTrims;
 use crate::ssh_config::SshSetup;
-use crate::workspaces::{Parts, RewriteGate, known_ids};
-use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
+use crate::workspaces::{Parts, RewriteGate};
+use crate::{HostConfig, HostError, HostWorkspaces, ProxyPasswords, VsCodeLauncher};
 
-/// One step of starting or stopping the host, in the order they ran.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Step {
-    /// This process holds the data folder; no other Puddle process can start on it.
-    DataFolderLocked,
-    /// The image-pull proxy is bound (not serving yet).
-    PullProxyBound,
-    /// The bundled runtime is present and of the exact version.
-    RuntimeChecked,
-    /// The corporate root certificates are read.
-    RootsRead,
-    /// The database is open and the event hub is wired to it.
-    StoreOpened,
-    /// The way out through the company network is built: discovery, sign-in, the chain.
-    UpstreamBuilt,
-    /// The files and the egress proxy sandboxes are built from are ready.
-    GuestFilesReady,
-    /// The sandbox runtime is open (its image pulls go through the pull proxy).
-    RuntimeOpened,
-    /// What an earlier run left behind is cleaned up.
-    Reconciled,
-    /// The workspaces' holders are rebuilt from what exists.
-    WorkspacesAdopted,
-    /// The image-pull proxy serves.
-    PullProxyServing,
-    /// The sweeper, the network-change watcher and the browser editor's front run.
-    BackgroundStarted,
-    /// The workspace service is built over the runtime.
-    WorkspacesReady,
-    /// The API serves.
-    ApiServing,
-    /// New workspace operations are refused.
-    WorkspacesClosed,
-    /// Running workspace operations have finished (or were ended after the grace period).
-    OperationsFinished,
-    /// Every sandbox is trimmed and stopped.
-    WorkspacesStopped,
-    /// The SSH endpoints and egress routes are closed.
-    RoutesClosed,
-    /// The API stopped serving.
-    ApiStopped,
-    /// The sweeper, the watcher, the pull proxy and the front are stopped.
-    BackgroundStopped,
-}
+mod egress;
+mod factory;
+mod reconcile;
+mod serve;
+mod steps;
 
-/// The steps [`prepare`] runs, in order.
-pub const PREPARE_STEPS: [Step; 4] = [
-    Step::DataFolderLocked,
-    Step::PullProxyBound,
-    Step::RuntimeChecked,
-    Step::RootsRead,
-];
+use egress::{
+    Egress, EgressParts, Injecting, company_signals, load_proxy_passwords, network_health_of,
+    pem_of,
+};
+use reconcile::{adopt_holders, reconcile_problems, reconcile_with};
+use serve::serve_api;
 
-/// The steps of a start with the default options, in order, [`prepare`]'s included.
-pub const START_STEPS: [Step; 14] = [
-    Step::DataFolderLocked,
-    Step::PullProxyBound,
-    Step::RuntimeChecked,
-    Step::RootsRead,
-    Step::StoreOpened,
-    Step::UpstreamBuilt,
-    Step::GuestFilesReady,
-    Step::RuntimeOpened,
-    Step::Reconciled,
-    Step::WorkspacesAdopted,
-    Step::PullProxyServing,
-    Step::BackgroundStarted,
-    Step::WorkspacesReady,
-    Step::ApiServing,
-];
-
-/// The steps of a shutdown, in order.
-pub const SHUTDOWN_STEPS: [Step; 6] = [
-    Step::WorkspacesClosed,
-    Step::OperationsFinished,
-    Step::WorkspacesStopped,
-    Step::RoutesClosed,
-    Step::ApiStopped,
-    Step::BackgroundStopped,
-];
-
-/// The result of [`prepare`]: everything the asynchronous start needs from the synchronous phase.
-pub struct Prepared {
-    // First field: dropped last, so a failed start releases the folder after everything else.
-    lock: DataLock,
-    config: HostConfig,
-    pull: PullProxy,
-    endpoints: PuddleEndpoints,
-    roots: CorporateRoots,
-    steps: Vec<Step>,
-}
-
-impl std::fmt::Debug for Prepared {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Prepared")
-            .field("pull", &self.pull)
-            .field("steps", &self.steps)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Prepared {
-    /// The steps run so far.
-    #[must_use]
-    pub fn steps(&self) -> &[Step] {
-        &self.steps
-    }
-}
-
-/// The synchronous phase of starting. Call it from `main` before building the async runtime or
-/// starting any thread (the desktop shell: before the UI toolkit starts its own).
-///
-/// The order is the dependency order. The data folder is locked first (a second process on it
-/// is refused with [`HostError::DataFolder`] before it touches anything). The pull proxy is bound first because the runtime's image
-/// pulls need its address; the runtime is checked next; the
-/// corporate roots are read last and handed to the runtime when it opens, because msb fixes them
-/// then.
-///
-/// # Errors
-///
-/// [`HostError`] from the step that failed; nothing is left running.
-pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, HostError> {
-    // First, before anything is bound or looked at: a second process on this folder would
-    // reconcile away the first one's running sandboxes.
-    let lock = DataLock::acquire(config.paths.data())?;
-    // Before the first socket; said in the log once the start has got past its checks.
-    let open_files = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
-    let mut steps = vec![Step::DataFolderLocked];
-    let endpoints = PuddleEndpoints::new();
-    let pull = PullProxy::bind(&endpoints).map_err(HostError::PullProxy)?;
-    steps.push(Step::PullProxyBound);
-    platform.check_runtime(&config.layout, &config.expected_runtime)?;
-    steps.push(Step::RuntimeChecked);
-    let roots = platform.corporate_roots()?;
-    steps.push(Step::RootsRead);
-    tracing::info!(
-        roots = roots.certificates().len(),
-        "corporate root certificates read"
-    );
-    open_files.log(FDS_NEEDED);
-    Ok(Prepared {
-        lock,
-        config,
-        pull,
-        endpoints,
-        roots,
-        steps,
-    })
-}
-
-/// Descriptors the host needs for every connection the proxy lets one workspace open (its cap is
-/// 4096; each costs a socket here), with room for the store, the API, routes and the runtime.
-const FDS_NEEDED: u64 = 4096 + 1024;
-
-/// What a [`RuntimeFactory`] opens the runtime with.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct RuntimeInputs<'a> {
-    /// The runtime folder and msb home.
-    pub layout: &'a puddle_runtime::RuntimeLayout,
-    /// The root every mount source must be inside.
-    pub guest_share: PathBuf,
-    /// Puddle's data folder: no checkout mount may lie in it or hold it.
-    pub data: PathBuf,
-    /// The pull proxy, which the runtime's image pulls go through.
-    pub pull_proxy: ProxyUrl,
-    /// The corporate roots (PEM) the registry client must trust besides the system's.
-    pub registry_roots: Vec<String>,
-    /// msb's log level for sandbox runtimes.
-    pub log_level: Option<String>,
-    /// The public login key (an OpenSSH line) that the runtime's SSH server accepts: the only way
-    /// to log in through a workspace's endpoint. `None` when the key could not be made; the
-    /// server then accepts no login.
-    pub ssh_login_key: Option<String>,
-}
-
-/// Opens the sandbox runtime. The real one opens msb; tests open a fake.
-pub trait RuntimeFactory: Send + Sync {
-    /// The runtime type.
-    type Runtime: Runtime + Clone;
-
-    /// Opens the runtime.
-    ///
-    /// # Errors
-    ///
-    /// [`HostError::Compute`] when it cannot be opened.
-    fn open(
-        &self,
-        inputs: RuntimeInputs<'_>,
-    ) -> impl Future<Output = Result<Self::Runtime, HostError>> + Send;
-}
-
-/// Opens msb in Puddle's private home.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct MsbFactory;
-
-impl RuntimeFactory for MsbFactory {
-    type Runtime = puddle_compute_msb::MsbRuntime;
-
-    async fn open(&self, inputs: RuntimeInputs<'_>) -> Result<Self::Runtime, HostError> {
-        let config = puddle_compute_msb::MsbConfig::new(
-            inputs.layout.home(),
-            inputs.layout.msb_path(),
-            inputs.layout.libkrunfw_path(),
-            inputs.guest_share,
-        )
-        .with_protected_dir(inputs.data)
-        .with_registry_proxy(inputs.pull_proxy.expose())
-        .with_registry_roots(inputs.registry_roots)
-        .with_runtime_log_level(inputs.log_level);
-        let config = match inputs.ssh_login_key {
-            Some(key) => config.with_ssh_key(key),
-            None => config,
-        };
-        Ok(puddle_compute_msb::MsbRuntime::open(config).await?)
-    }
-}
+pub use factory::{MsbFactory, RuntimeFactory, RuntimeInputs};
+pub use serve::RemoteListener;
+pub use steps::{PREPARE_STEPS, Prepared, SHUTDOWN_STEPS, START_STEPS, Step, prepare};
 
 /// What a host takes besides its configuration.
 #[derive(Clone)]
@@ -298,6 +87,9 @@ pub struct HostOptions {
     /// long for one of its entries is spread over several). Tests give an in-memory store, so they
     /// never touch the real one.
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    /// How the store is chosen when `secret_store` is `None`: the `secret_store` option, the
+    /// headless flag and the places the choice reads. The defaults are the shipped host's.
+    pub secret_setup: crate::vault::SecretSetup,
     /// Where the development certificate comes from: the first-run state and the certificate every
     /// workspace gets at boot. Without one, the host's own (its certificate stores and the data
     /// folder). Tests give a double.
@@ -308,8 +100,13 @@ pub struct HostOptions {
     pub resolver: Option<Arc<dyn Resolver>>,
     /// What the host reads of the company network (proxy script, DNS suffixes, private-access
     /// clients, routes), shared by the sandbox proxy's guard and the API. Without one the host
-    /// reads none, so no destination is ever in the company-network category.
+    /// reads none, so no destination is ever in the company-network category. The shipped host
+    /// uses [`HostOptions::system`], which reads the machine's own.
     pub company_signals: Option<Arc<dyn CompanySignals>>,
+    /// Probes whether this machine can open `ssh.dev.azure.com:22`, for the refusal that says the
+    /// company network blocks it. Without one, a real TCP probe; tests give a double so no test
+    /// depends on the machine's network.
+    pub port_probe: Option<Arc<dyn PortProbe>>,
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
@@ -319,9 +116,23 @@ pub struct HostOptions {
     /// identities. On by default; off, SSH to a Git host is refused (`ssh_unsupported`).
     pub git_ssh: bool,
     /// Where new workspace ids come from. Without one, the operating system's random source
-    /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
-    /// `acme` gets the id `acme`.
+    /// ([`puddle_api::RandomIds`]); a test that writes ids into paths itself gives
+    /// [`puddle_api::NameIds`], so a workspace called `acme` gets the id `acme`.
     pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
+    /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
+    /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
+    pub free_space: Option<Arc<dyn crate::Space>>,
+    /// Looks up a name for the host's own connections (the lists of repositories, the sign-in
+    /// checks) before the company proxy is asked. Without one, the operating system's resolver;
+    /// tests give a double, so a name is never a question for the machine's real DNS.
+    pub host_lookup: Option<puddle_upstream::HostLookup>,
+    /// Resolves the names of the front in front of Puddle for the guard. Without one, the
+    /// operating system's resolver; tests give a double.
+    pub front_resolver: Option<Arc<dyn puddle_api::NameResolver>>,
+    /// The folders searched for the Azure CLI by the system check (a `PATH` value). Without one,
+    /// the process's `PATH`; tests give an empty one, so the check never runs the machine's real
+    /// `az`, which waits on the network.
+    pub az_search_path: Option<std::ffi::OsString>,
 }
 
 impl Default for HostOptions {
@@ -331,12 +142,31 @@ impl Default for HostOptions {
             discovery: None,
             injector: None,
             secret_store: None,
+            secret_setup: crate::vault::SecretSetup::default(),
             dev_cert: None,
             resolver: None,
             company_signals: None,
+            port_probe: None,
             rewrite_gate: None,
             git_ssh: true,
             workspace_ids: None,
+            free_space: None,
+            host_lookup: None,
+            front_resolver: None,
+            az_search_path: None,
+        }
+    }
+}
+
+impl HostOptions {
+    /// The options of the shipped host: the defaults, plus the company-network signals the
+    /// machine itself gives ([`crate::HostSignals::system`]; none on a platform without readers).
+    /// Tests start from [`HostOptions::default`], so a test never depends on the machine's network.
+    #[must_use]
+    pub fn system() -> Self {
+        Self {
+            company_signals: Some(crate::HostSignals::system()),
+            ..Self::default()
         }
     }
 }
@@ -362,6 +192,8 @@ struct Background {
     sweeper: Sweeper,
     // Holds the store; awaited at shutdown so the database is closed when the host is.
     vault_sweep: tokio::task::JoinHandle<()>,
+    // Also holds the store (the injection removes rows); awaited at shutdown for the same reason.
+    retired_sweep: tokio::task::JoinHandle<()>,
     pull: PullRoute,
     front: Front,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
@@ -381,26 +213,40 @@ struct Background {
     disk_watch: AbortOnDrop,
 }
 
+impl Background {
+    fn new(serving: Serving, watchers: Watchers, vault_sweep: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            sweeper: serving.sweeper,
+            vault_sweep,
+            retired_sweep: watchers.retired_sweep,
+            pull: serving.pull,
+            front: serving.front,
+            _watching: serving.watching,
+            network_events: serving.network_events,
+            sign_in_failures: serving.sign_in_failures,
+            git_changes: watchers.git_changes,
+            sign_in_notices: watchers.sign_in_notices,
+            editor_updates: watchers.editor_updates,
+            space_watch: watchers.space_watch,
+            disk_watch: watchers.disk_watch,
+        }
+    }
+}
+
 /// Aborts its task when dropped, so a forwarder never outlives the host.
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
 impl AbortOnDrop {
     /// Announces each new network epoch of `discovery` on `events`.
     fn forwarding(discovery: &Discovery, events: &Arc<EventHub>) -> Self {
-        Self(forward_network_changes(
-            discovery,
-            events.clone() as Arc<dyn EventSink>,
-        ))
+        Self(forward_network_changes(discovery, events.clone()))
     }
 }
 
 impl AbortOnDrop {
     /// Announces on `events` each time signing in to a company proxy begins to fail.
     fn forwarding_sign_in_failures(chain: &Chain, events: &Arc<EventHub>) -> Self {
-        Self(forward_proxy_sign_in_failures(
-            chain,
-            events.clone() as Arc<dyn EventSink>,
-        ))
+        Self(forward_proxy_sign_in_failures(chain, events.clone()))
     }
 }
 
@@ -423,6 +269,7 @@ impl Drop for AbortOnDrop {
 pub struct Host<R: Runtime + Clone> {
     info: puddle_api::ConnectionInfo,
     url: Url,
+    remote_listener: Option<RemoteListener>,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
     quit_trims: QuitTrims,
@@ -471,7 +318,7 @@ fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceId) -> LocalAc
 fn local_access_checked(
     settings: &dyn SettingsRepo,
     workspace: &WorkspaceId,
-) -> Result<LocalAccess, String> {
+) -> Result<LocalAccess, crate::settings_read::SettingsReadError> {
     let global = crate::settings_read::global(settings)?;
     let own = crate::settings_read::workspace(settings, workspace)?;
     Ok(LocalAccess::from_effective(&resolve(&global, Some(&own))))
@@ -485,10 +332,6 @@ impl<R: Runtime + Clone> Host<R> {
     /// [`HostError`] from the step that failed. Whatever started is stopped again by drop, and
     /// no sandbox is left running: reconcile only runs after everything that can refuse to start
     /// has been built.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one start-up sequence, read top to bottom, each step recorded in order"
-    )]
     pub async fn start<F>(
         prepared: Prepared,
         factory: &F,
@@ -508,238 +351,79 @@ impl<R: Runtime + Clone> Host<R> {
 
         // Store, settings and the event hub.
         let events = Arc::new(EventHub::default());
-        let problems = Arc::new(Problems::new(events.clone() as Arc<dyn EventSink>));
+        let problems = Arc::new(Problems::new(events.clone()));
         let clock = Arc::new(SystemClock);
         let State {
             store,
+            all_users,
             settings,
             book,
             stored,
             retired,
-        } = open_state(&config.paths, &events, &clock)?;
-        steps.push(Step::StoreOpened);
+        } = open_state(&config.paths, &events, &clock, &mut steps)?;
 
-        // Credential injection: what each workspace decrypts, the injector and the secrets behind
-        // it, and the client that verifies the real servers of decrypted hosts.
-        let vault: Arc<dyn SecretStore> = options
-            .secret_store
-            .clone()
-            .unwrap_or_else(crate::vault::os_vault);
-        let vault_sweep =
-            crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
-        let marks = config.paths.login_markers();
-        let injecting = Injecting::build(&options, &vault, &store, &events, &roots, marks)?;
-        let proxy_passwords = ProxyPasswords::new(vault.clone());
-        load_proxy_passwords(proxy_passwords.clone(), problems.clone());
-
-        // The way out: the company network (discovery, sign-in as the user, then Basic) for the
-        // sandbox proxy and the pull proxy alike.
-        let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
-        let reports = Arc::new(ReportDesk::new(problems.clone()));
-        let ports = Ports::new(
-            endpoints.clone(),
-            Arc::new(StorePins::new(store.clone())),
-            events.clone() as Arc<dyn EventSink>,
+        let shared = Shared {
+            config: &config,
+            options: &options,
+            events: &events,
+            problems: &problems,
+            clock: &clock,
+            store: &store,
+            settings: &settings,
+            endpoints: &endpoints,
+            roots: &roots,
+        };
+        let credentials = open_credentials(&shared).await?;
+        let (outbound, pull) = build_outbound(
+            &shared,
+            &credentials.injecting,
+            &credentials.proxy_passwords,
+            pull,
         );
-        // Who `ssh -T` greets: read from the store, named once the repository reader exists.
-        let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
-        let mut egress_parts =
-            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports);
-        if options.git_ssh {
-            egress_parts.git_ssh = Some(ssh_accounts.clone());
-        }
-        let egress = Egress::build(
-            &config,
-            &options,
-            &settings,
-            &endpoints,
-            &connections,
-            &events,
-            egress_parts,
-        );
-        let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
-        let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
-            proxy_passwords.clone(),
-            egress.chain.clone(),
-        ));
-        let network_health =
-            network_health_of(&egress.chain, &discovery, &clock, &roots, sign_ins.clone());
-        network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
-        let pull_url = pull.proxy_url();
-        // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
-        let pull = pull
-            .with_upstream(upstream)
-            .with_connection_log(connections.clone());
         steps.push(Step::UpstreamBuilt);
 
-        // One development certificate service: the guests' boot files and the first-run line.
-        let dev_cert: Arc<dyn DevCertSource> = options
-            .dev_cert
-            .clone()
-            .unwrap_or_else(|| host_dev_cert(config.paths.data(), clock.clone()));
-        let kit = BootKit::new(
-            &config.paths.guest_share(),
-            &config.guest,
-            proxy,
-            &roots,
-            store.clone(),
-        )?
-        .with_dev_cert(dev_cert.clone());
-        steps.push(Step::GuestFilesReady);
-
-        // The login key of direct SSH: made before the runtime opens, which takes its public half.
-        let ssh = Arc::new(SshSetup::open(config.paths.data(), &config.ssh));
-
-        // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
-        let runtime = factory
-            .open(RuntimeInputs {
-                layout: &config.layout,
-                guest_share: config.paths.guest_share(),
-                data: config.paths.data().to_path_buf(),
-                pull_proxy: pull_url,
-                registry_roots: pem_of(&roots),
-                log_level: config.runtime_log_level.clone(),
-                ssh_login_key: ssh.authorized_key().map(str::to_owned),
-            })
-            .await?;
-        steps.push(Step::RuntimeOpened);
+        let opened = open_runtime(&shared, &outbound, factory, &mut steps).await?;
 
         // Clean up after an earlier run, then rebuild what only lives in memory.
-        let (report, status) = reconcile_with(&runtime, &config, &stored).await?;
-        for problem in reconcile_problems(&report) {
-            problems.raise(problem);
-        }
+        let reconciled = reconcile_phase(&opened.runtime, &config, &stored, &problems).await?;
         steps.push(Step::Reconciled);
-        // A trim that failed when the last run quit is told now, to a user who can read it.
-        let quit_trims = QuitTrims::new(config.paths.quit_trims());
-        let carried: BTreeMap<WorkspaceId, String> = quit_trims
-            .load()
-            .into_iter()
-            .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
-            .collect();
-        for (id, why) in &carried {
-            problems.raise(crate::quit_trims::problem(id, why));
-        }
-        let workspaces = adopt_holders(&runtime, &config, &stored).await?;
+        let workspaces = adopt_holders(&opened.runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
 
-        // From here the host serves. The pull proxy first: the first create pulls an image.
-        let pull = pull.serve().map_err(HostError::PullProxy)?;
-        // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
-        network_health.set_pull_proxy(true, true);
-        steps.push(Step::PullProxyServing);
-        let sweeper =
-            Sweeper::spawn_reporting(store.clone(), DEFAULT_SWEEP_PERIOD, problems.clone());
-        let watching = discovery.watch();
-        let network_events = AbortOnDrop::forwarding(&discovery, &events);
-        let sign_in_failures = AbortOnDrop::forwarding_sign_in_failures(&egress.chain, &events);
-        // The browser editor's front: a listener on this computer's loopback that reaches each
-        // running workspace's editor through its agent link, so a window can open it by origin.
-        let flavours = Arc::new(Flavours::default());
-        let (front, front_guests, front_halves) = crate::front::serve(
-            &config.paths,
-            &endpoints,
-            ports.clone(),
-            flavours.clone(),
-            &problems,
-        )
-        .await?;
-        let front_addr = front.local_addr();
-        steps.push(Step::BackgroundStarted);
+        // From here the host serves.
+        let serving = serve_background(&shared, &outbound, pull, &mut steps).await?;
 
-        let signals = company_signals(&options);
-        let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
-        let service = HostWorkspaces::new(
-            Parts {
-                runtime,
-                workspaces,
-                lifecycle: lifecycle.clone(),
-                kit,
-                events: events.clone() as Arc<dyn EventSink>,
-                clock: clock.clone(),
-                settings: settings.clone(),
-                store: store.clone(),
-                launcher: options.launcher,
-                ssh,
-                book,
-                injection: injecting.injection.clone(),
-                problems: problems.clone(),
-                reports,
-                ports: ports.clone(),
-                rewrite_gate: options.rewrite_gate.clone(),
-                flavours,
-                front_addr,
-                front_guests,
-                front_halves,
-                ids: options
-                    .workspace_ids
-                    .clone()
-                    .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
-                login_markers: config.paths.login_markers(),
-            },
-            stored,
-            retired,
-            &status,
-        )?;
-        let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
-        let editor_windows = front.windows().clone();
-        let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
-            service.clone(),
-            editor_windows.clone(),
+        let lifecycle = Arc::new(Lifecycle::new(
+            opened.runtime.clone(),
+            config.shutdown.clone(),
         ));
-        let space_watch = AbortOnDrop(crate::space_watch::spawn(
-            crate::space_watch::DriveOf(config.paths.data().to_path_buf()),
-            config.free_space,
-            settings.clone(),
-            events.clone() as Arc<dyn EventSink>,
-        ));
-        let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
+        let dev_cert = opened.dev_cert.clone();
+        let parts = workspace_parts(
+            &shared,
+            &outbound,
+            &credentials.injecting,
+            &serving,
+            opened,
+            (workspaces, book, all_users),
+            lifecycle.clone(),
+        );
+        let service = HostWorkspaces::new(parts, stored, retired, &reconciled.status)?;
+        let editor_windows = serving.front.windows().clone();
+        let watchers = spawn_watchers(&shared, &service, &credentials.injecting, &editor_windows);
         steps.push(Step::WorkspacesReady);
 
-        let services = Services::new(
-            store.clone(),
-            settings.clone(),
-            events.clone(),
-            clock.clone(),
-        )
-        .with_problems(problems.clone())
-        .with_workspaces(Arc::new(service.clone()))
-        .with_network_health(network_health)
-        .with_secret_store(vault.clone())
-        .with_credentials(Arc::new(
-            HostCredentials::new(ToolPaths::resolve(), vault)
-                .with_read_log(Arc::clone(&injecting.reads)),
-        ))
-        .with_repos({
-            let repos = injecting.repos(&egress.chain, &clock, connections.clone(), &events);
-            ssh_accounts.read_with(repos.clone());
-            repos
-        })
-        .with_doctor(system_doctor(
-            &config.layout,
-            &config.paths,
-            &config.expected_runtime,
-            settings.clone(),
-        ))
-        .with_dev_cert(dev_cert)
-        .with_ports(Arc::new(HostPorts::new(ports)))
-        .with_terminals(Arc::new(service.clone()))
-        .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
-        .with_proxy_sign_ins(sign_ins)
-        .with_company_signals(signals)
-        .with_endpoints(endpoints.clone());
-        let served = serve_api(&config, services).await?;
-        steps.push(Step::ApiServing);
-        tracing::info!(url = %served.url, "Puddle is up");
+        let services = build_services(&shared, &service, &credentials, &outbound, dev_cert);
+        let served = serve_api(&config, services, &mut steps).await?;
 
         Ok(Self {
             info: served.info,
             url: served.url,
+            remote_listener: served.remote_listener,
             events,
             problems,
-            quit_trims,
-            carried,
-            proxy_passwords,
+            quit_trims: reconciled.quit_trims,
+            carried: reconciled.carried,
+            proxy_passwords: credentials.proxy_passwords,
             store,
             settings,
             endpoints,
@@ -748,22 +432,13 @@ impl<R: Runtime + Clone> Host<R> {
             lifecycle,
             grace: config.operations_grace,
             api: AsyncMutex::new(Some(served.api)),
-            background: AsyncMutex::new(Some(Background {
-                sweeper,
-                vault_sweep,
-                pull,
-                front,
-                _watching: watching,
-                network_events,
-                sign_in_failures,
-                git_changes,
-                sign_in_notices,
-                editor_updates,
-                space_watch,
-                disk_watch,
-            })),
+            background: AsyncMutex::new(Some(Background::new(
+                serving,
+                watchers,
+                credentials.vault_sweep,
+            ))),
             steps: Mutex::new(steps),
-            reconcile: report,
+            reconcile: reconciled.report,
             stopped: OnceCell::new(),
             _lock: lock,
         })
@@ -773,6 +448,12 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn url(&self) -> &Url {
         &self.url
+    }
+
+    /// The network listener for a reverse proxy on another machine, when remote serving has one.
+    #[must_use]
+    pub fn remote_listener(&self) -> Option<&RemoteListener> {
+        self.remote_listener.as_ref()
     }
 
     /// The API token. Never log it.
@@ -902,16 +583,22 @@ impl<R: Runtime + Clone> Host<R> {
                 self.save_quit_trims(&sandboxes);
                 self.workspaces.release_all().await;
                 self.step(Step::RoutesClosed);
-                if let Some(api) = self.api.lock().await.take() {
+                let api = self.api.lock().await.take();
+                if let Some(api) = api {
                     api.shutdown().await;
                 }
                 self.step(Step::ApiStopped);
-                if let Some(mut background) = self.background.lock().await.take() {
+                let background = self.background.lock().await.take();
+                if let Some(mut background) = background {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
                     background.front.close().await;
-                    // A panic in the sweep was reported by the sweep; nothing more to do here.
-                    let _ = background.vault_sweep.await;
+                    crate::vault::finish_sweep(
+                        background.vault_sweep,
+                        crate::vault::SWEEP_SHUTDOWN_WAIT,
+                    )
+                    .await;
+                    let _ = background.retired_sweep.await;
                     for task in [
                         &mut background.network_events,
                         &mut background.sign_in_failures,
@@ -944,6 +631,8 @@ impl<R: Runtime + Clone> Host<R> {
 /// What `open_state` opened.
 struct State {
     store: Arc<Store>,
+    /// The reach across every user's data, taken before anything serves.
+    all_users: AllUsers,
     settings: Arc<dyn SettingsRepo>,
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
@@ -955,20 +644,28 @@ fn open_state(
     paths: &crate::HostPaths,
     events: &Arc<EventHub>,
     clock: &Arc<SystemClock>,
+    steps: &mut Vec<Step>,
 ) -> Result<State, HostError> {
     crate::data_folder::make_owner_only(paths)?;
     let store = Arc::new(
-        Store::open(&paths.store(), clock.clone(), Limits::default())?
-            .with_events(events.clone() as Arc<dyn EventSink>),
+        Store::open(&paths.store(), clock.clone(), Limits::default())?.with_events(events.clone()),
     );
+    // Taken here, before the store reaches anything that serves requests, so no request handler
+    // can take it after.
+    let all_users = store.take_all_users().ok_or(HostError::State {
+        what: "the database",
+        reason: "the reach across every user was taken before the host started".to_owned(),
+    })?;
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
     let crate::files::Book {
         workspaces: stored,
         retired,
     } = book.load()?;
+    steps.push(Step::StoreOpened);
     Ok(State {
         store,
+        all_users,
         settings,
         book,
         stored,
@@ -976,568 +673,499 @@ fn open_state(
     })
 }
 
-/// A company root as the TLS client takes it.
-fn der_of(root: &puddle_certs::SyncedCert) -> rustls::pki_types::CertificateDer<'static> {
-    rustls::pki_types::CertificateDer::from(root.der().to_vec())
+/// The handles every start-up phase reads: the settings it has opened and the options it was given.
+struct Shared<'a> {
+    config: &'a HostConfig,
+    options: &'a HostOptions,
+    events: &'a Arc<EventHub>,
+    problems: &'a Arc<Problems>,
+    clock: &'a Arc<SystemClock>,
+    store: &'a Arc<Store>,
+    settings: &'a Arc<dyn SettingsRepo>,
+    endpoints: &'a PuddleEndpoints,
+    roots: &'a CorporateRoots,
 }
 
-/// The company roots as PEM, for the runtime's registry client.
-fn pem_of(roots: &CorporateRoots) -> Vec<String> {
-    roots
-        .certificates()
-        .iter()
-        .map(puddle_certs::SyncedCert::pem)
-        .collect()
-}
-
-/// What the network-health screen reads: what discovery, the sign-in log of `chain` and the
-/// company roots know. The pull proxy reports itself once it serves.
-fn network_health_of(
-    chain: &Arc<Chain>,
-    discovery: &Arc<Discovery>,
-    clock: &Arc<SystemClock>,
-    roots: &CorporateRoots,
-    sign_ins: Arc<dyn ProxySignInService>,
-) -> Arc<HostNetworkHealth> {
-    let health = Arc::new(
-        HostNetworkHealth::new(discovery.clone(), clock.clone())
-            .with_chain(chain.clone())
-            .with_sign_ins(sign_ins),
-    );
-    health.set_roots(Arc::new(roots.clone()));
-    health
-}
-
-/// Makes a repository list that was renewed behind a screen's back an event, so the screen asks
-/// again.
-fn announce_renewals(repos: &Repos, events: Arc<dyn EventSink>) {
-    repos.on_change(Arc::new(move || events.emit(Event::RepoListsChanged {})));
-}
-
-/// What credential injection is made of, built once at start.
-struct Injecting {
-    injection: Arc<Injection>,
-    secrets: Arc<SecretCache<Sources>>,
-    /// What the last read of each credential came to, by every use; shown on the identities.
-    reads: Arc<ReadLog>,
-    terminations: Arc<Terminations>,
-    tls: TlsClient,
-}
-
-impl Injecting {
-    /// What the egress proxy terminates with: the registry it asks and the TLS client.
-    fn termination(&self) -> (Arc<Terminations>, TlsClient) {
-        (self.terminations.clone(), self.tls.clone())
-    }
-
-    /// The repository lists: read from the Git hosts' APIs over the company-proxy route with the
-    /// secrets the proxy's injection uses.
-    fn repos(
-        &self,
-        chain: &Arc<Chain>,
-        clock: &Arc<SystemClock>,
-        log: Arc<dyn ConnectionLog>,
-        events: &Arc<EventHub>,
-    ) -> Arc<Repos> {
-        let repos = Arc::new(Repos::new(
-            // Listing repositories is Puddle's own traffic: audited with origin `puddle`, like an
-            // image pull.
-            Arc::new(HostApi::new(chain.clone(), self.tls.clone()).with_connection_log(log)),
-            self.secrets.clone(),
-            clock.clone(),
-        ));
-        announce_renewals(&repos, events.clone());
-        repos
-    }
-
-    /// Starts following the changes that reach a running workspace: its identities (what it
-    /// decrypts, its commit authors) and the sign-ins its credentials need.
-    fn watch<R: Runtime + Clone>(
-        &self,
-        service: &HostWorkspaces<R>,
-        events: &Arc<EventHub>,
-    ) -> (AbortOnDrop, AbortOnDrop) {
-        (
-            AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone())),
-            AbortOnDrop(forward_sign_in_needed(
-                &self.secrets,
-                events.clone() as Arc<dyn EventSink>,
-            )),
-        )
-    }
-
-    fn build(
-        options: &HostOptions,
-        vault: &Arc<dyn SecretStore>,
-        store: &Arc<Store>,
-        events: &Arc<EventHub>,
-        roots: &CorporateRoots,
-        login_markers: PathBuf,
-    ) -> Result<Self, HostError> {
-        // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
-        let reads = credential_read_log(events.clone() as Arc<dyn EventSink>);
-        let secrets = Arc::new(
-            SecretCache::new(Sources::new(ToolPaths::resolve(), Arc::clone(vault)))
-                .with_read_log(Arc::clone(&reads)),
-        );
-        // Values nobody asks for any more leave memory on their own.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            drop(secrets.spawn_sweeper());
-        }
-        // The proxy asks this registry, once per connection, what the workspace decrypts.
-        let terminations = Arc::new(Terminations::new());
-        let injection = Arc::new(
-            Injection::new(
-                terminations.clone(),
-                InjectorInputs {
-                    store: store.clone(),
-                    secrets: secrets.clone(),
-                    events: events.clone() as Arc<dyn EventSink>,
-                },
-                options.injector.clone(),
-                Arc::clone(vault),
-            )
-            .with_login_markers(login_markers)
-            .with_git_ssh(options.git_ssh),
-        );
-        // The platform's roots plus the company's, as the guest is given.
-        let tls = TlsClient::new(roots.certificates().iter().map(der_of))?;
-        Ok(Self {
-            injection,
-            secrets,
-            reads,
-            terminations,
-            tls,
-        })
-    }
-}
-
-/// Reads the stored proxy sign-ins off the async threads: a locked credential store may take a
-/// long time to answer and starting must not wait for it. Until it has, a proxy that asks for Basic
-/// is answered as if no sign-in were stored.
-fn load_proxy_passwords(passwords: Arc<ProxyPasswords>, problems: Arc<Problems>) {
-    const PROBLEM: &str = "proxy-sign-in-store";
-    tokio::task::spawn_blocking(move || match passwords.load() {
-        Ok(count) => {
-            tracing::debug!(count, "proxy sign-ins loaded");
-            problems.clear(PROBLEM);
-        }
-        Err(_) => problems.raise(Problem::new(
-            PROBLEM,
-            "Puddle could not read the company proxy sign-ins",
-            "The operating system's credential store did not answer, so a proxy that asks for a \
-             user name and password is not signed in to. Unlock the credential store and restart \
-             Puddle.",
-        )),
-    });
-}
-
-/// What the way out is given besides the settings: the machinery for decrypted hosts and the stored
-/// proxy sign-ins.
-struct EgressParts {
-    terminations: Arc<Terminations>,
-    tls: TlsClient,
-    proxy_passwords: Arc<ProxyPasswords>,
-    /// Where the guest agents' reports go.
+/// The way out through the company network, with what the host's screens read about it.
+struct Outbound {
+    connections: Arc<ConnectionRecorder>,
     reports: Arc<ReportDesk>,
     ports: Ports,
-    /// Git over SSH, with the accounts `ssh -T` greets; `None` leaves SSH to Git hosts refused.
-    git_ssh: Option<Arc<crate::ssh_accounts::SshAccounts>>,
+    ssh_accounts: Arc<crate::ssh_accounts::SshAccounts>,
+    egress: Egress,
+    sign_ins: Arc<dyn ProxySignInService>,
+    network_health: Arc<HostNetworkHealth>,
+    pull_url: ProxyUrl,
 }
 
-impl EgressParts {
-    fn new(
-        (terminations, tls): (Arc<Terminations>, TlsClient),
-        proxy_passwords: &Arc<ProxyPasswords>,
-        reports: &Arc<ReportDesk>,
-        ports: &Ports,
-    ) -> Self {
-        Self {
-            terminations,
-            tls,
-            proxy_passwords: proxy_passwords.clone(),
-            reports: reports.clone(),
-            ports: ports.clone(),
-            git_ssh: None,
-        }
+/// The way out: the company network (discovery, sign-in as the user, then Basic) for the sandbox
+/// proxy and the pull proxy alike. Returns the pull proxy, now going out through it.
+fn build_outbound(
+    shared: &Shared<'_>,
+    injecting: &Injecting,
+    proxy_passwords: &Arc<ProxyPasswords>,
+    pull: PullProxy,
+) -> (Outbound, PullProxy) {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        clock,
+        store,
+        settings,
+        endpoints,
+        roots,
+    } = *shared;
+    let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
+    let reports = Arc::new(ReportDesk::new(problems.clone()));
+    let ports = Ports::new(
+        endpoints.clone(),
+        Arc::new(StorePins::new(store.clone())),
+        events.clone(),
+    );
+    // Who `ssh -T` greets: read from the store, named once the repository reader exists.
+    let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
+    let mut egress_parts = EgressParts::new(
+        injecting.termination(),
+        proxy_passwords,
+        &reports,
+        &ports,
+        roots,
+    );
+    if options.git_ssh {
+        egress_parts.git_ssh = Some(ssh_accounts.clone());
     }
+    let egress = Egress::build(
+        config,
+        options,
+        settings,
+        endpoints,
+        &connections,
+        events,
+        egress_parts,
+    );
+    let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
+        proxy_passwords.clone(),
+        egress.chain.clone(),
+    ));
+    let network_health = network_health_of(
+        &egress.chain,
+        &egress.discovery,
+        clock,
+        roots,
+        sign_ins.clone(),
+        company_signals(options),
+    );
+    network_health.set_tls_left_out(injecting.tls.rejected_roots(), roots);
+    let pull_url = pull.proxy_url();
+    // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
+    let pull = pull
+        .with_company_signals(company_signals(options))
+        .with_upstream(egress.upstream.clone())
+        .with_connection_log(connections.clone());
+    let outbound = Outbound {
+        connections,
+        reports,
+        ports,
+        ssh_accounts,
+        egress,
+        sign_ins,
+        network_health,
+        pull_url,
+    };
+    (outbound, pull)
 }
 
-/// The company-network signals the host was given, or none (the category is then empty).
-fn company_signals(options: &HostOptions) -> Arc<dyn CompanySignals> {
-    options
-        .company_signals
+/// What the credential injection and the proxy sign-ins stand on.
+struct Credentials {
+    vault: Arc<dyn SecretStore>,
+    vault_sweep: tokio::task::JoinHandle<()>,
+    store_retry: Arc<crate::vault::StoreRetry>,
+    injecting: Injecting,
+    proxy_passwords: Arc<ProxyPasswords>,
+}
+
+/// Credential injection: what each workspace decrypts, the injector and the secrets behind it,
+/// and the client that verifies the real servers of decrypted hosts.
+async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        store,
+        settings,
+        roots,
+        ..
+    } = *shared;
+    let chosen = crate::vault::open(
+        options.secret_store.as_ref(),
+        &options.secret_setup,
+        &config.paths,
+        store,
+        problems,
+    )
+    .await?;
+    let vault: Arc<dyn SecretStore> = chosen.vault.clone();
+    chosen.check_in_background(problems.clone());
+    let store_retry = Arc::new(chosen.retry_check(problems.clone()));
+    let vault_sweep = if chosen.usable {
+        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone())
+    } else {
+        tokio::task::spawn_blocking(|| ())
+    };
+    let marks = config.paths.login_markers();
+    let injecting = Injecting::build(options, &vault, store, events, roots, marks, settings)?;
+    let proxy_passwords = ProxyPasswords::new(vault.clone());
+    load_proxy_passwords(proxy_passwords.clone(), problems.clone());
+    Ok(Credentials {
+        vault,
+        vault_sweep,
+        store_retry,
+        injecting,
+        proxy_passwords,
+    })
+}
+
+/// The guests' boot files and the runtime that boots them.
+struct Opened<R> {
+    dev_cert: Arc<dyn DevCertSource>,
+    kit: BootKit,
+    ssh: Arc<SshSetup>,
+    runtime: R,
+}
+
+async fn open_runtime<R, F>(
+    shared: &Shared<'_>,
+    outbound: &Outbound,
+    factory: &F,
+    steps: &mut Vec<Step>,
+) -> Result<Opened<R>, HostError>
+where
+    R: Runtime,
+    F: RuntimeFactory<Runtime = R>,
+{
+    let Shared {
+        config,
+        options,
+        clock,
+        store,
+        roots,
+        ..
+    } = *shared;
+    // One development certificate service: the guests' boot files and the first-run line.
+    let dev_cert: Arc<dyn DevCertSource> = options
+        .dev_cert
         .clone()
-        .unwrap_or_else(|| Arc::new(NoSignals))
+        .unwrap_or_else(|| host_dev_cert(config.paths.data(), clock.clone()));
+    let kit = BootKit::new(
+        &config.paths.guest_share(),
+        &config.guest,
+        outbound.egress.proxy.clone(),
+        roots,
+        store.clone(),
+        config.paths.data(),
+    )?
+    .with_dev_cert(dev_cert.clone());
+    steps.push(Step::GuestFilesReady);
+
+    // The login key of direct SSH: made before the runtime opens, which takes its public half.
+    let ssh = Arc::new(SshSetup::open(config.paths.data(), &config.ssh));
+
+    // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
+    let runtime = factory
+        .open(RuntimeInputs {
+            layout: &config.layout,
+            guest_share: config.paths.guest_share(),
+            data: config.paths.data().to_path_buf(),
+            pull_proxy: outbound.pull_url.clone(),
+            registry_roots: pem_of(roots),
+            log_level: config.runtime_log_level.clone(),
+            ssh_login_key: ssh.authorized_key().map(str::to_owned),
+        })
+        .await?;
+    steps.push(Step::RuntimeOpened);
+    Ok(Opened {
+        dev_cert,
+        kit,
+        ssh,
+        runtime,
+    })
 }
 
-/// The way out through the company network, shared by the sandbox proxy and the pull proxy.
-struct Egress {
-    proxy: Arc<Proxy>,
-    upstream: Upstream,
-    chain: Arc<Chain>,
-    discovery: Arc<Discovery>,
+/// The parts of the host that serve beside the API.
+struct Serving {
+    pull: PullRoute,
+    sweeper: Sweeper,
+    watching: Option<Watching>,
+    network_events: AbortOnDrop,
+    sign_in_failures: AbortOnDrop,
+    flavours: Arc<Flavours>,
+    front: Front,
+    front_guests: Arc<dyn puddle_front::Guests>,
+    front_halves: Arc<dyn puddle_front::ServerHalves>,
 }
 
-impl Egress {
-    fn build(
-        config: &HostConfig,
-        options: &HostOptions,
-        settings: &Arc<dyn SettingsRepo>,
-        endpoints: &PuddleEndpoints,
-        connections: &Arc<ConnectionRecorder>,
-        events: &Arc<EventHub>,
-        parts: EgressParts,
-    ) -> Self {
-        let EgressParts {
-            terminations,
-            tls,
-            proxy_passwords,
-            reports,
-            ports,
-            git_ssh,
-        } = parts;
-        let discovery = options.discovery.clone().unwrap_or_else(|| {
-            Discovery::new(
-                puddle_upstream::system_os(),
-                config.upstream.discovery.clone(),
-            )
-        });
-        // Basic: the sign-in stored for the proxy, else the one configured for every proxy.
-        let mut basic = BasicAuth::new().with_source(proxy_passwords);
-        if let Some(credentials) = config.upstream.basic.clone() {
-            basic = basic.with_default(credentials);
-        }
-        let auth = AuthList::new().with(system_auth()).with(Arc::new(basic));
-        let chain = Chain::new(discovery.clone(), Arc::new(auth));
-        let upstream = Upstream::new(chain.clone());
-        let access_settings = settings.clone();
-        let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceId| {
-            local_access(access_settings.as_ref(), workspace)
-        }))
-        .with_endpoints(endpoints.clone())
-        .with_company_signals(company_signals(options));
-        let mut proxy = Proxy::new(
-            connections.store().clone(),
-            events.clone() as Arc<dyn EventSink>,
-        )
-        .with_connection_log(connections.clone())
-        .with_address_check(Arc::new(guard))
-        .with_upstream(upstream.clone())
-        .with_termination(terminations, tls)
-        .with_agent_reports(reports)
-        .with_guest_watcher(Arc::new(ports));
-        if let Some(resolver) = &options.resolver {
-            proxy = proxy.with_resolver(Arc::clone(resolver));
-        }
-        if let Some(accounts) = git_ssh {
-            // Each workspace serves its own start's host keys (`Injection`), so none here.
-            let https = GitSshHttps::new(accounts as Arc<dyn GitSshAccounts>);
-            proxy = proxy.with_git_ssh(GitSsh::new(Arc::new(https), Vec::new()));
-        }
-        let proxy = Arc::new(proxy);
-        Self {
-            proxy,
-            upstream,
-            chain,
-            discovery,
-        }
-    }
+/// The pull proxy first: the first create pulls an image. Then the sweeper, the network watch and
+/// the browser editor's front.
+async fn serve_background(
+    shared: &Shared<'_>,
+    outbound: &Outbound,
+    pull: PullProxy,
+    steps: &mut Vec<Step>,
+) -> Result<Serving, HostError> {
+    let pull = pull.serve().map_err(HostError::PullProxy)?;
+    // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
+    outbound.network_health.set_pull_proxy(true, true);
+    steps.push(Step::PullProxyServing);
+    let sweeper = Sweeper::spawn_reporting(
+        shared.store.clone(),
+        DEFAULT_SWEEP_PERIOD,
+        shared.problems.clone(),
+    );
+    let watching = outbound.egress.discovery.watch();
+    let network_events = AbortOnDrop::forwarding(&outbound.egress.discovery, shared.events);
+    let sign_in_failures =
+        AbortOnDrop::forwarding_sign_in_failures(&outbound.egress.chain, shared.events);
+    // The browser editor's front: a listener on this computer's loopback that reaches each
+    // running workspace's editor through its agent link, so a window can open it by origin.
+    let flavours = Arc::new(Flavours::default());
+    let (front, front_guests, front_halves) = crate::front::serve(
+        &shared.config.paths,
+        shared.endpoints,
+        outbound.ports.clone(),
+        flavours.clone(),
+        shared.problems,
+    )
+    .await?;
+    steps.push(Step::BackgroundStarted);
+    Ok(Serving {
+        pull,
+        sweeper,
+        watching,
+        network_events,
+        sign_in_failures,
+        flavours,
+        front,
+        front_guests,
+        front_halves,
+    })
 }
 
-/// The API, bound and serving. It registers its own address in the services' endpoint registry
-/// (the guard's) and drops that entry when it stops.
-struct ServedApi {
-    info: puddle_api::ConnectionInfo,
-    url: Url,
-    api: RunningApi,
+/// What a run of the host left unfinished, and what it learned about it: the reconcile report, the
+/// state of each known sandbox and the trims that failed when the last run quit.
+struct Reconciled {
+    report: puddle_lifecycle::ReconcileReport,
+    status: BTreeMap<WorkspaceId, WorkspaceStatus>,
+    quit_trims: QuitTrims,
+    carried: BTreeMap<WorkspaceId, String>,
 }
 
-async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi, HostError> {
-    let mut api_config = ApiConfig::with_port(config.api.port);
-    api_config
-        .extra_origins
-        .clone_from(&config.api.extra_origins);
-    if let Some(ui) = &config.api.ui {
-        api_config.ui = Some(ui.clone());
-    }
-    let server = ApiServer::bind(api_config, ApiToken::generate()?, services).await?;
-    let info = server.connection_info();
-    if let Some(file) = &config.api.connection_file {
-        info.write(file)?;
-    }
-    let url = Url::parse(&info.url).map_err(|e| HostError::State {
-        what: "the API address",
-        reason: e.to_string(),
-    })?;
-    let api = server.spawn();
-    Ok(ServedApi { info, url, api })
-}
-
-/// What reconcile works from: the workspaces Puddle knows, the sandboxes they own and which of
-/// those exist.
-async fn inventory_of<R: Runtime>(
+/// Cleans up after an earlier run, then reads what only lives in memory back in.
+async fn reconcile_phase<R: Runtime>(
     runtime: &R,
+    config: &HostConfig,
     stored: &[crate::files::Stored],
-) -> Result<Inventory, HostError> {
-    let existing: BTreeSet<String> = runtime
-        .list()
-        .await?
+    problems: &Problems,
+) -> Result<Reconciled, HostError> {
+    let (report, status) = reconcile_with(runtime, config, stored).await?;
+    for problem in reconcile_problems(&report) {
+        problems.raise(problem);
+    }
+    // A trim that failed when the last run quit is told now, to a user who can read it.
+    let quit_trims = QuitTrims::new(config.paths.quit_trims());
+    let carried: BTreeMap<WorkspaceId, String> = quit_trims
+        .load()
         .into_iter()
-        .map(|SandboxInfo { name, .. }| name)
+        .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
         .collect();
-    let workspaces = known_ids(stored);
-    let mut inventory = Inventory::default();
-    for stored in stored.iter().filter(|s| !s.creating) {
-        if existing.contains(stored.id.as_str()) {
-            inventory
-                .attached
-                .insert(stored.id.clone(), stored.id.sandbox_name());
-        }
-        inventory.sandboxes.insert(stored.id.sandbox_name());
-    }
-    inventory.workspaces = workspaces;
-    inventory.interrupted = stored
-        .iter()
-        .filter(|s| s.creating)
-        .map(|s| s.id.clone())
-        .collect();
-    Ok(inventory)
-}
-
-/// The workspaces' holders, rebuilt from what exists in the runtime.
-async fn adopt_holders<R: Runtime>(
-    runtime: &R,
-    config: &HostConfig,
-    stored: &[crate::files::Stored],
-) -> Result<Workspaces, HostError> {
-    let workspaces = Workspaces::new(config.workspaces.clone());
-    let inventory = inventory_of(runtime, stored).await?;
-    let adopted = adopt_workspaces(&workspaces, &inventory);
-    tracing::info!(adopted = adopted.len(), "workspace holders rebuilt");
-    Ok(workspaces)
-}
-
-/// Runs reconcile and returns its report with the state each known sandbox was left in.
-async fn reconcile_with<R: Runtime>(
-    runtime: &R,
-    config: &HostConfig,
-    stored: &[crate::files::Stored],
-) -> Result<
-    (
-        puddle_lifecycle::ReconcileReport,
-        BTreeMap<WorkspaceId, WorkspaceStatus>,
-    ),
-    HostError,
-> {
-    let inventory = inventory_of(runtime, stored).await?;
-    let report = reconcile(runtime, &inventory, &config.shutdown)
-        .await
-        .map_err(|e| HostError::Reconcile(e.to_string()))?;
-    if !report.unknown_volumes.is_empty() {
-        // Kept, never removed: the list may be the thing that is missing or out of date.
-        tracing::warn!(
-            volumes = ?report.unknown_volumes,
-            "workspace volumes that no workspace in the list claims were kept"
-        );
-    }
-    if !report.removed.is_empty() {
-        // Only the sandbox's own disk goes (its workspace volume is never touched), and a restart
-        // rebuilds a sandbox from the volume anyway; say so rather than remove silently.
-        tracing::warn!(
-            sandboxes = ?report.removed,
-            "sandbox records that no workspace in the list claims were removed (their root disks are discarded; workspace volumes are untouched)"
-        );
-    }
-    for failure in &report.failures {
-        tracing::warn!(item = %failure.item, action = failure.action, error = %failure.error, "reconcile did not finish this");
-    }
-    let mut status: BTreeMap<WorkspaceId, WorkspaceStatus> = report
-        .crashed
-        .iter()
-        .filter_map(|name| Some((name.workspace_id()?, WorkspaceStatus::Crashed)))
-        .collect();
-    // A workspace whose volume is gone shows that right away, not as stopped until a start
-    // fails. It wins over `crashed`: the start would be refused anyway.
-    for stored in stored {
-        if report.missing_volumes.contains(&stored.id) {
-            tracing::warn!(workspace = %stored.id, "a workspace's volume is gone; it shows as volume_missing");
-            status.insert(stored.id.clone(), WorkspaceStatus::VolumeMissing);
+    for (id, why) in &carried {
+        if let Some(stored) = stored.iter().find(|s| &s.id == id) {
+            problems.raise(crate::quit_trims::problem(id, stored.name.as_str(), why));
         }
     }
-    Ok((report, status))
+    Ok(Reconciled {
+        report,
+        status,
+        quit_trims,
+        carried,
+    })
 }
 
-/// What start-up reconcile found or could not do, as problems for the user: each one names the
-/// things and what happened to them. None when it found nothing to say.
-fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem> {
-    let mut problems = Vec::new();
-    let unknown: Vec<WorkspaceId> = report
-        .unknown_volumes
-        .iter()
-        .filter_map(puddle_types::VolumeName::workspace_id)
-        .collect();
-    problems.extend(crate::workspaces::orphans::problem(&unknown));
-    if !report.removed.is_empty() {
-        let names: Vec<_> = report.removed.iter().map(ToString::to_string).collect();
-        problems.push(Problem::new(
-            "reconcile-removed-sandboxes",
-            format!(
-                "Puddle removed {} sandbox{} that no workspace in its list claims",
-                names.len(),
-                if names.len() == 1 { "" } else { "es" }
-            ),
-            format!(
-                "{}. Only their own root disks were discarded; workspace volumes are untouched. \
-                 A workspace you start again gets a fresh sandbox on its volume.",
-                names.join(", ")
-            ),
-        ));
+/// What the workspace service is made of, from the phases before it.
+fn workspace_parts<R: Runtime + Clone>(
+    shared: &Shared<'_>,
+    outbound: &Outbound,
+    injecting: &Injecting,
+    serving: &Serving,
+    opened: Opened<R>,
+    (workspaces, book, all_users): (Workspaces, WorkspaceBook, AllUsers),
+    lifecycle: Arc<Lifecycle<R>>,
+) -> Parts<R> {
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        clock,
+        store,
+        settings,
+        ..
+    } = *shared;
+    Parts {
+        runtime: opened.runtime,
+        workspaces,
+        lifecycle,
+        kit: opened.kit,
+        events: events.clone(),
+        clock: clock.clone(),
+        settings: settings.clone(),
+        store: store.clone(),
+        all_users,
+        launcher: options.launcher.clone(),
+        ssh: opened.ssh,
+        book,
+        injection: injecting.injection.clone(),
+        problems: problems.clone(),
+        reports: outbound.reports.clone(),
+        ports: outbound.ports.clone(),
+        rewrite_gate: options.rewrite_gate.clone(),
+        flavours: serving.flavours.clone(),
+        front_addr: serving.front.local_addr(),
+        front_guests: serving.front_guests.clone(),
+        front_halves: serving.front_halves.clone(),
+        ids: options
+            .workspace_ids
+            .clone()
+            .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
+        login_markers: config.paths.login_markers(),
+        space: crate::space_watch::space_or_drive(options.free_space.clone(), config.paths.data()),
     }
-    if !report.failures.is_empty() {
-        let what: Vec<_> = report
-            .failures
-            .iter()
-            .map(|f| format!("{} ({}): {}", f.item, f.action, f.error))
-            .collect();
-        problems.push(Problem::new(
-            "reconcile-failures",
-            format!(
-                "Puddle could not clean up {} thing{} an earlier run left",
-                what.len(),
-                if what.len() == 1 { "" } else { "s" }
-            ),
-            format!(
-                "{}. They stay as they are and Puddle tries again at its next start.",
-                what.join("; ")
-            ),
-        ));
+}
+
+/// The tasks that keep running beside the workspaces, each stopped when it drops.
+struct Watchers {
+    retired_sweep: tokio::task::JoinHandle<()>,
+    git_changes: AbortOnDrop,
+    sign_in_notices: AbortOnDrop,
+    editor_updates: AbortOnDrop,
+    space_watch: AbortOnDrop,
+    disk_watch: AbortOnDrop,
+}
+
+fn spawn_watchers<R: Runtime + Clone>(
+    shared: &Shared<'_>,
+    service: &HostWorkspaces<R>,
+    injecting: &Injecting,
+    editor_windows: &puddle_front::Windows,
+) -> Watchers {
+    // Downloads the image the delete check boots now, while nobody is waiting on it.
+    service.warm_maintenance_image_for_listed();
+    // Finishes what a delete that did not end left under its id.
+    let retired_sweep = tokio::spawn({
+        let service = service.clone();
+        async move { service.sweep_retired().await }
+    });
+    let (git_changes, sign_in_notices) = injecting.watch(service, shared.events);
+    let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
+        service.clone(),
+        editor_windows.clone(),
+    ));
+    let space_watch = AbortOnDrop(crate::space_watch::spawn(
+        crate::space_watch::DriveOf(shared.config.paths.data().to_path_buf()),
+        shared.config.free_space,
+        shared.settings.clone(),
+        shared.events.clone(),
+    ));
+    let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
+    Watchers {
+        retired_sweep,
+        git_changes,
+        sign_in_notices,
+        editor_updates,
+        space_watch,
+        disk_watch,
     }
-    problems
+}
+
+/// The services the API serves, wired to the host's stores and workspaces.
+fn build_services<R: Runtime + Clone>(
+    shared: &Shared<'_>,
+    service: &HostWorkspaces<R>,
+    credentials: &Credentials,
+    outbound: &Outbound,
+    dev_cert: Arc<dyn DevCertSource>,
+) -> Services {
+    let Credentials {
+        vault,
+        store_retry,
+        injecting,
+        ..
+    } = credentials;
+    let vault = vault.clone();
+    let Shared {
+        config,
+        options,
+        events,
+        problems,
+        clock,
+        store,
+        settings,
+        endpoints,
+        ..
+    } = *shared;
+    let services = Services::new(
+        store.clone(),
+        settings.clone(),
+        events.clone(),
+        clock.clone(),
+    )
+    .with_problems(problems.clone())
+    .with_workspaces(Arc::new(service.clone()))
+    .with_network_health(outbound.network_health.clone())
+    .with_secret_store(vault.clone())
+    .with_credentials(Arc::new(
+        HostCredentials::new(ToolPaths::resolve(), vault)
+            .with_read_log(Arc::clone(&injecting.reads)),
+    ))
+    .with_repos({
+        let repos = injecting.repos(
+            &outbound.egress.chain,
+            clock,
+            outbound.connections.clone(),
+            events,
+        );
+        outbound.ssh_accounts.read_with(repos.clone());
+        repos
+    })
+    .with_doctor(system_doctor(
+        &config.layout,
+        &config.paths,
+        &config.expected_runtime,
+        settings.clone(),
+        options.az_search_path.clone(),
+    ))
+    .with_dev_cert(dev_cert)
+    .with_credential_store(store_retry.clone())
+    .with_ports(Arc::new(HostPorts::new(outbound.ports.clone())))
+    .with_terminals(Arc::new(service.clone()))
+    .with_learned(Arc::new(HostLearned::new(
+        injecting.terminations.clone(),
+        Arc::clone(store),
+    )))
+    .with_proxy_sign_ins(outbound.sign_ins.clone())
+    .with_company_signals(company_signals(options))
+    .with_endpoints(endpoints.clone());
+    let services = options.front_resolver.iter().fold(services, |s, resolver| {
+        s.with_front_resolver(resolver.clone())
+    });
+    // Browsers sign in against the database's secrets, which only the API ever holds.
+    match store.take_account_secrets() {
+        Some(secrets) => services.with_account_secrets(secrets),
+        None => services,
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_api::MemorySettings;
-    use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Secrets};
-    use puddle_secrets::{Credential, Secret, SourceError, SourceSpec};
-    use puddle_settings::WorkspaceSettings;
-    use puddle_types::LocalCategory;
-    use serde_json::json;
-
-    use super::*;
-
-    fn name() -> WorkspaceId {
-        WorkspaceId::new("acme").unwrap()
-    }
-
-    #[test]
-    fn local_access_follows_the_settings_when_they_can_be_read() {
-        let repo = MemorySettings::default();
-        let mut own = WorkspaceSettings::default();
-        own.overrides.local_toggles.private = Some(true);
-        repo.save_workspace(&name(), own.to_document()).unwrap();
-        let access = local_access(&repo, &name());
-        assert!(access.is_on(LocalCategory::Private));
-        assert!(!access.is_on(LocalCategory::Loopback));
-    }
-
-    #[test]
-    fn damaged_settings_block_every_local_destination_and_say_why() {
-        let repo = MemorySettings::default();
-        repo.save_global(json!("not an object")).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
-        let reason = local_access_checked(&repo, &name()).unwrap_err();
-        assert!(reason.contains("global settings are not valid"), "{reason}");
-
-        let repo = MemorySettings::default();
-        repo.save_workspace(&name(), json!([1])).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
-        let reason = local_access_checked(&repo, &name()).unwrap_err();
-        assert!(reason.contains("workspace acme"), "{reason}");
-    }
-
-    struct OneToken;
-
-    impl Secrets for OneToken {
-        fn get<'a>(
-            &'a self,
-            _spec: &'a SourceSpec,
-        ) -> futures_util::future::BoxFuture<'a, Result<Credential, SourceError>> {
-            Box::pin(async {
-                Ok(Credential {
-                    username: None,
-                    secret: Arc::new(Secret::new("CANARY-host-token".to_owned())),
-                })
-            })
-        }
-
-        fn invalidate(&self, _spec: &SourceSpec) {}
-    }
-
-    #[tokio::test]
-    async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_event() {
-        use std::collections::BTreeSet;
-
-        use puddle_store::{
-            Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Store,
-        };
-
-        let host = puddle_secrets::HostName::new("github.com").unwrap();
-        let source = SourceSpec::Gh {
-            host: host.clone(),
-            account: puddle_secrets::AccountName::new("octocat").unwrap(),
-        };
-        let clock = Arc::new(ManualClock::new(1_700_000_000_000));
-        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
-        let identity = store
-            .create_identity(IdentityDraft {
-                label: "Me".to_owned(),
-                author: puddle_store::Author::new("Me", "me@example.org").unwrap(),
-                credentials: vec![
-                    CredentialBinding::new(
-                        &host,
-                        source,
-                        Coverage::new(BTreeSet::new(), true).unwrap(),
-                    )
-                    .unwrap(),
-                ],
-            })
-            .unwrap();
-        // The token source answers the same for as long as it is asked.
-        OneToken.invalidate(&SourceSpec::Gh {
-            host: host.clone(),
-            account: puddle_secrets::AccountName::new("octocat").unwrap(),
-        });
-        let api = Arc::new(FakeApi::new());
-        let path = "/user/repos?per_page=100&sort=full_name&direction=asc";
-        api.reply("api.github.com", path, ApiReply::new(200, "[]"));
-        let repos = Repos::new(api.clone(), Arc::new(OneToken), clock.clone());
-        let hub = Arc::new(EventHub::default());
-        let mut stream = hub.subscribe();
-        announce_renewals(&repos, hub.clone());
-        let read = Read {
-            only: None,
-            freshness: Freshness::Cached,
-        };
-        repos.lists(std::slice::from_ref(&identity), read).await;
-
-        // A repository appears; the next ask after the list went stale is answered with the old
-        // list and the new one is announced.
-        api.clear("api.github.com", path);
-        api.reply(
-            "api.github.com",
-            path,
-            ApiReply::new(200, r#"[{"id":1,"name":"new","full_name":"octo/new","private":false,"html_url":"https://github.com/octo/new"}]"#),
-        );
-        clock.advance(11 * 60_000);
-        let served = repos.lists(std::slice::from_ref(&identity), read).await;
-
-        assert!(served[0].repos.is_empty());
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), stream.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(event, Event::RepoListsChanged {});
-    }
-}
+mod tests;

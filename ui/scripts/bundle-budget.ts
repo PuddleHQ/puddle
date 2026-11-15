@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The bundle budget gate (part of the `ui` gate, after `vite build`). What the first page load
 // fetches (the scripts and stylesheets index.html names, gzipped as a server would send them) must
 // stay under a fixed size, so a heavy dependency or an accidental import into the root layout

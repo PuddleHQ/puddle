@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Throughput of a terminated connection against a spliced one: a 256 MiB upload and a 256 MiB
 //! download of the same server, once decrypted by the proxy and once passed through.
 //!

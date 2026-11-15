@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! In-memory settings and credential sources for tests, and a [`World`]: a workspace in a real
 //! in-memory store with identities, a repository table and an injector over them. Never in
 //! product code (feature `testing`).
@@ -176,6 +176,7 @@ impl World {
             .unwrap(),
         );
         let workspace = WorkspaceId::new("box").unwrap();
+        puddle_store::testing::own(&store, &workspace);
         let credentials = StaticCredentials::new();
         let events = Arc::new(CollectingSink::default());
         let injector = Arc::new(GitInjector::new(
@@ -244,7 +245,11 @@ impl World {
                     .unwrap(),
             ],
         };
-        let id = self.store.create_identity(draft).unwrap().id;
+        let id = self
+            .store
+            .create_identity(puddle_store::UserId::OWNER, draft)
+            .unwrap()
+            .id;
         Made { id, source }
     }
 

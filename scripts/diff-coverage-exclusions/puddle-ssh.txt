@@ -1,0 +1,6 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-ssh/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-ssh/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-ssh/src/endpoint.rs | accept_failed(\|reason\| target.failed(&reason), &mut accept_failing, &e); | reason| target.failed(&reason), &mut accept_failing, &e); | same arm: accept itself failing cannot be provoked from a test
+crates/puddle-ssh/src/endpoint.rs | accept_stopped(\|reason\| target.failed(&reason), &e); | reason| target.failed(&reason), &e); | the listener closing under a running endpoint, or accept failing, cannot be made to happen from a test (the OS or the pipe server has to fail); both reports are covered through `accept_stopped` and `accept_failed` directly (`accept_failures_are_reported_once_per_run_and_a_stop_always`)

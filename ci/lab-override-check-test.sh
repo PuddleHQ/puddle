@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/lab-override-check.py, offline: PyPI answers come from fixture files. Cases it must flag (exit 1),
 # pass (exit 0), fail open on, and refuse (exit 2).
 set -uo pipefail

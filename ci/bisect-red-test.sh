@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/bisect-red.sh with a stub `gh` that answers the compare and last-green lookups from variables
 # and records every call: which commits get a branch and a dispatch (all but the red one), the default for --good,
 # the --max refusal, cleanup, and usage errors. Not seen: the real API.

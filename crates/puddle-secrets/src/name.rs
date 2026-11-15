@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Validated names that end up as an argument or a line of a tool's input.
 //!
 //! A name that reaches a child process is checked first, so it cannot be an option (`-x`), carry a
@@ -76,6 +76,26 @@ fn host_chars(s: &str) -> bool {
         && !s.starts_with('.')
 }
 
+/// [`HostName::new`]'s rule as a `const fn`, so a literal is checked at build time. A unit test
+/// compares it with the runtime rule.
+const fn is_valid_host(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let [first, ..] = bytes else {
+        return false;
+    };
+    if bytes.len() > 256 || *first == b'-' || *first == b'.' {
+        return false;
+    }
+    let mut rest = bytes;
+    while let [byte, tail @ ..] = rest {
+        if !(byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'.' | b':')) {
+            return false;
+        }
+        rest = tail;
+    }
+    true
+}
+
 fn path_chars(s: &str) -> bool {
     s.chars().all(|c| {
         c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~' | '%' | '@' | '+' | '/')
@@ -105,6 +125,51 @@ name_type!(
     /// A Git host name (`github.com`, `dev.azure.com`), with an optional port.
     HostName, "host name", host_chars
 );
+
+/// A host name written in the source and checked when the crate is built.
+///
+/// Use [`host_name!`](crate::host_name) for a constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostNameLit(&'static str);
+
+impl HostNameLit {
+    /// Checks `value`.
+    ///
+    /// # Panics
+    ///
+    /// When `value` is not a valid [`HostName`]. In a `const` context that is a build error.
+    #[must_use]
+    pub const fn new(value: &'static str) -> Self {
+        assert!(is_valid_host(value), "not a valid host name");
+        Self(value)
+    }
+}
+
+impl From<HostNameLit> for HostName {
+    fn from(lit: HostNameLit) -> Self {
+        Self(lit.0.to_owned())
+    }
+}
+
+/// A [`HostName`] from a constant string, checked at build time: no `Result`, no `expect`.
+///
+/// ```
+/// use puddle_secrets::{HostName, host_name};
+/// let host: HostName = host_name!("github.com");
+/// assert_eq!(host.as_str(), "github.com");
+/// ```
+///
+/// ```compile_fail
+/// use puddle_secrets::host_name;
+/// let _ = host_name!("-option");
+/// ```
+#[macro_export]
+macro_rules! host_name {
+    ($value:expr) => {
+        $crate::HostName::from(const { $crate::HostNameLit::new($value) })
+    };
+}
+
 name_type!(
     /// The path of a repository URL without the host (`org`, `org/project/_git/repo`): it selects
     /// the credential, so it is never empty.
@@ -126,61 +191,4 @@ name_type!(
 );
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accepts_plain_names() {
-        assert!(AccountName::new("TijsVK").is_ok());
-        assert!(AccountName::new("me+x@example.com").is_ok());
-        assert!(HostName::new("github.example.com:8443").is_ok());
-        assert!(UrlPath::new("org/project/_git/repo").is_ok());
-        assert!(StoredId::new("a1-b_2").is_ok());
-    }
-
-    #[test]
-    fn rejects_options_lines_and_odd_paths() {
-        for bad in ["", "-x", "a b", "a\nb", "a\0b", "a;b", "a$b", "$(x)"] {
-            assert!(AccountName::new(bad).is_err(), "{bad:?}");
-        }
-        assert!(AccountName::new("a".repeat(257)).is_err());
-        assert!(HostName::new(".x").is_err());
-        assert!(HostName::new("a/b").is_err());
-        for bad in [
-            "/a", "a/", "a//b", "a/../b", "a/./b", "a\nb", "a b", "a?x=1",
-        ] {
-            assert!(UrlPath::new(bad).is_err(), "{bad:?}");
-        }
-        assert!(StoredId::new("a".repeat(65)).is_err());
-        assert!(StoredId::new("a:b").is_err());
-    }
-
-    #[test]
-    fn tenant_id_refuses_options_lines_and_batch_metacharacters() {
-        assert!(TenantId::new("72f988bf-86f1-41af-91ab-2d7cd011db47").is_ok());
-        assert!(TenantId::new("contoso.onmicrosoft.com").is_ok());
-        for bad in [
-            "", "-x", "--tenant", ".x", "a b", "a\nb", "a\0b", "a%b", "a^b", "a&b", "a\"b", "a|b",
-            "a<b", "a>b", "a;b", "a$b", "a:b", "a_b", "a@b", "a/b", "a\\b", "a(b", "a!b",
-        ] {
-            assert!(TenantId::new(bad).is_err(), "{bad:?}");
-        }
-        assert!(TenantId::new("a".repeat(257)).is_err());
-    }
-
-    #[test]
-    fn serde_validates() {
-        let ok: AccountName = serde_json::from_str("\"abc\"").unwrap();
-        assert_eq!(ok.to_string(), "abc");
-        assert_eq!(serde_json::to_string(&ok).unwrap(), "\"abc\"");
-        assert!(serde_json::from_str::<AccountName>("\"-x\"").is_err());
-    }
-
-    #[test]
-    fn error_names_the_kind() {
-        assert_eq!(
-            AccountName::new("").unwrap_err().to_string(),
-            "not a valid account name"
-        );
-    }
-}
+mod tests;

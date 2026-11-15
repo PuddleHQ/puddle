@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of the private temp dir of scripts/check.sh with a stand-in cargo (no gate runs for real): the
 # stand-in writes a 1 GB file to the temp dir it is given, the way a test fixture or a build step would. The
 # stand-in for the system temp dir is a directory of the test (the caller's TMPDIR); after a passing run, after a
@@ -15,7 +15,9 @@ fail() {
     echo "check-tmp-test: $*" >&2
     exit 1
 }
-root=$(mktemp -d)
+# Under /var/tmp, not the caller's TMPDIR: a gate run's TMPDIR is already a long chk.* dir, and nesting this test's
+# own chk.* dirs below it pushes them past the socket-path guard of check.sh (the host's hooks gate failed on it).
+root=$(mktemp -d /var/tmp/chk-test.XXXXXX)
 trap 'rm -rf "$root"' EXIT
 sys="$root/system-tmp"
 mkdir -p "$sys" "$root/repo/scripts"

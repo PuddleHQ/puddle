@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! End to end, no VM: a guest names destinations with terminal escapes, homographs, bidi
 //! controls, full-width forms and over-long names, through the real guest agent, the real proxy and
 //! the real SQLite rules and audit. A name is either refused before any rule with the reason in the
@@ -38,6 +38,7 @@ async fn rig() -> Rig {
     let store = Arc::new(
         Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
     );
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-names").unwrap());
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
             .with_connection_log(store.clone())
@@ -145,7 +146,7 @@ fn hostile_names() -> Vec<(String, u16, &'static str, Option<String>)> {
             None,
         ),
         (
-            too_long.clone() + ":443",
+            too_long + ":443",
             400,
             "is longer than 253 characters",
             None,
@@ -168,12 +169,7 @@ fn hostile_names() -> Vec<(String, u16, &'static str, Option<String>)> {
             "pending",
             Some("evil.example".into()),
         ),
-        (
-            long_ok.clone() + ":443",
-            403,
-            "pending",
-            Some(long_ok.clone()),
-        ),
+        (long_ok.clone() + ":443", 403, "pending", Some(long_ok)),
     ]
 }
 
@@ -195,7 +191,10 @@ async fn hostile_hg13_hostile_names_are_refused_or_waiting_under_their_ascii_for
             expected_rows.push(row.clone());
         }
     }
-    let rows = rig.store.open_pending(None).unwrap();
+    let rows = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap();
     let mut hosts: Vec<String> = rows.iter().map(|r| r.host.to_string()).collect();
     hosts.sort();
     expected_rows.sort();

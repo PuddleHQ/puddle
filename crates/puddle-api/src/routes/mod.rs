@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The routes. Each handler carries its `#[utoipa::path]`, and [`api_router`] registers routes
 //! and spec together (`utoipa-axum`), so the published spec can't drift from what is served.
 
@@ -6,11 +6,16 @@ use std::sync::Arc;
 
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::SecretStore;
-use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{
+    Actor, Clock, NewWorkspaceOp, Store, UserId, WorkspaceOpKind, WorkspaceOpOutcome,
+};
 use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::admin::AdminService;
+use crate::authz::Authorizer;
+use crate::credential_store::CredentialStoreService;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
@@ -21,11 +26,15 @@ use crate::ports::PortsService;
 use crate::proxy_sign_in::ProxySignInService;
 use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
+use crate::signin::SignIn;
 use crate::terminals::{Registry, TerminalService};
 use crate::workspaces::WorkspaceService;
 
+mod admin;
 mod app_icon;
 mod audit;
+pub(crate) mod auth;
+mod credential_store;
 mod credentials;
 mod doctor;
 mod environment;
@@ -43,20 +52,23 @@ mod problems;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod rules;
 pub(crate) mod settings;
 mod shell_init;
+mod ssh_agent;
 mod start_folder;
 mod terminals;
 mod workspaces;
 
-/// Writes a `workspace_op` record for a change a request made (all of them reach Puddle through
-/// the API, so the actor is `api`). The change has happened, so a record that cannot be written
+/// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
+/// through the API, so the actor is `api`). The change has happened, so a record that cannot be written
 /// is logged and dropped rather than turned into an error the user would read as "not done".
 pub(crate) fn record_op(
     store: &Store,
+    user: UserId,
     op: WorkspaceOpKind,
     workspace: Option<&puddle_types::WorkspaceId>,
     detail: Option<String>,
@@ -64,6 +76,7 @@ pub(crate) fn record_op(
     let new = NewWorkspaceOp {
         op,
         workspace: workspace.cloned(),
+        user: Some(user),
         outcome: WorkspaceOpOutcome::Succeeded,
         actor: Actor::Api,
         detail,
@@ -75,6 +88,8 @@ pub(crate) fn record_op(
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<Store>,
+    /// Who may do what; every route asks it before its handler runs.
+    pub(crate) authorizer: Arc<dyn Authorizer>,
     pub(crate) settings: Arc<dyn SettingsRepo>,
     /// Serialises settings read-modify-write cycles.
     pub(crate) settings_lock: Arc<Mutex<()>>,
@@ -90,6 +105,8 @@ pub(crate) struct AppState {
     pub(crate) doctor: Arc<dyn DoctorService>,
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
+    /// The credential store check the first-run banner retries.
+    pub(crate) credential_store: Arc<dyn CredentialStoreService>,
     pub(crate) ports: Arc<dyn PortsService>,
     pub(crate) learned: Arc<dyn LearnedService>,
     pub(crate) terminal_service: Arc<dyn TerminalService>,
@@ -98,6 +115,12 @@ pub(crate) struct AppState {
     pub(crate) proxy_sign_ins: Arc<dyn ProxySignInService>,
     /// What the host reads of the company network, for the `blocked_by` of a pending request.
     pub(crate) company_signals: Arc<dyn CompanySignals>,
+    /// Browser sign-in; `None` when the host gave the API no accounts to sign in to.
+    pub(crate) sign_in: Option<Arc<SignIn>>,
+    /// The owner's admin screen; `None` unless several users are on and sign-in is.
+    pub(crate) admin: Option<Arc<AdminService>>,
+    /// The build of the app this server serves (`GET /api/health`), `None` when it serves none.
+    pub(crate) ui_build_id: Option<String>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -120,6 +143,8 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(pending::approve))
         .routes(routes!(pending::deny))
         .merge(rules_router())
+        .merge(auth_router())
+        .merge(admin_router())
         .routes(routes!(audit::audit))
         .routes(routes!(settings::get_global, settings::put_global))
         .routes(routes!(
@@ -150,8 +175,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::stop_workspace))
         .routes(routes!(workspaces::reclaim_workspace))
         .routes(routes!(workspaces::reset_root_disk))
+        .routes(routes!(workspaces::grow_root_disk))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
+        .routes(routes!(repository_hosts::repository_hosts))
         .routes(routes!(repositories::list_checkouts))
         .routes(routes!(repositories::add_repository))
         .routes(routes!(repositories::clone_again))
@@ -195,6 +222,33 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             identities::set_git_repo,
             identities::remove_git_repo
         ))
+}
+
+/// Browser sign-in, devices and the sign-in methods, in a router of their own like the rules.
+#[inline(never)]
+fn auth_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(auth::status))
+        .routes(routes!(auth::setup))
+        .routes(routes!(auth::password_sign_in))
+        .routes(routes!(auth::invite))
+        .routes(routes!(auth::refresh))
+        .routes(routes!(auth::sign_out))
+        .routes(routes!(auth::change_password))
+        .routes(routes!(auth::list_devices))
+        .routes(routes!(auth::revoke_device))
+        .routes(routes!(auth::get_methods, auth::put_methods))
+}
+
+/// The owner's admin screen, in a router of its own like the rules.
+#[inline(never)]
+fn admin_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(admin::list_users, admin::create_user))
+        .routes(routes!(admin::admin_stats))
+        .routes(routes!(admin::reissue_invite))
+        .routes(routes!(admin::delete_user))
+        .routes(routes!(admin::admin_audit))
 }
 
 /// The terminals, in a router of their own like the rules.
@@ -262,6 +316,10 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::put_interception
         ))
         .routes(routes!(
+            interception::get_interception_settings,
+            interception::put_interception_settings
+        ))
+        .routes(routes!(
             interception::get_global_never_decrypt,
             interception::put_global_never_decrypt
         ))
@@ -270,9 +328,17 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::clear_learned
         ))
         .routes(routes!(interception::forget_learned))
+        .routes(routes!(interception::make_permanent))
         .routes(routes!(
             interception::get_learned_limits,
             interception::put_learned_limits
+        ))
+        .routes(routes!(ssh_agent::list_asks))
+        .routes(routes!(ssh_agent::answer_ask))
+        .routes(routes!(ssh_agent::get_ssh_agent))
+        .routes(routes!(
+            ssh_agent::put_ssh_agent_host,
+            ssh_agent::delete_ssh_agent_host
         ))
         .routes(routes!(logins::list_logins))
         .routes(routes!(logins::forget_login))
@@ -286,4 +352,5 @@ pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
         .routes(routes!(first_run::trust_dev_certificate))
+        .routes(routes!(credential_store::retry_credential_store))
 }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of the stand-ins a secret places in a query parameter or in the path: the real value
 //! reaches the secret's own host in that one place, over HTTP/1.1 and HTTP/2; a stand-in toward
 //! another host or in another place goes out unchanged and is named; neither the real value nor

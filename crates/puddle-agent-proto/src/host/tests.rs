@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -10,6 +10,7 @@ use tokio_yamux::{Control, Session};
 
 use super::*;
 use crate::control::{PREAMBLE, PROTOCOL_VERSION};
+use crate::forward::{Answer, OpenError, read_line_exact};
 use crate::kind::StreamKind;
 use crate::resolve::{self, RecordType};
 use crate::yamux::client_config;
@@ -33,6 +34,17 @@ impl StreamHandler for Echo {
         let mut buf = Vec::new();
         if stream.read_to_end(&mut buf).await.is_ok() {
             let _ = stream.write_all(&buf).await;
+            let _ = stream.shutdown().await;
+        }
+    }
+
+    /// Answers an agent stream with `agent:` and what it read, so a test sees every byte arrive.
+    async fn ssh_agent(&self, mut stream: AgentStream) {
+        let mut buf = Vec::new();
+        if stream.read_to_end(&mut buf).await.is_ok() {
+            let _ = stream.write_all(b"agent:").await;
+            let _ = stream.write_all(&buf).await;
+            let _ = stream.flush().await;
             let _ = stream.shutdown().await;
         }
     }
@@ -478,27 +490,92 @@ async fn a_handler_that_does_not_care_about_capture_reports_loses_nothing_else()
 async fn unknown_and_invalid_messages_are_skipped_and_later_ones_still_count() {
     let mut h = start();
     let mut c = h.control_stream().await;
-    c.write_all(b"{\"type\":\"future_thing\"}\nnot json\n{\"type\":\"hello\",\"agent_version\":\"\\u0007x\",\"protocol\":9}\n")
-        .await
-        .unwrap();
+    let lines = format!(
+        "{{\"type\":\"future_thing\"}}\nnot json\n{{\"type\":\"hello\",\"agent_version\":\"\\u0007x\",\"protocol\":{PROTOCOL_VERSION}}}\n"
+    );
+    c.write_all(lines.as_bytes()).await.unwrap();
     send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
     assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
     h.close().await.unwrap();
 }
 
+/// A handler that records the link, the ports and the reports.
+#[derive(Default)]
+struct Heard {
+    reach: Reach,
+    told: Told,
+}
+
+struct Hearing(Arc<Heard>);
+
+impl StreamHandler for Hearing {
+    async fn handle(&self, _stream: GuestStream) {}
+
+    async fn guest_link(&self, link: GuestLink) {
+        *self.0.reach.link.lock().unwrap() = Some(link);
+    }
+
+    async fn guest_ports(&self, ports: Vec<u16>) {
+        self.0.reach.ports.lock().unwrap().push(ports);
+    }
+
+    async fn agent_report(&self, report: AgentReport) {
+        self.0.told.reports.lock().unwrap().push(report);
+    }
+}
+
 #[tokio::test]
-async fn a_guest_agent_on_another_protocol_is_logged_and_kept() {
+async fn a_guest_agent_on_another_protocol_is_reported_once_and_nothing_else_it_sends_counts() {
     Logs::capture();
-    let mut h = start();
+    let heard = Arc::new(Heard::default());
+    let mut h = start_handler(Arc::new(Hearing(Arc::clone(&heard))), HostConfig::default());
     let mut c = h.control_stream().await;
     let other = AgentMessage::Hello {
-        agent_version: "0.0.0".to_owned(),
+        agent_version: "0.9.0\u{7}".to_owned(),
         protocol: PROTOCOL_VERSION + 1,
     };
     send(&mut c, &other).await;
     send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
-    assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
+    c.write_all(b"{\"type\":\"ports\",\"listening\":[8080]}\n")
+        .await
+        .unwrap();
+    send(&mut c, &AgentMessage::capture_tampered(true)).await;
+    // A later hello on this protocol does not take the refusal back: the stream's first word stands.
+    send(&mut c, &AgentMessage::hello()).await;
+    let reports = eventually("the mismatch is reported", WAIT, || {
+        let reports = heard.told.reports.lock().unwrap();
+        (!reports.is_empty()).then(|| reports.clone())
+    })
+    .await;
+    assert_eq!(
+        reports,
+        [AgentReport::ProtocolMismatch {
+            agent_version: "0.9.0?".to_owned(),
+            protocol: PROTOCOL_VERSION + 1,
+        }]
+    );
+
+    // The refused stream stays open (an agent whose stream closed would reopen it in a loop), so a
+    // second control stream is still turned away.
+    let mut second = h.control_stream().await;
+    send(&mut second, &AgentMessage::hello()).await;
+    let mut buf = [0u8; 1];
+    assert!(second.read(&mut buf).await.is_err());
+
+    let mut events = std::mem::replace(&mut h.events, mpsc::unbounded_channel().1);
     h.close().await.unwrap();
+    no_event_for(
+        "an event from an agent on another protocol",
+        Duration::from_millis(200),
+        &mut events,
+    )
+    .await;
+    assert!(
+        heard.reach.link.lock().unwrap().is_none(),
+        "the host got a link to an agent it does not speak with"
+    );
+    assert!(heard.reach.ports.lock().unwrap().is_empty());
+    assert_eq!(heard.told.reports.lock().unwrap().len(), 1);
     let text = Logs::text();
     assert!(
         text.contains("WARN") && text.contains("another control protocol"),
@@ -586,7 +663,7 @@ async fn reserved_and_malformed_stream_kinds_are_closed() {
     let mut h = start();
     for preamble in [
         StreamKind::Connect.preamble(),
-        StreamKind::SshAgent.preamble(),
+        b"\0puddle-ssh-agent/2\n",
         b"\0puddle-control/2\n",
         b"\0no newline in sixty-four bytes .................................................",
     ] {
@@ -1058,4 +1135,101 @@ async fn a_forward_opened_through_the_link_is_the_connection_once_the_agent_says
         link.open_forward(3000).await,
         Err(OpenError::Disconnected)
     ));
+}
+
+#[tokio::test]
+async fn an_ssh_agent_stream_reaches_the_handler_with_every_byte_after_its_preamble() {
+    let mut h = start();
+    let mut s = h.control.open_stream().await.unwrap();
+    // The preamble and the first request in one write: the bytes the host read ahead are not lost.
+    let mut first = StreamKind::SshAgent.preamble().to_vec();
+    first.extend_from_slice(b"\0\0\0\x01\x0b");
+    s.write_all(&first).await.unwrap();
+    s.write_all(b"more").await.unwrap();
+    s.shutdown().await.unwrap();
+    let mut answer = Vec::new();
+    tokio::time::timeout(WAIT, s.read_to_end(&mut answer))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(answer, b"agent:\0\0\0\x01\x0bmore");
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_handler_without_an_ssh_agent_closes_its_streams() {
+    let told = Arc::new(Told::default());
+    let mut h = start_handler(Arc::new(Listening(told)), HostConfig::default());
+    let mut s = h.control.open_stream().await.unwrap();
+    s.write_all(StreamKind::SshAgent.preamble()).await.unwrap();
+    s.write_all(b"\0\0\0\x01\x0b").await.unwrap();
+    let mut buf = [0u8; 1];
+    let read = tokio::time::timeout(WAIT, s.read(&mut buf)).await.unwrap();
+    assert!(matches!(read, Err(_) | Ok(0)), "{read:?}");
+    h.close().await.unwrap();
+}
+
+/// Starts a host session, waits for its `GuestLink`, and runs a fake agent that answers the
+/// editor stream's one request line with `answer`; the request it read goes down `seen`.
+async fn editor_link_answered_with(
+    answer: Vec<u8>,
+) -> (GuestLink, mpsc::UnboundedReceiver<Vec<u8>>, Harness) {
+    let reach = Arc::new(Reach::default());
+    let mut h = start_handler(
+        Arc::new(Reaching(Arc::clone(&reach))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(&mut c, &AgentMessage::hello()).await;
+    let link = eventually("the handler gets the link at hello", WAIT, || {
+        reach.link.lock().unwrap().clone()
+    })
+    .await;
+    let mut inbound = std::mem::replace(&mut h.inbound, mpsc::unbounded_channel().1);
+    let (seen, requests) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let _control = c;
+        while let Some(mut stream) = inbound.recv().await {
+            let answer = answer.clone();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let preamble = read_line_exact(&mut stream, MAX_PREAMBLE).await.unwrap();
+                assert_eq!(parse_preamble(&preamble), Ok((StreamKind::Editor, 1)));
+                let word = read_line_exact(&mut stream, 16).await.unwrap();
+                seen.send(word).unwrap();
+                stream.write_all(&answer).await.unwrap();
+                let mut rest = Vec::new();
+                let _ = stream.read_to_end(&mut rest).await;
+            });
+        }
+    });
+    (link, requests, h)
+}
+
+#[tokio::test]
+async fn open_editor_sends_connect_and_hands_back_the_stream_on_an_ok_answer() {
+    let (link, mut requests, _h) = editor_link_answered_with(Answer::Ok.to_line()).await;
+    let stream = link.open_editor().await;
+    assert!(stream.is_ok());
+    assert_eq!(requests.recv().await.unwrap(), b"connect\n");
+}
+
+#[tokio::test]
+async fn open_editor_reports_a_refusal_with_its_reason() {
+    let (link, _requests, _h) =
+        editor_link_answered_with(Answer::refused("no server yet").to_line()).await;
+    let err = link.open_editor().await.unwrap_err();
+    assert!(
+        matches!(&err, OpenError::Refused(why) if why == "no server yet"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn editor_password_sends_password_and_returns_the_agents_answer() {
+    let hex = "0123456789abcdef".repeat(2);
+    let (link, mut requests, _h) =
+        editor_link_answered_with(crate::editor_stream::password_line(&hex)).await;
+    assert_eq!(link.editor_password().await.unwrap(), hex);
+    assert_eq!(requests.recv().await.unwrap(), b"password\n");
 }

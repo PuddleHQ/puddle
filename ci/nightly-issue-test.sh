@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/nightly-issue.sh with a stub `gh` (answers `issue list` and `run list` from variables, records
 # every write call and keeps the issue body), and a structure check of .github/workflows/nightly-signal.yml: it
 # names only workflows that exist, and every workflow with a cron trigger is either named there or listed below
@@ -68,14 +68,20 @@ listed=$(sed -n '/^    workflows:/,/^    types:/p' "$wf" | sed -n 's/^ *- *\[\?\
 for n in $listed; do
     grep -q "^name: $n\$" "$here/../.github/workflows/"*.yml || fail "nightly-signal.yml names '$n', which no workflow has"
 done
-# covered otherwise: ci (its nightly jobs have their own issue: ci/advisories-issue.sh), quality (a standing
+# covered otherwise: fork-upkeep (weekly; its own issue, ci/fork-upkeep-issue.sh), ci (its nightly jobs have their own issue: ci/advisories-issue.sh), quality (a standing
 # report that never fails), cache-gc (housekeeping, health.sh watches it), merge-queue-sweep (every 10 min; a PR it
 # misses shows as stuck-armed in pr-status.sh), the signal itself
-covered=" ci quality cache-gc merge-queue-sweep nightly-signal "
+covered=" ci quality cache-gc merge-queue-sweep nightly-signal fork-upkeep "
 for f in "$here/../.github/workflows/"*.yml; do
     grep -q '^  schedule:' "$f" || continue
     n=$(sed -n 's/^name: //p' "$f" | head -1)
     case "$covered" in *" $n "*) continue ;; esac
-    printf '%s\n' "$listed" | grep -qx "$n" || fail "workflow '$n' runs on a schedule but nightly-signal.yml does not watch it"
+    # No `printf | grep -qx` here: grep -q quits at the first match, printf then gets SIGPIPE, and pipefail turns the 141 into a
+    # failure of a check that found its match (seen once, reproduced at 0.1 % under CPU load). A case match has no pipe.
+    case $'\n'"$listed"$'\n' in *$'\n'"$n"$'\n'*) ;; *) fail "workflow '$n' runs on a schedule but nightly-signal.yml does not watch it" ;; esac
 done
+
+# Guard for the flake above: the repo-wide lint covers these two scripts and every other one.
+"$here/../scripts/check-early-exit-pipes.sh" --self-test >/dev/null
+"$here/../scripts/check-early-exit-pipes.sh" >/dev/null
 echo "nightly-issue-test: ok"

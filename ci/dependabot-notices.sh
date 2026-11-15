@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Pushes a regenerated ui/THIRD-PARTY-NOTICES.txt to a Dependabot npm PR's branch as one bot commit
 # (.github/workflows/dependabot-notices.yml). The file is data produced by the PR's own build
 # (dependabot-notices-build.yml); this script never runs anything from the PR, only git and cp.

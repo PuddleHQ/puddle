@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Runner disk evidence that survives a dead runner. A hosted runner that fills its disk loses its job log, so
 # the only record is what was written to the job summary and the annotations before the runner died.
 #
@@ -130,7 +130,7 @@ stop_step() { # <signal> <step pid>
         case "$own" in *" $pid "*) continue ;; esac
         if [ -n "${DISK_WATCH_KILL:-}" ]; then
             args=$(ps -o args= -p "$pid" 2>/dev/null) || continue
-            printf '%s\n' "$args" | grep -Eq -- "$DISK_WATCH_KILL" || continue
+            grep -Eq -- "$DISK_WATCH_KILL" <<<"$args" || continue
         fi
         kill "-$1" "$pid" 2>/dev/null
     done

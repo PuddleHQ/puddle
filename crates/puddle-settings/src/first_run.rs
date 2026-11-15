@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Whether the first-run flow has been through, kept with the user's other settings so a reinstall
 //! of the app does not ask again.
 

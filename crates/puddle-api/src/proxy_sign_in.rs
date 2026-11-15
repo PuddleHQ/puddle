@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sign-ins Puddle holds for company proxies that ask for a user name and password: the
 //! [`ProxySignInService`] trait the routes and the network-health report call, [`NoProxySignIns`]
 //! for a build without it, and [`FakeProxySignIns`] for tests and the UI fixture.

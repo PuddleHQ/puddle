@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of the concurrent gate runner (scripts/gate-sched.sh) with stub gates, and of the skip of
 # the `notices` gate (scripts/check.sh, with a stub cargo in a scratch repository). What it checks:
 # gates of different streams overlap; each gate's output stays whole under its `==> <gate>` line;
@@ -7,7 +7,7 @@
 # stops at its first failure; a gate that needs another waits for it and is skipped when it failed;
 # PUDDLE_CHECK_SERIAL=1 and a single stream run inline in order; the serial prefix stops the run.
 # What it cannot see: real gates (each has its own CI step), the timing of a loaded host (the
-# overlap check allows generous slack), a signal reaching the gates' children.
+# overlap check is a rendezvous, so it does not depend on speed), a signal reaching the gates' children.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/gate-sched-test.XXXXXX")
@@ -21,8 +21,11 @@ fail() {
 unset $(git rev-parse --local-env-vars)
 
 # scenario <name> <serial gates> <gate>...: runs the scheduler with stub gates in the background.
-# A gate's behaviour is the file $tmp/<name>/spec/<gate>: "<seconds> <exit status>". The stub prints a
-# line, waits, prints another; it records its start and end times.
+# A gate's behaviour is the file $tmp/<name>/spec/<gate>: "<seconds> <exit status> [<rendezvous>]". The
+# stub prints a line, waits, prints another; it records its start and end times. With a rendezvous count N
+# it also waits, after it started, until N gates of the scenario have started: that happens only when
+# they run at the same time, whatever the host's speed. A scheduler that ran them one after another
+# would never get there, so the wait gives up after 120 s and the gate fails.
 scenario() {
     name=$1 serial=$2
     shift 2
@@ -30,13 +33,21 @@ scenario() {
     mkdir -p "$d/spec"
     (
         trap 'echo $? >"$d/rc"' EXIT
+        export CHECK_GATE_DONE_DIR="$d/done"
         # shellcheck source=scripts/gate-sched.sh
         . "$here/scripts/gate-sched.sh"
         run_gate() {
             echo "==> $1"
-            read -r secs rc <"$d/spec/$1"
+            read -r secs rc meet <"$d/spec/$1"
             date +%s >"$d/start.$1"
+            printf '%s' "${CHECK_GATE_DONE_DIR:-unset}" >"$d/env.$1"
             echo "$1 begins"
+            tries=0
+            while [ -n "${meet:-}" ] && [ "$(find "$d" -name 'start.*' | wc -l)" -lt "$meet" ]; do
+                tries=$((tries + 1))
+                [ "$tries" -le 120 ] || return 99
+                sleep 1
+            done
             sleep "$secs"
             echo "$1 ends"
             date +%s >"$d/end.$1"
@@ -49,10 +60,10 @@ scenario() {
 }
 spec() { printf '%s\n' "$3" >"$tmp/$1/spec/$2"; } # spec <scenario> <gate> "<seconds> <status>"
 
-# S1: three streams of 2 s each overlap, and each gate's lines stay together.
+# S1: three streams overlap (each gate waits for the other two to have started), and each gate's lines
+# stay together.
 mkdir -p "$tmp/s1/spec"
-for g in clippy ui notices; do spec s1 $g "2 0"; done
-start=$(date +%s)
+for g in clippy ui notices; do spec s1 $g "0 0 3"; done
 scenario s1 "" clippy ui notices
 # S2: two failures in two streams; a stream stops at its first failure; the third stream completes.
 mkdir -p "$tmp/s2/spec"
@@ -73,6 +84,11 @@ PUDDLE_CHECK_SERIAL=1 scenario s4 "" clippy ui notices
 mkdir -p "$tmp/s5/spec"
 spec s5 fmt "0 2"; spec s5 typos "0 0"; spec s5 clippy "0 0"; spec s5 ui "0 0"
 scenario s5 "fmt typos" fmt typos fmt clippy ui
+# S6: a gate of the run that is not in the prefix list (hooks) goes to the streams even when it stands between two prefix gates:
+# the prefix gates after it still run first, one at a time, and hooks overlaps the other streams.
+mkdir -p "$tmp/s6/spec"
+spec s6 fmt "0 0"; spec s6 hooks "0 0 2"; spec s6 typos "0 0"; spec s6 clippy "0 0 2"
+scenario s6 "fmt typos" fmt hooks typos clippy
 wait
 
 rc_of() { cat "$tmp/$1/rc"; }
@@ -83,14 +99,21 @@ lines_of() { grep -c "$2" "$tmp/$1/out" || true; }
 for g in clippy ui notices; do
     [ "$(lines_of s1 "^==> $g\$")" = 1 ] || fail "s1: $g's ==> line is not there exactly once"
     # begins, ends and the ok line follow the header with nothing between them
-    [ "$(grep -A3 "^==> $g\$" "$tmp/s1/out" | tail -n 3 | tr '\n' '|')" = "$g begins|$g ends|-- $g: ok, 2 s|" ] ||
-        [ "$(grep -A3 "^==> $g\$" "$tmp/s1/out" | tail -n 3 | tr '\n' '|')" = "$g begins|$g ends|-- $g: ok, 3 s|" ] ||
+    grep -A3 "^==> $g\$" "$tmp/s1/out" | tail -n 3 | tr '\n' '|' | grep -q "^$g begins|$g ends|-- $g: ok, [0-9]* s|\$" ||
         fail "s1: the output of $g is split or incomplete"
 done
-s1_secs=$(sed -n 's/^check: .* wall \([0-9]*\) s.*/\1/p' "$tmp/s1/out")
-[ -n "$s1_secs" ] && [ "$s1_secs" -le 4 ] || fail "s1: three 2 s gates took ${s1_secs:-?} s: they did not overlap"
+for g in clippy ui notices; do
+    [ -e "$tmp/s1/start.$g" ] || fail "s1: $g never started: the gates did not overlap"
+done
 grep -q '^check: 3 streams' "$tmp/s1/out" || fail "s1: no summary line"
-: "$start"
+
+for g in clippy ui notices; do
+    [ -e "$tmp/s1/done/$g" ] || fail "s1: no gate-done marker for $g"
+done
+# A gate's own processes never see the marker directory: a check.sh that a gate starts would write markers for gates that are not done.
+for g in clippy ui notices; do
+    [ "$(cat "$tmp/s1/env.$g")" = unset ] || fail "s1: gate $g saw CHECK_GATE_DONE_DIR ($(cat "$tmp/s1/env.$g"))"
+done
 
 # S2
 [ "$(rc_of s2)" = 3 ] || fail "s2: exit $(rc_of s2), expected the earliest failure's 3 (doc)"
@@ -101,21 +124,39 @@ grep -q '^-- notices: ok' "$tmp/s2/out" || fail "s2: the misc stream did not fin
 [ "$(grep '^==> ' "$tmp/s2/out" | tail -n 2 | head -n 1)" = "==> ui-e2e" ] || fail "s2: failures are not printed in reverse run order"
 grep -q '^check: failed: doc ui-e2e' "$tmp/s2/out" || fail "s2: failed gates not listed in run order"
 
+# a gate that failed has ended too (its marker is there); a skipped one never ran (none)
+for g in clippy doc ui ui-e2e notices; do
+    [ -e "$tmp/s2/done/$g" ] || fail "s2: no gate-done marker for $g"
+done
+[ ! -e "$tmp/s2/done/coverage" ] || fail "s2: a gate-done marker for the skipped coverage"
+
 # S3
 [ "$(rc_of s3)" = 0 ] || fail "s3: exit $(rc_of s3)"
 [ "$(cat "$tmp/s3/start.coverage")" -ge "$(cat "$tmp/s3/end.ui")" ] || fail "s3: coverage started before ui finished"
 [ "$(rc_of s3b)" = 5 ] || fail "s3b: exit $(rc_of s3b), expected ui's 5"
 grep -q '^-- coverage: skipped (needs ui' "$tmp/s3b/out" || fail "s3b: coverage was not skipped for the failed ui"
 [ ! -e "$tmp/s3b/start.coverage" ] || fail "s3b: coverage ran without ui"
+[ ! -e "$tmp/s3b/done/coverage" ] || fail "s3b: a gate-done marker for the skipped coverage"
 
 # S4
 [ "$(rc_of s4)" = 0 ] || fail "s4: exit $(rc_of s4)"
 [ "$(grep '^==> ' "$tmp/s4/out" | tr '\n' ' ')" = "==> clippy ==> ui ==> notices " ] || fail "s4: gates not run in order"
 ! grep -q '^--\|^check:' "$tmp/s4/out" || fail "s4: the inline run printed scheduler lines"
 
+for g in clippy ui notices; do
+    [ -e "$tmp/s4/done/$g" ] || fail "s4: no gate-done marker for the inline gate $g"
+done
+
 # S5
 [ "$(rc_of s5)" = 2 ] || fail "s5: exit $(rc_of s5), expected fmt's 2"
 [ ! -e "$tmp/s5/start.typos" ] && [ ! -e "$tmp/s5/start.clippy" ] || fail "s5: a gate ran after the prefix failed"
+[ ! -e "$tmp/s5/done/typos" ] && [ ! -e "$tmp/s5/done/clippy" ] || fail "s5: a marker for a gate that never ran"
+
+# S6
+[ "$(rc_of s6)" = 0 ] || fail "s6: exit $(rc_of s6)"
+[ "$(cat "$tmp/s6/end.typos")" -le "$(cat "$tmp/s6/start.hooks")" ] || fail "s6: hooks started before the prefix gate typos ended"
+[ -e "$tmp/s6/start.hooks" ] && [ -e "$tmp/s6/start.clippy" ] || fail "s6: hooks and clippy did not overlap (rendezvous)"
+grep -q '^-- hooks: ok' "$tmp/s6/out" || fail "s6: hooks was not reported"
 
 # The notices skip: a scratch repository with this check.sh and a stub cargo and cargo-about.
 n=$tmp/notices

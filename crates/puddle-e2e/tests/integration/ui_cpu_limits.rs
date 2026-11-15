@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The CPU limits the settings page offers are the host's: the API publishes no limits, so the
 //! page keeps its own constants, and this test fails when they differ from `CpuCount`.
 #![expect(clippy::panic, reason = "a test: a failed step fails it by panicking")]

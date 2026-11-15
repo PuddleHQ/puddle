@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The daily quality report (.github/workflows/quality.yml). Usage: ci/quality-issue.sh
 # Reads three sources, compares each with what the open tracking issue recorded the day before, and keeps that one
 # issue in step: it opens it when none is open and rewrites its body otherwise. The body lists, per source, how many

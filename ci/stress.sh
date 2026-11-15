@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The nightly stress job's runner (.github/workflows/stress.yml). Runs one suite family many times
 # on a starved machine, so a test that only fails under load fails here instead of in the merge queue,
 # and leaves the result for ci/stress-yield.py. Self-test: ci/stress-test.sh.

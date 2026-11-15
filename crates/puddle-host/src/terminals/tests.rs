@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The session against the fake runtime's SSH server with its pseudo-terminal stand-in.
 
 use std::time::Duration;
@@ -184,7 +184,15 @@ async fn a_stop_ends_the_session_with_its_reason_and_closing_the_link_ends_it_to
     drop(second.input);
     let mut gone = second.output;
     // The pump ends once the page's side is gone.
-    while let Ok(Some(_)) = tokio::time::timeout(STEP, gone.recv()).await {}
+    loop {
+        match tokio::time::timeout(STEP, gone.recv()).await {
+            Ok(None) => break,
+            Ok(Some(_)) => {}
+            Err(elapsed) => {
+                panic!("the output stayed open after the page's side was gone: {elapsed}")
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -402,7 +410,10 @@ where
     end
 }
 
-#[tokio::test]
+// On paused time the clock moves only when every task is idle: the server's 50 ms always runs
+// out before the client's 500 ms wait for it, whatever the load (a real clock made the arm
+// that quotes the server's reason a coin flip on a busy machine).
+#[tokio::test(start_paused = true)]
 async fn a_server_that_ends_before_or_after_the_client_gave_up_still_gives_its_reason() {
     // It ends while the client still waits for the server's greeting.
     let early = open_with_server(|stream| async move {
@@ -431,6 +442,16 @@ async fn a_server_that_ends_before_or_after_the_client_gave_up_still_gives_its_r
     })
     .await;
     assert!(silent.message.is_some());
+    // The client gives up first and the server, asked why, has nothing to add: the client's own
+    // words are the reason.
+    let unexplained = open_with_server(|stream| async move {
+        drop(stream);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Ok(())
+    })
+    .await;
+    let message = unexplained.message.unwrap();
+    assert!(message.contains("the SSH connection failed"), "{message}");
 }
 
 #[tokio::test]
@@ -450,4 +471,36 @@ async fn a_shell_killed_by_a_signal_ends_with_status_255_and_a_page_that_left_en
     let TerminalLink { input, output } = link;
     drop(output);
     tokio::time::timeout(STEP, input.closed()).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_hub_counts_the_sessions_open_and_a_finished_one_leaves_the_count() {
+    let hub = Hub::default();
+    assert_eq!(hub.count(), 0);
+    let mut first = session(&hub, "agent").await;
+    let mut second = session(&hub, "agent").await;
+    bytes_until(&mut first, pty::PROMPT).await;
+    bytes_until(&mut second, pty::PROMPT).await;
+    assert_eq!(hub.count(), 2);
+    type_line(&first, "exit 0").await;
+    the_end(&mut first).await;
+    eventually_count(&hub, 1).await;
+    hub.end(&workspace(), EndReason::Stopped);
+    the_end(&mut second).await;
+    eventually_count(&hub, 0).await;
+}
+
+/// The count drops when the session task has dropped its end of the hub's channel, a moment after
+/// the end reaches the page.
+async fn eventually_count(hub: &Hub, wanted: usize) {
+    puddle_test_kit::eventually("the hub's open count", STEP, || hub.count() == wanted).await;
+}
+
+#[tokio::test]
+async fn the_shell_is_asked_for_as_the_session_users_login_shell_in_its_home_directory() {
+    let hub = Hub::default();
+    let mut link = session(&hub, "agent").await;
+    bytes_until(&mut link, pty::PROMPT).await;
+    type_line(&link, "command").await;
+    bytes_until(&mut link, &format!("{LOGIN_SHELL}\r\n")).await;
 }

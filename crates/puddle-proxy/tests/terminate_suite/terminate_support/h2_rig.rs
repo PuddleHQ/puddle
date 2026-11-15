@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! HTTP/2 pieces of the terminate test rig: an upstream that speaks h2 (or serves h1 behind ALPN)
 //! and a guest client that speaks h2 through the proxy's route.
 #![expect(

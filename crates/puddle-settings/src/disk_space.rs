@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How little free space on the drive that holds Puddle's data is a warning and how little is a
 //! failure: the two lines `puddle doctor` and the app's notice both read.
 
@@ -21,13 +21,13 @@ pub struct FreeGb(u32);
 
 impl FreeGb {
     /// Smallest accepted line: 1 GB. Zero would never warn.
-    pub const MIN: FreeGb = FreeGb(1);
+    pub const MIN: Self = Self(1);
     /// Largest accepted line: 10 000 GB.
-    pub const MAX: FreeGb = FreeGb(10_000);
+    pub const MAX: Self = Self(10_000);
     /// Puddle's default for the warning line: 20 GB.
-    pub const DEFAULT_WARN: FreeGb = FreeGb(20);
+    pub const DEFAULT_WARN: Self = Self(20);
     /// Puddle's default for the failure line: 5 GB.
-    pub const DEFAULT_FAIL: FreeGb = FreeGb(5);
+    pub const DEFAULT_FAIL: Self = Self(5);
 
     /// Checks `gb` and wraps it.
     ///
@@ -68,7 +68,7 @@ impl TryFrom<u32> for FreeGb {
 }
 
 impl From<FreeGb> for u32 {
-    fn from(g: FreeGb) -> u32 {
+    fn from(g: FreeGb) -> Self {
         g.0
     }
 }
@@ -158,37 +158,4 @@ impl Default for DiskSpaceLimits {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_range_is_one_to_ten_thousand() {
-        assert!(FreeGb::new(1).is_ok());
-        assert!(FreeGb::new(10_000).is_ok());
-        assert!(FreeGb::new(0).is_err());
-        assert!(FreeGb::new(10_001).is_err());
-        assert!(serde_json::from_str::<FreeGb>("0").is_err());
-        assert_eq!(serde_json::from_str::<FreeGb>("20").unwrap().gb(), 20);
-    }
-
-    #[test]
-    fn equal_lines_are_allowed_and_a_stored_pair_out_of_order_is_clamped() {
-        let five = FreeGb::new(5).unwrap();
-        let nine = FreeGb::new(9).unwrap();
-        assert!(DiskSpaceLimits::new(five, five).is_ok());
-        let limits = DiskSpaceLimits::clamped(five, nine);
-        assert_eq!((limits.warn(), limits.fail()), (five, five));
-        let limits = DiskSpaceLimits::clamped(nine, five);
-        assert_eq!((limits.warn(), limits.fail()), (nine, five));
-    }
-
-    #[test]
-    fn a_line_is_crossed_one_byte_under_it() {
-        let limits = DiskSpaceLimits::default();
-        let at = |gb: u64| gb * GIB;
-        assert_eq!(limits.level(at(5)), DiskSpaceLevel::Low);
-        assert_eq!(limits.level(at(5) - 1), DiskSpaceLevel::Critical);
-        assert_eq!(limits.level(0), DiskSpaceLevel::Critical);
-        assert_eq!(limits.level(u64::MAX), DiskSpaceLevel::Ok);
-    }
-}
+mod tests;

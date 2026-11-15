@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The web server that hands out a PAC file, and a builder for the failover lists tests need.
 
 use std::fmt::Write as _;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings and consents through the API, over the versioned documents of `puddle-settings`.
 
 use puddle_api::SettingsRepo;
@@ -20,7 +20,8 @@ fn null_layer() -> Value {
         "zoom_hotkeys": null,
         "clipboard_read": null,
         "direct_ssh": null,
-        "capture_logins": null
+        "capture_logins": null,
+        "warn_foreign_credentials": null
     })
 }
 
@@ -40,8 +41,9 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
                "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
                "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_disk_full": null, "disk_warning_percent": null, "notify_unexpected_stop": null,
-               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null})
+               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null, "ssh_agent_pipe": null})
     );
+    assert_eq!(view["tools"], json!({"mise": null}));
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
     assert_eq!(e["memory"], json!({"value": 8192, "source": "default"}));
@@ -63,14 +65,172 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"value": true, "source": "default"}),
         "login capture is on until someone turns it off"
     );
+    assert_eq!(
+        e["warn_foreign_credentials"],
+        json!({"value": true, "source": "default"}),
+        "the foreign credential warning is on until someone turns it off"
+    );
     // Reading wrote nothing.
     assert_eq!(api.settings.load_global().unwrap(), None);
     api.running.shutdown().await;
 }
 
 #[tokio::test]
+async fn settings_of_a_workspace_that_does_not_exist_are_404_and_store_nothing() {
+    let api = start().await;
+    let ghost = WorkspaceId::new("ghost").unwrap();
+    let body = json!({"overrides": {"direct_ssh": true}});
+    let put = api
+        .send("PUT", "/api/settings/workspaces/ghost", Some(&body))
+        .await;
+    assert_eq!(put.status, 404, "{}", put.body);
+    assert_eq!(put.error(), "not_found");
+    let get = api.get("/api/settings/workspaces/ghost").await;
+    assert_eq!(get.status, 404, "{}", get.body);
+    assert_eq!(api.settings.load_workspace(&ghost).unwrap(), None);
+
+    // Once the workspace exists the same PUT is accepted and stored.
+    api.own("ghost");
+    let put = api
+        .send("PUT", "/api/settings/workspaces/ghost", Some(&body))
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(put.json()["overrides"]["direct_ssh"], true);
+    assert!(api.settings.load_workspace(&ghost).unwrap().is_some());
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_global_mise_switch_is_stored_globally_and_never_per_workspace() {
+    let api = start().await;
+    api.own("w");
+    let w = WorkspaceId::new("w").unwrap();
+
+    // A workspace starts with unset switches; reading wrote nothing.
+    let view = api.get("/api/settings/workspaces/w").await.json();
+    assert_eq!(view["tools"], json!({"mise": null, "repo_code": null}));
+    assert_eq!(api.settings.load_workspace(&w).unwrap(), None);
+
+    // The workspace switches are stored sparse in the workspace document.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/workspaces/w",
+            Some(&json!({"tools": {"mise": false, "repo_code": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json()["tools"],
+        json!({"mise": false, "repo_code": false})
+    );
+    assert_eq!(
+        api.settings.load_workspace(&w).unwrap().unwrap(),
+        json!({"schema_version": 1, "tools": {"mise": false, "repo_code": false}})
+    );
+    // PUT replaces: a body without `tools` clears them back to the default.
+    let reply = api
+        .send("PUT", "/api/settings/workspaces/w", Some(&json!({})))
+        .await;
+    assert_eq!(
+        reply.json()["tools"],
+        json!({"mise": null, "repo_code": null})
+    );
+
+    // The global switch is stored in the global document only.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["tools"], json!({"mise": false}));
+    assert_eq!(
+        api.get("/api/settings").await.json()["tools"]["mise"],
+        false
+    );
+    assert_eq!(
+        api.settings.load_global().unwrap().unwrap(),
+        json!({"schema_version": 2, "tools": {"mise": false}})
+    );
+    // Switching it off stored nothing in any workspace document.
+    assert_eq!(
+        api.settings.load_workspace(&w).unwrap().unwrap(),
+        json!({"schema_version": 1})
+    );
+
+    // A workspace cannot carry the global switch: the request refuses it, and the layer has no field.
+    for body in [
+        json!({"tools": {"mise": true, "global": true}}),
+        json!({"mise": true}),
+        json!({"overrides": {"mise": true}}),
+    ] {
+        let reply = api
+            .send("PUT", "/api/settings/workspaces/w", Some(&body))
+            .await;
+        assert_eq!(reply.status, 422, "{body}: {}", reply.body);
+    }
+    // A workspace value of its own does not change the global answer.
+    api.send(
+        "PUT",
+        "/api/settings/workspaces/w",
+        Some(&json!({"tools": {"mise": true, "repo_code": true}})),
+    )
+    .await;
+    assert_eq!(
+        api.get("/api/settings").await.json()["tools"]["mise"],
+        false
+    );
+
+    // The old name of a request without the field: absent means default, and a bad value is refused.
+    let reply = api.send("PUT", "/api/settings", Some(&json!({}))).await;
+    assert_eq!(reply.json()["tools"], json!({"mise": null}));
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": "no"}})),
+        )
+        .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"repo_code": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_settings_file_without_the_tool_fields_loads_as_on() {
+    let api = start().await;
+    api.own("w");
+    let w = WorkspaceId::new("w").unwrap();
+    api.settings
+        .save_global(json!({"schema_version": 2, "workspace_defaults": {"memory": 4096}}))
+        .unwrap();
+    api.settings
+        .save_workspace(&w, json!({"schema_version": 1, "overrides": {"cpus": 2}}))
+        .unwrap();
+    let global = api.get("/api/settings").await.json();
+    assert_eq!(global["tools"], json!({"mise": null}));
+    assert_eq!(global["unknown_fields"], json!([]));
+    let own = api.get("/api/settings/workspaces/w").await.json();
+    assert_eq!(own["tools"], json!({"mise": null, "repo_code": null}));
+    assert_eq!(own["unknown_fields"], json!([]));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn global_and_workspace_values_resolve_in_order() {
     let api = start().await;
+    api.own("big");
+    api.own("plain");
     let reply = api
         .send(
             "PUT",
@@ -95,7 +255,7 @@ async fn global_and_workspace_values_resolve_in_order() {
         .send(
             "PUT",
             "/api/settings/workspaces/big",
-            Some(&json!({"overrides": {"memory": 16384, "cpus": 4, "clipboard_read": "deny", "capture_logins": false}})),
+            Some(&json!({"overrides": {"memory": 16384, "cpus": 4, "clipboard_read": "deny", "capture_logins": false, "warn_foreign_credentials": false}})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -112,6 +272,10 @@ async fn global_and_workspace_values_resolve_in_order() {
     assert_eq!(view["effective"]["clipboard_read"]["source"], "workspace");
     assert_eq!(
         view["effective"]["capture_logins"],
+        json!({"value": false, "source": "workspace"})
+    );
+    assert_eq!(
+        view["effective"]["warn_foreign_credentials"],
         json!({"value": false, "source": "workspace"})
     );
     assert_eq!(
@@ -171,6 +335,7 @@ async fn out_of_range_and_unknown_settings_are_refused() {
 #[tokio::test]
 async fn unknown_stored_fields_are_listed_and_kept() {
     let api = start().await;
+    api.own("box");
     api.settings
         .save_global(
             json!({"schema_version": 1, "rule_sets": ["x"], "workspace_defaults": {"swap": 2}}),
@@ -214,6 +379,7 @@ async fn unknown_stored_fields_are_listed_and_kept() {
 #[tokio::test]
 async fn settings_from_a_newer_puddle_are_a_conflict_and_left_alone() {
     let api = start().await;
+    api.own("box");
     let newer = json!({"schema_version": 99, "workspace_defaults": {"memory": 4096}});
     api.settings.save_global(newer.clone()).unwrap();
     for (method, path, body) in [
@@ -244,6 +410,7 @@ async fn settings_from_a_newer_puddle_are_a_conflict_and_left_alone() {
 #[tokio::test]
 async fn damaged_settings_are_a_conflict_that_says_what_is_wrong() {
     let api = start().await;
+    api.own("box");
     // A stored document that isn't an object: the body carries the reason, not a bare 500.
     api.settings.save_global(json!([1, 2])).unwrap();
     for (method, path, body) in [
@@ -396,7 +563,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
                 "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_disk_full": false, "disk_warning_percent": 90, "notify_unexpected_stop": false,
-                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10}
+                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10, "ssh_agent_pipe": " /run/agent.sock "}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -424,6 +591,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(view["ui"]["notify_low_disk_space"], false);
     assert_eq!(view["ui"]["disk_warn_free_gb"], 50);
     assert_eq!(view["ui"]["disk_fail_free_gb"], 10);
+    assert_eq!(view["ui"]["ssh_agent_pipe"], "/run/agent.sock");
     assert_eq!(view["ui"]["app_icon"], "duck_night");
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");

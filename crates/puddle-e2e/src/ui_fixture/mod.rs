@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The UI fixture backend: the real `puddle-api` router on an in-memory store, a manual
 //! clock and in-memory settings, seeded from a [`Scenario`] and driven by scripted [`Step`]s.
 //!
@@ -22,29 +22,32 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
-use puddle_api::wire::{DevCertificate, FoundAccount, FoundVia};
+use puddle_api::wire::{CredentialSource, DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DevCertService,
     DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
     FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found,
     FoundList, Launcher, LearnedService, Listing, MemorySettings, NetworkHealthService, Operation,
-    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, RepositoryDraft,
-    RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord,
-    check_repositories,
+    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, Repository,
+    RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
+    WorkspaceRecord, check_repositories, entry_id_from_text,
 };
+use puddle_api::{NoNames, PublicHost, Remote, RemoteServing};
+use puddle_netpolicy::StaticSignals;
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
     SignInStart, SourceError, Tool,
 };
 use puddle_settings::GLOBAL_SCHEMA_VERSION;
+use puddle_store::AccountSecrets;
 use puddle_store::{
     Actor, Clock, IdentityId, Limits, ManualClock, NewRequestRule, NewRule, Pattern, RepoRef,
-    Scope, Store,
+    Scope, Store, UserId,
 };
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
-    EventSink, Host, HttpRequestLine, ImageRef, MemoryMib, Methods, PathPattern, Problem, Problems,
-    RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
+    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason,
+    EgressRequest, Event, EventSink, Host, HttpRequestLine, ImageRef, LocalCategory, MemoryMib,
+    Methods, PathPattern, Problem, Problems, RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -52,6 +55,7 @@ pub mod cli;
 pub mod control;
 mod repos;
 pub mod scenario;
+pub mod stack;
 
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
@@ -63,7 +67,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 14] = [
+const BUILT_IN: [(&str, &str); 17] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -81,6 +85,10 @@ const BUILT_IN: [(&str, &str); 14] = [
         include_str!("../../../../ui/e2e/fixtures/corporate-network.json"),
     ),
     (
+        "company-network",
+        include_str!("../../../../ui/e2e/fixtures/company-network.json"),
+    ),
+    (
         "network-trouble",
         include_str!("../../../../ui/e2e/fixtures/network-trouble.json"),
     ),
@@ -95,6 +103,10 @@ const BUILT_IN: [(&str, &str); 14] = [
     (
         "git-identities",
         include_str!("../../../../ui/e2e/fixtures/git-identities.json"),
+    ),
+    (
+        "azure-cli",
+        include_str!("../../../../ui/e2e/fixtures/azure-cli.json"),
     ),
     (
         "repo-lists",
@@ -115,6 +127,10 @@ const BUILT_IN: [(&str, &str); 14] = [
     (
         "environment",
         include_str!("../../../../ui/e2e/fixtures/environment.json"),
+    ),
+    (
+        "multi-user",
+        include_str!("../../../../ui/e2e/fixtures/multi-user.json"),
     ),
     (
         "request-rules",
@@ -189,8 +205,14 @@ struct State {
     ports: Arc<FakePorts>,
     /// Every workspace's learned pass-through hosts: none until a step says so.
     learned: Arc<FakeLearned>,
+    /// The sign-in secrets of a multi-user scenario, kept so that a restart of the API reuses them
+    /// (the store hands them out once).
+    account_secrets: Option<Arc<AccountSecrets>>,
     api: Option<RunningApi>,
 }
+
+/// The public name a multi-user scenario's API answers to besides the loopback address.
+const MULTI_USER_HOST: &str = "puddle.example.org";
 
 /// A running fixture: the API, its fakes and the scenario that seeded them.
 pub struct Fixture {
@@ -251,6 +273,11 @@ impl Fixture {
         let doctor = Arc::new(FakeDoctor::new());
         let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
+        let account_secrets = if scenario.multi_user {
+            Some(sign_in_secrets(&store)?)
+        } else {
+            None
+        };
         let state = State {
             store,
             clock,
@@ -267,6 +294,7 @@ impl Fixture {
             problems,
             ports: Arc::new(FakePorts::new()),
             learned: Arc::new(FakeLearned::new()),
+            account_secrets,
             api: None,
         };
         state.seed(scenario)?;
@@ -288,6 +316,8 @@ impl Fixture {
             )
             .with_workspaces(Arc::new(state.workspaces.clone()))
             .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
+            // A private-access client is active, so an address in 100.64.0.0/10 is the company's.
+            .with_company_signals(Arc::new(StaticSignals::new().with_private_access_client()))
             .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
             .with_secret_store(state.secrets.clone())
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
@@ -298,13 +328,20 @@ impl Fixture {
             .with_learned(state.learned.clone() as Arc<dyn LearnedService>)
             .with_terminals(Arc::new(FakeTerminals::new()))
             .with_proxy_sign_ins(state.proxy_sign_ins.clone() as Arc<dyn ProxySignInService>);
-            match ApiServer::bind(
-                ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
-                self.token.clone(),
-                services,
-            )
-            .await
-            {
+            let mut config = ApiConfig::with_port(self.port.load(Ordering::SeqCst));
+            let mut services = services;
+            if let Some(secrets) = &state.account_secrets {
+                // Sign-in and the admin screen exist only on a public name: the desktop window's
+                // token on the loopback address is still the owner.
+                let host = PublicHost::parse(MULTI_USER_HOST).map_err(|err| err.to_string())?;
+                let serving =
+                    RemoteServing::new(vec![host], None).map_err(|err| err.to_string())?;
+                config.remote = Some(Remote::new(serving));
+                config.multi_user = true;
+                services = services.with_front_resolver(Arc::new(NoNames));
+                services.account_secrets = Some(secrets.clone());
+            }
+            match ApiServer::bind(config, self.token.clone(), services).await {
                 Ok(server) => {
                     self.port
                         .store(server.local_addr().port(), Ordering::SeqCst);
@@ -350,6 +387,18 @@ impl Fixture {
         self.state.lock().await.events.clone()
     }
 
+    /// Puts `event` on the stream, the workspace it names recorded as the owner's first (see
+    /// `State::own`), so the owner's stream carries it.
+    ///
+    /// # Errors
+    /// The workspace's user could not be recorded.
+    pub async fn emit(&self, event: Event) -> Result<(), String> {
+        let state = self.state.lock().await;
+        event.workspace().map_or(Ok(()), |w| state.own(w))?;
+        state.events.emit(event);
+        Ok(())
+    }
+
     /// The bearer token (the control server takes the same one).
     #[must_use]
     pub fn token(&self) -> &ApiToken {
@@ -381,7 +430,7 @@ impl Fixture {
         let state = self.state.lock().await;
         state
             .store
-            .inbox()
+            .inbox(UserId::OWNER)
             .map(|groups| groups.iter().map(|g| g.rows.len()).sum())
             .unwrap_or_default()
     }
@@ -461,7 +510,7 @@ impl Fixture {
 }
 
 /// Reads control files dropped into `dir` (one JSON object or an array per file; each is taken
-/// once and deleted). An object without `do` is read as a `request` (it has `host`) or a `bulk`
+/// once and deleted after its steps are applied). An object without `do` is read as a `request` (it has `host`) or a `bulk`
 /// (it has `count`): the format the earlier `serve_ui` example took.
 pub fn watch_drop_dir(fixture: Arc<Fixture>, dir: PathBuf) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -495,7 +544,6 @@ async fn drain_drop_dir(fixture: &Fixture, dir: &Path) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
             continue;
         };
-        let _ = tokio::fs::remove_file(&path).await;
         let items = match value {
             serde_json::Value::Array(items) => items,
             item => vec![item],
@@ -510,6 +558,8 @@ async fn drain_drop_dir(fixture: &Fixture, dir: &Path) {
                 Err(err) => eprintln!("fixture: control file {}: {err}", path.display()),
             }
         }
+        // Deleted last: a writer that sees its file gone can rely on every step being applied.
+        let _ = tokio::fs::remove_file(&path).await;
     }
 }
 
@@ -533,6 +583,23 @@ pub fn step_from_drop(mut item: serde_json::Value) -> Result<Step, String> {
 }
 
 impl State {
+    /// Records the owner as the user of `workspace` unless one is recorded. The fixture serves
+    /// the owner, as the desktop window does, and every workspace it names (seeded, asking for a
+    /// host, given settings, named by an event) is theirs, as the first start records it for a
+    /// workspace listed from before; one with no recorded user would be nobody's.
+    fn own(&self, workspace: &WorkspaceId) -> Result<(), String> {
+        let recorded = self
+            .store
+            .workspace_owner(workspace)
+            .map_err(|err| err.to_string())?;
+        if recorded.is_none() {
+            self.store
+                .set_workspace_owner(workspace, UserId::OWNER)
+                .map_err(|err| format!("workspace {workspace}: {err}"))?;
+        }
+        Ok(())
+    }
+
     fn seed(&self, scenario: &Scenario) -> Result<(), String> {
         let start = scenario.start_ms();
         for rule in &scenario.rules {
@@ -566,6 +633,7 @@ impl State {
                 .map_err(|err| err.to_string())?;
         }
         for (name, document) in &scenario.settings.workspaces {
+            self.own(&workspace(name)?)?;
             self.settings
                 .save_workspace(&workspace(name)?, document.clone())
                 .map_err(|err| err.to_string())?;
@@ -586,77 +654,39 @@ impl State {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines, reason = "one arm per step")]
     fn apply(&self, step: &Step) -> Result<(), String> {
         let now = self.clock.now_ms();
         match step {
             Step::Emit { event } => self.events.emit(event.clone()),
-            Step::Advance { ms } => {
-                self.clock.advance(*ms);
-                self.store.sweep().map_err(|err| err.to_string())?;
-            }
+            Step::Advance { ms } => self.step_advance(*ms)?,
             // Handled by the caller: it must not hold the state while it sleeps.
             Step::Wait { .. } => {}
             Step::Request(request) => self.request(request, now)?,
+            Step::SshAgentAsk {
+                workspace: name,
+                host: target,
+                fingerprint,
+            } => {
+                let id = workspace(name)?;
+                self.own(&id)?;
+                self.store
+                    .start_ssh_agent_ask(
+                        &id,
+                        target,
+                        fingerprint
+                            .as_deref()
+                            .unwrap_or("SHA256:ZXhhbXBsZS1maXh0dXJlLWtleS1ub3QtcmVhbC0wMDA"),
+                        "ssh-ed25519",
+                    )
+                    .map_err(|err| err.to_string())?;
+            }
             Step::Bulk {
                 workspace,
                 count,
                 domain,
-            } => {
-                let domain = domain.as_deref().unwrap_or("bulk.example.org");
-                for i in 0..*count {
-                    self.request(
-                        &RequestSeed {
-                            workspace: workspace.clone(),
-                            host: format!("n{i}.{domain}"),
-                            port: 443,
-                            repeat: 1,
-                            ago_ms: 0,
-                        },
-                        now,
-                    )?;
-                }
-            }
-            Step::Spread { count } => {
-                for i in 0..*count {
-                    self.request(
-                        &RequestSeed {
-                            workspace: format!("bulk-{}", i % 10),
-                            host: format!("h{i}.d{}.example.org", i % 50),
-                            port: 443,
-                            repeat: 1,
-                            ago_ms: 0,
-                        },
-                        now,
-                    )?;
-                }
-            }
-            Step::History { count } => {
-                const WEEK_MS: u64 = 7 * 24 * 3_600_000;
-                let count = *count;
-                for i in 0..count {
-                    let decision = match i % 4 {
-                        0 => DecisionSeed::Allow,
-                        1 => DecisionSeed::Deny,
-                        2 => DecisionSeed::Pending,
-                        _ => DecisionSeed::Blocked,
-                    };
-                    self.connection(
-                        &ConnectionSeed {
-                            workspace: format!("bulk-{}", i % 10),
-                            host: format!("h{}.d{}.example.org", i % 200, i % 50),
-                            port: 443,
-                            decision,
-                            reason: None,
-                            request_line: None,
-                            bytes_up: i % 5000,
-                            bytes_down: (i % 700) * 1024,
-                            ago_ms: (count - 1 - i) * WEEK_MS / count,
-                        },
-                        now,
-                    )?;
-                }
-            }
+            } => self.step_bulk(workspace, *count, domain.as_deref(), now)?,
+            Step::Spread { count } => self.step_spread(*count, now)?,
+            Step::History { count } => self.step_history(*count, now)?,
             Step::LoginStoreRefuses { refuses } => {
                 self.workspaces.set_login_store_refuses(*refuses);
             }
@@ -664,33 +694,9 @@ impl State {
                 workspace: name,
                 logins,
                 store_readable,
-            } => {
-                let id = WorkspaceId::new(name)
-                    .map_err(|err| format!("workspace id {name:?}: {err}"))?;
-                self.workspaces.set_kept_logins(
-                    &id,
-                    puddle_api::KeptLogins {
-                        logins: logins
-                            .iter()
-                            .map(|login| puddle_api::KeptLogin {
-                                service: login.service.clone(),
-                                name: login.name.clone(),
-                                since: login.since,
-                            })
-                            .collect(),
-                        store_readable: *store_readable,
-                    },
-                );
-            }
+            } => self.step_kept_logins(name, logins, *store_readable)?,
             Step::OrphanVolume { id, remote } => {
-                let id =
-                    WorkspaceId::new(id).map_err(|err| format!("workspace id {id:?}: {err}"))?;
-                let remote = remote
-                    .as_deref()
-                    .map(puddle_api::RepoUrl::parse)
-                    .transpose()?;
-                self.workspaces.add_orphan_volume(&id, remote);
-                self.events.emit(Event::ProblemsChanged {});
+                self.step_orphan_volume(id, remote.as_deref())?;
             }
             Step::NetworkHealth(report) => {
                 let epoch = report.proxy.epoch;
@@ -698,7 +704,7 @@ impl State {
                 self.events.emit(Event::NetworkChanged { epoch });
             }
             Step::CredentialReadable { source, readable } => {
-                let spec = source.clone().into_spec()?;
+                let spec = source.clone().into_spec().map_err(|e| e.to_string())?;
                 self.credentials
                     .set_unreadable(spec, (!readable).then_some(SourceError::NotSignedIn));
             }
@@ -707,20 +713,7 @@ impl State {
                 by,
                 readable,
                 ago_ms,
-            } => {
-                let at = std::time::SystemTime::now() - Duration::from_millis(*ago_ms);
-                self.credentials.note_read_at(
-                    &source.clone().into_spec()?,
-                    match by {
-                        ReadBy::Injection => puddle_secrets::ReadUse::Injection,
-                        ReadBy::RepositoryList => puddle_secrets::ReadUse::RepositoryList,
-                        ReadBy::Test => puddle_secrets::ReadUse::Test,
-                    },
-                    (!readable).then_some(SourceError::NotSignedIn),
-                    at,
-                );
-                self.events.emit(Event::IdentitiesChanged {});
-            }
+            } => self.step_credential_read(source, *by, *readable, *ago_ms)?,
             Step::CredentialsFound { accounts } => {
                 self.credentials.set_found(found(accounts, &[])?);
             }
@@ -735,43 +728,19 @@ impl State {
                 state,
                 trust_answer,
                 detail,
-            } => {
-                self.dev_cert.set(*state);
-                self.dev_cert.set_trust_answer(
-                    trust_answer.unwrap_or(DevCertificate::Trusted),
-                    detail.clone(),
-                );
-            }
-            Step::Problem(seed) => {
-                let mut problem = Problem::new(&seed.key, &seed.title, &seed.detail);
-                if let Some(name) = &seed.workspace {
-                    problem = problem.about(workspace(name)?);
-                }
-                self.problems.raise(problem);
-            }
+            } => self.step_dev_certificate(*state, *trust_answer, detail.as_deref()),
+            Step::Problem(seed) => self.step_problem(seed)?,
             Step::ClearProblem { key } => self.problems.clear(key),
             Step::Listening {
                 workspace: name,
                 ports,
-            } => {
-                let name = workspace(name)?;
-                self.ports.set_listening(&name, ports);
-                self.events
-                    .emit(Event::WorkspacePortsChanged { workspace: name });
-            }
+            } => self.step_listening(name, ports)?,
             Step::Learned {
                 workspace: name,
                 host,
                 expires_in_secs,
-            } => {
-                let name = workspace(name)?;
-                self.learned
-                    .learn(&name, host, expires_in_secs.unwrap_or(12 * 3600));
-                self.events.emit(Event::PassThroughLearned {
-                    workspace: name,
-                    host: host.clone(),
-                });
-            }
+                count,
+            } => self.step_learned(name, host, *expires_in_secs, *count, now)?,
             Step::ShellInitCheck { refuses } => self.workspaces.set_shell_init_check(
                 refuses
                     .clone()
@@ -781,18 +750,211 @@ impl State {
             Step::Connection(connection) => self.connection(connection, now)?,
             Step::HoldWorkspaces => self.workspaces.hold(),
             Step::ReleaseWorkspaces => self.workspaces.release(),
-            Step::FailWorkspace { operation, reason } => self.workspaces.fail_next(
-                match operation {
-                    WorkspaceOperationSeed::Create => Operation::Creating,
-                    WorkspaceOperationSeed::Start => Operation::Starting,
-                    WorkspaceOperationSeed::Stop => Operation::Stopping,
-                    WorkspaceOperationSeed::Reclaim => Operation::Reclaiming,
-                    WorkspaceOperationSeed::Delete => Operation::Deleting,
-                },
-                reason.clone(),
-            ),
+            Step::FailWorkspace { operation, reason } => {
+                self.step_fail_workspace(*operation, reason);
+            }
         }
         Ok(())
+    }
+
+    fn step_advance(&self, ms: u64) -> Result<(), String> {
+        self.clock.advance(ms);
+        self.store
+            .sweep()
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
+    fn step_bulk(
+        &self,
+        workspace: &str,
+        count: u64,
+        domain: Option<&str>,
+        now: u64,
+    ) -> Result<(), String> {
+        let domain = domain.unwrap_or("bulk.example.org");
+        for i in 0..count {
+            self.request(
+                &RequestSeed {
+                    workspace: workspace.to_owned(),
+                    host: format!("n{i}.{domain}"),
+                    port: 443,
+                    repeat: 1,
+                    ago_ms: 0,
+                },
+                now,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn step_spread(&self, count: u64, now: u64) -> Result<(), String> {
+        for i in 0..count {
+            self.request(
+                &RequestSeed {
+                    workspace: format!("bulk-{}", i % 10),
+                    host: format!("h{i}.d{}.example.org", i % 50),
+                    port: 443,
+                    repeat: 1,
+                    ago_ms: 0,
+                },
+                now,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn step_history(&self, count: u64, now: u64) -> Result<(), String> {
+        const WEEK_MS: u64 = 7 * 24 * 3_600_000;
+        for i in 0..count {
+            let decision = match i % 4 {
+                0 => DecisionSeed::Allow,
+                1 => DecisionSeed::Deny,
+                2 => DecisionSeed::Pending,
+                _ => DecisionSeed::Blocked,
+            };
+            self.connection(
+                &ConnectionSeed {
+                    workspace: format!("bulk-{}", i % 10),
+                    host: format!("h{}.d{}.example.org", i % 200, i % 50),
+                    port: 443,
+                    decision,
+                    reason: None,
+                    request_line: None,
+                    company_signal: None,
+                    bytes_up: i % 5000,
+                    bytes_down: (i % 700) * 1024,
+                    ago_ms: (count - 1 - i) * WEEK_MS / count,
+                },
+                now,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn step_kept_logins(
+        &self,
+        name: &str,
+        logins: &[KeptLoginSeed],
+        store_readable: bool,
+    ) -> Result<(), String> {
+        let id = WorkspaceId::new(name).map_err(|err| format!("workspace id {name:?}: {err}"))?;
+        self.workspaces.set_kept_logins(
+            &id,
+            puddle_api::KeptLogins {
+                logins: logins
+                    .iter()
+                    .map(|login| puddle_api::KeptLogin {
+                        service: login.service.clone(),
+                        name: login.name.clone(),
+                        since: login.since,
+                    })
+                    .collect(),
+                store_readable,
+            },
+        );
+        Ok(())
+    }
+
+    fn step_orphan_volume(&self, id: &str, remote: Option<&str>) -> Result<(), String> {
+        let id = WorkspaceId::new(id).map_err(|err| format!("workspace id {id:?}: {err}"))?;
+        let remote = remote
+            .map(puddle_api::RepoUrl::parse)
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        self.workspaces.add_orphan_volume(&id, remote);
+        self.events.emit(Event::ProblemsChanged {});
+        Ok(())
+    }
+
+    fn step_credential_read(
+        &self,
+        source: &CredentialSource,
+        by: ReadBy,
+        readable: bool,
+        ago_ms: u64,
+    ) -> Result<(), String> {
+        let at = std::time::SystemTime::now() - Duration::from_millis(ago_ms);
+        self.credentials.note_read_at(
+            &source.clone().into_spec().map_err(|e| e.to_string())?,
+            match by {
+                ReadBy::Injection => puddle_secrets::ReadUse::Injection,
+                ReadBy::RepositoryList => puddle_secrets::ReadUse::RepositoryList,
+                ReadBy::Test => puddle_secrets::ReadUse::Test,
+            },
+            (!readable).then_some(SourceError::NotSignedIn),
+            at,
+        );
+        self.events.emit(Event::IdentitiesChanged {});
+        Ok(())
+    }
+
+    fn step_dev_certificate(
+        &self,
+        state: DevCertificate,
+        trust_answer: Option<DevCertificate>,
+        detail: Option<&str>,
+    ) {
+        self.dev_cert.set(state);
+        self.dev_cert.set_trust_answer(
+            trust_answer.unwrap_or(DevCertificate::Trusted),
+            detail.map(str::to_owned),
+        );
+    }
+
+    fn step_problem(&self, seed: &ProblemSeed) -> Result<(), String> {
+        let mut problem = Problem::new(&seed.key, &seed.title, &seed.detail);
+        if let Some(name) = &seed.workspace {
+            problem = problem.about(workspace(name)?);
+        }
+        self.problems.raise(problem);
+        Ok(())
+    }
+
+    fn step_listening(&self, name: &str, ports: &[u16]) -> Result<(), String> {
+        let name = workspace(name)?;
+        self.ports.set_listening(&name, ports);
+        self.events
+            .emit(Event::WorkspacePortsChanged { workspace: name });
+        Ok(())
+    }
+
+    fn step_learned(
+        &self,
+        name: &str,
+        host: &str,
+        expires_in_secs: Option<u64>,
+        count: Option<u32>,
+        now: u64,
+    ) -> Result<(), String> {
+        let name = workspace(name)?;
+        let count = count.unwrap_or(1);
+        self.learned.learn_with_history(
+            &name,
+            host,
+            Some(expires_in_secs.unwrap_or(12 * 3600)),
+            count,
+            now,
+        );
+        self.events.emit(Event::PassThroughLearned {
+            workspace: name,
+            host: host.to_owned(),
+            count,
+        });
+        Ok(())
+    }
+
+    fn step_fail_workspace(&self, operation: WorkspaceOperationSeed, reason: &str) {
+        self.workspaces.fail_next(
+            match operation {
+                WorkspaceOperationSeed::Create => Operation::Creating,
+                WorkspaceOperationSeed::Start => Operation::Starting,
+                WorkspaceOperationSeed::Stop => Operation::Stopping,
+                WorkspaceOperationSeed::Reclaim => Operation::Reclaiming,
+                WorkspaceOperationSeed::Delete => Operation::Deleting,
+            },
+            reason.to_owned(),
+        );
     }
 
     /// Records in the global settings that the first-run flow has been through, keeping whatever
@@ -812,6 +974,14 @@ impl State {
         );
         self.settings
             .save_global(document)
+            .map_err(|err| err.to_string())?;
+        // A finished setup includes the interception step, so the notice for installs that
+        // predate it stays away; a test of that notice turns the flag back off.
+        self.store
+            .set_interception_settings(puddle_store::InterceptionSettings {
+                notice_seen: true,
+                ..puddle_store::InterceptionSettings::default()
+            })
             .map_err(|err| err.to_string())
     }
 
@@ -833,7 +1003,10 @@ impl State {
         let repositories = check_repositories(&drafts, |_| false)
             .map_err(|err| at(&err))?
             .into_iter()
-            .map(|r| r.repository)
+            .map(|r| Repository {
+                entry: entry_id_from_text(&format!("{}:{}", seed.name, r.repository.directory)),
+                ..r.repository
+            })
             .collect();
         let mut record = WorkspaceRecord::new(id.clone(), name, repositories);
         record.start_folder = seed
@@ -867,6 +1040,7 @@ impl State {
             items: items.to_vec(),
             more: 0,
         };
+        self.own(&id)?;
         self.workspaces.seed(
             record,
             Unsaved {
@@ -893,7 +1067,7 @@ impl State {
     fn identity_ids(&self) -> Result<Vec<(String, IdentityId)>, String> {
         Ok(self
             .store
-            .identities()
+            .identities(UserId::OWNER)
             .map_err(|err| err.to_string())?
             .into_iter()
             .map(|identity| (identity.label.clone(), identity.id))
@@ -907,10 +1081,13 @@ impl State {
             .iter()
             .map(|request| {
                 let label = request.label.clone();
-                let draft = request.clone().into_store_draft()?;
+                let draft = request
+                    .clone()
+                    .into_store_draft()
+                    .map_err(|e| e.to_string())?;
                 let made = self
                     .store
-                    .create_identity(draft)
+                    .create_identity(UserId::OWNER, draft)
                     .map_err(|err| format!("identity {label:?}: {err}"))?;
                 Ok((label, made.id))
             })
@@ -942,7 +1119,7 @@ impl State {
             }
         };
         self.store
-            .set_env(scope, &name, draft)
+            .set_env(UserId::OWNER, scope, &name, draft)
             .map(|_| ())
             .map_err(|err| at(&err))
     }
@@ -1010,8 +1187,10 @@ impl State {
         self.credentials
             .set_found(found(&seed.found, &seed.missing)?);
         for source in &seed.signed_out {
-            self.credentials
-                .set_unreadable(source.clone().into_spec()?, Some(SourceError::NotSignedIn));
+            self.credentials.set_unreadable(
+                source.clone().into_spec().map_err(|e| e.to_string())?,
+                Some(SourceError::NotSignedIn),
+            );
         }
         self.credentials.set_sign_in(match &seed.sign_in {
             Some(start) => SignInStart {
@@ -1038,7 +1217,11 @@ impl State {
         let created = now.saturating_sub(seed.ago_ms);
         let new = NewRule {
             scope: match &seed.workspace {
-                Some(name) => Scope::Workspace(workspace(name)?),
+                Some(name) => {
+                    let id = workspace(name)?;
+                    self.own(&id)?;
+                    Scope::Workspace(id)
+                }
                 None => Scope::Global,
             },
             pattern: Pattern::parse(&seed.pattern).map_err(|err| err.to_string())?,
@@ -1049,27 +1232,36 @@ impl State {
             expires_at: seed.expires_in_ms.map(|ms| created + ms),
             created_by: Actor::Ui,
         };
-        self.at(now, seed.ago_ms, || self.store.add_rule(&new))
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+        self.at(now, seed.ago_ms, || {
+            self.store.as_user(UserId::OWNER).add_rule(&new)
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
     }
 
     fn add_request_rule(&self, seed: &RequestRuleSeed, now: u64) -> Result<(), String> {
+        let scoped = seed.workspace.as_deref().map(workspace).transpose()?;
+        if let Some(id) = &scoped {
+            self.own(id)?;
+        }
         let new = NewRequestRule {
-            workspace: seed.workspace.as_deref().map(workspace).transpose()?,
+            workspace: scoped,
             host: seed.host.clone(),
             methods: Methods::parse(seed.methods.iter().map(String::as_str))
                 .map_err(|err| err.to_string())?,
             path: PathPattern::parse(&seed.path).map_err(|err| err.to_string())?,
             created_by: Actor::Api,
         };
-        self.at(now, seed.ago_ms, || self.store.add_request_rule(&new))
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+        self.at(now, seed.ago_ms, || {
+            self.store.as_user(UserId::OWNER).add_request_rule(&new)
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
     }
 
     fn request(&self, seed: &RequestSeed, now: u64) -> Result<(), String> {
         let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
+        self.own(&request.workspace)?;
         self.at(now, seed.ago_ms, || {
             for _ in 0..seed.repeat {
                 let decision = self
@@ -1086,6 +1278,7 @@ impl State {
 
     fn connection(&self, seed: &ConnectionSeed, now: u64) -> Result<(), String> {
         let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
+        self.own(&request.workspace)?;
         let (decision, default_reason) = match seed.decision {
             DecisionSeed::Allow => (ConnectionDecision::Allow, "rule"),
             DecisionSeed::Deny => (ConnectionDecision::Deny, "rule"),
@@ -1100,11 +1293,24 @@ impl State {
             "ssh_unsupported" => ConnectionReason::Blocked(BlockReason::SshUnsupported),
             "udp_unsupported" => ConnectionReason::Blocked(BlockReason::UdpUnsupported),
             "local_address" => ConnectionReason::Blocked(BlockReason::LocalAddress),
+            "toggle:company_network" => {
+                ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::CompanyNetwork))
+            }
             other => return Err(format!("unknown connection reason {other:?}")),
         };
         let mut event = ConnectionEvent::new(&request, decision, reason);
         event.bytes_up = seed.bytes_up;
         event.bytes_down = seed.bytes_down;
+        event.company_network = seed
+            .company_signal
+            .as_deref()
+            .map(|code| {
+                CompanySignal::ALL
+                    .into_iter()
+                    .find(|signal| signal.code() == code)
+                    .ok_or_else(|| format!("unknown company signal {code:?}"))
+            })
+            .transpose()?;
         if let Some(line) = &seed.request_line {
             event.http = Some(HttpRequestLine::new(line.method.as_str(), &line.path));
             event.request_rule = line.rule.map(RuleId);
@@ -1183,6 +1389,17 @@ fn workspace(name: &str) -> Result<WorkspaceId, String> {
     WorkspaceId::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
 }
 
+/// The store hands its sign-in secrets out once; a second taker is told so.
+fn sign_in_secrets(store: &Store) -> Result<Arc<AccountSecrets>, String> {
+    store
+        .take_account_secrets()
+        .map(Arc::new)
+        .ok_or_else(|| "the store's sign-in secrets were taken already".to_owned())
+}
+
 fn host(name: &str) -> Result<Host, String> {
     Host::parse_normalised(name).map_err(|err| format!("host {name:?}: {err}"))
 }
+
+#[cfg(test)]
+mod tests;

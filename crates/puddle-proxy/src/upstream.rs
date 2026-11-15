@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The way out of the host once a connection has been admitted: straight to a checked
 //! address, or along the route the company's proxy settings give ([`puddle_upstream::Chain`]).
 //!
@@ -203,7 +203,7 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
             "signing in to the company proxy failed; check the proxy credentials in Puddle",
         )
         .header("x-puddle-blocked-by", "upstream-auth"),
-        _ => Refusal::new(
+        ChainError::Unreachable { .. } => Refusal::new(
             "502 Bad Gateway",
             format!("could not connect to {host}:{port} (no route to it works)"),
         ),
@@ -214,80 +214,11 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
         } => ConnectionOutcome::Timeout,
         ChainError::Unreachable { .. } => ConnectionOutcome::ConnectFailed,
         // The company proxy answered, or turned the sign-in down: it is the proxy's refusal.
-        _ => ConnectionOutcome::UpstreamRefused,
+        ChainError::Refused { .. }
+        | ChainError::AuthRequired { .. }
+        | ChainError::AuthFailed { .. } => ConnectionOutcome::UpstreamRefused,
     })
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::{Error, ErrorKind};
-
-    use super::*;
-
-    #[test]
-    fn a_direct_connect_that_timed_out_is_a_timeout_and_any_other_failure_is_a_connect_failure() {
-        assert_eq!(
-            connect_outcome(&Error::new(ErrorKind::TimedOut, "connect timed out")),
-            ConnectionOutcome::Timeout
-        );
-        for kind in [ErrorKind::ConnectionRefused, ErrorKind::NotFound] {
-            assert_eq!(
-                connect_outcome(&Error::from(kind)),
-                ConnectionOutcome::ConnectFailed
-            );
-        }
-    }
-
-    fn blocked_by(refusal: &Refusal) -> Option<&str> {
-        refusal
-            .headers
-            .iter()
-            .find(|(name, _)| *name == "x-puddle-blocked-by")
-            .map(|(_, value)| value.as_str())
-    }
-
-    #[test]
-    fn a_sign_in_that_failed_and_one_that_is_missing_are_refused_apart_without_naming_the_proxy() {
-        let target = Target {
-            host: puddle_netpolicy::normalise_host("example.com")
-                .unwrap()
-                .into_host(),
-            port: 443,
-        };
-        let proxy = puddle_upstream::ProxyAddr::new("corp-proxy.internal", 3128);
-
-        let failed = refusal(
-            &ChainError::AuthFailed {
-                proxy: proxy.clone(),
-                why: "rejected".to_owned(),
-            },
-            &target,
-        );
-        assert_eq!(failed.status, "502 Bad Gateway");
-        assert_eq!(blocked_by(&failed), Some("upstream-auth"));
-        assert!(failed.message.contains("signing in"), "{}", failed.message);
-
-        let required = refusal(
-            &ChainError::AuthRequired {
-                proxy,
-                schemes: vec!["Negotiate".to_owned()],
-            },
-            &target,
-        );
-        assert_eq!(blocked_by(&required), Some("upstream-auth"));
-        assert!(
-            required.message.contains("Negotiate"),
-            "{}",
-            required.message
-        );
-        assert_ne!(failed.message, required.message);
-
-        for refusal in [&failed, &required] {
-            assert!(
-                !refusal.message.contains("corp-proxy"),
-                "{}",
-                refusal.message
-            );
-        }
-    }
-}
+mod tests;

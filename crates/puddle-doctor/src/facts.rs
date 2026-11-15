@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a [`crate::Probe`] reports: plain data, no OS handles, so tests can fake every case and
 //! [`crate::diagnose`] can turn it into findings on any platform.
 
@@ -327,6 +327,23 @@ pub enum DataPathFacts {
     NoFolder,
 }
 
+/// What the Azure CLI (`az`) on the search path answered for its version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AzCliFacts {
+    /// No `az` (`az.cmd` on Windows) is on the search path.
+    NotFound,
+    /// `az --version` ran and named its version.
+    Found {
+        /// The version, as `az` prints it (`2.64.0`).
+        version: String,
+    },
+    /// `az` is there but its answer is not one: it failed, hung or printed no version.
+    Unknown {
+        /// What happened.
+        detail: String,
+    },
+}
+
 /// How the SSH agent Puddle would ask answered a request for its key list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SshAgentFacts {
@@ -519,79 +536,7 @@ impl GsaFacts {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ServiceState::{Missing, Running, Stopped, Unreadable};
-
-    #[test]
-    fn gsa_state_from_its_services() {
-        let installed = |running| GsaFacts::Installed { running };
-        assert_eq!(GsaFacts::from_services([]), GsaFacts::NotInstalled);
-        assert_eq!(
-            GsaFacts::from_services([Missing, Missing]),
-            GsaFacts::NotInstalled
-        );
-        assert_eq!(
-            GsaFacts::from_services([Missing, Stopped]),
-            installed(Some(false))
-        );
-        assert_eq!(
-            GsaFacts::from_services([Stopped, Running, Unreadable]),
-            installed(Some(true))
-        );
-        // An unreadable service might be the running one: "not running" would be a guess.
-        assert_eq!(
-            GsaFacts::from_services([Stopped, Unreadable, Missing]),
-            installed(None)
-        );
-        assert_eq!(GsaFacts::from_services([Unreadable]), installed(None));
-    }
-
-    #[test]
-    fn an_installed_agent_service_is_running_disabled_or_stopped() {
-        assert_eq!(AgentService::installed(false, true), AgentService::Running);
-        assert_eq!(AgentService::installed(true, true), AgentService::Running);
-        assert_eq!(AgentService::installed(true, false), AgentService::Disabled);
-        assert_eq!(AgentService::installed(false, false), AgentService::Stopped);
-    }
-
-    #[test]
-    fn only_a_missing_service_reads_as_not_installed() {
-        assert_eq!(ServiceState::from_open_error(1060), Missing);
-        // Access denied, a shutting-down service manager, an invalid name: all unproven.
-        for code in [5, 1115, 1055, 6, 0] {
-            assert_eq!(ServiceState::from_open_error(code), Unreadable, "{code}");
-        }
-    }
-
-    #[test]
-    fn a_failed_job_query_names_the_call_and_the_error() {
-        let facts = JobFacts::query_failed("QueryInformationJobObject", 87);
-        assert_eq!(
-            facts,
-            JobFacts::Unreadable {
-                detail: "QueryInformationJobObject failed: os error 87".into()
-            }
-        );
-        assert!(!facts.forbids_breakaway());
-        assert!(
-            JobFacts::Read {
-                breakaway_allowed: false
-            }
-            .forbids_breakaway()
-        );
-    }
-
-    #[test]
-    fn a_failed_code_integrity_query_names_the_status() {
-        let facts =
-            CodeIntegrityFacts::query_failed(i32::from_ne_bytes(0xC000_0022_u32.to_ne_bytes()));
-        assert!(
-            matches!(&facts, CodeIntegrityFacts::Unreadable { detail } if detail.contains("NTSTATUS 0xC0000022")),
-            "{facts:?}"
-        );
-    }
-}
+mod tests;
 
 /// Whether what holds data is encrypted at rest.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -671,4 +616,34 @@ pub struct DiskEncryptionFacts {
     pub data: DataEncryption,
     /// The swap.
     pub swap: SwapFacts,
+}
+
+/// What the doctor found of the vault a data folder keeps its secrets in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultFacts {
+    /// The vault's header names this key source.
+    Header(puddle_secrets::KeySourceTag),
+    /// No vault file yet.
+    NoVaultYet,
+    /// The file is there and its header cannot be read.
+    Unreadable,
+}
+
+/// Which store keeps this install's secrets, and how it is doing. Everything is read; nothing is
+/// written but the test entry of the operating system's store, and no key is opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialStoreFacts {
+    /// The operating system's credential store: the data folder recorded it, or has not decided.
+    Os {
+        /// Whether `secrets/store.json` names it.
+        recorded: bool,
+        /// Whether a test write worked.
+        health: puddle_secrets::StoreHealth,
+        /// What the user's login sessions say about a screen (Linux).
+        session: puddle_secrets::LoginSession,
+    },
+    /// Puddle's file vault.
+    File(VaultFacts),
+    /// `secrets/store.json` cannot be read, so Puddle does not know where the secrets are.
+    Unreadable,
 }

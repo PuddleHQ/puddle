@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Builds the UI fixture backend (`puddle-ui-fixture`, crate puddle-e2e) and returns the path of
 // the executable, so callers can start and stop it directly (not through `cargo run`, whose
 // parent process would be the one a signal reaches).

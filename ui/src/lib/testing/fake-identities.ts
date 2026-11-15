@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the identities, workspace Git and credentials endpoints, for unit and component
 // tests, in the shape openapi-fetch returns them. It keeps real state (so a change shows up in the
 // next read) and refuses a collision the way the host does. Not shipped (tests import it).
@@ -244,16 +244,27 @@ export class FakeIdentities {
         return this.reply(201, made);
       }
       case "/api/credentials/check": {
-        const line = describeSource(body["source"] as Source);
+        const source = body["source"] as Source;
+        const line = describeSource(source);
         return this.reply(
           200,
           this.unreadable.has(line)
             ? {
                 readable: false,
                 problem: "not signed in, or the sign-in has expired",
-                needs_sign_in: true,
+                // As the host answers for the Azure CLI: no sign-in button, the step instead.
+                needs_sign_in: source.kind !== "az_cli",
+                fix_step:
+                  source.kind === "az_cli"
+                    ? `Run \`az login --tenant ${source.tenant}\` in a terminal and finish the sign-in.`
+                    : null,
               }
-            : { readable: true, problem: null, needs_sign_in: false },
+            : {
+                readable: true,
+                problem: null,
+                needs_sign_in: false,
+                fix_step: null,
+              },
         );
       }
       case "/api/credentials/stored": {

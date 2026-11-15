@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests of HTTP/2 on terminated connections: protocol agreement with the real server, requests
 //! decided and injected like HTTP/1.1, translation to an HTTP/1.1 server, trailers.
 use crate::terminate_support;

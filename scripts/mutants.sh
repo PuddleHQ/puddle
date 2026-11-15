@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Mutation testing with cargo-mutants (docs/STANDARDS.md, "Mutation testing"). Usage:
 #   scripts/mutants.sh diff [<base>]       the mutants on lines the change adds or changes, in the
 #                                          listed crates only (the per-landing gate; `check.sh mutants`)

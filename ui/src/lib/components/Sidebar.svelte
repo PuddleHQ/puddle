@@ -1,7 +1,9 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from "$app/state";
   import { APP_NAME, NAV, sectionFor } from "#lib/nav.ts";
+  import { session } from "#lib/session/session.svelte.ts";
+  import { admin } from "#lib/stores/admin.svelte.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import DuckMark from "./DuckMark.svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
@@ -16,7 +18,7 @@
   </p>
   <nav aria-label="Main">
     <ul>
-      {#each NAV as item (item.href)}
+      {#each NAV.filter((entry) => !entry.owner || admin.available) as item (item.href)}
         <li>
           <a
             href={item.href}
@@ -24,10 +26,10 @@
           >
             <item.icon aria-hidden="true" size={18} />
             <span>{item.label}</span>
-            {#if item.badge === "pending" && live.pending > 0}
+            {#if item.badge === "pending" && live.open > 0}
               <span class="badge" data-testid="pending-badge">
-                <span aria-hidden="true">{live.pending}</span>
-                <span class="visually-hidden">{live.pending} pending</span>
+                <span aria-hidden="true">{live.open}</span>
+                <span class="visually-hidden">{live.open} pending</span>
               </span>
             {/if}
           </a>
@@ -36,6 +38,17 @@
     </ul>
   </nav>
   <div class="footer">
+    {#if session.mode === "signed-in" && session.user}
+      <p class="who">
+        <span class="visually-hidden">Signed in as</span>
+        {session.user.name}
+        <button
+          type="button"
+          class="signout"
+          onclick={() => void session.signOut()}>Sign out</button
+        >
+      </p>
+    {/if}
     <ThemeToggle />
   </div>
 </aside>
@@ -50,6 +63,23 @@
     padding: var(--space-4);
     background: var(--color-surface);
     border-inline-end: 1px solid var(--color-border-subtle);
+  }
+  .who {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--color-text-muted);
+  }
+  .signout {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
   .brand {
     display: flex;

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Native Windows MSVC build and tests. It runs on every pull request to develop and main (a
 # required check on develop), on every merge queue run, nightly (skipped when this workflow already has a green run on
 # develop's head), and by hand. Linux CI already cross-checks clippy for the msvc target.
@@ -127,6 +127,14 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: scripts/check.sh clippy
+      # Once a build died with "A device which does not exist was specified" (os error 433) on D:
+      # while the runner agent also lost its own files there. A red job records the volumes, the free
+      # space and the disk, volume and file system events, so the next hit shows whether D: detached.
+      - name: volumes and disk events (red job)
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: ./ci/windows-volume-diag.ps1
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -168,7 +176,7 @@ jobs:
           shared-key: windows
           cache-on-failure: true # a red build must not forfeit the dependencies
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -193,6 +201,14 @@ jobs:
           path: ${{ runner.temp }}/bundle
           retention-days: 1
           compression-level: 0 # the archive is already compressed
+      # Once a build died with "A device which does not exist was specified" (os error 433) on D:
+      # while the runner agent also lost its own files there. A red job records the volumes, the free
+      # space and the disk, volume and file system events, so the next hit shows whether D: detached.
+      - name: volumes and disk events (red job)
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: ./ci/windows-volume-diag.ps1
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -220,7 +236,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.test-build.outputs.run == 'true'
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: needs.test-build.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -249,8 +265,27 @@ jobs:
         if: needs.test-build.outputs.run == 'true'
         shell: pwsh
         run: Start-Process -WindowStyle Hidden pwsh -ArgumentList '-NoProfile', '-File', 'ci/start-canary.ps1', '-Out', (Join-Path $env:RUNNER_TEMP 'start-canary.txt')
-      - name: the test archive from the build job
+      # The first start of node.exe on a fresh runner reads it from a slow disk: 2 to 8 s idle, 10 to 19 s
+      # in the canary_github_auth tests while the other tests read their binaries, and 30 s or more once
+      # (a failed merge group, 2026-11-10). Starting it here, idle, puts it in memory (ci/warm-node.ps1).
+      - name: warm up node
         if: needs.test-build.outputs.run == 'true'
+        shell: pwsh
+        run: ./ci/warm-node.ps1
+      # A hung download would hold the job until its job limit (the same stall cost vm-linux 39 minutes once). Each download gets a step
+      # limit (the archive 8 minutes; the slowest seen on this runner is under 2), then one more try that fails the job when it also fails.
+      - name: the test archive from the build job
+        id: archive
+        if: needs.test-build.outputs.run == 'true'
+        timeout-minutes: 8
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-tests-build
+          path: ${{ runner.temp }}/bundle
+      - name: the test archive from the build job (second try)
+        if: needs.test-build.outputs.run == 'true' && steps.archive.outcome != 'success'
+        timeout-minutes: 8
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-tests-build
@@ -526,6 +561,7 @@ jobs:
       # machine never does.
       - name: development certificate in Edge, Chrome and Firefox (trust dialog answered No, then Yes)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        timeout-minutes: 12
         shell: bash
         env:
           PUDDLE_REQUIRE_BROWSER_TRUST: "1"
@@ -559,6 +595,15 @@ jobs:
         run: |
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/origins.mjs
+      # What the terminal screen's key rules assume of WebView2, with
+      # real input (SendInput): Ctrl+Shift+V and Shift+Insert fire `paste`, Ctrl+R and F5 with the keydown
+      # cancelled do not reload, Ctrl+Q quits with no terminal open and asks first with some. The WebKitGTK half runs in ci.yml.
+      - name: terminal paste, key-cancel and Ctrl+Q test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/terminal-keys.mjs
       # The host needs the bundled runtime beside the program (the fork's msb.exe and libkrunfw.dll,
       # checksums pinned); no machine boots, so WHP is not needed.
       - name: desktop shell smoke test (WebView2, Puddle host)
@@ -629,6 +674,14 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: cargo build --workspace --release --locked
+      # Once a build died with "A device which does not exist was specified" (os error 433) on D:
+      # while the runner agent also lost its own files there. A red job records the volumes, the free
+      # space and the disk, volume and file system events, so the next hit shows whether D: detached.
+      - name: volumes and disk events (red job)
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: ./ci/windows-volume-diag.ps1
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true

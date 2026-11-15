@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
@@ -93,6 +93,7 @@
           waiting={waitingBy[workspace.id] ?? 0}
           progress={workspaces.progress[workspace.id]}
           oom={workspaces.oom[workspace.id]}
+          tools={workspaces.tools[workspace.id]}
           onStart={actions.start}
           onStop={actions.stop}
           onConnect={actions.connect}

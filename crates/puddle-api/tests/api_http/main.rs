@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests over real loopback HTTP (tier L2): the guard's refusals,
 //! every route against a real store, and the SSE stream.
 #![expect(
@@ -12,6 +12,7 @@
 mod app_icon;
 mod common;
 
+mod admin;
 mod credentials;
 mod doctor;
 mod endpoints;
@@ -27,8 +28,10 @@ mod orphan_volumes;
 mod ports;
 mod problems;
 mod proxy_sign_in;
+mod remote;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod routes;
 mod rule_sets;
@@ -36,6 +39,8 @@ mod rule_sets;
 mod second_user;
 mod settings;
 mod shell_init;
+mod sign_in;
+mod ssh_agent;
 mod terminals;
 mod ui;
 mod workspaces;

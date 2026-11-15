@@ -1,11 +1,15 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { tick } from "svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import OptionsPopover from "./OptionsPopover.svelte";
   import { decidedSentence, type Decided } from "#lib/decision/decided.ts";
-  import { localCategory } from "#lib/decision/local.ts";
-  import { describe, needsConfirm, type Choice } from "#lib/decision/model.ts";
+  import {
+    describe,
+    isIpLiteral,
+    needsConfirm,
+    type Choice,
+  } from "#lib/decision/model.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { pending as defaultStore } from "#lib/stores/pending.svelte.ts";
   import { isOn, setsOnFor, userSetNumber } from "#lib/rules/sets.ts";
@@ -14,6 +18,7 @@
     type RuleSetsStore,
   } from "#lib/stores/rule-sets.svelte.ts";
   import type { PendingStore, Row } from "#lib/stores/pending.svelte.ts";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
 
   // Everything that happens when someone decides a request, wherever the list is drawn: the
@@ -52,6 +57,7 @@
         }))
       : [],
   );
+  const spoken = (id: string) => workspaces.spokenLabelOf(id);
   const confirmText = $derived(
     confirming
       ? describe(
@@ -60,7 +66,7 @@
             host: confirming.row.request.host,
             registrableDomain: confirming.row.domain,
           },
-          confirming.row.request.workspace,
+          spoken(confirming.row.request.workspace),
         )
       : "",
   );
@@ -98,7 +104,7 @@
       d.alsoClosed > 0
         ? `; also closed ${d.alsoClosed} other ${d.alsoClosed === 1 ? "request" : "requests"}`
         : "";
-    toasts.push(`${decidedSentence(d)}${extra}.`, {
+    toasts.push(`${decidedSentence(d, undefined, spoken)}${extra}.`, {
       action: { label: "Undo", run: () => undo(d) },
     });
     await settleFocus(nextId);
@@ -109,7 +115,7 @@
     const result = await store.undo(d);
     toasts.push(
       result.ok
-        ? `Undone: ${decidedSentence(d)}. It asks again the next time the workspace retries.`
+        ? `Undone: ${decidedSentence(d, undefined, spoken)}. It asks again the next time the workspace retries.`
         : result.message,
       { ms: result.ok ? 5000 : 8000, tone: result.ok ? "info" : "error" },
     );
@@ -178,7 +184,7 @@
     }}
     workspace={optionsRow.request.workspace}
     anchor={shown?.anchor ?? null}
-    exactOnly={localCategory(optionsRow.request.host) !== null}
+    exactOnly={isIpLiteral(optionsRow.request.host)}
     sets={setChoices}
     onDecide={(choice) => decide(optionsRow, choice)}
     onClose={() => {

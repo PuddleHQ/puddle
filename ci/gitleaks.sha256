@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # What ci/fetch-gitleaks.sh may install: `<version> <release asset> <sha256>`, copied from the
 # release's own gitleaks_<version>_checksums.txt (https://github.com/gitleaks/gitleaks/releases).
 # scripts/check-secrets.sh refuses any other gitleaks version than the one named here. To bump:

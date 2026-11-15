@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The `ui-licences` gate. Every npm package in the browser bundle (listed by `vite build`, see
 // tools/shipped-packages.ts) must carry a licence from the allowlist, and its licence text goes
 // into THIRD-PARTY-NOTICES.txt. `--check` fails when that file is out of date. Run `vite build`

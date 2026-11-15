@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A guest-side TLS client that trusts only the workspace's CA completes a handshake with a server
 //! that presents the CA's leaf, the way the proxy will terminate bound hosts.
 #![expect(

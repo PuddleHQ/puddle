@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The app icon against the real API on the fixture backend: a built-in duck chosen and kept, an own
 // image checked, resized and stored by Puddle, and the section accessible with the images shown
 // without a Content-Security-Policy violation. Waits are on conditions, never on time.

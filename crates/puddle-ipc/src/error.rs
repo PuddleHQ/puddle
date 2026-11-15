@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The crate's one error type.
 
 use std::io;
@@ -25,6 +25,15 @@ pub enum IpcError {
         /// The root it was passed to.
         root: PathBuf,
     },
+    /// A name for a stable endpoint that is not a workspace-id-shaped label.
+    #[error("{name:?} is not a valid endpoint name: use 1 to 63 characters of a-z, 0-9 and -")]
+    InvalidName {
+        /// The name that was refused.
+        name: String,
+    },
+    /// A stable name was asked of a root that was not made with `IpcRoot::stable`.
+    #[error("this ipc root has no stable names; make it with IpcRoot::stable")]
+    NotStable,
     /// A Unix socket path is longer than the OS allows.
     #[error("socket path {path} is {len} bytes; the limit is {max}")]
     PathTooLong {
@@ -95,62 +104,4 @@ pub enum IpcError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::error::Error as _;
-
-    #[test]
-    fn messages_name_the_endpoint_and_keep_the_cause_as_source() {
-        let e = IpcError::Io {
-            op: "bind",
-            endpoint: PathBuf::from("/r/x.sock"),
-            source: io::Error::from(io::ErrorKind::AddrInUse),
-        };
-        assert_eq!(e.to_string(), "could not bind /r/x.sock");
-        assert!(e.source().is_some());
-
-        let e = IpcError::NameTaken {
-            endpoint: PathBuf::from(r"\\.\pipe\puddle-ab"),
-        };
-        assert!(e.to_string().contains(r"\\.\pipe\puddle-ab"));
-        assert!(e.to_string().contains("squatting"));
-    }
-
-    #[test]
-    fn every_variant_has_a_lowercase_message_without_a_trailing_period() {
-        let p = || PathBuf::from("/p");
-        let all = [
-            IpcError::NameTaken { endpoint: p() },
-            IpcError::ForeignEndpoint {
-                endpoint: p(),
-                root: p(),
-            },
-            IpcError::PathTooLong {
-                path: p(),
-                len: 200,
-                max: 107,
-            },
-            IpcError::Root {
-                path: p(),
-                source: io::Error::other("x"),
-            },
-            IpcError::Random(getrandom::Error::UNSUPPORTED),
-            IpcError::NoRuntime,
-            IpcError::NotFound { endpoint: p() },
-            IpcError::AccessDenied { endpoint: p() },
-            IpcError::WrongOwner { endpoint: p() },
-            IpcError::Busy { endpoint: p() },
-            IpcError::Closed { endpoint: p() },
-            IpcError::Io {
-                op: "bind",
-                endpoint: p(),
-                source: io::Error::other("x"),
-            },
-        ];
-        for e in all {
-            let m = e.to_string();
-            assert!(m.chars().next().unwrap().is_lowercase(), "{m}");
-            assert!(!m.ends_with('.'), "{m}");
-        }
-    }
-}
+mod tests;

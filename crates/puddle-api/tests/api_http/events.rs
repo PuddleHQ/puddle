@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The SSE stream over real HTTP: filtering, lag notices, and ending on shutdown.
 
 use std::time::Duration;
@@ -77,6 +77,8 @@ fn name(s: &str) -> WorkspaceId {
 #[tokio::test]
 async fn a_filtered_stream_gets_only_its_workspace() {
     let api = start().await;
+    api.own("a");
+    api.own("b");
     let mut s = Stream::open(&api, "?workspace=a").await;
     api.events.emit(Event::oom_kill(name("b"), 1, "other"));
     api.events.emit(Event::oom_kill(name("a"), 2, "node"));
@@ -98,6 +100,8 @@ async fn a_filtered_stream_gets_only_its_workspace() {
 #[tokio::test]
 async fn an_unfiltered_stream_gets_every_workspace() {
     let api = start().await;
+    api.own("a");
+    api.own("b");
     let mut s = Stream::open(&api, "").await;
     api.events.emit(Event::oom_kill(name("a"), 1, "x"));
     api.events.emit(Event::oom_kill(name("b"), 2, "y"));

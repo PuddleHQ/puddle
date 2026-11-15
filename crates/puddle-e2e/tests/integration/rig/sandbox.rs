@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sandbox side of the corporate-lab tests: the real guest agent, the real proxy (SQLite
 //! rules and audit) and upstream chaining over a chosen OS proxy layer, plus the small clients
 //! and servers around them. The fixtures themselves are `puddle_e2e::lab`.
@@ -76,6 +76,7 @@ pub(crate) async fn rig_checked(
     check: Arc<dyn AddressCheck>,
 ) -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let chain = Chain::new(discovery, auth);
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
@@ -125,8 +126,34 @@ pub(crate) async fn rig_guarded(
     .await
 }
 
+/// Like [`rig_guarded`], with the host's company-network `signals`.
+pub(crate) async fn rig_company(
+    hops: Vec<Hop>,
+    resolver: StaticResolver,
+    access: puddle_netpolicy::LocalAccess,
+    signals: puddle_netpolicy::StaticSignals,
+) -> Rig {
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/proxy.pac".into()),
+        ..ProxyConfig::default()
+    });
+    os.set_pac(move |_| Ok(hops.clone()));
+    let discovery = Discovery::new(os, DiscoveryConfig::default());
+    let check = Arc::new(
+        puddle_netpolicy::NetPolicy::new(Arc::new(access)).with_company_signals(Arc::new(signals)),
+    );
+    rig_checked(
+        discovery,
+        basic("lab", &puddle_types::fixture::password("lab")),
+        resolver,
+        check,
+    )
+    .await
+}
+
 pub(crate) fn allow(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),

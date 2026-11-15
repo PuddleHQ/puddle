@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Puddle host process as a library: the one place that wires the store, the proxies, the
 //! sandbox runtime, workspaces, shutdown and the API together.
 //!
@@ -24,10 +24,12 @@
 //! [`SHUTDOWN_STEPS`].
 #![forbid(unsafe_code)]
 
+mod accounts;
 mod agent_reports;
 mod backup;
 mod boot;
 mod changes;
+mod company_signals;
 mod config;
 mod data_folder;
 mod dev_cert;
@@ -46,6 +48,7 @@ mod kubernetes;
 mod learned;
 mod logins;
 mod merge_notice;
+mod op_error;
 mod paths;
 mod platform;
 mod ports;
@@ -56,33 +59,40 @@ mod settings_read;
 mod shell_init;
 mod space_watch;
 mod ssh_accounts;
+mod ssh_agent;
 mod ssh_config;
 mod ssh_login;
 mod ssh_target;
 mod terminals;
 mod vault;
+pub use vault::SecretSetup;
 mod vscode;
 mod workspaces;
 
+pub use accounts::{
+    AccountError, UserRow, UserState, add_user, list_users, remove_user, reset_user,
+};
 pub use backup::{
     BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
 };
+pub use company_signals::{HostSignals, PacReader, PacTiming};
 pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
-    UpstreamSettings,
+    RemoteSettings, UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
 pub use doctor::{disk_limits, ssh_agent_pipe};
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{
-    Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RuntimeFactory,
-    RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
+    Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RemoteListener,
+    RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
 pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
 pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
+pub use space_watch::Space;
 pub use ssh_config::{SshSettings, ssh_host};
 pub use vscode::VsCodeLauncher;
 pub use workspaces::{EndExtensionHostsError, HostWorkspaces, RewriteGate, SwitchEditorBuildError};

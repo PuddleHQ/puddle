@@ -3,6 +3,8 @@
 # `accepted` mirrors deny.toml's licence allow list: cargo-deny decides what may be used, this
 # only says which licence of an `OR` expression to attribute. Our own crates are publish = false.
 accepted = [
+    "AGPL-3.0-or-later",
+    "AGPL-3.0-only",
     "GPL-3.0-or-later",
     "GPL-3.0-only",
     "LGPL-2.1-or-later",

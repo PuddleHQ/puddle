@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The events the store emits for every change, and the filtered audit queries behind
 //! `GET /api/audit`.
 #![expect(
@@ -11,10 +11,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use proptest::prelude::*;
+use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditOutcome, AuditRecord, ConnectionRecord, Effect, Limits,
     ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire, Resolution,
-    RuleDeleteReason, RuleWire, Scope, Store,
+    RuleDeleteReason, RuleWire, Scope, Store, UserId, UserName,
 };
 use puddle_test_kit::cpu_time;
 use puddle_types::{
@@ -36,7 +37,15 @@ fn fixture(limits: Limits) -> (Arc<ManualClock>, Arc<CollectingSink>, Store) {
     let store = Store::open_in_memory(clock.clone(), limits)
         .unwrap()
         .with_events(sink.clone());
+    own_workspaces(&store);
     (clock, sink, store)
+}
+
+/// The workspaces these tests use, each the owner's.
+fn own_workspaces(store: &Store) {
+    for name in ["a", "b", "beta", "gamma"] {
+        own(store, &sb(name));
+    }
 }
 
 fn ask(store: &Store, workspace: &str, host: &str) -> PendingOutcome {
@@ -61,7 +70,12 @@ fn new_id(outcome: PendingOutcome) -> PendingId {
 
 fn newest_audit_id(store: &Store) -> i64 {
     store
-        .audit_query(&AuditFilter::default(), AuditCursor::Before(None), 1)
+        .audit_query_every_user(
+            &puddle_store::testing::all_users(),
+            &AuditFilter::default(),
+            AuditCursor::Before(None),
+            1,
+        )
         .unwrap()
         .first()
         .map_or(0, |(id, _)| *id)
@@ -109,7 +123,8 @@ fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
     assert_eq!(
         events[1],
         Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }
     );
 }
@@ -177,7 +192,8 @@ fn approving_closes_the_row_and_reports_the_rule_and_every_other_row_it_decides(
     assert_eq!(
         events.last(),
         Some(&Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         })
     );
 }
@@ -205,6 +221,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
     let id = new_id(ask(&store, "a", "www.example.com"));
     drop(sink.take());
     let rule = store
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse(".example.com").unwrap(),
@@ -230,6 +247,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
 
     // The sweeper's expiry of a rule is a rule change too.
     store
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("short.example").unwrap(),
@@ -282,6 +300,7 @@ fn deleted_workspaces_close_their_rows_as_expired() {
 fn deleting_a_workspace_with_rules_reports_rules_changed() {
     let (_, sink, store) = fixture(Limits::default());
     store
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sb("a")),
             pattern: Pattern::parse("example.com").unwrap(),
@@ -323,7 +342,8 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
     assert_eq!(
         sink.take(),
         [Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }]
     );
     // Over the per-second limit: counted, nothing written, nothing emitted.
@@ -335,12 +355,18 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
     assert_eq!(
         sink.take(),
         [Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }]
     );
     assert_eq!(
         store
-            .audit_query(&AuditFilter::default(), AuditCursor::After(0), 100)
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &AuditFilter::default(),
+                AuditCursor::After(0),
+                100
+            )
             .unwrap()
             .len(),
         3
@@ -363,7 +389,8 @@ fn trimming_the_audit_emits_for_its_trim_record() {
     assert_eq!(
         sink.take().last(),
         Some(&Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         })
     );
 }
@@ -372,6 +399,7 @@ fn trimming_the_audit_emits_for_its_trim_record() {
 fn a_store_without_a_sink_works() {
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open_in_memory(clock, Limits::default()).unwrap();
+    own_workspaces(&store);
     ask(&store, "a", "example.com");
 }
 
@@ -440,6 +468,8 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         injected: false,
         unswapped_stand_ins: Vec::new(),
         scrubbed_stand_ins: Vec::new(),
+        foreign_credentials: Vec::new(),
+        answer_credentials: Vec::new(),
         method: None,
         path: None,
         path_truncated: false,
@@ -464,14 +494,15 @@ fn seeded(records: &[AuditRecord]) -> (tempfile::TempDir, Store) {
     let path = dir.path().join("puddle.db");
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open(&path, clock, Limits::default()).unwrap();
+    own_workspaces(&store);
     let mut conn = rusqlite::Connection::open(&path).unwrap();
     conn.busy_timeout(Duration::from_secs(5)).unwrap();
     let tx = conn.transaction().unwrap();
     {
         let mut insert = tx
             .prepare(
-                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, user_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
             )
             .unwrap();
         for record in records {
@@ -602,12 +633,14 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
     )
         .prop_map(
             |(workspace, kind, outcome, origin, host, q, from, to)| AuditFilter {
+                user: None,
                 workspace: workspace.map(sb),
                 kind,
                 outcome,
                 origin,
                 host_contains: host.map(str::to_owned),
                 q: q.map(str::to_owned),
+                category: None,
                 from: from.map(|t| T0 + t * 1000),
                 to: to.map(|t| T0 + t * 1000),
             },
@@ -627,16 +660,16 @@ proptest! {
     ) {
         let (_dir, store) = seeded(&records);
         let want = naive(&records, &filter);
-        let up = ids(store.audit_query(&filter, AuditCursor::After(0), 1000).unwrap());
+        let up = ids(store.audit_query_every_user(&puddle_store::testing::all_users(), &filter, AuditCursor::After(0), 1000).unwrap());
         prop_assert_eq!(&up, &want);
-        let mut down = ids(store.audit_query(&filter, AuditCursor::Before(None), 1000).unwrap());
+        let mut down = ids(store.audit_query_every_user(&puddle_store::testing::all_users(), &filter, AuditCursor::Before(None), 1000).unwrap());
         down.reverse();
         prop_assert_eq!(&down, &want);
 
         let mut paged = Vec::new();
         let mut cursor = AuditCursor::Before(None);
         loop {
-            let rows = ids(store.audit_query(&filter, cursor, page).unwrap());
+            let rows = ids(store.audit_query_every_user(&puddle_store::testing::all_users(), &filter, cursor, page).unwrap());
             let Some(last) = rows.last().copied() else { break };
             prop_assert!(rows.len() <= page as usize);
             paged.extend(rows);
@@ -661,7 +694,12 @@ fn filters_combine_and_the_host_is_case_folded() {
     let (_dir, store) = seeded(&records);
     let q = |filter: AuditFilter| {
         ids(store
-            .audit_query(&filter, AuditCursor::After(0), 100)
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &filter,
+                AuditCursor::After(0),
+                100,
+            )
             .unwrap())
     };
     assert_eq!(q(AuditFilter::default()), [1, 2, 3, 4]);
@@ -700,6 +738,52 @@ fn filters_combine_and_the_host_is_case_folded() {
         }),
         [2, 3]
     );
+}
+
+#[test]
+fn the_category_filter_matches_company_network_connections_only() {
+    let mut company = connection(T0, "a", "nexus.corp.example", ConnectionDecision::Allow);
+    let mut refused = connection(T0 + 1, "a", "10.8.0.9", ConnectionDecision::Deny);
+    let mut lookalike = connection(
+        T0 + 2,
+        "a",
+        "company_network.example",
+        ConnectionDecision::Allow,
+    );
+    for (record, reason) in [
+        (&mut company, "rule"),
+        (&mut refused, "toggle:company_network"),
+    ] {
+        if let AuditRecord::Connection(c) = record {
+            c.reason = reason.into();
+            c.category = Some("company_network".into());
+        }
+    }
+    if let AuditRecord::Connection(c) = &mut lookalike {
+        c.reason = "toggle:company_network".into();
+    }
+    let records = vec![
+        company,
+        refused,
+        lookalike,
+        connection(T0 + 3, "a", "api.example.com", ConnectionDecision::Allow),
+    ];
+    let (_dir, store) = seeded(&records);
+    let found = |category: Option<&'static str>| {
+        ids(store
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &AuditFilter {
+                    category,
+                    ..AuditFilter::default()
+                },
+                AuditCursor::After(0),
+                100,
+            )
+            .unwrap())
+    };
+    assert_eq!(found(Some("company_network")), [1, 2]);
+    assert_eq!(found(None), [1, 2, 3, 4]);
 }
 
 #[test]
@@ -751,7 +835,12 @@ fn the_search_box_matches_each_text_column_and_combines_with_the_other_filters()
     let (_dir, store) = seeded(&records);
     let found = |filter: AuditFilter| {
         ids(store
-            .audit_query(&filter, AuditCursor::After(0), 100)
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &filter,
+                AuditCursor::After(0),
+                100,
+            )
             .unwrap())
     };
     let q = |text: &str| {
@@ -863,7 +952,8 @@ fn hostile_filter_text_is_data_not_sql_or_a_pattern() {
     )]);
     for needle in ["%", "_", "' OR 1=1 --", "\"; DROP TABLE audit; --", "\u{0}"] {
         let rows = store
-            .audit_query(
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
                 &AuditFilter {
                     host_contains: Some(needle.into()),
                     ..AuditFilter::default()
@@ -874,7 +964,8 @@ fn hostile_filter_text_is_data_not_sql_or_a_pattern() {
             .unwrap();
         assert!(rows.is_empty(), "{needle:?}");
         let rows = store
-            .audit_query(
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
                 &AuditFilter {
                     q: Some(needle.into()),
                     ..AuditFilter::default()
@@ -887,7 +978,12 @@ fn hostile_filter_text_is_data_not_sql_or_a_pattern() {
     }
     assert_eq!(
         store
-            .audit_query(&AuditFilter::default(), AuditCursor::After(0), 10)
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &AuditFilter::default(),
+                AuditCursor::After(0),
+                10
+            )
             .unwrap()
             .len(),
         1
@@ -1072,12 +1168,14 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         (
             "everything at once",
             AuditFilter {
+                user: Some(UserId::OWNER),
                 workspace: Some(sb("gamma")),
                 kind: Some("connection"),
                 outcome: Some(AuditOutcome::Pending),
                 origin: Some(ConnectionOrigin::Workspace),
                 q: Some("details".into()),
                 host_contains: Some("site7".into()),
+                category: None,
                 from: Some(T0),
                 to: Some(last),
             },
@@ -1097,19 +1195,37 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             plan.iter().any(|line| line.contains(step)),
             "{name}: expected `{step}` in the plan, got {plan:?}"
         );
-        let (rows, cpu) = cpu_time(|| store.audit_query(&filter, cursor, 100).unwrap());
+        // Best of three: thread CPU time still inflates on a shared 2-vCPU runner when another
+        // job bursts on the same host (CI run 42824928536: the full scans took 44 ms, then 203 ms,
+        // then 501 ms within one second, against 17 ms on a free machine). A burst that long does
+        // not cover three runs in a row, and a quadratic query is slow in all three.
+        let mut best = Duration::MAX;
+        let mut rows = Vec::new();
+        let all = puddle_store::testing::all_users();
+        for _ in 0..3 {
+            let (got, cpu) = cpu_time(|| {
+                store
+                    .audit_query_every_user(&all, &filter, cursor, 100)
+                    .unwrap()
+            });
+            best = best.min(cpu);
+            rows = got;
+        }
+        let cpu = best;
         assert!(rows.len() <= 100);
         eprintln!("audit query {name}: {cpu:?} of CPU");
-        // The bar is on this thread's CPU time, so a loaded machine does not move it; it catches a
-        // query that went quadratic. The slowest case (a full scan) used 29 ms on Linux and 47 ms on Windows (3 ticks), the indexed ones 0.1 ms on Linux.
+        // The bar is on this thread's CPU time, so a loaded machine barely moves it; it catches a
+        // query that went quadratic (a per-row rescan costs seconds). The slowest case (a full
+        // scan) used 17 to 44 ms on Linux and 47 ms on Windows (3 ticks), the indexed ones 0.1 ms.
         assert!(
             cpu < Duration::from_millis(250),
-            "{name} used {cpu:?} of CPU"
+            "{name} used {cpu:?} of CPU (best of three)"
         );
     }
     // The filtered results are right, not just fast.
     let one = store
-        .audit_query(
+        .audit_query_every_user(
+            &puddle_store::testing::all_users(),
             &AuditFilter {
                 host_contains: Some("rule99950".into()),
                 ..AuditFilter::default()
@@ -1132,6 +1248,7 @@ fn deleting_a_workspace_that_only_had_a_rule_set_switch_reports_rules_changed() 
     let (_, sink, store) = fixture(Limits::default());
     store
         .switch_rule_set(
+            UserId::OWNER,
             puddle_types::RuleSetId::BuiltIn("github"),
             Some(&sb("a")),
             Some(false),
@@ -1161,4 +1278,28 @@ fn deleting_a_workspace_that_only_had_a_system_reason_reports_rules_changed() {
         !rules_changed_by_deleting(&store, &sink, "b"),
         "nothing to drop, nothing reported"
     );
+}
+
+#[test]
+fn a_users_audit_query_returns_only_that_users_records_when_the_filter_names_no_user() {
+    let (_, _, store) = fixture(Limits::default());
+    let ann = store.add_user(&UserName::new("Ann").unwrap()).unwrap().id;
+    store.set_workspace_owner(&sb("anns"), ann).unwrap();
+    ask(&store, "a", "owner.example");
+    ask(&store, "anns", "ann.example");
+
+    let page = |user: UserId| -> Vec<String> {
+        store
+            .audit_query(user, &AuditFilter::default(), AuditCursor::After(0), 100)
+            .unwrap()
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect()
+    };
+    let owners = page(UserId::OWNER);
+    let anns = page(ann);
+    assert_eq!(owners.len(), 1, "{owners:?}");
+    assert!(owners[0].contains("owner.example"), "{owners:?}");
+    assert_eq!(anns.len(), 1, "{anns:?}");
+    assert!(anns[0].contains("ann.example"), "{anns:?}");
 }

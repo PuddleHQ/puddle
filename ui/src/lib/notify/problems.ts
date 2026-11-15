@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Background problems: something Puddle did on its own failed (a sweep, a clean-up, a start-up
 // step), so no request carried the error. The host lists them (`GET /api/problems`) and says when
 // the list changed (`problems_changed`); each becomes one notice that goes away with its cause.

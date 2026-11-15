@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One workspace's Git settings, for its Git tab: the identities it has in order, its repository
 // table with a Pull and a Push toggle per repository, and the two "only listed" switches. Every
 // change is saved at once; the page refetches on `workspace_git_changed` (also when an identity it

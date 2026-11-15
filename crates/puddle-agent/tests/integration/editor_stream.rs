@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `editor` stream through a real agent and the host's session code over a Unix socket: the
 //! host reaches the editor server's port (and only that port) and reads its password. A plain echo
 //! server on the port stands in for the editor server.
@@ -176,10 +176,11 @@ async fn before_the_server_has_a_password_the_request_is_refused_with_a_reason()
 
 #[tokio::test]
 async fn nothing_listening_on_the_editor_port_is_refused_with_a_reason() {
-    let free = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // Bound, never listening: connecting is refused and no parallel test can take the port
+    // (a port freed after a listener was dropped can be handed to another test's echo server).
+    let dead = tokio::net::TcpSocket::new_v4().unwrap();
+    dead.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let free = dead.local_addr().unwrap().port();
     let rig = rig("editor-down", Some((free, Some(PASSWORD)))).await;
     let err = rig.link().await.open_editor().await.unwrap_err();
     assert!(

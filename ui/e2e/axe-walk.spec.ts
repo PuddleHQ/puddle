@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a scan and a slow page open may cost a test, as the test sees it: neither takes the 90 s a
 // test has for what it checks.
 import { slowdown } from "./cpu-throttle.ts";

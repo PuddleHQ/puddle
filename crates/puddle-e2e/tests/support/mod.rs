@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The rig the L2 tests share: the real guest agent, the real proxy and the real rules engine,
 //! joined as in a workspace, with local servers to talk to.
 #![expect(
@@ -44,6 +44,7 @@ pub(crate) async fn rig() -> Rig {
     // 256-connection test alone needs about 1 000, which is the usual default limit of 1 024.
     let _ = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = StaticResolver::new()
         .with("echo.test", &[LOCAL])
         .with("sink.test", &[LOCAL])
@@ -89,6 +90,7 @@ pub(crate) fn log_proxy_to_stderr() {
 
 pub(crate) fn allow(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),

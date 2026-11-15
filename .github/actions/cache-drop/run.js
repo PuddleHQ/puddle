@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Runs ci/cache-drop.sh <mode> <prefix>. The script never fails the job, and neither does a missing script.
 const { spawnSync } = require("node:child_process");
 

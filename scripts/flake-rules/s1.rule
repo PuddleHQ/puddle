@@ -1,0 +1,4 @@
+status: failing
+fixture: s1-child-stdin-write.bad.rs.txt
+as: crates/puddle-boot/tests/x.rs
+fix: a test that writes a child's piped stdin and unwraps the result races the child: a child that exits before it reads closes the pipe and the write fails with `BrokenPipe`, so the test panics on that instead of the child's own outcome. Send it with `puddle_test_kit::feed_stdin(&mut child, bytes)` and let the exit status or output decide (an async write: `let _ = stdin.write_all(..).await;` and assert on the output), or `flake-ok: <why this child always reads its whole input>`

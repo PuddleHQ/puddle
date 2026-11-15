@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # VM tests on Linux KVM (tier K): crate puddle-vm-tests under `nextest --profile vm`, real
 # msb microVMs on the hosted runner. It runs on every pull request to develop (a required check there) and to main,
 # on every merge queue run, by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and
@@ -45,8 +45,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # No debug info: the archive build is CPU-bound and this saves about a minute of it. A failing test still prints its
+  # panic file:line, test name and assertion text (they come from #[track_caller]); only backtrace frames lose their lines.
+  CARGO_PROFILE_DEV_DEBUG: 0
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, memory),
   # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle
@@ -131,7 +132,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the ci entry restored (exact) it was no faster than a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -284,7 +285,7 @@ jobs:
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -321,14 +322,37 @@ jobs:
         run: |
           mkdir -p "$HOME/vm-tools-cache"
           echo "PUDDLE_VM_TOOLS_CACHE=$HOME/vm-tools-cache" >> "$GITHUB_ENV"
+      # A download that hangs would hold the job until its 40 minute limit (partition 9 of merge-group run 43245154124 sat in this
+      # step for 39 minutes while the other nine finished it in 1 to 3 minutes). Each download gets 8 minutes (the 2.5 GB archive
+      # takes up to 3), then one more try that fails the job when it also fails.
       - name: the test archive from the build job
+        id: archive
         if: steps.kvm.outputs.ok == 'true'
+        timeout-minutes: 8
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-linux-build
+          path: ${{ runner.temp }}/bundle
+      - name: the test archive from the build job (second try)
+        if: steps.kvm.outputs.ok == 'true' && steps.archive.outcome != 'success'
+        timeout-minutes: 8
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-linux-build
           path: ${{ runner.temp }}/bundle
       - name: the guest agent from the agent job
+        id: agent
         if: steps.kvm.outputs.ok == 'true'
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-linux-agent
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job (second try)
+        if: steps.kvm.outputs.ok == 'true' && steps.agent.outcome != 'success'
+        timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-linux-agent
@@ -352,6 +376,26 @@ jobs:
           else
             echo "no browser test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"
           fi
+      # JetBrains Gateway (about 350 MB unpacked, ci/gateway.sha256) is fetched only on a partition that runs
+      # `vm_gateway_attach`. Same reading of the partition's filterset as the browser check above; the hash split
+      # (no `test(=`) cannot be read, so the partition is assumed to need it.
+      - name: does this partition run the Gateway test?
+        id: gateway
+        if: steps.kvm.outputs.ok == 'true'
+        run: |
+          sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" "${{ strategy.job-total }}" \
+            "$RUNNER_TEMP/bundle/vm-tests.list" ci/vm-test-timings-linux.tsv 'test(/(^|::)vm_gateway_attach/)') || exit 1
+          if ! grep -q 'test(=' <<<"$sel" || grep -Eq 'test\(=([A-Za-z0-9_]+::)*vm_gateway_attach' <<<"$sel"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no Gateway test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: JetBrains Gateway (pinned release; download, verify)
+        if: steps.gateway.outputs.needed == 'true'
+        timeout-minutes: 20
+        run: |
+          ci/fetch-gateway.sh "$RUNNER_TEMP/gateway"
+          echo "PUDDLE_GATEWAY_DIR=$RUNNER_TEMP/gateway" >> "$GITHUB_ENV"
       - name: disk after the archive download (evidence, never a gate)
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         timeout-minutes: 3
@@ -499,6 +543,24 @@ jobs:
         timeout-minutes: 2
         continue-on-error: true
         run: ci/vm-tests-report.sh log "$RUNNER_TEMP/vm-tests.log" "${{ matrix.partition }}"
+      # The upload's glob stats every match, and a sandbox directory that a cancelled merge group tore down
+      # mid-glob failed the whole step with ENOENT. So copy the msb logs that still exist, and warn when the
+      # run home is gone; a real upload failure still fails the upload step below.
+      - name: stage msb logs that still exist
+        if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
+        shell: bash
+        run: |
+          src="$RUNNER_TEMP/pvm"
+          dest="$RUNNER_TEMP/msb-logs"
+          mkdir -p "$dest"
+          if [ ! -d "$src" ]; then
+            echo "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          fi
+          cd "$src" || exit 0
+          while IFS= read -r -d '' f; do
+            mkdir -p "$dest/$(dirname "$f")" 2>/dev/null && cp "$f" "$dest/$f" 2>/dev/null || true
+          done < <(find . -path '*/logs/*' -type f -print0 2>/dev/null || true)
       - name: upload test results and msb logs
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -512,7 +574,7 @@ jobs:
             ${{ runner.temp }}/vm-processes.txt
             ${{ runner.temp }}/runner-speed.txt
             ${{ runner.temp }}/disk-watch-*.log
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group

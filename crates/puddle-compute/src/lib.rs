@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Compute plane: the traits every microVM runtime implements, and the types they take.
 //!
 //! Other crates code against [`Runtime`] and [`Sandbox`], never against the msb SDK; the SDK
@@ -14,7 +14,9 @@
 //! | create and boot | [`Runtime::create`] with a [`SandboxSpec`] → owning [`Sandbox`] handle |
 //! | boot again | [`Runtime::start`] → owning handle |
 //! | memory for the next start | [`Runtime::set_memory`] |
+//! | a bigger root disk, live or at the next start | [`Runtime::grow_root_disk`] |
 //! | vCPUs for the next start | [`Runtime::set_cpus`] |
+//! | environment for the next start | [`Runtime::set_env`] |
 //! | re-adopt a running sandbox | [`Runtime::get`] → non-owning handle |
 //! | list / delete | [`Runtime::list`], [`Runtime::remove`] |
 //! | clean up after failed creates | [`Runtime::stale_dirs`], [`Runtime::remove_stale_dir`] |
@@ -49,14 +51,16 @@ mod error;
 mod exec;
 #[cfg(feature = "fake")]
 pub mod fake;
+#[cfg(any(feature = "fake", feature = "contract"))]
+pub mod probes;
 mod runtime;
 mod spec;
 
 pub use error::{ComputeError, StartRefusal};
 pub use exec::{ExecOutput, ExecRequest, ExitStatus};
 pub use runtime::{
-    Capabilities, ImageConfig, RootDiskUse, Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo,
-    VolumeSpec,
+    Capabilities, ImageConfig, RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo,
+    SshStream, VolumeInfo, VolumeSpec,
 };
 pub use spec::{
     DiskSize, FileMount, MountKind, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,

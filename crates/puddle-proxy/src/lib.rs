@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Egress proxy: the only way out of a workspace.
 //!
 //! Every guest connection reaches the host as a yamux stream on the workspace's route (a per-workspace
@@ -60,6 +60,7 @@
 //! - `fuzzing`: the parsers a guest's first bytes reach, behind entry points that check their own
 //!   invariants (`fuzzing`), for the cargo-fuzz targets. Never use it in product code.
 #![forbid(unsafe_code)]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 mod coalesce;
 mod counted;
@@ -67,13 +68,16 @@ mod destination;
 #[cfg(feature = "fuzzing")]
 pub mod fuzzing;
 mod http;
+mod opened;
 mod plain;
+mod probe;
 mod proxy;
 mod pull;
 mod records;
 mod resolve;
 mod route;
 mod ssh;
+pub mod ssh_agent;
 mod ssh_git;
 mod tap;
 mod target;
@@ -85,6 +89,7 @@ mod upstream;
 
 pub use coalesce::Coalescing;
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
+pub use probe::{PortProbe, TcpPortProbe};
 pub use proxy::{Proxy, ProxyConfig, WorkspaceHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};
@@ -96,10 +101,11 @@ pub use ssh_git::{
 };
 pub use terminate::{
     AnswerHead, AnswerRewriter, BodyField, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange,
-    ExchangeRewriter, FieldKind, HeaderError, InjectContext, InjectDecision, InjectRefusal,
-    InjectedHeader, Injection, Injector, Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY,
-    NoInjection, PassThrough, PatternError, Placement, RequestRule, RequestRules, RequestView,
-    SecretValue, StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationSet,
-    TerminationSource, Terminations, TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
+    ExchangeRewriter, FieldKind, ForeignCredentialWarning, HeaderError, InjectContext,
+    InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector, Interception, LEARNED_CAP,
+    LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough, PatternError, Placement, RequestRule,
+    RequestRules, RequestView, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
+    Termination, TerminationSet, TerminationSource, Terminations, TokenBody, TokenBodyError,
+    Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

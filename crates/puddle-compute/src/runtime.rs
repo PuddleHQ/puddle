@@ -1,14 +1,16 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The compute-plane traits: [`Runtime`] (sandboxes, volumes, images) and [`Sandbox`] (one
 //! running VM).
 
 use std::collections::BTreeMap;
 use std::future::Future;
 
-use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
+use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec, VsockRoute};
 
 /// What a runtime can do, from [`Runtime::probe`]. Code that works around a runtime bug checks
 /// the matching flag instead of the version.
@@ -16,11 +18,6 @@ use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
 pub struct Capabilities {
     /// The runtime's version (`0.7.7`, `0.7.7-puddle.1`, `fake`).
     pub runtime_version: String,
-    /// A failed create leaves no stale directory behind (the upstream msb bug is fixed). When
-    /// `false`, a failed create blocks its name until [`Runtime::remove_stale_dir`].
-    pub stale_dir_fixed: bool,
-    /// SSH sessions report a signal-killed command as a failure. msb 0.7.6 reports exit 0.
-    pub ssh_reports_signal_exit: bool,
 }
 
 /// A sandbox as [`Runtime::list`] sees it.
@@ -35,6 +32,10 @@ pub struct SandboxInfo {
     pub puddle_owned: bool,
     /// How full its root disk is, when the runtime can tell.
     pub root_disk: Option<RootDiskUse>,
+    /// The vsock routes it was made with, which it starts with whatever the host serves now: a
+    /// host can start it again only when it serves each of them. Empty when the runtime can't
+    /// tell.
+    pub routes: Vec<VsockRoute>,
 }
 
 /// The root disk of a sandbox (home directory, tool caches, installed packages): its capacity and
@@ -45,6 +46,15 @@ pub struct RootDiskUse {
     pub size: DiskSize,
     /// What the image takes on the host now, never more than `size`.
     pub used: DiskSize,
+}
+
+/// When a root disk's new size takes effect, from [`Runtime::grow_root_disk`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootDiskGrowth {
+    /// The running guest has the room now.
+    Live,
+    /// The room arrives with the next start of the sandbox.
+    NextStart,
 }
 
 impl SandboxInfo {
@@ -181,10 +191,8 @@ pub trait Runtime: Send + Sync + 'static {
     /// shutdown (`fstrim` first, ADR 0006). Pulls the image if needed. Named volumes with
     /// [`crate::VolumeMount::ensure_size`] are created if missing.
     ///
-    /// On failure nothing is created, except that, without
-    /// [`Capabilities::stale_dir_fixed`], a failed volume check leaves a stale directory that
-    /// blocks the name; and a refused volume attach leaves a `Stopped` record, which
-    /// [`Runtime::remove`] clears.
+    /// On failure nothing is created, except that a refused volume attach leaves a `Stopped`
+    /// record, which [`Runtime::remove`] clears.
     ///
     /// # Errors
     ///
@@ -246,6 +254,36 @@ pub trait Runtime: Send + Sync + 'static {
         name: &SandboxName,
         cpus: CpuCount,
     ) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
+    /// Replaces the environment a sandbox's processes start with, from its **next** start on:
+    /// variables not in `env` are removed, the others set. The root disk and everything else of
+    /// the sandbox stays, which is why a changed variable needs no new sandbox. A running sandbox
+    /// keeps the environment of its processes until it is stopped and started again.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`].
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
+    /// Grows the root disk of a sandbox to `size`: now when it runs and the runtime can grow a
+    /// disk under a running guest ([`RootDiskGrowth::Live`], the guest sees the room at once and
+    /// nothing is lost), otherwise at its next start ([`RootDiskGrowth::NextStart`], a stopped
+    /// sandbox always; a running one when the runtime cannot grow live, which the caller
+    /// answers by restarting it). A root disk only grows: nothing here shrinks it.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`]; [`ComputeError::InvalidSpec`] when `size` is not above the
+    /// current size.
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: DiskSize,
+    ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send;
 
     /// Every sandbox the runtime knows, in name order, including ones Puddle didn't create.
     ///
@@ -383,64 +421,4 @@ pub trait Sandbox: Send + Sync + 'static {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_default_checkout_rule_names_the_folder_and_what_is_wrong() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = crate::fake::FakeRuntime::default()
-            .check_checkout(dir.path())
-            .unwrap_err();
-        let reason = err.to_string();
-        assert!(matches!(err, ComputeError::InvalidSpec { .. }), "{reason}");
-        assert!(
-            reason.contains(&format!("the checkout {} ", dir.path().display())),
-            "{reason}"
-        );
-    }
-
-    #[test]
-    fn info_names_parse_only_when_valid() {
-        let ours = SandboxInfo {
-            name: "box".into(),
-            status: WorkspaceStatus::Running,
-            puddle_owned: true,
-            root_disk: None,
-        };
-        assert_eq!(ours.sandbox_name().unwrap().as_str(), "box");
-        let foreign = SandboxInfo {
-            name: "Foreign_Box".into(),
-            status: WorkspaceStatus::Stopped,
-            puddle_owned: false,
-            root_disk: None,
-        };
-        assert!(foreign.sandbox_name().is_none());
-        let vol = VolumeInfo {
-            name: "ws-a".into(),
-            size: DiskSize::mib(1),
-            used: None,
-            holder: None,
-        };
-        assert_eq!(vol.volume_name().unwrap().as_str(), "ws-a");
-        let vol = VolumeInfo {
-            name: "Bad".into(),
-            ..vol
-        };
-        assert!(vol.volume_name().is_none());
-    }
-
-    #[test]
-    fn image_env_last_value_wins() {
-        let c = ImageConfig {
-            env: vec![
-                ("PATH".into(), "/a".into()),
-                ("X".into(), "1".into()),
-                ("PATH".into(), "/b".into()),
-            ],
-            ..ImageConfig::default()
-        };
-        assert_eq!(c.env_var("PATH"), Some("/b"));
-        assert_eq!(c.env_var("NOPE"), None);
-    }
-}
+mod tests;

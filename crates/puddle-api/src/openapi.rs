@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `OpenAPI` 3.1 contract (ADR 0004), generated from the routes and the [`crate::wire`]
 //! types. Committed as `crates/puddle-api/openapi/openapi.json`, with the TypeScript types
 //! generated from it; a test and the `openapi` gate fail when either is stale.
@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.27.0";
+pub const API_VERSION: &str = "0.31.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -41,6 +41,8 @@ const BEARER: &str = "bearer";
     tags(
         (name = "service", description = "Who is answering"),
         (name = "events", description = "The server-sent event stream"),
+        (name = "admin", description = "The owner's admin screen: users with counts and sizes, totals, making and deleting users, invites, and their audit. Owner only, and only when several users are on"),
+        (name = "auth", description = "Browser sign-in on a public address: the first visitor's owner account, passwords, devices and the sign-in methods"),
         (name = "pending", description = "Connections waiting for a decision"),
         (name = "rules", description = "Allow and deny rules"),
         (name = "audit", description = "The audit log"),
@@ -54,6 +56,7 @@ const BEARER: &str = "bearer";
         (name = "ports", description = "A workspace's ports: what listens in it, forwards to this computer's loopback, pinned forwards"),
         (name = "environment", description = "Environment variables and secrets, global and per workspace; a secret's value is write-only"),
         (name = "interception", description = "Decrypting every host: a workspace's switch and the names that are never decrypted"),
+        (name = "ssh-agent", description = "The filtered SSH agent: the hosts a workspace may use the user's SSH agent for"),
         (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"),
         (name = "logins", description = "The logins Puddle kept for a workspace: listing them and forgetting one"),
         (name = "orphan-volumes", description = "Workspace disks the workspace list does not name, and restoring one as a workspace"),
@@ -134,168 +137,29 @@ fn add_guard_responses(doc: &mut OpenApi) {
     }
 }
 
+/// How many operations (a method on a path) `spec` lists. The tests compare the live contract with
+/// the committed one by this count, so no test keeps a number that every new route must bump.
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use serde_json::Value;
-
-    use super::*;
-
-    fn spec() -> Value {
-        serde_json::from_str(&openapi_json()).unwrap()
-    }
-
-    #[test]
-    fn spec_is_openapi_3_1_with_bearer_security() {
-        let s = spec();
-        assert_eq!(s["openapi"], "3.1.0");
-        assert_eq!(s["info"]["version"], API_VERSION);
-        assert_eq!(s["security"], serde_json::json!([{ "bearer": [] }]));
-        assert_eq!(
-            s["components"]["securitySchemes"]["bearer"],
-            serde_json::json!({ "type": "http", "scheme": "bearer" })
-        );
-    }
-
-    #[test]
-    fn every_operation_documents_the_guard_refusals() {
-        let s = spec();
-        let mut count = 0;
-        for (path, item) in s["paths"].as_object().unwrap() {
-            assert!(path.starts_with("/api/"), "{path}");
-            for (method, op) in item.as_object().unwrap() {
-                count += 1;
-                for status in ["401", "403", "421", "500"] {
-                    assert!(
-                        op["responses"].get(status).is_some(),
-                        "{method} {path} lacks {status}"
-                    );
-                }
-                assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
-            }
-        }
-        assert_eq!(count, 108, "operations in the spec");
-    }
-
-    /// ADR 0002: responses always carry every field (`null`, never absent), so the generated
-    /// TypeScript has `T | null`, not `T?`. Request bodies (`*Request`) may leave fields out.
-    #[test]
-    fn response_schemas_require_every_property() {
-        let s = spec();
-        let schemas = s["components"]["schemas"].as_object().unwrap();
-        for (name, schema) in schemas {
-            if name.ends_with("Request")
-                || name == "SettingsLayer"
-                || name == "LocalToggles"
-                || name == "UiPrefs"
-            {
-                continue;
-            }
-            check_required(name, schema);
-        }
-        // Shared by requests and responses: required in the spec (responses always send them),
-        // tolerated when absent in a request.
-        for name in ["SettingsLayer", "LocalToggles", "VsCodeServer", "UiPrefs"] {
-            check_required(name, &schemas[name]);
-        }
-    }
-
-    fn check_required(name: &str, schema: &Value) {
-        if let Some(variants) = schema.get("oneOf").and_then(Value::as_array) {
-            for v in variants {
-                check_required(name, v);
-            }
-            return;
-        }
-        let Some(props) = schema.get("properties").and_then(Value::as_object) else {
-            return;
-        };
-        let required: BTreeSet<&str> = schema["required"]
-            .as_array()
-            .map(|r| r.iter().filter_map(Value::as_str).collect())
-            .unwrap_or_default();
-        for prop in props.keys() {
-            assert!(
-                required.contains(prop.as_str()),
-                "{name}.{prop} is not required"
-            );
-        }
-    }
-
-    /// The generated TypeScript names an operation by its id, so two handlers with the same name
-    /// would silently replace one another's types.
-    #[test]
-    fn every_operation_has_its_own_id() {
-        let s = spec();
-        let mut seen = BTreeSet::new();
-        for (path, item) in s["paths"].as_object().unwrap() {
-            for (method, op) in item.as_object().unwrap() {
-                let id = op["operationId"].as_str().unwrap();
-                assert!(
-                    seen.insert(id.to_owned()),
-                    "{method} {path} reuses the id {id}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn every_ref_resolves() {
-        fn refs(v: &Value, out: &mut Vec<String>) {
-            match v {
-                Value::Object(map) => {
-                    if let Some(Value::String(r)) = map.get("$ref") {
-                        out.push(r.clone());
-                    }
-                    map.values().for_each(|c| refs(c, out));
-                }
-                Value::Array(items) => items.iter().for_each(|c| refs(c, out)),
-                _ => {}
-            }
-        }
-        let s = spec();
-        let mut all = Vec::new();
-        refs(&s, &mut all);
-        assert!(all.len() > 10, "{all:?}");
-        for r in all {
-            let name = r
-                .strip_prefix("#/components/schemas/")
-                .unwrap_or_else(|| panic!("{r}"));
-            assert!(
-                s["components"]["schemas"].get(name).is_some(),
-                "{r} does not resolve"
-            );
-        }
-    }
-
-    #[test]
-    fn spec_names_no_flatten_or_untagged_shapes() {
-        // `allOf` would come from #[serde(flatten)]; `anyOf` from untagged enums (ADR 0002/0004).
-        let text = openapi_json();
-        assert!(!text.contains("\"allOf\""));
-        assert!(!text.contains("\"anyOf\""));
-    }
-
-    #[test]
-    fn event_union_and_lagged_are_components() {
-        let s = spec();
-        let schemas = &s["components"]["schemas"];
-        assert!(schemas["Event"]["oneOf"].is_array());
-        assert!(schemas["Lagged"]["properties"]["missed"].is_object());
-        assert!(schemas["ApiErrorBody"].is_object());
-        assert!(
-            s["paths"]["/api/events"]["get"]["responses"]["200"]["content"]["text/event-stream"]
-                .is_object()
-        );
-    }
-
-    #[test]
-    fn committed_spec_is_current() {
-        let committed = include_str!("../openapi/openapi.json");
-        assert!(
-            committed == openapi_json(),
-            "crates/puddle-api/openapi/openapi.json is stale: run `cargo xtask openapi`"
-        );
-    }
+pub(crate) fn operation_count(spec: &serde_json::Value) -> usize {
+    const METHODS: [&str; 8] = [
+        "get", "put", "post", "delete", "options", "head", "patch", "trace",
+    ];
+    spec["paths"].as_object().map_or(0, |paths| {
+        paths
+            .values()
+            .filter_map(serde_json::Value::as_object)
+            .map(|item| METHODS.iter().filter(|m| item.contains_key(**m)).count())
+            .sum()
+    })
 }
+
+/// The operation count of the committed `openapi.json`.
+#[cfg(test)]
+pub(crate) fn committed_operation_count() -> usize {
+    let committed: serde_json::Value =
+        serde_json::from_str(include_str!("../openapi/openapi.json")).unwrap();
+    operation_count(&committed)
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The transparency bar on the product stack, no VM: traffic shaped like the heaviest real tools
 //! (many parallel connections, keep-alive, huge transfers, half-close, slow readers, request
 //! storms, HTTP/2) goes from a guest-side client through the real guest agent, the workspace's

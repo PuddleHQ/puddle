@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Proves the clippy half of the flake rules: clippy.toml's `disallowed-methods` flags the original code of a
 # fixed flake (a test file named from the clock inside `std::env::temp_dir()`, from the windows store tests),
 # the error names the fix, and `#[expect(clippy::disallowed_methods, reason = ...)]` is the one escape.

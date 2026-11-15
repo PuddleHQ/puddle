@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Less usual turns of an HTTP/2 terminated connection: a server that is down at the handshake and
 //! back later, one that stalls or drops a request, a refused WebSocket, a request the rules let
 //! through unchanged. Each one answers on its stream and leaves the connection usable.

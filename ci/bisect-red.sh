@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Finds which commit turned a non-required workflow red. Usage:
 #   ci/bisect-red.sh <workflow-file> [--good <sha>] --bad <sha> [--max <n>]
 #   ci/bisect-red.sh <workflow-file> --cleanup

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The code-server releases Puddle may bundle: `<version> <release asset> <sha256>`. `cargo xtask
 # code-server` refuses a download that is not listed here or does not match. The first line is the
 # version it builds by default. Values are the SHA-256 GitHub shows for the asset

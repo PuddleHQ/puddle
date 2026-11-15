@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's ports over real HTTP: the list, a forward, a pin, and every refusal.
 
 use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services};

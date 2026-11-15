@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Names the VM tests that failed or were stopped, so a red or cancelled vm-linux check says which test and why
 # instead of "cancelled". In the merge queue the first failed partition cancels its own run (ci/cancel-group.sh),
 # the job then ends as `cancelled` and the result job only sees that word; an annotation written before the

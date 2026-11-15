@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The audit log (docs/spec/rules.md §5).
 
 use axum::Json;
@@ -8,6 +8,7 @@ use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::AppState;
@@ -36,6 +37,7 @@ pub(crate) struct AuditQuery {
     origin: Option<ConnectionOrigin>,
     host_contains: Option<String>,
     q: Option<String>,
+    category: Option<String>,
     from: Option<u64>,
     to: Option<u64>,
 }
@@ -88,13 +90,20 @@ impl AuditQuery {
         {
             return Err(ApiError::invalid("from must be before to"));
         }
+        let category = match self.category.as_deref() {
+            None | Some("") => None,
+            Some("company_network") => Some("company_network"),
+            Some(_) => return Err(ApiError::invalid("category must be company_network")),
+        };
         let filter = AuditFilter {
+            user: None,
             workspace,
             kind: self.kind.map(AuditType::tag),
             outcome: self.outcome.map(Into::into),
             origin: self.origin.map(Into::into),
             host_contains,
             q,
+            category,
             from: self.from,
             to: self.to,
         };
@@ -119,6 +128,7 @@ impl AuditQuery {
         ("origin" = Option<ConnectionOrigin>, Query, description = "`connection` records of this origin (`workspace` or `puddle`); other types have none and never match"),
         ("host_contains" = Option<String>, Query, description = "records whose host (a rule's pattern) contains this text, case-insensitive"),
         ("q" = Option<String>, Query, description = "records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters"),
+        ("category" = Option<String>, Query, description = "`connection` records in this destination category; only `company_network`"),
         ("from" = Option<u64>, Query, description = "records at or after this epoch ms"),
         ("to" = Option<u64>, Query, description = "records before this epoch ms")
     ),
@@ -130,12 +140,15 @@ impl AuditQuery {
 )]
 pub(crate) async fn audit(
     State(state): State<AppState>,
+    principal: Principal,
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<AuditPage>, ApiError> {
     let after = query.after;
     let (filter, cursor, limit) = query.parse()?;
     let (lines, mut names) = blocking(move || {
-        let lines = state.store.audit_query(&filter, cursor, limit)?;
+        let lines = state
+            .store
+            .audit_query(principal.user, &filter, cursor, limit)?;
         let ids: Vec<i64> = lines.iter().map(|(id, _)| *id).collect();
         let names = state.store.audit_workspace_names(&ids)?;
         Ok((lines, names))

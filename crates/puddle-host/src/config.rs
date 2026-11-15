@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's typed configuration: everything `puddle serve` and the desktop app decide, in one
 //! value, so both start the same host.
 
@@ -28,6 +28,22 @@ pub struct ApiSettings {
     pub ui: Option<Arc<dyn UiAssets>>,
     /// Where to write the connection file (URL and token), if anywhere.
     pub connection_file: Option<PathBuf>,
+    /// Remote serving: the public names a reverse proxy may use, and the listener for one on
+    /// another machine. `None`: loopback only, exactly as before.
+    pub remote: Option<RemoteSettings>,
+    /// Whether users other than the owner may sign in (off: everything belongs to the owner).
+    pub multi_user: bool,
+}
+
+/// Remote serving as the host is asked for it. The network listener is part of it, so a
+/// listener without remote serving cannot be written down. The host makes the listener's TLS
+/// certificate under the data folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteSettings {
+    /// The public names, and the base domain of workspace web apps.
+    pub serving: puddle_api::RemoteServing,
+    /// The listener for a reverse proxy on another machine, when there is one.
+    pub network: Option<puddle_api::NetworkEndpoint>,
 }
 
 impl std::fmt::Debug for ApiSettings {
@@ -37,6 +53,8 @@ impl std::fmt::Debug for ApiSettings {
             .field("extra_origins", &self.extra_origins)
             .field("ui", &self.ui.as_ref().map(|_| "custom"))
             .field("connection_file", &self.connection_file)
+            .field("remote", &self.remote)
+            .field("multi_user", &self.multi_user)
             .finish()
     }
 }
@@ -145,6 +163,8 @@ impl HostConfig {
                 extra_origins: Vec::new(),
                 ui: None,
                 connection_file,
+                remote: None,
+                multi_user: false,
             },
             upstream: UpstreamSettings::default(),
             workspaces: WorkspaceConfig::default(),
@@ -164,7 +184,7 @@ impl HostConfig {
     /// [`HostError::DataDir`] without a per-user data folder; [`HostError::Runtime`] when the
     /// folders are not absolute.
     pub fn installed_for_user(exe: &Path) -> Result<Self, HostError> {
-        let data = puddle_fs::data_dir().map_err(|e| HostError::DataDir(e.to_string()))?;
+        let data = puddle_fs::data_dir().map_err(HostError::DataDir)?;
         let mut config = Self::installed(exe, &data)?;
         // Only the user's own installation touches the user's own ssh config: a host over an
         // explicit data folder (tests, a second profile) leaves it alone.
@@ -208,45 +228,4 @@ pub const CODE_SERVER_DIR_NAME: &str = "code-server";
 pub const AGENT_FILE_NAME: &str = "puddle-agent";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_defaults_follow_the_data_folder() {
-        // Absolute on every platform ("/rt" has no drive on Windows).
-        let layout = RuntimeLayout::new(
-            std::path::absolute("/rt").unwrap(),
-            std::path::absolute("/data/msb").unwrap(),
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
-        let config = HostConfig::new(
-            HostPaths::new("/data"),
-            layout,
-            GuestSettings::new("/rt/puddle-agent"),
-        );
-        assert_eq!(
-            config.api.connection_file.as_deref(),
-            Some(Path::new("/data/api.json"))
-        );
-        assert_eq!(config.api.port, 0);
-        assert_eq!(config.expected_runtime, RuntimeVersion::built_for());
-        assert!(config.guest.git_identity.is_none());
-        assert!(format!("{:?}", config.api).contains("connection_file"));
-    }
-
-    #[test]
-    fn the_installed_layout_keeps_state_in_the_given_folder_and_the_runtime_beside_the_exe() {
-        let dir = tempfile::tempdir().unwrap();
-        let app = dir.path().join("app");
-        let data = dir.path().join("data");
-        let config = HostConfig::installed(&app.join("puddle-app"), &data).unwrap();
-        assert_eq!(config.paths.data(), data);
-        assert_eq!(config.layout.runtime_dir(), app.join("runtime"));
-        assert_eq!(
-            config.guest.agent_binary,
-            app.join("runtime").join(AGENT_FILE_NAME)
-        );
-        assert_eq!(config.guest.code_server, None);
-        assert_eq!(config.api.connection_file, Some(data.join("api.json")));
-    }
-}
+mod tests;

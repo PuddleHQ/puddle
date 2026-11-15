@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The system check, run on request. A run takes a few seconds (it boots a tiny test machine), so
 // the screens show `running` and keep the buttons off meanwhile.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";

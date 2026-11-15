@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The colour of a rule set (`Fill`: one solid colour today, a tagged value so a gradient can be
 // another kind later) and what drawing it takes: the ink that stays readable on it, the swatches
 // the picker offers and the check of a typed value. The colour is never the only carrier of

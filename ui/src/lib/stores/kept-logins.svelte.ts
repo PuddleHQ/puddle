@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The logins Puddle keeps for one workspace, for its settings page: which services, since when.
 // The list never holds a token; forgetting one asks the API to delete it from the credential store.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";

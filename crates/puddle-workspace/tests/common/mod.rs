@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared by the tests that run `git` (or scripts that do) on the host.
 //!
 //! Under a git hook (the pre-push gates run the tests) git exports `GIT_DIR`, `GIT_INDEX_FILE`
@@ -169,21 +169,4 @@ pub(crate) fn volume(root: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_git_variables_are_removed() {
-        let cmd = command_without(
-            "git",
-            ["GIT_DIR", "GIT_INDEX_FILE", "PATH", "GIT_CONFIG_COUNT"].map(OsString::from),
-        );
-        let mut removed: Vec<_> = cmd
-            .get_envs()
-            .filter(|(_, v)| v.is_none())
-            .map(|(k, _)| k.to_string_lossy().into_owned())
-            .collect();
-        removed.sort();
-        assert_eq!(removed, ["GIT_CONFIG_COUNT", "GIT_DIR", "GIT_INDEX_FILE"]);
-    }
-}
+mod tests;

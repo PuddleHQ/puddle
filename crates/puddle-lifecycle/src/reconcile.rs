@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reconcile at start: clean up after a Puddle that died without its shutdown.
 //!
 //! Puddle-owned means: a sandbox the runtime lists with [`SandboxInfo::puddle_owned`] (msb: the

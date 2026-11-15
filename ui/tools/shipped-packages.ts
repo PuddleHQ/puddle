@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Records which npm packages end up in the browser bundle, for the licence gate
 // (scripts/licences.ts): what ships is what must be licence-checked, not the whole install tree
 // (build tools are never shipped). Written by `vite build` to .svelte-kit/shipped-packages.json.

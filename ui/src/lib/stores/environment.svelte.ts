@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The environment variables and secrets of one scope: a workspace's own (with the global ones it
 // inherits, listed after them) or the global ones. A secret's value goes out once and never comes
 // back; the table has only its hosts. Every change is saved at once, and the list is read again on

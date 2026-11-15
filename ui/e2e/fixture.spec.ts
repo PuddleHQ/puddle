@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The fixture backend itself, from the browser's side: scripted requests reach the shell's live
 // count, a restart makes the page resync, and reset gives each test its own start.
 import { expect, test } from "./fixture";

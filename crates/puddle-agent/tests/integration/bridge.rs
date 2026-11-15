@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for the Docker bridge listener: the bridge appears after the agent started,
 //! disappears, and comes back as a different interface, with a fake probe standing in for the
 //! kernel and `127.0.0.2` standing in for the bridge address.
@@ -255,8 +255,8 @@ async fn a_bridge_that_comes_goes_and_comes_again_works_each_time() {
 #[tokio::test]
 async fn a_busy_bridge_port_is_retried_until_it_is_free() {
     // Hold a port on the bridge address, as a published container port would.
-    let held = TcpListener::bind((BRIDGE_IP, 0)).await.unwrap();
-    let port = held.local_addr().unwrap().port();
+    let port = puddle_test_kit::quiet_port();
+    let held = TcpListener::bind((BRIDGE_IP, port)).await.unwrap();
     let s = setup("busy", port).await;
     let echo = echo_server().await;
     let mut state = s.rig.agent.bridge_state();

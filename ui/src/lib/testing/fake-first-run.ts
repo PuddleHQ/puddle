@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the API's system-check and first-run endpoints, in the shape openapi-fetch returns
 // them. Not shipped (tests import it).
 import type { FirstRun } from "#lib/stores/first-run.svelte.ts";

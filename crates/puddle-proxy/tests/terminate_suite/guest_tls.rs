@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of what the audit records when the client in the workspace does not accept the
 //! certificate Puddle presents for a bound host (the usual cause: a tool with its own list of
 //! roots that does not include the workspace's CA).

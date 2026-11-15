@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The event stream reader (ADR 0004). `EventSource` can't send the bearer token, so this reads
 // `GET /api/events` with `fetch` and feeds the bytes to eventsource-parser. It is an async
 // iterator of `Event`: it reconnects with backoff, tells the caller when a refetch is needed
 // (`lagged`, or any reconnect, because events may have been missed), and ends when aborted or
 // when the service refuses the app's key (401/403: the same key will be refused again).
 import { createParser } from "eventsource-parser";
-import { authHeaders, bootstrapToken } from "./connection.ts";
+import { activeToken, authHeaders } from "./connection.ts";
 import type { components } from "./schema.d.ts";
 
 export type PuddleEvent = components["schemas"]["Event"];
@@ -144,7 +144,7 @@ export async function* eventStream(
         signal,
         headers: {
           Accept: "text/event-stream",
-          ...authHeaders((options.getToken ?? bootstrapToken)()),
+          ...authHeaders((options.getToken ?? activeToken)()),
         },
       });
       if (!response.ok || response.body === null) {

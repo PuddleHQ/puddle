@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Signing in to a company proxy that asks for a user name and password, against the real API on
 // the fixture backend: store it in Settings, see it on the network-health screen, never see the
 // password again, remove it. Waits are on conditions, never on time.

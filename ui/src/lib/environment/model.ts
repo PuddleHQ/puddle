@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the environment screens know about variables and secrets: what a name and a host list look
 // like before they are sent (the service has the last word and its reason is shown as it is), and
 // the sentences the rows and the forms use.
@@ -101,7 +101,7 @@ export const plural = (n: number, noun: string): string =>
   `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 export const PLAIN_AT_NEXT_START =
-  "Plain variables apply at the next start of a running workspace (the sandbox is made again, so its home folder and installed packages are reset; the disk with your work stays).";
+  "Plain variables apply at the next start of a running workspace; its home folder and installed packages stay. Programs already running keep the old values.";
 export const SECRET_AT_ONCE =
   "A secret's hosts and value apply at once, with no restart.";
 export const SECRET_NEVER_IN =

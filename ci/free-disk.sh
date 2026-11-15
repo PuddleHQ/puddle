@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Frees space on a hosted Linux runner that starts with little disk. Some runners of the pool start with a 72 GB
 # root disk of which the image already fills 59 GB (14 GB free), where a normal one has 145 GB (86 GB free); the
 # VM test job writes about 13 GB and the nextest archive extraction alone filled the rest. Run as the first step

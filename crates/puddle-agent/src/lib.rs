@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Guest agent (`puddle-agent`): a static binary inside each sandbox (ADR 0005) that
 //!
 //! - listens for proxy clients (`HTTP(S)_PROXY`) and
@@ -33,6 +33,7 @@
 //!
 //! Unsafe code exists only in the Linux `vsock` module, which says why; elsewhere it is forbidden.
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 pub mod account;
 pub mod bridge;
@@ -41,6 +42,7 @@ pub mod cli;
 pub mod config;
 pub mod connect;
 pub mod control;
+pub mod download;
 pub mod editor;
 pub mod editor_stream;
 pub mod entrypoint;
@@ -52,11 +54,15 @@ pub mod host_streams;
 mod ifaddrs;
 pub mod merge_file;
 pub mod microsoft;
+pub mod mise;
+pub mod mise_install;
 pub mod oom;
 #[cfg(target_os = "linux")]
 pub mod origin;
 pub mod ports;
 pub mod serve;
+#[cfg(unix)]
+pub mod ssh_agent;
 pub mod upstream;
 #[cfg(target_os = "linux")]
 mod vsock;
@@ -69,7 +75,7 @@ use puddle_agent_proto::AgentMessage;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
-pub use config::Config;
+pub use config::{Config, SshAgentConfig};
 
 /// Reports waiting for the control stream.
 const REPORT_QUEUE: usize = 64;
@@ -152,6 +158,10 @@ impl Agent {
         }
         let capture =
             start_capture(&config, stand_ins.as_ref(), &upstream, &tx, &mut tasks).await?;
+        #[cfg(unix)]
+        if let Some(socket) = config.ssh_agent.clone() {
+            tasks.spawn(ssh_agent::serve(socket, Arc::clone(&upstream)));
+        }
         tasks.spawn(control::run(upstream, rx));
         if let Some(watch) = config.ports.clone() {
             tasks.spawn(ports::watch(watch, bound.reserved_ports(), tx.clone()));
@@ -314,15 +324,4 @@ fn covers(listen: SocketAddr, addr: SocketAddr) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_wildcard_or_equal_listener_covers_the_bridge_address() {
-        let bridge: SocketAddr = "172.17.0.1:3128".parse().unwrap();
-        assert!(covers("0.0.0.0:3128".parse().unwrap(), bridge));
-        assert!(covers("172.17.0.1:3128".parse().unwrap(), bridge));
-        assert!(!covers("0.0.0.0:3129".parse().unwrap(), bridge));
-        assert!(!covers("127.0.0.1:3128".parse().unwrap(), bridge));
-    }
-}
+mod tests;

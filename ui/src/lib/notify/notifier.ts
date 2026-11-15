@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Where a notice goes. The in-app implementation puts it in the notice list; operating-system
 // notifications are raised by the desktop shell from the same events, not from here.
 import {

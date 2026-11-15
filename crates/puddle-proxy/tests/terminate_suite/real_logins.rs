@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Claude Code, `gh` and GitHub Copilot command-line tools logging in through the proxy
 //! and the real login capture, against fake servers that speak the three logins' wire formats.
 //! No account is involved and nothing leaves the machine.
@@ -8,8 +8,8 @@
 //! helper) and never holds a real token. The tools are the user's own installs: a test skips when
 //! its tool is not found, unless `PUDDLE_REQUIRE_LOGIN_TOOLS` is set. `claude` and `gh` come from
 //! the path, Copilot CLI from `PUDDLE_COPILOT_BIN` (its VS Code shim installs the real program on
-//! first use, so the path alone is not enough). Claude Code 2.1.5 (its login is a screen, driven on a
-//! terminal made by `script`) comes from `PUDDLE_CLAUDE_OLD_BIN`. Unix only.
+//! first use, so the path alone is not enough). One test drives Claude Code's login screen on a
+//! terminal made by `script`. Unix only.
 #![cfg(unix)]
 #![expect(
     clippy::print_stderr,
@@ -261,6 +261,8 @@ fn github_api(request: &Recorded) -> Reply {
 struct Tools {
     rig: Rig,
     home: tempfile::TempDir,
+    /// The folder the home sits in: the ceiling for git's search for a repository.
+    outer: tempfile::TempDir,
     port: u16,
     servers: Vec<(&'static str, FakeServer)>,
     notices: Arc<Notices>,
@@ -327,11 +329,13 @@ impl Tools {
             .build();
         let guest = rig.guest();
         let (port, bridge) = guest.proxy_port().await;
-        let home = tempfile::tempdir().unwrap();
+        let outer = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir_in(outer.path()).unwrap();
         std::fs::write(home.path().join("ca.pem"), rig.ca.certificate().pem()).unwrap();
         Self {
             rig,
             home,
+            outer,
             port,
             servers,
             notices,
@@ -383,6 +387,11 @@ impl Tools {
             // github.com): git must not look above it.
             .env("GIT_CEILING_DIRECTORIES", home.parent().unwrap_or(home))
             .env("DO_NOT_TRACK", "1")
+            // A tool that finds no session bus starts its own (`dbus-launch`) and, with gnome-keyring
+            // installed, a keyring daemon behind it that waits for a prompt nobody answers: `gh auth login`
+            // then hangs instead of writing hosts.yml. A bus address that goes nowhere keeps every tool
+            // on its file store, whatever keyring the machine has.
+            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/no-session-bus")
             .current_dir(home)
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -588,8 +597,8 @@ async fn claude_code_console_login_keeps_the_api_key_it_creates_and_sends_it_onl
     tools.assert_no_real_token_in_the_workspace();
 }
 
-/// Claude Code 2.1.5 has no `auth login`: its login is a screen of the interactive program, so it
-/// runs on a terminal made by `script`, and the keys are sent as each screen shows up.
+/// Claude Code's login is also a screen of the interactive program, so it runs on a terminal made
+/// by `script`, and the keys are sent as each screen shows up.
 struct Screen {
     seen: Arc<Mutex<String>>,
     keys: tokio::process::ChildStdin,
@@ -628,6 +637,36 @@ impl Screen {
         }
     }
 
+    /// The raw terminal output as plain text: the program moves the cursor with `ESC [ n G` instead
+    /// of printing a space between words, so that sequence becomes a space and every other escape
+    /// sequence is dropped.
+    fn plain(raw: &str) -> String {
+        let mut out = String::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\u{1b}' {
+                out.push(c);
+                continue;
+            }
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                let mut last = ' ';
+                for next in chars.by_ref() {
+                    last = next;
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+                if last == 'G' {
+                    out.push(' ');
+                }
+            } else {
+                chars.next();
+            }
+        }
+        out
+    }
+
     /// Waits for `text` to appear on the screen after the last key, then sends `keys`.
     async fn wait_then_send(&mut self, text: &str, keys: &str) {
         let seen = Arc::clone(&self.seen);
@@ -635,7 +674,7 @@ impl Screen {
             &format!("{text:?} on the screen"),
             Duration::from_secs(60),
             || {
-                let screen = seen.lock().unwrap();
+                let screen = Self::plain(&seen.lock().unwrap());
                 screen
                     .contains(text)
                     .then_some(())
@@ -653,13 +692,12 @@ impl Screen {
     }
 }
 
-/// The real Claude Code 2.1.5 (`PUDDLE_CLAUDE_OLD_BIN`, from `npm i @anthropic-ai/claude-code@2.1.5`)
-/// logs in on the console host, which the newer tool no longer uses, and the real tokens stay out
-/// of its credentials file.
+/// The real Claude Code logs in from its first-run screens (theme, login method, pasted code) on
+/// the platform host, and the real tokens stay out of its credentials file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
-    let Some(old) = std::env::var_os("PUDDLE_CLAUDE_OLD_BIN").map(PathBuf::from) else {
-        tool_missing("PUDDLE_CLAUDE_OLD_BIN (Claude Code 2.1.5)");
+async fn claude_code_logs_in_from_its_login_screen_with_stand_ins_only() {
+    let Some(claude) = on_path("claude") else {
+        tool_missing("claude");
         return;
     };
     if on_path("script").is_none() {
@@ -667,18 +705,19 @@ async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
         return;
     }
     let tools = Tools::new(false).await;
-    let mut screen = Screen::start(&tools, &old);
+    let mut screen = Screen::start(&tools, &claude);
     screen.wait_then_send("Choose the text style", "\r").await;
     screen.wait_then_send("Select login method", "\r").await;
     screen
         .wait_then_send("Paste code here", "fakecode#fakestate")
         .await;
-    screen.wait_then_send("fakecode#fakestate", "\r").await;
+    // The screen masks the pasted code except its last six characters.
+    screen.wait_then_send("************estate", "\r").await;
     screen.wait_then_send("Login successful", "").await;
 
-    // The exchange is the one the profile assumes: a JSON `POST /v1/oauth/token` on the console host.
+    // The exchange is the one the profile assumes: a JSON `POST /v1/oauth/token` on the platform host.
     let exchanges: Vec<Recorded> = tools
-        .server("console.anthropic.com")
+        .server("platform.claude.com")
         .recorded()
         .into_iter()
         .filter(|r| r.method == "POST")
@@ -695,11 +734,11 @@ async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
     assert_eq!(sent["code"], "fakecode");
     assert!(
         tools
-            .server("platform.claude.com")
+            .server("console.anthropic.com")
             .recorded()
             .iter()
             .all(|r| path_of(r) != "/v1/oauth/token"),
-        "the tool used the new host"
+        "the tool used the console host"
     );
 
     let credentials = tools.home.path().join(".claude/.credentials.json");
@@ -851,12 +890,20 @@ async fn copilot_cli_uses_the_stand_in_from_a_gh_login_on_the_copilot_hosts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_tool_run_never_discovers_a_repository_above_its_home() {
     let tools = Tools::new(false).await;
-    let command = tools.command(Path::new("git"));
-    let ceiling = command
-        .as_std()
-        .get_envs()
-        .find(|(name, _)| *name == "GIT_CEILING_DIRECTORIES")
-        .and_then(|(_, value)| value.map(PathBuf::from))
-        .expect("the ceiling is set");
-    assert_eq!(Some(ceiling.as_path()), tools.home.path().parent());
+    // A repository in the folder above the home, as a checkout is above a mutation run's temporary
+    // directory: a tool run in the home must not see it.
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(tools.outer.path())
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    let mut found = tools.command(Path::new("git"));
+    found.args(["rev-parse", "--show-toplevel"]);
+    let found = found.output().await.unwrap();
+    assert!(
+        !found.status.success(),
+        "git found a repository above the home: {}",
+        String::from_utf8_lossy(&found.stdout)
+    );
 }

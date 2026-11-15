@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle"
 description = "The Puddle host program: CLI and daemon that wires the other crates together"
@@ -15,30 +15,41 @@ publish.workspace = true
 embedded-ui = ["puddle-host/embedded-ui"]
 
 [dependencies]
+puddle-api = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-host = { workspace = true }
 puddle-lifecycle = { workspace = true }
 puddle-log = { workspace = true }
 puddle-no-dump = { workspace = true }
+puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-std", "net", "rt", "rt-multi-thread", "time"] }
+toml = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
+puddle-upstream = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 puddle-boot = { workspace = true }
-puddle-compute = { workspace = true }
+puddle-compute = { workspace = true, features = ["fake"] }
+puddle-certs = { workspace = true }
+puddle-runtime = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-vm-tests = { workspace = true }
 puddle-ipc = { workspace = true }
-puddle-store = { workspace = true }
 tempfile = { workspace = true }
+sha2 = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+pem = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 
 [lints]

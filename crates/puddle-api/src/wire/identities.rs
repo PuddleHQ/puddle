@@ -1,10 +1,12 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git identities and a workspace's Git settings on the wire (credentials spec §7, §8). A
 //! credential names a source; no request or response carries a secret value.
 
 use std::collections::BTreeSet;
 
-use puddle_secrets::{AccountName, HostName, OrgName, SourceSpec, StoredId, TokenScope, UrlPath};
+use puddle_secrets::{
+    AccountName, HostName, OrgName, SourceSpec, StoredId, TenantId, TokenScope, UrlPath,
+};
 use puddle_store as store;
 use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
@@ -16,9 +18,10 @@ fn bad(what: &str) -> ApiError {
     ApiError::invalid(format!("not a valid {what}"))
 }
 
-/// Where the host reads a credential's value. A closed list; there is no command-line source.
+/// Where the host reads a credential's value. A closed list; there is no command-line source, and
+/// a field the list does not know (a `command`, say) is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CredentialSource {
     /// The token of a named, signed-in GitHub CLI account.
     Gh {
@@ -49,6 +52,16 @@ pub enum CredentialSource {
         #[schema(required = true)]
         org: Option<String>,
     },
+    /// The Microsoft Entra token of the account signed in to the Azure CLI (`az`), for Azure
+    /// DevOps. The user signs in to `az` in a terminal; Puddle only reads a token.
+    AzCli {
+        /// The tenant to ask `az` for: a directory id or a domain such as `contoso.onmicrosoft.com`.
+        tenant: String,
+        /// The Azure DevOps organisation the token is meant for.
+        #[serde(default)]
+        #[schema(required = true)]
+        org: Option<String>,
+    },
 }
 
 impl CredentialSource {
@@ -72,6 +85,10 @@ impl CredentialSource {
                 host: scope.host.to_string(),
                 org: scope.org.as_ref().map(ToString::to_string),
             },
+            SourceSpec::AzCli { tenant, org } => Self::AzCli {
+                tenant: tenant.to_string(),
+                org: org.as_ref().map(ToString::to_string),
+            },
             _ => return None,
         })
     }
@@ -81,8 +98,8 @@ impl CredentialSource {
     ///
     /// # Errors
     /// The refusal in words: a host, account, path, id or organisation that is not valid.
-    pub fn into_spec(self) -> Result<SourceSpec, String> {
-        self.into_store().map_err(|err| err.message().to_owned())
+    pub fn into_spec(self) -> Result<SourceSpec, crate::ApiErrorBody> {
+        self.into_store().map_err(ApiError::into_body)
     }
 
     pub(crate) fn into_store(self) -> Result<SourceSpec, ApiError> {
@@ -114,6 +131,13 @@ impl CredentialSource {
                         .transpose()
                         .map_err(|_| bad("organisation"))?,
                 },
+            },
+            Self::AzCli { tenant, org } => SourceSpec::AzCli {
+                tenant: TenantId::new(tenant).map_err(|_| bad("Azure tenant"))?,
+                org: org
+                    .map(OrgName::new)
+                    .transpose()
+                    .map_err(|_| bad("organisation"))?,
             },
         })
     }
@@ -149,6 +173,9 @@ pub struct LastCheck {
     pub problem: Option<String>,
     /// True when the way out is for the user to sign in.
     pub needs_sign_in: bool,
+    /// The exact step the user takes to fix it, when there is one; `null` otherwise.
+    #[schema(required = true)]
+    pub fix_step: Option<String>,
     /// Epoch ms the read finished.
     pub checked_at: u64,
     /// What asked for it.
@@ -168,15 +195,18 @@ pub enum CheckedBy {
 }
 
 impl LastCheck {
-    pub(crate) fn from_read(read: &puddle_secrets::LastRead) -> Self {
+    pub(crate) fn from_read(source: &SourceSpec, read: &puddle_secrets::LastRead) -> Self {
         let result = read
             .problem
             .as_ref()
-            .map_or_else(super::CheckResult::readable, super::CheckResult::from_error);
+            .map_or_else(super::CheckResult::readable, |err| {
+                super::CheckResult::from_error(source, err)
+            });
         Self {
             readable: result.readable,
             problem: result.problem,
             needs_sign_in: result.needs_sign_in,
+            fix_step: result.fix_step,
             checked_at: read
                 .at
                 .duration_since(std::time::UNIX_EPOCH)
@@ -219,7 +249,7 @@ impl IdentityCredentialView {
             last_check: credentials
                 .last_read(&binding.source)
                 .as_ref()
-                .map(LastCheck::from_read),
+                .map(|read| LastCheck::from_read(&binding.source, read)),
         })
     }
 }
@@ -349,8 +379,8 @@ impl IdentityRequest {
     ///
     /// # Errors
     /// The refusal in words.
-    pub fn into_store_draft(self) -> Result<store::IdentityDraft, String> {
-        self.into_draft().map_err(|err| err.message().to_owned())
+    pub fn into_store_draft(self) -> Result<store::IdentityDraft, crate::ApiErrorBody> {
+        self.into_draft().map_err(ApiError::into_body)
     }
 
     pub(crate) fn into_draft(self) -> Result<store::IdentityDraft, ApiError> {
@@ -667,43 +697,4 @@ impl NewWorkspaceIdentity {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn repo() -> store::RepoRef {
-        store::RepoRef::new("github.com", "acme", "shop").unwrap()
-    }
-
-    #[test]
-    fn only_a_repository_nobody_covers_has_a_warning_naming_the_identity_and_the_place() {
-        let start = |basis, label: Option<&str>| store::GitStart {
-            identity: label.map(|l| (store::IdentityId(1), l.to_owned())),
-            basis,
-        };
-        let covered = NewWorkspaceIdentity::from_store(
-            &start(store::StartBasis::Covers, Some("Work")),
-            &repo(),
-        );
-        assert_eq!(covered.warning, None);
-        assert_eq!(covered.identity.as_deref(), Some("Work"));
-
-        let default = NewWorkspaceIdentity::from_store(
-            &start(store::StartBasis::Default, Some("Personal")),
-            &repo(),
-        );
-        assert_eq!(default.basis, NewWorkspaceIdentityBasis::Default);
-        let text = default.warning.unwrap();
-        assert!(
-            text.contains("Personal") && text.contains("github.com/acme"),
-            "{text}"
-        );
-
-        let none =
-            NewWorkspaceIdentity::from_store(&start(store::StartBasis::NoIdentity, None), &repo());
-        assert_eq!(
-            (none.identity, none.basis),
-            (None, NewWorkspaceIdentityBasis::None)
-        );
-        assert!(none.warning.unwrap().contains("no default identity"));
-    }
-}
+mod tests;

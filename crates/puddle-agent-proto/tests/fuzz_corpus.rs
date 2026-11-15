@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Replays the checked-in corpus of the `resolve_line` cargo-fuzz target (`fuzz/corpus/resolve_line/`)
 //! through the same entry point on the stable toolchain, so a plain test run keeps every seed and
 //! every input a nightly fuzz run once crashed on passing (see `fuzz/README.md`).

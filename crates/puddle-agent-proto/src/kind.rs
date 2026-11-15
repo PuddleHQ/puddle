@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Stream kinds: what a yamux stream that isn't a proxied connection carries.
 //!
 //! One vsock route carries everything (a smaller surface than a route per feature).
@@ -12,7 +12,7 @@
 //! | `resolve` v1 | agent | served: one name lookup per stream ([`crate::resolve`]), for the guest's stub DNS |
 //! | `forward` v1 | host | served by the agent: the host reaches a guest port ([`crate::forward`]) |
 //! | `connect` | agent | reserved: a raw connection to a named destination (`puddle-agent connect`, the `ssh` `ProxyCommand`, goes through the agent's listener as a `CONNECT` for now: [`crate::ssh`]) |
-//! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
+//! | `ssh-agent` v1 | agent | served: one client of the guest's SSH agent socket, the agent protocol both ways ([`crate::host::AgentStream`]) |
 //! | `host-control` v1 | host | served by the agent: one [`crate::host_control::HostMessage`] line, one reply line ([`crate::host_control`]) |
 //! | `editor` v1 | host | served by the agent: a connection to the editor server, or its password ([`crate::editor_stream`]) |
 //!
@@ -40,7 +40,7 @@ pub enum StreamKind {
     Forward,
     /// Reserved: a raw connection to a named destination.
     Connect,
-    /// Reserved: the guest side of a filtered SSH agent.
+    /// One client of the guest's SSH agent socket; the host's filter answers it.
     SshAgent,
     /// Reserved: host → guest messages on a host-opened stream.
     HostControl,
@@ -136,55 +136,4 @@ pub fn parse_preamble(line: &[u8]) -> Result<(StreamKind, u32), PreambleError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-
-    use super::*;
-
-    #[test]
-    fn every_kind_round_trips_through_its_preamble() {
-        for kind in StreamKind::ALL {
-            let p = kind.preamble();
-            assert!(p.len() <= MAX_PREAMBLE);
-            assert_eq!(p.first(), Some(&0));
-            assert_eq!(parse_preamble(p), Ok((kind, kind.version())));
-        }
-    }
-
-    #[test]
-    fn unknown_kinds_and_bad_shapes_are_errors() {
-        assert_eq!(
-            parse_preamble(b"\0puddle-telepathy/1\n"),
-            Err(PreambleError::UnknownKind("telepathy".into()))
-        );
-        assert_eq!(
-            parse_preamble(b"\0puddle-\x07x/1\n"),
-            Err(PreambleError::UnknownKind("?x".into()))
-        );
-        for bad in [
-            &b""[..],
-            b"\0puddle-control/1",
-            b"\0puddle-control\n",
-            b"\0puddle-control/x\n",
-            b"puddle-control/1\n",
-            b"\0puddle-\xff/1\n",
-        ] {
-            assert_eq!(
-                parse_preamble(bad),
-                Err(PreambleError::Malformed),
-                "{bad:?}"
-            );
-        }
-        assert_eq!(
-            parse_preamble(b"\0puddle-control/2\n"),
-            Ok((StreamKind::Control, 2))
-        );
-    }
-
-    proptest! {
-        #[test]
-        fn any_bytes_parse_or_fail_without_panicking(bytes in proptest::collection::vec(any::<u8>(), 0..80)) {
-            let _ = parse_preamble(&bytes);
-        }
-    }
-}
+mod tests;

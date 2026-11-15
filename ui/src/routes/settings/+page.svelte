@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { onDestroy, onMount } from "svelte";
@@ -6,15 +6,22 @@
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
+  import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
+  import DevicesPanel from "#lib/components/DevicesPanel.svelte";
+  import { DevicesStore } from "#lib/stores/devices.svelte.ts";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
+  import { session } from "#lib/session/session.svelte.ts";
   import Toast from "#lib/components/Toast.svelte";
   import EnvironmentTable from "#lib/components/EnvironmentTable.svelte";
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
   import { SECRET_NEVER_IN } from "#lib/environment/model.ts";
   import { api } from "#lib/api/client.ts";
-  import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import {
+    LOCAL_LABELS,
+    type LocalCategory,
+  } from "#lib/decision/local-labels.ts";
   import { CPU_COUNTS, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import {
     EMPTY_DRAFT,
@@ -25,6 +32,7 @@
     setLayer,
     setServer,
     setToggle,
+    setTools,
     setUi,
     type Draft,
     type LayerKey,
@@ -36,11 +44,13 @@
     linesProblem,
     parseFreeGb,
   } from "#lib/settings/disk-space.ts";
+  import { parseSshAgentPipe } from "#lib/settings/ssh-agent.ts";
   import {
     CLOSE_OPTIONS,
     LOCAL_EXPLAIN,
     memorySizes,
     microsoftChosenToast,
+    miseManaged,
     needsMicrosoftConsent,
     parseDiskWarning,
     parseGrace,
@@ -84,16 +94,19 @@
     ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
     ["s-disk", "Disk space"],
+    ["s-ssh", "SSH agent"],
     ["s-net", "Network"],
     ["s-vsc", "Browser VS Code"],
     ["s-git", "Git and credentials"],
     ["s-env", "Environment"],
+    ["s-dev", "Devices"],
     ["s-priv", "Privacy"],
     ["s-about", "About"],
   ];
   const CATEGORIES: LocalCategory[] = [
     "loopback",
     "private",
+    "company_network",
     "link_local",
     "metadata",
     "special",
@@ -106,6 +119,7 @@
   /** What is wrong with a free-space line as typed; the lines as a pair are checked by `linesError`. */
   let warnError = $state<string | null>(null);
   let failError = $state<string | null>(null);
+  let sshError = $state<string | null>(null);
   let trustOpen = $state(false);
   let popupOpen = $state(false);
   let popupBusy = $state(false);
@@ -117,6 +131,7 @@
   let noticesFailed = $state(false);
 
   const env = new EnvironmentStore();
+  const devices = new DevicesStore();
   onMount(() => env.start({ kind: "global" }));
 
   onMount(() => {
@@ -190,6 +205,7 @@
     warnError = null;
     failError = null;
     diskError = null;
+    sshError = null;
     saved = null;
     problem = null;
     showStored();
@@ -236,6 +252,9 @@
     value: NonNullable<Layer[K]>,
     stored: NonNullable<Layer[K]>,
   ) => edit(setLayer(draft, key, value, stored));
+  const miseShown = $derived(
+    draft.tools.mise ?? (store.view ? miseManaged(store.view) : true),
+  );
   /** The preferences that are plain on/off switches. */
   type BoolPref =
     | "notifications"
@@ -365,6 +384,25 @@
     else failError = message;
     if (!parsed.ok || !store.view) return;
     editUi(key, parsed.gb, store.view.ui[key] ?? fallback);
+  }
+
+  function editSshAgent(input: HTMLInputElement) {
+    const view = store.view;
+    if (!view) return;
+    const parsed = parseSshAgentPipe(input.value);
+    if (!parsed.ok) {
+      sshError = parsed.message;
+      return;
+    }
+    sshError = null;
+    edit(
+      setUi(
+        draft,
+        "ssh_agent_pipe",
+        parsed.pipe,
+        view.ui.ssh_agent_pipe ?? null,
+      ),
+    );
   }
 
   function editGrace(input: HTMLInputElement, stored: number) {
@@ -711,6 +749,32 @@
         </div>
         <div class="setting">
           <div class="grow">
+            <label for="set-mise">Manage tools with mise in workspaces</label>
+            <p class="desc" id="set-mise-desc">
+              Turning this off leaves every workspace's tools and mise.toml as
+              they are; running workspaces drop mise from PATH at their next
+              start. It applies to every workspace and no workspace can turn it
+              back on. On by default.
+            </p>
+          </div>
+          <input
+            id="set-mise"
+            type="checkbox"
+            aria-describedby="set-mise-desc"
+            checked={miseShown}
+            onchange={(e) =>
+              edit(
+                setTools(
+                  draft,
+                  "mise",
+                  e.currentTarget.checked,
+                  store.view ? miseManaged(store.view) : true,
+                ),
+              )}
+          />
+        </div>
+        <div class="setting">
+          <div class="grow">
             <label for="set-direct-ssh"
               >{DIRECT_SSH_LABEL} for new workspaces</label
             >
@@ -763,6 +827,40 @@
                 "capture_logins",
                 e.currentTarget.checked,
                 eff.capture_logins.value,
+              )}
+          />
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-foreign-warning"
+              >Warn about a credential Puddle did not add</label
+            >
+            <p class="desc" id="set-foreign-warning-desc">
+              When a tool in a workspace sends a token of its own (one you
+              pasted, or a login Puddle does not keep) to a website, Puddle lets
+              the request through as it always did and tells you: a notice, and
+              a flag in the Activity log that names the website and what kind of
+              token it looked like, never the token itself. On by default.
+              Puddle cannot tell your own token from one that leaked, so this
+              catches mistakes, not a workspace that hides what it sends. A
+              workspace can set its own switch; a change applies to the next
+              request. The same switch covers a token of a known kind that a
+              website sends the workspace in an answer and Puddle does not hold.
+            </p>
+          </div>
+          <input
+            id="set-foreign-warning"
+            type="checkbox"
+            aria-describedby="set-foreign-warning-desc"
+            checked={layerValue(
+              "warn_foreign_credentials",
+              eff.warn_foreign_credentials.value,
+            )}
+            onchange={(e) =>
+              editLayer(
+                "warn_foreign_credentials",
+                e.currentTarget.checked,
+                eff.warn_foreign_credentials.value,
               )}
           />
         </div>
@@ -837,6 +935,37 @@
         {#if linesError}<p class="error" role="alert">{linesError}</p>{/if}
       </section>
 
+      <section class="card" id="s-ssh" aria-labelledby="h-ssh">
+        <h2 id="h-ssh">SSH agent</h2>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-ssh-agent">SSH agent pipe or socket</label>
+            <p class="desc" id="set-ssh-agent-desc">
+              The agent <code>puddle doctor</code> asks for the key list, for
+              SSH to servers other than Git hosts. Leave it empty for the
+              default: the OpenSSH agent's pipe
+              <span class="mono">\\.\pipe\openssh-ssh-agent</span>
+              on Windows, the <span class="mono">SSH_AUTH_SOCK</span> of
+              Puddle's session elsewhere. Pageant and 1Password users name the
+              agent's own pipe here.
+              {#if sshError}<span class="error" role="alert">{sshError}</span
+                >{/if}
+            </p>
+          </div>
+          <input
+            id="set-ssh-agent"
+            type="text"
+            class="wide mono"
+            aria-describedby="set-ssh-agent-desc"
+            aria-invalid={sshError ? "true" : undefined}
+            value={draft.ui.ssh_agent_pipe ??
+              store.view?.ui.ssh_agent_pipe ??
+              ""}
+            onchange={(e) => editSshAgent(e.currentTarget)}
+          />
+        </div>
+      </section>
+
       <section class="card" id="s-net" aria-labelledby="h-net">
         <h2 id="h-net">Network</h2>
         <h3>Network health</h3>
@@ -866,7 +995,7 @@
             >Run the system check again</a
           >
         </div>
-        <h3>Local destinations</h3>
+        <h3 id="local-destinations">Local destinations</h3>
         <p class="desc">
           Off by default. Turning one on makes those destinations
           <b>approvable</b>: each one still needs a rule or your approval.
@@ -919,6 +1048,7 @@
           />
         </div>
 
+        <GlobalInterception />
         <GlobalNeverDecrypt />
         <LearnedLimitsSetting />
       </section>
@@ -1087,6 +1217,11 @@
         <EnvironmentTable store={env} label="Environment of every workspace" />
       </section>
 
+      <section class="card" id="s-dev" aria-labelledby="h-dev">
+        <h2 id="h-dev">Devices and sign-in</h2>
+        <DevicesPanel {session} store={devices} />
+      </section>
+
       <section class="card" id="s-priv" aria-labelledby="h-priv">
         <h2 id="h-priv">Privacy</h2>
         <p>
@@ -1107,7 +1242,7 @@
             <span class="muted">
               (version unavailable: Puddle's service didn't say)</span
             >{/if}
-          <span class="muted"> &middot; GPL-3.0-or-later</span>
+          <span class="muted"> &middot; AGPL-3.0-or-later</span>
         </p>
         <details ontoggle={() => void loadNotices()}>
           <summary>Third-party licences</summary>
@@ -1134,6 +1269,8 @@
             <p class="error">Fix the reconnection grace to save.</p>
           {:else if diskBlocked && dirty}
             <p class="error">Fix the disk space lines to save.</p>
+          {:else if sshError && dirty}
+            <p class="error">Fix the SSH agent pipe to save.</p>
           {:else if diskError && dirty}
             <p class="error">Fix the disk warning percentage to save.</p>
           {:else if saved}
@@ -1158,7 +1295,11 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!dirty || saving || graceError !== null || diskIssue}
+          disabled={!dirty ||
+            saving ||
+            graceError !== null ||
+            diskIssue ||
+            sshError !== null}
           onclick={() => void saveAll()}>Save</button
         >
       </div>
@@ -1310,6 +1451,9 @@
   }
   .narrow {
     width: 6rem;
+  }
+  .wide {
+    width: min(22rem, 100%);
   }
   .notices {
     max-height: 20rem;

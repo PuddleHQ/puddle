@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A guest holds its workspace at the connection cap and then opens 100 000 more streams on its
 //! route. Every one is refused at the cap with the reason in the answer, the proxy's heap stays
 //! within a fixed bar, a second workspace on the same proxy finishes 64 connections in under 5 s

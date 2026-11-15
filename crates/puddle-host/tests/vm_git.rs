@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over HTTPS end to end on real microVMs (K on Linux KVM, W on Windows WHP), through the
 //! host's own wiring: the real Git injector over the host's store and secrets, the per-workspace
 //! CA, the live decrypt set and the egress proxy, to a fake Git host (the real `git http-backend`
@@ -54,7 +54,7 @@ fn internet(hosts: &[(&str, &GitHost)]) -> Internet {
         hosts.iter().map(|(n, h)| (*n, h.addr())).collect();
     let proxy = tokio::task::block_in_place(|| rt.block_on(NameProxy::start(&names)));
     let options = with_fake_names(
-        through_company_proxy(support::hermetic_options(), &proxy),
+        through_company_proxy(support::named_id_options(), &proxy),
         hosts.iter().map(|(n, _)| *n),
     );
     let platform = platform_trusting(hosts.iter().map(|(_, h)| h.root()));
@@ -88,7 +88,7 @@ fn owned_stored(host: &str, owner: &str, token: &str, vm: &VmHost, id: &str) -> 
     let host = HostName::new(host).unwrap();
     CredentialBinding::new(
         &host,
-        binding.source.clone(),
+        binding.source,
         Coverage::new(
             BTreeSet::from([puddle_store::Owner::new(owner).unwrap()]),
             false,
@@ -108,8 +108,10 @@ fn identity(label: &str, credentials: Vec<CredentialBinding>) -> IdentityDraft {
 
 fn allow(vm: &VmHost, sandbox: &WorkspaceId, hosts: &[&str]) {
     for host in hosts {
+        puddle_store::testing::own(vm.host.store(), sandbox);
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(host).unwrap(),
@@ -248,18 +250,18 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     let work = vm
         .host
         .store()
-        .create_identity(identity(
-            "Work",
-            vec![owned_stored(NAME, "acme", WORK, &vm, "kwork")],
-        ))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            identity("Work", vec![owned_stored(NAME, "acme", WORK, &vm, "kwork")]),
+        )
         .unwrap();
     let personal = vm
         .host
         .store()
-        .create_identity(identity(
-            "Personal",
-            vec![stored(NAME, PERSONAL, &vm, "kpersonal")],
-        ))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            identity("Personal", vec![stored(NAME, PERSONAL, &vm, "kpersonal")]),
+        )
         .unwrap();
     let _ = (work.id, personal.id);
 
@@ -436,10 +438,10 @@ async fn vm_git_clone_and_push_with_no_proxy_setting_carry_the_injected_credenti
     allow(&vm, &sandbox, &[NAME]);
     vm.host
         .store()
-        .create_identity(identity(
-            "Work",
-            vec![owned_stored(NAME, "acme", WORK, &vm, "nwork")],
-        ))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            identity("Work", vec![owned_stored(NAME, "acme", WORK, &vm, "nwork")]),
+        )
         .unwrap();
     create(&vm, &name, &format!("https://{NAME}/acme/web.git")).await;
 
@@ -527,7 +529,10 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
     create(&vm, &b_name, &format!("https://{NAME}/acme/open.git")).await;
     vm.host
         .store()
-        .create_identity(identity("Work", vec![stored(NAME, WORK, &vm, "kwork")]))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            identity("Work", vec![stored(NAME, WORK, &vm, "kwork")]),
+        )
         .unwrap();
     create(&vm, &a_name, &format!("https://{NAME}/acme/web.git")).await;
     let ca_a = format!("Puddle CA for {a_name}");
@@ -700,14 +705,17 @@ async fn vm_git_a_guest_clock_at_2010_or_2040_does_not_change_the_upstream_check
     // upstream certificate itself.
     vm.host
         .store()
-        .create_identity(identity(
-            "Work",
-            vec![
-                stored(NAME, WORK, &vm, "kwork"),
-                stored("old.invalid", WORK, &vm, "kold"),
-                stored("new.invalid", WORK, &vm, "knew"),
-            ],
-        ))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            identity(
+                "Work",
+                vec![
+                    stored(NAME, WORK, &vm, "kwork"),
+                    stored("old.invalid", WORK, &vm, "kold"),
+                    stored("new.invalid", WORK, &vm, "knew"),
+                ],
+            ),
+        )
         .unwrap();
     create(&vm, &name, &format!("https://{NAME}/acme/open.git")).await;
 

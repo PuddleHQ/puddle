@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a click on a workspace does, shared by the list and the detail page: start, stop,
 // reclaim, connect (the "how do you want to connect" step, with the direct-SSH switch and its
 // trust text), delete (with the check of what would be lost) and the create dialog. The dialogs themselves are drawn by
@@ -34,6 +34,7 @@ type Store = Pick<
   | "stopWorkspace"
   | "reclaim"
   | "resetRootDisk"
+  | "growRootDisk"
   | "rename"
   | "attach"
   | "setDirectSsh"
@@ -50,6 +51,7 @@ const DONE_WORDS: Record<string, (label: string) => string> = {
   reclaiming: (name) => `Reclaimed free space on ${name}.`,
   resetting_root_disk: (name) =>
     `Reset the root disk of ${name}; it is made again at the next start.`,
+  growing_root_disk: (name) => `Made the root disk of ${name} bigger.`,
   cloning: (name) => `Cloned a repository into ${name}.`,
   deleting: (name) => `Deleted ${name}.`,
 };
@@ -95,15 +97,19 @@ export class WorkspaceActions {
   readonly #toasts: Toasts;
 
   readonly #removed: (name: string) => Promise<Removed | null>;
+  /** Where a link the host could not open itself is followed: this page's own location. */
+  readonly #location: Pick<Location, "assign">;
 
   constructor(
     store: Store = defaultStore,
     toasts: Toasts = defaultToasts,
     removed: (name: string) => Promise<Removed | null> = readRemoved,
+    location: Pick<Location, "assign"> = window.location,
   ) {
     this.#store = store;
     this.#toasts = toasts;
     this.#removed = removed;
+    this.#location = location;
   }
 
   #fail(message: string): void {
@@ -140,6 +146,15 @@ export class WorkspaceActions {
   resetRootDisk = async (w: Workspace): Promise<void> => {
     const result = await this.#store.resetRootDisk(w.id);
     if (!result.ok) this.#fail(result.message);
+  };
+
+  /**
+   * Makes the root disk `gib` GiB big. Returns the refusal as text for the dialog, or `null` when
+   * Puddle took it (the workspace is then busy and the finished toast follows).
+   */
+  growRootDisk = async (w: Workspace, gib: number): Promise<string | null> => {
+    const result = await this.#store.growRootDisk(w.id, gib * 1024);
+    return result.ok ? null : result.message;
   };
 
   openRename = (w: Workspace): void => {
@@ -228,9 +243,14 @@ export class WorkspaceActions {
       this.#fail(result.message);
       return;
     }
-    const { opened, message } = result.value;
+    const { opened, message, open_uri } = result.value;
     if (opened) {
       this.#toasts.push(`Opening ${w.name} in ${words.where}.`);
+    } else if (mode === "desktop" && open_uri) {
+      // The host opened nothing (a server with no desktop, reached from another computer): this
+      // computer's VS Code takes the link, if it has the remote extension and an entry for the host.
+      this.#toasts.push(`Opening ${w.name} in VS Code on this computer.`);
+      this.#location.assign(open_uri);
     } else {
       this.#fail(
         message ?? `Puddle couldn't open ${words.what} for ${w.name}.`,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A real API on loopback and a raw HTTP/1.1 client, so tests control every header byte (a
 //! normal client would fix up `Host` and refuse odd requests).
 
@@ -10,8 +10,8 @@ use std::time::Duration;
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
     FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeProxySignIns, FakeRepos,
-    FakeTerminals, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RepoService,
-    RunningApi, Services, SettingsRepo,
+    FakeTerminals, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, NoNames,
+    RepoService, RunningApi, Services, SettingsRepo,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
@@ -58,48 +58,37 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
-    start_inner(config, true, None, None, None, true, None).await
+    start_inner(Options {
+        config,
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API serving this network-health report.
 pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        Some(network),
-        None,
-        None,
-        true,
-        None,
-    )
+    start_inner(Options {
+        network: Some(network),
+        ..Options::default()
+    })
     .await
 }
 
 /// An API running the system check through `doctor`.
 pub(crate) async fn start_with_doctor(doctor: Arc<dyn DoctorService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        None,
-        None,
-        Some(doctor),
-        true,
-        None,
-    )
+    start_inner(Options {
+        doctor: Some(doctor),
+        ..Options::default()
+    })
     .await
 }
 
 /// An API reporting the development certificate's state through `dev_cert`.
 pub(crate) async fn start_with_dev_cert(dev_cert: Arc<dyn DevCertService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        None,
-        None,
-        None,
-        true,
-        Some(dev_cert),
-    )
+    start_inner(Options {
+        dev_cert: Some(dev_cert),
+        ..Options::default()
+    })
     .await
 }
 
@@ -108,72 +97,52 @@ pub(crate) async fn start_with_config_and_dev_cert(
     config: ApiConfig,
     dev_cert: Arc<dyn DevCertService>,
 ) -> Api {
-    start_inner(config, true, None, None, None, true, Some(dev_cert)).await
+    start_inner(Options {
+        config,
+        dev_cert: Some(dev_cert),
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
-    start_inner(ApiConfig::default(), false, None, None, None, true, None).await
+    start_inner(Options {
+        with_workspaces: false,
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API whose credentials service is `credentials` (`Api::credentials` is then an unused fake).
 pub(crate) async fn start_with_credentials(credentials: Arc<dyn CredentialService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        None,
-        Some(credentials),
-        None,
-        true,
-        None,
-    )
+    start_inner(Options {
+        own_credentials: Some(credentials),
+        ..Options::default()
+    })
     .await
 }
 
 /// An API whose services have no repository lists (what `Services::new` gives).
 pub(crate) async fn start_without_repos() -> Api {
-    start_inner(ApiConfig::default(), true, None, None, None, false, None).await
+    start_inner(Options {
+        with_repos: false,
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API whose host reads the company network through `signals`.
 pub(crate) async fn start_with_company_signals(signals: Arc<dyn CompanySignals>) -> Api {
-    start_inner_with(
-        ApiConfig::default(),
-        true,
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(signals),
-    )
+    start_inner(Options {
+        company_signals: Some(signals),
+        ..Options::default()
+    })
     .await
 }
 
-async fn start_inner(
-    config: ApiConfig,
-    with_workspaces: bool,
-    network: Option<Arc<dyn NetworkHealthService>>,
-    own_credentials: Option<Arc<dyn CredentialService>>,
-    doctor: Option<Arc<dyn DoctorService>>,
-    with_repos: bool,
-    dev_cert: Option<Arc<dyn DevCertService>>,
-) -> Api {
-    start_inner_with(
-        config,
-        with_workspaces,
-        network,
-        own_credentials,
-        doctor,
-        with_repos,
-        dev_cert,
-        None,
-    )
-    .await
-}
-
-#[expect(clippy::too_many_arguments, reason = "a test fixture's switches")]
-async fn start_inner_with(
+/// What a test's API is wired with; the default is the usual server with every fake wired.
+struct Options {
     config: ApiConfig,
     with_workspaces: bool,
     network: Option<Arc<dyn NetworkHealthService>>,
@@ -182,7 +151,34 @@ async fn start_inner_with(
     with_repos: bool,
     dev_cert: Option<Arc<dyn DevCertService>>,
     company_signals: Option<Arc<dyn CompanySignals>>,
-) -> Api {
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            config: ApiConfig::default(),
+            with_workspaces: true,
+            network: None,
+            own_credentials: None,
+            doctor: None,
+            with_repos: true,
+            dev_cert: None,
+            company_signals: None,
+        }
+    }
+}
+
+async fn start_inner(options: Options) -> Api {
+    let Options {
+        config,
+        with_workspaces,
+        network,
+        own_credentials,
+        doctor,
+        with_repos,
+        dev_cert,
+        company_signals,
+    } = options;
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let store = Arc::new(
@@ -204,7 +200,8 @@ async fn start_inner_with(
         settings.clone() as Arc<dyn SettingsRepo>,
         events.clone(),
         clock.clone(),
-    );
+    )
+    .with_front_resolver(Arc::new(NoNames));
     let services = if with_workspaces {
         services.with_workspaces(Arc::new(workspaces.clone()))
     } else {
@@ -242,6 +239,7 @@ async fn start_inner_with(
     let services = services.with_terminals(terminals.clone());
     let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
     let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
+    let services = services.with_account_secrets(store.take_account_secrets().unwrap());
     let services = match company_signals {
         Some(signals) => services.with_company_signals(signals),
         None => services,
@@ -272,6 +270,17 @@ async fn start_inner_with(
 }
 
 impl Api {
+    /// Records the owner as the user of workspace `name`, made without a create (seeded, or an id
+    /// only the store knows), as the first start does for the workspaces listed from before; one
+    /// already recorded keeps its user. A workspace with no recorded user is nobody's: every route
+    /// answers 404 for it.
+    pub(crate) fn own(&self, name: &str) {
+        let id = WorkspaceId::new(name).unwrap();
+        if self.store.workspace_owner(&id).unwrap().is_none() {
+            puddle_store::testing::own(&self.store, &id);
+        }
+    }
+
     pub(crate) fn host(&self) -> String {
         format!("127.0.0.1:{}", self.addr.port())
     }
@@ -313,8 +322,10 @@ impl Api {
         self.send("GET", path, None).await
     }
 
-    /// Makes the workspace ask for `host:443` once, as the proxy would; returns the pending id.
+    /// Makes the workspace (the owner's unless recorded otherwise) ask for `host:443` once, as the
+    /// proxy would; returns the pending id.
     pub(crate) fn request(&self, workspace: &str, host: &str) -> i64 {
+        self.own(workspace);
         let decision = self
             .store
             .decide(
@@ -419,4 +430,123 @@ fn dechunk(mut rest: &str) -> String {
         rest = after[size..].trim_start_matches("\r\n");
     }
     out
+}
+
+/// The handshake's nonce (a fixed one is fine: the host only echoes its hash).
+const NONCE: &str = "AQIDBAUGBwgJCgsMDQ4PEA==";
+
+/// A WebSocket client written by hand, so a test can see what a library client hides: whether the
+/// host keeps the connection open until the page has answered its close.
+pub(crate) struct RawSocket {
+    stream: TcpStream,
+    pending: Vec<u8>,
+}
+
+impl RawSocket {
+    /// Opens `path` as a WebSocket with the given sub-protocols and, when given, a `Host`.
+    pub(crate) async fn open(
+        addr: SocketAddr,
+        path: &str,
+        host: Option<&str>,
+        protocols: &str,
+    ) -> Self {
+        let host = host.map_or_else(|| addr.to_string(), str::to_owned);
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+             Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {NONCE}\r\n\
+             Sec-WebSocket-Protocol: {protocols}\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut socket = Self {
+            stream,
+            pending: Vec::new(),
+        };
+        let head = loop {
+            if let Some(end) = socket.pending.windows(4).position(|w| w == b"\r\n\r\n") {
+                break socket.pending.drain(..end + 4).collect::<Vec<u8>>();
+            }
+            assert!(socket.fill(STEP).await, "the handshake ended early");
+        };
+        let head = String::from_utf8_lossy(&head);
+        assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+        socket
+    }
+
+    /// Reads more bytes; false when the connection ended.
+    async fn fill(&mut self, within: Duration) -> bool {
+        let mut buffer = [0_u8; 4096];
+        let read = tokio::time::timeout(within, self.stream.read(&mut buffer))
+            .await
+            .expect("bytes or the end of the connection in time");
+        match read {
+            Ok(0) | Err(_) => false,
+            Ok(n) => {
+                self.pending.extend_from_slice(&buffer[..n]);
+                true
+            }
+        }
+    }
+
+    /// The next frame from the host as (opcode, payload).
+    async fn frame(&mut self) -> (u8, Vec<u8>) {
+        loop {
+            if self.pending.len() >= 2 {
+                let (opcode, short) = (self.pending[0] & 0x0f, usize::from(self.pending[1] & 0x7f));
+                let (head, length) = match short {
+                    126 if self.pending.len() >= 4 => (
+                        4,
+                        usize::from(u16::from_be_bytes([self.pending[2], self.pending[3]])),
+                    ),
+                    126 => (usize::MAX, 0),
+                    127 => panic!("a frame this size is not expected"),
+                    n => (2, n),
+                };
+                if head != usize::MAX && self.pending.len() >= head + length {
+                    let payload = self.pending[head..head + length].to_vec();
+                    self.pending.drain(..head + length);
+                    return (opcode, payload);
+                }
+            }
+            assert!(
+                self.fill(STEP).await,
+                "the host closed before the close frame"
+            );
+        }
+    }
+
+    /// Reads frames until the host's close frame; its status code.
+    pub(crate) async fn read_close(&mut self) -> u16 {
+        loop {
+            let (opcode, payload) = self.frame().await;
+            if opcode == 0x8 {
+                return u16::from_be_bytes([payload[0], payload[1]]);
+            }
+        }
+    }
+
+    /// Sends one masked frame.
+    pub(crate) async fn send(&mut self, opcode: u8, payload: &[u8]) {
+        let mask = [1_u8, 2, 3, 4];
+        let mut frame = vec![0x80 | opcode, 0x80 | u8::try_from(payload.len()).unwrap()];
+        frame.extend_from_slice(&mask);
+        frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+        self.stream.write_all(&frame).await.unwrap();
+    }
+
+    /// After the host's close: the host must keep the connection open until the page answers, then
+    /// end it. Dropping it at once resets the connection when the page is still sending.
+    pub(crate) async fn answer_close_after_a_pause(&mut self) {
+        let early = tokio::time::timeout(
+            Duration::from_millis(300),
+            self.stream.read(&mut [0_u8; 64]),
+        )
+        .await;
+        assert!(
+            early.is_err(),
+            "the host closed the connection before the page answered: {early:?}"
+        );
+        self.send(0x8, &1000_u16.to_be_bytes()).await;
+        while self.fill(STEP).await {}
+    }
 }

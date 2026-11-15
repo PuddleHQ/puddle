@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 <#
 .SYNOPSIS
 Runs Puddle's real-machine VM tests (tier R) on a real Windows machine and posts the result as
@@ -8,6 +8,7 @@ the commit status `puddle/windows-e2e`.
 Tier R covers what the hosted runners can't: a real client OS on mains power, sleep/resume,
 Defender, the corporate network. The tests live in crates/puddle-vm-tests and are named
 `vm_machine_*`; -All also runs the K/W set the CI jobs run.
+A run that selects no test fails (`--no-tests=fail`) instead of posting a green status.
 
 Steps: power check (refuses on battery below -MinBattery percent), per-run prefix, private msb
 home under -Root, `cargo nextest run --profile vm`, the msb fork's regression repros
@@ -28,7 +29,7 @@ Run every VM test (real-machine and CI ones) instead of -Filter.
 
 .PARAMETER MsbRepros
 Cases of ci/msb-repros/repros.ps1 to run against the runtime's msb.exe after the nextest run:
-relay, signal, scp, forward, stale-dir (default: all), or 'none'. They pin the fixes the puddle
+relay, signal, scp, forward, stale-dir (default: all), or 'none'. They pin the fixes the Puddle
 fork of msb carries; stock msb fails them. Not run in -Bisect steps.
 
 .PARAMETER ReproPort
@@ -240,7 +241,7 @@ $env:PUDDLE_VM_PREFIX = $Prefix
 $env:PUDDLE_VM_ROOT = $Root
 Write-Step "prefix $Prefix, msb home $(Join-Path $Root $Prefix), runtime $RuntimeDir"
 
-$nextest = @('nextest', 'run', '-p', 'puddle-vm-tests', '--profile', 'vm', '--locked', '--no-tests=warn')
+$nextest = @('nextest', 'run', '-p', 'puddle-vm-tests', '--profile', 'vm', '--locked', '--no-tests=fail')
 if (-not $All) { $nextest += @('-E', $Filter) }
 
 # The msb fork's regression repros (vendored from the fork's tests/puddle, see ci/msb-repros/SOURCE).

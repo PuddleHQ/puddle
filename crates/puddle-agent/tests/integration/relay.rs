@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests: guest client → agent → yamux over a Unix socket → host allow-all endpoint → server.
 #![cfg(unix)]
 #![expect(

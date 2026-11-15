@@ -1,6 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
-use ::http::header::HeaderName;
 use http_body_util::BodyExt as _;
 use proptest::prelude::*;
 
@@ -317,6 +316,15 @@ fn zlib(data: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
+fn brotli_pack(data: &[u8]) -> Vec<u8> {
+    let mut packed = Vec::new();
+    {
+        let mut encoder = brotli::CompressorWriter::new(&mut packed, 4096, 5, 22);
+        encoder.write_all(data).unwrap();
+    }
+    packed
+}
+
 fn raw_deflate(data: &[u8]) -> Vec<u8> {
     let mut encoder =
         flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
@@ -521,82 +529,6 @@ proptest! {
         if let Ok(out) = stream(&scrubber, &[a, b]) {
             prop_assert_eq!(out, body);
         }
-    }
-}
-
-/// Throughput of the body scrub and the cost of a header scrub, by hand in a release build:
-/// `cargo nextest run --release -p puddle-proxy --lib -E 'test(scrub_speed)' --run-ignored only --no-capture`.
-#[test]
-#[ignore = "a measurement, meaningful only in a release build"]
-fn scrub_speed() {
-    use std::time::Instant;
-    const MIB: usize = 1024 * 1024;
-    let text: Vec<u8> = br#"{"id":12345,"name":"package-name","version":"1.2.3","dist":{"shasum":"abcdef0123456789"}},"#
-        .iter()
-        .copied()
-        .cycle()
-        .take(16 * MIB)
-        .collect();
-    let bodies: [(&str, Vec<u8>); 3] = [
-        ("x", vec![b'x'; 16 * MIB]),
-        ("json", text),
-        // Every byte starts a form: the worst case for the held tail.
-        ("all-s", vec![b's'; 16 * MIB]),
-    ];
-    for count in [1_usize, 8, 50] {
-        let registry = StandIns::new();
-        for n in 0..count {
-            let name = format!("S{n}");
-            registry
-                .insert(entry(
-                    StandInOrigin::Secret,
-                    &name,
-                    &format!("puddle-secret-S{n}-{n:032x}"),
-                    &format!("sk-live-{n}-5c1d9e0a47b2a9f0e1d2c3b4"),
-                    &["api.github.com"],
-                ))
-                .unwrap();
-        }
-        let started = Instant::now();
-        let scrubber = registry.answer_scrubber(&host("api.github.com")).unwrap();
-        eprintln!(
-            "M build registered={count} {:.0} us (once per host until the registry changes)",
-            started.elapsed().as_secs_f64() * 1e6
-        );
-        for (kind, body) in &bodies {
-            let pieces: Vec<&[u8]> = body.chunks(16 * 1024).collect();
-            let started = Instant::now();
-            let out = stream(&scrubber, &pieces).unwrap();
-            let took = started.elapsed();
-            assert_eq!(out.len(), body.len());
-            eprintln!(
-                "M body registered={count} patterns={} kind={kind} {:.0} MiB/s",
-                scrubber.patterns.len(),
-                16.0 / took.as_secs_f64()
-            );
-        }
-        let mut headers = HeaderMap::new();
-        for n in 0..17 {
-            headers.append(
-                HeaderName::from_bytes(format!("x-h{n}").as_bytes()).unwrap(),
-                HeaderValue::from_static("some ordinary header value of a typical length here"),
-            );
-        }
-        headers.append(
-            "set-cookie",
-            HeaderValue::from_str(&"c".repeat(3000)).unwrap(),
-        );
-        let rounds = 2000;
-        let started = Instant::now();
-        for _ in 0..rounds {
-            let mut copy = headers.clone();
-            let scrubber = registry.answer_scrubber(&host("api.github.com")).unwrap();
-            scrubber.scrub_headers(&mut copy, &ScrubNotes::default());
-        }
-        eprintln!(
-            "M headers registered={count} {:.1} us per answer (scrubber made already, 18 headers, a 3 KB cookie)",
-            started.elapsed().as_secs_f64() * 1e6 / f64::from(rounds)
-        );
     }
 }
 
@@ -924,4 +856,213 @@ async fn a_scrubbed_body_says_what_it_knows_of_its_end_and_size() {
     }
     assert_eq!(data, 1);
     assert!(body.is_end_stream());
+}
+
+/// `size` zero bytes, compressed in each coding Puddle reads that the tests can produce.
+fn bombs(size: usize) -> Vec<(&'static str, Vec<u8>)> {
+    let zeros = vec![0_u8; size];
+    vec![
+        ("gzip", gzip(&zeros)),
+        ("deflate", zlib(&zeros)),
+        ("deflate", raw_deflate(&zeros)),
+        ("br", brotli_pack(&zeros)),
+        ("zstd", zstd::stream::encode_all(&zeros[..], 3).unwrap()),
+    ]
+}
+
+#[test]
+fn a_frame_that_inflates_past_the_limit_stops_decoding_there() {
+    const LIMIT: usize = 1024 * 1024;
+    for (encoding, packed) in bombs(48 * LIMIT) {
+        assert!(packed.len() < LIMIT, "{encoding}: {}", packed.len());
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        let pushed = decoder.push(&packed, &mut out, LIMIT).unwrap();
+        assert_eq!(pushed, Pushed::Full, "{encoding}");
+        // The decoder's own write size is all it may run over by.
+        assert!(
+            (LIMIT..=LIMIT + 256 * 1024).contains(&out.len()),
+            "{encoding}: {}",
+            out.len()
+        );
+        // It is spent: nothing more comes out, and the end gives no more either.
+        assert_eq!(
+            decoder.push(&packed, &mut out, LIMIT).unwrap(),
+            Pushed::Full
+        );
+    }
+}
+
+#[test]
+fn no_room_left_stops_before_a_piece_that_would_add_nothing() {
+    // A gzip header decodes to no bytes, so only the room check can say `Full` for it.
+    let packed = gzip(b"payload");
+    let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static("gzip")))
+        .unwrap()
+        .unwrap();
+    let mut out = Vec::new();
+    assert_eq!(
+        decoder.push(&packed[..10], &mut out, 0).unwrap(),
+        Pushed::Full
+    );
+    assert_eq!(out, Vec::<u8>::new());
+}
+
+#[test]
+fn a_frame_under_the_limit_decodes_whole_in_every_coding() {
+    let plain = format!("{{\"echo\":\"Bearer {REAL_GH} done\"}}");
+    let zstd = zstd::stream::encode_all(plain.as_bytes(), 3).unwrap();
+    for (encoding, packed) in [
+        ("gzip", gzip(plain.as_bytes())),
+        ("deflate", zlib(plain.as_bytes())),
+        ("deflate", raw_deflate(plain.as_bytes())),
+        ("br", BROTLI.to_vec()),
+        ("zstd", zstd),
+    ] {
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        assert_eq!(
+            decoder.push(&packed, &mut out, 1 << 20).unwrap(),
+            Pushed::All
+        );
+        decoder.finish(&mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), plain, "{encoding}");
+    }
+}
+
+/// The sizes of the data frames of the scrubbed answer, or the error that ended it.
+async fn scrubbed_frames(encoding: &str, body: Vec<u8>) -> Result<Vec<usize>, String> {
+    let response = answered(&registry(), 200, Some(encoding), body).await;
+    let mut body = response.into_body();
+    let mut sizes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        match frame {
+            Ok(frame) => {
+                if let Ok(data) = frame.into_data() {
+                    sizes.push(data.len());
+                }
+            }
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+    Ok(sizes)
+}
+
+#[tokio::test]
+async fn a_frame_that_inflates_a_lot_reaches_the_guest_in_bounded_pieces() {
+    const SIZE: usize = 32 * 1024 * 1024;
+    for (encoding, packed) in bombs(SIZE)
+        .into_iter()
+        .filter(|(c, _)| !matches!(*c, "zstd" | "br"))
+    {
+        let sizes = scrubbed_frames(encoding, packed).await.unwrap();
+        assert_eq!(
+            sizes.iter().sum::<usize>(),
+            SIZE,
+            "{encoding}: nothing is lost"
+        );
+        let largest = sizes.iter().max().copied().unwrap_or_default();
+        assert!(
+            largest <= MAX_DECODED_STEP,
+            "{encoding}: a frame of {largest} bytes"
+        );
+        assert!(sizes.len() > 1, "{encoding}: {} frames", sizes.len());
+    }
+}
+
+#[tokio::test]
+async fn a_step_that_inflates_past_the_step_limit_ends_the_answer_with_an_error() {
+    let zstd = zstd::stream::encode_all(&vec![0_u8; 3 * MAX_DECODED_STEP][..], 3).unwrap();
+    assert!(
+        zstd.len() <= DECODE_STEP,
+        "one step of the input: {}",
+        zstd.len()
+    );
+    let err = scrubbed_frames("zstd", zstd).await.unwrap_err();
+    assert!(err.contains("inflates too far"), "{err}");
+}
+
+#[tokio::test]
+async fn a_brotli_step_that_inflates_past_the_step_limit_ends_the_answer_with_an_error() {
+    let packed = brotli_pack(&vec![0_u8; 3 * MAX_DECODED_STEP]);
+    assert!(
+        packed.len() <= DECODE_STEP,
+        "one step of the input: {}",
+        packed.len()
+    );
+    let err = scrubbed_frames("br", packed).await.unwrap_err();
+    assert!(err.contains("inflates too far"), "{err}");
+}
+
+#[test]
+fn the_limit_counts_what_this_call_adds_not_what_the_caller_already_holds() {
+    const LIMIT: usize = 1024 * 1024;
+    for (encoding, packed) in bombs(8 * LIMIT) {
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = vec![1_u8; 4 * LIMIT];
+        assert_eq!(
+            decoder.push(&packed, &mut out, LIMIT).unwrap(),
+            Pushed::Full,
+            "{encoding}"
+        );
+        let added = out.len() - 4 * LIMIT;
+        assert!(
+            (LIMIT..=LIMIT + 256 * 1024).contains(&added),
+            "{encoding}: {added}"
+        );
+    }
+}
+
+#[test]
+fn a_body_that_stops_short_fails_at_its_end_in_the_codings_that_can_tell() {
+    let plain = vec![b'x'; 50_000];
+    for (encoding, whole) in [
+        ("gzip", gzip(&plain)),
+        ("deflate", zlib(&plain)),
+        ("deflate", raw_deflate(&plain)),
+    ] {
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        let cut = whole.len() - 4;
+        decoder.push(&whole[..cut], &mut out, 1 << 20).unwrap();
+        assert!(decoder.finish(&mut out).is_err(), "{encoding} cut short");
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        decoder.push(&whole, &mut out, 1 << 20).unwrap();
+        decoder.finish(&mut out).unwrap();
+        assert_eq!(out, plain, "{encoding}");
+    }
+}
+
+#[tokio::test]
+async fn a_plain_body_is_passed_on_in_the_frames_it_came_in() {
+    let body = ScrubBody {
+        inner: AnswerBody::Buffered(Some(Bytes::from(vec![b'a'; 100_000]))),
+        scrubber: scrubber(),
+        queued: Bytes::new(),
+        decoder: None,
+        held: Zeroizing::new(Vec::new()),
+        notes: Arc::new(ScrubNotes::default()),
+        trailers: None,
+        ended: false,
+    };
+    let mut body = body;
+    let mut sizes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        if let Ok(data) = frame.unwrap().into_data() {
+            sizes.push(data.len());
+        }
+    }
+    // The scrubber keeps the last byte back until the end; nothing else splits the body.
+    assert_eq!(sizes, [99_999, 1]);
 }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The coverage ratchet (docs/STANDARDS.md, "Coverage"): the workspace's line and region coverage
 // must stay at or above the floor (lines 92 %, regions 90 %) and no more than 0.05 points below the
 // committed baseline in scripts/coverage-baseline.json. The floor has no tolerance. The 0.05 is

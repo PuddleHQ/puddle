@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! TLS termination for the hosts a workspace has a credential for.
 //!
 //! Almost every connection through the proxy is spliced: the guest and the real server talk TLS
@@ -62,6 +62,7 @@
 mod alt_svc;
 mod body;
 mod exchange;
+mod foreign;
 mod guest;
 #[cfg(test)]
 pub(crate) use guest::test_client_hello;
@@ -88,9 +89,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use puddle_ca::WorkspaceCa;
-use puddle_types::WorkspaceId;
+use puddle_ssh_agent::filter::AllowedKeys;
+use puddle_types::{Host, WorkspaceId};
 
 pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
+pub use foreign::ForeignCredentialWarning;
 pub(crate) use guest::{ALPN_HTTP11, Prefixed};
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
@@ -98,7 +101,7 @@ pub use inject::{
 };
 pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
 pub use request_rules::{RequestRule, RequestRules};
-pub(crate) use session::{Context, Outcome, run};
+pub(crate) use session::{Context, MAX_UNSWAPPED_STAND_INS, Outcome, run};
 /// The HTTP/1.1 pieces the plain-HTTP path shares with a decrypted connection: the upstream
 /// client, the guest's body streamed into it, and the response rebuilt for the guest.
 pub(crate) mod h1 {
@@ -112,6 +115,8 @@ pub(crate) mod h1 {
     pub(crate) use super::session::{keep_reading, send_and_pump, short};
 }
 pub use set::{PatternError, TerminationSet};
+#[cfg(feature = "fuzzing")]
+pub(crate) use stand_in::read_both_ways;
 pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyField, BodyFormat, FieldKind, TokenBody, TokenBodyError};
 
@@ -134,6 +139,8 @@ pub struct Termination {
     request_rules: RequestRules,
     git_ssh_hosts: TerminationSet,
     git_ssh_keys: Option<Arc<crate::ssh_git::GitSshHostKeys>>,
+    ssh_agent_hosts: HashMap<Host, AllowedKeys>,
+    foreign_warning: Arc<ForeignCredentialWarning>,
 }
 
 /// How a connection to a host is decrypted.
@@ -166,7 +173,25 @@ impl Termination {
             request_rules: RequestRules::default(),
             git_ssh_hosts: TerminationSet::new(),
             git_ssh_keys: None,
+            ssh_agent_hosts: HashMap::new(),
+            foreign_warning: Arc::new(ForeignCredentialWarning::default()),
         }
+    }
+
+    /// Warns about a credential in a request that Puddle did not add or swap while `warning`
+    /// says so (see [`ForeignCredentialWarning`]). On by default. Shared, so a new `Termination`
+    /// for the same workspace keeps what the user was already told.
+    #[must_use]
+    pub fn with_foreign_credential_warning(
+        mut self,
+        warning: Arc<ForeignCredentialWarning>,
+    ) -> Self {
+        self.foreign_warning = warning;
+        self
+    }
+
+    pub(crate) fn foreign_warning(&self) -> &Arc<ForeignCredentialWarning> {
+        &self.foreign_warning
     }
 
     /// Sets how the workspace decrypts beyond its hosts with a credential (see [`Interception`]).
@@ -210,6 +235,20 @@ impl Termination {
         self.git_ssh_keys.as_deref()
     }
 
+    /// Lets the workspace use keys from the host's SSH agent on `hosts`, each with the keys it may
+    /// use (see [`crate::ssh_agent`]). Empty by default: only the user turns the agent on.
+    #[must_use]
+    pub fn with_ssh_agent_hosts(mut self, hosts: HashMap<Host, AllowedKeys>) -> Self {
+        self.ssh_agent_hosts = hosts;
+        self
+    }
+
+    /// The hosts the filtered SSH agent is on for, with the keys each may use.
+    #[must_use]
+    pub fn ssh_agent_hosts(&self) -> &HashMap<Host, AllowedKeys> {
+        &self.ssh_agent_hosts
+    }
+
     /// The hosts whose SSH is ended for Git, beyond the built-in ones.
     #[must_use]
     pub fn git_ssh_hosts(&self) -> &TerminationSet {
@@ -231,11 +270,11 @@ impl Termination {
     /// How a connection to `host` is decrypted, or `None` when it is passed through.
     /// `from_container`: the agent says the client is in a container (see
     /// [`puddle_agent_proto::origin`]).
-    pub(crate) fn mode_for(&self, host: &puddle_types::Host, from_container: bool) -> Option<Mode> {
+    pub(crate) fn mode_for(&self, host: &Host, from_container: bool) -> Option<Mode> {
         if self.set.contains(host) {
             Some(Mode::Bound)
         } else if self.interception.decrypt_all
-            && matches!(host, puddle_types::Host::Name(_))
+            && matches!(host, Host::Name(_))
             && self.skipped(host, from_container).is_none()
         {
             Some(Mode::Everything)
@@ -249,18 +288,11 @@ impl Termination {
     /// workspace's trust settings), the never-decrypt list, or a host its tools did not accept the
     /// certificate for. `None` for a host with a credential, which is always decrypted so the
     /// credential can be added, and for a host that is decrypted.
-    pub(crate) fn skipped(
-        &self,
-        host: &puddle_types::Host,
-        from_container: bool,
-    ) -> Option<&'static str> {
+    pub(crate) fn skipped(&self, host: &Host, from_container: bool) -> Option<&'static str> {
         if self.set.contains(host) {
             return None;
         }
-        if from_container
-            && self.interception.decrypt_all
-            && matches!(host, puddle_types::Host::Name(_))
-        {
+        if from_container && self.interception.decrypt_all && matches!(host, Host::Name(_)) {
             return Some("container");
         }
         self.interception.skipped(host)
@@ -286,7 +318,7 @@ impl Termination {
 
     /// Whether `host` is a token endpoint of the workspace's logins (see
     /// [`ExchangeRewriter::is_token_endpoint`]); `false` without a rewriter.
-    pub(crate) fn is_token_endpoint(&self, host: &puddle_types::Host) -> bool {
+    pub(crate) fn is_token_endpoint(&self, host: &Host) -> bool {
         self.exchanges
             .as_deref()
             .is_some_and(|exchanges| exchanges.is_token_endpoint(host))

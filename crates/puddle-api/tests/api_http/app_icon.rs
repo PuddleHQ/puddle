@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The app icon through the API: the icons to choose between, the upload of the user's own image,
 //! and the rule that the icon in use always exists.
 

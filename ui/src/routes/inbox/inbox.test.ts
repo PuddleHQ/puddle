@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   cleanup,
   fireEvent,
@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = await vi.hoisted(async () => {
   const m = await import("#lib/testing/fake-inbox.ts");
   const sets = await import("#lib/testing/fake-rule-sets.ts");
+  const agent = await import("#lib/testing/fake-ssh-agent.ts");
   return {
+    agentApi: new agent.FakeSshAgent(),
+    ask: agent.ask,
     inbox: new m.FakeInbox(),
     setsApi: new sets.FakeRuleSets(),
     source: new m.FakeSource(),
@@ -33,6 +36,19 @@ vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) => {
   };
 });
 
+vi.mock("#lib/stores/ssh-agent-asks.svelte.ts", async (original) => {
+  const mod =
+    await original<typeof import("#lib/stores/ssh-agent-asks.svelte.ts")>();
+  return {
+    ...mod,
+    sshAgentAsks: new mod.SshAgentAsksStore(
+      h.agentApi as never,
+      h.source,
+      () => {},
+    ),
+  };
+});
+
 vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   const mod = await original<typeof import("#lib/stores/pending.svelte.ts")>();
   return {
@@ -45,28 +61,36 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   };
 });
 
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { FakeSettings } from "#lib/testing/fake-settings.ts";
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
+import { sshAgentAsks } from "#lib/stores/ssh-agent-asks.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import InboxPage from "./+page.svelte";
 
-const { inbox, setsApi, source, request, mine } = h;
+const { inbox, setsApi, source, request, mine, agentApi, ask } = h;
 
 function reset() {
   globalSettings.view = null;
   inbox.open = [];
   inbox.rules = [];
-  inbox.toggles = {};
   inbox.calls = [];
   inbox.down = false;
   inbox.openLimit = 1000;
   pending.rows = [];
   pending.openLimit = Number.POSITIVE_INFINITY;
   pending.decided = [];
-  pending.toggles = {};
+  workspaces.list = [];
   pending.status = "loading";
   setsApi.sets = [];
+  agentApi.asks = [];
+  agentApi.answers = [];
+  agentApi.calls = [];
+  agentApi.down = false;
+  agentApi.nextStatus = null;
+  sshAgentAsks.asks = [];
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 }
 
@@ -304,6 +328,43 @@ describe("the inbox page", () => {
 });
 
 describe("deciding with the buttons", () => {
+  it("names a workspace by its display name, never its id, in Allow, Deny and Undo", async () => {
+    // The request's workspace is the id; the name is what a person chose.
+    workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];
+    inbox.add(
+      request(1, { host: "a.example.com", workspace: "g07jxx5q" }),
+      "example.com",
+    );
+    await ready();
+    expect(
+      screen.getByRole("button", { name: "Deny a.example.com for Shop" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Allow a.example.com for Shop" }),
+    );
+    const undo = await screen.findByRole("button", {
+      name: /^Undo: Allowed a\.example\.com for workspace Shop, permanently/,
+    });
+    expect(undo.getAttribute("aria-label")).not.toContain("g07jxx5q");
+  });
+
+  it("adds the id only when two workspaces share a name", async () => {
+    workspaces.list = [
+      { ...fakeWorkspace("Shop"), id: "g07jxx5q" },
+      { ...fakeWorkspace("Shop"), id: "h19kyy6r" },
+    ];
+    inbox.add(
+      request(1, { host: "a.example.com", workspace: "g07jxx5q" }),
+      "example.com",
+    );
+    await ready();
+    expect(
+      screen.getByRole("button", {
+        name: "Allow a.example.com for Shop (g07jxx5q)",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("allows one host for one workspace with one click, announces it, and closes the row", async () => {
     seed();
     await ready();
@@ -549,6 +610,7 @@ describe("every workspace needs a confirm", () => {
       ui: fake.ui,
       unknown_fields: [],
       vscode_server: fake.vscode,
+      tools: fake.tools,
       workspace_defaults: fake.layer,
     };
     seed();
@@ -590,6 +652,7 @@ function shortcuts(on: boolean | null) {
     ui: fake.ui,
     unknown_fields: [],
     vscode_server: fake.vscode,
+    tools: fake.tools,
     workspace_defaults: fake.layer,
   };
 }
@@ -756,8 +819,13 @@ describe("local destinations", () => {
   beforeEach(() => shortcuts(true));
 
   async function local(toggleOn: boolean) {
-    inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
-    inbox.toggles["demo"] = { private: toggleOn };
+    inbox.add(
+      request(1, {
+        host: "192.168.1.10",
+        blocked_by: toggleOn ? null : "private",
+      }),
+      "192.168.1.10",
+    );
     render(InboxPage);
     await screen.findByRole("heading", { name: "192.168.1.10" });
   }
@@ -850,5 +918,69 @@ describe("a long list is drawn in slices", () => {
     await vi.waitFor(() =>
       expect(screen.getAllByRole("listitem")).toHaveLength(rows),
     );
+  });
+});
+
+describe("the SSH agent questions", () => {
+  it("lists a waiting login with its workspace, host and key, and is not 'all quiet'", async () => {
+    workspaces.list = [fakeWorkspace("demo")];
+    agentApi.asks = [ask(1, { host: "build.example.com", attempts: 3 })];
+    render(InboxPage);
+    const region = await screen.findByRole("region", { name: "SSH agent" });
+    expect(within(region).getByText("1 waiting")).toBeTruthy();
+    expect(region).toHaveTextContent("build.example.com");
+    expect(region).toHaveTextContent("ssh-ed25519");
+    expect(region).toHaveTextContent("3 attempts");
+    expect(screen.queryByText("All quiet")).toBeNull();
+  });
+
+  it("answers once, for this run, always or no, and the question goes", async () => {
+    workspaces.list = [fakeWorkspace("demo")];
+    agentApi.asks = [ask(1), ask(2), ask(3), ask(4)];
+    render(InboxPage);
+    const region = await screen.findByRole("region", { name: "SSH agent" });
+    const press = async (id: number, name: RegExp) => {
+      const item = region.querySelector(`[data-ask-id="${id}"]`) as HTMLElement;
+      await fireEvent.click(within(item).getByRole("button", { name }));
+    };
+    await press(1, /^Allow once/);
+    await press(2, /^Allow for this run/);
+    await press(3, /^Always allow/);
+    await press(4, /^Deny/);
+    await vi.waitFor(() => expect(agentApi.answers).toHaveLength(4));
+    expect(agentApi.answers).toEqual([
+      { id: 1, answer: "once" },
+      { id: 2, answer: "run" },
+      { id: 3, answer: "always" },
+      { id: 4, answer: "deny" },
+    ]);
+    await screen.findByText("All quiet");
+  });
+
+  it("says when the answer could not be given and keeps the question", async () => {
+    workspaces.list = [fakeWorkspace("demo")];
+    agentApi.asks = [ask(1)];
+    render(InboxPage);
+    const region = await screen.findByRole("region", { name: "SSH agent" });
+    agentApi.nextStatus = 500;
+    await fireEvent.click(
+      within(region).getByRole("button", { name: /^Deny/ }),
+    );
+    await vi.waitFor(() =>
+      expect(toasts.items.map((t) => t.message)).toContain(
+        "Puddle couldn't take the answer.",
+      ),
+    );
+    expect(region.querySelector('[data-ask-id="1"]')).not.toBeNull();
+  });
+
+  it("shows a question that arrives while the page is open", async () => {
+    workspaces.list = [fakeWorkspace("demo")];
+    seed();
+    await ready();
+    expect(screen.queryByRole("region", { name: "SSH agent" })).toBeNull();
+    agentApi.asks = [ask(9, { host: "late.example.com" })];
+    source.emit({ type: "ssh_agent_asks_changed", workspace: "demo" });
+    expect(await screen.findByText("late.example.com")).toBeTruthy();
   });
 });

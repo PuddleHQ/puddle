@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `cargo xtask runtime`: the bundled runtime folder, built in a staging folder and moved into
 //! place only when every check passed, so a half-built or unverified folder never exists at `out`.
 //!
@@ -13,8 +13,9 @@
 //! <out>/licenses/      Apache-2.0, LGPL-2.1, GPL-2.0, NOTICE, THIRD-PARTY-{msb,puddle}
 //! ```
 //!
-//! Every download is checked against its release's checksum list, and msb's embedded version
-//! against the tag. [`plan`] decides the files; it has no I/O.
+//! Every download is checked against its release's checksum list and against the committed pin
+//! list `ci/msb-runtime.sha256` (a release's own list can be replaced along with its assets), and
+//! msb's embedded version against the tag. [`plan`] decides the files; it has no I/O.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,7 @@ use crate::checksums::{Checksums, sha256_file};
 use crate::error::{Result, XtaskError};
 use crate::inventory::Inventory;
 use crate::notice;
+use crate::pin;
 use crate::source::{
     CHECKSUMS_ASSET, FIRMWARE_FORK, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET,
     MSB_ASSET, MSB_LINUX_ASSET, Origin, ReleaseSource,
@@ -154,7 +156,8 @@ pub struct Manifest {
 }
 
 /// Builds the runtime folder of `target` at `out` for the msb version `expected` (exact embedded
-/// version), with `puddle` as the inventory of Puddle's own tree.
+/// version), with `puddle` as the inventory of Puddle's own tree and `pins` the text of the
+/// committed pin list ([`crate::pin::PIN_FILE`]) every download is checked against.
 ///
 /// # Errors
 ///
@@ -164,6 +167,7 @@ pub fn assemble(
     source: &dyn ReleaseSource,
     expected: &str,
     puddle: &Inventory,
+    pins: &str,
     target: &Target,
     out: &Path,
 ) -> Result<Manifest> {
@@ -180,7 +184,7 @@ pub fn assemble(
         std::fs::remove_dir_all(&staging)
             .map_err(|e| XtaskError::io(format!("removing {}", staging.display()), e))?;
     }
-    let result = build(source, expected, puddle, target, &staging);
+    let result = build(source, expected, puddle, pins, target, &staging);
     match result {
         Ok(manifest) => {
             if out.exists() {
@@ -221,6 +225,7 @@ fn fetch_verified(
     asset: &str,
     dir: &Path,
     list_name: &str,
+    pin: Pin<'_>,
 ) -> Result<(PathBuf, String)> {
     mkdir(dir)?;
     let sums_path = source.fetch(origin, CHECKSUMS_ASSET, dir)?;
@@ -229,7 +234,15 @@ fn fetch_verified(
     let sums = Checksums::parse(list_name, &sums_text)?;
     let file = source.fetch(origin, asset, dir)?;
     let sha = sums.verify(asset, &file)?;
+    pin::verify(pin.list, pin.tag, asset, &sha)?;
     Ok((file, sha))
+}
+
+/// The committed pin list and the release tag whose lines a download is checked against.
+#[derive(Clone, Copy)]
+struct Pin<'a> {
+    list: &'a str,
+    tag: &'a str,
 }
 
 /// Downloads and verifies the firmware library. Windows: the fork release's dll, the one
@@ -238,6 +251,7 @@ fn fetch_verified(
 fn fetch_firmware(
     source: &dyn ReleaseSource,
     facts: &ForkFacts,
+    pins: &str,
     os: HostOs,
     target: &Target,
     downloads: &Path,
@@ -256,6 +270,11 @@ fn fetch_firmware(
             facts.upstream_repo, facts.upstream_tag
         ),
     };
+    let pin_tag = match (fw_origin, &facts.firmware.fork_tag) {
+        (Origin::Fork, _) => &facts.tag,
+        (Origin::FirmwareFork, Some(fork_tag)) => fork_tag,
+        _ => &facts.upstream_tag,
+    };
     fetch_verified(
         source,
         fw_origin,
@@ -265,6 +284,10 @@ fn fetch_firmware(
         },
         &downloads.join("firmware"),
         &fw_list,
+        Pin {
+            list: pins,
+            tag: pin_tag,
+        },
     )
 }
 
@@ -294,6 +317,7 @@ fn build(
     source: &dyn ReleaseSource,
     expected: &str,
     puddle: &Inventory,
+    pins: &str,
     target: &Target,
     staging: &Path,
 ) -> Result<Manifest> {
@@ -302,6 +326,10 @@ fn build(
     let layout = plan(target)?;
     let facts = source.facts()?;
     let downloads = staging.join(".download");
+    let fork_pin = Pin {
+        list: pins,
+        tag: &facts.tag,
+    };
     let (msb, msb_sha256) = match target {
         Target::Windows => fetch_verified(
             source,
@@ -309,6 +337,7 @@ fn build(
             MSB_ASSET,
             &downloads.join("fork"),
             &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+            fork_pin,
         )?,
         Target::Linux { msb: Some(msb), .. } => (msb.clone(), sha256_file(msb)?),
         Target::Linux { msb: None, .. } => fetch_verified(
@@ -317,6 +346,7 @@ fn build(
             MSB_LINUX_ASSET,
             &downloads.join("fork"),
             &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+            fork_pin,
         )?,
     };
     let found = puddle_runtime::read_embedded_version(&msb)
@@ -327,7 +357,7 @@ fn build(
             found: found.unwrap_or_else(|| "none".into()),
         });
     }
-    let (fw, libkrunfw_sha256) = fetch_firmware(source, &facts, os, target, &downloads)?;
+    let (fw, libkrunfw_sha256) = fetch_firmware(source, &facts, pins, os, target, &downloads)?;
     let msb_inventory = source.msb_inventory(os)?;
     msb_inventory.check()?;
     puddle.check()?;
@@ -377,146 +407,9 @@ fn build(
     };
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| XtaskError::parse("runtime.json", e))?;
-    write(&staging.join("runtime.json"), json + "\n")?;
+    write(&staging.join("runtime.json"), format!("{json}\n"))?;
     Ok(manifest)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use puddle_runtime::RuntimeFiles;
-
-    #[test]
-    fn licence_texts_are_the_real_ones() {
-        let [(_, apache), (_, lgpl), (_, gpl)] = LICENCE_TEXTS;
-        assert!(apache.contains("Apache License") && apache.contains("Version 2.0, January 2004"));
-        assert!(
-            lgpl.contains("GNU LESSER GENERAL PUBLIC LICENSE")
-                && lgpl.contains("Version 2.1, February 1999")
-        );
-        assert!(gpl.contains("GNU GENERAL PUBLIC LICENSE") && gpl.contains("Version 2, June 1991"));
-    }
-
-    const WIN: RuntimeFiles = HostOs::Windows.runtime_files();
-    const LINUX: RuntimeFiles = HostOs::Linux.runtime_files();
-
-    fn linux(version: &str) -> Target {
-        Target::Linux {
-            msb: None,
-            libkrunfw_version: version.to_owned(),
-            firmware_tag: None,
-        }
-    }
-
-    fn firmware(fork_tag: Option<&str>) -> Firmware {
-        Firmware {
-            libkrunfw_version: "5.6.1".into(),
-            kernel_version: "6.12.113".into(),
-            repo_url: "https://github.com/PuddleHQ/libkrunfw".into(),
-            commit: "e".repeat(40),
-            fork_tag: fork_tag.map(ToOwned::to_owned),
-        }
-    }
-
-    fn linux_from(fork_tag: Option<&str>) -> Target {
-        Target::Linux {
-            msb: None,
-            libkrunfw_version: "5.6.1".into(),
-            firmware_tag: fork_tag.map(ToOwned::to_owned),
-        }
-    }
-
-    #[test]
-    fn the_firmware_comes_from_the_fork_release_the_pin_and_the_facts_both_name() {
-        let pinned = Some("v5.6.1-puddle.1");
-        assert_eq!(
-            firmware_origin(&linux_from(pinned), &firmware(pinned)).unwrap(),
-            Origin::FirmwareFork
-        );
-        assert_eq!(
-            firmware_origin(&linux_from(None), &firmware(None)).unwrap(),
-            Origin::Upstream
-        );
-        assert_eq!(
-            firmware_origin(&Target::Windows, &firmware(None)).unwrap(),
-            Origin::Upstream
-        );
-    }
-
-    #[test]
-    fn a_pin_and_facts_naming_different_firmware_are_refused() {
-        for (target, facts) in [
-            (
-                linux_from(Some("v5.6.1-puddle.2")),
-                firmware(Some("v5.6.1-puddle.1")),
-            ),
-            (linux_from(Some("v5.6.1-puddle.1")), firmware(None)),
-            (linux_from(None), firmware(Some("v5.6.1-puddle.1"))),
-            (Target::Windows, firmware(Some("v5.6.1-puddle.1"))),
-        ] {
-            let err = firmware_origin(&target, &facts).unwrap_err().to_string();
-            assert!(err.contains("v5.6.1-puddle.1"), "{err}");
-        }
-    }
-
-    fn fw(name: &str) -> (String, Part) {
-        (name.to_owned(), Part::Firmware)
-    }
-
-    #[test]
-    fn windows_ships_msb_and_one_firmware_file() {
-        assert_eq!(
-            plan(&Target::Windows).unwrap(),
-            [(WIN.msb.to_owned(), Part::Msb), fw(WIN.libkrunfw)]
-        );
-    }
-
-    #[test]
-    fn linux_ships_the_firmware_under_its_soname_and_the_pinned_version() {
-        assert_eq!(
-            plan(&linux("5.6.1")).unwrap(),
-            [
-                (LINUX.msb.to_owned(), Part::Msb),
-                fw(LINUX.libkrunfw),
-                fw(&format!("{}.6.1", LINUX.libkrunfw))
-            ]
-        );
-        // A pin bump changes the name.
-        assert_eq!(
-            plan(&linux("5.7.0")).unwrap().last(),
-            Some(&fw(&format!("{}.7.0", LINUX.libkrunfw)))
-        );
-    }
-
-    #[test]
-    fn a_version_that_equals_the_soname_is_refused() {
-        let err = plan(&linux("5")).unwrap_err().to_string();
-        assert!(err.contains(LINUX.libkrunfw), "{err}");
-    }
-
-    #[test]
-    fn a_part_that_cannot_be_copied_is_named() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("xtask-assemble-no-such-msb");
-        let err = place(
-            &[("msb".to_owned(), Part::Msb)],
-            &missing,
-            &missing,
-            dir.path(),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("copying") && err.contains("no-such-msb"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn staging_sits_beside_the_output() {
-        assert_eq!(
-            sibling(Path::new("/a/runtime"), "partial"),
-            Path::new("/a/runtime.partial")
-        );
-    }
-}
+mod tests;

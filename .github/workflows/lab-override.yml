@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Says when ci/lab/overrides.txt can be deleted: ci/lab-override-check.py reads the latest mitmproxy release's
 # declared bounds from PyPI and fails when it allows the version the override pins. A failure opens
 # "Nightly red: lab-override" through nightly-signal.yml and a green run closes it. Not a required check and never

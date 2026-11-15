@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The bundled code-server installs an extension in a fresh workspace on the first try, with no
 //! rule added by anyone (K on Linux KVM): System managed allows Open VSX for every workspace from
 //! the start (rules spec R-41), whether or not that workspace's browser editor was ever opened.
@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest, guest_live, start_vm_host_config};
 
 /// A small extension that is on Open VSX.
@@ -66,7 +66,7 @@ async fn vm_editor_installs_an_extension_from_open_vsx_with_no_rule_added() {
         runtime,
         settings,
         ..
-    } = start_vm_host_config("ovx", hermetic_options(), |config| {
+    } = start_vm_host_config("ovx", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;

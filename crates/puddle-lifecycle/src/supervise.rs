@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The front/worker split on Windows (see the crate docs): the worker is not on the user's
 //! console, so it survives the console's 5 s deadline and finishes stopping the VMs.
 
@@ -60,11 +60,4 @@ pub(crate) fn is_worker() -> bool {
 }
 
 #[cfg(all(test, not(windows)))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outside_windows_every_process_is_the_worker() {
-        assert_eq!(supervise().unwrap(), Role::Worker);
-    }
-}
+mod tests;

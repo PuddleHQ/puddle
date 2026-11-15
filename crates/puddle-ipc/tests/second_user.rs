@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest tier W: a real second local user (a throwaway account the test makes and logs
 //! on) goes after a route's pipe. The guest can only reach a route through msb, which runs as the
 //! owner, so the second user stands for anything else on the machine that wants to be the route's

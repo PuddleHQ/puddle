@@ -1,9 +1,14 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The rules table as pure data: how a rule reads, which rules a filter keeps, and in which order
 // they are shown. No layout and no API calls here.
 import type { components } from "#lib/api/schema.d.ts";
 
 export type Rule = components["schemas"]["Rule"];
+
+/** Who made a rule or a decision, in words: the create of a workspace is not a person's click. */
+export function actorLabel(actor: string): string {
+  return actor === "workspace_create" ? "the create" : actor;
+}
 
 export type SortKey = "pattern" | "effect" | "scope" | "expires" | "created";
 export type SortDirection = "asc" | "desc";

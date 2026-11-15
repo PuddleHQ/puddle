@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The proxy's memory does not follow what a hostile guest sends: twelve guests at once push a
 //! 10 MB request line or 100 000 header lines at one route, and the proxy's heap (counted by this
 //! test binary's allocator) stays far below what buffering one of the heads would take. The guests
@@ -23,8 +23,9 @@ const TEST: &str = "hostile_hg10_the_heap_does_not_follow_what_a_guest_sends";
 /// What the child prints once every guest is sending.
 const SENDING: &str = "guests: sending";
 const ATTACKERS: usize = 12;
-/// Buffering one 10 MB line would already pass this.
-const LIMIT: usize = 12 * 1024 * 1024;
+/// Twelve heads held at their 64 KiB cap are under 1 MiB; a run measured 2 MiB. Holding the whole
+/// of even one 10 MB line goes over this.
+const LIMIT: usize = 5 * 1024 * 1024;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows: named pipes with an owner-only DACL, a first-instance check and a pool of acceptors.
 
 #[expect(
@@ -38,6 +38,8 @@ const BUSY_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 pub(crate) struct Root {
     /// The owner-only security descriptor, as SDDL.
     sddl: Arc<str>,
+    /// The install's id, in every name this root makes by name; `None` for a root of random names.
+    install: Option<Arc<str>>,
 }
 
 impl Root {
@@ -48,7 +50,22 @@ impl Root {
         })?;
         Ok(Self {
             sddl: puddle_fs::win::owner_only_sddl(&sid, "GA", false).into(),
+            install: None,
         })
+    }
+
+    pub(crate) fn stable(install_id: &str) -> Result<Self, IpcError> {
+        Ok(Self {
+            install: Some(install_id.into()),
+            ..Self::new()?
+        })
+    }
+
+    /// The pipe `puddle-<install id>-<name>`. The id is what another user cannot guess before
+    /// Puddle serves the name; the first-instance flag catches a user who does.
+    pub(crate) fn named_path(&self, name: &str) -> Result<PathBuf, IpcError> {
+        let install = self.install.as_deref().ok_or(IpcError::NotStable)?;
+        Ok(PathBuf::from(format!("{PIPE_PREFIX}{install}-{name}")))
     }
 
     #[expect(
@@ -325,52 +342,4 @@ impl AsyncWrite for Stream {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn first_instance_failures_mean_the_name_is_taken() {
-        let p = Path::new(r"\\.\pipe\puddle-x");
-        for code in [ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY] {
-            let err = bind_error(
-                p,
-                io::Error::from_raw_os_error(i32::try_from(code).unwrap()),
-            );
-            assert!(matches!(err, IpcError::NameTaken { .. }), "{code}: {err}");
-        }
-        let err = bind_error(p, io::Error::from_raw_os_error(87));
-        assert!(matches!(err, IpcError::Io { op: "create", .. }), "{err}");
-    }
-
-    #[test]
-    fn endpoint_names_have_the_prefix_and_128_random_bits() {
-        let p = Root::new().unwrap().endpoint_path().unwrap();
-        let s = p.to_str().unwrap();
-        let suffix = s.strip_prefix(PIPE_PREFIX).unwrap();
-        assert_eq!(suffix.len(), 32, "{s}");
-    }
-
-    #[tokio::test]
-    async fn a_pipe_served_by_another_user_is_refused_and_ours_is_not() {
-        let root = crate::IpcRoot::new().unwrap();
-        let listener = root.listen().unwrap();
-        let path = listener.endpoint().path().to_path_buf();
-        connect_as(&path, puddle_fs::win::current_user_sid)
-            .await
-            .unwrap();
-        // The local SYSTEM account stands for the other user.
-        let err = connect_as(&path, || Ok("S-1-5-18".to_owned()))
-            .await
-            .unwrap_err();
-        assert!(matches!(err, IpcError::WrongOwner { .. }), "{err}");
-        crate::connect(&path).await.unwrap();
-    }
-
-    #[test]
-    fn busy_is_recognised_by_its_os_code() {
-        let busy = i32::try_from(ERROR_PIPE_BUSY).unwrap();
-        assert!(is_busy(&io::Error::from_raw_os_error(busy)));
-        assert!(!is_busy(&io::Error::from_raw_os_error(2)));
-        assert!(!is_busy(&io::Error::other("x")));
-    }
-}
+mod tests;

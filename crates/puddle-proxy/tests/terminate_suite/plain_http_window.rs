@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A plain-HTTP response bigger than one yamux stream window arrives whole while the guest sends
 //! nothing more. The client keeps its sending side open and the connection alive, as curl and
 //! apt do.

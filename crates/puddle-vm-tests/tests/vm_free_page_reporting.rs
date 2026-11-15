@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Memory a guest frees goes back to the host: the guest fills a large block of RAM, the host
 //! process that runs the VM grows by about that much, the guest frees the block, and the process
 //! shrinks again without the guest being stopped. This is the balloon device's free page

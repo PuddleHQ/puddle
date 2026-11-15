@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the counter map here is bookkeeping that no template reads, so it needs no reactivity */
 // The workspace screens' state: the list, what each one is doing (progress steps), the last
 // out-of-memory kill, and the actions (create, start, stop, reclaim, attach, delete).
@@ -11,9 +11,11 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import {
   asWorkspaceEvent,
+  type ToolsState,
   type WorkspaceEvent,
 } from "#lib/workspaces/events.ts";
 import {
+  isDown,
   operationOfStep,
   sortWorkspaces,
   type DeleteCheck,
@@ -97,6 +99,8 @@ export class WorkspaceStore {
   loadError = $state<string | null>(null);
   progress = $state.raw<Record<string, Progress>>({});
   oom = $state.raw<Record<string, OomEvent>>({});
+  /** The last `workspace_tools` state of each workspace that is up; the record has no field for it. */
+  tools = $state.raw<Record<string, ToolsState>>({});
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -124,6 +128,16 @@ export class WorkspaceStore {
   /** The words for a workspace: its display name, or the id when it is not listed (deleted). */
   labelOf(id: string): string {
     return this.byId(id)?.name ?? id;
+  }
+
+  /**
+   * `labelOf` for a sentence a person hears (an accessible name, a toast): the display name alone,
+   * and only when another listed workspace shares it, followed by the id so the two can be told apart.
+   */
+  spokenLabelOf(id: string): string {
+    const name = this.labelOf(id);
+    const clash = this.list.some((w) => w.id !== id && w.name === name);
+    return clash ? `${name} (${id})` : name;
   }
 
   /** Reads the list; never throws. Calls that overlap share one run, and one more follows. */
@@ -187,8 +201,16 @@ export class WorkspaceStore {
           return;
         }
         this.#put({ ...w, status: event.status });
+        // Nothing installs in a workspace that is down, and the next start tells afresh.
+        if (isDown(event.status) && id in this.tools) {
+          const { [id]: _gone, ...rest } = this.tools;
+          this.tools = rest;
+        }
         return;
       }
+      case "workspace_tools":
+        this.tools = { ...this.tools, [id]: event.state };
+        return;
       case "workspace_repositories_changed":
         // The list of repositories is part of the record: read it again.
         void this.refresh();
@@ -353,6 +375,24 @@ export class WorkspaceStore {
   stopWorkspace = (id: string) => this.#operate(id, "stop");
   reclaim = (id: string) => this.#operate(id, "reclaim");
   resetRootDisk = (id: string) => this.#operate(id, "reset-root-disk");
+
+  /** Makes the root disk `sizeMib` big; it only grows, and the workspace is busy until it is done. */
+  async growRootDisk(
+    id: string,
+    sizeMib: number,
+  ): Promise<ActionResult<Workspace>> {
+    const before = this.#endedCount(id);
+    const result = await this.#post(() =>
+      this.#api.POST("/api/workspaces/{id}/grow-root-disk", {
+        params: { path: { id } },
+        body: { size_mib: sizeMib },
+      }),
+    );
+    if (result.ok) {
+      this.#accept(result.value.id, before, result.value, true);
+    }
+    return result;
+  }
 
   /** What deleting would lose. */
   checkDelete(id: string): Promise<ActionResult<DeleteCheck>> {

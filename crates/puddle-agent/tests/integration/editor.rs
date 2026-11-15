@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for the editor server: the agent starts the release's `bin/code-server` when the host
 //! asks, hands it a fresh password it also writes to an owner-only file, and starts it again when
 //! it dies. A shell script stands in for code-server and records what it was started with.
@@ -49,8 +49,7 @@ fn fixture() -> Fixture {
     let script = release.join("bin/code-server");
     let out = dir.path().join("out");
     std::fs::create_dir(&out).unwrap();
-    std::fs::write(&script, FAKE.replace("OUT", &out.to_string_lossy())).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&script, &FAKE.replace("OUT", &out.to_string_lossy()));
     let mut server = EditorServer::new(
         dir.path().join("data").to_string_lossy(),
         dir.path().join("work").to_string_lossy(),

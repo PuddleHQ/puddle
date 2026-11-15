@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the kernel does with a process that has called `harden_from_env`, in a child process
 //! (the setting is per process). The child is this test binary run again on `probe`.
 #![cfg(target_os = "linux")]

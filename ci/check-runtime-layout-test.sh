@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/check-runtime-layout.sh --check: a complete folder passes, and each way a folder
 # can fall short (missing file, wrong firmware copy, wrong or missing version in runtime.json,
 # msb not executable) fails with its own message. Not seen: the xtask run itself.

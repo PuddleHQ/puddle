@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The nightly coverage baseline raise (ci/raise-coverage-baseline.sh): when the coverage the `ci` workflow measured on develop's tip is
 # above scripts/coverage-baseline.json or ui/coverage-baseline.json, ONE pull request, `build: raise the coverage baseline`, raises
 # them and goes through the merge queue like any other. Pull requests carry no raise of their own, so two of them never conflict on

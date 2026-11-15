@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Test helpers for code that sets owner-only ACLs: read a handle's DACL back as the OS reports
 //! it, open files from a thread impersonating a restricted copy of this process's token, and
 //! make a real second local user ([`SecondUser`]) to act as. Behind the `testing` feature; never

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Splits the VM tests over the partition jobs by measured test time instead of nextest's hash of the name.
 # `--partition hash:i/n` has no timing mode, and one hash share held 42 tests (859 s of tests) where another held
 # 31 (563 s), so the slowest partition set the length of the whole run. Here every test gets its measured seconds

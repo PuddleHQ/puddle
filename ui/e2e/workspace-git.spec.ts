@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A workspace's Git tab against the real API on the fixture backend, scenario `git-identities`:
 // web-shop has Work and a table of two repositories (design-tokens without Push), docs-site has
 // Personal and Work and the push list off, data-tools has nothing. Waits are on conditions.

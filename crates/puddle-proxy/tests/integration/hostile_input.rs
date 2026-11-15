@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest sends the proxy malformed heads (a 10 MB line, 100 000 headers, NUL, bytes that
 //! are not UTF-8, bad ports and brackets) on a real route. Every refusal names its cause in the
 //! response body (so a test passes only for the limit or rule it is about, not because the

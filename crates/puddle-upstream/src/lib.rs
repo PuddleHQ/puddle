@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The company proxy in front of Puddle.
 //!
 //! Many networks only let a machine out through an HTTP proxy, chosen per URL by a PAC script or
@@ -53,6 +53,7 @@ mod health;
 mod hop;
 pub mod host;
 mod negotiate;
+pub mod network;
 mod os;
 mod parse;
 mod redact;
@@ -65,7 +66,9 @@ mod wire;
 
 pub use auth::{AuthError, AuthSession, AuthStep, NoAuth, ProxyAuth, system_auth};
 pub use basic::{AuthList, BasicAuth, CredentialSource, Credentials};
-pub use chain::{Chain, ChainConfig, ChainError, Connected, Form, Request, Secret, connect_first};
+pub use chain::{
+    Chain, ChainConfig, ChainError, Connected, Form, HostLookup, Request, Secret, connect_first,
+};
 pub use discovery::{Config, Decision, Discovery, ManualProxy, Mode, RouteSource, Watching};
 pub use env::{EnvFallback, EnvOs};
 #[cfg(any(test, feature = "testing"))]
@@ -78,6 +81,12 @@ pub use health::{
 };
 pub use hop::{Destination, Hop, ParseError, ProxyAddr, Route, Scheme};
 pub use negotiate::{Leg, NegotiateAuth, Package, SecurityContext, TokenSource};
+#[cfg(any(test, feature = "testing"))]
+pub use network::FakeNetwork;
+pub use network::{
+    Adapter, AdapterKind, NetworkError, NetworkOs, NetworkSnapshot, Route as NetworkRoute,
+    system_network,
+};
 pub use os::{
     ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig,
     SettingsError, WatchGuard, system_os,

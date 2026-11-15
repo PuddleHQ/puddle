@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host side of the repository lists and the account profile ([`RepoService`]): which
 //! repositories each identity's credentials reach, and who a credential's account is, to prefill
 //! an identity. [`Repos`] reads them from the Git hosts over Puddle's own route; [`FakeRepos`]
@@ -67,11 +67,11 @@ impl RepoService for Repos {
         identities: &'a [Identity],
         read: Read,
     ) -> BoxFuture<'a, Result<Vec<SourceList>, ReposError>> {
-        Box::pin(async move { Ok(Repos::lists(self, identities, read).await) })
+        Box::pin(async move { Ok(Self::lists(self, identities, read).await) })
     }
 
     fn profile(&self, source: SourceSpec) -> BoxFuture<'_, Result<ProfileRead, ReposError>> {
-        Box::pin(async move { Ok(Repos::profile(self, &source).await) })
+        Box::pin(async move { Ok(Self::profile(self, &source).await) })
     }
 }
 

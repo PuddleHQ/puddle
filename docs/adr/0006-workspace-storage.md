@@ -56,6 +56,11 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
    again). The name the user types is display text and names no volume, sandbox or folder, so a
    workspace made again under a deleted one's name finds none of its data. Workspaces made before
    ids were generated keep the id they have, which is the name they were created with.
+   A delete keeps the workspace's entry in the list, marked as being deleted, until the volume
+   and the cleanup are done. A start that finds a marked entry whose volume is gone finishes the
+   delete (the id is retired); one whose volume is still there lists the workspace again. Every
+   start also sweeps each retired id in the background: a sandbox, store rows, credential-store
+   values, the settings file and the browser editor's data still named by it are removed.
 2. **Code gets in by cloning inside the VM** through Puddle's proxy in the first milestone, with
    git HTTPS credentials injected by the proxy. **"Start from my Windows checkout"** is the first
    thing after it; the measurements showed the mechanism works (a read-only bind of the checkout +
@@ -73,13 +78,17 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 
 ### Requirements from the rerun
 
-6. **Guest git uses `core.fsync=committed`.** There is no image of our own to bake it into
+6. **Guest git uses `core.fsync=added` and `core.fsyncMethod=batch`.** There is no image of our own to bake it into
    (ADR 0005), so Puddle's boot-time guest setup writes it into its own git config file in the guest
    (`/etc/puddle/gitconfig`), which `/etc/gitconfig` pulls in with one `include` line, next to
-   the other boot setup (inotify limits, proxy config, PATH fix, git identity). Measured on a busy
-   host: 1 000 commits take about 4 times as long (113 s against 29 s, 3 fsyncs per commit), a
+   the other boot setup (inotify limits, proxy config, PATH fix, git identity). The file is
+   rewritten at every boot, so a workspace made earlier gets the current settings at its next
+   start. `added` also syncs the index, which `committed` leaves out, and `batch` syncs a whole
+   bulk add at once instead of every object. Measured on a busy host with `committed` alone:
+   1 000 commits take about 4 times as long (113 s against 29 s, 3 fsyncs per commit), a
    `git add -A` of 50 000 new files 33 times as long (692 s against 21 s), and a checkout is
-   unchanged.
+   unchanged. With `batch` the bulk add takes seconds, and `added` plus `batch` costs about 12 %
+   more per commit than `committed` plus `batch`, within the run-to-run range.
 7. **Puddle trims workspace volumes:** `fstrim` on the volume's mount point when a sandbox is
    stopped by Puddle (before the VM goes down), plus a manual "reclaim space" action per workspace.
    A timer for long-running sandboxes can come later if disk use shows it is needed.
@@ -138,8 +147,8 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 - **Single writer** is only shown for a *running* first sandbox; a second sandbox attaching while
   the first is merely stopped, and whether `msb rm` ever touches a named volume, are untested.
   Puddle's own tracking (8) covers this in practice.
-- **`core.fsync=committed` cost** is measured (see decision 6); `core.fsyncMethod=batch` would cut
-  the bulk-add cost (41 s instead of 692 s for 50 000 files) but has not been run under a power cut.
+- **`core.fsync=added` with `core.fsyncMethod=batch`** was run under power cuts (no corrupt index
+  in 62 index events against 4 of 63 with `committed`); the cost is measured (see decision 6).
 - **#1638** has no fix date. It doesn't affect this decision, but blocks any writable host-folder
   feature until fixed (and re-measured: the speed gap stands regardless).
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Running the fixed invocations: resolved paths, no console window, never a prompt.
 
 use std::ffi::OsStr;
@@ -25,13 +25,21 @@ pub struct ToolPaths {
     gh: Option<PathBuf>,
     git: Option<PathBuf>,
     az: Option<PathBuf>,
+    systemd_creds: Option<PathBuf>,
+    loginctl: Option<PathBuf>,
 }
 
 impl ToolPaths {
     /// Paths given directly (tests, or a setting).
     #[must_use]
     pub fn new(gh: Option<PathBuf>, git: Option<PathBuf>) -> Self {
-        Self { gh, git, az: None }
+        Self {
+            gh,
+            git,
+            az: None,
+            systemd_creds: None,
+            loginctl: None,
+        }
     }
 
     /// The same paths with `az` at `az` (tests, or a setting).
@@ -41,7 +49,21 @@ impl ToolPaths {
         self
     }
 
-    /// Looks `gh`, `git` and `az` up in the process's `PATH`.
+    /// The same paths with `systemd-creds` at `systemd_creds` (tests, or a setting).
+    #[must_use]
+    pub fn with_systemd_creds(mut self, systemd_creds: Option<PathBuf>) -> Self {
+        self.systemd_creds = systemd_creds;
+        self
+    }
+
+    /// The same paths with `loginctl` at `loginctl` (tests, or a setting).
+    #[must_use]
+    pub fn with_loginctl(mut self, loginctl: Option<PathBuf>) -> Self {
+        self.loginctl = loginctl;
+        self
+    }
+
+    /// Looks `gh`, `git`, `az`, `systemd-creds` and `loginctl` up in the process's `PATH`.
     #[must_use]
     pub fn resolve() -> Self {
         Self::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default())
@@ -57,6 +79,8 @@ impl ToolPaths {
             gh: find("gh", search_path),
             git: find("git", search_path),
             az: find_file(if cfg!(windows) { "az.cmd" } else { "az" }, search_path),
+            systemd_creds: find("systemd-creds", search_path),
+            loginctl: find("loginctl", search_path),
         }
     }
 
@@ -65,6 +89,8 @@ impl ToolPaths {
             Tool::Gh => &self.gh,
             Tool::Git => &self.git,
             Tool::Az => &self.az,
+            Tool::SystemdCreds => &self.systemd_creds,
+            Tool::Loginctl => &self.loginctl,
         };
         path.as_deref().ok_or(SourceError::ToolMissing(tool))
     }
@@ -214,6 +240,18 @@ pub(crate) async fn run_capturing(
     run_inner(Prompts::Never, true, tool, program, args, None, timeout).await
 }
 
+/// [`run`] with `stdin`, keeping standard error for the caller to classify a failure by (as
+/// [`run_capturing`]); for a tool that is handed a secret.
+pub(crate) async fn run_with_input(
+    tool: Tool,
+    program: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output, SourceError> {
+    run_inner(Prompts::Never, true, tool, program, args, stdin, timeout).await
+}
+
 async fn run_inner(
     prompts: Prompts,
     capture_stderr: bool,
@@ -287,78 +325,4 @@ async fn read_wiping<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Ze
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn name(tool: &str) -> String {
-        let extension = if cfg!(windows) { ".exe" } else { "" };
-        format!("{tool}{extension}")
-    }
-
-    #[tokio::test]
-    async fn output_larger_than_the_first_buffer_is_read_whole() {
-        let data: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
-        let mut reader = &data[..];
-        let read = read_wiping(&mut reader).await.unwrap();
-        assert_eq!(&read[..], &data[..]);
-        // The buffer doubled itself three times; a Vec growing on its own would not stop at that.
-        assert_eq!(read.capacity(), FIRST_READ * 8);
-    }
-
-    #[tokio::test]
-    async fn a_small_output_stays_in_the_first_buffer() {
-        let mut reader = &b"token"[..];
-        let read = read_wiping(&mut reader).await.unwrap();
-        assert_eq!(&read[..], b"token");
-        assert_eq!(read.capacity(), FIRST_READ);
-    }
-
-    #[cfg(unix)]
-    fn set_mode(path: &Path, mode: u32) {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
-    }
-
-    #[test]
-    fn only_an_executable_file_counts_as_a_tool() {
-        let dir = tempfile::tempdir().unwrap();
-        let found = dir.path().join("found");
-        let plain = dir.path().join("plain");
-        let folder = dir.path().join("folder");
-        for d in [&found, &plain, &folder] {
-            std::fs::create_dir(d).unwrap();
-        }
-        // `gh` runs; `git` is a file nobody may run (Unix) or is missing (Windows has no mode).
-        std::fs::write(found.join(name("gh")), b"").unwrap();
-        std::fs::write(plain.join(name("git")), b"").unwrap();
-        // A folder with a tool's name is no tool.
-        std::fs::create_dir(folder.join(name("gh"))).unwrap();
-        std::fs::create_dir(folder.join(name("git"))).unwrap();
-        #[cfg(unix)]
-        {
-            set_mode(&found.join("gh"), 0o755);
-            set_mode(&plain.join("git"), 0o644);
-            set_mode(&folder.join("gh"), 0o755);
-            set_mode(&folder.join("git"), 0o755);
-        }
-        let paths = |dir: &Path| ToolPaths::from_search_path(dir.as_os_str());
-        assert_eq!(paths(&found).gh, Some(found.join(name("gh"))));
-        assert_eq!(paths(&found).git, None);
-        assert_eq!(paths(&folder), ToolPaths::default());
-        #[cfg(unix)]
-        assert_eq!(paths(&plain), ToolPaths::default());
-        #[cfg(windows)]
-        assert_eq!(paths(&plain).git, Some(plain.join(name("git"))));
-    }
-
-    #[test]
-    fn the_process_path_is_searched_for_both_tools() {
-        let from_env =
-            ToolPaths::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default());
-        assert_eq!(ToolPaths::resolve(), from_env);
-        assert!(
-            from_env.git.is_some(),
-            "git is on the PATH of every machine that builds Puddle"
-        );
-    }
-}
+mod tests;

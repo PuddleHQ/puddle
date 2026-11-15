@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Compile-time checks, enforced by `svelte-check`: each `@ts-expect-error` below must be a type
 // error, or svelte-check fails ("unused directive"). So a wrong path, verb, parameter or body
 // breaks the gate. The functions are never called.

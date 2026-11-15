@@ -9,6 +9,7 @@ cargo-fuzz targets for what a guest's first bytes reach before any rule is asked
 | `connect_target` | the target of a `CONNECT` or absolute-form request, as text |
 | `normalise_host` | `puddle_netpolicy::normalise_host` |
 | `agent_preamble` | the first line of an agent stream |
+| `answer_tokens` | an answer read for tokens Puddle does not hold, whole and in pieces of a size the first byte sets: both must find the same kinds, each once (`puddle_proxy::fuzzing::answer_tokens`) |
 | `resolve_line` | the lookup lines the host reads from the agent (`puddle_agent_proto::fuzzing`) |
 | `dns_message` | the DNS message the guest's stub reads from a tool in the guest (`checks/dns_message.rs`) |
 | `resolve_line_grammar` | the same lines, built from a grammar (JSON spellings, key order, escapes, unknown fields, broken variants) that knows what the host must make of each (`puddle_agent_proto::fuzzing::resolve_line_grammar`) |

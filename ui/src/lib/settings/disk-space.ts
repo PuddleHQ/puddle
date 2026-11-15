@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The two free-space lines on the Settings screen: what a typed amount may be, and the notice the
 // app raises when the drive that holds Puddle's data runs low. The host measures; the lines and
 // their defaults match the API's (`ui.disk_warn_free_gb`, `ui.disk_fail_free_gb`).

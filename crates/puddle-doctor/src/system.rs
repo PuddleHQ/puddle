@@ -1,13 +1,14 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real machine as a [`Probe`].
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use puddle_runtime::{
-    BundledRuntime, DevOverride, RUNTIME_DIR_NAME, RuntimeError, RuntimeLayout, RuntimeVersion,
-    VersionStatus,
+    BundledRuntime, DevOverride, DigestStatus, RUNTIME_DIR_NAME, RuntimeDigests, RuntimeError,
+    RuntimeLayout, RuntimeVersion, VersionStatus,
 };
 
 use puddle_ssh_agent::{
@@ -16,9 +17,9 @@ use puddle_ssh_agent::{
 
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, AgentService, BootFacts, CodeIntegrityFacts, DataPathFacts, DiskEncryptionFacts,
-    DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
-    SshAgentFacts,
+    AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts,
+    DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os,
+    ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts, VaultFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -28,9 +29,11 @@ pub struct SystemProbe {
     runtime_dir: PathBuf,
     expected: RuntimeVersion,
     dev: DevOverride,
+    digests: RuntimeDigests,
     keep_boot_logs: Option<PathBuf>,
     data_dir: Option<PathBuf>,
     ssh_agent_pipe: Option<String>,
+    az_search_path: Option<std::ffi::OsString>,
     opened: OnceCell<BundledRuntime>,
 }
 
@@ -43,11 +46,21 @@ impl SystemProbe {
             runtime_dir,
             expected,
             dev,
+            digests: RuntimeDigests::built_in(),
             keep_boot_logs: None,
             data_dir: None,
             ssh_agent_pipe: None,
+            az_search_path: None,
             opened: OnceCell::new(),
         }
+    }
+
+    /// Checks the runtime's files against `digests` instead of the hashes built into this
+    /// Puddle (tests with fake runtime folders).
+    #[must_use]
+    pub fn with_digests(mut self, digests: RuntimeDigests) -> Self {
+        self.digests = digests;
+        self
     }
 
     /// Keeps msb's logs of a failed test boot in a new folder inside `dir` (see
@@ -76,6 +89,15 @@ impl SystemProbe {
         self
     }
 
+    /// Looks for the Azure CLI in the folders of `path` (a `PATH` value) instead of the process's
+    /// own. Running the real `az` can wait on the network (it checks for updates and sends
+    /// telemetry), which a test of the check should not depend on.
+    #[must_use]
+    pub fn with_az_search_path(mut self, path: Option<std::ffi::OsString>) -> Self {
+        self.az_search_path = path;
+        self
+    }
+
     /// The folder failed test boots keep their logs in, if [`Self::with_keep_boot_logs`] set one.
     #[must_use]
     pub fn keep_boot_logs_dir(&self) -> Option<&Path> {
@@ -100,13 +122,17 @@ impl SystemProbe {
         ))
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the home is never read or written here; it only has to be an absolute folder"
-    )]
+    /// The layout the runtime check opens: the runtime folder and the msb home the host would
+    /// use, Puddle's data folder (the one set with [`Self::with_data_dir`], else the user's).
+    /// `--version` doesn't touch the home and the test boot brings its own.
     fn layout(&self) -> Result<RuntimeLayout, RuntimeError> {
-        // The home is unused here: `--version` doesn't touch it and the test boot brings its own.
-        RuntimeLayout::new(self.runtime_dir.clone(), std::env::temp_dir())
+        let data = match &self.data_dir {
+            Some(dir) => dir.clone(),
+            None => puddle_fs::data_dir().map_err(|e| RuntimeError::NoDataDir {
+                reason: e.to_string(),
+            })?,
+        };
+        RuntimeLayout::new(self.runtime_dir.clone(), data.join("msb"))
     }
 }
 
@@ -148,8 +174,10 @@ impl Probe for SystemProbe {
                 detail: e.to_string(),
             }));
         }
-        match BundledRuntime::open(layout, &self.expected, self.dev) {
+        match BundledRuntime::open_with(layout, &self.expected, &self.digests, self.dev) {
             Ok(rt) => {
+                let files_overridden =
+                    matches!(rt.digest_status(), DigestStatus::Overridden { .. });
                 let state = match rt.status() {
                     VersionStatus::Overridden { found } => RuntimeState::Ready {
                         version: found.clone().unwrap_or_else(|| "(no version)".into()),
@@ -157,7 +185,7 @@ impl Probe for SystemProbe {
                     },
                     VersionStatus::Exact => RuntimeState::Ready {
                         version: self.expected.to_string(),
-                        overridden: false,
+                        overridden: files_overridden,
                     },
                 };
                 // Set once: `runtime` runs once per diagnosis.
@@ -223,9 +251,147 @@ impl Probe for SystemProbe {
         )
     }
 
+    fn az_cli(&self, limit: Duration) -> AzCliFacts {
+        az_cli_in(
+            self.az_search_path
+                .clone()
+                .or_else(|| std::env::var_os("PATH")),
+            limit,
+        )
+    }
+
+    fn credential_store(&self) -> CredentialStoreFacts {
+        let data = self.data_dir.clone().or_else(|| puddle_fs::data_dir().ok());
+        credential_store_facts(data.as_deref(), puddle_secrets::probe_os_store, || {
+            login_session_in(std::env::var_os("PATH"), Duration::from_secs(2))
+        })
+    }
+
     fn data_path(&self) -> Option<DataPathFacts> {
         cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
     }
+}
+
+/// Which store `data` records, read without writing: the operating system's store is probed with
+/// `probe` and the login session read with `session` only when that store is the one in use (or
+/// nothing is decided yet).
+fn credential_store_facts(
+    data: Option<&Path>,
+    probe: impl FnOnce() -> puddle_secrets::StoreHealth,
+    session: impl FnOnce() -> puddle_secrets::LoginSession,
+) -> CredentialStoreFacts {
+    let record = match data {
+        Some(data) => match puddle_secrets::read_record(data) {
+            Ok(record) => record,
+            Err(_) => return CredentialStoreFacts::Unreadable,
+        },
+        None => None,
+    };
+    if let (Some(record), Some(data)) = (&record, data)
+        && record.store == puddle_secrets::StoreKind::File
+    {
+        return CredentialStoreFacts::File(
+            match puddle_secrets::FileVault::header_source(&puddle_secrets::vault_path(data)) {
+                Ok(Some(tag)) => VaultFacts::Header(tag),
+                Ok(None) => VaultFacts::NoVaultYet,
+                Err(_) => VaultFacts::Unreadable,
+            },
+        );
+    }
+    CredentialStoreFacts::Os {
+        recorded: record.is_some(),
+        health: probe(),
+        session: session(),
+    }
+}
+
+/// What `loginctl` says about the display session of this user, found on `PATH`.
+fn login_session_in(
+    path: Option<std::ffi::OsString>,
+    limit: Duration,
+) -> puddle_secrets::LoginSession {
+    use puddle_secrets::LoginSession;
+    let (Some(program), Some(uid)) = (
+        find_on_path("loginctl", path),
+        puddle_secrets::login_user_id(),
+    ) else {
+        return LoginSession::Unknown;
+    };
+    let ask = |args: &[&str]| match launch::run(Command::new(&program).args(args), limit) {
+        ProcessOutcome::Exited {
+            code: Some(0),
+            stdout_first_line,
+            ..
+        } => Some(stdout_first_line.trim().to_owned()),
+        _ => None,
+    };
+    let Some(display) = ask(&[
+        "show-user",
+        &uid.to_string(),
+        "--property=Display",
+        "--value",
+    ]) else {
+        return LoginSession::Unknown;
+    };
+    if display.is_empty() {
+        return LoginSession::NotGraphical;
+    }
+    if !display.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return LoginSession::Unknown;
+    }
+    match ask(&["show-session", &display, "--property=Type", "--value"]) {
+        Some(kind) => LoginSession::of_type(&kind),
+        None => LoginSession::Unknown,
+    }
+}
+
+/// The Azure CLI facts for a given `PATH` value.
+fn az_cli_in(path: Option<std::ffi::OsString>, limit: Duration) -> AzCliFacts {
+    let Some(program) = find_on_path(if cfg!(windows) { "az.cmd" } else { "az" }, path) else {
+        return AzCliFacts::NotFound;
+    };
+    az_cli_facts_at(&program, limit)
+}
+
+/// What running `program --version` says about the Azure CLI.
+fn az_cli_facts_at(program: &Path, limit: Duration) -> AzCliFacts {
+    az_cli_facts(launch::run(Command::new(program).arg("--version"), limit))
+}
+
+fn az_cli_facts(outcome: ProcessOutcome) -> AzCliFacts {
+    match outcome {
+        ProcessOutcome::Exited {
+            code: Some(0),
+            stdout_first_line,
+            ..
+        } => match azure_cli_version(&stdout_first_line) {
+            Some(version) => AzCliFacts::Found { version },
+            None => AzCliFacts::Unknown {
+                detail: "no version in its first line".into(),
+            },
+        },
+        ProcessOutcome::Exited { code, .. } => AzCliFacts::Unknown {
+            detail: format!("`az --version` exited with {code:?}"),
+        },
+        ProcessOutcome::TimedOut { after } => AzCliFacts::Unknown {
+            detail: format!("`az --version` took more than {} s", after.as_secs()),
+        },
+        ProcessOutcome::SpawnFailed { detail, .. } => AzCliFacts::Unknown { detail },
+    }
+}
+
+/// The version in the first line of `az --version`: `azure-cli   2.64.0 *`.
+fn azure_cli_version(first_line: &str) -> Option<String> {
+    let mut words = first_line.split_whitespace();
+    (words.next()? == "azure-cli").then_some(())?;
+    words.next().map(str::to_owned)
+}
+
+/// The first file called `name` in the folders of `PATH`.
+fn find_on_path(name: &str, path: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    std::env::split_paths(&path?)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// What asking the agent gave. `service` reads the OpenSSH Authentication Agent service's state,
@@ -278,114 +444,4 @@ fn facts_from_answer(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io;
-
-    use super::*;
-
-    fn blob(name: &str) -> Vec<u8> {
-        let mut v = u32::try_from(name.len()).unwrap().to_be_bytes().to_vec();
-        v.extend_from_slice(name.as_bytes());
-        v
-    }
-
-    fn key(name: &str) -> Identity {
-        Identity::new(blob(name), "a comment that must not be reported".into())
-    }
-
-    fn facts(endpoint: &str, answer: Result<Vec<Identity>, AgentError>) -> SshAgentFacts {
-        facts_from_answer(endpoint.into(), answer, || Some(AgentService::Stopped))
-    }
-
-    #[test]
-    fn keys_are_reported_as_families_only() {
-        let got = facts(
-            "/run/agent.sock",
-            Ok(vec![
-                key("ssh-ed25519"),
-                key("ssh-rsa-cert-v01@openssh.com"),
-                Identity::new(vec![0, 0], String::new()),
-                key("made-up@example.com"),
-            ]),
-        );
-        assert_eq!(
-            got,
-            SshAgentFacts::Keys {
-                endpoint: "/run/agent.sock".into(),
-                families: ["ed25519", "rsa", "other", "other"]
-                    .map(String::from)
-                    .to_vec(),
-            }
-        );
-    }
-
-    #[test]
-    fn the_service_is_read_only_for_the_default_pipe() {
-        let gone = || AgentError::Unreachable(io::ErrorKind::NotFound.into());
-        let named = facts(r"\\.\pipe\pageant.alice", Err(gone()));
-        assert!(
-            matches!(named, SshAgentFacts::Unreachable { service: None, .. }),
-            "{named:?}"
-        );
-        let default = facts(WINDOWS_DEFAULT_PIPE, Err(gone()));
-        assert!(
-            format!("{default:?}").contains("service: Some(Stopped)"),
-            "{default:?}"
-        );
-    }
-
-    #[test]
-    fn each_error_has_its_own_facts() {
-        let at = |e| facts("/s", Err(e));
-        assert_eq!(
-            at(AgentError::Refused),
-            SshAgentFacts::Locked {
-                endpoint: "/s".into()
-            }
-        );
-        let limit = Duration::from_secs(2);
-        assert_eq!(
-            at(AgentError::TimedOut(limit)),
-            SshAgentFacts::TimedOut {
-                endpoint: "/s".into(),
-                limit
-            }
-        );
-        for e in [
-            AgentError::Io(io::ErrorKind::BrokenPipe.into()),
-            AgentError::Protocol("not an identities answer"),
-        ] {
-            let text = e.to_string();
-            assert_eq!(
-                at(e),
-                SshAgentFacts::Unusable {
-                    endpoint: "/s".into(),
-                    detail: text
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn no_endpoint_asks_nothing() {
-        let got = ssh_agent_facts(None, Duration::from_secs(2), || None);
-        assert_eq!(got, SshAgentFacts::NoEndpoint);
-    }
-
-    #[test]
-    fn a_probe_with_nothing_at_the_named_endpoint_says_unreachable() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("no-agent");
-        let probe = SystemProbe::new(
-            dir.path().to_path_buf(),
-            RuntimeVersion::built_for(),
-            DevOverride::from_env(),
-        )
-        .with_ssh_agent_pipe(Some(missing.display().to_string()));
-        let got = probe.ssh_agent(Duration::from_secs(2));
-        assert!(
-            matches!(&got, SshAgentFacts::Unreachable { endpoint, service: None, by_default: false, .. } if *endpoint == missing.display().to_string()),
-            "{got:?}"
-        );
-    }
-}
+mod tests;

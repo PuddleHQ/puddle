@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Root sync through the real `boot.sh` and `guest/ca-bundle.sh`, on the test host against a
 //! fake guest root (stubbed `sysctl` and a Debian-like `update-ca-certificates`), under dash and
 //! bash. The VM version is `puddle-vm-tests/tests/vm_root_sync.rs`.
@@ -67,8 +67,7 @@ fn shells() -> Vec<PathBuf> {
 
 fn write_exec(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(path, text);
 }
 
 impl Guest {
@@ -186,12 +185,7 @@ impl Guest {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&plan.render())
-            .unwrap();
+        puddle_test_kit::feed_stdin(&mut child, &plan.render());
         child.wait_with_output().unwrap()
     }
 
@@ -830,6 +824,7 @@ fn jks_entries(file: &Path) -> Vec<(String, Vec<u8>)> {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
+    // flake-ok: sha1sum reads all of its input before it answers, so the pipe never closes early
     child.stdin.take().unwrap().write_all(&check).unwrap();
     let sum = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
     let hex = digest.iter().fold(String::new(), |mut hex, b| {
@@ -969,6 +964,7 @@ fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_docum
         "/home/dev/.jdks/corretto-21",
         "/root/.asdf/installs/java/temurin-21",
         "/home/dev/.local/share/mise/installs/java/21",
+        "/workspaces/w1/.puddle/mise/data/installs/java/temurin-21",
         "/usr/java/jdk-17",
         "/usr/lib64/jvm/java-21",
         "/usr/local/java-17",

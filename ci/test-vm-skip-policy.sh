@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Checks ci/vm-skip-policy.sh: a pull request and a merge queue run fail with ::error; schedule, workflow_dispatch and an
 # unset GITHUB_EVENT_NAME warn with ::warning and exit 0. Prints ok only when every case passes.
 set -euo pipefail

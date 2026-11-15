@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Transparent capture on a real microVM (K on Linux KVM, W on Windows WHP), with no proxy
 //! setting in play: the host's boot hook turns capture on, and tools that ignore proxy settings
 //! reach the internet only the way a rule allows, by name or by address, through the agent and
@@ -15,19 +15,17 @@
 //! fake website and a fake package index.
 //!
 //! The sites the tests reach are a fake website behind a fake company proxy (`web_internet`), so no
-//! result here depends on a public site being up. Two tests keep a live third party on purpose, and
-//! their failure messages name it: the second installs the real `nftables` package from
-//! `deb.debian.org` (the test needs a real `nft` binary; a mirror would have to serve that
-//! package and its libraries, signed, to apt's default sources), and the third runs the real
-//! `apt-get update` against Debian's mirrors (the assertion is about apt's own behaviour with
-//! Debian's `SRV` records, which a stand-in mirror would not carry).
+//! result here depends on a public site being up. The packages the tests bring (`nft`, `pip`) are
+//! saved from the real mirror on the first run and served from the fake website after that
+//! (`vm_support::PackageKit`), so a warm cache needs no package mirror; the cold run names the mirror
+//! when it fails. One test keeps a live third party on purpose: the third runs the real `apt-get update`
+//! against Debian's mirrors (the assertion is about apt's own behaviour with Debian's `SRV` records,
+//! which a stand-in mirror would not carry).
 //!
 //! Every guest command runs as root through the runtime's exec, which carries the workspace's
 //! proxy settings; the probes that must not use them say `env -i` or `--noproxy '*'`.
 #![expect(
     clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
     clippy::print_stderr,
     reason = "VM test: a failed step fails the test; what the guest said goes to the log"
 )]
@@ -37,15 +35,17 @@ mod vm_support;
 
 use std::time::Duration;
 
-use puddle_e2e::lab::{WebHost, WebOptions, pip_index};
-use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
+use puddle_e2e::lab::{WebOptions, pip_index};
+use puddle_store::{Actor, Resolution};
 use puddle_test_kit::{eventually, eventually_async};
 use puddle_types::WorkspaceId;
 use serde_json::json;
-use support::{Api, ended, hermetic_options};
+use support::{Api, named_id_options};
+use vm_support::kit::{Flavour, KIT_HOST, PackageKit};
 use vm_support::{
-    VmHost, WebInternet, guest, guest_as, guest_live, start_vm_host, start_vm_host_platform,
-    web_internet,
+    PROBE_IMAGE, VmHost, WebInternet, allowed_connections, as_agent, container_fetch,
+    create_workspace_from, field, guest, guest_as, guest_live, reached_by_host, start_vm_host,
+    start_vm_host_platform, wait_for_connection_record, web_internet,
 };
 
 /// The fake website's name (it answers plain HTTP and HTTPS).
@@ -60,43 +60,6 @@ async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -
     create_workspace_from(vm, api, tag, allowed, json!({"memory_mib": 1024})).await
 }
 
-/// [`create_workspace`] with `extra` fields (an image, a memory size) in the request.
-async fn create_workspace_from(
-    vm: &VmHost,
-    api: &Api,
-    tag: &str,
-    allowed: &[&str],
-    extra: serde_json::Value,
-) -> WorkspaceId {
-    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
-    let workspace = WorkspaceId::new(&name).unwrap();
-    for site in allowed {
-        vm.host
-            .store()
-            .add_rule(&NewRule {
-                scope: Scope::Workspace(workspace.clone()),
-                pattern: Pattern::parse(site).unwrap(),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::Cli,
-            })
-            .unwrap();
-    }
-    let mut events = api.events().await;
-    let reply = api
-        .post("/api/workspaces", &{
-            let mut body = extra;
-            body["name"] = json!(name);
-            body.to_string()
-        })
-        .await;
-    assert_eq!(reply.status, 202, "{}", reply.body);
-    let name: &'static str = Box::leak(name.into_boxed_str());
-    let end = events.until(ended(name), Duration::from_secs(600)).await;
-    assert_eq!(end["step"], "done", "{end}");
-    workspace
-}
-
 /// A guest script's clock: `now` prints the milliseconds since the epoch.
 const CLOCK: &str = "now() { local t=${EPOCHREALTIME/[.,]/}; echo $((t / 1000)); }";
 
@@ -108,26 +71,11 @@ fn bash_script(script: &str) -> String {
     )
 }
 
-/// The value after `key=` on the first line of `text` that has it.
-fn field<'a>(text: &'a str, key: &str) -> &'a str {
-    text.lines()
-        .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
-        .unwrap_or_else(|| panic!("no {key} in: {text}"))
-}
-
-/// How many requests the fake website saw with `Host: host`.
-fn reached_by_host(web: &WebHost, host: &str) -> usize {
-    web.seen()
-        .iter()
-        .filter(|r| r.headers_named("host") == [host])
-        .count()
-}
-
 /// The open inbox rows of `workspace`, as `host:port`.
 fn open_rows(vm: &VmHost, workspace: &WorkspaceId) -> Vec<String> {
     vm.host
         .store()
-        .open_pending(Some(workspace))
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(workspace))
         .unwrap()
         .iter()
         .map(|r| format!("{}:{}", r.host, r.port))
@@ -144,7 +92,11 @@ async fn wait_for_row(
         &format!("an open row for {wanted}"),
         Duration::from_secs(10),
         || {
-            let rows = vm.host.store().open_pending(Some(workspace)).unwrap();
+            let rows = vm
+                .host
+                .store()
+                .open_pending_every_user(&puddle_store::testing::all_users(), Some(workspace))
+                .unwrap();
             rows.iter()
                 .find(|r| r.host.to_string() == wanted)
                 .map(|row| row.id)
@@ -154,58 +106,13 @@ async fn wait_for_row(
     .await
 }
 
-/// The number of allowed connection records to `host:port` in the audit.
-fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
-    vm.host
-        .store()
-        .audit_lines(0, 100_000)
-        .unwrap()
-        .iter()
-        .filter(|(_, line)| {
-            let record: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
-            record["type"] == "connection"
-                && record["host"] == host
-                && record["port"] == port
-                && record["decision"] == "allow"
-        })
-        .count()
-}
-
-/// Waits until the audit holds more allowed connection records to `host:port` than `before`.
-///
-/// The proxy writes a connection's record when the connection ends, which is after the guest
-/// tool that opened it has exited and the test has read its output, so reading the audit
-/// right away races the proxy's write.
-async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
-    eventually(
-        &format!("a connection record for {host}:{port}"),
-        Duration::from_secs(20),
-        || {
-            if allowed_connections(vm, host, port) > before {
-                return Ok(());
-            }
-            let lines: Vec<String> = vm
-                .host
-                .store()
-                .audit_lines(0, 100_000)
-                .unwrap()
-                .into_iter()
-                .map(|(_, line)| line)
-                .filter(|line| line.contains(host))
-                .collect();
-            Err(format!("audit lines naming it: {lines:#?}"))
-        },
-    )
-    .await;
-}
-
 /// With capture on from the boot and no proxy setting in the command, tools that never look at
 /// one still work for what a rule allows and fail at once for the rest.
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses_the_rest_at_once()
 {
-    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&[SITE], WebOptions::default(), named_id_options()).await;
     // The address nothing allows at first is answered by the same site once a rule lets it through.
     net.proxy.route("1.1.1.1:443", net.web.tls_addr());
     let vm = start_vm_host_platform("capt", net.options, &net.platform, |_| {}).await;
@@ -371,14 +278,25 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 /// through (the VM has no route of its own), and the agent puts the rules back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
-    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let kit = PackageKit::open(
+        Flavour::Apt,
+        puddle_api::DEFAULT_IMAGE,
+        "nftables",
+        "deb.debian.org and security.debian.org",
+    );
+    let net = web_internet(
+        &[SITE, KIT_HOST],
+        kit.options(WebOptions::default()),
+        named_id_options(),
+    )
+    .await;
     let vm = start_vm_host_platform("flush", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace(
         &vm,
         &api,
         "flush",
-        &[SITE, "deb.debian.org", "security.debian.org"],
+        &[SITE, KIT_HOST, "deb.debian.org", "security.debian.org"],
     )
     .await;
     let run = |script: String| {
@@ -386,21 +304,12 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
         async move { guest(runtime, workspace, &bash_script(&script)).await }
     };
 
-    // The image ships no nft; the test brings one, through the proxy, as any tool would.
-    let installed = guest_live(
-        &vm.runtime,
-        &workspace,
-        &bash_script(
-            "export DEBIAN_FRONTEND=noninteractive
-         { apt-get update -qq; apt-get install -y -qq nftables; } >/tmp/apt.log 2>&1
-         command -v nft || { echo 'no nft; the end of apt output:'; tail -15 /tmp/apt.log; curl -sv --max-time 20 -o /dev/null http://deb.debian.org/debian/dists/trixie/InRelease 2>&1 | tail -25; }",
-        ),
-        "deb.debian.org and security.debian.org",
-    )
-    .await;
+    // The image ships no nft; the test brings one, through the proxy, as any tool would: from
+    // the saved package files on a warm cache, from Debian's mirrors on the first run.
+    let installed = kit.install(&vm, &workspace, "command -v nft").await;
     assert!(
         installed.trim_end().ends_with("/nft"),
-        "nftables could not be installed (live third party: deb.debian.org, security.debian.org; an outage there fails this test): {installed}"
+        "nftables is not usable: {installed}"
     );
 
     for attack in ["nft flush ruleset", "nft delete table inet puddle"] {
@@ -504,13 +413,19 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
 /// (the live package mirrors, named when they fail).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
+    let kit = PackageKit::open(
+        Flavour::Apt,
+        puddle_api::DEFAULT_IMAGE,
+        "python3 python3-pip",
+        "deb.debian.org and security.debian.org",
+    );
     let net = web_internet(
-        &[SITE, INDEX],
-        WebOptions {
+        &[SITE, INDEX, KIT_HOST],
+        kit.options(WebOptions {
             responder: Some(pip_index(INDEX, PROJECT)),
             ..WebOptions::default()
-        },
-        hermetic_options(),
+        }),
+        named_id_options(),
     )
     .await;
     let vm = start_vm_host_platform("pyth", net.options, &net.platform, |_| {}).await;
@@ -519,7 +434,13 @@ async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
         &vm,
         &api,
         "pyth",
-        &[SITE, INDEX, "deb.debian.org", "security.debian.org"],
+        &[
+            SITE,
+            INDEX,
+            KIT_HOST,
+            "deb.debian.org",
+            "security.debian.org",
+        ],
     )
     .await;
     let run = |script: String| {
@@ -527,20 +448,12 @@ async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
         async move { guest(runtime, workspace, &bash_script(&script)).await }
     };
 
-    let installed = guest_live(
-        &vm.runtime,
-        &workspace,
-        &bash_script(
-            "export DEBIAN_FRONTEND=noninteractive
-             { apt-get update -qq; apt-get install -y -qq python3 python3-pip; } >/tmp/apt.log 2>&1
-             python3 -m pip --version || { echo 'no pip; the end of apt output:'; tail -15 /tmp/apt.log; }",
-        ),
-        "deb.debian.org and security.debian.org",
-    )
-    .await;
+    let installed = kit
+        .install(&vm, &workspace, "python3 -m pip --version")
+        .await;
     assert!(
-        installed.contains("pip ") && !installed.contains("no pip"),
-        "python3-pip could not be installed (live third party: deb.debian.org, security.debian.org; an outage there fails this test): {installed}"
+        installed.contains("pip "),
+        "python3-pip is not usable: {installed}"
     );
 
     // An allowed name through `urllib`: it resolves to a stand-in, the capture redirects the
@@ -618,37 +531,6 @@ const DOCKER_SITES: [&str; 4] = [
     "restart-user.invalid",
 ];
 
-/// Shell prelude of every command the Docker test runs as the session user: a millisecond clock
-/// and a Docker config of its own, so no proxy variable from the CLI's config reaches a container.
-/// `dsudo` is `sudo docker` where the image has `sudo`, and plain `docker` (the `docker` group,
-/// which the boot grants the session user) where it has none, as `docker:dind` has not.
-const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
-export DOCKER_CONFIG=/tmp/docker-without-proxy
-mkdir -p "$DOCKER_CONFIG"
-dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; else docker "$@"; fi; }
-"#;
-
-/// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
-/// own files, and nothing else. No registry is involved.
-const PROBE_IMAGE: &str = r"d=/tmp/probe-image
-mkdir -p $d/rootfs/bin $d/rootfs/lib
-cp /bin/busybox $d/rootfs/bin/busybox
-for l in /lib/ld-musl-*.so.1; do cp -L $l $d/rootfs/lib/; done
-printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
-dsudo build -q -t probe:local $d";
-
-/// Runs `script` as `agent` (the session user) with [`DOCKER_PRELUDE`] first.
-async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
-    guest_as(
-        &vm.runtime,
-        workspace,
-        "agent",
-        &format!("{DOCKER_PRELUDE}{script}"),
-        Duration::from_secs(180),
-    )
-    .await
-}
-
 /// What the guest says about the agent, dockerd and the firewall tables: the start tick of the
 /// oldest `puddle-agent` and of `dockerd` (the kernel's clock ticks since boot, field 22 of
 /// `/proc/<pid>/stat`), and the `table` lines of `nft -a list ruleset` (with handles).
@@ -668,16 +550,6 @@ nft -a list ruleset | grep '^table '"#,
     .await;
     assert_eq!(code, 0, "{out}");
     out
-}
-
-/// A container's fetch of `url` on `network`: what proxy variables it sees, then wget's output, the
-/// exit code and the milliseconds it took.
-fn container_fetch(docker: &str, network: &str, url: &str) -> String {
-    format!(
-        "s=$(now); {docker} run --rm --pull=never --network {network} probe:local /bin/busybox \
-         sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
-         echo \"exit=$? ms=$(( $(now) - s ))\""
-    )
 }
 
 /// A container's fetch of `site` that no rule allows yet: it fails at once and makes an inbox row.
@@ -838,29 +710,36 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceId, p
 /// bridge get to a site only through a rule, and the session user works through `sudo`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_coexists_with_a_real_dockerd_in_both_start_orders() {
-    let net = web_internet(&DOCKER_SITES, WebOptions::default(), hermetic_options()).await;
+    let kit = PackageKit::open(
+        Flavour::Apk,
+        "docker:dind",
+        "nftables",
+        "dl-cdn.alpinelinux.org",
+    );
+    let mut sites = DOCKER_SITES.to_vec();
+    sites.push(KIT_HOST);
+    let net = web_internet(
+        &sites,
+        kit.options(WebOptions::default()),
+        named_id_options(),
+    )
+    .await;
     let vm = start_vm_host_platform("dock", net.options.clone(), &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace_from(
         &vm,
         &api,
         "dock",
-        &["dl-cdn.alpinelinux.org"],
+        &["dl-cdn.alpinelinux.org", KIT_HOST],
         json!({"image": "docker:dind", "memory_mib": 2048}),
     )
     .await;
-    // The image ships no `nft`; the test brings one, through the proxy, as any tool would.
-    let (code, installed) = guest_as(
-        &vm.runtime,
-        &workspace,
-        "root",
-        "apk add --no-cache nftables >/tmp/apk.log 2>&1; nft --version || tail -15 /tmp/apk.log",
-        Duration::from_secs(100),
-    )
-    .await;
+    // The image ships no `nft`; the test brings one, through the proxy, as any tool would: from
+    // the saved package files on a warm cache, from Alpine's mirror on the first run.
+    let installed = kit.install(&vm, &workspace, "nft --version").await;
     assert!(
-        code == 0 && installed.contains("nftables"),
-        "nftables could not be installed (live third party: dl-cdn.alpinelinux.org; an outage there fails this test): {installed}"
+        installed.contains("nftables"),
+        "nftables is not usable: {installed}"
     );
 
     // Boot order: the agent first, dockerd after it.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The nightly stress job's yield record: what each night found, and what it cost.
 
   stress-yield.py record <out-dir> <kind> --sha S --run-id N --job-seconds N [--date D]

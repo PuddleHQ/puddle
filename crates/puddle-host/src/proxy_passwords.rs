@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sign-in Puddle uses for a company proxy that asks for a user name and password (Basic),
 //! kept per proxy in the operating system's credential store and nowhere else: never in a
 //! settings file, never in the audit, never in a log.
@@ -53,7 +53,11 @@ pub struct ProxyPasswords {
     /// What every entry's id starts with; [`ID_PREFIX`] except in a test that must not touch the
     /// entries of a real Puddle on the same computer.
     prefix: String,
-    /// Held across store calls too, so two changes never interleave their list writes.
+    /// Held across store calls, so two changes never interleave their list writes. Only changes
+    /// and [`ProxyPasswords::load`] take it: a reader never waits for the credential store.
+    changing: Mutex<()>,
+    /// What is known now; held only to read or swap it, never across a store call, so the
+    /// network-health page and the proxy's lookups stay quick while the store is slow.
     entries: Mutex<BTreeMap<ProxyAddr, Credentials>>,
 }
 
@@ -78,6 +82,7 @@ impl ProxyPasswords {
         Arc::new(Self {
             vault,
             prefix: prefix.to_owned(),
+            changing: Mutex::default(),
             entries: Mutex::default(),
         })
     }
@@ -89,7 +94,7 @@ impl ProxyPasswords {
     /// # Errors
     /// [`ProxyPasswordError::Store`] when the store cannot be read at all; nothing changes then.
     pub fn load(&self) -> Result<usize, ProxyPasswordError> {
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
         let mut loaded = BTreeMap::new();
         for proxy in self.listed()? {
             if let Some(secret) = self.vault.get(&self.entry_id(&proxy)?)?
@@ -99,7 +104,7 @@ impl ProxyPasswords {
             }
         }
         let count = loaded.len();
-        *entries = loaded;
+        *self.entries() = loaded;
         Ok(count)
     }
 
@@ -121,15 +126,16 @@ impl ProxyPasswords {
         if password.is_empty() || password.contains(['\n', '\r']) {
             return Err(ProxyPasswordError::BadPassword);
         }
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut names: Vec<ProxyAddr> = entries.keys().cloned().collect();
+        let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut names: Vec<ProxyAddr> = self.entries().keys().cloned().collect();
         if !names.contains(proxy) {
             names.push(proxy.clone());
         }
         self.write_list(&names)?;
         let value = Secret::new(format!("{user}\n{password}"));
         self.vault.set(&self.entry_id(proxy)?, &value)?;
-        entries.insert(proxy.clone(), Credentials::new(user, password));
+        self.entries()
+            .insert(proxy.clone(), Credentials::new(user, password));
         Ok(())
     }
 
@@ -138,23 +144,30 @@ impl ProxyPasswords {
     /// # Errors
     /// [`ProxyPasswordError::Store`] when the store failed.
     pub fn remove(&self, proxy: &ProxyAddr) -> Result<(), ProxyPasswordError> {
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
         self.vault.delete(&self.entry_id(proxy)?)?;
-        let names: Vec<ProxyAddr> = entries.keys().filter(|p| *p != proxy).cloned().collect();
+        let names: Vec<ProxyAddr> = self
+            .entries()
+            .keys()
+            .filter(|p| *p != proxy)
+            .cloned()
+            .collect();
         self.write_list(&names)?;
-        entries.remove(proxy);
+        self.entries().remove(proxy);
         Ok(())
     }
 
     /// The proxies that have a sign-in and the user name of each, never a password.
     #[must_use]
     pub fn proxies(&self) -> Vec<(ProxyAddr, String)> {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.entries()
             .iter()
             .map(|(proxy, credentials)| (proxy.clone(), credentials.user().to_owned()))
             .collect()
+    }
+
+    fn entries(&self) -> std::sync::MutexGuard<'_, BTreeMap<ProxyAddr, Credentials>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn listed(&self) -> Result<Vec<ProxyAddr>, StoreError> {
@@ -183,11 +196,7 @@ impl ProxyPasswords {
 
 impl CredentialSource for ProxyPasswords {
     fn credentials(&self, proxy: &ProxyAddr) -> Option<Credentials> {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(proxy)
-            .cloned()
+        self.entries().get(proxy).cloned()
     }
 }
 
@@ -209,6 +218,7 @@ impl ProxyPasswords {
     fn entry_id(&self, proxy: &ProxyAddr) -> Result<StoredId, StoreError> {
         let digest = Sha256::digest(proxy.to_string().as_bytes());
         let hex = digest.iter().take(16).fold(String::new(), |mut hex, byte| {
+            // writing into a `String` cannot fail
             let _ = write!(hex, "{byte:02x}");
             hex
         });
@@ -217,192 +227,4 @@ impl ProxyPasswords {
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_secrets::MemoryStore;
-    use puddle_types::fixture;
-
-    use super::*;
-
-    /// The password the tests plant and look for; random per run.
-    fn secret() -> String {
-        fixture::canary("proxy-password")
-    }
-
-    fn proxy() -> ProxyAddr {
-        ProxyAddr::new("Proxy.Corp", 8080)
-    }
-
-    fn vault() -> Arc<MemoryStore> {
-        Arc::new(MemoryStore::new())
-    }
-
-    #[test]
-    fn a_sign_in_survives_a_restart_and_answers_from_memory() {
-        let vault = vault();
-        let first = ProxyPasswords::new(vault.clone());
-        first.set(&proxy(), "corp\\alice", &secret()).unwrap();
-        assert_eq!(first.credentials(&proxy()).unwrap().user(), "corp\\alice");
-
-        let second = ProxyPasswords::new(vault);
-        assert!(
-            second.credentials(&proxy()).is_none(),
-            "nothing is known before load"
-        );
-        assert_eq!(second.load().unwrap(), 1);
-        assert_eq!(second.proxies(), [(proxy(), "corp\\alice".to_owned())]);
-        assert!(
-            second
-                .credentials(&ProxyAddr::new("other.corp", 8080))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn nothing_but_the_credential_store_holds_the_password() {
-        let vault = vault();
-        let passwords = ProxyPasswords::new(vault.clone());
-        passwords.set(&proxy(), "alice", &secret()).unwrap();
-        for text in [
-            format!("{passwords:?}"),
-            format!("{:?}", passwords.proxies()),
-        ] {
-            fixture::assert_absent("a debug rendering", &text, &secret());
-        }
-        // Two entries, both under the prefix the clean-up keeps; the id does not spell the host.
-        let ids = vault.ids();
-        assert_eq!(ids.len(), 2, "the store holds two entries");
-        assert!(
-            ids.iter().all(|id| id.starts_with(ID_PREFIX)),
-            "an entry id lacks the prefix the clean-up keeps"
-        );
-        assert!(
-            ids.iter().all(|id| !id.contains("corp")),
-            "an entry id spells the host"
-        );
-    }
-
-    #[test]
-    fn removing_a_sign_in_leaves_nothing_in_the_store() {
-        let vault = vault();
-        let passwords = ProxyPasswords::new(vault.clone());
-        passwords.set(&proxy(), "alice", &secret()).unwrap();
-        passwords.remove(&proxy()).unwrap();
-        passwords.remove(&proxy()).unwrap();
-        assert!(passwords.credentials(&proxy()).is_none());
-        assert_eq!(passwords.proxies(), []);
-        assert_eq!(vault.ids(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn setting_again_replaces_and_each_proxy_keeps_its_own() {
-        let passwords = ProxyPasswords::new(vault());
-        let other = ProxyAddr::new("other.corp", 3128);
-        passwords
-            .set(&proxy(), "alice", &fixture::password("one"))
-            .unwrap();
-        passwords
-            .set(&other, "bob", &fixture::password("two"))
-            .unwrap();
-        passwords
-            .set(&proxy(), "alice", &fixture::password("three"))
-            .unwrap();
-        assert_eq!(
-            passwords.proxies(),
-            [(other, "bob".to_owned()), (proxy(), "alice".to_owned())]
-        );
-        let again = ProxyPasswords::new(passwords.vault.clone());
-        assert_eq!(again.load().unwrap(), 2);
-    }
-
-    #[test]
-    fn a_user_or_password_basic_cannot_carry_is_refused_and_nothing_is_stored() {
-        let vault = vault();
-        let passwords = ProxyPasswords::new(vault.clone());
-        for user in ["", "a:b", "a\nb", "a\rb", &"u".repeat(257)] {
-            assert_eq!(
-                passwords.set(&proxy(), user, &fixture::password("p")),
-                Err(ProxyPasswordError::BadUser),
-                "{user:?}"
-            );
-        }
-        let (line, carriage) = (
-            format!("{}\n{}", fixture::password("a"), fixture::password("b")),
-            format!("{}\r{}", fixture::password("a"), fixture::password("b")),
-        );
-        for bad in [String::new(), line, carriage] {
-            assert_eq!(
-                passwords.set(&proxy(), "alice", &bad),
-                Err(ProxyPasswordError::BadPassword),
-                "a password Basic cannot carry was accepted"
-            );
-        }
-        assert_eq!(vault.ids(), Vec::<String>::new());
-        // A password may hold a colon: Basic splits at the first one only.
-        passwords
-            .set(
-                &proxy(),
-                "alice",
-                &format!("{}:x", fixture::password("colon")),
-            )
-            .unwrap();
-    }
-
-    #[test]
-    fn a_store_that_fails_changes_nothing_in_memory() {
-        let vault = vault();
-        let passwords = ProxyPasswords::new(vault.clone());
-        passwords
-            .set(&proxy(), "alice", &fixture::password("one"))
-            .unwrap();
-        vault.break_it();
-        assert_eq!(
-            passwords.set(&proxy(), "alice", &fixture::password("two")),
-            Err(ProxyPasswordError::Store)
-        );
-        assert_eq!(passwords.remove(&proxy()), Err(ProxyPasswordError::Store));
-        assert_eq!(passwords.load(), Err(ProxyPasswordError::Store));
-        // The old sign-in still answers, and still after the store is back.
-        assert!(passwords.credentials(&proxy()).is_some());
-        vault.heal();
-        assert_eq!(passwords.load().unwrap(), 1);
-    }
-
-    #[test]
-    fn a_listed_proxy_without_a_readable_entry_is_skipped_on_load() {
-        let vault = vault();
-        let passwords = ProxyPasswords::new(vault.clone());
-        let other = ProxyAddr::new("other.corp", 3128);
-        passwords
-            .set(&proxy(), "alice", &fixture::password("one"))
-            .unwrap();
-        passwords
-            .set(&other, "bob", &fixture::password("two"))
-            .unwrap();
-        // A crash between the list and the entry, and an entry that is not a sign-in.
-        vault
-            .delete(&passwords.entry_id(&proxy()).unwrap())
-            .unwrap();
-        vault
-            .set(
-                &passwords.entry_id(&other).unwrap(),
-                &Secret::new("no newline".into()),
-            )
-            .unwrap();
-        let again = ProxyPasswords::new(vault);
-        assert_eq!(again.load().unwrap(), 0);
-        assert_eq!(again.proxies(), []);
-    }
-
-    #[test]
-    fn a_list_line_that_is_not_a_proxy_is_ignored() {
-        let vault = vault();
-        let passwords = ProxyPasswords::new(vault.clone());
-        vault
-            .set(
-                &passwords.list_id().unwrap(),
-                &Secret::new("\n://\nproxy.corp:8080".into()),
-            )
-            .unwrap();
-        assert_eq!(passwords.load().unwrap(), 0);
-    }
-}
+mod tests;

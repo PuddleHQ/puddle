@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Root's write attack on a file Puddle mounts into a guest, and the judge of what came of it.
 //!
 //! Three parts, so that the test which uses them can be shown to fail:

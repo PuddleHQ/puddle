@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One forward: a listener on this computer's loopback whose every connection is carried into the
 //! guest, to one port on the guest's loopback, through a stream the agent serves
 //! ([`puddle_agent_proto::forward`]). It does not use SSH, so an editor's own forwards and these

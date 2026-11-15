@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   // Puddle's default mark: a rubber duck on a patch of water. It is drawn from the theme's duck
   // tokens, so a theme that recolours them recolours the mark. Decorative by default (the name

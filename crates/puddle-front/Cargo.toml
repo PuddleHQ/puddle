@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-front"
 description = "The browser editor's front: one loopback listener that routes <workspace>.localhost to the editor server in a workspace's guest"

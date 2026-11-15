@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   cleanup,
   fireEvent,
@@ -92,6 +92,36 @@ const putBodies = () =>
     .map((c, i) => [c, api.bodies[i]] as const)
     .filter(([c]) => c === "PUT /api/settings");
 
+describe("the mise switch", () => {
+  it("is on by default and a save sends it as the global tools switch", async () => {
+    await open();
+    const box = screen.getByLabelText(
+      "Manage tools with mise in workspaces",
+    ) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    expect(box.checked).toBe(false);
+    await save();
+    expect(api.bodies.at(-1)).toMatchObject({ tools: { mise: false } });
+    expect(api.tools.mise).toBe(false);
+    expect(
+      (
+        screen.getByLabelText(
+          "Manage tools with mise in workspaces",
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+  });
+
+  it("sends nothing for a switch put back to what is stored", async () => {
+    await open();
+    const box = screen.getByLabelText("Manage tools with mise in workspaces");
+    await fireEvent.click(box);
+    await fireEvent.click(box);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
 describe("the screen", () => {
   it("offers to run the system check again, on its own page with a way back here", async () => {
     await open();
@@ -128,10 +158,12 @@ describe("the screen", () => {
       "Inbox",
       "Workspaces",
       "Disk space",
+      "SSH agent",
       "Network",
       "Browser VS Code",
       "Git and credentials",
       "Environment",
+      "Devices and sign-in",
       "Privacy",
       "About",
     ]);
@@ -230,6 +262,32 @@ describe("explicit Save", () => {
     expect(screen.getByText(/You have unsaved changes/)).toBeInTheDocument();
     expect(putBodies()).toHaveLength(0);
     expect(api.ui.sound).toBeNull();
+  });
+
+  it("shows the company network switch right under private networks, off, with its words", async () => {
+    await open();
+    const boxes = screen
+      .getAllByRole("checkbox")
+      .filter((b) => b.id.startsWith("set-local-"))
+      .map((b) => b.id);
+    expect(boxes).toEqual([
+      "set-local-loopback",
+      "set-local-private",
+      "set-local-company_network",
+      "set-local-link_local",
+      "set-local-metadata",
+      "set-local-special",
+    ]);
+    expect(screen.getByLabelText("Company network")).not.toBeChecked();
+    expect(
+      screen.getByText(
+        /VPN, private-access client or DNS suffixes mark as internal/,
+      ),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Company network"));
+    await save();
+    expect(api.layer.local_toggles.company_network).toBe(true);
+    expect(api.layer.local_toggles.private).toBeNull();
   });
 
   it("sends every edit as one change", async () => {
@@ -862,6 +920,25 @@ describe("workspace defaults and the network", () => {
     expect(api.layer.capture_logins).toBe(true);
   });
 
+  it("warns about a credential Puddle did not add by default and turns the default off and back on", async () => {
+    await open();
+    const box = screen.getByLabelText(
+      "Warn about a credential Puddle did not add",
+    );
+    expect(box).toBeChecked();
+    await fireEvent.click(box);
+    await save();
+    expect(api.layer.warn_foreign_credentials).toBe(false);
+    expect(
+      screen.getByLabelText("Warn about a credential Puddle did not add"),
+    ).not.toBeChecked();
+    await fireEvent.click(
+      screen.getByLabelText("Warn about a credential Puddle did not add"),
+    );
+    await save();
+    expect(api.layer.warn_foreign_credentials).toBe(true);
+  });
+
   it("cancelling the global trust text changes nothing", async () => {
     await open();
     await fireEvent.click(
@@ -990,6 +1067,57 @@ describe("disk space lines", () => {
     await open();
     await type(warn(), "50");
     await type(warn(), "20");
+    expect(screen.getByText("No unsaved changes.")).toBeVisible();
+  });
+});
+
+describe("SSH agent pipe", () => {
+  const field = () => screen.getByLabelText("SSH agent pipe or socket");
+  const type = async (box: HTMLElement, text: string) => {
+    await fireEvent.input(box, { target: { value: text } });
+    await fireEvent.change(box);
+  };
+
+  it("starts empty, saves a typed pipe trimmed on Save and shows what is stored", async () => {
+    await open();
+    expect(field()).toHaveValue("");
+    await type(field(), String.raw`  \\.\pipe\pageant.alice  `);
+    expect(putBodies()).toHaveLength(0);
+    await save();
+    expect(api.ui.ssh_agent_pipe).toBe(String.raw`\\.\pipe\pageant.alice`);
+  });
+
+  it("shows a stored pipe and clears it with an empty field", async () => {
+    api.ui.ssh_agent_pipe = "/run/agent.sock";
+    await open();
+    expect(field()).toHaveValue("/run/agent.sock");
+    await type(field(), "");
+    await save();
+    expect(api.ui.ssh_agent_pipe).toBeNull();
+  });
+
+  it("refuses a control character and holds Save until it is fixed", async () => {
+    await open();
+    await type(field(), "/run/a\tb");
+    expect(
+      await screen.findByText(
+        "A pipe or socket path cannot hold a control character.",
+      ),
+    ).toBeVisible();
+    expect(field()).toHaveAttribute("aria-invalid", "true");
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(screen.getByText("Fix the SSH agent pipe to save.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await type(field(), "/run/agent.sock");
+    await save();
+    expect(api.ui.ssh_agent_pipe).toBe("/run/agent.sock");
+  });
+
+  it("puts the field back to what is stored without it counting as a change", async () => {
+    api.ui.ssh_agent_pipe = "/run/agent.sock";
+    await open();
+    await type(field(), "/other");
+    await type(field(), "/run/agent.sock");
     expect(screen.getByText("No unsaved changes.")).toBeVisible();
   });
 });

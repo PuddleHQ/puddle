@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One workspace's ports for its tab: what listens in it, what is forwarded to this computer and
 // what is pinned. The page reads the list again on the events that say it changed and on a resync.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";

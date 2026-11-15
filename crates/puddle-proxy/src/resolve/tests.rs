@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's answers to the stub DNS, without an agent: the handler is called directly. The path
 //! through a real agent and route is in `puddle-e2e`.
 

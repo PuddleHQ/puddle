@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/dependabot-auto-merge.sh with a fake `gh` that serves a PR JSON ($FAKE_PR) and records each
 # call: patch-only, patch-and-minor, mixed with a major, major, github-actions, fork pin, human commit, draft,
 # wrong base and a missing metadata block. Prints ok only when every case passes.

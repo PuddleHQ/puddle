@@ -1,16 +1,16 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the runtime's parts come from: the fork's GitHub release (msb), upstream's release or a
 //! release of Puddle's libkrunfw fork (the firmware), the fork's source at the tag (commits,
 //! firmware source, licences of msb's tree), or a fixture folder with the same parts for tests and
 //! offline runs.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use puddle_runtime::HostOs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, XtaskError};
+use crate::github::GitHub;
 use crate::inventory::{Inventory, shipped_packages};
 use crate::tools::{Cargo, Features, git_command, run};
 
@@ -171,7 +171,7 @@ impl ReleaseSource for DirSource {
     }
 }
 
-/// The real thing: `gh` for releases and the compare API, `git` for the fork's source at the tag,
+/// The real thing: plain HTTPS ([`GitHub`]) for releases and the compare API, `git` for the fork's source at the tag,
 /// cargo-about on that source.
 #[derive(Debug, Clone)]
 pub struct GitHubSource {
@@ -191,6 +191,8 @@ pub struct GitHubSource {
     pub about_config: PathBuf,
     /// The cargo to run.
     pub cargo: Cargo,
+    /// Where releases and API answers come from.
+    pub github: GitHub,
 }
 
 impl GitHubSource {
@@ -222,7 +224,7 @@ impl GitHubSource {
         Ok(src)
     }
 
-    fn firmware(src: &Path) -> Result<Firmware> {
+    fn firmware(&self, src: &Path) -> Result<Firmware> {
         let tree =
             run(git_command()
                 .arg("-C")
@@ -232,32 +234,29 @@ impl GitHubSource {
         let modules = std::fs::read_to_string(src.join(".gitmodules"))
             .map_err(|e| XtaskError::io("reading .gitmodules", e))?;
         let repo_url = parse_submodule_url(&modules, LIBKRUNFW_SUBMODULE)?;
-        Self::firmware_at(&github_slug(&repo_url)?, commit, None)
+        self.firmware_at(&github_slug(&repo_url)?, commit, None)
     }
 
     /// The firmware of the libkrunfw fork's release `tag`: the commit the tag names.
-    fn fork_firmware(tag: &str) -> Result<Firmware> {
-        let commit = run(Command::new("gh").args([
-            "api",
-            "--jq",
-            ".sha",
-            &format!("repos/{FIRMWARE_FORK}/commits/{tag}"),
-        ]))?;
-        Self::firmware_at(
-            FIRMWARE_FORK,
-            commit.trim().to_owned(),
-            Some(tag.to_owned()),
-        )
+    fn fork_firmware(&self, tag: &str) -> Result<Firmware> {
+        let json = self
+            .github
+            .api(&format!("repos/{FIRMWARE_FORK}/commits/{tag}"), false)?;
+        let commit = parse_commit_sha(&json)?;
+        self.firmware_at(FIRMWARE_FORK, commit, Some(tag.to_owned()))
     }
 
     /// The firmware facts of libkrunfw `slug` at `commit`, from its Makefile there.
-    fn firmware_at(slug: &str, commit: String, fork_tag: Option<String>) -> Result<Firmware> {
-        let makefile = run(Command::new("gh").args([
-            "api",
-            "-H",
-            "Accept: application/vnd.github.raw",
+    fn firmware_at(
+        &self,
+        slug: &str,
+        commit: String,
+        fork_tag: Option<String>,
+    ) -> Result<Firmware> {
+        let makefile = self.github.api(
             &format!("repos/{slug}/contents/Makefile?ref={commit}"),
-        ]))?;
+            true,
+        )?;
         let (libkrunfw_version, kernel_version) = parse_libkrunfw_makefile(&makefile)?;
         Ok(Firmware {
             libkrunfw_version,
@@ -272,27 +271,14 @@ impl GitHubSource {
 impl ReleaseSource for GitHubSource {
     fn fetch(&self, origin: Origin, name: &str, dir: &Path) -> Result<PathBuf> {
         let (repo, tag) = self.repo(origin)?;
-        run(Command::new("gh")
-            .args([
-                "release",
-                "download",
-                tag,
-                "--repo",
-                repo,
-                "--pattern",
-                name,
-                "--clobber",
-                "--dir",
-            ])
-            .arg(dir))?;
-        Ok(dir.join(name))
+        self.github.release_asset(repo, tag, name, dir)
     }
 
     fn facts(&self) -> Result<ForkFacts> {
-        let compare = run(Command::new("gh").args([
-            "api",
+        let compare = self.github.api(
             &compare_path(&self.fork, &self.upstream, &self.upstream_tag, &self.tag),
-        ]))?;
+            false,
+        )?;
         let commits = parse_compare(&compare)?;
         let src = self.checkout()?;
         Ok(ForkFacts {
@@ -302,8 +288,8 @@ impl ReleaseSource for GitHubSource {
             upstream_tag: self.upstream_tag.clone(),
             commits,
             firmware: match &self.firmware_tag {
-                Some(tag) => Self::fork_firmware(tag)?,
-                None => Self::firmware(&src)?,
+                Some(tag) => self.fork_firmware(tag)?,
+                None => self.firmware(&src)?,
             },
         })
     }
@@ -397,6 +383,17 @@ fn compare_path(fork: &str, upstream: &str, upstream_tag: &str, tag: &str) -> St
     format!("repos/{fork}/compare/{owner}:{upstream_tag}...{tag}")
 }
 
+/// The `sha` of a GitHub commit API response.
+fn parse_commit_sha(json: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Commit {
+        sha: String,
+    }
+    serde_json::from_str::<Commit>(json)
+        .map(|c| c.sha)
+        .map_err(|e| XtaskError::parse("GitHub commit response", e))
+}
+
 /// The commits of a GitHub compare API response, oldest first.
 fn parse_compare(json: &str) -> Result<Vec<Commit>> {
     #[derive(Deserialize)]
@@ -431,129 +428,4 @@ fn parse_compare(json: &str) -> Result<Vec<Commit>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_the_submodule_commit() {
-        let sha = "21f169f7e94798c8916315f8ac6f5999d5b88566";
-        assert_eq!(
-            parse_submodule_commit(&format!("160000 commit {sha}\tvendor/libkrunfw\n")).unwrap(),
-            sha
-        );
-        assert!(parse_submodule_commit("").is_err());
-        assert!(parse_submodule_commit(&format!("100644 blob {sha}\tvendor/libkrunfw")).is_err());
-        assert!(parse_submodule_commit("160000 commit abc\tvendor/libkrunfw").is_err());
-    }
-
-    #[test]
-    fn parses_the_submodule_url() {
-        let modules = "[submodule \"vendor/libkrunfw\"]\n\tpath = vendor/libkrunfw\n\turl = https://github.com/superradcompany/libkrunfw.git\n\tbranch = krunfw\n[submodule \"mcp\"]\n\tpath = mcp\n\turl = https://github.com/x/mcp.git\n";
-        assert_eq!(
-            parse_submodule_url(modules, "vendor/libkrunfw").unwrap(),
-            "https://github.com/superradcompany/libkrunfw.git"
-        );
-        assert_eq!(
-            parse_submodule_url(modules, "mcp").unwrap(),
-            "https://github.com/x/mcp.git"
-        );
-        assert!(parse_submodule_url(modules, "other").is_err());
-        // url before path in the section still counts
-        let reordered = "[submodule \"a\"]\n url = https://github.com/o/a\n path = a\n";
-        assert_eq!(
-            parse_submodule_url(reordered, "a").unwrap(),
-            "https://github.com/o/a"
-        );
-    }
-
-    #[test]
-    fn github_slugs() {
-        assert_eq!(github_slug("https://github.com/o/r.git").unwrap(), "o/r");
-        assert_eq!(github_slug("https://github.com/o/r/").unwrap(), "o/r");
-        assert!(github_slug("git@github.com:o/r.git").is_err());
-        assert!(github_slug("https://github.com/o/r/x").is_err());
-        assert!(github_slug("https://github.com/../r").is_err());
-    }
-
-    #[test]
-    fn msb_is_resolved_for_the_target_of_each_os() {
-        assert_eq!(msb_target(HostOs::Windows), "x86_64-pc-windows-msvc");
-        assert_eq!(msb_target(HostOs::Linux), "x86_64-unknown-linux-gnu");
-    }
-
-    #[test]
-    fn parses_libkrunfw_makefile() {
-        let mk = "KERNEL_VERSION = linux-6.12.109\nKERNEL_REMOTE = x\nABI_VERSION = 5\nFULL_VERSION = 5.6.1\n";
-        assert_eq!(
-            parse_libkrunfw_makefile(mk).unwrap(),
-            ("5.6.1".into(), "6.12.109".into())
-        );
-        assert!(
-            parse_libkrunfw_makefile("FULL_VERSION = 1")
-                .unwrap_err()
-                .to_string()
-                .contains("KERNEL_VERSION")
-        );
-        assert!(parse_libkrunfw_makefile("KERNEL_VERSION = 1").is_err());
-    }
-
-    #[test]
-    fn parses_compare_responses() {
-        let json = r#"{"commits": [
-            {"sha": "aaa", "commit": {"message": "fix(vsock): one\n\nbody"}},
-            {"sha": "bbb", "commit": {"message": ""}}
-        ]}"#;
-        let commits = parse_compare(json).unwrap();
-        assert_eq!(
-            commits[0],
-            Commit {
-                sha: "aaa".into(),
-                subject: "fix(vsock): one".into()
-            }
-        );
-        assert_eq!(commits[1].subject, "");
-        assert!(parse_compare("{}").is_err());
-    }
-
-    fn github_source(firmware_tag: Option<&str>) -> GitHubSource {
-        GitHubSource {
-            fork: "f/m".into(),
-            upstream: "u/m".into(),
-            tag: "v1.0.0-puddle.1".into(),
-            upstream_tag: "v1.0.0".into(),
-            firmware_tag: firmware_tag.map(ToOwned::to_owned),
-            work: PathBuf::from("/w"),
-            about_config: PathBuf::from("/c"),
-            cargo: Cargo::from_env(true),
-        }
-    }
-
-    #[test]
-    fn github_source_maps_origins_to_repos() {
-        let s = github_source(Some("v5.6.1-puddle.1"));
-        assert_eq!(s.repo(Origin::Fork).unwrap(), ("f/m", "v1.0.0-puddle.1"));
-        assert_eq!(s.repo(Origin::Upstream).unwrap(), ("u/m", "v1.0.0"));
-        assert_eq!(
-            s.repo(Origin::FirmwareFork).unwrap(),
-            (FIRMWARE_FORK, "v5.6.1-puddle.1")
-        );
-        let err = github_source(None)
-            .repo(Origin::FirmwareFork)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("libkrunfw fork"), "{err}");
-    }
-
-    #[test]
-    fn the_compare_base_names_upstreams_owner() {
-        assert_eq!(
-            compare_path(
-                "PuddleHQ/microsandbox",
-                "superradcompany/microsandbox",
-                "v0.7.7",
-                "v0.7.7-puddle.3"
-            ),
-            "repos/PuddleHQ/microsandbox/compare/superradcompany:v0.7.7...v0.7.7-puddle.3"
-        );
-    }
-}
+mod tests;

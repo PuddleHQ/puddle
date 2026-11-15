@@ -1,21 +1,22 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Workspace disks the workspace list does not name: listing them and restoring one.
 //!
 //! Puddle keeps such a disk (a lost or outdated workspace list is the usual cause) and never
 //! removes it. A restore adds the list entry back; there is no route that deletes a disk.
 
+use crate::authz::Principal;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
-use crate::error::ApiError;
+use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::{StoreGitSetup, view};
 use crate::wire::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest, Workspace};
-use crate::workspaces::RepoUrl;
+use crate::workspaces::{GitSetup as _, RepoUrl};
 
 /// The workspace disks Puddle keeps that no workspace in its list claims, read fresh from the
 /// runtime on every call. Puddle cannot tell from outside whether such a disk holds any files.
@@ -65,6 +66,7 @@ pub(crate) async fn list_orphan_volumes(
 )]
 pub(crate) async fn restore_orphan_volume(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<RestoreOrphanRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
@@ -75,6 +77,15 @@ pub(crate) async fn restore_orphan_volume(
         .as_deref()
         .map(|url| RepoUrl::parse(url).map_err(ApiError::invalid))
         .transpose()?;
+    let store = state.store.clone();
+    let restored = id.clone();
+    blocking(move || {
+        // The disk of a workspace a user had stays theirs; any other becomes the restorer's (only
+        // the owner restores disks). Recorded first, so the workspace is never listed as nobody's.
+        let owner = store.workspace_owner(&restored)?.unwrap_or(principal.user);
+        Ok(StoreGitSetup::new(store).claim(&restored, owner)?)
+    })
+    .await?;
     let git = StoreGitSetup::new(state.store.clone());
     let record = state
         .workspaces

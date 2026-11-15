@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An image with no `sudo` on a real microVM (K on Linux KVM): the workspace starts as the session
 //! user `agent`, `agent` cannot become root, and the user is told so in a problem on the workspace,
 //! with the way out. Switching the session user to root and starting again ends the problem.

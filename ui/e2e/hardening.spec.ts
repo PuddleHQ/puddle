@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the UI promises about how it is used, read from computed styles and box sizes (never from
 // screenshots): every control is at least 24 px (WCAG 2.5.8), the page keeps its layout at 200 %
 // zoom on a 1280 px window, motion stops when the system asks for less of it, a select's text fits
@@ -28,6 +28,7 @@ const ROUTES = [
   "/welcome/check",
   "/welcome/certificates",
   "/welcome/connect",
+  "/welcome/interception",
   "/welcome/look",
   "/welcome/workspace",
 ] as const;
@@ -449,7 +450,13 @@ test.describe("with the keyboard alone", () => {
     await expect(trust).toHaveCount(0);
     await expect(directSsh).toBeFocused();
     await expect(directSsh).not.toBeChecked();
-    await next("Continue", "Look");
+    await next("Continue", "Which hosts should Puddle decrypt?");
+
+    // Interception: the recommended radio is focusable and Continue is a button.
+    await tabTo(page, page.getByRole("radio", { checked: true }).first());
+    await tabTo(page, page.getByRole("button", { name: "Continue" }));
+    await page.keyboard.press("Enter");
+    await expect(heading("Look")).toBeFocused();
 
     // Look: the theme radios change with the arrow keys, at once.
     const theme = page.getByRole("radio", { checked: true }).first();

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The shell over the Puddle host: the host prepared the way the program does it, started on a
 //! fake sandbox runtime, the main window opened on it (Tauri's mock runtime), and the quit sequence.
 #![expect(
@@ -103,6 +103,12 @@ fn hermetic() -> HostOptions {
     ));
     options.secret_store = Some(Arc::new(MemoryStore::new()));
     options.dev_cert = Some(Arc::new(NoDevCert));
+    // No name resolves on this machine's DNS and no real `az` runs: the system check and the
+    // host's own connections never wait on the network.
+    options.host_lookup = Some(puddle_upstream::HostLookup::new(|_, _| async {
+        Err(std::io::Error::other("no names resolve in a hermetic host"))
+    }));
+    options.az_search_path = Some(std::ffi::OsString::new());
     options
 }
 
@@ -158,6 +164,11 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
     shell::open(app.handle(), &options, backend).unwrap();
 
     let backend = app.state::<Backend>();
+    assert_eq!(
+        backend.open_terminals(),
+        0,
+        "no terminal is open in a fresh host"
+    );
     let window = app.get_webview_window(MAIN_LABEL).unwrap();
     assert_eq!(&window.url().unwrap(), backend.url());
     assert_eq!(backend.url().host_str(), Some("127.0.0.1"));
@@ -216,11 +227,24 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
         .build()
         .unwrap();
     let port = app.state::<Backend>().url().port().unwrap();
+    let token = app.state::<Backend>().token().to_owned();
+    // The probe below only proves a stop when it can see a running host.
+    assert_eq!(
+        puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/api/workspaces", &token),
+        Some(200),
+        "the running host answers its own token"
+    );
 
     let stopped = shell::stop(app.handle()).unwrap();
     assert_eq!(stopped.steps, SHUTDOWN_STEPS);
     assert_eq!(stopped.operations_ended, 0);
-    assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+    // Not "nothing accepts on the port": the port is the system's pick, and another test's socket
+    // can take it the moment the host lets go (seen on a Windows runner). The host no longer
+    // answers its own token.
+    assert_ne!(
+        puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/api/workspaces", &token),
+        Some(200)
+    );
     // A second exit event finds nothing left to stop.
     assert_eq!(shell::stop(app.handle()), None);
     // The host let go of the data folder: the next start gets it.

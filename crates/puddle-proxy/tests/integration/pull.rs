@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of the image-pull proxy: a real loopback listener, raw HTTP clients and local
 //! servers. The bars: only `127.0.0.1`; a missing or wrong token is a `407` and nothing is
 //! connected; the right token tunnels and forwards; the guard blocks Puddle's own endpoints and
@@ -22,7 +22,6 @@ use puddle_types::{
 use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 #[tokio::test]
 async fn the_listener_is_loopback_only_and_registered_while_it_serves() {
@@ -46,6 +45,36 @@ async fn the_listener_is_loopback_only_and_registered_while_it_serves() {
     let a = PullProxy::bind(&endpoints).unwrap();
     let b = PullProxy::bind(&endpoints).unwrap();
     assert_ne!(a.token().expose(), b.token().expose());
+}
+
+/// `shutdown` returns only once the listener is gone and open tunnels are reset: the caller
+/// may rebind the address or tear down what the tunnels reach straight away. The checks run
+/// with no await in between, so a shutdown that left the cancelling to the runtime fails them.
+#[tokio::test]
+async fn a_shut_down_pull_proxy_has_closed_its_listener_and_its_tunnels_on_return() {
+    let endpoints = PuddleEndpoints::new();
+    let server = echo().await;
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let addr = route.local_addr();
+    let target = format!("registry.test:{}", server.addr.port());
+    let (head, mut tunnel) = send(addr, &connect(&target, Some(&format!("Basic {good}")))).await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    tunnel.write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    tunnel.read_exact(&mut back).await.unwrap();
+    assert_eq!(&back, b"ping");
+
+    route.shutdown().await;
+
+    let rebound = std::net::TcpListener::bind(addr);
+    assert!(
+        rebound.is_ok(),
+        "the address must be free again when shutdown returns: {rebound:?}"
+    );
+    let ended = tokio::time::timeout(Duration::from_secs(5), tunnel.read(&mut back))
+        .await
+        .expect("an open tunnel must be reset by shutdown, not left hanging");
+    assert!(matches!(ended, Ok(0) | Err(_)), "{ended:?}");
 }
 
 #[tokio::test]
@@ -242,9 +271,8 @@ async fn unresolvable_and_unreachable_registries_are_502() {
     .await;
     assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
     // A loopback port nothing listens on.
-    let closed = TcpListener::bind((LOCAL, 0)).await.unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let closed = puddle_test_kit::ReservedPort::new();
+    let port = closed.port();
     let (head, _) = send(
         route.local_addr(),
         &connect(&format!("127.0.0.1:{port}"), Some(&auth)),
@@ -499,6 +527,14 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
     let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
     let addr = route.local_addr();
     let open = open_connection(&route, &good).await;
+    // The probe below only proves a close when it can see the running proxy refuse a wrong token.
+    let running = wrong_token_head(addr).await;
+    assert!(
+        running
+            .as_deref()
+            .is_some_and(|h| h.starts_with("HTTP/1.1 407 ")),
+        "the running proxy answers a wrong token with 407: {running:?}"
+    );
     route.shutdown().await;
     // Nothing below yields to the runtime, so a task that is only marked for abort is still alive.
     let mut buf = [0u8; 1];
@@ -506,10 +542,37 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
         matches!(open.try_read(&mut buf), Ok(0) | Err(_)),
         "the open connection is closed"
     );
+    // Not "the port refuses connections": the proxy bound port 0, and another test's socket can hold
+    // that number by now. The proxy answers a request with a wrong token 407; a stranger does not.
+    let closed = wrong_token_head(addr).await;
     assert!(
-        std::net::TcpStream::connect(addr).is_err(),
-        "the listener is closed"
+        closed
+            .as_deref()
+            .is_none_or(|h| !h.starts_with("HTTP/1.1 407 ")),
+        "the listener is closed: {closed:?}"
     );
+}
+
+/// The head of the proxy's answer to a `CONNECT` with a wrong token, or `None` when nothing
+/// answers on `addr`.
+async fn wrong_token_head(addr: std::net::SocketAddr) -> Option<String> {
+    let wrong = BASE64.encode(format!("puddle:{}", "0".repeat(64)));
+    let mut s = tokio::time::timeout(Duration::from_secs(1), tokio::net::TcpStream::connect(addr))
+        .await
+        .ok()?
+        .ok()?;
+    s.write_all(connect("registry.test:1", Some(&format!("Basic {wrong}"))).as_bytes())
+        .await
+        .ok()?;
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match tokio::time::timeout(Duration::from_secs(1), s.read(&mut byte)).await {
+            Ok(Ok(1)) => head.push(byte[0]),
+            _ => break,
+        }
+    }
+    Some(String::from_utf8_lossy(&head).into_owned())
 }
 
 #[tokio::test]
@@ -524,4 +587,54 @@ async fn dropping_the_route_stops_the_proxy_and_closes_its_connections() {
         .await
         .expect("a dropped route closes its connections");
     assert!(matches!(read, Ok(0) | Err(_)));
+}
+
+#[tokio::test]
+async fn a_pull_to_a_name_puddle_serves_under_is_refused_before_any_lookup() {
+    let endpoints = PuddleEndpoints::new();
+    let _name = endpoints.block_name("front.puddle.example", true, EndpointKind::Api);
+    // The resolver would answer with a public address: only the name stage can refuse it.
+    let (route, good) = pull_proxy(&endpoints, Some(std::net::Ipv4Addr::new(8, 8, 8, 8).into()));
+    let auth = format!("Basic {good}");
+    for target in ["front.puddle.example:443", "ws.front.puddle.example:443"] {
+        let (head, _) = send(route.local_addr(), &connect(target, Some(&auth))).await;
+        assert!(head.starts_with("HTTP/1.1 403 "), "{target}: {head}");
+        assert!(
+            head.contains("x-puddle-blocked: puddle_endpoint"),
+            "{target}: {head}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_name_under_a_company_dns_suffix_answers_to_the_company_toggle_even_on_a_private_address()
+{
+    let signals = Arc::new(puddle_netpolicy::StaticSignals::new().with_dns_suffix("corp.example"));
+    let resolver = || {
+        Arc::new(
+            StaticResolver::new().with("registry.corp.example", &["10.1.2.3".parse().unwrap()]),
+        )
+    };
+    // Private networks on, company network off: the name makes the address the company's.
+    let off = LocalAccess::NONE.with_toggle(LocalCategory::Private, true);
+    let proxy = PullProxy::bind(&PuddleEndpoints::new())
+        .unwrap()
+        .with_resolver(resolver())
+        .with_company_signals(signals)
+        .with_local_access(off);
+    let auth = format!(
+        "Basic {}",
+        BASE64.encode(format!("puddle:{}", proxy.token().expose()))
+    );
+    let route = proxy.serve().unwrap();
+    let (head, _) = send(
+        route.local_addr(),
+        &connect("registry.corp.example:443", Some(&auth)),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 403 "), "{head}");
+    assert!(
+        head.contains("x-puddle-blocked: toggle:company_network"),
+        "{head}"
+    );
 }

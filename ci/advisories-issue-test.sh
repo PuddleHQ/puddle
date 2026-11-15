@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/advisories-issue.sh with a stub check command (for `rust`: prints a report shaped like cargo-deny
 # 0.20's JSON on stderr; for `npm`: prints what `node ui/scripts/audit.ts --json` prints on stdout; each exits with
 # a chosen status) and a stub `gh` (records its write calls, answers `issue list` from a

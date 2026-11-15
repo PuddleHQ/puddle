@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The localhost development certificate.
 //!
 //! A server a developer runs in a workspace over HTTPS reaches the host's browser as raw TCP on
@@ -11,12 +11,15 @@
 //! | that leaf is trusted once in the user's `Root` store (one Windows confirmation, never overriding a policy) | [`DevCertTrust::trust`] |
 //! | where it stands, for the first-run line | [`DevCertStatus`] |
 //!
+//! The network listener of remote serving gets a leaf of its own ([`listener`]), made the same way.
+//!
 //! No certificate authority key exists anywhere: the leaf cannot sign, and the only key that
 //! reaches a workspace is the leaf's. The per-workspace CA of the credential proxy is a different certificate
 //! and is never mixed with this one.
 
 mod guest;
 pub mod leaf;
+pub mod listener;
 mod manager;
 mod material;
 mod reuse;

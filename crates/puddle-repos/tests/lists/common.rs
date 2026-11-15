@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared test parts: scripted tokens, identities from a real in-memory store, a rig.
 
 use std::collections::{BTreeSet, HashMap};
@@ -48,6 +48,13 @@ pub(crate) fn gcm(host_name: &str, path: &str) -> SourceSpec {
     }
 }
 
+pub(crate) fn az_cli(tenant: &str, org: Option<&str>) -> SourceSpec {
+    SourceSpec::AzCli {
+        tenant: puddle_secrets::TenantId::new(tenant).unwrap(),
+        org: org.map(|o| OrgName::new(o).unwrap()),
+    }
+}
+
 pub(crate) fn stored(id: &str, host_name: &str, org: Option<&str>) -> SourceSpec {
     SourceSpec::Stored {
         id: StoredId::new(id).unwrap(),
@@ -80,11 +87,14 @@ pub(crate) fn identities(specs: Vec<(&str, Vec<CredentialBinding>)>) -> Vec<Iden
         .into_iter()
         .map(|(label, credentials)| {
             store
-                .create_identity(IdentityDraft {
-                    label: label.to_owned(),
-                    author: Author::new(label, "me@example.org").unwrap(),
-                    credentials,
-                })
+                .create_identity(
+                    puddle_store::UserId::OWNER,
+                    IdentityDraft {
+                        label: label.to_owned(),
+                        author: Author::new(label, "me@example.org").unwrap(),
+                        credentials,
+                    },
+                )
                 .unwrap()
         })
         .collect()

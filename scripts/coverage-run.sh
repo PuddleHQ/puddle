@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Runs the Rust tests with coverage (`cargo llvm-cov nextest --no-report <args>`) and sets aside the profile files
 # that cannot be read, so the report step that follows merges readable files only (scripts/check.sh runs
 # `cargo llvm-cov report` after this script). The instrumented runtime writes one `.profraw` file per process
@@ -26,7 +26,16 @@ shift
 PROPTEST_RNG_SEED=${PROPTEST_RNG_SEED:-20261028}
 export PROPTEST_RNG_SEED
 
-"$cargo" llvm-cov nextest --no-report "$@"
+# The tests run with a resolver that never answers (scripts/dead-resolver.sh), so a test that waits on a real
+# resolver fails here with the names it asked for. The crates are fetched first, with the real resolver; the
+# build and the run that follow use none. Set COVERAGE_RUN_NO_DEAD_RESOLVER=1 for a run without it (the self-test
+# stands in for cargo and has no use for it).
+if [ -n "${COVERAGE_RUN_NO_DEAD_RESOLVER:-}" ]; then
+    "$cargo" llvm-cov nextest --no-report "$@"
+else
+    "$cargo" fetch --locked || exit $?
+    "$(dirname "$0")/dead-resolver.sh" "$cargo" llvm-cov nextest --no-report "$@"
+fi
 rc=$?
 [ "$rc" = 0 ] || exit "$rc"
 

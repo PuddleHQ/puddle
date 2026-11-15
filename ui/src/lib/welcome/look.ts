@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The options of the "Look" step, with the words that go with them.
 import type { DensityChoice } from "#lib/theme/density.ts";
 import { PALETTES, PRESETS, type Preset } from "#lib/theme/palette.ts";

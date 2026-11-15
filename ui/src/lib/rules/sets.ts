@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Rule sets and System managed as pure data (rules spec §7): where a set is on and why, how its
 // entries and the System managed hosts read. No layout and no API calls here.
 import type { components } from "#lib/api/schema.d.ts";

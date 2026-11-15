@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Commit messages must read to an outside contributor: no task or decision IDs from a private
 # planning workspace. Enable: git config core.hooksPath .githooks
 # Same ID forms as scripts/check-standalone.sh (any digit count, any case, t165-style); it can't

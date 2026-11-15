@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-vm-tests"
 description = "VM test harness (tiers K/W/R): per-run prefix, private MSB_HOME, msb runtime pair, boot helpers; tests only, no product code"

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The UI fixture backend over real HTTP: seeded data, the guard of the real API, the
 //! control server, scripted events, restart and reset.
 #![expect(
@@ -157,15 +157,18 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("empty", 0, 0),
         ("lived-in", 8, 6),
         ("corporate-network", 0, 0),
+        ("company-network", 2, 0),
         ("network-trouble", 0, 0),
         ("volume-missing", 0, 0),
         ("disks-full", 0, 0),
         ("git-identities", 0, 0),
+        ("azure-cli", 0, 0),
         ("repo-lists", 0, 0),
         ("first-run", 0, 0),
         ("unmanaged-checkouts", 0, 0),
         ("start-folder-missing", 0, 0),
         ("environment", 0, 1),
+        ("multi-user", 0, 0),
         ("request-rules", 0, 1),
     ];
     for (name, pending, rules_min) in counts {
@@ -189,18 +192,48 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "empty",
             "lived-in",
             "corporate-network",
+            "company-network",
             "network-trouble",
             "volume-missing",
             "disks-full",
             "git-identities",
+            "azure-cli",
             "repo-lists",
             "first-run",
             "unmanaged-checkouts",
             "start-folder-missing",
             "environment",
+            "multi-user",
             "request-rules"
         ]
     );
+}
+
+/// The binary's start-up runs on its main thread inside `#[tokio::main]`, whose stack `build.rs`
+/// links at 8 MiB on Windows (the default 1 MiB overflowed in a debug build, intermittently).
+/// Here each built-in scenario starts the same way on a thread with half of that, so the binary
+/// keeps at least twice what its start-up needs and a scenario that grows shows up here, not as an
+/// abort in the UI tests.
+#[test]
+fn every_built_in_scenario_starts_on_half_the_programs_main_thread_stack() {
+    let stack = puddle_e2e::ui_fixture::stack::linked_stack_bytes() / 2;
+    for name in built_in_names() {
+        std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let run = start(name).await;
+                        run.fixture.shutdown().await;
+                    });
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|_| panic!("scenario {name} did not start on {stack} bytes of stack"));
+    }
 }
 
 #[tokio::test]
@@ -312,6 +345,42 @@ async fn scripts_run_in_order_and_an_unknown_one_is_404() {
             "POST",
             "/control/step",
             Some(&json!({"do": "request", "workspace": "Not A Name", "host": "x.example.org"})),
+        )
+        .await;
+    assert_eq!(bad.status, 422, "{}", bad.body);
+}
+
+#[tokio::test]
+async fn a_spread_adds_that_many_pending_requests_and_an_orphan_volume_is_listed() {
+    let run = start("lived-in").await;
+    let before = run.state().await["pending"].as_u64().unwrap();
+    let spread = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "spread", "count": 7})),
+        )
+        .await;
+    assert_eq!(spread.status, 204, "{}", spread.body);
+    assert_eq!(run.state().await["pending"].as_u64().unwrap(), before + 7);
+
+    let orphan = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "orphan_volume", "id": "bare"})),
+        )
+        .await;
+    assert_eq!(orphan.status, 204, "{}", orphan.body);
+    let listed = run.get("/api/orphan-volumes").await;
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    assert!(listed.body.contains("bare"), "{}", listed.body);
+
+    let bad = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "orphan_volume", "id": "Not A Valid Id!"})),
         )
         .await;
     assert_eq!(bad.status, 422, "{}", bad.body);
@@ -441,6 +510,28 @@ async fn a_dropped_file_makes_requests_arrive_in_the_old_serve_ui_format() {
         .map(|r| r["attempts"].as_i64().unwrap())
         .collect();
     assert_eq!(attempts, [2]);
+}
+
+#[tokio::test]
+async fn a_dropped_file_is_gone_only_once_its_steps_are_applied() {
+    let run = start("empty").await;
+    let dir = tempfile::tempdir().unwrap();
+    let _watch = watch_drop_dir(run.fixture.clone(), dir.path().to_owned());
+    let file = dir.path().join("a.json");
+    // The wait step holds the file's work up for a real 300 ms, so a file that is deleted
+    // before its steps run is seen gone while nothing is applied yet.
+    std::fs::write(
+        dir.path().join("a.tmp"),
+        json!([
+            {"do": "wait", "ms": 300},
+            {"workspace": "demo", "host": "one.example.org"}
+        ])
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::rename(dir.path().join("a.tmp"), &file).unwrap();
+    puddle_test_kit::eventually("the drop file was taken", STEP, || !file.exists()).await;
+    assert_eq!(run.state().await["pending"], 1);
 }
 
 #[test]
@@ -832,7 +923,7 @@ async fn a_scenario_with_a_bad_workspace_fails_to_start() {
         ),
         (
             json!({"name": "a", "repositories": [{"url": "git@x.test:a/b"}]}),
-            "SSH remotes",
+            "ssh remotes",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "https://x.test/a"}], "memory_mib": 1}),
@@ -1061,6 +1152,32 @@ async fn the_git_identities_scenario_seeds_identities_tables_and_what_the_creden
         seen.contains(r#""access":"push""#) && seen.contains(r#""access":"pull""#),
         "{seen}"
     );
+}
+
+#[tokio::test]
+async fn the_azure_cli_scenario_answers_a_check_with_the_step_and_starts_no_sign_in() {
+    let run = start("azure-cli").await;
+    let source = json!({"kind": "az_cli", "tenant": "contoso.onmicrosoft.com", "org": "contoso"});
+    let listed = run.get("/api/identities").await.json();
+    assert_eq!(listed["identities"][0]["credentials"][0]["source"], source);
+    let checked = run
+        .api(
+            "POST",
+            "/api/credentials/check",
+            Some(&json!({"source": source})),
+        )
+        .await;
+    assert_eq!(checked.status, 200, "{}", checked.body);
+    let result = checked.json();
+    assert_eq!(result["readable"], false);
+    assert_eq!(result["needs_sign_in"], false);
+    assert!(
+        result["fix_step"]
+            .as_str()
+            .unwrap()
+            .contains("az login --tenant contoso.onmicrosoft.com")
+    );
+    run.fixture.shutdown().await;
 }
 
 #[tokio::test]
@@ -1679,6 +1796,28 @@ async fn a_scenario_with_a_bad_rule_on_method_and_path_fails_to_start_and_names_
 }
 
 #[tokio::test]
+async fn a_learned_step_carries_how_often_the_host_was_refused() {
+    let run = start("environment").await;
+    let body = json!({"do": "learned", "workspace": "web-shop", "host": "again.example", "expires_in_secs": 120, "count": 3});
+    let mut events = run.events().await;
+    let step = run.control("POST", "/control/step", Some(&body)).await;
+    assert_eq!(step.status, 204, "{}", step.body);
+    let seen = read_until(&mut events, |text| text.contains("again.example")).await;
+    assert!(seen.contains(r#""count":3"#), "{seen}");
+    let learned = run
+        .get("/api/workspaces/web-shop/interception/learned")
+        .await
+        .json();
+    let again = &learned["hosts"][0];
+    assert_eq!(again["host"], "again.example", "{learned}");
+    assert_eq!(again["count"], 3, "{learned}");
+    assert!(
+        again["first_rejected_at"].as_u64().unwrap() < again["last_rejected_at"].as_u64().unwrap(),
+        "{learned}"
+    );
+}
+
+#[tokio::test]
 async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
     let run = start("environment").await;
     let step = |body: Value| {
@@ -1710,9 +1849,17 @@ async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
         .get("/api/workspaces/web-shop/interception/learned")
         .await
         .json();
+    let hosts = learned["hosts"].as_array().unwrap();
+    assert_eq!(hosts.len(), 1, "{learned}");
     assert_eq!(
-        learned,
-        json!({"hosts": [{"host": "pinned.example", "expires_in_secs": 90}]})
+        (
+            hosts[0]["host"].as_str(),
+            hosts[0]["passed_through"].as_bool(),
+            hosts[0]["expires_in_secs"].as_u64(),
+            hosts[0]["count"].as_u64()
+        ),
+        (Some("pinned.example"), Some(true), Some(90), Some(1)),
+        "{learned}"
     );
     assert_eq!(
         step(json!({"do": "learned", "workspace": "web-shop", "host": "other.example"}))
@@ -1724,7 +1871,13 @@ async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
         .get("/api/workspaces/web-shop/interception/learned")
         .await
         .json();
-    assert_eq!(learned["hosts"][1]["expires_in_secs"], 43_200, "{learned}");
+    let default = learned["hosts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["host"] == "other.example")
+        .unwrap();
+    assert_eq!(default["expires_in_secs"], 43_200, "{learned}");
 
     let put = |content: &str| {
         let run = &run;
@@ -1786,4 +1939,55 @@ async fn a_scenario_whose_variable_is_refused_fails_to_start_and_names_it() {
     .err()
     .unwrap();
     assert!(err.contains("web"), "{err}");
+}
+
+/// The program itself, started as a user starts it: `--help` prints the usage and exits 0, and a
+/// bad option exits 2 with the reason on stderr (the same path the stack-size guard reports on).
+#[test]
+fn the_program_prints_its_help_and_exits_2_on_a_bad_option() {
+    let program = env!("CARGO_BIN_EXE_puddle-ui-fixture");
+    let help = std::process::Command::new(program)
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success(), "{help:?}");
+    assert!(
+        String::from_utf8_lossy(&help.stdout).contains("usage: puddle-ui-fixture"),
+        "{help:?}"
+    );
+    let bad = std::process::Command::new(program)
+        .arg("--no-such-option")
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(2), "{bad:?}");
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).starts_with("puddle-ui-fixture: "),
+        "{bad:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_orphan_disk_with_an_address_that_is_not_a_repository_is_refused_with_the_reason() {
+    let running = start(built_in_names()[0]).await;
+    let step: Step =
+        serde_json::from_value(json!({"do": "orphan_volume", "id": "lost", "remote": "a b"}))
+            .unwrap();
+    let err = running.fixture.apply(&step).await.unwrap_err();
+    assert!(err.contains("space"), "{err}");
+}
+
+#[tokio::test]
+async fn an_ssh_agent_ask_step_puts_one_open_question_for_the_workspace() {
+    let run = start("empty").await;
+    let body = json!({"do": "ssh_agent_ask", "workspace": "demo", "host": "git.example.org"});
+    assert_eq!(
+        run.control("POST", "/control/step", Some(&body))
+            .await
+            .status,
+        204
+    );
+    let asks = run.get("/api/ssh-agent-asks").await.json();
+    assert_eq!(asks["asks"].as_array().map(Vec::len), Some(1), "{asks}");
+    assert_eq!(asks["asks"][0]["host"], "git.example.org");
+    assert_eq!(asks["asks"][0]["workspace"], "demo");
 }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The global settings as the screen shows them: the wording of the Microsoft server consent,
 // what each control offers, and how an edit becomes the whole document the API replaces.
 import type { components } from "#lib/api/schema.d.ts";
@@ -10,6 +10,7 @@ export type GlobalBody = Required<S["GlobalSettingsRequest"]>;
 export type Layer = S["SettingsLayer"];
 export type Ui = S["UiPrefs"];
 export type VsCodeServer = S["VsCodeServer"];
+export type GlobalTools = S["GlobalTools"];
 export type Consent = S["Consent"];
 export type ServerChoice = NonNullable<VsCodeServer["server"]>;
 export type CloseBehaviour = NonNullable<Ui["close_behaviour"]>;
@@ -126,6 +127,8 @@ export const LOCAL_EXPLAIN: Record<string, string> = {
   loopback:
     "Services on your own machine, like a database in Docker Desktop. Turning this on also lets the workspace reach any service listening on this computer's 127.0.0.1, and the ports other workspaces forwarded to this computer.",
   private: "Your home or office network (10.x, 192.168.x, ...).",
+  company_network:
+    "Destinations your company's VPN, private-access client or DNS suffixes mark as internal. Puddle reads those signals on Windows only; on other systems this switch changes nothing.",
   link_local: "169.254.x.x and fe80::, usually device discovery.",
   metadata: "Instance metadata endpoints such as 169.254.169.254.",
   special: "Carrier-grade NAT, benchmarking and similar ranges.",
@@ -138,14 +141,20 @@ export function bodyFrom(
     layer?: Partial<Layer>;
     server?: Partial<VsCodeServer>;
     ui?: Partial<Ui>;
+    tools?: Partial<GlobalTools>;
   } = {},
 ): GlobalBody {
   return {
     workspace_defaults: { ...view.workspace_defaults, ...patch.layer },
     vscode_server: { ...view.vscode_server, ...patch.server },
     ui: { ...view.ui, ...patch.ui },
+    tools: { ...view.tools, ...patch.tools },
   };
 }
+
+/** Whether Puddle manages tools with mise in workspaces: an unset global switch is on. */
+export const miseManaged = (view: GlobalView): boolean =>
+  view.tools.mise ?? true;
 
 /** What a toggle shows: the stored value, else Puddle's default (off). */
 export const toggleOn = (value: boolean | null | undefined): boolean =>

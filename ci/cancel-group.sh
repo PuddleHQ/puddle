@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Fail fast in the merge queue: when a job of a merge group fails, cancel every run of that group that has not
 # completed (the other three workflows and the rest of this one), so the queue entry is rebuilt after the fix
 # instead of after the slowest job. The result jobs of the cancelled runs run `if: always()` and report red,

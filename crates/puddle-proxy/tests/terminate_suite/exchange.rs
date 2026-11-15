@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of the token-exchange seam on terminated connections: an exchange's request body has
 //! its stand-ins swapped for the real values (one named field, toward the stand-in's hosts only),
 //! its answer is read and may be replaced, and everything that is not an exchange streams as it

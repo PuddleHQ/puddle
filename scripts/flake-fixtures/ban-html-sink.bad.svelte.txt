@@ -1,0 +1,6 @@
+<!-- Fixture: a markup sink in a component. -->
+<script lang="ts">
+  let { note }: { note: string } = $props();
+</script>
+
+<p>{@html note}</p>

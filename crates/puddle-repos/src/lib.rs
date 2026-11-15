@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which repositories an identity's credentials reach, and who a credential's account is.
 //!
 //! The host asks the Git host's own API with the token a [`Secrets`] source gives it: GitHub's

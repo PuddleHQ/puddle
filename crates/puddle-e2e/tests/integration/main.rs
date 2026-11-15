@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One test binary for every area below, so the shared support code compiles and links once.
 
 mod lab;
@@ -10,6 +10,7 @@ mod api_unreachable;
 mod corporate_lab;
 mod corporate_lab_windows;
 mod corporate_reroute;
+mod forgejo_lab;
 mod forward_unreachable;
 mod front_unreachable;
 mod git_inject;
@@ -18,6 +19,7 @@ mod hostile_flood_names;
 mod hostile_listeners;
 mod hostile_names;
 mod image_pull_company_proxy;
+mod image_pull_intercepting_proxy;
 mod image_pull_layer_connections;
 mod image_pull_resume;
 mod ip_deny;

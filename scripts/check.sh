@@ -538,12 +538,14 @@ done
 # name stays short: <target dir>/chk.XXXXXX/mbx-session-XXXXXX/cache-agent.sock must fit in 107 bytes).
 check_tmp=
 check_tmp_cleanup() { [ -z "$check_tmp" ] || rm -rf "$check_tmp"; }
-# A unix socket path is at most 107 bytes (sun_path). The longest socket the tests bind sits 39 bytes below TMPDIR
-# (measured under a 32-byte TMPDIR: the longest bound path was 71 bytes, the agent tests' route.sock), so a longer
-# TMPDIR fails the socket tests with an error that names no cause. Refuse it here, before any gate runs.
+# A unix socket path is at most 107 bytes (sun_path). A bind logger over the whole workspace test run found the
+# longest socket under TMPDIR in two places: puddle-ipc's default endpoint, `/puddle-<16 hex>/<16 hex>.sock`, which
+# sits 46 bytes below TMPDIR when XDG_RUNTIME_DIR is unset or not a directory (it binds under that directory
+# otherwise), and the agent tests' `/pa-editor-nopassword-XXXXXX/route.sock`, 39 bytes below. A longer TMPDIR fails
+# the socket tests with an error that names no cause. Refuse it here, before any gate runs.
 sock_max=107
-sock_tail=39
 tmp_guard() {
+    if [ -d "${XDG_RUNTIME_DIR:-}" ]; then sock_tail=39; else sock_tail=46; fi
     n=$(printf %s "${TMPDIR:-/tmp}" | wc -c | tr -d ' ')
     limit=$((sock_max - sock_tail))
     [ "$n" -le "$limit" ] || {

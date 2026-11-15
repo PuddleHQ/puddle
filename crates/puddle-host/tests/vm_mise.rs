@@ -381,6 +381,8 @@ async fn vm_radar_an_own_deny_on_the_mise_host_gives_a_problem_and_a_done_start(
     let api = Api::new(vm.host.url(), vm.host.token());
     let id = puddle_types::WorkspaceId::new(&format!("{}-misedeny", vm.settings.prefix.as_str()))
         .unwrap();
+    // The rule names a workspace the create has not made yet: record its owner first.
+    puddle_store::testing::own(vm.host.store(), &id);
     vm.host
         .store()
         .as_user(puddle_store::UserId::OWNER)

@@ -1,0 +1,2 @@
+drwxr-xr-x+ 2 runner  wheel  64 Nov 15 15:27 DIR/f7
+ 0: group:everyone allow list,search,readattr,readextattr,readsecurity

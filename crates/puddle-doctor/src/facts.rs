@@ -283,7 +283,7 @@ impl WritableFolder {
 }
 
 /// Why msb refuses a folder above Puddle's data apart from its permission bits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlockedBy {
     /// It is not a folder (a file, or another kind of entry).
     NotAFolder,
@@ -291,6 +291,13 @@ pub enum BlockedBy {
     OtherOwner {
         /// The owner's user id.
         uid: u32,
+    },
+    /// Another account holds an ACL entry that lets it change the folder (macOS).
+    MutatingAcl {
+        /// The entry's number in the folder's `ls -lde` listing.
+        index: u32,
+        /// The entry as `ls -lde` prints it, such as `group:everyone allow add_file`.
+        entry: String,
     },
 }
 
@@ -304,7 +311,7 @@ pub struct BlockedFolder {
 }
 
 /// The folders from `/` down to Puddle's data folder, read the way msb reads them before it opens
-/// its catalog (Linux only).
+/// its catalog (Linux and macOS).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataPathFacts {
     /// The folders were read; `writable` lists those msb would refuse, top first.

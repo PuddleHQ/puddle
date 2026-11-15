@@ -1,0 +1,2 @@
+drwxr-x---+ 39 runner  staff  1248 Nov 15 15:28 /Users/runner
+ 0: group:everyone deny delete

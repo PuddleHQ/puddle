@@ -175,6 +175,8 @@ pub enum Finding {
     DataPathWritable,
     /// A folder above Puddle's data is not a folder or belongs to another user.
     DataPathBlocked,
+    /// Another account holds an ACL entry that lets it change a folder above Puddle's data (macOS).
+    DataPathAcl,
     /// The folders above Puddle's data couldn't be read.
     DataPathUnreadable,
     /// The drive that holds Puddle's data is not encrypted.

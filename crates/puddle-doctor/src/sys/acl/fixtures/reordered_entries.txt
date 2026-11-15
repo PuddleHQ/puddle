@@ -1,0 +1,4 @@
+drwxr-xr-x+ 2 runner  wheel  64 Nov 15 15:29 DIR/m
+ 0: group:everyone deny delete
+ 1: group:everyone allow add_file
+ 2: user:runner allow add_file,delete_child

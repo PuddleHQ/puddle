@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use puddle_proxy::{
     BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    RequestView, Unauthorized,
+    RequestView, SecretValue, Unauthorized,
 };
 use puddle_secrets::{SourceError, SourceSpec};
 use puddle_store::{CredentialBinding, CredentialChoice, Identity, WorkspaceGit};
@@ -288,15 +288,9 @@ impl GitInjector {
             }
         };
         let value = authorization(&path.credential_host, credential.secret.expose());
-        let Ok(header) = InjectedHeader::new("authorization", value) else {
-            return refuse(
-                502,
-                ReasonCode::CredentialUnavailable,
-                format!(
-                    "the credential of identity {} for {named} is not a usable header value; replace it in Puddle",
-                    identity.label
-                ),
-            );
+        let header = match authorization_header(value, &identity.label, &named) {
+            Ok(header) => header,
+            Err(refusal) => return refusal,
         };
         let injection = Injection::new(
             format!("identity:{}:{}", identity.id, binding.host),
@@ -426,6 +420,24 @@ impl Injector for GitInjector {
     }
 }
 
+/// The `Authorization` header for `value`, or the refusal that says the identity's credential
+/// cannot be sent as one.
+fn authorization_header(
+    value: SecretValue,
+    label: &str,
+    named: &str,
+) -> Result<InjectedHeader, InjectDecision> {
+    InjectedHeader::new("authorization", value).map_err(|_| {
+        refuse(
+            502,
+            ReasonCode::CredentialUnavailable,
+            format!(
+                "the credential of identity {label} for {named} is not a usable header value; replace it in Puddle"
+            ),
+        )
+    })
+}
+
 fn refuse(status: u16, code: ReasonCode, message: impl Into<String>) -> InjectDecision {
     InjectDecision::Refuse(InjectRefusal::new(status, code, message))
 }
@@ -507,3 +519,6 @@ impl Notices {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

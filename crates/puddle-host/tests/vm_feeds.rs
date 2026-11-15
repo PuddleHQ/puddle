@@ -119,7 +119,9 @@ cat > probe.csproj <<'EOF'
   <ItemGroup><PackageReference Include="{NUGET_PACKAGE}" Version="1.0.0" /></ItemGroup>
 </Project>
 EOF
-dotnet restore 2>&1 | tail -3
+# NuGet keeps what the authenticated installs fetched in its http cache: without these the control restores from it.
+rm -rf ~/.local/share/NuGet/http-cache
+dotnet restore --no-cache 2>&1 | tail -3
 echo "control=nuget rc=${{PIPESTATUS[0]}}"
 "#
     );
@@ -316,7 +318,12 @@ fn reach(web: &puddle_e2e::lab::WebHost, host: &str, from: usize) -> Reach {
 
 /// A fake internet with the four private feeds, a workspace that may reach them and `extra`
 /// sites, one secret per `(variable, feed host)` holding [`REAL`], and the workspace started.
-async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost, WorkspaceId) {
+/// `tag` names the scratch home and the workspace: one per test, a second claim fails.
+async fn boot(
+    tag: &str,
+    secrets: &[(&str, &str)],
+    extra: &[&str],
+) -> (WebInternet, VmHost, WorkspaceId) {
     let net = web_internet(
         &[NPM, NUGET, PIP, MAVEN],
         WebOptions {
@@ -326,8 +333,8 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
         named_id_options(),
     )
     .await;
-    let vm = start_vm_host_platform("feed", net.options.clone(), &net.platform, |_| {}).await;
-    let name = format!("{}-feed", vm.settings.prefix.as_str());
+    let vm = start_vm_host_platform(tag, net.options.clone(), &net.platform, |_| {}).await;
+    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in [NPM, NUGET, PIP, MAVEN].iter().chain(extra) {
         puddle_store::testing::own(vm.host.store(), &workspace);
@@ -372,6 +379,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_in() {
     let (net, vm, workspace) = boot(
+        "feed",
         &[
             ("NPM_FEED_TOKEN", NPM),
             ("NUGET_FEED_TOKEN", NUGET),
@@ -480,7 +488,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_artifacts_credential_provider_hands_the_stand_in_to_nuget_unchanged() {
     let sites: Vec<&str> = MIRRORS.iter().chain(PROVIDER_HOSTS).copied().collect();
-    let (net, vm, workspace) = boot(&[("NUGET_FEED_TOKEN", NUGET)], &sites).await;
+    let (net, vm, workspace) = boot("feed-nuget", &[("NUGET_FEED_TOKEN", NUGET)], &sites).await;
 
     let installed = run(
         &vm,

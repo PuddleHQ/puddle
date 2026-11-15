@@ -11,7 +11,7 @@ use puddle_types::{
     CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, SessionUser, WorkspaceId, WorkspaceStep,
 };
 
-use puddle_workspace::Layout;
+use puddle_workspace::{Layout, WorkspaceError};
 
 use super::{GuestState, HostWorkspaces, Live, editor_file_title, problem_key};
 use crate::boot::{GuestInputs, MiseLayer, root_disk_size};
@@ -50,7 +50,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .await
         }
         .map_err(|e| {
-            if matches!(e, puddle_workspace::WorkspaceError::VolumeMissing { .. }) {
+            if matches!(e, WorkspaceError::VolumeMissing { .. }) {
                 self.mark_volume_missing(id);
             }
             e
@@ -584,23 +584,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
         {
             Ok(list) => crate::editor_file::Found::from_listing(&list),
+            // An image with no git can't describe checkouts (the checkouts screen says so). The
+            // editor then opens the volume root, which shows every folder on it, and the attach
+            // has nothing to report: the start's optimistic multi-root file is dropped below.
+            Err(WorkspaceError::GitMissing { .. }) => crate::editor_file::Found::default(),
             Err(e) => {
                 not_updated(&e);
                 return;
             }
         };
-        let order: Vec<CheckoutDir> = record
-            .repositories
-            .iter()
-            .map(|r| r.directory.clone())
-            .collect();
-        let file = crate::editor_file::multi_root_folders(
-            &guest.root,
-            record.start_folder.as_ref(),
-            &found,
-            &order,
-        )
-        .and_then(|folders| crate::editor_file::workspace_file(&guest.root, &record.id, &folders));
+        let file = multi_root_file(record, &guest.root, &found);
         let replanned = GuestState {
             editor_file: file,
             ..guest.clone()
@@ -641,4 +634,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             _ => inner.problems.clear(&key),
         }
     }
+}
+
+/// The multi-root file the editor opens for `found`, `None` when it opens the start folder or the
+/// volume root instead.
+fn multi_root_file(
+    record: &WorkspaceRecord,
+    root: &GuestPath,
+    found: &crate::editor_file::Found,
+) -> Option<GuestFile> {
+    let order: Vec<CheckoutDir> = record
+        .repositories
+        .iter()
+        .map(|r| r.directory.clone())
+        .collect();
+    crate::editor_file::multi_root_folders(root, record.start_folder.as_ref(), found, &order)
+        .and_then(|folders| crate::editor_file::workspace_file(root, &record.id, &folders))
 }

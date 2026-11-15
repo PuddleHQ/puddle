@@ -239,6 +239,8 @@ struct Guest {
     fail_import: AtomicBool,
     /// The listing script fails the way it does for a volume it cannot enter.
     fail_listing: AtomicBool,
+    /// The listing script finds no git in the image (it exits 4 and says so).
+    git_missing: AtomicBool,
     /// Checkouts the listing reports as unreadable, by directory and message.
     unreadable: Mutex<Vec<(String, String)>>,
     /// The next listing waits here before it answers, and says so in `listing_waits`.
@@ -516,6 +518,9 @@ impl Guest {
         if let Some(hold) = hold {
             self.listing_waits.store(true, Ordering::SeqCst);
             wait_for(&hold);
+        }
+        if self.git_missing.load(Ordering::SeqCst) {
+            return ExecOutput::new(4, "E\t.\tgit is not installed in the image\n", "");
         }
         if self.fail_listing.load(Ordering::SeqCst) {
             return ExecOutput::new(3, "E\t.\tcannot enter /workspaces/adds\n", "");
@@ -6594,6 +6599,37 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     let folder = attach().await;
     assert_eq!(folder.path, "/workspaces/acme/api");
     assert!(!folder.is_workspace_file);
+    host.shutdown().await;
+}
+
+/// An image with no git can't describe checkouts; the editor still opens the volume root and the
+/// attach raises no problem about it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_on_an_image_without_git_opens_the_folder_and_raises_no_problem() {
+    let rig = Rig::named_ids();
+    rig.guest.git_missing.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+    let target = rig
+        .launcher
+        .targets
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(target.path, "/workspaces/acme");
+    assert!(!target.is_workspace_file);
+    assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
     host.shutdown().await;
 }
 

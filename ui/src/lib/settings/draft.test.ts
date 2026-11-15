@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { FakeSettings } from "#lib/testing/fake-settings.ts";
+import {
+  FAKE_EFFECTIVE_LIMITS,
+  FakeSettings,
+} from "#lib/testing/fake-settings.ts";
 import {
   EMPTY_DRAFT,
   isDirty,
   restartNames,
   savePatch,
   setLayer,
+  setLimits,
   setServer,
   setToggle,
   setTools,
@@ -23,18 +27,21 @@ describe("the draft", () => {
     expect(EMPTY_DRAFT.ui).toEqual({});
   });
 
-  it("keeps the five parts apart", () => {
+  it("keeps the six parts apart", () => {
     let d = setLayer(EMPTY_DRAFT, "memory", 4096, 8192);
     d = setToggle(d, "private", true, false);
     d = setServer(d, "auto_update", false, true);
     d = setUi(d, "theme", "dark", "system");
+    d = setLimits(d, "max_cpus", 6, null);
     expect(d).toEqual({
       layer: { memory: 4096 },
       toggles: { private: true },
       server: { auto_update: false },
       tools: {},
       ui: { theme: "dark" },
+      limits: { max_cpus: 6 },
     });
+    expect(isDirty(setLimits(EMPTY_DRAFT, "max_cpus", null, null))).toBe(false);
   });
 
   it("names only the changed settings that need a restart, once each", () => {
@@ -56,6 +63,8 @@ describe("the change a save sends", () => {
       unknown_fields: [],
       vscode_server: fake.vscode,
       tools: fake.tools,
+      limits: fake.limits,
+      effective_limits: FAKE_EFFECTIVE_LIMITS,
       workspace_defaults: fake.layer,
     };
   };

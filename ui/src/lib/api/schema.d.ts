@@ -3472,6 +3472,25 @@ export interface components {
          * @enum {string}
          */
         Effect: "allow" | "deny";
+        /** @description The limits as they apply on this computer. */
+        EffectiveLimits: {
+            /**
+             * Format: int32
+             * @description The vCPUs a new workspace gets unless it or the global default says otherwise: four, or
+             *     half the cores on a small computer.
+             */
+            default_cpus: number;
+            /**
+             * Format: int32
+             * @description The computer's logical cores.
+             */
+            host_cpus: number;
+            /**
+             * Format: int32
+             * @description The most vCPUs a workspace may have: the set limit, else the logical cores.
+             */
+            max_cpus: number;
+        };
         /** @description The values a workspace gets: its override, else the global value, else Puddle's default. */
         EffectiveSettings: {
             /** @description Whether logins made inside the workspace are captured. */
@@ -4036,6 +4055,8 @@ export interface components {
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
+            /** @description The limits; omitted or `null` falls back to the computer's cores. */
+            limits?: components["schemas"]["Limits"];
             /** @description The tool switches. */
             tools?: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -4049,6 +4070,10 @@ export interface components {
         GlobalSettingsView: {
             /** @description The effective values for a workspace with no overrides. */
             effective: components["schemas"]["EffectiveSettings"];
+            /** @description What the limits come to on this computer. */
+            effective_limits: components["schemas"]["EffectiveLimits"];
+            /** @description The limits the user set (global only). */
+            limits: components["schemas"]["Limits"];
             /** @description The tool switches (global only). */
             tools: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -4411,6 +4436,14 @@ export interface components {
              * @description Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).
              */
             ttl_secs: number;
+        };
+        /** @description Upper bounds on what a workspace may be given (global only). */
+        Limits: {
+            /**
+             * Format: int32
+             * @description The most vCPUs a workspace may have. `null` is the computer's logical cores.
+             */
+            max_cpus: number | null;
         };
         /**
          * @description A class of local destination with its own toggle. Everything outside these is public.
@@ -5523,7 +5556,7 @@ export interface components {
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
             /**
              * Format: int32
-             * @description Guest vCPUs (1 to 32); applies at the next start.
+             * @description Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
              */
             cpus: number | null;
             /**

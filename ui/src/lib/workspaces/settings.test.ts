@@ -109,8 +109,8 @@ describe("sources", () => {
 });
 
 describe("cpus", () => {
-  it("offers the global default first, then 1 to 32", () => {
-    const options = cpuOptions(2);
+  it("offers the global default first, then 1 up to the maximum", () => {
+    const options = cpuOptions(2, 32);
     expect(options[0]).toEqual({
       value: "",
       label: "Use the global default (2 CPUs)",
@@ -118,6 +118,17 @@ describe("cpus", () => {
     expect(options).toHaveLength(33);
     expect(options[1]).toEqual({ value: "1", label: "1 CPU" });
     expect(options[32]).toEqual({ value: "32", label: "32 CPUs" });
+  });
+
+  it("has no fixed cap: the maximum is the host's, and a stored count above it stays", () => {
+    expect(cpuOptions(4, 64)).toHaveLength(65);
+    expect(cpuOptions(1, 2).map((o) => o.value)).toEqual(["", "1", "2"]);
+    expect(cpuOptions(1, 2, 6).map((o) => o.value)).toEqual([
+      "",
+      "1",
+      "2",
+      "6",
+    ]);
   });
 
   it("maps a choice to an override and back", () => {

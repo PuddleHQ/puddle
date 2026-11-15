@@ -141,7 +141,7 @@ describe("RequestRow", () => {
   it("still says it is on the company network when the signal is one this version doesn't know", () => {
     mount(
       { blockedBy: "company_network" },
-      request(3, { host: "100.64.3.7", company_signal: "later" }),
+      request(3, { host: "100.64.3.7", company_signal: "later" as never }),
     );
     const note = screen
       .getByText("on your company network")

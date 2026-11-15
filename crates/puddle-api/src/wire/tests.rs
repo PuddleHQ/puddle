@@ -876,3 +876,29 @@ fn every_theme_and_close_behaviour_converts_both_ways() {
         assert_eq!(CloseBehaviour::from(stored), wire);
     }
 }
+
+/// Kinds, reasons and signals this version has no name for still reach the wire as stored: the
+/// schema lists the names this version knows, the record keeps what another version wrote.
+#[test]
+fn a_name_from_another_version_reaches_the_wire_as_stored() {
+    let stored = serde_json::json!({
+        "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+        "port": 443, "resolved_ip": null, "decision": "allow", "reason": "limit:from_the_future", "rule_id": 4,
+        "pending_id": null, "binding_id": null, "injected": false, "method": null, "path": null,
+        "foreign_credentials": ["a_new_kind"], "answer_credentials": ["another_new_kind"],
+        "category": "company_network", "signal": "a_new_signal",
+        "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+    });
+    let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+    let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+    assert_eq!(wire["reason"], "limit:from_the_future");
+    assert_eq!(
+        wire["foreign_credentials"],
+        serde_json::json!(["a_new_kind"])
+    );
+    assert_eq!(
+        wire["answer_credentials"],
+        serde_json::json!(["another_new_kind"])
+    );
+    assert_eq!(wire["signal"], "a_new_signal");
+}

@@ -22,8 +22,8 @@ use http_body_util::{BodyExt, Empty, Limited};
 use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Host, HttpRequestLine,
-    NullConnectionLog,
+    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, FailedRequestCode, Host,
+    HttpRequestLine, NullConnectionLog,
 };
 use puddle_upstream::host::connect;
 use puddle_upstream::{Chain, Destination, Form, Scheme, TlsClient, TlsConnectError};
@@ -225,9 +225,9 @@ impl HostApi {
             Ok(reply) if reply.status < 400 => (ConnectionReason::PuddleRequest, reply.body.len()),
             Ok(reply) => (
                 ConnectionReason::PuddleRequestFailed(match reply.status {
-                    401 | 403 => "host_refused",
-                    429 => "rate_limited",
-                    _ => "host_error",
+                    401 | 403 => FailedRequestCode::HostRefused,
+                    429 => FailedRequestCode::RateLimited,
+                    _ => FailedRequestCode::HostError,
                 }),
                 reply.body.len(),
             ),
@@ -242,14 +242,14 @@ impl HostApi {
 }
 
 /// The audit code of a request that got no answer.
-fn failure_code(err: &TransportError) -> &'static str {
+fn failure_code(err: &TransportError) -> FailedRequestCode {
     match err {
-        TransportError::Unreachable(_) => "unreachable",
-        TransportError::Tls(_) => "tls",
-        TransportError::Timeout(_) => "timeout",
-        TransportError::TooLarge => "too_large",
-        TransportError::Protocol(_) => "protocol",
-        TransportError::BadToken => "bad_token",
+        TransportError::Unreachable(_) => FailedRequestCode::Unreachable,
+        TransportError::Tls(_) => FailedRequestCode::Tls,
+        TransportError::Timeout(_) => FailedRequestCode::Timeout,
+        TransportError::TooLarge => FailedRequestCode::TooLarge,
+        TransportError::Protocol(_) => FailedRequestCode::Protocol,
+        TransportError::BadToken => FailedRequestCode::BadToken,
     }
 }
 

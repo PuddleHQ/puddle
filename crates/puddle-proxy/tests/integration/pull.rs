@@ -377,7 +377,7 @@ async fn refused_pulls_are_recorded_and_unauthorised_ones_are_not() {
     assert_eq!(failed.host.to_string(), "registry.test");
     assert_eq!(
         failed.reason,
-        ConnectionReason::PuddleRequestFailed("unreachable"),
+        ConnectionReason::PuddleRequestFailed(puddle_types::FailedRequestCode::Unreachable),
         "a pull that got nowhere must not read as one that went through"
     );
 }
@@ -454,7 +454,7 @@ async fn a_pull_that_could_not_resolve_its_name_records_why_it_failed() {
     assert_eq!(events[0].outcome, Some(ConnectionOutcome::Timeout));
     assert_eq!(
         events[0].reason,
-        ConnectionReason::PuddleRequestFailed("timeout")
+        ConnectionReason::PuddleRequestFailed(puddle_types::FailedRequestCode::Timeout)
     );
 }
 

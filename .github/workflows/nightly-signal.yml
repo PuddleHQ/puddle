@@ -22,6 +22,7 @@ on:
       - coverage-baseline
       - refresh-image-pins
       - stress
+      - fake-host-starved
       - lab-override
       - live-contracts
       - lab-forgejo

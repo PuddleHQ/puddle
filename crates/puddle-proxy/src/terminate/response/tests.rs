@@ -115,3 +115,17 @@ async fn an_http_1_0_guest_or_a_close_request_gets_the_connection_closed() {
     assert!(!out.contains("connection:"), "{out:?}");
     assert!(matches!(how, Written::KeepOpen));
 }
+
+#[test]
+fn closing_keeps_an_http_1_0_guest_and_marks_an_http_1_1_guest_as_asking_to_close() {
+    assert_eq!(GuestHttp::Http10.closing(), GuestHttp::Http10);
+    assert_eq!(
+        GuestHttp::Http11 {
+            close_requested: false
+        }
+        .closing(),
+        GuestHttp::Http11 {
+            close_requested: true
+        }
+    );
+}

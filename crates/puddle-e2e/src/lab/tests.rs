@@ -238,3 +238,12 @@ fn a_busy_process_reports_more_cpu_time_than_an_idle_one() {
     // none while it waits, whatever the load (0 ns measured under 16 busy loops on 4 cores).
     assert!(idle_cpu < Duration::from_millis(100), "{idle_cpu:?}");
 }
+
+#[test]
+fn a_requirement_is_required_only_when_its_variable_is_set() {
+    assert_eq!(
+        Requirement::from_env("NOBODY_SETS_THIS_VARIABLE"),
+        Requirement::Optional
+    );
+    assert_eq!(Requirement::from_env("PATH"), Requirement::Required);
+}

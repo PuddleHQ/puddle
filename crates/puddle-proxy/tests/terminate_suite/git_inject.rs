@@ -236,7 +236,7 @@ async fn a_push_off_the_list_is_refused_in_one_readable_line_and_recorded() {
 #[tokio::test]
 async fn the_pull_list_refuses_a_fetch_with_the_same_kind_of_line() {
     let t = GitRig::new().await;
-    t.world.switches(true, true);
+    t.world.switches(puddle_inject::testing::OnlyListed::Both);
     let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
@@ -586,7 +586,7 @@ async fn an_anonymous_read_that_the_host_redirects_is_passed_on_and_never_follow
 async fn a_pull_off_the_list_is_refused_before_an_anonymous_read_goes_out() {
     let t = GitRig::new().await;
     sign_out(&t.world);
-    t.world.switches(true, true);
+    t.world.switches(puddle_inject::testing::OnlyListed::Both);
     let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,

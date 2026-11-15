@@ -9,6 +9,8 @@ use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal, VsockRoute};
 use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
 
+use super::access::Undo;
+use super::boot::BootFor;
 use super::{HostWorkspaces, Live, RuntimeNames, State, problem_key};
 use crate::boot::BootKit;
 use crate::op_error::OpError;
@@ -55,11 +57,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // A route left from an earlier boot belongs to a sandbox that no longer exists.
             self.quiesce(name, true).await;
             let mut created_volume = false;
-            self.boot_new(&record, &mut created_volume, false, false)
+            self.boot_new(&record, &mut created_volume, BootFor::Start)
                 .await?;
         }
         if let Err(reason) = self.settle(&record).await {
-            return Err(self.undo_boot(&record, false, false, reason).await);
+            return Err(self.undo_boot(&record, Undo::Keep, reason).await);
         }
         self.refresh_checkouts_later(&record.id);
         Ok(())

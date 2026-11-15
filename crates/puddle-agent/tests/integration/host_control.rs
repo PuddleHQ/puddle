@@ -18,7 +18,7 @@ use std::time::Duration;
 use puddle_agent::config::Target;
 use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
-use puddle_agent_proto::editor::EditorServer;
+use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions};
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
@@ -272,8 +272,10 @@ async fn the_hosts_message_runs_the_staged_build_and_a_second_message_has_nothin
         dir.path().join("data").to_string_lossy(),
         dir.path().join("work").to_string_lossy(),
         120,
-        false,
-        true,
+        MicrosoftOptions {
+            telemetry: false,
+            auto_update: true,
+        },
     );
     server.dir = builds.to_string_lossy().into_owned();
     let (host, _agent) = start_agent(&dir, server).await;

@@ -266,6 +266,27 @@ async fn a_seal_that_cannot_be_read_back_in_time_fails_instead_of_falling_back()
 }
 
 #[tokio::test]
+async fn a_tool_that_cannot_be_started_is_a_cannot_seal_not_a_timeout() {
+    let setup = Setup::new();
+    let paths = ToolPaths::default()
+        .with_systemd_creds(Some(setup.dir.path().join("no-such-systemd-creds")));
+    let keys = VaultKeys::new(&setup.config(), &setup.vault(), paths).with_credentials_dir(None);
+    let found = keys.find_or_make().await.unwrap();
+    assert_eq!(found.source, KeySource::KeyFile);
+}
+
+#[tokio::test]
+async fn a_seal_that_cannot_be_stored_is_a_cannot_seal_and_leaves_the_key_file() {
+    let setup = Setup::new();
+    // Something that is not a file sits where the sealed key goes, so storing it fails.
+    std::fs::create_dir_all(setup.sealed()).unwrap();
+    let (keys, _) = setup.keys(HEALTHY);
+    let found = keys.find_or_make().await.unwrap();
+    assert_eq!(found.source, KeySource::KeyFile);
+    assert!(setup.sealed().is_dir());
+}
+
+#[tokio::test]
 async fn systemd_before_256_is_not_asked_to_seal() {
     let setup = Setup::new();
     let (keys, tool) = setup.keys(

@@ -46,7 +46,9 @@
 # the target dir (MUTANTS_TMPDIR=DIR uses DIR/mutants-tmp.* instead), removed when the run ends, which also holds
 # the private cargo home. The jobs are capped so the copies fit: MUTANTS_JOBS (default 2) is lowered to the free
 # space of that directory divided by MUTANTS_JOB_GB (default 14, at least 1 job); MUTANTS_FREE_GB overrides the
-# measured free space (the self-test uses it).
+# measured free space (the self-test uses it). The copies and the builds stay there, but the test processes get the
+# TMPDIR the caller had (PUDDLE_TEST_TMPDIR, read by scripts/cap-test-memory.sh), so a host that keeps TMPDIR in RAM
+# runs the tests' fixtures in RAM here as in the other gates; a caller with no TMPDIR leaves the tests on the copy's disk.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -145,6 +147,13 @@ private_tmp() {
     mkdir -p "$base"
     work_tmp=$(mktemp -d "$base/mutants-tmp.XXXXXX")
     trap cleanup EXIT
+    # The caller's own TMPDIR (a RAM directory on the hosts that set one) goes to the test processes alone, through
+    # scripts/cap-test-memory.sh: their fixtures are small and fsync-heavy, and under the target dir a disk shared with
+    # other runs made each fsync wait for its journal (a store test took 67 s that runs in 2 s in the default profile).
+    if [ -z "${PUDDLE_TEST_TMPDIR:-}" ] && [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+        PUDDLE_TEST_TMPDIR="$TMPDIR"
+        export PUDDLE_TEST_TMPDIR
+    fi
     export TMPDIR="$work_tmp"
     free_gb="${MUTANTS_FREE_GB:-$(df -Pk "$work_tmp" | awk 'NR == 2 { print int($4 / 1048576) }')}"
     case $free_gb in

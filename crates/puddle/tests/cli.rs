@@ -396,5 +396,12 @@ fn audit_without_a_data_dir_looks_in_the_per_user_folder() {
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8(out.stderr).unwrap();
     assert!(err.contains("no database at"), "{err}");
-    assert!(err.contains(home.path().to_str().unwrap()), "{err}");
+    // Windows asks the shell for the per-user folder and ignores the environment, so the
+    // expected folder there is what that same lookup gives this process.
+    let expected = if cfg!(windows) {
+        puddle_fs::data_dir().unwrap()
+    } else {
+        home.path().to_path_buf()
+    };
+    assert!(err.contains(expected.to_str().unwrap()), "{err}");
 }

@@ -6374,6 +6374,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-freshness"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "puddle-front"
 version = "0.0.0"
 dependencies = [

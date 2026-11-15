@@ -1611,3 +1611,5 @@ async fn a_workspace_with_keys_of_its_own_start_is_served_with_them_and_not_the_
     assert_eq!(shown, keys.keys()[0].public_key().to_openssh().unwrap());
     assert_ne!(shown, decoy.public_key().to_openssh().unwrap());
 }
+
+mod hostile;

@@ -604,10 +604,13 @@ struct Fixture {
 }
 
 fn fixture(telemetry: bool) -> Fixture {
-    fixture_updating(telemetry, true)
+    fixture_updating(MicrosoftOptions {
+        telemetry,
+        auto_update: true,
+    })
 }
 
-fn fixture_updating(telemetry: bool, auto_update: bool) -> Fixture {
+fn fixture_updating(options: MicrosoftOptions) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("out");
     std::fs::create_dir(&out).unwrap();
@@ -615,10 +618,7 @@ fn fixture_updating(telemetry: bool, auto_update: bool) -> Fixture {
         dir.path().join("data").to_string_lossy(),
         dir.path().join("work").to_string_lossy(),
         120,
-        MicrosoftOptions {
-            telemetry,
-            auto_update,
-        },
+        options,
     );
     let reserved = ReservedPort::new();
     server.port = reserved.port();
@@ -907,7 +907,14 @@ async fn a_new_build_that_exits_before_it_started_is_dropped_for_the_previous_on
 
 #[tokio::test]
 async fn nothing_is_looked_for_or_switched_with_automatic_updates_off() {
-    let r = running(fixture_updating(false, false), false).await;
+    let r = running(
+        fixture_updating(MicrosoftOptions {
+            telemetry: false,
+            auto_update: false,
+        }),
+        false,
+    )
+    .await;
     r.publish_newer(false);
     // An absence window: several update intervals (`quick`) pass, and nothing may have been asked.
     tokio::time::sleep(Duration::from_millis(600)).await;

@@ -15,12 +15,11 @@
 //! The `401` carries a basic challenge, as in [`private_feeds`](super::private_feeds). Test code
 //! only.
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use sha2::{Digest as _, Sha256};
 
-use super::feeds::{PIP_PROJECT, answer, npm_answer, pip_answer, presented, status, tgz};
+use super::feeds::{PIP_PROJECT, answer, hex, npm_answer, pip_answer, presented, status, tgz};
 use super::pip_index::{wheel_name, zip_stored};
 use super::{Responder, Seen, WebAnswer};
 
@@ -76,12 +75,7 @@ fn cargo_answer(host: &str, path: &str) -> WebAnswer {
         });
         answer("application/json", doc.to_string().into_bytes())
     } else if path == index {
-        let sum = Sha256::digest(crate_file())
-            .iter()
-            .fold(String::new(), |mut out, byte| {
-                let _ = write!(out, "{byte:02x}");
-                out
-            });
+        let sum = hex(&Sha256::digest(crate_file()));
         let line = serde_json::json!({
             "name": CARGO_CRATE,
             "vers": "1.0.0",

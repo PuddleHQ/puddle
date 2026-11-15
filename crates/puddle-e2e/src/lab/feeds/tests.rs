@@ -127,3 +127,25 @@ fn every_feed_serves_its_package_and_nothing_else_to_a_request_with_the_token() 
     assert_eq!(body("mvn.test", &format!("{base}.jar")).0, 200);
     assert_eq!(body("mvn.test", &format!("{base}.jar.sha1")).0, 404);
 }
+
+#[test]
+fn the_npm_document_names_the_sha1_of_the_tarball_it_serves() {
+    let feeds = feeds();
+    let doc = ask(
+        &feeds,
+        "npm.test",
+        "/probe-private",
+        Some("Bearer real-token"),
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&doc.body).unwrap();
+    let tarball = ask(
+        &feeds,
+        "npm.test",
+        "/probe-private/-/probe-private-1.0.0.tgz",
+        Some("Bearer real-token"),
+    );
+    assert_eq!(
+        doc["versions"]["1.0.0"]["dist"]["shasum"],
+        hex(&sha1::Sha1::digest(&tarball.body))
+    );
+}

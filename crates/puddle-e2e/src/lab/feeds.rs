@@ -5,6 +5,8 @@
 //! that needs a credential. The token is accepted as a bearer token (npm) or as the password of
 //! basic authentication (the others). Test code only.
 
+use sha1::Digest as _;
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -78,32 +80,48 @@ pub(super) fn tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
 pub(super) fn npm_answer(host: &str, prefix: &str, path: &str) -> WebAnswer {
     let tarball = format!("/{NPM_PACKAGE}/-/{NPM_PACKAGE}-1.0.0.tgz");
     if path == format!("/{NPM_PACKAGE}") {
+        // `yarn` 1 reads the SHA-1 and refuses a document without it.
+        let archive = npm_tarball();
         let doc = serde_json::json!({
             "name": NPM_PACKAGE,
             "dist-tags": {"latest": "1.0.0"},
             "versions": {"1.0.0": {
                 "name": NPM_PACKAGE,
                 "version": "1.0.0",
-                "dist": {"tarball": format!("https://{host}{prefix}{tarball}")},
+                "dist": {
+                    "tarball": format!("https://{host}{prefix}{tarball}"),
+                    "shasum": hex(&sha1::Sha1::digest(&archive)),
+                },
             }},
         });
         answer("application/json", doc.to_string().into_bytes())
     } else if path == tarball {
-        let manifest =
-            format!("{{\"name\":\"{NPM_PACKAGE}\",\"version\":\"1.0.0\",\"main\":\"index.js\"}}");
-        answer(
-            "application/octet-stream",
-            tgz(&[
-                ("package/package.json", manifest.as_bytes()),
-                (
-                    "package/index.js",
-                    b"module.exports = 'from the private feed';\n",
-                ),
-            ]),
-        )
+        answer("application/octet-stream", npm_tarball())
     } else {
         status(404)
     }
+}
+
+/// The package every npm feed serves, the same bytes each time (the registry document names their
+/// hash).
+fn npm_tarball() -> Vec<u8> {
+    let manifest =
+        format!("{{\"name\":\"{NPM_PACKAGE}\",\"version\":\"1.0.0\",\"main\":\"index.js\"}}");
+    tgz(&[
+        ("package/package.json", manifest.as_bytes()),
+        (
+            "package/index.js",
+            b"module.exports = 'from the private feed';\n",
+        ),
+    ])
+}
+
+/// Lowercase hexadecimal of `bytes`.
+pub(super) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
 }
 
 fn nuget_answer(host: &str, path: &str) -> WebAnswer {

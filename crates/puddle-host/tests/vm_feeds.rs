@@ -719,6 +719,8 @@ const CARGO: &str = r#"rm -rf /tmp/cargo-t && mkdir -p /tmp/cargo-t/.cargo /tmp/
 cat > .cargo/config.toml <<'RC_END'
 [registries.feed]
 index = "sparse+https://@CARGO@/"
+[registry]
+global-credential-providers = ["cargo:token"]
 RC_END
 cat > Cargo.toml <<'RC_END'
 [package]
@@ -802,9 +804,9 @@ cd /tmp/c-p && printf 'registry=https://@PATH@/\n' > .npmrc && echo '{"name":"c"
 npm install @PKG@ --no-audit --no-fund >/dev/null 2>&1
 echo "control=path rc=$?"
 cd /tmp/c-pn && printf 'registry=https://@NPM@/\n' > .npmrc && echo '{"name":"c","version":"1.0.0"}' > package.json
-CI=1 pnpm add @PKG@ --reporter=silent >/dev/null 2>&1
+CI=1 pnpm add @PKG@ --reporter=silent --store-dir /tmp/c-pn/store --cache-dir /tmp/c-pn/cache >/dev/null 2>&1
 echo "control=pnpm rc=$?"
-cd /tmp/c-c && printf '[registries.feed]\nindex = "sparse+https://@CARGO@/"\n' > .cargo/config.toml
+cd /tmp/c-c && printf '[registries.feed]\nindex = "sparse+https://@CARGO@/"\n[registry]\nglobal-credential-providers = ["cargo:token"]\n' > .cargo/config.toml
 printf '[package]\nname = "c"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\n@CRATE@ = { version = "1", registry = "feed" }\n' > Cargo.toml
 touch src/lib.rs
 CARGO_HOME=/tmp/c-c/home cargo fetch >/dev/null 2>&1

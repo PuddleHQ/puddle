@@ -90,12 +90,7 @@ fn the_cargo_feed_takes_the_token_bare_and_serves_an_index_a_download_matches() 
     )
     .unwrap();
     let doc: serde_json::Value = serde_json::from_slice(&line.body).unwrap();
-    let sum = Sha256::digest(&krate.body)
-        .iter()
-        .fold(String::new(), |mut out, byte| {
-            let _ = write!(out, "{byte:02x}");
-            out
-        });
+    let sum = hex(&Sha256::digest(&krate.body));
     assert_eq!(doc["cksum"], sum);
     assert_eq!(code("cargo.test", "/pr/ob/other", Some("real-token")), 404);
 }

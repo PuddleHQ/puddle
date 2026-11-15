@@ -55,7 +55,31 @@ pub(crate) enum Written {
     Close,
 }
 
-/// Writes `response` to `writer` for a guest speaking HTTP/1.1 (`http11`) or 1.0, answering a
+/// The HTTP version the guest speaks, and for 1.1 whether it asked to close afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuestHttp {
+    /// HTTP/1.0: the connection always closes after the response.
+    Http10,
+    /// HTTP/1.1.
+    Http11 {
+        /// The request carried `Connection: close`.
+        close_requested: bool,
+    },
+}
+
+impl GuestHttp {
+    /// The same guest, with the connection to close after this response.
+    pub(crate) const fn closing(self) -> Self {
+        match self {
+            Self::Http10 => Self::Http10,
+            Self::Http11 { .. } => Self::Http11 {
+                close_requested: true,
+            },
+        }
+    }
+}
+
+/// Writes `response` to `writer` for a `guest` speaking HTTP/1.1 or 1.0, answering a
 /// `method` request. `idle` bounds the wait for each piece of the body.
 ///
 /// # Errors
@@ -65,8 +89,7 @@ pub(crate) async fn write<W: AsyncWrite + Unpin>(
     writer: &mut W,
     response: Response<AnswerBody>,
     method: &str,
-    http11: bool,
-    close_requested: bool,
+    guest: GuestHttp,
     idle: Duration,
 ) -> io::Result<Written> {
     let (mut parts, mut body) = response.into_parts();
@@ -80,13 +103,21 @@ pub(crate) async fn write<W: AsyncWrite + Unpin>(
         Framing::None
     } else if let Some(n) = body.size_hint().exact() {
         Framing::Length(n)
-    } else if http11 {
+    } else if matches!(guest, GuestHttp::Http11 { .. }) {
         Framing::Chunked
     } else {
         Framing::UntilClose
     };
-    let close = close_requested || !http11 || framing == Framing::UntilClose;
-    let mut head = head_bytes(status, &parts.headers, framing, close, no_body);
+    let close = match guest {
+        GuestHttp::Http11 { close_requested } => close_requested,
+        GuestHttp::Http10 => true,
+    } || framing == Framing::UntilClose;
+    let ending = if close {
+        Written::Close
+    } else {
+        Written::KeepOpen
+    };
+    let mut head = head_bytes(status, &parts.headers, framing, ending);
     writer.write_all(&head).await?;
     head.clear();
     let mut sent: u64 = 0;
@@ -132,20 +163,16 @@ pub(crate) async fn write<W: AsyncWrite + Unpin>(
         }
     }
     writer.flush().await?;
-    Ok(if close {
-        Written::Close
-    } else {
-        Written::KeepOpen
-    })
+    Ok(ending)
 }
 
 fn head_bytes(
     status: StatusCode,
     headers: &HeaderMap,
     framing: Framing,
-    close: bool,
-    no_body: bool,
+    ending: Written,
 ) -> Vec<u8> {
+    let no_body = framing == Framing::None;
     let mut out = format!(
         "HTTP/1.1 {} {}\r\n",
         status.as_str(),
@@ -185,7 +212,7 @@ fn head_bytes(
         out.extend_from_slice(length.as_bytes());
         out.extend_from_slice(b"\r\n");
     }
-    if close {
+    if ending == Written::Close {
         out.extend_from_slice(b"connection: close\r\n");
     }
     out.extend_from_slice(b"\r\n");

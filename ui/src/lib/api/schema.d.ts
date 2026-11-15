@@ -2371,8 +2371,15 @@ export interface components {
         ApiErrorBody: {
             /** @description Stable error code. */
             error: components["schemas"]["ErrorCode"];
+            field: components["schemas"]["ErrorField"] | null;
             /** @description Human-readable, lower case, no trailing period. Never contains a token. */
             message: string;
+            /**
+             * Format: int32
+             * @description The place, counted from 1, of the entry of the request's `repositories` list the refusal
+             *     is about; `field` then names the entry's input. `null` when it is about no entry.
+             */
+            row: number | null;
         };
         /**
          * @description Which icon the window, the tray and the taskbar show.
@@ -3597,6 +3604,11 @@ export interface components {
          * @enum {string}
          */
         ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "rate_limited" | "unavailable" | "internal";
+        /**
+         * @description The input of a request a refusal is about, so a form can put the message beside it.
+         * @enum {string}
+         */
+        ErrorField: "name" | "repo_url" | "image" | "memory_mib" | "cpus" | "start_folder" | "local_path" | "url" | "directory";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).

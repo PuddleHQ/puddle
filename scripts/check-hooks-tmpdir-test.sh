@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Runs the whole `hooks` gate of scripts/check.sh with the longest TMPDIR the socket-length guard lets through, and
 # with one byte less: 61 and 60 bytes (the limit without XDG_RUNTIME_DIR; the host's lane paths and long task ids
-# land near it). Every script self-test of the gate builds scratch directories below TMPDIR; one that nests a long
-# path under the caller's TMPDIR fails here, which is how a self-test that only passes under a short TMPDIR shows up.
+# land near it). The run is set up as a host lane sets it (work/scripts/remote-check-host.sh): TMPDIR and CHECK_TMPDIR
+# are both the lane's tmpfs dir, so a script that reads the caller's TMPDIR sees the long one. Every script
+# self-test of the gate builds scratch directories below TMPDIR; one that nests a long path under the caller's TMPDIR
+# fails here, which is how a self-test that only passes under a short TMPDIR shows up.
 # The nested gate skips this script (CHECK_HOOKS_TMPDIR_NESTED), so the run does not recurse.
 set -eu
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
@@ -31,7 +33,7 @@ base_of() {
 for n in 60 61; do
     base=$(base_of "$n")
     log="$root/run-$n.log"
-    (cd "$here" && env -u XDG_RUNTIME_DIR CHECK_HOOKS_TMPDIR_NESTED=1 CHECK_TMPDIR="$base" scripts/check.sh hooks) >"$log" 2>&1 ||
+    (cd "$here" && env -u XDG_RUNTIME_DIR CHECK_HOOKS_TMPDIR_NESTED=1 TMPDIR="$base" CHECK_TMPDIR="$base" scripts/check.sh hooks) >"$log" 2>&1 ||
         {
             tail -n 30 "$log" >&2
             fail "the hooks gate failed under a $n-byte TMPDIR"

@@ -83,6 +83,7 @@ pub(crate) fn check_new_workspace_cpus(
         return Ok(());
     }
     check_cpus_within(cpus, &load_global(repo)?.settings.limits, "cpus")
+        .map_err(|e| e.at_field(crate::ErrorField::Cpus))
 }
 
 /// A CPU count above the global maximum is refused where it is set, so the user hears it then

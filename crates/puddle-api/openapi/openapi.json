@@ -12410,16 +12410,38 @@
         "description": "The body of every error response.",
         "required": [
           "error",
-          "message"
+          "message",
+          "field",
+          "row"
         ],
         "properties": {
           "error": {
             "$ref": "#/components/schemas/ErrorCode",
             "description": "Stable error code."
           },
+          "field": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ErrorField",
+                "description": "The input the refusal is about; `null` when it is about no one input. Set on the\nrefusals of a workspace's name, repository list, start folder, image and memory."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "message": {
             "type": "string",
             "description": "Human-readable, lower case, no trailing period. Never contains a token."
+          },
+          "row": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The place, counted from 1, of the entry of the request's `repositories` list the refusal\nis about; `field` then names the entry's input. `null` when it is about no entry.",
+            "minimum": 1
           }
         }
       },
@@ -15237,6 +15259,21 @@
           "rate_limited",
           "unavailable",
           "internal"
+        ]
+      },
+      "ErrorField": {
+        "type": "string",
+        "description": "The input of a request a refusal is about, so a form can put the message beside it.",
+        "enum": [
+          "name",
+          "repo_url",
+          "image",
+          "memory_mib",
+          "cpus",
+          "start_folder",
+          "local_path",
+          "url",
+          "directory"
         ]
       },
       "Event": {

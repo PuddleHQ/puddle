@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use puddle_proxy::{AnswerHead, Exchange, ExchangeRewriter, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{Host, ReasonCode, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::profile::{CLAUDE, DOCKER, GITHUB, OPENAI, Profile, Role, builtin};
@@ -1304,7 +1304,7 @@ async fn an_answer_found_too_large_while_it_streams_is_refused_and_the_user_is_t
     let answer = exchange.answer_mut().unwrap();
     answer.too_large();
     let refusal = answer.refusal().expect("the answer is refused");
-    assert_eq!(refusal.code(), "login_not_kept");
+    assert_eq!(refusal.code(), ReasonCode::LoginNotKept);
     assert!(answer.refusal().is_none());
     assert_eq!(
         rig.notices.seen(),

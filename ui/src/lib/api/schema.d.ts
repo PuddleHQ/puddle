@@ -2541,11 +2541,7 @@ export interface components {
              * @description Bytes from the guest.
              */
             bytes_up: number;
-            /**
-             * @description `company_network` when the destination is in the company-network category, allowed or
-             *     refused; `null` otherwise and in records written before it existed.
-             */
-            category: string | null;
+            category: components["schemas"]["LocalCategory"] | null;
             /**
              * Format: int64
              * @description Records summarised, on a `suppressed` summary.
@@ -2585,8 +2581,8 @@ export interface components {
             /**
              * @description Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with
              *     a `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a
-             *     `FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the
-             *     pass-through (open-ended). A reader keeps a string it does not know.
+             *     `FailedRequestCode`, `limit:` and a `LimitCode`, or `pass_through:` and a
+             *     `PassThroughCode`. A reader keeps a string it does not know.
              */
             reason: string;
             /**
@@ -4401,6 +4397,11 @@ export interface components {
             ttl_secs: number;
         };
         /**
+         * @description Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.
+         * @enum {string}
+         */
+        LimitCode: "stream_idle" | "shutdown_ignored" | "websocket_idle" | "header_block_too_slow" | "control_frame_flood";
+        /**
          * @description A class of local destination with its own toggle. Everything outside these is public.
          *
          *     A toggle only *permits* its category; each destination still needs an allow rule or an
@@ -4606,6 +4607,11 @@ export interface components {
          * @enum {string}
          */
         PaletteChoice: "pond" | "dusk" | "meadow" | "ember" | "graphite" | "custom";
+        /**
+         * @description Why a host the workspace decrypts was passed through untouched: the code after `pass_through:`.
+         * @enum {string}
+         */
+        PassThroughCode: "never_decrypt" | "curated" | "learned" | "container" | "not_tls" | "sni_mismatch" | "server_client_certificate" | "server_certificate" | "server_tls";
         /** @description A password sign-in. */
         PasswordSignInRequest: {
             /** @description What this browser calls itself in the device list; `null` for the default. */

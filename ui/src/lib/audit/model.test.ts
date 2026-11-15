@@ -208,6 +208,12 @@ describe("a record as a row", () => {
     expect(detail("puddle_request_failed:rate_limited")).toBe(
       "because Puddle's own request failed: the Git host's request limit is used up (try again later)",
     );
+    expect(detail("limit:stream_idle")).toBe(
+      "cut short: a request moved no data for too long and was cut",
+    );
+    expect(detail("pass_through:server_tls")).toBe(
+      "passed through undecrypted: the TLS handshake with the server failed",
+    );
     expect(detail("limit:from_the_future")).toBe(
       "because limit:from_the_future",
     );

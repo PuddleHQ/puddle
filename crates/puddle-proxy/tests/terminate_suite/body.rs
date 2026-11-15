@@ -12,7 +12,7 @@ use bytes::Bytes;
 use puddle_proxy::{
     BoxFuture, InjectContext, InjectDecision, InjectRefusal, Injector, ProxyConfig, RequestView,
 };
-use puddle_types::{ConnectionDecision, ConnectionReason};
+use puddle_types::{ConnectionDecision, ConnectionReason, ReasonCode};
 use terminate_support::h2_rig::{H2Server, full};
 use terminate_support::{CANARY, FakeServer, Flaw, Pki, Reply, RigBuilder, inject};
 
@@ -41,7 +41,11 @@ impl Injector for Peek {
             .unwrap_or_else(PoisonError::into_inner)
             .push(body);
         Box::pin(std::future::ready(if refused {
-            InjectDecision::Refuse(InjectRefusal::new(403, "peek_refused", "no, said the body"))
+            InjectDecision::Refuse(InjectRefusal::new(
+                403,
+                ReasonCode::PeekRefused,
+                "no, said the body",
+            ))
         } else {
             inject(CANARY)
         }))
@@ -151,7 +155,10 @@ async fn a_refusal_on_the_body_sends_nothing_upstream_and_is_recorded_with_its_c
     let event = &rig.events(1).await[0];
     assert_eq!(event.decision, ConnectionDecision::Blocked);
     assert_eq!(event.reason.to_string(), "peek_refused");
-    assert_eq!(event.reason, ConnectionReason::Refused("peek_refused"));
+    assert_eq!(
+        event.reason,
+        ConnectionReason::Refused(ReasonCode::PeekRefused)
+    );
     assert!(!event.injected);
 }
 
@@ -189,7 +196,7 @@ async fn a_body_over_the_limit_is_413_whether_declared_or_chunked_and_nothing_go
     assert!(
         events
             .iter()
-            .all(|e| e.reason == ConnectionReason::Refused("body_too_large"))
+            .all(|e| e.reason == ConnectionReason::Refused(ReasonCode::BodyTooLarge))
     );
 }
 
@@ -321,7 +328,10 @@ async fn over_http2_a_refusal_on_the_body_and_an_oversized_body_send_nothing_ups
     assert!(server.recorded().is_empty());
     client.close().await;
     let event = &rig.events(1).await[0];
-    assert_eq!(event.reason, ConnectionReason::Refused("peek_refused"));
+    assert_eq!(
+        event.reason,
+        ConnectionReason::Refused(ReasonCode::PeekRefused)
+    );
 }
 
 #[tokio::test]

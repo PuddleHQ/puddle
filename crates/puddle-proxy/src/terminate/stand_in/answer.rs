@@ -41,7 +41,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use http_body::{Body, Frame, SizeHint};
-use puddle_types::Host;
+use puddle_types::{Host, ReasonCode};
 use zeroize::Zeroizing;
 
 use super::super::exchange::AnswerBody;
@@ -854,7 +854,7 @@ impl Body for ScrubBody {
 
 /// The record's reason for an answer cut off because it held a real value that cannot be
 /// replaced.
-pub(crate) const ANSWER_WITHHELD: &str = "answer_withheld";
+pub(crate) const ANSWER_WITHHELD: ReasonCode = ReasonCode::AnswerWithheld;
 
 /// The guest's answer when the server's is in an encoding Puddle cannot read, so cannot check
 /// for real values.
@@ -865,7 +865,7 @@ pub(crate) fn answer_encoding_refusal(host: &Host) -> Refusal {
             "{host} answered in a content encoding Puddle cannot read, so it could not check the answer for secret values (gzip, deflate, br and zstd are read)"
         ),
     )
-    .coded("answer_encoding")
+    .coded(ReasonCode::AnswerEncoding)
 }
 
 /// The guest's answer when the server's answer, held to be scrubbed, did not arrive whole.

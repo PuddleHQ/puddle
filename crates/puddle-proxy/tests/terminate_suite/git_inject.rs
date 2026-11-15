@@ -14,7 +14,7 @@ use git_support::{
     GitRig, H2GitRig, Host, MOVED_TO, PERSONAL, REAL_SECRET, WORK, denied, token_basic,
 };
 use puddle_secrets::SourceError;
-use puddle_types::{ConnectionDecision, ConnectionReason, Event, GitAccess};
+use puddle_types::{ConnectionDecision, ConnectionReason, Event, GitAccess, ReasonCode};
 use terminate_support::h2_rig::full;
 
 const FETCH: &str = "/acme/web.git/info/refs?service=git-upload-pack";
@@ -221,7 +221,10 @@ async fn a_push_off_the_list_is_refused_in_one_readable_line_and_recorded() {
     );
     let event = &t.rig.events(1).await[0];
     assert_eq!(event.decision, ConnectionDecision::Blocked);
-    assert_eq!(event.reason, ConnectionReason::Refused("push_denied"));
+    assert_eq!(
+        event.reason,
+        ConnectionReason::Refused(ReasonCode::PushDenied)
+    );
     assert!(!event.injected);
     // The listed repository is still fine; the post of a push is gated the same way.
     assert_eq!(get(&mut guest, PUSH_ADVERT, None).await.status, 200);
@@ -356,7 +359,7 @@ async fn a_401_to_the_credential_puddle_added_is_ours_forgets_the_token_and_asks
     let event = &t.rig.events(1).await[0];
     assert_eq!(
         event.reason,
-        ConnectionReason::Refused("credential_rejected")
+        ConnectionReason::Refused(ReasonCode::CredentialRejected)
     );
     assert!(event.injected, "a credential was added, and refused");
 }
@@ -749,7 +752,7 @@ async fn over_http2_a_401_is_ours_only_when_puddle_chose_the_credential() {
     let events = t.rig.events(1).await;
     assert_eq!(
         events[0].reason,
-        ConnectionReason::Refused("credential_rejected")
+        ConnectionReason::Refused(ReasonCode::CredentialRejected)
     );
 }
 

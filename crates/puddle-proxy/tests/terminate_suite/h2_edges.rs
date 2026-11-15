@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_proxy::{InjectDecision, ProxyConfig};
+use puddle_types::ReasonCode;
 use terminate_support::h2_rig::{H2Server, Script, WsServer, full, reply};
 use terminate_support::{FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, refuse};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -153,7 +154,7 @@ async fn a_request_the_rules_refuse_leaves_the_http11_connection_for_the_next_st
     let server = FakeServer::tls(h1_server_config(&pki), Arc::new(|_| Reply::ok("fine"))).await;
     let injector = TestInjector::new(|view| {
         if view.path() == "/denied" {
-            refuse(403, "not-on-the-list")
+            refuse(403, ReasonCode::PushDenied)
         } else {
             terminate_support::inject("x")
         }

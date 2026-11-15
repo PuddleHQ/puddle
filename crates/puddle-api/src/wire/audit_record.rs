@@ -2,7 +2,7 @@
 //! The audit record union on the wire (docs/spec/rules.md §5).
 
 use puddle_store as store;
-use puddle_types::{CompanySignal, ForeignCredentialKind, UnknownTokenKind};
+use puddle_types::{CompanySignal, ForeignCredentialKind, LocalCategory, UnknownTokenKind};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -54,8 +54,8 @@ pub enum AuditRecord {
         outcome: Option<ConnectionOutcome>,
         /// Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with
         /// a `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a
-        /// `FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the
-        /// pass-through (open-ended). A reader keeps a string it does not know.
+        /// `FailedRequestCode`, `limit:` and a `LimitCode`, or `pass_through:` and a
+        /// `PassThroughCode`. A reader keeps a string it does not know.
         reason: String,
         /// The deciding rule.
         #[schema(required = true)]
@@ -85,7 +85,7 @@ pub enum AuditRecord {
         /// `company_network` when the destination is in the company-network category, allowed or
         /// refused; `null` otherwise and in records written before it existed.
         #[serde(default)]
-        #[schema(required = true)]
+        #[schema(required = true, value_type = Option<LocalCategory>)]
         category: Option<String>,
         /// The signal that put the destination in the company network: `pac_direct`,
         /// `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.

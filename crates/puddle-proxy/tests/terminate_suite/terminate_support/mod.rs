@@ -28,7 +28,7 @@ use puddle_proxy::{
     Injection, Injector, Interception, Proxy, ProxyConfig, RequestView, Resolver, Route,
     SecretValue, StandIns, Termination, TerminationSet, Terminations,
 };
-use puddle_types::{ConnectionEvent, DomainName, Host, WorkspaceId};
+use puddle_types::{ConnectionEvent, DomainName, Host, ReasonCode, WorkspaceId};
 use puddle_upstream::TlsClient;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -550,7 +550,7 @@ pub(crate) fn inject(secret: &str) -> InjectDecision {
     ))
 }
 
-pub(crate) fn refuse(status: u16, code: &'static str) -> InjectDecision {
+pub(crate) fn refuse(status: u16, code: ReasonCode) -> InjectDecision {
     InjectDecision::Refuse(InjectRefusal::new(status, code, "refused by the test"))
 }
 

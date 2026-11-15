@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use puddle_proxy::ProxyConfig;
 use puddle_test_kit::eventually;
-use puddle_types::{ConnectionEvent, ConnectionReason};
+use puddle_types::{ConnectionEvent, ConnectionReason, LimitCode, ReasonCode};
 use terminate_support::h2_rig::{
     H2Server, Handler, Script, WsServer, ack_server_settings, frame, frames_until_end, full,
     get_block, open_body, raw, reply,
@@ -155,7 +155,7 @@ async fn a_stream_over_the_workspace_budget_is_refused_and_a_finished_one_gives_
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::Refused("stream_limit")]
+        [ConnectionReason::Refused(ReasonCode::StreamLimit)]
     );
 }
 
@@ -221,7 +221,7 @@ async fn sockets_of_the_http11_pool_count_against_the_workspace_connection_limit
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::Refused("connection_limit")]
+        [ConnectionReason::Refused(ReasonCode::ConnectionLimit)]
     );
 }
 
@@ -289,7 +289,7 @@ async fn a_stream_that_is_never_polled_ends_its_connection_and_the_audit_says_wh
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("stream_idle")]
+        [ConnectionReason::LimitEnded(LimitCode::StreamIdle)]
     );
     assert_eq!(events[0].reason.to_string(), "limit:stream_idle");
 }
@@ -333,7 +333,7 @@ async fn a_peer_that_ignores_the_shutdown_is_dropped_after_the_grace() {
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("shutdown_ignored")]
+        [ConnectionReason::LimitEnded(LimitCode::ShutdownIgnored)]
     );
 }
 
@@ -607,7 +607,7 @@ async fn a_stream_the_server_never_answers_is_ended_by_the_idle_limit() {
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("stream_idle")]
+        [ConnectionReason::LimitEnded(LimitCode::StreamIdle)]
     );
 }
 
@@ -720,7 +720,7 @@ async fn an_agreed_websocket_over_http11_that_goes_silent_is_closed_and_recorded
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("websocket_idle")]
+        [ConnectionReason::LimitEnded(LimitCode::WebsocketIdle)]
     );
 }
 
@@ -761,7 +761,7 @@ async fn an_agreed_websocket_over_http2_that_goes_silent_is_closed_and_recorded(
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("websocket_idle")]
+        [ConnectionReason::LimitEnded(LimitCode::WebsocketIdle)]
     );
 }
 
@@ -787,7 +787,7 @@ async fn a_control_frame_flood_is_recorded_as_the_limit_that_ended_the_connectio
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("control_frame_flood")]
+        [ConnectionReason::LimitEnded(LimitCode::ControlFrameFlood)]
     );
 }
 
@@ -811,6 +811,6 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),
-        [ConnectionReason::LimitEnded("header_block_too_slow")]
+        [ConnectionReason::LimitEnded(LimitCode::HeaderBlockTooSlow)]
     );
 }

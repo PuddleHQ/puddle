@@ -40,6 +40,8 @@ const BEARER: &str = "bearer";
         puddle_types::ReasonCode,
         puddle_types::ReasonPrefix,
         puddle_types::FailedRequestCode,
+        puddle_types::LimitCode,
+        puddle_types::PassThroughCode,
         puddle_types::CompanySignal
     )),
     tags(

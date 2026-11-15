@@ -18,7 +18,7 @@ use puddle_secrets::{
 };
 use puddle_store::RepoToggles;
 use puddle_store::WorkspaceGit;
-use puddle_types::{Event, GitAccess, Host};
+use puddle_types::{Event, GitAccess, Host, ReasonCode};
 use support::{Ask as _, basic, injected, refusal};
 
 const FETCH: &str = "/acme/web.git/info/refs?service=git-upload-pack";
@@ -829,7 +829,7 @@ async fn a_read_with_a_source_that_needs_a_sign_in_goes_out_with_no_credential()
             // A private repository's `401` is the sign-in refusal, never the server's `401`.
             let replaced = unauthorized.refusal().expect("replaced");
             assert_eq!(replaced.status(), 502);
-            assert_eq!(replaced.code(), "credential_unavailable");
+            assert_eq!(replaced.code(), ReasonCode::CredentialUnavailable);
             assert!(replaced.message().contains("sign in to it in Puddle"));
             assert!(replaced.message().contains("Work"));
         }

@@ -94,7 +94,7 @@ pub(crate) fn injected(decision: &InjectDecision, expected: &str) -> bool {
 
 pub(crate) fn refusal(decision: &InjectDecision) -> (u16, &'static str, String) {
     match decision {
-        InjectDecision::Refuse(r) => (r.status(), r.code(), r.message().to_owned()),
+        InjectDecision::Refuse(r) => (r.status(), r.code().as_str(), r.message().to_owned()),
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

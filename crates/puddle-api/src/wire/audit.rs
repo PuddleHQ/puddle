@@ -613,3 +613,59 @@ impl AuditType {
         }
     }
 }
+
+/// What the activity log holds and how fast it grows, and for how many days it is kept. Records
+/// older than the days are deleted; nothing is deleted for size, so the size is for the owner to
+/// watch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AuditSize {
+    /// Days the log is kept, 1 to 3650. Built in: 90.
+    pub retention_days: u32,
+    /// Records held.
+    pub records: u64,
+    /// Bytes of their lines.
+    pub bytes: u64,
+    /// When the oldest record was written, epoch ms; `null` when there are none.
+    #[schema(required = true)]
+    pub oldest_ts: Option<u64>,
+    /// Records written in the last 24 hours.
+    pub records_last_day: u64,
+    /// Bytes written in the last 24 hours.
+    pub bytes_last_day: u64,
+    /// Records written in the last 7 days.
+    pub records_last_week: u64,
+    /// Bytes written in the last 7 days.
+    pub bytes_last_week: u64,
+    /// Size of the lines above which Puddle shows a warning.
+    pub warn_bytes: u64,
+    /// Size of the database file (the log and everything else Puddle keeps).
+    pub file_bytes: u64,
+    /// The part of the file that is free space, given back to the disk in steps.
+    pub free_bytes: u64,
+}
+
+impl From<store::AuditStats> for AuditSize {
+    fn from(stats: store::AuditStats) -> Self {
+        Self {
+            retention_days: stats.retention_days,
+            records: stats.records,
+            bytes: stats.bytes,
+            oldest_ts: stats.oldest_ts,
+            records_last_day: stats.records_last_day,
+            bytes_last_day: stats.bytes_last_day,
+            records_last_week: stats.records_last_week,
+            bytes_last_week: stats.bytes_last_week,
+            warn_bytes: stats.warn_bytes,
+            file_bytes: stats.file_bytes,
+            free_bytes: stats.free_bytes,
+        }
+    }
+}
+
+/// How many days to keep the activity log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuditRetentionRequest {
+    /// 1 to 3650.
+    pub days: u32,
+}

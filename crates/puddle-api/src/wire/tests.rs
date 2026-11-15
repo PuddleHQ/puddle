@@ -145,10 +145,6 @@ fn out_of_range_settings_are_refused() {
             ..SettingsLayer::default()
         },
         SettingsLayer {
-            cpus: Some(33),
-            ..SettingsLayer::default()
-        },
-        SettingsLayer {
             reconnection_grace: Some(1),
             ..SettingsLayer::default()
         },
@@ -293,9 +289,11 @@ fn global_request_sets_vscode_options() {
             ssh_agent_pipe: Some(r"  \\.\pipe\pageant.alice  ".to_owned()),
         },
         tools: GlobalTools { mise: Some(false) },
+        limits: Limits { max_cpus: Some(48) },
     }
     .apply_to(&mut g)
     .unwrap();
+    assert_eq!(g.limits.max_cpus.map(puddle_types::CpuCount::get), Some(48));
     assert_eq!(g.vscode_server.server(), settings::ServerChoice::Microsoft);
     assert_eq!(g.ui.theme(), settings::ThemeChoice::Dark);
     assert_eq!(g.ui.density(), settings::DensityChoice::Compact);

@@ -46,7 +46,10 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   };
 });
 
-import { FakeSettings } from "#lib/testing/fake-settings.ts";
+import {
+  FAKE_EFFECTIVE_LIMITS,
+  FakeSettings,
+} from "#lib/testing/fake-settings.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { pending } from "#lib/stores/pending.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -77,6 +80,8 @@ function settingsWith(confirm: boolean | null) {
     unknown_fields: [],
     vscode_server: fake.vscode,
     tools: fake.tools,
+    limits: fake.limits,
+    effective_limits: FAKE_EFFECTIVE_LIMITS,
     workspace_defaults: fake.layer,
   };
 }

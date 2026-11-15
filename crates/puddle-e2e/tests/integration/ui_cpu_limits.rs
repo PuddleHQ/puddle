@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The CPU limits the settings page offers are the host's: the API publishes no limits, so the
-//! page keeps its own constants, and this test fails when they differ from `CpuCount`.
+//! The smallest count and the default the settings page assumes are the host's: the page keeps its
+//! own constants, and this test fails when they differ from `CpuCount`. The upper bound is not a
+//! constant: the API publishes it (the global maximum), so the page must not hard-code one.
 #![expect(clippy::panic, reason = "a test: a failed step fails it by panicking")]
 
 use puddle_types::CpuCount;
@@ -19,8 +20,15 @@ fn constant(name: &str) -> u32 {
 }
 
 #[test]
-fn the_settings_page_offers_the_counts_the_host_accepts() {
+fn the_settings_page_assumes_the_smallest_count_and_default_the_host_has() {
     assert_eq!(constant("CPUS_MIN"), u32::from(CpuCount::MIN.get()));
-    assert_eq!(constant("CPUS_MAX"), u32::from(CpuCount::MAX.get()));
     assert_eq!(constant("CPUS_DEFAULT"), u32::from(CpuCount::DEFAULT.get()));
+}
+
+#[test]
+fn the_settings_page_has_no_fixed_upper_bound() {
+    assert!(
+        !PAGE_LIMITS.contains("export const CPUS_MAX"),
+        "the maximum comes from the host (`effective_limits.max_cpus`)"
+    );
 }

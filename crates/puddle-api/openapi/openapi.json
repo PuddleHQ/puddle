@@ -944,6 +944,146 @@
         }
       }
     },
+    "/api/audit/retention": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "How big the activity log is, how fast it grows, and for how many days it is kept. Only the\nowner sees it: it covers every user's records.",
+        "operationId": "get_retention",
+        "responses": {
+          "200": {
+            "description": "the log's size and growth, and its days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSize"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Changes how many days the activity log is kept. Records older than that are deleted within the\nhour and cannot be brought back; nothing is deleted for the log's size.",
+        "operationId": "put_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditRetentionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the log's size and days now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSize"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the days are not 1 to 3650",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/invite": {
       "post": {
         "tags": [
@@ -13689,6 +13829,22 @@
           "workspace"
         ]
       },
+      "AuditRetentionRequest": {
+        "type": "object",
+        "description": "How many days to keep the activity log.",
+        "required": [
+          "days"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 3650.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "AuditRule": {
         "type": "object",
         "description": "A rule as an audit record shows it.",
@@ -13825,6 +13981,94 @@
           "name": {
             "type": "string",
             "description": "Name."
+          }
+        }
+      },
+      "AuditSize": {
+        "type": "object",
+        "description": "What the activity log holds and how fast it grows, and for how many days it is kept. Records\nolder than the days are deleted; nothing is deleted for size, so the size is for the owner to\nwatch.",
+        "required": [
+          "retention_days",
+          "records",
+          "bytes",
+          "oldest_ts",
+          "records_last_day",
+          "bytes_last_day",
+          "records_last_week",
+          "bytes_last_week",
+          "warn_bytes",
+          "file_bytes",
+          "free_bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of their lines.",
+            "minimum": 0
+          },
+          "bytes_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written in the last 24 hours.",
+            "minimum": 0
+          },
+          "bytes_last_week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written in the last 7 days.",
+            "minimum": 0
+          },
+          "file_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the database file (the log and everything else Puddle keeps).",
+            "minimum": 0
+          },
+          "free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The part of the file that is free space, given back to the disk in steps.",
+            "minimum": 0
+          },
+          "oldest_ts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the oldest record was written, epoch ms; `null` when there are none.",
+            "minimum": 0
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records held.",
+            "minimum": 0
+          },
+          "records_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records written in the last 24 hours.",
+            "minimum": 0
+          },
+          "records_last_week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records written in the last 7 days.",
+            "minimum": 0
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Days the log is kept, 1 to 3650. Built in: 90.",
+            "minimum": 0
+          },
+          "warn_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the lines above which Puddle shows a warning.",
+            "minimum": 0
           }
         }
       },
@@ -14942,6 +15186,35 @@
           "allow",
           "deny"
         ]
+      },
+      "EffectiveLimits": {
+        "type": "object",
+        "description": "The limits as they apply on this computer.",
+        "required": [
+          "max_cpus",
+          "host_cpus",
+          "default_cpus"
+        ],
+        "properties": {
+          "default_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The vCPUs a new workspace gets unless it or the global default says otherwise: four, or\nhalf the cores on a small computer.",
+            "minimum": 0
+          },
+          "host_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The computer's logical cores.",
+            "minimum": 0
+          },
+          "max_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The most vCPUs a workspace may have: the set limit, else the logical cores.",
+            "minimum": 0
+          }
+        }
       },
       "EffectiveSettings": {
         "type": "object",
@@ -16537,6 +16810,10 @@
         "type": "object",
         "description": "New global settings. Replaces every value listed here; unknown stored fields are kept.",
         "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "The limits; omitted or `null` falls back to the computer's cores."
+          },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
             "description": "The tool switches."
@@ -16564,6 +16841,8 @@
           "vscode_server",
           "ui",
           "tools",
+          "limits",
+          "effective_limits",
           "effective",
           "unknown_fields"
         ],
@@ -16571,6 +16850,14 @@
           "effective": {
             "$ref": "#/components/schemas/EffectiveSettings",
             "description": "The effective values for a workspace with no overrides."
+          },
+          "effective_limits": {
+            "$ref": "#/components/schemas/EffectiveLimits",
+            "description": "What the limits come to on this computer."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "The limits the user set (global only)."
           },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
@@ -17318,6 +17605,24 @@
             "type": "integer",
             "format": "int32",
             "description": "Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).",
+            "minimum": 0
+          }
+        }
+      },
+      "Limits": {
+        "type": "object",
+        "description": "Upper bounds on what a workspace may be given (global only).",
+        "required": [
+          "max_cpus"
+        ],
+        "properties": {
+          "max_cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The most vCPUs a workspace may have. `null` is the computer's logical cores.",
             "minimum": 0
           }
         }
@@ -19779,7 +20084,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest vCPUs (1 to 32); applies at the next start.",
+            "description": "Guest vCPUs (at least 1, at most the global maximum); applies at the next start.",
             "maximum": 32,
             "minimum": 1
           },

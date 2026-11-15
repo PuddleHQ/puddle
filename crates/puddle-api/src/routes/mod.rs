@@ -150,6 +150,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .merge(auth_router())
         .merge(admin_router())
         .routes(routes!(audit::audit))
+        .routes(routes!(audit::get_retention, audit::put_retention))
         .routes(routes!(settings::get_global, settings::put_global))
         .routes(routes!(
             settings::get_workspace_settings,

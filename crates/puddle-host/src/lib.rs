@@ -70,7 +70,8 @@ mod vscode;
 mod workspaces;
 
 pub use accounts::{
-    AccountError, UserRow, UserState, add_user, list_users, remove_user, reset_user,
+    AccountError, AuditPruned, UserRow, UserState, add_user, audit_status, list_users, prune_audit,
+    remove_user, reset_user,
 };
 pub use backup::{
     BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupArchive, BackupError, BackupReport,
@@ -93,6 +94,7 @@ pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
 pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
+pub use puddle_store::AuditStats;
 pub use space_watch::Space;
 pub use ssh_config::{SshSettings, ssh_host};
 pub use vscode::VsCodeLauncher;

@@ -10,6 +10,7 @@
 )]
 
 mod app_icon;
+mod audit_retention;
 mod common;
 
 mod admin;

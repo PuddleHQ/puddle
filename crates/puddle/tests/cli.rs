@@ -329,3 +329,79 @@ fn user_reset_prints_one_link_and_sets_no_password() {
             .contains("no user named ghost")
     );
 }
+
+#[test]
+fn audit_status_and_prune_work_on_a_data_folder_and_say_when_there_is_none() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    let missing = puddle(&["audit", "status", "--data-dir", data.to_str().unwrap()]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("no database at")
+    );
+    drop(
+        puddle_store::Store::open(
+            &data.join("puddle.db"),
+            std::sync::Arc::new(puddle_store::SystemClock),
+            puddle_store::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let status = puddle(&["audit", "status", "--data-dir", data.to_str().unwrap()]);
+    assert_eq!(status.status.code(), Some(0));
+    assert!(
+        String::from_utf8(status.stdout)
+            .unwrap()
+            .contains("kept for 90 days")
+    );
+    let pruned = puddle(&[
+        "audit",
+        "prune",
+        "--days",
+        "7",
+        "--data-dir",
+        data.to_str().unwrap(),
+    ]);
+    assert_eq!(pruned.status.code(), Some(0));
+    assert!(
+        String::from_utf8(pruned.stdout)
+            .unwrap()
+            .contains("older than 7 days")
+    );
+    let refused = puddle(&[
+        "audit",
+        "prune",
+        "--days",
+        "0",
+        "--data-dir",
+        data.to_str().unwrap(),
+    ]);
+    assert_eq!(refused.status.code(), Some(1));
+}
+
+#[test]
+fn audit_without_a_data_dir_looks_in_the_per_user_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .args(["audit", "status"])
+        .env_remove("PUDDLE_DATA_DIR")
+        .env("HOME", home.path())
+        .env("XDG_DATA_HOME", home.path().join("share"))
+        .env("LOCALAPPDATA", home.path().join("local"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("no database at"), "{err}");
+    // Windows asks the shell for the per-user folder and ignores the environment, so the
+    // expected folder there is what that same lookup gives this process.
+    let expected = if cfg!(windows) {
+        puddle_fs::data_dir().unwrap()
+    } else {
+        home.path().to_path_buf()
+    };
+    assert!(err.contains(expected.to_str().unwrap()), "{err}");
+}

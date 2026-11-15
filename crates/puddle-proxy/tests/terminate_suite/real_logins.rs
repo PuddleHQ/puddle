@@ -8,8 +8,8 @@
 //! helper) and never holds a real token. The tools are the user's own installs: a test skips when
 //! its tool is not found, unless `PUDDLE_REQUIRE_LOGIN_TOOLS` is set. `claude` and `gh` come from
 //! the path, Copilot CLI from `PUDDLE_COPILOT_BIN` (its VS Code shim installs the real program on
-//! first use, so the path alone is not enough). Claude Code 2.1.5 (its login is a screen, driven on a
-//! terminal made by `script`) comes from `PUDDLE_CLAUDE_OLD_BIN`. Unix only.
+//! first use, so the path alone is not enough). One test drives Claude Code's login screen on a
+//! terminal made by `script`. Unix only.
 #![cfg(unix)]
 #![expect(
     clippy::print_stderr,
@@ -597,8 +597,8 @@ async fn claude_code_console_login_keeps_the_api_key_it_creates_and_sends_it_onl
     tools.assert_no_real_token_in_the_workspace();
 }
 
-/// Claude Code 2.1.5 has no `auth login`: its login is a screen of the interactive program, so it
-/// runs on a terminal made by `script`, and the keys are sent as each screen shows up.
+/// Claude Code's login is also a screen of the interactive program, so it runs on a terminal made
+/// by `script`, and the keys are sent as each screen shows up.
 struct Screen {
     seen: Arc<Mutex<String>>,
     keys: tokio::process::ChildStdin,
@@ -637,6 +637,36 @@ impl Screen {
         }
     }
 
+    /// The raw terminal output as plain text: the program moves the cursor with `ESC [ n G` instead
+    /// of printing a space between words, so that sequence becomes a space and every other escape
+    /// sequence is dropped.
+    fn plain(raw: &str) -> String {
+        let mut out = String::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\u{1b}' {
+                out.push(c);
+                continue;
+            }
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                let mut last = ' ';
+                for next in chars.by_ref() {
+                    last = next;
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+                if last == 'G' {
+                    out.push(' ');
+                }
+            } else {
+                chars.next();
+            }
+        }
+        out
+    }
+
     /// Waits for `text` to appear on the screen after the last key, then sends `keys`.
     async fn wait_then_send(&mut self, text: &str, keys: &str) {
         let seen = Arc::clone(&self.seen);
@@ -644,7 +674,7 @@ impl Screen {
             &format!("{text:?} on the screen"),
             Duration::from_secs(60),
             || {
-                let screen = seen.lock().unwrap();
+                let screen = Self::plain(&seen.lock().unwrap());
                 screen
                     .contains(text)
                     .then_some(())
@@ -662,13 +692,12 @@ impl Screen {
     }
 }
 
-/// The real Claude Code 2.1.5 (`PUDDLE_CLAUDE_OLD_BIN`, from `npm i @anthropic-ai/claude-code@2.1.5`)
-/// logs in on the console host, which the newer tool no longer uses, and the real tokens stay out
-/// of its credentials file.
+/// The real Claude Code logs in from its first-run screens (theme, login method, pasted code) on
+/// the platform host, and the real tokens stay out of its credentials file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
-    let Some(old) = std::env::var_os("PUDDLE_CLAUDE_OLD_BIN").map(PathBuf::from) else {
-        tool_missing("PUDDLE_CLAUDE_OLD_BIN (Claude Code 2.1.5)");
+async fn claude_code_logs_in_from_its_login_screen_with_stand_ins_only() {
+    let Some(claude) = on_path("claude") else {
+        tool_missing("claude");
         return;
     };
     if on_path("script").is_none() {
@@ -676,18 +705,19 @@ async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
         return;
     }
     let tools = Tools::new(false).await;
-    let mut screen = Screen::start(&tools, &old);
+    let mut screen = Screen::start(&tools, &claude);
     screen.wait_then_send("Choose the text style", "\r").await;
     screen.wait_then_send("Select login method", "\r").await;
     screen
         .wait_then_send("Paste code here", "fakecode#fakestate")
         .await;
-    screen.wait_then_send("fakecode#fakestate", "\r").await;
+    // The screen masks the pasted code except its last six characters.
+    screen.wait_then_send("************estate", "\r").await;
     screen.wait_then_send("Login successful", "").await;
 
-    // The exchange is the one the profile assumes: a JSON `POST /v1/oauth/token` on the console host.
+    // The exchange is the one the profile assumes: a JSON `POST /v1/oauth/token` on the platform host.
     let exchanges: Vec<Recorded> = tools
-        .server("console.anthropic.com")
+        .server("platform.claude.com")
         .recorded()
         .into_iter()
         .filter(|r| r.method == "POST")
@@ -704,11 +734,11 @@ async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
     assert_eq!(sent["code"], "fakecode");
     assert!(
         tools
-            .server("platform.claude.com")
+            .server("console.anthropic.com")
             .recorded()
             .iter()
             .all(|r| path_of(r) != "/v1/oauth/token"),
-        "the tool used the new host"
+        "the tool used the console host"
     );
 
     let credentials = tools.home.path().join(".claude/.credentials.json");

@@ -3,6 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import {
   expect,
   test as base,
+  type APIRequestContext,
   type Locator,
   type Page,
 } from "@playwright/test";
@@ -22,6 +23,17 @@ function connection(): { url: string; token: string } {
 }
 
 /** What the desktop shell's init script does: hand the page the token before the app starts. */
+/** What the host says about CPUs: the computer's cores, its maximum and its default count. */
+export async function cpuLimits(
+  request: APIRequestContext,
+  token: string,
+): Promise<{ max_cpus: number; host_cpus: number; default_cpus: number }> {
+  const r = await request.get("/api/settings", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return ((await r.json()) as { effective_limits: never }).effective_limits;
+}
+
 export async function signIn(page: Page): Promise<void> {
   const { token } = connection();
   await page.addInitScript((t) => {

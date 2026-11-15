@@ -369,3 +369,35 @@ fn the_global_mise_switch_defaults_on_and_round_trips() {
         false
     );
 }
+
+#[test]
+fn the_cpu_maximum_round_trips_and_its_unknown_siblings_are_kept() {
+    let loaded = GlobalSettings::from_document(serde_json::json!({
+        "schema_version": 2,
+        "limits": { "max_cpus": 40, "max_gpus": 1 },
+    }))
+    .unwrap();
+    assert_eq!(
+        loaded
+            .settings
+            .limits
+            .max_cpus
+            .map(puddle_types::CpuCount::get),
+        Some(40)
+    );
+    assert_eq!(loaded.unknown_fields, ["limits.max_gpus"]);
+    let doc = loaded.settings.to_document().unwrap();
+    assert_eq!(
+        doc["limits"],
+        serde_json::json!({ "max_cpus": 40, "max_gpus": 1 })
+    );
+    let bad = GlobalSettings::from_document(serde_json::json!({
+        "schema_version": 2, "limits": { "max_cpus": 0 },
+    }));
+    assert!(bad.is_err());
+    let empty = GlobalSettings::default().to_document().unwrap();
+    assert!(
+        empty.get("limits").is_none(),
+        "an unset limit is not stored"
+    );
+}

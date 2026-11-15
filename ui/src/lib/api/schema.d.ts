@@ -174,6 +174,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How big the activity log is, how fast it grows, and for how many days it is kept. Only the
+         *     owner sees it: it covers every user's records.
+         */
+        get: operations["get_retention"];
+        /**
+         * Changes how many days the activity log is kept. Records older than that are deleted within the
+         *     hour and cannot be brought back; nothing is deleted for the log's size.
+         */
+        put: operations["put_retention"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/invite": {
         parameters: {
             query?: never;
@@ -2904,6 +2928,14 @@ export interface components {
             /** @description The workspace, for a workspace rule. */
             workspace_id: string | null;
         };
+        /** @description How many days to keep the activity log. */
+        AuditRetentionRequest: {
+            /**
+             * Format: int32
+             * @description 1 to 3650.
+             */
+            days: number;
+        };
         /** @description A rule as an audit record shows it. */
         AuditRule: {
             /**
@@ -2963,6 +2995,68 @@ export interface components {
             id: number;
             /** @description Name. */
             name: string;
+        };
+        /**
+         * @description What the activity log holds and how fast it grows, and for how many days it is kept. Records
+         *     older than the days are deleted; nothing is deleted for size, so the size is for the owner to
+         *     watch.
+         */
+        AuditSize: {
+            /**
+             * Format: int64
+             * @description Bytes of their lines.
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes written in the last 24 hours.
+             */
+            bytes_last_day: number;
+            /**
+             * Format: int64
+             * @description Bytes written in the last 7 days.
+             */
+            bytes_last_week: number;
+            /**
+             * Format: int64
+             * @description Size of the database file (the log and everything else Puddle keeps).
+             */
+            file_bytes: number;
+            /**
+             * Format: int64
+             * @description The part of the file that is free space, given back to the disk in steps.
+             */
+            free_bytes: number;
+            /**
+             * Format: int64
+             * @description When the oldest record was written, epoch ms; `null` when there are none.
+             */
+            oldest_ts: number | null;
+            /**
+             * Format: int64
+             * @description Records held.
+             */
+            records: number;
+            /**
+             * Format: int64
+             * @description Records written in the last 24 hours.
+             */
+            records_last_day: number;
+            /**
+             * Format: int64
+             * @description Records written in the last 7 days.
+             */
+            records_last_week: number;
+            /**
+             * Format: int32
+             * @description Days the log is kept, 1 to 3650. Built in: 90.
+             */
+            retention_days: number;
+            /**
+             * Format: int64
+             * @description Size of the lines above which Puddle shows a warning.
+             */
+            warn_bytes: number;
         };
         /**
          * @description The record types, for the `type` filter.
@@ -6981,6 +7075,131 @@ export interface operations {
                 };
             };
             /** @description a filter or the limit out of range */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the log's size and growth, and its days */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditSize"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditRetentionRequest"];
+            };
+        };
+        responses: {
+            /** @description saved; the log's size and days now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditSize"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the days are not 1 to 3650 */
             422: {
                 headers: {
                     [name: string]: unknown;

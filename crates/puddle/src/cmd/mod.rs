@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One module per subcommand that does more than print a line.
 
+pub mod audit;
 pub mod backup;
 pub mod data_folder;
 pub mod doctor;

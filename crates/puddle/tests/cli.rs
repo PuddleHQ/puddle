@@ -329,3 +329,55 @@ fn user_reset_prints_one_link_and_sets_no_password() {
             .contains("no user named ghost")
     );
 }
+
+#[test]
+fn audit_status_and_prune_work_on_a_data_folder_and_say_when_there_is_none() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    let missing = puddle(&["audit", "status", "--data-dir", data.to_str().unwrap()]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("no database at")
+    );
+    drop(
+        puddle_store::Store::open(
+            &data.join("puddle.db"),
+            std::sync::Arc::new(puddle_store::SystemClock),
+            puddle_store::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let status = puddle(&["audit", "status", "--data-dir", data.to_str().unwrap()]);
+    assert_eq!(status.status.code(), Some(0));
+    assert!(
+        String::from_utf8(status.stdout)
+            .unwrap()
+            .contains("kept for 90 days")
+    );
+    let pruned = puddle(&[
+        "audit",
+        "prune",
+        "--days",
+        "7",
+        "--data-dir",
+        data.to_str().unwrap(),
+    ]);
+    assert_eq!(pruned.status.code(), Some(0));
+    assert!(
+        String::from_utf8(pruned.stdout)
+            .unwrap()
+            .contains("older than 7 days")
+    );
+    let refused = puddle(&[
+        "audit",
+        "prune",
+        "--days",
+        "0",
+        "--data-dir",
+        data.to_str().unwrap(),
+    ]);
+    assert_eq!(refused.status.code(), Some(1));
+}

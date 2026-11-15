@@ -70,7 +70,8 @@ mod vscode;
 mod workspaces;
 
 pub use accounts::{
-    AccountError, UserRow, UserState, add_user, list_users, remove_user, reset_user,
+    AccountError, AuditPruned, UserRow, UserState, add_user, audit_status, list_users, prune_audit,
+    remove_user, reset_user,
 };
 pub use backup::{
     BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,

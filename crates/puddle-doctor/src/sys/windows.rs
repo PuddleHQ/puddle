@@ -36,7 +36,7 @@ use windows_sys::Win32::System::WindowsProgramming::{
 
 use crate::facts::{
     AgentService, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts,
-    JobFacts, ServiceState,
+    JobFacts, ServiceStart, ServiceState,
 };
 
 /// The services of the Microsoft Entra Global Secure Access client.
@@ -299,19 +299,19 @@ fn agent_service_state(scm: SC_HANDLE) -> AgentService {
     } else {
         None
     };
-    let disabled = service_start_disabled(svc);
+    let start = service_start(svc);
     // SAFETY: closes the handle opened above, once.
     unsafe { CloseServiceHandle(svc) };
-    match (state, disabled) {
-        (Some(running), Some(disabled)) => AgentService::installed(disabled, running),
+    match (state, start) {
+        (Some(running), Some(start)) => AgentService::installed(start, running),
         _ => AgentService::Unreadable,
     }
 }
 
 /// Whether the open service `svc` (opened with `SERVICE_QUERY_CONFIG`) has the start type
-/// disabled; `None` when its configuration cannot be read.
+/// disabled or not; `None` when its configuration cannot be read.
 #[expect(unsafe_code, reason = "Service Control Manager queries")]
-fn service_start_disabled(svc: SC_HANDLE) -> Option<bool> {
+fn service_start(svc: SC_HANDLE) -> Option<ServiceStart> {
     let mut needed: u32 = 0;
     // SAFETY: a null buffer of size 0 asks for the size needed; `needed` is a valid out pointer.
     unsafe { QueryServiceConfigW(svc, std::ptr::null_mut(), 0, &raw mut needed) };
@@ -328,7 +328,12 @@ fn service_start_disabled(svc: SC_HANDLE) -> Option<bool> {
         return None;
     }
     // SAFETY: the call succeeded, so the buffer starts with an initialised QUERY_SERVICE_CONFIGW.
-    Some(unsafe { (*config).dwStartType } == SERVICE_DISABLED)
+    let start_type = unsafe { (*config).dwStartType };
+    Some(if start_type == SERVICE_DISABLED {
+        ServiceStart::Disabled
+    } else {
+        ServiceStart::Enabled
+    })
 }
 
 /// What the service `name` looks like through the open service manager `scm`.

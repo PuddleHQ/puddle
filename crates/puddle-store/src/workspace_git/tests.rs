@@ -7,12 +7,12 @@ fn repo(text: &str) -> RepoRef {
     RepoRef::new(host, owner, name).unwrap()
 }
 
-fn entry(text: &str, pull: bool, push: bool) -> RepoEntry {
+fn entry(text: &str, toggles: RepoToggles) -> RepoEntry {
     RepoEntry {
         id: 1,
         repo: repo(text),
-        pull,
-        push,
+        pull: toggles.pull,
+        push: toggles.push,
         created_at: 0,
     }
 }
@@ -149,8 +149,8 @@ fn only_ascii_letters_fold_so_a_look_alike_is_another_name() {
 fn the_switches_decide_what_the_toggles_mean() {
     let mut git = WorkspaceGit::unconfigured();
     git.repos = vec![
-        entry("github.com/a/b", true, false),
-        entry("github.com/a/c", false, true),
+        entry("github.com/a/b", RepoToggles::PULL_ONLY),
+        entry("github.com/a/c", RepoToggles::PUSH_ONLY),
     ];
     let (b, c, d) = (
         repo("github.com/a/b"),

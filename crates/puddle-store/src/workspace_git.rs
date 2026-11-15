@@ -224,6 +224,38 @@ impl std::fmt::Display for RepoRef {
     }
 }
 
+/// The Pull and Push toggles of one row of the repository table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepoToggles {
+    /// A fetch from the repository may go out.
+    pub pull: bool,
+    /// A push to the repository may go out.
+    pub push: bool,
+}
+
+impl RepoToggles {
+    /// Both on.
+    pub const BOTH: Self = Self {
+        pull: true,
+        push: true,
+    };
+    /// Pull on, Push off.
+    pub const PULL_ONLY: Self = Self {
+        pull: true,
+        push: false,
+    };
+    /// Push on, Pull off.
+    pub const PUSH_ONLY: Self = Self {
+        pull: false,
+        push: true,
+    };
+    /// Both off.
+    pub const NEITHER: Self = Self {
+        pull: false,
+        push: false,
+    };
+}
+
 /// One row of the repository table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

@@ -99,6 +99,15 @@ pub enum ServerKind {
     },
 }
 
+/// The two choices that shape Microsoft's server ([`ServerKind::Microsoft`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MicrosoftOptions {
+    /// Whether the server may send telemetry to Microsoft.
+    pub telemetry: bool,
+    /// Whether the agent looks for newer builds at start and daily.
+    pub auto_update: bool,
+}
+
 /// How to run the editor server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorServer {
@@ -147,14 +156,13 @@ impl EditorServer {
         data: impl Into<String>,
         folder: impl Into<String>,
         grace_secs: u32,
-        telemetry: bool,
-        auto_update: bool,
+        options: MicrosoftOptions,
     ) -> Self {
         let mut server = Self::new(data, folder, grace_secs);
         server.dir = format!("{}/{MICROSOFT_BUILDS}", server.data);
         server.kind = ServerKind::Microsoft {
-            telemetry,
-            auto_update,
+            telemetry: options.telemetry,
+            auto_update: options.auto_update,
         };
         server
     }

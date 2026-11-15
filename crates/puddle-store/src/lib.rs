@@ -35,8 +35,8 @@ pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
 pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
-    PendingExpiryReason, PendingWire, RequestRuleWire, RuleDeleteReason, RuleSetWire, RuleWire,
-    WorkspaceOpKind, WorkspaceOpOutcome,
+    PendingExpiryReason, PendingWire, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason,
+    RuleSetWire, RuleWire, RuleWirePatternKind, RuleWireScope, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use backup::{BackupInfo, backup_database};
 pub use catalogue::{
@@ -77,6 +77,6 @@ pub use users::{
     SignInMethod, User, UserId, UserName, device_name,
 };
 pub use workspace_git::{
-    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
-    SwitchSource, WorkspaceGit, is_bare_user,
+    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
+    SwitchChange, SwitchSource, WorkspaceGit, is_bare_user,
 };

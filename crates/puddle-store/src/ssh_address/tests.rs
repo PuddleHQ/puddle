@@ -55,6 +55,10 @@ fn only_ssh_addresses_look_like_ssh() {
         "/home/me/repo",
         "",
         "ssh",
+        // Another scheme, a name that only starts with `http`, a colon after a slash.
+        "ftp://host/path",
+        "httpx:path",
+        "dir/a:b",
     ] {
         assert!(!looks_like_ssh(other), "{other}");
     }

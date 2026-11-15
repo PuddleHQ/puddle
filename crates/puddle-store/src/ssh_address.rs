@@ -40,8 +40,8 @@ fn scp_like(url: &str) -> Option<(&str, &str)> {
         return None;
     }
     let colon = url.find(':')?;
-    let slash = url.find('/').unwrap_or(usize::MAX);
-    (colon > 1 && colon < slash).then(|| (&url[..colon], &url[colon + 1..]))
+    // A slash before the colon is a path (`dir/a:b`), not a host.
+    (colon > 1 && !url[..colon].contains('/')).then(|| (&url[..colon], &url[colon + 1..]))
 }
 
 /// The host and the path (without leading slashes) of an SSH address, or `None` when it has a

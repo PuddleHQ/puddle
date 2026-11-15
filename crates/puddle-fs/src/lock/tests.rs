@@ -21,6 +21,20 @@ fn a_second_lock_on_the_same_folder_is_refused_until_the_first_is_dropped() {
 }
 
 #[test]
+fn dropping_the_lock_frees_the_folder_while_a_copy_of_its_descriptor_lives_on() {
+    // A process spawned by another thread holds a copy of every open descriptor from its fork
+    // until its exec; a copy shares the lock, so closing ours alone would keep the folder
+    // refused for that moment (a quick restart failed under load that way).
+    let dir = tempfile::tempdir().unwrap();
+    let lock = DataLock::acquire(dir.path()).unwrap();
+    let copy = lock.file.try_clone().unwrap();
+    drop(lock);
+    let again = DataLock::acquire(dir.path());
+    drop(copy);
+    drop(again.expect("the folder is free the moment the lock is dropped"));
+}
+
+#[test]
 fn different_folders_do_not_block_each_other() {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();

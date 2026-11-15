@@ -12,7 +12,10 @@ use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::AppState;
-use crate::wire::{AuditEntry, AuditOutcome, AuditPage, AuditRecord, AuditType, ConnectionOrigin};
+use crate::wire::{
+    AuditEntry, AuditOutcome, AuditPage, AuditRecord, AuditRetentionRequest, AuditSize, AuditType,
+    ConnectionOrigin,
+};
 
 /// Records per page when the client doesn't say.
 const DEFAULT_LIMIT: u32 = 100;
@@ -179,4 +182,48 @@ pub(crate) async fn audit(
         next_after: newest.or(after).unwrap_or(0),
         next_before,
     }))
+}
+
+/// How big the activity log is, how fast it grows, and for how many days it is kept. Only the
+/// owner sees it: it covers every user's records.
+#[utoipa::path(
+    get,
+    path = "/api/audit/retention",
+    tag = "audit",
+    responses((status = OK, description = "the log's size and growth, and its days", body = AuditSize))
+)]
+pub(crate) async fn get_retention(
+    State(state): State<AppState>,
+) -> Result<Json<AuditSize>, ApiError> {
+    blocking(move || Ok(Json(state.store.audit_stats()?.into()))).await
+}
+
+/// Changes how many days the activity log is kept. Records older than that are deleted within the
+/// hour and cannot be brought back; nothing is deleted for the log's size.
+#[utoipa::path(
+    put,
+    path = "/api/audit/retention",
+    tag = "audit",
+    request_body = AuditRetentionRequest,
+    responses(
+        (status = OK, description = "saved; the log's size and days now", body = AuditSize),
+        (status = UNPROCESSABLE_ENTITY, description = "the days are not 1 to 3650", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn put_retention(
+    State(state): State<AppState>,
+    crate::extract::Json(body): crate::extract::Json<AuditRetentionRequest>,
+) -> Result<Json<AuditSize>, ApiError> {
+    if !(1..=puddle_store::MAX_AUDIT_RETENTION_DAYS).contains(&body.days) {
+        return Err(ApiError::invalid(format!(
+            "the log is kept for 1 to {} days ({} given)",
+            puddle_store::MAX_AUDIT_RETENTION_DAYS,
+            body.days
+        )));
+    }
+    blocking(move || {
+        state.store.set_audit_retention_days(body.days)?;
+        Ok(Json(state.store.audit_stats()?.into()))
+    })
+    .await
 }

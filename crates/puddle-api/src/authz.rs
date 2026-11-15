@@ -403,6 +403,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/interception"
             | "/api/interception/learned-limits"
             | "/api/interception/never-decrypt"
+            | "/api/audit/retention"
             | "/api/orphan-volumes"
             | "/api/auth/methods",
         ) => (A::ReadInstall, T::Install),
@@ -416,6 +417,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/interception"
             | "/api/interception/learned-limits"
             | "/api/interception/never-decrypt"
+            | "/api/audit/retention"
             | "/api/auth/methods",
         )
         | ("DELETE", "/api/app-icons/custom" | "/api/proxy-sign-ins/{proxy}")

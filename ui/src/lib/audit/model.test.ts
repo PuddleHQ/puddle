@@ -196,6 +196,25 @@ describe("a record as a row", () => {
     );
     expect(row(connection(2, {}).record).company).toBeUndefined();
   });
+  it("puts every kind of reason in words and keeps one it does not know as it came", () => {
+    const detail = (reason: string) =>
+      row(connection(1, { reason, rule_id: null }).record).detail;
+    expect(detail("policy_unavailable")).toBe(
+      "because the rules could not be checked",
+    );
+    expect(detail("toggle:private")).toBe(
+      "because private networks are switched off",
+    );
+    expect(detail("puddle_request_failed:rate_limited")).toBe(
+      "because Puddle's own request failed: the Git host's request limit is used up (try again later)",
+    );
+    expect(detail("limit:from_the_future")).toBe(
+      "because limit:from_the_future",
+    );
+    expect(detail("toggle:from_the_future")).toBe(
+      "because toggle:from_the_future",
+    );
+  });
   it("explains a block, a waiting request and a request line", () => {
     const blocked = row(
       connection(1, {
@@ -354,7 +373,12 @@ describe("a record as a row", () => {
   it("says which kinds of credential the workspace sent that Puddle did not add, never a value", () => {
     const view = row(
       connection(1, {
-        foreign_credentials: ["github_token", "git_authorization", "odd_kind"],
+        foreign_credentials: [
+          "github_token",
+          "git_authorization",
+          // A kind a newer service sends: not in the generated type, so the fixture says so.
+          "odd_kind" as never,
+        ],
       }).record,
     );
     expect(view.detail).toContain(
@@ -368,7 +392,7 @@ describe("a record as a row", () => {
         answer_credentials: [
           "github_token",
           "jwt_with_refresh_token",
-          "odd_kind",
+          "odd_kind" as never,
         ],
       }).record,
     );

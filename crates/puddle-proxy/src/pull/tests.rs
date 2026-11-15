@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
+use puddle_types::FailedRequestCode;
 
 fn head(headers: &[&str]) -> Head {
     Head {
@@ -25,16 +26,20 @@ fn a_failed_pull_is_marked_unless_something_already_decided_it() {
         )
     };
     for (status, outcome, code) in [
-        ("504 Gateway Timeout", ConnectionOutcome::Timeout, "timeout"),
+        (
+            "504 Gateway Timeout",
+            ConnectionOutcome::Timeout,
+            FailedRequestCode::Timeout,
+        ),
         (
             "502 Bad Gateway",
             ConnectionOutcome::ConnectFailed,
-            "unreachable",
+            FailedRequestCode::Unreachable,
         ),
         (
             "502 Bad Gateway",
             ConnectionOutcome::UpstreamRefused,
-            "unreachable",
+            FailedRequestCode::Unreachable,
         ),
     ] {
         let mut failed = event();

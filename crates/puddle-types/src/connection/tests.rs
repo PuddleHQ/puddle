@@ -47,8 +47,8 @@ fn an_origin_prints_as_its_wire_name() {
 #[test]
 fn a_failed_puddle_request_reason_carries_its_code() {
     assert_eq!(
-        ConnectionReason::PuddleRequestFailed("bad_gateway").to_string(),
-        "puddle_request_failed:bad_gateway"
+        ConnectionReason::PuddleRequestFailed(FailedRequestCode::BadToken).to_string(),
+        "puddle_request_failed:bad_token"
     );
 }
 
@@ -325,4 +325,83 @@ fn the_null_log_takes_events_through_a_shared_handle_and_leaves_them_alone() {
     let before = event.clone();
     log.record(&event);
     assert_eq!(event, before);
+}
+
+#[test]
+fn every_reason_the_types_build_is_a_listed_code_or_a_prefixed_one() {
+    use crate::{LocalCategory, ReasonCode, ReasonPrefix};
+    let listed = |text: &str| ReasonCode::ALL.iter().any(|code| code.as_str() == text);
+    let prefixed = |text: &str, prefix: ReasonPrefix, codes: &[&str]| {
+        text.strip_prefix(prefix.as_str())
+            .and_then(|rest| rest.strip_prefix(':'))
+            .is_some_and(|code| codes.contains(&code))
+    };
+    let categories = [
+        LocalCategory::Loopback,
+        LocalCategory::Private,
+        LocalCategory::LinkLocal,
+        LocalCategory::Metadata,
+        LocalCategory::Special,
+        LocalCategory::CompanyNetwork,
+    ]
+    .map(|category| category.audit_reason().trim_start_matches("toggle:"));
+    for reason in [
+        ConnectionReason::Rule,
+        ConnectionReason::NoRule,
+        ConnectionReason::PolicyUnavailable,
+        ConnectionReason::PuddleRequest,
+        ConnectionReason::PkiDistributionPoint,
+        ConnectionReason::RequestRule,
+        ConnectionReason::SniMismatch,
+        ConnectionReason::GuestTlsRejected,
+        ConnectionReason::CertificateUnavailable,
+        ConnectionReason::ConnectionLimit,
+        ConnectionReason::Suppressed,
+        ConnectionReason::Merged,
+        ConnectionReason::Blocked(BlockReason::PuddleEndpoint),
+        ConnectionReason::Blocked(BlockReason::SshUnsupported),
+        ConnectionReason::Blocked(BlockReason::UdpUnsupported),
+        ConnectionReason::Blocked(BlockReason::LocalAddress),
+        ConnectionReason::Blocked(BlockReason::SettingsUnreadable),
+    ] {
+        let text = reason.to_string();
+        assert!(listed(&text), "{text} is not a ReasonCode");
+    }
+    for category in LocalCategory::ALL {
+        let text = ConnectionReason::Blocked(BlockReason::LocalToggle(category)).to_string();
+        assert!(
+            prefixed(&text, ReasonPrefix::Toggle, &categories),
+            "{text} is not toggle:<category>"
+        );
+    }
+    for code in [
+        FailedRequestCode::Unreachable,
+        FailedRequestCode::HostRefused,
+    ] {
+        let text = ConnectionReason::PuddleRequestFailed(code).to_string();
+        assert!(prefixed(
+            &text,
+            ReasonPrefix::PuddleRequestFailed,
+            &[code.as_str()]
+        ));
+    }
+    assert!(prefixed(
+        &ConnectionReason::LimitEnded("idle").to_string(),
+        ReasonPrefix::Limit,
+        &["idle"]
+    ));
+    assert!(prefixed(
+        &ConnectionReason::PassedThrough("learned").to_string(),
+        ReasonPrefix::PassThrough,
+        &["learned"]
+    ));
+    assert!(listed(RefusedReason::IpRule.code()));
+}
+
+#[test]
+fn a_company_signal_code_is_its_wire_name() {
+    for signal in CompanySignal::ALL {
+        let wire = serde_json::to_value(signal).unwrap();
+        assert_eq!(wire, signal.code());
+    }
 }

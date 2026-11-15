@@ -93,7 +93,7 @@ sample_holders() { # sample_holders <file>
 
 n=0
 while [ "$n" -lt "$busy" ]; do
-    taskset -c "$cpus" sh -c 'while :; do :; done' &
+    taskset -c "$cpus" sh -c 'while :; do :; done' fake-host-busy "$out" &
     busy_pids+=("$!")
     n=$((n + 1))
 done

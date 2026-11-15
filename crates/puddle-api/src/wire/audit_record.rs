@@ -2,6 +2,7 @@
 //! The audit record union on the wire (docs/spec/rules.md §5).
 
 use puddle_store as store;
+use puddle_types::{CompanySignal, ForeignCredentialKind, UnknownTokenKind};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -51,7 +52,10 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         outcome: Option<ConnectionOutcome>,
-        /// Why: `rule`, `no_rule`, or a block reason.
+        /// Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with
+        /// a `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a
+        /// `FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the
+        /// pass-through (open-ended). A reader keeps a string it does not know.
         reason: String,
         /// The deciding rule.
         #[schema(required = true)]
@@ -73,7 +77,8 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         refused_address: Option<String>,
-        /// Why `refused_address` was refused: a reason code such as `ip_rule` or `toggle:private`.
+        /// Why `refused_address` was refused: a `reason` code such as `ip_rule` or
+        /// `toggle:private`.
         #[serde(default)]
         #[schema(required = true)]
         refused_reason: Option<String>,
@@ -85,7 +90,7 @@ pub enum AuditRecord {
         /// The signal that put the destination in the company network: `pac_direct`,
         /// `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.
         #[serde(default)]
-        #[schema(required = true)]
+        #[schema(required = true, value_type = Option<CompanySignal>)]
         signal: Option<String>,
         /// The pending request.
         #[schema(required = true)]
@@ -113,7 +118,7 @@ pub enum AuditRecord {
         /// `azure_devops_token` or `git_authorization`. Never a value. Records written before it
         /// existed, and connections of a workspace that turned the warning off, read as empty.
         #[serde(default)]
-        #[schema(required = true)]
+        #[schema(required = true, value_type = Vec<ForeignCredentialKind>)]
         foreign_credentials: Vec<String>,
         /// The kinds of token the answers held that Puddle does not hold, each once:
         /// `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
@@ -121,7 +126,7 @@ pub enum AuditRecord {
         /// a value. Records written before it existed, and connections of a workspace that turned
         /// the warning off, read as empty.
         #[serde(default)]
-        #[schema(required = true)]
+        #[schema(required = true, value_type = Vec<UnknownTokenKind>)]
         answer_credentials: Vec<String>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]

@@ -7,6 +7,7 @@
     reason = "test helpers outside #[test] functions fail the test by panicking"
 )]
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -494,9 +495,27 @@ fn seeded(records: &[AuditRecord]) -> (tempfile::TempDir, Store) {
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open(&path, clock, Limits::default()).unwrap();
     own_workspaces(&store);
-    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    reseed(&seed_connection(&path), records);
+    (dir, store)
+}
+
+/// The connection that writes the audit rows beside the store's own. Nothing here must survive a
+/// crash, so it does not wait for the disk: with the default `synchronous` every seeding commit
+/// is an fsync, and on a busy host those waits, not the work, made the test slow.
+fn seed_connection(path: &Path) -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open(path).unwrap();
     conn.busy_timeout(Duration::from_secs(5)).unwrap();
-    let tx = conn.transaction().unwrap();
+    conn.pragma_update(None, "synchronous", "off").unwrap();
+    conn
+}
+
+/// Replaces the audit rows with `records`, numbered from 1 again, so one opened store serves many
+/// generated cases (opening runs every migration, which a 48-case property would otherwise pay 48
+/// times).
+fn reseed(conn: &rusqlite::Connection, records: &[AuditRecord]) {
+    let tx = conn.unchecked_transaction().unwrap();
+    tx.execute_batch("DELETE FROM audit; DELETE FROM sqlite_sequence WHERE name = 'audit';")
+        .unwrap();
     {
         let mut insert = tx
             .prepare(
@@ -519,7 +538,6 @@ fn seeded(records: &[AuditRecord]) -> (tempfile::TempDir, Store) {
         }
     }
     tx.commit().unwrap();
-    (dir, store)
 }
 
 fn naive(records: &[AuditRecord], filter: &AuditFilter) -> Vec<i64> {
@@ -646,37 +664,58 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
         )
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
+/// Every filter combination returns exactly what filtering the records by hand returns,
+/// in both directions, and paging back with `Before` visits each match once.
+///
+/// One store serves all cases (each case replaces the audit rows): opening a store runs every
+/// migration, which made 48 opens the bulk of the test's time.
+#[test]
+fn filtered_queries_equal_a_naive_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
+    own_workspaces(&store);
+    let seed = seed_connection(&path);
+    let users = puddle_store::testing::all_users();
 
-    /// Every filter combination returns exactly what filtering the records by hand returns,
-    /// in both directions, and paging back with `Before` visits each match once.
-    #[test]
-    fn filtered_queries_equal_a_naive_filter(
-        records in prop::collection::vec(any_record(), 0..60),
-        filter in any_filter(),
-        page in 1_u32..9,
-    ) {
-        let (_dir, store) = seeded(&records);
-        let want = naive(&records, &filter);
-        let up = ids(store.audit_query_every_user(&puddle_store::testing::all_users(), &filter, AuditCursor::After(0), 1000).unwrap());
-        prop_assert_eq!(&up, &want);
-        let mut down = ids(store.audit_query_every_user(&puddle_store::testing::all_users(), &filter, AuditCursor::Before(None), 1000).unwrap());
-        down.reverse();
-        prop_assert_eq!(&down, &want);
+    let cases = (
+        prop::collection::vec(any_record(), 0..60),
+        any_filter(),
+        1_u32..9,
+    );
+    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(48));
+    runner
+        .run(&cases, |(records, filter, page)| {
+            reseed(&seed, &records);
+            let want = naive(&records, &filter);
+            let up = ids(store
+                .audit_query_every_user(&users, &filter, AuditCursor::After(0), 1000)
+                .unwrap());
+            prop_assert_eq!(&up, &want);
+            let mut down = ids(store
+                .audit_query_every_user(&users, &filter, AuditCursor::Before(None), 1000)
+                .unwrap());
+            down.reverse();
+            prop_assert_eq!(&down, &want);
 
-        let mut paged = Vec::new();
-        let mut cursor = AuditCursor::Before(None);
-        loop {
-            let rows = ids(store.audit_query_every_user(&puddle_store::testing::all_users(), &filter, cursor, page).unwrap());
-            let Some(last) = rows.last().copied() else { break };
-            prop_assert!(rows.len() <= page as usize);
-            paged.extend(rows);
-            cursor = AuditCursor::Before(Some(last));
-        }
-        paged.reverse();
-        prop_assert_eq!(paged, want);
-    }
+            let mut paged = Vec::new();
+            let mut cursor = AuditCursor::Before(None);
+            loop {
+                let rows = ids(store
+                    .audit_query_every_user(&users, &filter, cursor, page)
+                    .unwrap());
+                let Some(last) = rows.last().copied() else {
+                    break;
+                };
+                prop_assert!(rows.len() <= page as usize);
+                paged.extend(rows);
+                cursor = AuditCursor::Before(Some(last));
+            }
+            paged.reverse();
+            prop_assert_eq!(paged, want);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]

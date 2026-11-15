@@ -9,6 +9,7 @@ import {
   MAX_NAME_LENGTH,
   MAX_ROOT_DISK_GIB,
   canAttach,
+  cleanRepoUrl,
   canDelete,
   canGrowRootDisk,
   canReclaim,
@@ -204,11 +205,55 @@ describe("repository URLs", () => {
       "https://user:pw@github.com/x.git",
       "Remove the user name and password from the URL; Puddle supplies credentials itself.",
     ],
+    [
+      "https://token@example.com/x.git",
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+    ],
+    [
+      "https://org:pat@dev.azure.com/org/p/_git/r",
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+    ],
+    [
+      "https://org:@dev.azure.com/org/p/_git/r",
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+    ],
+    [
+      "https://org@dev.azure.com@evil.test/x",
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+    ],
+    ["https://org@dev.azure.com/org/p/_git/r", null],
+    ["https://org@org.visualstudio.com/p/_git/r", null],
+    ["https://me@github.com:443/a/b.git", null],
     ["https://", "The URL has no host."],
     ["https:///x", "The URL has no host."],
     ["https://:8443/x", "The URL has no host."],
   ])("%j -> %j", (url, problem) => {
     expect(repoUrlProblem(url)).toBe(problem);
+  });
+
+  it.each([
+    [
+      "https://org@dev.azure.com/org/p/_git/r",
+      "https://dev.azure.com/org/p/_git/r",
+    ],
+    [
+      "  HTTPS://Org@Dev.Azure.com/org/p/_git/r  ",
+      "https://Dev.Azure.com/org/p/_git/r",
+    ],
+    [
+      "https://org@org.visualstudio.com/p/_git/r",
+      "https://org.visualstudio.com/p/_git/r",
+    ],
+    ["https://me@github.com/a/b@c", "https://github.com/a/b@c"],
+    // Left as typed, for repoUrlProblem to refuse.
+    ["https://token@example.com/x", "https://token@example.com/x"],
+    ["https://o:p@dev.azure.com/x", "https://o:p@dev.azure.com/x"],
+    ["https://@dev.azure.com/x", "https://@dev.azure.com/x"],
+    ["https://org@notgithub.com/x", "https://org@notgithub.com/x"],
+    ["git@github.com:a/b.git", "git@github.com:a/b.git"],
+    ["https://github.com/a/b", "https://github.com/a/b"],
+  ])("cleans %j to %j", (raw, clean) => {
+    expect(cleanRepoUrl(raw)).toBe(clean);
   });
 
   it("does not take a Windows drive letter for an SSH host", () => {

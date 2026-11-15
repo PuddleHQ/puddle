@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { BuildGuard } from "./build-guard.ts";
+import { holdReload } from "./unsaved-edits.ts";
 
 type Served = { data?: { ui_build_id: string | null } } | "throw";
 let served: Served;
@@ -159,5 +160,27 @@ describe("BuildGuard.start", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(calls).toHaveLength(2);
     stop();
+  });
+});
+
+describe("BuildGuard with unsaved edits", () => {
+  it("does not reload over typing, and reloads at the next check once it is saved", async () => {
+    served = { data: { ui_build_id: "build-2" } };
+    let typing = true;
+    const guard = make("build-1", { unsavedEdits: () => typing });
+    expect(await guard.check()).toBe(false);
+    expect(reloads).toBe(0);
+    expect(kept.size).toBe(0);
+    typing = false;
+    expect(await guard.check()).toBe(true);
+    expect(reloads).toBe(1);
+  });
+
+  it("waits on the registered forms by default", async () => {
+    served = { data: { ui_build_id: "build-2" } };
+    const release = holdReload(() => true);
+    expect(await make().check()).toBe(false);
+    release();
+    expect(await make().check()).toBe(true);
   });
 });

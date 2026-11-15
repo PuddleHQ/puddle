@@ -292,6 +292,40 @@ fn the_scanner_keeps_at_most_one_run_between_pieces() {
 }
 
 #[test]
+fn a_refresh_token_value_still_growing_is_kept_whole_up_to_the_bound_and_dropped_beyond_it() {
+    // The longest start of a field: name, a gap, the separator, a gap, then a value run of the
+    // longest length. The scanner keeps all of it, which is more than one run.
+    let gap = "\"\\ \t\" ";
+    assert_eq!(gap.len(), MAX_GAP);
+    let start = format!("refresh_token{gap}:{gap}");
+    let mut scanner = TokenScanner::default();
+    let first = format!("{start}{}", "a".repeat(MAX_RUN));
+    let _ = scanner.feed(first.as_bytes(), false, &NO_ONE);
+    assert_eq!(scanner.carry.len(), first.len());
+    assert!(scanner.carry.len() > MAX_RUN);
+    // That longest start is exactly the most the scanner keeps, so the bound is no looser.
+    assert_eq!(scanner.carry.len(), MAX_KEPT);
+    // One more byte makes the value a run no token is as long as: it is read as set and not kept.
+    let _ = scanner.feed(b"a", false, &NO_ONE);
+    assert!(scanner.carry.len() <= MAX_RUN, "{}", scanner.carry.len());
+    assert!(scanner.refresh);
+    assert!(scanner.skipping);
+}
+
+#[test]
+fn a_refresh_token_value_over_a_run_is_set_whole_and_in_pieces_even_when_the_run_has_an_even_length()
+ {
+    // A reader that holds every long run of even length: a value that long is still not Puddle's.
+    let holds = |run: &[u8]| run.len() >= 4000 && run.len().is_multiple_of(2);
+    let signed = jwt("long", claims());
+    let body = format!("{signed} refresh_token={}", "a".repeat(MAX_RUN + 2));
+    let one = seen(&[body.as_bytes()], &holds);
+    let split: Vec<&[u8]> = body.as_bytes().chunks(97).collect();
+    assert_eq!(seen(&split, &holds), one);
+    assert_eq!(one, [UnknownTokenKind::JwtWithRefreshToken]);
+}
+
+#[test]
 fn nothing_past_the_cap_is_read() {
     let made = token(TokenKind::GithubPersonal, "cap");
     let filler = vec![b' '; MAX_SCANNED];
@@ -792,4 +826,28 @@ fn a_gzip_body_read_in_pieces_is_read_to_its_end() {
     scan.read(None);
     assert!(scan.done && scan.decoder.is_none());
     assert_eq!(rig.report.kinds(), ["github_token"]);
+}
+
+#[cfg(feature = "fuzzing")]
+#[test]
+fn the_fuzz_reading_takes_its_piece_size_from_the_first_byte() {
+    assert!(read_both_ways(&[]).is_none());
+    for (first, size) in [(0u8, 1), (1, 2), (96, 97), (97, 1), (98, 2), (255, 62)] {
+        let read = read_both_ways(&[first]).expect("one byte is a size and an empty answer");
+        assert_eq!(read.size, size, "first byte {first}");
+    }
+}
+
+#[cfg(feature = "fuzzing")]
+#[test]
+fn the_fuzz_reading_reports_the_kinds_of_both_readings_and_the_most_kept() {
+    let made = token(TokenKind::GithubPersonal, "fz");
+    let read = read_both_ways(&[&[7u8][..], made.as_bytes()].concat()).expect("a size is given");
+    assert_eq!(read.limit, MAX_KEPT);
+    assert_eq!(read.whole, read.split);
+    // A field whose value is still growing at the end is kept whole: its start and the run.
+    let field = format!("refresh_token={}", "a".repeat(MAX_RUN));
+    let read = read_both_ways(&[&[255u8][..], field.as_bytes()].concat()).expect("a size is given");
+    assert_eq!(read.kept, field.len());
+    assert!(read.kept > MAX_RUN && read.kept <= read.limit);
 }

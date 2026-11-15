@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NameResolver, NetworkEndpoint,
@@ -429,7 +429,7 @@ async fn a_front_whose_record_moves_is_followed_while_the_api_serves() {
         .lock()
         .unwrap()
         .insert("puddle.example.org", vec![new]);
-    tokio::time::sleep(std::time::Duration::from_secs(70)).await;
+    tokio::time::sleep(Duration::from_secs(70)).await;
     assert!(
         blocked(new),
         "the new address is blocked after the next lookup"
@@ -586,6 +586,27 @@ async fn a_peer_that_is_not_listed_is_closed_at_accept_before_any_handshake() {
         .await
         .unwrap();
     assert!(handshake.is_err());
+    proxy.api.running.shutdown().await;
+}
+
+/// A client that connects and says nothing is dropped when the handshake limit passes: the
+/// clock is paused, so the limit takes no real time.
+#[tokio::test(start_paused = true)]
+async fn a_client_that_never_starts_the_handshake_is_closed_when_the_limit_passes() {
+    let proxy = proxied(&[IpAddr::V4(Ipv4Addr::LOCALHOST)]).await;
+    let mut tcp = TcpStream::connect(proxy.addr).await.unwrap();
+    let started = tokio::time::Instant::now();
+    let mut buf = [0_u8; 16];
+    let read = tokio::time::timeout(Duration::from_secs(600), tcp.read(&mut buf))
+        .await
+        .expect("the server gives up on a silent client");
+    assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
+    let waited = started.elapsed();
+    // flake-ok: the clock is paused, so `waited` is virtual time the runtime advanced, not a load-dependent measurement.
+    assert!(
+        waited >= Duration::from_secs(10) && waited < Duration::from_secs(30),
+        "{waited:?}"
+    );
     proxy.api.running.shutdown().await;
 }
 

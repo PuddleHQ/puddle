@@ -459,7 +459,7 @@ run_gate() {
         # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
         # not touch: hundreds of lines, so only their count is printed.
         rc=0
-        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs 2>&1) || rc=$?
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs --partial 2>&1) || rc=$?
         printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then

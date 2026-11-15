@@ -13,6 +13,8 @@ mod support;
 
 #[path = "fake_host/dropped_requests.rs"]
 mod dropped_requests;
+#[path = "fake_host/grow_room.rs"]
+mod grow_room;
 #[path = "fake_host/tools_install.rs"]
 mod tools_install;
 
@@ -819,6 +821,8 @@ struct Rig {
     file_vault: AtomicBool,
     /// With `file_vault`: leaves the headless flag off, as a restart of a recorded install does.
     without_headless_flag: AtomicBool,
+    /// The drive the host reads its free space from, when a test sets one; else a fixed figure.
+    free_space: Mutex<Option<Arc<dyn puddle_host::Space>>>,
 }
 
 impl Rig {
@@ -849,6 +853,7 @@ impl Rig {
             mise_on: AtomicBool::new(false),
             file_vault: AtomicBool::new(false),
             without_headless_flag: AtomicBool::new(false),
+            free_space: Mutex::new(None),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
         // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
@@ -924,6 +929,9 @@ impl Rig {
         options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
         if let Some(ids) = self.ids.lock().unwrap().clone() {
             options.workspace_ids = Some(ids);
+        }
+        if let Some(space) = self.free_space.lock().unwrap().clone() {
+            options.free_space = Some(space);
         }
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));

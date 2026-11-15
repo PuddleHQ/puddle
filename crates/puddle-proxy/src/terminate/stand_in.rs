@@ -59,7 +59,7 @@ pub(crate) use answer::{
     answer_failed_refusal, limit_accept_encoding, scrub_answer,
 };
 #[cfg(feature = "fuzzing")]
-pub(crate) use scan::check as check_answer_scan;
+pub(crate) use scan::read_both_ways;
 pub(crate) use scan::{AnswerReport, ScanBody, scan_answer};
 
 /// The shortest stand-in accepted. A short one would match inside ordinary header text and swap

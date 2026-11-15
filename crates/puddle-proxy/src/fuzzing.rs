@@ -144,8 +144,15 @@ pub fn preamble(bytes: &[u8]) {
 ///
 /// # Panics
 ///
-/// When the pieces find other kinds than the whole, a kind is found twice, or more than one run
-/// is kept between pieces.
+/// When the pieces find other kinds than the whole, a kind is found twice, or the scanner keeps
+/// more between pieces than one run or one `refresh_token` field start.
 pub fn answer_tokens(bytes: &[u8]) {
-    crate::terminate::check_answer_scan(bytes);
+    let Some(read) = crate::terminate::read_both_ways(bytes) else {
+        return;
+    };
+    assert!(read.kept <= read.limit, "{} bytes were kept", read.kept);
+    assert_eq!(read.whole, read.split, "pieces of {}", read.size);
+    let mut unique = read.split.clone();
+    unique.dedup();
+    assert_eq!(unique.len(), read.split.len(), "a kind was found twice");
 }

@@ -436,7 +436,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   a new entry goes at its sorted place, not at the end, so two pull requests that add entries for different files
   merge without a conflict. The same holds for `scripts/full-coverage-exclusions.txt`.
   An entry whose text is gone fails the gate on every run, whatever the diff touches, naming the exclusion file
-  and line: no file under its glob holds its text any more. Delete it. An entry a test now runs every line of
+  and line: no file under its glob holds its text any more. Delete it. An entry also fails when its glob names
+  more than one file of the run's language (an entry is one reason for one file), or when no report of the run
+  lists the one file it names (a line outside the report is never measured, so it cannot fail and the entry
+  excuses nothing; a test file such as `tests.rs` is not in the report). The fast gate's report holds some crates
+  only (`--partial`), so there the second check is a note. An entry a test now runs every line of
   (judged where the run measured the file) fails only when `--lcov` lists the reports of two or more runs
   (comma-separated) and every one of them ran every line; a report that misses one line keeps the entry, in any
   order. One report only prints a note, since a racy line (a `select!` arm, a timing path) reads covered in one run
@@ -522,7 +526,8 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
   that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
   logging line or a timing could catch is not equivalent: assert the line or the timing.
   An entry names the function and the mutation text, never a line number: the `mutants-exclusions` gate fails an entry
-  that names a literal line (an edit above it would fail an unrelated change) and one that matches no mutant. When two
+  that names a literal line (an edit above it would fail an unrelated change), one that matches no mutant and one that
+  matches mutants in more than one file (name the file in the entry, one entry per file). When two
   mutants read alike (the Windows and the Unix body of one function), give each body its own function name.
 - **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
   VM tests, with four threads and a 1 GiB heap limit per test process: a mutant can make a loop allocate without

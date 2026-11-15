@@ -20,7 +20,7 @@
 //   only another OS or a VM runs) is the one wildcard and stays a reviewed whole-file choice.
 //
 // Usage: node scripts/diff-coverage.ts --base <rev> --lcov <file>[,<file>...] --exts .rs[,.ts] [--prefix ui/]
-//          [--exclusions <file>] [--label <name>]
+//          [--exclusions <file>] [--label <name>] [--partial]
 // `--base` is the commit the change is measured from (merge base locally, PR or push base in CI);
 // the diff is that commit against the working tree. `--lcov` is an lcov report whose `SF:` paths
 // are absolute or relative to `--prefix` (a directory under the repository root, default "").
@@ -387,6 +387,11 @@ export interface StaleEntry {
  * A file the report does not know is only checked for the text (another language's or another crate's
  * run, `cfg` code compiled out): "covered" is judged where a measurement exists, never guessed. A line
  * the report lists as not executable is left alone, since code compiled out of this run reads that way.
+ * - the glob names more than one file (an entry excuses one file; a second file is a second, separate reason);
+ * - none of the files it names is in any report of the run (`exts` limits this to the run's own languages):
+ *   a line outside the report is never measured, so it cannot fail and the entry excuses nothing. A file
+ *   the report lists with no executable line still counts as known. A report of some crates only
+ *   (`whole` false, the `--partial` option) makes this a note: a file of another crate is not in it.
  * `files` are the repository paths to match globs against.
  */
 export function staleExclusions(
@@ -394,6 +399,8 @@ export function staleExclusions(
   files: string[],
   coverage: Coverage | Coverage[],
   source: Source,
+  exts?: string[],
+  whole = true,
 ): StaleEntry[] {
   const reports = Array.isArray(coverage) ? coverage : [coverage];
   const out: StaleEntry[] = [];
@@ -402,6 +409,29 @@ export function staleExclusions(
     const matched = files.filter((f) => re.test(f));
     if (matched.length === 0) {
       out.push({ entry: e, why: "no file matches its path glob", fails: true });
+      continue;
+    }
+    const mine = exts
+      ? matched.filter((f) => exts.some((x) => f.endsWith(x)))
+      : matched;
+    if (mine.length > 1) {
+      out.push({
+        entry: e,
+        why: `its path glob matches ${mine.length} files (${mine.slice(0, 3).join(", ")}${mine.length > 3 ? ", ..." : ""}); name the one file`,
+        fails: true,
+      });
+      continue;
+    }
+    if (
+      mine.length === 1 &&
+      reports.length > 0 &&
+      !reports.some((r) => r.has(mine[0] as string))
+    ) {
+      out.push({
+        entry: e,
+        why: `no coverage report lists ${mine[0]}, so its lines are never measured and cannot fail`,
+        fails: whole,
+      });
       continue;
     }
     if (e.lines === "*") continue;
@@ -523,6 +553,8 @@ export interface Options {
   prefix: string;
   exclusions?: string | undefined;
   label: string;
+  /** The report is of some crates only (the fast gate): a file it lacks may be in another crate's run. */
+  partial?: boolean | undefined;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -535,7 +567,7 @@ function parseArgs(argv: string[]): Options {
   const exts = get("exts");
   if (!base || !lcov || !exts) {
     throw new Error(
-      "usage: diff-coverage.ts --base <rev> --lcov <file>[,<file>...] --exts .rs[,.ts] [--prefix dir/] [--exclusions file] [--label name]",
+      "usage: diff-coverage.ts --base <rev> --lcov <file>[,<file>...] --exts .rs[,.ts] [--prefix dir/] [--exclusions file] [--label name] [--partial]",
     );
   }
   return {
@@ -545,6 +577,7 @@ function parseArgs(argv: string[]): Options {
     prefix: get("prefix") ?? "",
     exclusions: get("exclusions"),
     label: get("label") ?? "diff-coverage",
+    partial: argv.includes("--partial"),
   };
 }
 
@@ -599,6 +632,8 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
     git(["ls-files"], repoRoot).split("\n").filter(Boolean).map(posix),
     reports,
     source,
+    opts.exts,
+    opts.partial !== true,
   );
   const report = judge(added, coverage, exclusions, source, notes);
   for (const n of new Set(notes)) console.log(`${opts.label}: note: ${n}`);

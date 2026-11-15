@@ -65,9 +65,25 @@ export interface OomEvent {
 export type Field =
   "name" | "repo_url" | "image" | "memory_mib" | "start_folder" | "form";
 
+/** The input of a repository row of the create form. */
+export type RowInput = "localPath" | "url" | "directory";
+
+/** A refusal about one input of one repository row; `row` counts from 1. */
+export interface RowRefusal {
+  row: number;
+  input: RowInput;
+}
+
 export type ActionResult<T = null> =
   | { ok: true; value: T }
-  | { ok: false; message: string; field?: Field; reason?: "gone" | "conflict" };
+  | {
+      ok: false;
+      message: string;
+      field?: Field;
+      /** Set when the refusal is about one repository row. */
+      at?: RowRefusal;
+      reason?: "gone" | "conflict";
+    };
 
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
 
@@ -81,15 +97,31 @@ export interface WorkspacesDeps {
 
 const DOWN = "Puddle's service isn't answering.";
 
-/** Which create-form field a refusal is about, from its text. */
-export function fieldOf(message: string): Field {
-  const m = message.toLowerCase();
-  if (/start folder|start_folder/.test(m)) return "start_folder";
-  if (/ssh|repository|repositories|url|https/.test(m)) return "repo_url";
-  if (/image/.test(m)) return "image";
-  if (/memory/.test(m)) return "memory_mib";
-  if (/name|already exists/.test(m)) return "name";
-  return "form";
+/** Where each field the service names goes in the create form (a row input also sets `input`). */
+const PLACES: Record<
+  components["schemas"]["ErrorField"],
+  { field: Field; input?: RowInput }
+> = {
+  name: { field: "name" },
+  repo_url: { field: "repo_url" },
+  image: { field: "image" },
+  memory_mib: { field: "memory_mib" },
+  start_folder: { field: "start_folder" },
+  local_path: { field: "repo_url", input: "localPath" },
+  url: { field: "repo_url", input: "url" },
+  directory: { field: "repo_url", input: "directory" },
+};
+
+/** Where a refusal belongs, from the `field` and `row` the service sent. */
+function placeOf(error: components["schemas"]["ApiErrorBody"] | undefined): {
+  field: Field;
+  at?: RowRefusal;
+} {
+  const place = error?.field ? PLACES[error.field] : undefined;
+  if (!place) return { field: "form" };
+  if (place.input && error?.row)
+    return { field: place.field, at: { row: error.row, input: place.input } };
+  return { field: place.field };
 }
 
 export class WorkspaceStore {
@@ -330,7 +362,7 @@ export class WorkspaceStore {
         void this.refresh();
         return { ok: false, message, reason: "conflict" };
       }
-      return { ok: false, message, field: fieldOf(message) };
+      return { ok: false, message, ...placeOf(error) };
     } catch {
       return { ok: false, message: DOWN };
     }

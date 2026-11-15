@@ -261,30 +261,3 @@ export function startFolderProblem(text: string): string | null {
     return `${first} belongs to Puddle and the disk; pick another folder.`;
   return null;
 }
-
-/** Which row of the list a refusal is about, from the service's words; `null` when none. */
-export function refusedRow(
-  message: string,
-): { row: number; field: "localPath" | "url" | "directory" } | null {
-  // "repositories 1 (a) and 2 (b) both go into api; ..." and "... are the same repository, ..."
-  const pair = /^repositories (\d+) \(.*?\) and (\d+) \(/.exec(message);
-  if (pair) {
-    return {
-      row: Number(pair[2]),
-      field: /both go into/.test(message) ? "directory" : "url",
-    };
-  }
-  const single = /^repository (\d+) \(/.exec(message);
-  if (single && message.startsWith(`repository ${single[1]} (the checkout `))
-    return { row: Number(single[1]), field: "localPath" };
-  if (single) {
-    // The service's reasons for a directory it refuses (`CheckoutDir::new`).
-    const field = /lost\+found|ASCII letters|100 characters|`\.` or `-`/.test(
-      message,
-    )
-      ? "directory"
-      : "url";
-    return { row: Number(single[1]), field };
-  }
-  return null;
-}

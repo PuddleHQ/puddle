@@ -7,7 +7,7 @@ use puddle_types::{
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorField};
 use crate::workspaces as domain;
 
 /// The long operation a workspace is in the middle of; progress comes as
@@ -309,6 +309,15 @@ pub struct NewWorkspaceRequest {
     pub repo_url: Option<Retired>,
 }
 
+/// The refusal of a repository list, at the entry and input it is about.
+fn list_refusal(error: &domain::RepositoryListError) -> ApiError {
+    let refusal = ApiError::invalid(error);
+    match error.place() {
+        Some((row, field)) => refusal.at_row(row, field),
+        None => refusal.at_field(ErrorField::RepoUrl),
+    }
+}
+
 impl NewWorkspaceRequest {
     /// The `local_path` of every repository that has one.
     pub(crate) fn local_paths(&self) -> Vec<String> {
@@ -333,7 +342,8 @@ impl NewWorkspaceRequest {
         if self.repo_url.is_some() {
             return Err(ApiError::invalid(
                 "repo_url was replaced by repositories, a list of {url}",
-            ));
+            )
+            .at_field(ErrorField::RepoUrl));
         }
         let drafts: Vec<domain::RepositoryDraft> = self
             .repositories
@@ -348,25 +358,26 @@ impl NewWorkspaceRequest {
             })
             .collect();
         let repositories = domain::check_repositories_with(&drafts, identity_exists, locals)
-            .map_err(ApiError::invalid)?;
+            .map_err(|e| list_refusal(&e))?;
         let start_folder = self
             .start_folder
             .as_deref()
             .map(domain::StartFolder::parse)
             .transpose()
-            .map_err(ApiError::invalid)?;
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::StartFolder))?;
         let image = self
             .image
             .as_deref()
             .map(ImageRef::new)
             .transpose()
-            .map_err(ApiError::invalid)?;
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Image))?;
         let memory = self
             .memory_mib
             .map(MemoryMib::new)
             .transpose()
-            .map_err(ApiError::invalid)?;
-        let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::MemoryMib))?;
+        let name = domain::DisplayName::parse(&self.name)
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Name))?;
         Ok(domain::NewWorkspace {
             owner,
             name,
@@ -506,7 +517,8 @@ pub struct RenameWorkspaceRequest {
 
 impl RenameWorkspaceRequest {
     pub(crate) fn into_name(self) -> Result<domain::DisplayName, ApiError> {
-        domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)
+        domain::DisplayName::parse(&self.name)
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Name))
     }
 }
 

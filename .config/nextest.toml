@@ -120,13 +120,18 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 
 # One at a time, and a kill budget of 300 s: at the measured 65 CPU-seconds that holds down to a
 # 0.25-CPU share, which is below the share a test gets on a loaded runner.
+# The store's `r26_a_flood_of_waiting_requests...` is one by its work, not its name: 100 000 `decide` and
+# `record_connection` calls are 11 s of CPU in a debug build (4 s and 7 s) and took 38.6 s on a busy host,
+# against the 20 s x 3 kill of the `mutants` profile. That profile inherits these overrides (its own kill
+# reaches only the tests no override names; a 1 s kill on it let these tests run on), so listing the test
+# here is what gives it the budget. The cost is the calls the test exists to make, so it is not cut.
 [[profile.default.overrides]]
-filter = "test(/a_hundred_thousand_|hostile_hg1[12]_a_hundred_thousand/)"
+filter = "test(/a_hundred_thousand_|hostile_hg1[12]_a_hundred_thousand|r26_a_flood_of_waiting_requests/)"
 test-group = "flood"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
-filter = "test(/a_hundred_thousand_|hostile_hg1[12]_a_hundred_thousand/)"
+filter = "test(/a_hundred_thousand_|hostile_hg1[12]_a_hundred_thousand|r26_a_flood_of_waiting_requests/)"
 test-group = "flood"
 slow-timeout = { period = "60s", terminate-after = 5 }
 

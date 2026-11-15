@@ -12,7 +12,6 @@ import {
   localPathProblem,
   MAX_REPOSITORIES,
   newRow,
-  refusedRow,
   rowProblems,
   sameRepositoryKey,
   startFolderProblem,
@@ -206,36 +205,6 @@ describe("startFolderProblem", () => {
   });
 });
 
-describe("refusedRow", () => {
-  it("finds the row a refusal names", () => {
-    expect(
-      refusedRow(
-        "repositories 1 (https://a/x) and 3 (https://b/x) both go into x; give one",
-      ),
-    ).toEqual({ row: 3, field: "directory" });
-    expect(
-      refusedRow(
-        "repositories 1 (https://a/x) and 2 (https://a/X) are the same repository, a/x; list it once",
-      ),
-    ).toEqual({ row: 2, field: "url" });
-    expect(
-      refusedRow("repository 2 (https://a/x): use an https:// URL"),
-    ).toEqual({ row: 2, field: "url" });
-    expect(
-      refusedRow(
-        "repository 4 (https://a/x): is the volume's own lost+found folder",
-      ),
-    ).toEqual({ row: 4, field: "directory" });
-    expect(
-      refusedRow("repository 1 (https://a/x): there is no identity 9"),
-    ).toEqual({ row: 1, field: "url" });
-  });
-  it("is null for anything else", () => {
-    expect(refusedRow("a workspace holds at most 100 repositories")).toBeNull();
-    expect(refusedRow("")).toBeNull();
-  });
-});
-
 const folderRow = (key: number, localPath: string, url = "") => ({
   ...newRow(key, url),
   source: "folder" as const,
@@ -325,17 +294,6 @@ describe("a checkout on this computer", () => {
     ]);
     expect(found.get(2)?.directory).toContain("also goes into api");
     expect(checkRows([folderRow(1, "")]).get(1)?.localPath).toBeDefined();
-  });
-
-  it("puts a refusal about the checkout on its folder field", () => {
-    expect(
-      refusedRow(
-        "repository 2 (the checkout /home/you/shop): it has no origin remote",
-      ),
-    ).toEqual({
-      row: 2,
-      field: "localPath",
-    });
   });
 });
 

@@ -77,6 +77,6 @@ pub use users::{
     SignInMethod, User, UserId, UserName, device_name,
 };
 pub use workspace_git::{
-    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
-    SwitchSource, WorkspaceGit,
+    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
+    SwitchChange, SwitchSource, WorkspaceGit,
 };

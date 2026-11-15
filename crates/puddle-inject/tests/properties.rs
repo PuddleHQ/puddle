@@ -12,8 +12,9 @@ mod support;
 use std::sync::OnceLock;
 
 use proptest::prelude::*;
-use puddle_inject::testing::World;
+use puddle_inject::testing::{OnlyListed, World};
 use puddle_proxy::InjectDecision;
+use puddle_store::RepoToggles;
 use support::{Ask as _, basic};
 
 /// Tokens that are each other's near misses: the names that are covered, case and encoding
@@ -100,23 +101,27 @@ fn worlds() -> &'static Worlds {
     static WORLDS: OnceLock<Worlds> = OnceLock::new();
     WORLDS.get_or_init(|| {
         let mut mine = Vec::new();
-        for (push_listed, pull_listed) in
-            [(true, false), (true, true), (false, false), (false, true)]
-        {
+        for only in [
+            OnlyListed::Push,
+            OnlyListed::Both,
+            OnlyListed::Neither,
+            OnlyListed::Pull,
+        ] {
+            let (push_listed, pull_listed) = (only.push(), only.pull());
             let w = World::new();
             w.identity("Alpha", "github.com", &["alpha"], false, ALPHA);
             w.identity("Beta", "github.com", &["beta"], false, BETA);
             w.identity("Rest", "github.com", &[], true, REST);
             w.identity("Contoso", "dev.azure.com", &["contoso"], false, CONTOSO);
             w.identity("Fabrikam", "dev.azure.com", &["fabrikam"], false, FABRIKAM);
-            w.list("github.com/acme/web", true, true);
-            w.switches(push_listed, pull_listed);
+            w.list("github.com/acme/web", RepoToggles::BOTH);
+            w.switches(only);
             mine.push((w, push_listed, pull_listed));
         }
         let theirs = World::new();
         theirs.identity("Alpha", "github.com", &["alpha"], false, OTHER_ALPHA);
         theirs.identity("Ado", "dev.azure.com", &["contoso"], false, OTHER_ADO);
-        theirs.switches(false, false);
+        theirs.switches(OnlyListed::Neither);
         Worlds { mine, theirs }
     })
 }

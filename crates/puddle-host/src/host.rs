@@ -33,7 +33,7 @@ use puddle_settings::resolve;
 use puddle_store::{
     AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
 };
-use puddle_types::{EventSink, Problems, WorkspaceId, WorkspaceStatus};
+use puddle_types::{Problems, WorkspaceId, WorkspaceStatus};
 use puddle_upstream::{Chain, Discovery, Watching};
 use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
@@ -239,20 +239,14 @@ struct AbortOnDrop(tokio::task::JoinHandle<()>);
 impl AbortOnDrop {
     /// Announces each new network epoch of `discovery` on `events`.
     fn forwarding(discovery: &Discovery, events: &Arc<EventHub>) -> Self {
-        Self(forward_network_changes(
-            discovery,
-            events.clone() as Arc<dyn EventSink>,
-        ))
+        Self(forward_network_changes(discovery, events.clone()))
     }
 }
 
 impl AbortOnDrop {
     /// Announces on `events` each time signing in to a company proxy begins to fail.
     fn forwarding_sign_in_failures(chain: &Chain, events: &Arc<EventHub>) -> Self {
-        Self(forward_proxy_sign_in_failures(
-            chain,
-            events.clone() as Arc<dyn EventSink>,
-        ))
+        Self(forward_proxy_sign_in_failures(chain, events.clone()))
     }
 }
 
@@ -357,7 +351,7 @@ impl<R: Runtime + Clone> Host<R> {
 
         // Store, settings and the event hub.
         let events = Arc::new(EventHub::default());
-        let problems = Arc::new(Problems::new(events.clone() as Arc<dyn EventSink>));
+        let problems = Arc::new(Problems::new(events.clone()));
         let clock = Arc::new(SystemClock);
         let State {
             store,
@@ -589,11 +583,13 @@ impl<R: Runtime + Clone> Host<R> {
                 self.save_quit_trims(&sandboxes);
                 self.workspaces.release_all().await;
                 self.step(Step::RoutesClosed);
-                if let Some(api) = self.api.lock().await.take() {
+                let api = self.api.lock().await.take();
+                if let Some(api) = api {
                     api.shutdown().await;
                 }
                 self.step(Step::ApiStopped);
-                if let Some(mut background) = self.background.lock().await.take() {
+                let background = self.background.lock().await.take();
+                if let Some(mut background) = background {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
                     background.front.close().await;
@@ -652,8 +648,7 @@ fn open_state(
 ) -> Result<State, HostError> {
     crate::data_folder::make_owner_only(paths)?;
     let store = Arc::new(
-        Store::open(&paths.store(), clock.clone(), Limits::default())?
-            .with_events(events.clone() as Arc<dyn EventSink>),
+        Store::open(&paths.store(), clock.clone(), Limits::default())?.with_events(events.clone()),
     );
     // Taken here, before the store reaches anything that serves requests, so no request handler
     // can take it after.
@@ -727,7 +722,7 @@ fn build_outbound(
     let ports = Ports::new(
         endpoints.clone(),
         Arc::new(StorePins::new(store.clone())),
-        events.clone() as Arc<dyn EventSink>,
+        events.clone(),
     );
     // Who `ssh -T` greets: read from the store, named once the repository reader exists.
     let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
@@ -1023,7 +1018,7 @@ fn workspace_parts<R: Runtime + Clone>(
         workspaces,
         lifecycle,
         kit: opened.kit,
-        events: events.clone() as Arc<dyn EventSink>,
+        events: events.clone(),
         clock: clock.clone(),
         settings: settings.clone(),
         store: store.clone(),
@@ -1081,7 +1076,7 @@ fn spawn_watchers<R: Runtime + Clone>(
         crate::space_watch::DriveOf(shared.config.paths.data().to_path_buf()),
         shared.config.free_space,
         shared.settings.clone(),
-        shared.events.clone() as Arc<dyn EventSink>,
+        shared.events.clone(),
     ));
     let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
     Watchers {

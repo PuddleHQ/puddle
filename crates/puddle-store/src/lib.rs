@@ -78,5 +78,5 @@ pub use users::{
 };
 pub use workspace_git::{
     GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
-    SwitchSource, WorkspaceGit,
+    SwitchSource, WorkspaceGit, is_bare_user,
 };

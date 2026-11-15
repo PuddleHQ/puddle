@@ -201,9 +201,44 @@ export function sshAddress(raw: string): { host: string; path: string } | null {
   return host && path ? { host: host.toLowerCase(), path } : null;
 }
 
+/** Hosts whose Clone button copies `https://<user>@host/...`; there the bare user name is
+ * dropped instead of refused. */
+const BARE_USER_HOSTS = [
+  "github.com",
+  "gitlab.com",
+  "bitbucket.org",
+  "dev.azure.com",
+  "visualstudio.com",
+];
+
+function takesBareUser(host: string): boolean {
+  const name = (host.split(":")[0] ?? "").toLowerCase();
+  return BARE_USER_HOSTS.some((h) => name === h || name.endsWith(`.${h}`));
+}
+
+/** `raw` trimmed, with the bare user name of a known host removed
+ * (`https://org@dev.azure.com/org/p/_git/r` becomes `https://dev.azure.com/org/p/_git/r`).
+ * A password, a token or a user name on another host is left in place for `repoUrlProblem`
+ * to refuse. */
+export function cleanRepoUrl(raw: string): string {
+  const url = raw.trim();
+  if (!/^https:\/\//i.test(url)) return url;
+  const rest = url.slice(8);
+  const end = rest.search(/[/?#]/);
+  const authority = end < 0 ? rest : rest.slice(0, end);
+  const tail = end < 0 ? "" : rest.slice(end);
+  const at = authority.lastIndexOf("@");
+  if (at < 0) return url;
+  const user = authority.slice(0, at);
+  const host = authority.slice(at + 1);
+  if (user === "" || user.includes(":") || user.includes("@")) return url;
+  if (!takesBareUser(host)) return url;
+  return `https://${host}${tail}`;
+}
+
 /** The reason a repository URL can't be cloned, or `null` when it can. */
 export function repoUrlProblem(raw: string): string | null {
-  const url = raw.trim();
+  const url = cleanRepoUrl(raw);
   if (url === "") return "Enter the repository's HTTPS URL.";
   if (/^ssh:\/\//i.test(url) || looksLikeScp(url)) return SSH_MESSAGE;
   if (/\s/.test(url)) return "The URL must not contain spaces.";

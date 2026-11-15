@@ -106,7 +106,7 @@ impl RepoRef {
     /// `DefaultCollection` segment first). A query or fragment is ignored.
     ///
     /// # Errors
-    /// [`StoreError::IdentityInvalid`] for another scheme, a user name or port in the address, or
+    /// [`StoreError::IdentityInvalid`] for another scheme, a user name (other than a bare one on GitHub, GitLab, Bitbucket or Azure DevOps) or port in the address, or
     /// a path that is not one of those shapes.
     pub fn from_https_url(url: &str) -> Result<Self, StoreError> {
         let bad = || StoreError::IdentityInvalid("not an HTTPS repository address".into());
@@ -118,6 +118,10 @@ impl RepoRef {
             .ok_or_else(bad)?;
         let rest = rest.split(['?', '#']).next().unwrap_or_default();
         let (host, path) = rest.split_once('/').ok_or_else(bad)?;
+        let host = match host.rsplit_once('@') {
+            Some((user, host)) if is_bare_user(user, host) => host,
+            _ => host,
+        };
         if host.contains(['@', ':']) {
             return Err(bad());
         }
@@ -152,6 +156,36 @@ impl RepoRef {
         };
         Self::new(&host, &owner, &repo)
     }
+}
+
+/// Hosts whose Clone button copies `https://<user>@host/...`.
+const BARE_USER_HOSTS: [&str; 5] = [
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "dev.azure.com",
+    "visualstudio.com",
+];
+
+/// Whether `user@host` (the authority of an `https://` address, `host` possibly with a port) is
+/// a bare user name, no password, on a host whose Clone button copies one: the user name may be
+/// dropped from the address. Any other user name, an empty one or one with a password is not.
+#[must_use]
+pub fn is_bare_user(user: &str, host: &str) -> bool {
+    if user.is_empty() || user.contains([':', '@']) {
+        return false;
+    }
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    BARE_USER_HOSTS.iter().any(|h| {
+        host == *h
+            || host
+                .strip_suffix(h)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
 }
 
 /// One segment of a typed clone address with its `%XX` escapes decoded, or `None` for a segment

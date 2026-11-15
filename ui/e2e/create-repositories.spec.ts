@@ -159,6 +159,50 @@ test.describe("the list of repositories", () => {
     ]);
   });
 
+  test("an Azure DevOps address with the organisation as user name is accepted and stored without it", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await addrOf(page, 1).fill(
+      "https://acme@dev.azure.com/acme/shop/_git/shop-api",
+    );
+    await dialog.getByLabel("Name").fill("shop");
+    await expect(rowOf(page, 1).getByRole("alert")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(card(page, "shop")).toBeVisible();
+    expect(listed(await workspace(request, backend, "shop"))).toEqual([
+      {
+        url: "https://dev.azure.com/acme/shop/_git/shop-api",
+        directory: "shop-api",
+      },
+    ]);
+  });
+
+  test("a password or token in the address is still refused, and the message names no secret", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    const refusal =
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.";
+    for (const url of [
+      "https://acme:s3cret-pat@dev.azure.com/acme/shop/_git/shop-api",
+      "https://token@example.com/acme/shop.git",
+    ]) {
+      await addrOf(page, 1).fill(url);
+      await dialog.getByLabel("Name").fill("shop");
+      await dialog.getByRole("button", { name: "Create workspace" }).click();
+      await expect(rowOf(page, 1).getByRole("alert")).toHaveText(refusal);
+      await expect(dialog).toBeVisible();
+      await expect(dialog).not.toContainText("s3cret-pat");
+    }
+  });
+
   test("an empty list makes an ordinary workspace, and the card says so", async ({
     page,
     request,

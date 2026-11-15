@@ -27,6 +27,7 @@
     type WorkspaceStore,
   } from "#lib/stores/workspaces.svelte.ts";
   import {
+    cleanRepoUrl,
     nameProblem,
     parseMemoryGib,
     suggestName,
@@ -288,7 +289,7 @@
         const directory = row.directory.trim();
         const local = row.source === "folder" ? cleanPath(row.localPath) : "";
         return {
-          url: row.url.trim(),
+          url: cleanRepoUrl(row.url),
           ...(local === "" ? {} : { local_path: local }),
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),

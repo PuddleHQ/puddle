@@ -19,6 +19,9 @@ use crate::{Layout, WorkspaceError};
 /// under it, as arguments).
 pub const CHECKOUTS_SH: &str = include_str!("../guest/checkouts.sh");
 
+/// The listing's exit status when the image has no git (`guest/checkouts.sh`).
+const GIT_MISSING_EXIT: i32 = 4;
+
 /// How long the listing may take.
 pub const CHECKOUTS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -107,6 +110,11 @@ pub(crate) async fn run<S: Sandbox>(
         workspace: id.to_string(),
         reason,
     };
+    if out.status.code == GIT_MISSING_EXIT {
+        return Err(WorkspaceError::GitMissing {
+            workspace: id.to_string(),
+        });
+    }
     if !out.status.success() {
         let stdout = out.stdout_text();
         let first_error = stdout

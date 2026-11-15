@@ -94,7 +94,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for TokenGate<S> {
         }
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if matches!(polled, Poll::Ready(Ok(()))) && self.termination.is_some() {
+        if let Poll::Ready(Ok(())) = polled
+            && self.termination.is_some()
+        {
             let chunk = buf.filled().get(before..).unwrap_or_default().to_vec();
             self.look(&chunk);
             if self.refused {

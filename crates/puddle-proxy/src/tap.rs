@@ -107,7 +107,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for RequestTap<S> {
     ) -> Poll<io::Result<()>> {
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if !self.full && matches!(polled, Poll::Ready(Ok(()))) {
+        if !self.full
+            && let Poll::Ready(Ok(())) = polled
+        {
             let new = buf.filled().get(before..).unwrap_or_default().to_vec();
             self.keep(&new);
         }

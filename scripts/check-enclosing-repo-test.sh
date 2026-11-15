@@ -13,9 +13,9 @@ fail() {
     echo "check-enclosing-repo-test: $*" >&2
     exit 1
 }
-# Under /var/tmp, not the caller's TMPDIR: a gate run's TMPDIR is already a long chk.* dir, and the paths below it
-# would trip the socket-length limit this test then checks the wrong thing about.
-root=$(mktemp -d /var/tmp/chk-enclosing.XXXXXX)
+# Under /var/tmp, not the caller's TMPDIR: a gate run's own TMPDIR is a long chk.* dir, and the limit cases below build
+# paths from the root up to the 68-byte limit.
+root=$(mktemp -d /var/tmp/chk-encl.XXXXXX)
 trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/repo/scripts" "$root/outer/.git" "$root/outer/.scratch/target/task"
 cp "$here/check.sh" "$here/gate-sched.sh" "$root/repo/scripts/"

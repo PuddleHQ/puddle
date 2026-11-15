@@ -3,16 +3,23 @@
 
 use serde_json::{Value, json};
 
+use puddle_api::ApiConfig;
 use puddle_store::Clock;
 use puddle_types::{EgressRequest, Host, WorkspaceId};
 
 use std::sync::Arc;
 
-use crate::common::{START_MS, start, start_with_company_signals};
+use crate::common::{START_MS, start, start_with, start_with_company_signals};
 
 #[tokio::test]
 async fn health_names_the_versions() {
-    let api = start().await;
+    // No app is served: with the embedded one the build id depends on whether `ui/build` exists
+    // when the test runs, which the host check's `ui` step decides while the tests are running.
+    let api = start_with(ApiConfig {
+        ui: None,
+        ..ApiConfig::default()
+    })
+    .await;
     let reply = api.get("/api/health").await;
     assert_eq!(reply.status, 200);
     assert_eq!(

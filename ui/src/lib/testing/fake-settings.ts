@@ -57,6 +57,13 @@ const noUi = (): S["UiPrefs"] => ({
   start_at_login: null,
 });
 
+/** The limits a fresh fake reports: 16 logical cores, so a default of 4. */
+export const FAKE_EFFECTIVE_LIMITS = {
+  max_cpus: 16,
+  host_cpus: 16,
+  default_cpus: 4,
+} as const;
+
 export class FakeSettings {
   layer = noLayer();
   /** Fields the stored document has that Puddle doesn't know. */
@@ -68,6 +75,9 @@ export class FakeSettings {
   };
   ui: S["UiPrefs"] = noUi();
   tools: S["GlobalTools"] = { mise: null };
+  limits: S["Limits"] = { max_cpus: null };
+  /** The computer's logical cores, which the maximum defaults to. */
+  hostCpus = 16;
   /** The user's own app icon, as the PNG text the API would send; `null` until one is stored. */
   customIcon: string | null = null;
   consent: S["Consent"] = { state: "not_asked" };
@@ -103,6 +113,8 @@ export class FakeSettings {
     this.vscode = fresh.vscode;
     this.ui = fresh.ui;
     this.tools = fresh.tools;
+    this.limits = fresh.limits;
+    this.hostCpus = fresh.hostCpus;
     this.customIcon = null;
     this.consent = fresh.consent;
     this.neverDecrypt = [];
@@ -150,6 +162,12 @@ export class FakeSettings {
       vscode_server: this.vscode,
       ui: this.ui,
       tools: this.tools,
+      limits: this.limits,
+      effective_limits: {
+        max_cpus: this.limits.max_cpus ?? this.hostCpus,
+        host_cpus: this.hostCpus,
+        default_cpus: Math.max(1, Math.min(4, Math.floor(this.hostCpus / 2))),
+      },
       unknown_fields: this.unknown,
       effective: {
         memory: {
@@ -157,7 +175,8 @@ export class FakeSettings {
           source: l.memory === null ? "default" : "global",
         },
         cpus: {
-          value: l.cpus ?? 1,
+          value:
+            l.cpus ?? Math.max(1, Math.min(4, Math.floor(this.hostCpus / 2))),
           source: l.cpus === null ? "default" : "global",
         },
         local_toggles: {
@@ -324,6 +343,7 @@ export class FakeSettings {
     };
     this.ui = { ...noUi(), ...b.ui };
     this.tools = { mise: null, ...b.tools };
+    this.limits = { max_cpus: null, ...b.limits };
     return this.reply(200, this.view());
   };
 

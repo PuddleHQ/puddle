@@ -4,8 +4,13 @@
 // focus), never on key order or time.
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
-import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
+import { cpuLabel, CPUS_MIN } from "../src/lib/settings/cpus.ts";
+import {
+  cpuLimits,
+  watchCsp,
+  expectNoAxeViolations,
+  staysEmpty,
+} from "./support";
 
 const TERMS = "https://code.visualstudio.com/license/server";
 
@@ -267,11 +272,18 @@ test.describe("default CPUs", () => {
     request,
   }) => {
     await openSettings(page, backend);
+    const limits = await cpuLimits(request, backend.token);
+    // The arrow key below needs one count above the default; a one-core computer has none.
+    test.skip(limits.max_cpus <= limits.default_cpus, "a one-core computer");
     const cpus = page.getByLabel("Default CPUs");
-    await expect(cpus).toHaveValue("1");
-    await expect(cpus.locator("option")).toHaveCount(CPUS_MAX - CPUS_MIN + 1);
+    await expect(cpus).toHaveValue(String(limits.default_cpus));
+    await expect(cpus.locator("option")).toHaveCount(
+      limits.max_cpus - CPUS_MIN + 1,
+    );
     await expect(cpus.locator("option").first()).toHaveText("1 CPU");
-    await expect(cpus.locator("option").last()).toHaveText("32 CPUs");
+    await expect(cpus.locator("option").last()).toHaveText(
+      cpuLabel(limits.max_cpus),
+    );
 
     await page.getByLabel("Default memory").focus();
     await page.keyboard.press("Tab");
@@ -285,7 +297,8 @@ test.describe("default CPUs", () => {
       )
       .toEqual({ width: "2px", style: "solid" });
     await page.keyboard.press("ArrowDown");
-    await expect(cpus).toHaveValue("2");
+    const next = limits.default_cpus + 1;
+    await expect(cpus).toHaveValue(String(next));
     await expect(
       page.getByText(/Default CPUs apply when a workspace next starts/),
     ).toBeVisible();
@@ -295,9 +308,11 @@ test.describe("default CPUs", () => {
     ).toBeNull();
 
     await pressSave(page);
-    expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(2);
+    expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(
+      next,
+    );
     await page.reload();
-    await expect(page.getByLabel("Default CPUs")).toHaveValue("2");
+    await expect(page.getByLabel("Default CPUs")).toHaveValue(String(next));
   });
 
   test("says a running workspace keeps its count, in a control that is big enough and stays inside its card at phone width", async ({

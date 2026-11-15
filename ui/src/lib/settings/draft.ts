@@ -5,6 +5,7 @@ import type { LocalCategory } from "#lib/decision/local-labels.ts";
 import {
   type GlobalTools,
   type GlobalView,
+  type Limits,
   type Layer,
   type Ui,
   type VsCodeServer,
@@ -18,6 +19,7 @@ export interface Draft {
   server: Partial<VsCodeServer>;
   ui: Partial<Ui>;
   tools: Partial<GlobalTools>;
+  limits: Partial<Limits>;
 }
 
 export const EMPTY_DRAFT: Draft = {
@@ -26,6 +28,7 @@ export const EMPTY_DRAFT: Draft = {
   server: {},
   ui: {},
   tools: {},
+  limits: {},
 };
 
 /** Settings that act only when a workspace next starts, with the name the notes use. */
@@ -88,13 +91,21 @@ export const setTools = <K extends keyof GlobalTools>(
   stored: GlobalTools[K],
 ): Draft => ({ ...draft, tools: put(draft.tools, key, value, stored) });
 
+export const setLimits = <K extends keyof Limits>(
+  draft: Draft,
+  key: K,
+  value: Limits[K],
+  stored: Limits[K],
+): Draft => ({ ...draft, limits: put(draft.limits, key, value, stored) });
+
 export function isDirty(draft: Draft): boolean {
   return (
     Object.keys(draft.layer).length > 0 ||
     Object.keys(draft.toggles).length > 0 ||
     Object.keys(draft.server).length > 0 ||
     Object.keys(draft.ui).length > 0 ||
-    Object.keys(draft.tools).length > 0
+    Object.keys(draft.tools).length > 0 ||
+    Object.keys(draft.limits).length > 0
   );
 }
 
@@ -116,6 +127,7 @@ export function savePatch(view: GlobalView, draft: Draft) {
     server: draft.server,
     ui: draft.ui,
     tools: draft.tools,
+    limits: draft.limits,
   };
 }
 

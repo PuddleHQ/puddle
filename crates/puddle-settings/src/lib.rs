@@ -25,7 +25,7 @@
 //! version changes it. [`resolve`] is the only place that applies this rule.
 //!
 //! ```
-//! use puddle_settings::{GlobalSettings, WorkspaceSettings, Source, resolve};
+//! use puddle_settings::{GlobalSettings, WorkspaceSettings, Source, host_cpu_count, resolve, resolve_on_host};
 //! use puddle_types::MemoryMib;
 //!
 //! let mut global = GlobalSettings::default();
@@ -75,10 +75,13 @@ pub use disk_space::{DiskSpaceLimits, FreeGb};
 pub use document::{Loaded, SettingsError};
 pub use first_run::FirstRun;
 pub use global::{
-    GLOBAL_SCHEMA_VERSION, GlobalSettings, MICROSOFT_TERMS_VERSION, Tools, UiPrefs, VsCodeServer,
+    GLOBAL_SCHEMA_VERSION, GlobalSettings, Limits, MICROSOFT_TERMS_VERSION, Tools, UiPrefs,
+    VsCodeServer,
 };
 pub use layer::{LocalToggles, WorkspaceLayer};
-pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
+pub use resolve::{
+    Effective, EffectiveToggles, Resolved, Source, host_cpu_count, resolve, resolve_on_host,
+};
 pub use values::{
     AppIconChoice, ClipboardRead, CloseBehaviour, DensityChoice, DiskWarningPercent, HexColour,
     PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,

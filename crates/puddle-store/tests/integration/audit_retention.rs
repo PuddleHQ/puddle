@@ -316,3 +316,37 @@ fn an_older_file_that_was_not_incremental_is_rebuilt_once_when_it_has_space_to_g
     assert_eq!(auto_vacuum(&path), 2);
     assert!(mentions(&store, "old-kept.example") > 0);
 }
+
+#[test]
+fn the_sweeper_looks_again_exactly_an_hour_after_its_last_look() {
+    const HOUR: u64 = 60 * 60 * 1000;
+    let (clock, store) = fixture();
+    store.set_audit_retention_days(1).unwrap();
+    ask(&store, "a", "old.example");
+    // Just under a day old: this look finds nothing and starts the hour.
+    clock.set(T0 + DAY - 1);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+    clock.set(T0 + DAY - 1 + HOUR - 1);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+    assert!(mentions(&store, "old.example") > 0);
+    clock.set(T0 + DAY - 1 + HOUR);
+    assert!(store.sweep().unwrap().audit_records_pruned > 0);
+}
+
+#[test]
+fn a_log_exactly_at_the_warning_size_is_not_over_it() {
+    let bytes = {
+        let (_, store) = fixture();
+        ask(&store, "a", "x.example");
+        store.audit_bytes().unwrap()
+    };
+    for (warn, over) in [(bytes, false), (bytes - 1, true)] {
+        let (_, store) = fixture_with(Limits {
+            audit_warn_bytes: warn,
+            ..Limits::default()
+        });
+        ask(&store, "a", "x.example");
+        assert_eq!(store.audit_bytes().unwrap(), bytes);
+        assert_eq!(store.sweep().unwrap().audit_over_warn_size, over, "{warn}");
+    }
+}

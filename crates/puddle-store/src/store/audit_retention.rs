@@ -28,7 +28,7 @@ const PRUNE_EVERY_MS: u64 = 60 * 60 * 1000;
 const CHUNK: i64 = 5000;
 
 /// The database file is shrunk once at least this many bytes of it are free (64 MiB) ...
-const SHRINK_MIN_FREE_BYTES: u64 = 64 * 1024 * 1024;
+const SHRINK_MIN_FREE_BYTES: u64 = 67_108_864;
 
 /// ... or a quarter of the file is free.
 const SHRINK_MIN_FREE_PERCENT: u64 = 25;
@@ -275,3 +275,6 @@ impl Store {
         Ok(before.saturating_sub(after))
     }
 }
+
+#[cfg(test)]
+mod tests;

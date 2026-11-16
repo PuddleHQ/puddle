@@ -218,8 +218,8 @@ pub fn flushes_between(
             if id == CREATE && !ended {
                 if file.contains(end) && started {
                     ended = true;
-                } else if file.contains(start) {
-                    started = true;
+                } else {
+                    started |= file.contains(start);
                 }
             }
         }

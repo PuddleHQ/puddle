@@ -160,4 +160,27 @@ mod session {
             .unwrap_err();
         assert!(matches!(e, HarnessError::Io { .. }), "{e}");
     }
+
+    #[test]
+    fn a_failing_tracerpt_is_a_trace_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools {
+            logman: script(dir.path(), "logman", "true"),
+            tracerpt: script(dir.path(), "tracerpt", "echo no events >&2; exit 1"),
+        };
+        let e = FlushTrace::start_with(tools, dir.path(), "s6")
+            .unwrap()
+            .stop()
+            .unwrap_err();
+        assert!(matches!(e, HarnessError::Trace { .. }), "{e}");
+        assert!(e.to_string().contains("no events"), "{e}");
+    }
+
+    /// The real tool names: on a machine without `logman` the session does not start.
+    #[test]
+    fn the_default_tools_are_the_windows_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = FlushTrace::start(dir.path(), "s7").unwrap_err();
+        assert!(matches!(e, HarnessError::Io { .. }), "{e}");
+    }
 }

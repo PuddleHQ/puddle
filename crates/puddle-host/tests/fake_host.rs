@@ -215,7 +215,7 @@ struct Guest {
     tools_report_garbled: AtomicBool,
     /// The root `mise.toml` as `puddle-agent mise-tools` sees it: its tools and how often it
     /// changed (the hash is made from the count; 0 is no file).
-    mise_file: Mutex<(std::collections::BTreeMap<String, String>, u64)>,
+    mise_root: Mutex<(std::collections::BTreeMap<String, String>, u64)>,
     /// What every `mise-tools` call answers on standard error with exit code 1, instead of its
     /// answer.
     mise_tools_failure: Mutex<Option<&'static str>>,
@@ -460,7 +460,7 @@ impl Guest {
         if let Some(said) = *self.mise_tools_failure.lock().unwrap() {
             return ExecOutput::new(1, "", said);
         }
-        let mut file = self.mise_file.lock().unwrap();
+        let mut file = self.mise_root.lock().unwrap();
         let hash = |revision: u64| {
             if revision == 0 {
                 "absent".to_owned()

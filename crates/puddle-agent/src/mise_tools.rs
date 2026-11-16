@@ -219,7 +219,7 @@ pub fn run(mise: &impl Mise, request: &Request) -> Outcome {
                 root,
                 &["config", "set", "-f", &file_arg, &key, version.as_str()],
             )?;
-            let _ = writeln!(out, "hash\t{}", root_hash(root)?);
+            let _ = writeln!(out, "hash\t{}", root_hash(root)?); // writing to a String cannot fail
         }
         Operation::Remove(name, expected) => {
             guard(root, expected)?;
@@ -228,18 +228,18 @@ pub fn run(mise: &impl Mise, request: &Request) -> Outcome {
                 root,
                 &["unuse", "--no-prune", "-p", &file_arg, name.as_str()],
             )?;
-            let _ = writeln!(out, "hash\t{}", root_hash(root)?);
+            let _ = writeln!(out, "hash\t{}", root_hash(root)?); // writing to a String cannot fail
         }
         Operation::Registry => {
             let json = mise.run(root, &["registry", "--json"])?;
             for (name, description) in parse_registry(&json)? {
-                let _ = writeln!(out, "reg\t{name}\t{description}");
+                let _ = writeln!(out, "reg\t{name}\t{description}"); // writing to a String cannot fail
             }
         }
         Operation::Versions(name) => {
             let listed = mise.run(root, &["ls-remote", name.as_str()])?;
             for version in newest(&listed) {
-                let _ = writeln!(out, "ver\t{version}");
+                let _ = writeln!(out, "ver\t{version}"); // writing to a String cannot fail
             }
         }
     }

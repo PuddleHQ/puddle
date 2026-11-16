@@ -288,15 +288,9 @@ impl GitInjector {
             }
         };
         let value = authorization(&path.credential_host, credential.secret.expose());
-        let header = match authorization_header(value, &identity.label, &named) {
-            Ok(header) => header,
-            Err(refusal) => return refusal,
-        };
-        let injection = Injection::new(
-            format!("identity:{}:{}", identity.id, binding.host),
-            vec![header],
-        );
-        InjectDecision::Inject(injection.on_unauthorized(self.rejected(identity, source, path)))
+        let rejected = self.rejected(identity, source, path);
+        let binding_id = format!("identity:{}:{}", identity.id, binding.host);
+        credentialed(value, binding_id, &identity.label, &named, rejected)
     }
 
     /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its secret (not signed in, tool missing) goes
@@ -420,22 +414,27 @@ impl Injector for GitInjector {
     }
 }
 
-/// The `Authorization` header for `value`, or the refusal that says the identity's credential
-/// cannot be sent as one.
-fn authorization_header(
+/// The decision that sends `value` as the `Authorization` header, or the refusal that says the
+/// identity's credential cannot be sent as one.
+fn credentialed(
     value: SecretValue,
+    binding_id: String,
     label: &str,
     named: &str,
-) -> Result<InjectedHeader, InjectDecision> {
-    InjectedHeader::new("authorization", value).map_err(|_| {
-        refuse(
+    rejected: Unauthorized,
+) -> InjectDecision {
+    match InjectedHeader::new("authorization", value) {
+        Ok(header) => InjectDecision::Inject(
+            Injection::new(binding_id, vec![header]).on_unauthorized(rejected),
+        ),
+        Err(_) => refuse(
             502,
             ReasonCode::CredentialUnavailable,
             format!(
                 "the credential of identity {label} for {named} is not a usable header value; replace it in Puddle"
             ),
-        )
-    })
+        ),
+    }
 }
 
 fn refuse(status: u16, code: ReasonCode, message: impl Into<String>) -> InjectDecision {

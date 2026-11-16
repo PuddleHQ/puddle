@@ -16,10 +16,12 @@ use tokio_rustls::TlsAcceptor;
 
 use super::sha256;
 
-pub(crate) const REPO: &str = "puddle/hello";
+/// The repository the lab registry serves.
+pub const REPO: &str = "puddle/hello";
 
 /// A one-file image: (manifest, blobs by digest). The layer is an uncompressed tar.
-pub(crate) fn image() -> (Vec<u8>, BTreeMap<String, Vec<u8>>) {
+#[must_use]
+pub fn image() -> (Vec<u8>, BTreeMap<String, Vec<u8>>) {
     let mut layer = tar::Builder::new(Vec::new());
     let content = b"hello from the lab registry\n";
     let mut header = tar::Header::new_gnu();
@@ -62,13 +64,17 @@ pub(crate) fn image() -> (Vec<u8>, BTreeMap<String, Vec<u8>>) {
 
 /// What the lab registry saw.
 #[derive(Default)]
-pub(crate) struct Seen {
-    pub(crate) handshakes_failed: AtomicUsize,
-    pub(crate) requests: Mutex<Vec<String>>,
+pub struct Seen {
+    /// TLS handshakes that failed.
+    pub handshakes_failed: AtomicUsize,
+    /// The request lines served, in order.
+    pub requests: Mutex<Vec<String>>,
 }
 
 impl Seen {
-    pub(crate) fn requests(&self) -> Vec<String> {
+    /// A copy of the request lines served so far.
+    #[must_use]
+    pub fn requests(&self) -> Vec<String> {
         self.requests
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -77,11 +83,7 @@ impl Seen {
 }
 
 /// Serves the OCI distribution API for [`image`] over TLS, one request per connection.
-pub(crate) async fn registry(
-    listener: TcpListener,
-    tls: Arc<rustls::ServerConfig>,
-    seen: Arc<Seen>,
-) {
+pub async fn registry(listener: TcpListener, tls: Arc<rustls::ServerConfig>, seen: Arc<Seen>) {
     let acceptor = TlsAcceptor::from(tls);
     let (manifest, blobs) = image();
     let manifest_digest = sha256(&manifest);

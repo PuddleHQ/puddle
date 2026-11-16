@@ -8,7 +8,6 @@
 
 #[expect(dead_code, reason = "each test binary uses a different subset")]
 mod hostile_heap;
-mod hostile_support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -16,8 +15,8 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use hostile_heap::Counting;
-use hostile_support::{Guest, rig_logged};
 use puddle_proxy::ProxyConfig;
+use puddle_proxy_test_support::hostile::{Guest, rig_logged};
 use puddle_types::{ConnectionEvent, ConnectionLog, ConnectionReason};
 
 #[global_allocator]

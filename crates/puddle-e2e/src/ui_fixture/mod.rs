@@ -24,13 +24,13 @@ use std::time::Duration;
 
 use puddle_api::wire::{CredentialSource, DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DevCertService,
-    DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
-    FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found,
-    FoundList, Launcher, LearnedService, Listing, MemorySettings, NetworkHealthService, Operation,
-    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, Repository,
-    RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
-    WorkspaceRecord, check_repositories, entry_id_from_text,
+    ApiConfig, ApiServer, ApiToken, BackupService, ConnectionInfo, CredentialService,
+    DevCertService, DoctorService, EventHub, FakeBackup, FakeCredentials, FakeDevCert, FakeDoctor,
+    FakeLauncher, FakeLearned, FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals,
+    FakeWorkspaces, Found, FoundList, Launcher, LearnedService, Listing, MemorySettings,
+    NetworkHealthService, Operation, PortsService, ProxySignInService, RemoteNote, RepoFindings,
+    RepoService, Repository, RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck,
+    StartFolder, Unsaved, WorkspaceRecord, check_repositories, entry_id_from_text,
 };
 use puddle_api::{NoNames, PublicHost, Remote, RemoteServing};
 use puddle_netpolicy::StaticSignals;
@@ -198,6 +198,7 @@ struct State {
     secrets: Arc<puddle_secrets::MemoryStore>,
     repos: Arc<repos::HeldRepos>,
     doctor: Arc<FakeDoctor>,
+    backup: Arc<FakeBackup>,
     dev_cert: Arc<FakeDevCert>,
     /// The background problems the API lists; kept here so they outlive a rebind of the API.
     problems: Arc<Problems>,
@@ -271,6 +272,7 @@ impl Fixture {
         let credentials = Arc::new(FakeCredentials::new());
         let repos = Arc::new(repos::HeldRepos::new(credentials.clone()));
         let doctor = Arc::new(FakeDoctor::new());
+        let backup = Arc::new(FakeBackup::new());
         let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
         let account_secrets = if scenario.multi_user {
@@ -290,6 +292,7 @@ impl Fixture {
             secrets: Arc::new(puddle_secrets::MemoryStore::new()),
             repos,
             doctor,
+            backup,
             dev_cert,
             problems,
             ports: Arc::new(FakePorts::new()),
@@ -322,6 +325,7 @@ impl Fixture {
             .with_secret_store(state.secrets.clone())
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
+            .with_backup(state.backup.clone() as Arc<dyn BackupService>)
             .with_dev_cert(state.dev_cert.clone() as Arc<dyn DevCertService>)
             .with_problems(state.problems.clone())
             .with_ports(state.ports.clone() as Arc<dyn PortsService>)
@@ -724,6 +728,7 @@ impl State {
             Step::HoldRepos => self.repos.hold(),
             Step::ReleaseRepos => self.repos.release(),
             Step::Doctor(report) => self.doctor.set((**report).clone()),
+            Step::BackupFails { reason } => self.backup.fail_with(reason.as_deref()),
             Step::DevCertificate {
                 state,
                 trust_answer,

@@ -24,7 +24,8 @@ use super::{LabResolver, REGISTRY, lab_pki};
 
 /// Where the registry will listen, taken before the proxy starts: a company proxy may let a
 /// tunnel reach only this port.
-pub(crate) fn registry_socket() -> (std::net::TcpListener, SocketAddr) {
+#[must_use]
+pub fn registry_socket() -> (std::net::TcpListener, SocketAddr) {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let addr = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -32,13 +33,19 @@ pub(crate) fn registry_socket() -> (std::net::TcpListener, SocketAddr) {
 }
 
 /// What one test runs against: the pull runtime, the registry and what each saw.
-pub(crate) struct Pull {
-    pub(crate) runtime: MsbRuntime,
-    pub(crate) image: ImageRef,
-    pub(crate) registry_port: u16,
-    pub(crate) seen: Arc<Seen>,
-    pub(crate) store: Arc<Store>,
-    pub(crate) token: String,
+pub struct Pull {
+    /// The runtime that pulls.
+    pub runtime: MsbRuntime,
+    /// The image to pull.
+    pub image: ImageRef,
+    /// The port the registry listens on.
+    pub registry_port: u16,
+    /// What the registry saw.
+    pub seen: Arc<Seen>,
+    /// The store the pull proxy records into.
+    pub store: Arc<Store>,
+    /// The token the pull client presents.
+    pub token: String,
     _home: tempfile::TempDir,
     _route: PullRoute,
 }
@@ -47,7 +54,7 @@ impl Pull {
     /// A pull proxy whose company route is `hop` (answered with `auth`), in front of a registry
     /// on `listener`. `roots` maps the registry's own root (PEM) to the roots the pull client
     /// trusts.
-    pub(crate) async fn start(
+    pub async fn start(
         hop: Hop,
         auth: Arc<dyn ProxyAuth>,
         listener: std::net::TcpListener,

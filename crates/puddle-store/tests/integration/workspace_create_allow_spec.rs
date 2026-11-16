@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A workspace create allows the host of its repositories (storage ST-44a), through the store's
+//! A workspace create allows the host of its repositories (rules R-58), through the store's
 //! public API.
 #![expect(
     clippy::unwrap_used,

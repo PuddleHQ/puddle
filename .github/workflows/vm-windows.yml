@@ -252,6 +252,14 @@ jobs:
           ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      # The browser editor's server, mounted read-only into the guests that the host tests start. Its executable
+      # bits must survive the runner's file system for the editor test (vm_host_runs_the_editor_server_*).
+      - name: code-server (pinned release; download, verify)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          ci/fetch-code-server.sh "$(cygpath -u "$RUNNER_TEMP")/code-server"
+          echo "PUDDLE_CODE_SERVER_DIR=$(cygpath -w "$RUNNER_TEMP")\\code-server" >> "$GITHUB_ENV"
       # A hung download would hold the job until its job limit (the same stall cost vm-linux 39 minutes once). Each download gets a step
       # limit (the archive 8 minutes, the agent 3; the slowest seen on this runner is under 2), then one more try that fails the job when it also fails.
       - name: the test archive from the build job

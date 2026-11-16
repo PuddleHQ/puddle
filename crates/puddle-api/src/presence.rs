@@ -6,7 +6,7 @@
 //! desktop app is told once.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use puddle_store::{Clock, Store, UserId};
 use puddle_types::{Event, EventSink, PendingSummary};
@@ -164,10 +164,6 @@ pub(crate) fn spawn_picker(
             };
             match received {
                 Ok(Event::PendingOpened { request }) => {
-                    // A hub that is gone has nobody left to tell.
-                    let Some(events) = events.upgrade() else {
-                        return;
-                    };
                     notify_about(&events, &store, &presence, clock.as_ref(), request).await;
                 }
                 Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -178,7 +174,7 @@ pub(crate) fn spawn_picker(
 }
 
 async fn notify_about(
-    events: &EventHub,
+    events: &Weak<EventHub>,
     store: &Arc<Store>,
     presence: &Presence,
     clock: &dyn Clock,
@@ -193,10 +189,13 @@ async fn notify_about(
         return;
     };
     let picked = presence.pick(owner, clock.now_ms());
-    events.emit(Event::PendingNotify {
-        request,
-        clients: picked.clients,
-        desktop: picked.desktop,
+    // A hub that is gone has nobody left to tell.
+    let _ = events.upgrade().map(|hub| {
+        hub.emit(Event::PendingNotify {
+            request,
+            clients: picked.clients,
+            desktop: picked.desktop,
+        });
     });
 }
 

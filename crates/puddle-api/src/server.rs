@@ -23,7 +23,7 @@ use puddle_secrets::SecretStore;
 use puddle_store::{AccountSecrets, Clock, Store};
 use puddle_types::Problems;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
@@ -643,6 +643,13 @@ async fn warn_while_unclaimed(sign_in: &Arc<SignIn>) {
     }
 }
 
+/// What runs beside the routes: the picker of who is told about a new request, and the system
+/// managed rules, which follow the stored setup from the first request on (rules spec R-41).
+async fn start_background(state: &AppState) {
+    crate::presence::start(state);
+    crate::system_managed::refresh(state).await;
+}
+
 impl ApiServer {
     /// Binds `127.0.0.1:<config.port>` and builds the routes.
     ///
@@ -680,10 +687,7 @@ impl ApiServer {
             None => None,
         };
         let (stop, shutdown) = watch::channel(false);
-        let settings_lock = services
-            .workspaces
-            .settings_lock()
-            .unwrap_or_else(|| Arc::new(Mutex::new(())));
+        let settings_lock = services.workspaces.settings_lock().unwrap_or_default();
         let sign_in = sign_in_for(&config, &services).await?;
         let admin = admin_for(&config, sign_in.as_ref(), &services);
         let state = AppState {
@@ -714,9 +718,7 @@ impl ApiServer {
             ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
-        crate::presence::start(&state);
-        // System managed follows the stored setup from the first request on (rules spec R-41).
-        crate::system_managed::refresh(&state).await;
+        start_background(&state).await;
         let editor = editor_for(&config, &state);
         let ui = config
             .ui

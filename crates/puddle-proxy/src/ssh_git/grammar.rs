@@ -190,6 +190,11 @@ fn plain(segments: &[&str], host: &GitHost) -> Result<Repository, Refused> {
         return Err(Refused::BadPath);
     }
     let (last, owners) = segments.split_last().ok_or(Refused::BadPath)?;
+    // A group that ends in `.git` would read as a repository followed by an endpoint
+    // (`acme/web.git/info/refs`), which two readers of the path may take differently.
+    if owners.iter().any(|group| ends_in_git(group)) {
+        return Err(Refused::BadPath);
+    }
     let repo = last.strip_suffix(".git").unwrap_or(last);
     if !name_ok(repo, false) || repo.strip_suffix(".git").is_some() {
         return Err(Refused::BadPath);
@@ -220,6 +225,10 @@ fn azure(segments: &[&str], host: &GitHost) -> Result<Repository, Refused> {
             path: format!("/{project}/_git/{repo}"),
         })
     }
+}
+
+fn ends_in_git(segment: &str) -> bool {
+    segment.to_ascii_lowercase().ends_with(".git")
 }
 
 /// Whether `name` is one path segment made of the bytes a repository, owner, organisation or

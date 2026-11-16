@@ -50,7 +50,7 @@ fn invalid_values_are_rejected_through_the_flattened_map() {
     assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"memory":1}"#).is_err());
     assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"memory":"8192"}"#).is_err());
     assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"cpus":0}"#).is_err());
-    assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"cpus":33}"#).is_err());
+    assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"cpus":256}"#).is_err());
     assert!(
         serde_json::from_str::<WorkspaceLayer>(r#"{"local_toggles":{"private":"yes"}}"#).is_err()
     );

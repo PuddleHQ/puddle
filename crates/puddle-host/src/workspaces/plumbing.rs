@@ -10,7 +10,7 @@ use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
 use puddle_compute::{ImageConfig, Runtime};
 use puddle_ports::Ports;
-use puddle_settings::{WorkspaceSettings, resolve};
+use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
 use puddle_store::{Actor, AllUsers, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceStatus,
@@ -834,19 +834,39 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(resolve(&global, None::<&WorkspaceSettings>).memory.value)
     }
 
-    /// The vCPUs for `name`: its override over the global default over one. The default when the
-    /// settings cannot be read (a workspace is not worth a failed start over a CPU count).
+    /// The vCPUs for `name`: its override over the global default over the built-in default,
+    /// never above the global maximum. The default for this computer when the settings cannot be read (a workspace is not worth a failed start over a CPU count).
     pub(super) fn cpus(&self, name: &WorkspaceId) -> CpuCount {
         let settings = self.inner.settings.as_ref();
         let read = || {
             let global = crate::settings_read::global(settings)?;
             let own = crate::settings_read::workspace(settings, name)?;
-            Ok::<_, SettingsReadError>(resolve(&global, Some(&own)).cpus.value)
+            Ok::<_, SettingsReadError>(
+                resolve_on_host(&global, Some(&own), host_cpu_count())
+                    .cpus
+                    .value,
+            )
         };
         read().unwrap_or_else(|reason| {
             tracing::warn!(workspace = %name, %reason, "the workspace boots with the default CPU count: the settings cannot be read");
-            CpuCount::DEFAULT
+            CpuCount::default_for_host(host_cpu_count())
         })
+    }
+
+    /// Writes `cpus` as the workspace's own setting, keeping anything else its document holds.
+    /// Under the settings routes' lock, like every other write of that file.
+    pub(super) async fn store_own_cpus(
+        &self,
+        name: &WorkspaceId,
+        cpus: CpuCount,
+    ) -> Result<(), String> {
+        let _lock = self.inner.settings_lock.lock().await;
+        let repo = self.inner.settings.as_ref();
+        let mut own = crate::settings_read::workspace(repo, name).map_err(|e| e.to_string())?;
+        own.overrides.cpus = Some(cpus);
+        let document = own.to_document().map_err(|e| e.to_string())?;
+        repo.save_workspace(name, document)
+            .map_err(|e| e.to_string())
     }
 
     /// The workspace's image and what the runtime says about it, pulled if it is not local yet.

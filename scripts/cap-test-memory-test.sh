@@ -24,4 +24,11 @@ out=$(PUDDLE_TEST_MEMORY_KB=65536 "$cap" sh -c 'ulimit -S -d unlimited && ulimit
 # reach about 450 MiB and aborted CI shards at 512 MiB.
 out=$(env -u PUDDLE_TEST_MEMORY_KB "$cap" sh -c 'ulimit -S -d') || fail "the default limit must be readable"
 [ "$out" -ge 1048576 ] || fail "the default limit must be at least 1 GiB for thread-heavy tests: $out"
+# The tests' scratch directory: PUDDLE_TEST_TMPDIR replaces TMPDIR for the command, and a missing one is ignored.
+out=$(TMPDIR=/elsewhere PUDDLE_TEST_TMPDIR="$here" "$cap" printenv TMPDIR) || fail "a command with PUDDLE_TEST_TMPDIR must run"
+[ "$out" = "$here" ] || fail "PUDDLE_TEST_TMPDIR must become TMPDIR: $out"
+out=$(TMPDIR=/elsewhere PUDDLE_TEST_TMPDIR="$here/gone" "$cap" printenv TMPDIR) || fail "a missing PUDDLE_TEST_TMPDIR must not fail the command"
+[ "$out" = /elsewhere ] || fail "a missing PUDDLE_TEST_TMPDIR must leave TMPDIR alone: $out"
+out=$(TMPDIR=/elsewhere "$cap" printenv TMPDIR) || fail "a command with no PUDDLE_TEST_TMPDIR must run"
+[ "$out" = /elsewhere ] || fail "no PUDDLE_TEST_TMPDIR must leave TMPDIR alone: $out"
 echo "cap-test-memory-test: ok"

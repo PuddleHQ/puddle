@@ -57,6 +57,13 @@ const noUi = (): S["UiPrefs"] => ({
   start_at_login: null,
 });
 
+/** The limits a fresh fake reports: 16 logical cores, so a default of 4. */
+export const FAKE_EFFECTIVE_LIMITS = {
+  max_cpus: 16,
+  host_cpus: 16,
+  default_cpus: 4,
+} as const;
+
 export class FakeSettings {
   layer = noLayer();
   /** Fields the stored document has that Puddle doesn't know. */
@@ -68,6 +75,9 @@ export class FakeSettings {
   };
   ui: S["UiPrefs"] = noUi();
   tools: S["GlobalTools"] = { mise: null };
+  limits: S["Limits"] = { max_cpus: null };
+  /** The computer's logical cores, which the maximum defaults to. */
+  hostCpus = 16;
   /** The user's own app icon, as the PNG text the API would send; `null` until one is stored. */
   customIcon: string | null = null;
   consent: S["Consent"] = { state: "not_asked" };
@@ -81,6 +91,20 @@ export class FakeSettings {
   proxyPasswords = new Map<string, string>();
   /** How long and how many learned hosts are passed through. */
   learnedLimits: S["LearnedLimits"] = { ttl_secs: 43_200, cap: 1024 };
+  /** The activity log's size and days, answered on `/api/audit/retention`. */
+  auditSize: S["AuditSize"] = {
+    records: 1200,
+    bytes: 480_000,
+    oldest_ts: 1_700_000_000_000,
+    records_last_day: 40,
+    bytes_last_day: 16_000,
+    records_last_week: 280,
+    bytes_last_week: 112_000,
+    retention_days: 90,
+    warn_bytes: 2_147_483_648,
+    file_bytes: 4_194_304,
+    free_bytes: 65_536,
+  };
   calls: string[] = [];
   bodies: unknown[] = [];
   down = false;
@@ -103,10 +127,13 @@ export class FakeSettings {
     this.vscode = fresh.vscode;
     this.ui = fresh.ui;
     this.tools = fresh.tools;
+    this.limits = fresh.limits;
+    this.hostCpus = fresh.hostCpus;
     this.customIcon = null;
     this.consent = fresh.consent;
     this.neverDecrypt = [];
     this.learnedLimits = { ttl_secs: 43_200, cap: 1024 };
+    this.auditSize = fresh.auditSize;
     this.proxySignIns = [];
     this.proxyPasswords = new Map();
     this.health = null;
@@ -150,6 +177,12 @@ export class FakeSettings {
       vscode_server: this.vscode,
       ui: this.ui,
       tools: this.tools,
+      limits: this.limits,
+      effective_limits: {
+        max_cpus: this.limits.max_cpus ?? this.hostCpus,
+        host_cpus: this.hostCpus,
+        default_cpus: Math.max(1, Math.min(4, Math.floor(this.hostCpus / 2))),
+      },
       unknown_fields: this.unknown,
       effective: {
         memory: {
@@ -157,7 +190,8 @@ export class FakeSettings {
           source: l.memory === null ? "default" : "global",
         },
         cpus: {
-          value: l.cpus ?? 1,
+          value:
+            l.cpus ?? Math.max(1, Math.min(4, Math.floor(this.hostCpus / 2))),
           source: l.cpus === null ? "default" : "global",
         },
         local_toggles: {
@@ -209,6 +243,8 @@ export class FakeSettings {
         return this.reply(200, { never_decrypt: this.neverDecrypt });
       case "/api/interception/learned-limits":
         return this.reply(200, this.learnedLimits);
+      case "/api/audit/retention":
+        return this.reply(200, this.auditSize);
       case "/api/proxy-sign-ins":
         return this.reply(200, { sign_ins: this.proxySignIns });
       case "/api/network-health":
@@ -248,6 +284,11 @@ export class FakeSettings {
     if (path === "/api/interception/learned-limits") {
       this.learnedLimits = init.body as S["LearnedLimits"];
       return this.reply(200, this.learnedLimits);
+    }
+    if (path === "/api/audit/retention") {
+      const { days } = init.body as S["AuditRetentionRequest"];
+      this.auditSize = { ...this.auditSize, retention_days: days };
+      return this.reply(200, this.auditSize);
     }
     if (path === "/api/proxy-sign-ins") {
       const b = init.body as S["ProxySignInRequest"];
@@ -324,6 +365,7 @@ export class FakeSettings {
     };
     this.ui = { ...noUi(), ...b.ui };
     this.tools = { mise: null, ...b.tools };
+    this.limits = { max_cpus: null, ...b.limits };
     return this.reply(200, this.view());
   };
 

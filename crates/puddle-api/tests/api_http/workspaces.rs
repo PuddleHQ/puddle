@@ -197,6 +197,31 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
 }
 
 #[tokio::test]
+async fn create_takes_a_cpu_count_up_to_the_global_maximum() {
+    let api = start().await;
+    let put = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"limits": {"max_cpus": 6}})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    let body = |cpus: u32| json!({"name": "c", "repositories": [{"url": REPO}], "cpus": cpus});
+    let reply = api.send("POST", "/api/workspaces", Some(&body(7))).await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert!(
+        reply.body.contains("cpus: 7 is more than"),
+        "{}",
+        reply.body
+    );
+    let reply = api.send("POST", "/api/workspaces", Some(&body(6))).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    api.workspaces.idle().await;
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn create_takes_an_image_and_memory() {
     let api = start().await;
     let reply = api
@@ -254,6 +279,37 @@ async fn create_with_no_repositories_is_an_ordinary_workspace() {
         (&git["identities"], &git["repos"]),
         (&json!([]), &json!([]))
     );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn create_takes_an_ssh_address_of_a_git_host_as_its_https_address() {
+    let api = start().await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "ssh", "repositories": [
+                {"url": "git@github.com:Acme/Web.git"},
+                {"url": "ssh://git@ssh.dev.azure.com:443/v3/contoso/Platform/Api"},
+            ]})),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let urls: Vec<String> = reply.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["url"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            "https://github.com/Acme/Web.git",
+            "https://dev.azure.com/contoso/Platform/_git/Api"
+        ]
+    );
+    api.workspaces.idle().await;
     api.running.shutdown().await;
 }
 
@@ -387,16 +443,16 @@ async fn create_with_two_identities_that_cover_the_same_place_is_a_409_and_makes
 }
 
 /// Create bodies the API refuses with 422, each with a part of the message it gives.
-fn refused_bodies() -> [(Value, &'static str); 20] {
+fn refused_bodies() -> [(Value, &'static str); 21] {
     let long = "w".repeat(61);
     [
         (
-            json!({"name": "a", "repositories": [{"url": "git@github.com:acme/api.git"}]}),
-            "ssh remotes are not supported yet",
+            json!({"name": "a", "repositories": [{"url": "git@git.example.com:acme/api.git"}]}),
+            "reads SSH addresses of GitHub",
         ),
         (
-            json!({"name": "a", "repositories": [{"url": "ssh://git@github.com/acme/api.git"}]}),
-            "ssh remotes are not supported yet",
+            json!({"name": "a", "repositories": [{"url": "ssh://git@git.example.com/acme/api.git"}]}),
+            "reads SSH addresses of GitHub",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "http://github.com/a/b"}]}),
@@ -433,6 +489,10 @@ fn refused_bodies() -> [(Value, &'static str); 20] {
         (
             json!({"name": "a", "repositories": [{"url": REPO}], "memory_mib": 10}),
             "memory",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}], "cpus": 0}),
+            "cpu count",
         ),
         (
             json!({"name": "a", "repositories": [{"url": REPO}], "image": "no spaces allowed"}),
@@ -512,6 +572,94 @@ async fn create_refuses_what_cannot_work_and_says_why() {
     assert_eq!(
         api.get("/api/workspaces").await.json(),
         json!({"workspaces": []})
+    );
+    api.running.shutdown().await;
+}
+
+/// What a refused create says about where the refusal belongs: the `field` and the `row`.
+#[tokio::test]
+async fn create_refusals_name_the_input_and_the_entry_they_are_about() {
+    let api = start().await;
+    let long = "w".repeat(61);
+    let many: Vec<Value> = (0..101)
+        .map(|n| json!({"url": format!("https://github.com/acme/r{n}")}))
+        .collect();
+    let cases = [
+        (
+            json!({"name": "", "repositories": [{"url": REPO}]}),
+            Some("name"),
+            None,
+        ),
+        (json!({"name": long}), Some("name"), None),
+        (
+            json!({"name": "a", "memory_mib": 10}),
+            Some("memory_mib"),
+            None,
+        ),
+        (
+            json!({"name": "a", "image": "no spaces allowed"}),
+            Some("image"),
+            None,
+        ),
+        (
+            json!({"name": "a", "start_folder": "../etc"}),
+            Some("start_folder"),
+            None,
+        ),
+        (
+            json!({"name": "a", "repo_url": REPO}),
+            Some("repo_url"),
+            None,
+        ),
+        (
+            json!({"name": "a", "repositories": many}),
+            Some("repo_url"),
+            None,
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "http://github.com/a/b"}]}),
+            Some("url"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://gitlab.com/b/c", "directory": "lost+found"}]}),
+            Some("directory"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://gitlab.com/b/api"}]}),
+            Some("directory"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://github.com/ACME/api", "directory": "two"}]}),
+            Some("url"),
+            Some(2),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO, "identity_id": 77}]}),
+            Some("url"),
+            Some(1),
+        ),
+        (
+            json!({"name": "a", "repositories": [{"local_path": "/no/such/checkout"}]}),
+            Some("local_path"),
+            Some(1),
+        ),
+        // A body the JSON reader refuses is about no one input.
+        (json!({"name": "a", "extra": 1}), None, None),
+    ];
+    for (body, field, row) in cases {
+        let reply = api.send("POST", "/api/workspaces", Some(&body)).await;
+        assert_eq!(reply.status, 422, "{}", reply.body);
+        let sent = reply.json();
+        assert_eq!(sent.get("field").and_then(Value::as_str), field, "{sent}");
+        assert_eq!(sent.get("row").and_then(Value::as_u64), row, "{sent}");
+    }
+    let missing = api.get("/api/workspaces/nope").await.json();
+    assert!(
+        missing["field"].is_null() && missing["row"].is_null(),
+        "{missing}"
     );
     api.running.shutdown().await;
 }
@@ -1344,6 +1492,8 @@ async fn a_rename_refuses_bad_names_and_bodies_and_unknown_workspaces() {
         assert_eq!(reply.status, 422, "{body}: {}", reply.body);
     }
     assert_eq!(api.get("/api/workspaces/web").await.json()["name"], "web");
+    let empty = rename(&api, "web", &json!({"name": " "})).await.json();
+    assert_eq!(empty["field"], "name", "{empty}");
     assert_eq!(
         rename(&api, "ghost", &json!({"name": "x"})).await.status,
         404

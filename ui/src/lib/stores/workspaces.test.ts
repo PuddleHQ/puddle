@@ -6,7 +6,7 @@ import {
   cleanCheck,
   workspace,
 } from "#lib/testing/fake-workspaces.ts";
-import { WorkspaceStore, fieldOf, type Settled } from "./workspaces.svelte.ts";
+import { WorkspaceStore, type Settled } from "./workspaces.svelte.ts";
 
 let api: FakeWorkspaces;
 let source: FakeSource;
@@ -322,17 +322,77 @@ describe("actions", () => {
     });
   });
 
-  it("puts a refusal on the field it is about", async () => {
+  it.each([
+    ["name", "name"],
+    ["repo_url", "repo_url"],
+    ["image", "image"],
+    ["memory_mib", "memory_mib"],
+    ["cpus", "cpus"],
+    ["start_folder", "start_folder"],
+  ] as const)(
+    "puts a refusal the service puts at %s on that field",
+    async (sent, field) => {
+      api.refuse.set("POST /api/workspaces", {
+        status: 422,
+        message: "words that name no field at all",
+        field: sent,
+      });
+      const result = await store.create({ name: "x", repositories: [] });
+      expect(result).toEqual({
+        ok: false,
+        message: "words that name no field at all",
+        field,
+      });
+    },
+  );
+
+  it.each([
+    ["local_path", "localPath"],
+    ["url", "url"],
+    ["directory", "directory"],
+  ] as const)(
+    "puts a refusal at the %s of a row at that row",
+    async (sent, input) => {
+      api.refuse.set("POST /api/workspaces", {
+        status: 422,
+        message: "nothing here says which row",
+        field: sent,
+        row: 3,
+      });
+      const result = await store.create({ name: "x", repositories: [] });
+      expect(result).toEqual({
+        ok: false,
+        message: "nothing here says which row",
+        field: "repo_url",
+        at: { row: 3, input },
+      });
+    },
+  );
+
+  it("does not read the words: a refusal that names nothing goes to the form", async () => {
     api.refuse.set("POST /api/workspaces", {
       status: 422,
-      message:
-        "SSH remotes are not supported yet; use the repository's HTTPS URL instead",
+      message: "the start folder, the image and the name are all in this text",
     });
-    const result = await store.create({
-      name: "x",
-      repositories: [{ url: "git@x:y" }],
+    expect(await store.create({ name: "x", repositories: [] })).toEqual({
+      ok: false,
+      message: "the start folder, the image and the name are all in this text",
+      field: "form",
     });
-    expect(result).toMatchObject({ ok: false, field: "repo_url" });
+  });
+
+  it("ignores a row that comes without an input of a row", async () => {
+    api.refuse.set("POST /api/workspaces", {
+      status: 422,
+      message: "x",
+      field: "image",
+      row: 2,
+    });
+    expect(await store.create({ name: "x", repositories: [] })).toEqual({
+      ok: false,
+      message: "x",
+      field: "image",
+    });
   });
 
   it("says the service is down", async () => {
@@ -632,21 +692,5 @@ describe("listening", () => {
     const reads = api.calls.length;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(api.calls.length).toBe(reads);
-  });
-});
-
-describe("fieldOf", () => {
-  it.each([
-    ["use an https:// URL for the repository", "repo_url"],
-    ["SSH remotes are not supported yet", "repo_url"],
-    ["bad image reference", "image"],
-    ["memory must be at least 256 MiB", "memory_mib"],
-    ["this name can't be a workspace: x", "name"],
-    ["a workspace named x already exists", "name"],
-    ["the start folder can't be inside .puddle", "start_folder"],
-    ["repositories 1 (a) and 2 (b) both go into api", "repo_url"],
-    ["something else", "form"],
-  ])("%j goes to %s", (message, field) => {
-    expect(fieldOf(message)).toBe(field);
   });
 });

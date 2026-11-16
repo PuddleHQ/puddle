@@ -152,6 +152,10 @@ export class FakeWorkspaces {
   /** Unknown fields per workspace document. */
   unknown: Record<string, string[]> = {};
   globalMemory = 8192;
+  /** The computer's logical cores, the most CPUs a workspace may have here. */
+  hostCpus = 16;
+  /** What a workspace without a count gets. */
+  defaultCpus = 4;
   check: DeleteCheck | null = null;
   calls: string[] = [];
   bodies: unknown[] = [];
@@ -188,10 +192,19 @@ export class FakeWorkspaces {
     detail: string;
     workspace: string | null;
   }[] = [];
-  /** Refuse the next call to a path (`"POST /api/workspaces"`) with this status and text. */
+  /**
+   * Refuse the next call to a path (`"POST /api/workspaces"`) with this status and text, and the
+   * `field` and `row` the service would add.
+   */
   refuse = new Map<
     string,
-    { status: number; message: string; error?: string }
+    {
+      status: number;
+      message: string;
+      error?: string;
+      field?: components["schemas"]["ErrorField"];
+      row?: number;
+    }
   >();
   attachReply: components["schemas"]["AttachResponse"] = {
     opened: true,
@@ -204,6 +217,10 @@ export class FakeWorkspaces {
     data?: unknown,
     message = "refused",
     code?: string,
+    place: Pick<components["schemas"]["ApiErrorBody"], "field" | "row"> = {
+      field: null,
+      row: null,
+    },
   ) {
     const response = { status, ok: status < 400 } as Response;
     return status < 400
@@ -218,6 +235,7 @@ export class FakeWorkspaces {
                   ? "not_found"
                   : "invalid"),
             message,
+            ...place,
           },
           response,
         };
@@ -227,7 +245,10 @@ export class FakeWorkspaces {
     const r = this.refuse.get(key);
     if (!r) return null;
     this.refuse.delete(key);
-    return this.reply(r.status, undefined, r.message, r.error);
+    return this.reply(r.status, undefined, r.message, r.error, {
+      field: r.field ?? null,
+      row: r.row ?? null,
+    });
   }
 
   private find(id: unknown) {
@@ -255,7 +276,10 @@ export class FakeWorkspaces {
         o.memory === null
           ? resolved(this.globalMemory, "global")
           : resolved(o.memory, "workspace"),
-      cpus: resolved(o.cpus ?? 1, o.cpus === null ? "default" : "workspace"),
+      cpus: resolved(
+        o.cpus ?? this.defaultCpus,
+        o.cpus === null ? "default" : "workspace",
+      ),
       reconnection_grace: resolved(300, "default"),
       wildcards_reach_local: resolved(false, "default"),
       zoom_hotkeys: resolved(true, "default"),
@@ -333,6 +357,12 @@ export class FakeWorkspaces {
           unknown_fields: [],
           vscode_server: {},
           tools: { mise: this.globalMise },
+          limits: { max_cpus: null },
+          effective_limits: {
+            max_cpus: this.hostCpus,
+            host_cpus: this.hostCpus,
+            default_cpus: this.defaultCpus,
+          },
         });
       case "/api/settings/workspaces/{workspace}": {
         const key = String(id);

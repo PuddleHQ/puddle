@@ -65,6 +65,7 @@ mod openapi;
 mod ports;
 mod proxy_sign_in;
 mod remote;
+mod remote_editor;
 mod repos;
 mod routes;
 mod server;
@@ -89,7 +90,7 @@ pub use credentials::{
 };
 pub use dev_cert::{DevCertService, FakeDevCert, NoDevCert};
 pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
-pub use error::{ApiErrorBody, ErrorCode};
+pub use error::{ApiErrorBody, ErrorCode, ErrorField};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
 pub use front::{NameResolver, NoNames, SystemResolver};

@@ -167,6 +167,10 @@ describe("bodyFrom", () => {
       vscode_server: v.vscode_server,
       ui: v.ui,
       tools: v.tools,
+      limits: v.limits,
+    });
+    expect(bodyFrom(v, { limits: { max_cpus: 6 } }).limits).toEqual({
+      max_cpus: 6,
     });
   });
 });

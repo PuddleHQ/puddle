@@ -12,7 +12,6 @@ import {
   localPathProblem,
   MAX_REPOSITORIES,
   newRow,
-  refusedRow,
   rowProblems,
   sameRepositoryKey,
   startFolderProblem,
@@ -81,8 +80,14 @@ describe("sameRepositoryKey", () => {
     expect(key).toBe("github.com/acme/api");
     expect(sameRepositoryKey("https://github.com/acme/api/")).toBe(key);
   });
+  it("reads an SSH address of a Git host as its HTTPS address", () => {
+    expect(sameRepositoryKey("git@github.com:A/B.git")).toBe(
+      sameRepositoryKey("https://github.com/a/b"),
+    );
+  });
+
   it("has none for what is not an https address", () => {
-    expect(sameRepositoryKey("git@github.com:a/b")).toBeNull();
+    expect(sameRepositoryKey("git@git.example.com:a/b")).toBeNull();
     expect(sameRepositoryKey("http://github.com/a/b")).toBeNull();
     expect(sameRepositoryKey("nonsense")).toBeNull();
   });
@@ -131,9 +136,18 @@ describe("checkRows", () => {
     ).toBe(0);
   });
 
+  it("takes an SSH address as the same repository as its HTTPS address", () => {
+    const found = checkRows([
+      row(1, "git@github.com:a/api.git", "one"),
+      row(2, "https://github.com/a/api", "two"),
+    ]);
+    expect(found.get(1)?.url).toBeUndefined();
+    expect(found.get(2)?.url).toMatch(/already|same/i);
+  });
+
   it("names a bad address and a bad typed directory, and both clash and bad together", () => {
     const found = checkRows([
-      row(1, "git@github.com:a/api.git", "-x"),
+      row(1, "git@git.example.com:a/api.git", "-x"),
       row(2, ""),
     ]);
     expect(found.get(1)?.url).toMatch(/SSH/);
@@ -188,36 +202,6 @@ describe("startFolderProblem", () => {
   it("allows exactly 255 bytes", () => {
     expect(startFolderProblem("a".repeat(255))).toBeNull();
     expect(startFolderProblem("a".repeat(256))).toMatch(/255 bytes/);
-  });
-});
-
-describe("refusedRow", () => {
-  it("finds the row a refusal names", () => {
-    expect(
-      refusedRow(
-        "repositories 1 (https://a/x) and 3 (https://b/x) both go into x; give one",
-      ),
-    ).toEqual({ row: 3, field: "directory" });
-    expect(
-      refusedRow(
-        "repositories 1 (https://a/x) and 2 (https://a/X) are the same repository, a/x; list it once",
-      ),
-    ).toEqual({ row: 2, field: "url" });
-    expect(
-      refusedRow("repository 2 (https://a/x): use an https:// URL"),
-    ).toEqual({ row: 2, field: "url" });
-    expect(
-      refusedRow(
-        "repository 4 (https://a/x): is the volume's own lost+found folder",
-      ),
-    ).toEqual({ row: 4, field: "directory" });
-    expect(
-      refusedRow("repository 1 (https://a/x): there is no identity 9"),
-    ).toEqual({ row: 1, field: "url" });
-  });
-  it("is null for anything else", () => {
-    expect(refusedRow("a workspace holds at most 100 repositories")).toBeNull();
-    expect(refusedRow("")).toBeNull();
   });
 });
 
@@ -310,17 +294,6 @@ describe("a checkout on this computer", () => {
     ]);
     expect(found.get(2)?.directory).toContain("also goes into api");
     expect(checkRows([folderRow(1, "")]).get(1)?.localPath).toBeDefined();
-  });
-
-  it("puts a refusal about the checkout on its folder field", () => {
-    expect(
-      refusedRow(
-        "repository 2 (the checkout /home/you/shop): it has no origin remote",
-      ),
-    ).toEqual({
-      row: 2,
-      field: "localPath",
-    });
   });
 });
 

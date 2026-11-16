@@ -23,7 +23,7 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true, minimum = 256, maximum = 1_048_576)]
     pub memory: Option<u32>,
-    /// Guest vCPUs (1 to 32); applies at the next start.
+    /// Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
     #[serde(default)]
     #[schema(required = true, minimum = 1, maximum = 32)]
     pub cpus: Option<u8>,
@@ -854,6 +854,10 @@ pub struct GlobalSettingsView {
     pub ui: UiPrefs,
     /// The tool switches (global only).
     pub tools: GlobalTools,
+    /// The limits the user set (global only).
+    pub limits: Limits,
+    /// What the limits come to on this computer.
+    pub effective_limits: EffectiveLimits,
     /// The effective values for a workspace with no overrides.
     pub effective: EffectiveSettings,
     /// Fields in the stored document this Puddle doesn't know (written by a newer one); they
@@ -877,6 +881,41 @@ pub struct GlobalSettingsRequest {
     /// The tool switches.
     #[serde(default)]
     pub tools: GlobalTools,
+    /// The limits; omitted or `null` falls back to the computer's cores.
+    #[serde(default)]
+    pub limits: Limits,
+}
+
+/// Upper bounds on what a workspace may be given (global only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// The most vCPUs a workspace may have. `null` is the computer's logical cores.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub max_cpus: Option<u8>,
+}
+
+/// The limits as they apply on this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EffectiveLimits {
+    /// The most vCPUs a workspace may have: the set limit, else the logical cores.
+    pub max_cpus: u32,
+    /// The computer's logical cores.
+    pub host_cpus: u32,
+    /// The vCPUs a new workspace gets unless it or the global default says otherwise: four, or
+    /// half the cores on a small computer.
+    pub default_cpus: u32,
+}
+
+impl EffectiveLimits {
+    pub(crate) fn new(global: &settings::GlobalSettings, host_cores: u32) -> Self {
+        Self {
+            max_cpus: u32::from(global.limits.max_cpus_on(host_cores).get()),
+            host_cpus: host_cores,
+            default_cpus: u32::from(CpuCount::default_for_host(host_cores).get()),
+        }
+    }
 }
 
 impl GlobalSettingsRequest {
@@ -891,8 +930,13 @@ impl GlobalSettingsRequest {
                 },
             ui,
             tools: GlobalTools { mise },
+            limits: Limits { max_cpus },
         } = self;
         global.tools.mise = mise;
+        global.limits.max_cpus = max_cpus
+            .map(|c| CpuCount::new(u32::from(c)))
+            .transpose()
+            .map_err(ApiError::invalid)?;
         workspace_defaults.apply_to(&mut global.workspace_defaults)?;
         global.vscode_server.server = server.map(Into::into);
         global.vscode_server.telemetry = telemetry;
@@ -904,6 +948,7 @@ impl GlobalSettingsRequest {
 impl GlobalSettingsView {
     pub(crate) fn new(loaded: &settings::Loaded<settings::GlobalSettings>) -> Self {
         let global = &loaded.settings;
+        let host_cores = settings::host_cpu_count();
         Self {
             workspace_defaults: (&global.workspace_defaults).into(),
             vscode_server: VsCodeServer {
@@ -915,7 +960,11 @@ impl GlobalSettingsView {
             tools: GlobalTools {
                 mise: global.tools.mise,
             },
-            effective: settings::resolve(global, None).into(),
+            limits: Limits {
+                max_cpus: global.limits.max_cpus.map(CpuCount::get),
+            },
+            effective_limits: EffectiveLimits::new(global, host_cores),
+            effective: settings::resolve_on_host(global, None, host_cores).into(),
             unknown_fields: loaded.unknown_fields.clone(),
         }
     }

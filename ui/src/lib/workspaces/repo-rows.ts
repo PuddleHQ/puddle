@@ -2,7 +2,7 @@
 // The create form's list of repositories without the DOM: which directory an address gets, which
 // rows clash, how a start folder is checked, and which row a refusal of the service is about.
 // The service checks all of this again; these checks only tell the user sooner, in the same words.
-import { repoUrlProblem } from "./model.ts";
+import { looksLikeSsh, repoUrlProblem, sshAsHttps } from "./model.ts";
 
 /** The most repositories one workspace lists (the service refuses more). */
 export const MAX_REPOSITORIES = 100;
@@ -133,8 +133,14 @@ export function freeDirectory(dir: string, taken: readonly string[]): string {
 
 /** An address reduced to how the repository table spells it: host and path, no `.git`, any case. */
 export function sameRepositoryKey(url: string): string | null {
+  let address = url.trim();
+  if (looksLikeSsh(address)) {
+    const https = sshAsHttps(address);
+    if ("message" in https) return null;
+    address = https.url;
+  }
   try {
-    const parsed = new URL(url.trim());
+    const parsed = new URL(address);
     if (parsed.protocol !== "https:") return null;
     const path = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/i, "");
     return `${parsed.host}${path}`.toLowerCase();
@@ -253,32 +259,5 @@ export function startFolderProblem(text: string): string | null {
   const first = parts[0];
   if (first === ".puddle" || first === "lost+found")
     return `${first} belongs to Puddle and the disk; pick another folder.`;
-  return null;
-}
-
-/** Which row of the list a refusal is about, from the service's words; `null` when none. */
-export function refusedRow(
-  message: string,
-): { row: number; field: "localPath" | "url" | "directory" } | null {
-  // "repositories 1 (a) and 2 (b) both go into api; ..." and "... are the same repository, ..."
-  const pair = /^repositories (\d+) \(.*?\) and (\d+) \(/.exec(message);
-  if (pair) {
-    return {
-      row: Number(pair[2]),
-      field: /both go into/.test(message) ? "directory" : "url",
-    };
-  }
-  const single = /^repository (\d+) \(/.exec(message);
-  if (single && message.startsWith(`repository ${single[1]} (the checkout `))
-    return { row: Number(single[1]), field: "localPath" };
-  if (single) {
-    // The service's reasons for a directory it refuses (`CheckoutDir::new`).
-    const field = /lost\+found|ASCII letters|100 characters|`\.` or `-`/.test(
-      message,
-    )
-      ? "directory"
-      : "url";
-    return { row: Number(single[1]), field };
-  }
   return null;
 }

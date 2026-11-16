@@ -3901,7 +3901,9 @@ async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_
         .request(
             "PUT",
             "/api/settings",
-            Some(&json!({"workspace_defaults": {"cpus": 2}}).to_string()),
+            Some(
+                &json!({"workspace_defaults": {"cpus": 2}, "limits": {"max_cpus": 8}}).to_string(),
+            ),
             true,
         )
         .await;
@@ -3928,6 +3930,90 @@ async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_
     api.post("/api/workspaces/acme/start", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(online_cpus(&rig, "acme").await, "0-3", "its own override");
+
+    // Lowering the global maximum under a stored count lowers the next start.
+    let lowered = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(
+                &json!({"workspace_defaults": {"cpus": 2}, "limits": {"max_cpus": 2}}).to_string(),
+            ),
+            true,
+        )
+        .await;
+    assert_eq!(lowered.status, 200, "{}", lowered.body);
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        online_cpus(&rig, "acme").await,
+        "0-1",
+        "capped by the maximum"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_created_with_a_cpu_count_stores_it_as_its_own_and_boots_with_it() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let raised = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"limits": {"max_cpus": 8}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(raised.status, 200, "{}", raised.body);
+    let body = json!({"name": "acme", "repositories": [{"url": REPO}], "cpus": 3}).to_string();
+    let reply = api.post("/api/workspaces", &body).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        online_cpus(&rig, "acme").await,
+        "0-2",
+        "the count it was made with"
+    );
+    let own = api.get("/api/settings/workspaces/acme").await.json();
+    assert_eq!(own["overrides"]["cpus"], 3, "{own}");
+    assert_eq!(
+        own["effective"]["cpus"],
+        json!({"value": 3, "source": "workspace"})
+    );
+
+    // Over the maximum: refused before anything exists.
+    let too_many = json!({"name": "big", "repositories": [{"url": REPO}], "cpus": 9}).to_string();
+    let reply = api.post("/api/workspaces", &too_many).await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert!(reply.body.contains("cpus"), "{}", reply.body);
+    assert_eq!(api.get("/api/workspaces/big").await.status, 404);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_whose_list_cannot_be_saved_leaves_no_cpu_setting_behind() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let _events = api.events().await;
+    make_unwritable(&list_path(&rig));
+    let body = json!({"name": "acme", "repositories": [{"url": REPO}], "cpus": 2}).to_string();
+    let reply = api.post("/api/workspaces", &body).await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    assert!(!file.exists(), "{} was left behind", file.display());
+    assert_eq!(api.get("/api/workspaces/acme").await.status, 404);
     host.shutdown().await;
 }
 

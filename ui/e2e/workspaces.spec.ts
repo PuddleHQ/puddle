@@ -5,10 +5,11 @@
 // Operations finish at once unless a test holds them (`hold_workspaces`) to look at the busy
 // state; the page clock is the fixture's.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
-import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
+import { cpuLabel, CPUS_MIN } from "../src/lib/settings/cpus.ts";
 import { type Backend, expect, test } from "./fixture";
 import {
   axeStops,
+  cpuLimits,
   RECONNECT_WAIT_MS,
   watchCsp,
   expectNoAxeViolations,
@@ -26,6 +27,7 @@ interface Ws {
   busy: string | null;
   direct_ssh: boolean;
   memory_mib: number;
+  repositories: { url: string }[];
 }
 
 async function workspaceList(
@@ -258,7 +260,7 @@ test.describe("creating", () => {
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/other.git");
     await expect(dialog.getByLabel("Name")).toHaveValue("my-name");
-    await dialog.getByText("Start folder, image and memory").click();
+    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Memory (GiB)").fill("3");
     await dialog.getByLabel("Image").fill("ghcr.io/acme/dev:1");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
@@ -269,7 +271,63 @@ test.describe("creating", () => {
     expect(made?.memory_mib).toBe(3072);
   });
 
-  test("checks the fields before asking; an SSH address gets the message", async ({
+  test("the CPU slider starts on the default, moves with the keyboard from 1 to the computer's maximum, and the count goes to the API", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    const limits = await cpuLimits(request, backend.token);
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await dialog.getByLabel("Name").fill("slider-ws");
+    await dialog
+      .getByLabel("Git repository (HTTPS)")
+      .fill("https://example.org/slider.git");
+    await dialog.getByText("Start folder, image, memory and CPUs").click();
+    const slider = dialog.getByLabel("CPUs", { exact: true });
+    await expect(slider).toHaveAttribute("max", String(limits.max_cpus));
+    await expect(slider).toHaveValue(String(limits.default_cpus));
+    await slider.focus();
+    await page.keyboard.press("End");
+    await expect(slider).toHaveValue(String(limits.max_cpus));
+    await expect(dialog.locator("output")).toHaveText(String(limits.max_cpus));
+    await page.keyboard.press("Home");
+    await expect(slider).toHaveValue("1");
+    await page.keyboard.press("End");
+    const posted = page.waitForRequest(
+      (r) => r.url().endsWith("/api/workspaces") && r.method() === "POST",
+    );
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    expect((await posted).postDataJSON()).toMatchObject({
+      name: "slider-ws",
+      cpus: limits.max_cpus,
+    });
+    await expect(card(page, "slider-ws")).toBeVisible();
+  });
+
+  test("takes an SSH address of a Git host and clones it over HTTPS", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await dialog.getByLabel("Name").fill("over-ssh");
+    await dialog
+      .getByLabel("Git repository (HTTPS)")
+      .fill("git@github.com:Acme/Web-Shop.git");
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    await expect(card(page, "over-ssh")).toBeVisible();
+    const made = (await workspaceList(request, backend)).find(
+      (w) => w.name === "over-ssh",
+    );
+    expect(made?.repositories[0]?.url).toBe(
+      "https://github.com/Acme/Web-Shop.git",
+    );
+  });
+
+  test("checks the fields before asking; an SSH address of another host gets the message", async ({
     page,
     request,
     backend,
@@ -282,11 +340,11 @@ test.describe("creating", () => {
     await expect(dialog.getByLabel("Git repository (HTTPS)")).toBeFocused();
     await dialog
       .getByLabel("Git repository (HTTPS)")
-      .fill("git@github.com:acme/web-shop.git");
+      .fill("git@git.example.com:acme/web-shop.git");
     await dialog.getByLabel("Name").fill("x".repeat(61));
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog.getByRole("alert").first()).toContainText(
-      "SSH remotes are not supported yet; use the repository's HTTPS URL instead.",
+      "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.",
     );
     await expect(dialog.getByLabel("Name")).toHaveAttribute(
       "aria-invalid",
@@ -1258,18 +1316,23 @@ test.describe("the settings tab", () => {
     ).toBeNull();
   });
 
-  test("cpus: choose a count from the keyboard, it is kept, says a running workspace keeps its count, and the API takes 1 to 32 only", async ({
+  test("cpus: choose a count from the keyboard, it is kept, says a running workspace keeps its count, and the API takes 1 up to the computer's cores only", async ({
     page,
     request,
     backend,
   }) => {
+    const limits = await cpuLimits(request, backend.token);
+    // The arrow key below picks the first count; a count of one would not change the select.
+    test.skip(limits.max_cpus < 2, "a one-core computer");
     await openDetail(page, backend, "web-shop", "settings");
     const cpus = page.getByLabel("CPUs for this workspace");
     await expect(cpus).toHaveValue("");
     await expect(cpus.locator("option").first()).toHaveText(
-      "Use the global default (1 CPU)",
+      `Use the global default (${cpuLabel(limits.default_cpus)})`,
     );
-    await expect(cpus.locator("option")).toHaveCount(CPUS_MAX - CPUS_MIN + 2);
+    await expect(cpus.locator("option")).toHaveCount(
+      limits.max_cpus - CPUS_MIN + 2,
+    );
     await expect(
       page.getByText(/A running workspace keeps the count it started with/),
     ).toBeVisible();
@@ -1310,9 +1373,9 @@ test.describe("the settings tab", () => {
     // Each put is an action whose answer is the thing under test, so it is made once, not polled.
     const accepted = {
       belowMin: await put(CPUS_MIN - 1),
-      aboveMax: await put(CPUS_MAX + 1),
+      aboveMax: await put(limits.max_cpus + 1),
       min: await put(CPUS_MIN),
-      max: await put(CPUS_MAX),
+      max: await put(limits.max_cpus),
     };
     expect(accepted).toEqual({
       belowMin: false,
@@ -1662,7 +1725,7 @@ test.describe("accessibility", () => {
         const create = page.getByRole("dialog", { name: "New workspace" });
         await create.getByRole("button", { name: "Create workspace" }).click();
         await expect(create.getByRole("alert")).toHaveCount(2);
-        await create.getByText("Start folder, image and memory").click();
+        await create.getByText("Start folder, image, memory and CPUs").click();
         await scan(page, "create with errors");
         await create.getByRole("button", { name: "Cancel" }).click();
 

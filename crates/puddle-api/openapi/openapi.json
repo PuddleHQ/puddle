@@ -944,6 +944,146 @@
         }
       }
     },
+    "/api/audit/retention": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "How big the activity log is, how fast it grows, and for how many days it is kept. Only the\nowner sees it: it covers every user's records.",
+        "operationId": "get_retention",
+        "responses": {
+          "200": {
+            "description": "the log's size and growth, and its days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSize"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Changes how many days the activity log is kept. Records older than that are deleted within the\nhour and cannot be brought back; nothing is deleted for the log's size.",
+        "operationId": "put_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditRetentionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the log's size and days now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSize"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the days are not 1 to 3650",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/invite": {
       "post": {
         "tags": [
@@ -12410,16 +12550,38 @@
         "description": "The body of every error response.",
         "required": [
           "error",
-          "message"
+          "message",
+          "field",
+          "row"
         ],
         "properties": {
           "error": {
             "$ref": "#/components/schemas/ErrorCode",
             "description": "Stable error code."
           },
+          "field": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ErrorField",
+                "description": "The input the refusal is about; `null` when it is about no one input. Set on the\nrefusals of a workspace's name, repository list, start folder, image and memory."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "message": {
             "type": "string",
             "description": "Human-readable, lower case, no trailing period. Never contains a token."
+          },
+          "row": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The place, counted from 1, of the entry of the request's `repositories` list the refusal\nis about; `field` then names the entry's input. `null` when it is about no entry.",
+            "minimum": 1
           }
         }
       },
@@ -12480,7 +12642,8 @@
             "description": "Where in the order; omitted means last.",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "AttachMode": {
         "type": "string",
@@ -13671,6 +13834,22 @@
           "workspace"
         ]
       },
+      "AuditRetentionRequest": {
+        "type": "object",
+        "description": "How many days to keep the activity log.",
+        "required": [
+          "days"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 3650.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "AuditRule": {
         "type": "object",
         "description": "A rule as an audit record shows it.",
@@ -13807,6 +13986,94 @@
           "name": {
             "type": "string",
             "description": "Name."
+          }
+        }
+      },
+      "AuditSize": {
+        "type": "object",
+        "description": "What the activity log holds and how fast it grows, and for how many days it is kept. Records\nolder than the days are deleted; nothing is deleted for size, so the size is for the owner to\nwatch.",
+        "required": [
+          "retention_days",
+          "records",
+          "bytes",
+          "oldest_ts",
+          "records_last_day",
+          "bytes_last_day",
+          "records_last_week",
+          "bytes_last_week",
+          "warn_bytes",
+          "file_bytes",
+          "free_bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of their lines.",
+            "minimum": 0
+          },
+          "bytes_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written in the last 24 hours.",
+            "minimum": 0
+          },
+          "bytes_last_week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written in the last 7 days.",
+            "minimum": 0
+          },
+          "file_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the database file (the log and everything else Puddle keeps).",
+            "minimum": 0
+          },
+          "free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The part of the file that is free space, given back to the disk in steps.",
+            "minimum": 0
+          },
+          "oldest_ts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the oldest record was written, epoch ms; `null` when there are none.",
+            "minimum": 0
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records held.",
+            "minimum": 0
+          },
+          "records_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records written in the last 24 hours.",
+            "minimum": 0
+          },
+          "records_last_week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records written in the last 7 days.",
+            "minimum": 0
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Days the log is kept, 1 to 3650. Built in: 90.",
+            "minimum": 0
+          },
+          "warn_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the lines above which Puddle shows a warning.",
+            "minimum": 0
           }
         }
       },
@@ -14357,7 +14624,8 @@
             "type": "boolean",
             "description": "Every other owner on the host. At least one of the two must be set."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CredentialSource": {
         "oneOf": [
@@ -14925,6 +15193,35 @@
           "deny"
         ]
       },
+      "EffectiveLimits": {
+        "type": "object",
+        "description": "The limits as they apply on this computer.",
+        "required": [
+          "max_cpus",
+          "host_cpus",
+          "default_cpus"
+        ],
+        "properties": {
+          "default_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The vCPUs a new workspace gets unless it or the global default says otherwise: four, or\nhalf the cores on a small computer.",
+            "minimum": 0
+          },
+          "host_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The computer's logical cores.",
+            "minimum": 0
+          },
+          "max_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The most vCPUs a workspace may have: the set limit, else the logical cores.",
+            "minimum": 0
+          }
+        }
+      },
       "EffectiveSettings": {
         "type": "object",
         "description": "The values a workspace gets: its override, else the global value, else Puddle's default.",
@@ -15212,6 +15509,21 @@
           "rate_limited",
           "unavailable",
           "internal"
+        ]
+      },
+      "ErrorField": {
+        "type": "string",
+        "description": "The input of a request a refusal is about, so a form can put the message beside it.",
+        "enum": [
+          "name",
+          "repo_url",
+          "image",
+          "memory_mib",
+          "cpus",
+          "start_folder",
+          "local_path",
+          "url",
+          "directory"
         ]
       },
       "Event": {
@@ -16399,7 +16711,8 @@
             "type": "string",
             "description": "`repo`, or `project/repo` on Azure DevOps; `.git` is dropped."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GitRepoToggles": {
         "type": "object",
@@ -16417,7 +16730,8 @@
             "type": "boolean",
             "description": "A push to it may go out."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GitRepoView": {
         "type": "object",
@@ -16483,7 +16797,8 @@
             ],
             "description": "\"Only push to listed repos\"."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GlobalNeverDecrypt": {
         "type": "object",
@@ -16499,12 +16814,17 @@
             },
             "description": "The names, as for a workspace; sorted. On saving, replaces the whole list. At most 500."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GlobalSettingsRequest": {
         "type": "object",
         "description": "New global settings. Replaces every value listed here; unknown stored fields are kept.",
         "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "The limits; omitted or `null` falls back to the computer's cores."
+          },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
             "description": "The tool switches."
@@ -16532,6 +16852,8 @@
           "vscode_server",
           "ui",
           "tools",
+          "limits",
+          "effective_limits",
           "effective",
           "unknown_fields"
         ],
@@ -16539,6 +16861,14 @@
           "effective": {
             "$ref": "#/components/schemas/EffectiveSettings",
             "description": "The effective values for a workspace with no overrides."
+          },
+          "effective_limits": {
+            "$ref": "#/components/schemas/EffectiveLimits",
+            "description": "What the limits come to on this computer."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "The limits the user set (global only)."
           },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
@@ -16640,7 +16970,8 @@
             "type": "string",
             "description": "`user.name`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentityCredential": {
         "type": "object",
@@ -16663,7 +16994,8 @@
             "$ref": "#/components/schemas/CredentialSource",
             "description": "Where its value comes from."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentityCredentialView": {
         "type": "object",
@@ -16755,7 +17087,8 @@
             },
             "description": "The ids, first to last."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentityRequest": {
         "type": "object",
@@ -16781,7 +17114,8 @@
             "type": "string",
             "description": "The name you see; unique whatever the case."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentitySigning": {
         "type": "string",
@@ -16932,7 +17266,8 @@
             },
             "description": "Replaces the workspace's never-decrypt names. Each is a host name or `*.` followed by a\ndomain with at least two labels; no IP addresses. At most 500."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "InterceptionSettingsRequest": {
         "type": "object",
@@ -16963,7 +17298,8 @@
             ],
             "description": "Records that the user has seen the notice."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "InterceptionSettingsView": {
         "type": "object",
@@ -17288,7 +17624,27 @@
             "description": "Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
+      },
+      "Limits": {
+        "type": "object",
+        "description": "Upper bounds on what a workspace may be given (global only).",
+        "required": [
+          "max_cpus"
+        ],
+        "properties": {
+          "max_cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The most vCPUs a workspace may have. `null` is the computer's logical cores.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "LimitCode": {
         "type": "string",
@@ -17395,7 +17751,8 @@
             "$ref": "#/components/schemas/PermanentScope",
             "description": "Which never-decrypt list gets the host."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "NetworkHealth": {
         "type": "object",
@@ -17488,7 +17845,7 @@
           },
           "url": {
             "type": "string",
-            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it\nmay be left out or empty: the checkout's `origin` remote gives it (an SSH remote of\nGitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form)."
+            "description": "The repository to clone, as an `https://` URL without credentials. An SSH address\n(`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its\nHTTPS address; one of any other host is refused with a message that says so. With `local_path` it\nmay be left out or empty: the checkout's `origin` remote gives it (an SSH remote of\nGitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form)."
           }
         },
         "additionalProperties": false
@@ -17639,6 +17996,15 @@
           "name"
         ],
         "properties": {
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The workspace's own vCPU count (at least 1, at most the global maximum, which\n`GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows\nthe global default. Stored as the workspace's own setting, so it applies from the first start.",
+            "minimum": 1
+          },
           "image": {
             "type": [
               "string",
@@ -19773,7 +20139,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest vCPUs (1 to 32); applies at the next start.",
+            "description": "Guest vCPUs (at least 1, at most the global maximum); applies at the next start.",
             "maximum": 32,
             "minimum": 1
           },
@@ -19870,7 +20236,8 @@
             "type": "string",
             "description": "The whole script. Line ends become LF. At most 48 KiB, no NUL, not empty (to remove the\nshell init, delete it)."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ShellInitSaved": {
         "type": "object",
@@ -21244,7 +21611,8 @@
             },
             "description": "The ids in order."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "WorkspaceList": {
         "type": "object",
@@ -21518,7 +21886,8 @@
             "type": "boolean",
             "description": "Drop the workspace's own push value, so it follows the default again. Not with\n`only_push_listed`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "WorkspaceTools": {
         "type": "object",

@@ -7,7 +7,7 @@ use puddle_types::{
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorField};
 use crate::workspaces as domain;
 
 /// The long operation a workspace is in the middle of; progress comes as
@@ -236,8 +236,9 @@ pub struct WorkspaceList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewRepositoryRequest {
-    /// The repository to clone, as an `https://` URL without credentials. SSH remotes
-    /// (`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it
+    /// The repository to clone, as an `https://` URL without credentials. An SSH address
+    /// (`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its
+    /// HTTPS address; one of any other host is refused with a message that says so. With `local_path` it
     /// may be left out or empty: the checkout's `origin` remote gives it (an SSH remote of
     /// GitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form).
     #[serde(default)]
@@ -301,11 +302,26 @@ pub struct NewWorkspaceRequest {
     #[serde(default)]
     #[schema(minimum = 256, maximum = 1_048_576)]
     pub memory_mib: Option<u32>,
+    /// The workspace's own vCPU count (at least 1, at most the global maximum, which
+    /// `GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows
+    /// the global default. Stored as the workspace's own setting, so it applies from the first start.
+    #[serde(default)]
+    #[schema(minimum = 1)]
+    pub cpus: Option<u8>,
     /// Replaced by `repositories`; a body that sends it is refused with a message saying so.
     #[serde(default, deserialize_with = "retired", skip_serializing)]
     // skip-ok: leaves the retired field out of the contract; no test is skipped.
     #[schema(ignore)]
     pub repo_url: Option<Retired>,
+}
+
+/// The refusal of a repository list, at the entry and input it is about.
+fn list_refusal(error: &domain::RepositoryListError) -> ApiError {
+    let refusal = ApiError::invalid(error);
+    match error.place() {
+        Some((row, field)) => refusal.at_row(row, field),
+        None => refusal.at_field(ErrorField::RepoUrl),
+    }
 }
 
 impl NewWorkspaceRequest {
@@ -332,7 +348,8 @@ impl NewWorkspaceRequest {
         if self.repo_url.is_some() {
             return Err(ApiError::invalid(
                 "repo_url was replaced by repositories, a list of {url}",
-            ));
+            )
+            .at_field(ErrorField::RepoUrl));
         }
         let drafts: Vec<domain::RepositoryDraft> = self
             .repositories
@@ -347,25 +364,31 @@ impl NewWorkspaceRequest {
             })
             .collect();
         let repositories = domain::check_repositories_with(&drafts, identity_exists, locals)
-            .map_err(ApiError::invalid)?;
+            .map_err(|e| list_refusal(&e))?;
         let start_folder = self
             .start_folder
             .as_deref()
             .map(domain::StartFolder::parse)
             .transpose()
-            .map_err(ApiError::invalid)?;
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::StartFolder))?;
         let image = self
             .image
             .as_deref()
             .map(ImageRef::new)
             .transpose()
-            .map_err(ApiError::invalid)?;
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Image))?;
         let memory = self
             .memory_mib
             .map(MemoryMib::new)
             .transpose()
-            .map_err(ApiError::invalid)?;
-        let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::MemoryMib))?;
+        let cpus = self
+            .cpus
+            .map(|c| puddle_types::CpuCount::new(u32::from(c)))
+            .transpose()
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Cpus))?;
+        let name = domain::DisplayName::parse(&self.name)
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Name))?;
         Ok(domain::NewWorkspace {
             owner,
             name,
@@ -373,6 +396,7 @@ impl NewWorkspaceRequest {
             start_folder,
             image,
             memory,
+            cpus,
         })
     }
 }
@@ -505,7 +529,8 @@ pub struct RenameWorkspaceRequest {
 
 impl RenameWorkspaceRequest {
     pub(crate) fn into_name(self) -> Result<domain::DisplayName, ApiError> {
-        domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)
+        domain::DisplayName::parse(&self.name)
+            .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Name))
     }
 }
 

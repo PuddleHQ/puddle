@@ -7,7 +7,7 @@ use axum::Json;
 use axum::extract::State;
 use puddle_settings::{
     GLOBAL_SCHEMA_VERSION, GlobalSettings, Loaded, SettingsError, WORKSPACE_SCHEMA_VERSION,
-    WorkspaceSettings, resolve,
+    WorkspaceSettings, host_cpu_count, resolve_on_host,
 };
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
@@ -72,6 +72,36 @@ pub(crate) fn load_workspace(
     Ok(loaded)
 }
 
+/// Refuses a new workspace's own CPU count above the global maximum (the settings routes do the
+/// same for the counts they set).
+pub(crate) fn check_new_workspace_cpus(
+    repo: &dyn SettingsRepo,
+    cpus: Option<puddle_types::CpuCount>,
+) -> Result<(), ApiError> {
+    // A create without a count reads no settings: it must not fail on a damaged file.
+    if cpus.is_none() {
+        return Ok(());
+    }
+    check_cpus_within(cpus, &load_global(repo)?.settings.limits, "cpus")
+        .map_err(|e| e.at_field(crate::ErrorField::Cpus))
+}
+
+/// A CPU count above the global maximum is refused where it is set, so the user hears it then
+/// instead of finding the count silently lowered at the next start.
+fn check_cpus_within(
+    cpus: Option<puddle_types::CpuCount>,
+    limits: &puddle_settings::Limits,
+    field: &str,
+) -> Result<(), ApiError> {
+    let max = limits.max_cpus_on(host_cpu_count());
+    match cpus {
+        Some(count) if count > max => Err(ApiError::invalid(format!(
+            "{field}: {count} is more than the most CPUs a workspace may have ({max})"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 fn workspace_view(
     workspace: WorkspaceId,
     global: &GlobalSettings,
@@ -81,7 +111,7 @@ fn workspace_view(
         workspace,
         overrides: SettingsLayer::from(&loaded.settings.overrides),
         tools: (&loaded.settings.tools).into(),
-        effective: resolve(global, Some(&loaded.settings)).into(),
+        effective: resolve_on_host(global, Some(&loaded.settings), host_cpu_count()).into(),
         unknown_fields: loaded.unknown_fields.clone(),
     }
 }
@@ -128,6 +158,11 @@ pub(crate) async fn put_global(
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
         body.apply_to(&mut loaded.settings)?;
+        check_cpus_within(
+            loaded.settings.workspace_defaults.cpus,
+            &loaded.settings.limits,
+            "workspace_defaults.cpus",
+        )?;
         // Consent fails closed: Microsoft's server is only chosen while the recorded consent
         // covers the terms the popup shows today, not on a grant of other terms or a decline.
         if loaded.settings.vscode_server.server() == puddle_settings::ServerChoice::Microsoft
@@ -213,6 +248,11 @@ pub(crate) async fn put_workspace_settings(
         let global = load_global(repo)?;
         let mut loaded = load_workspace(repo, &workspace)?;
         body.overrides.apply_to(&mut loaded.settings.overrides)?;
+        check_cpus_within(
+            loaded.settings.overrides.cpus,
+            &global.settings.limits,
+            "overrides.cpus",
+        )?;
         loaded.settings.tools.mise = body.tools.mise;
         loaded.settings.tools.repo_code = body.tools.repo_code;
         repo.save_workspace(&workspace, loaded.settings.to_document()?)?;

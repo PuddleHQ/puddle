@@ -174,6 +174,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How big the activity log is, how fast it grows, and for how many days it is kept. Only the
+         *     owner sees it: it covers every user's records.
+         */
+        get: operations["get_retention"];
+        /**
+         * Changes how many days the activity log is kept. Records older than that are deleted within the
+         *     hour and cannot be brought back; nothing is deleted for the log's size.
+         */
+        put: operations["put_retention"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/invite": {
         parameters: {
             query?: never;
@@ -2371,8 +2395,15 @@ export interface components {
         ApiErrorBody: {
             /** @description Stable error code. */
             error: components["schemas"]["ErrorCode"];
+            field: components["schemas"]["ErrorField"] | null;
             /** @description Human-readable, lower case, no trailing period. Never contains a token. */
             message: string;
+            /**
+             * Format: int32
+             * @description The place, counted from 1, of the entry of the request's `repositories` list the refusal
+             *     is about; `field` then names the entry's input. `null` when it is about no entry.
+             */
+            row: number | null;
         };
         /**
          * @description Which icon the window, the tray and the taskbar show.
@@ -2909,6 +2940,14 @@ export interface components {
          * @enum {string}
          */
         AuditRequestRuleScope: "global" | "workspace";
+        /** @description How many days to keep the activity log. */
+        AuditRetentionRequest: {
+            /**
+             * Format: int32
+             * @description 1 to 3650.
+             */
+            days: number;
+        };
         /** @description A rule as an audit record shows it. */
         AuditRule: {
             /**
@@ -2973,6 +3012,68 @@ export interface components {
             id: number;
             /** @description Name. */
             name: string;
+        };
+        /**
+         * @description What the activity log holds and how fast it grows, and for how many days it is kept. Records
+         *     older than the days are deleted; nothing is deleted for size, so the size is for the owner to
+         *     watch.
+         */
+        AuditSize: {
+            /**
+             * Format: int64
+             * @description Bytes of their lines.
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes written in the last 24 hours.
+             */
+            bytes_last_day: number;
+            /**
+             * Format: int64
+             * @description Bytes written in the last 7 days.
+             */
+            bytes_last_week: number;
+            /**
+             * Format: int64
+             * @description Size of the database file (the log and everything else Puddle keeps).
+             */
+            file_bytes: number;
+            /**
+             * Format: int64
+             * @description The part of the file that is free space, given back to the disk in steps.
+             */
+            free_bytes: number;
+            /**
+             * Format: int64
+             * @description When the oldest record was written, epoch ms; `null` when there are none.
+             */
+            oldest_ts: number | null;
+            /**
+             * Format: int64
+             * @description Records held.
+             */
+            records: number;
+            /**
+             * Format: int64
+             * @description Records written in the last 24 hours.
+             */
+            records_last_day: number;
+            /**
+             * Format: int64
+             * @description Records written in the last 7 days.
+             */
+            records_last_week: number;
+            /**
+             * Format: int32
+             * @description Days the log is kept, 1 to 3650. Built in: 90.
+             */
+            retention_days: number;
+            /**
+             * Format: int64
+             * @description Size of the lines above which Puddle shows a warning.
+             */
+            warn_bytes: number;
         };
         /**
          * @description The record types, for the `type` filter.
@@ -3461,6 +3562,25 @@ export interface components {
          * @enum {string}
          */
         Effect: "allow" | "deny";
+        /** @description The limits as they apply on this computer. */
+        EffectiveLimits: {
+            /**
+             * Format: int32
+             * @description The vCPUs a new workspace gets unless it or the global default says otherwise: four, or
+             *     half the cores on a small computer.
+             */
+            default_cpus: number;
+            /**
+             * Format: int32
+             * @description The computer's logical cores.
+             */
+            host_cpus: number;
+            /**
+             * Format: int32
+             * @description The most vCPUs a workspace may have: the set limit, else the logical cores.
+             */
+            max_cpus: number;
+        };
         /** @description The values a workspace gets: its override, else the global value, else Puddle's default. */
         EffectiveSettings: {
             /** @description Whether logins made inside the workspace are captured. */
@@ -3574,6 +3694,11 @@ export interface components {
          * @enum {string}
          */
         ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "rate_limited" | "unavailable" | "internal";
+        /**
+         * @description The input of a request a refusal is about, so a form can put the message beside it.
+         * @enum {string}
+         */
+        ErrorField: "name" | "repo_url" | "image" | "memory_mib" | "cpus" | "start_folder" | "local_path" | "url" | "directory";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -4020,6 +4145,8 @@ export interface components {
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
+            /** @description The limits; omitted or `null` falls back to the computer's cores. */
+            limits?: components["schemas"]["Limits"];
             /** @description The tool switches. */
             tools?: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -4033,6 +4160,10 @@ export interface components {
         GlobalSettingsView: {
             /** @description The effective values for a workspace with no overrides. */
             effective: components["schemas"]["EffectiveSettings"];
+            /** @description What the limits come to on this computer. */
+            effective_limits: components["schemas"]["EffectiveLimits"];
+            /** @description The limits the user set (global only). */
+            limits: components["schemas"]["Limits"];
             /** @description The tool switches (global only). */
             tools: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -4396,6 +4527,14 @@ export interface components {
              */
             ttl_secs: number;
         };
+        /** @description Upper bounds on what a workspace may be given (global only). */
+        Limits: {
+            /**
+             * Format: int32
+             * @description The most vCPUs a workspace may have. `null` is the computer's logical cores.
+             */
+            max_cpus: number | null;
+        };
         /**
          * @description Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.
          * @enum {string}
@@ -4486,8 +4625,9 @@ export interface components {
             /** @description Push on its new repository table row; left out or `null` is on. */
             push?: boolean | null;
             /**
-             * @description The repository to clone, as an `https://` URL without credentials. SSH remotes
-             *     (`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it
+             * @description The repository to clone, as an `https://` URL without credentials. An SSH address
+             *     (`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its
+             *     HTTPS address; one of any other host is refused with a message that says so. With `local_path` it
              *     may be left out or empty: the checkout's `origin` remote gives it (an SSH remote of
              *     GitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form).
              */
@@ -4557,6 +4697,13 @@ export interface components {
         NewWorkspaceIdentityBasis: "chosen" | "covers" | "default" | "none";
         /** @description `POST /api/workspaces`. */
         NewWorkspaceRequest: {
+            /**
+             * Format: int32
+             * @description The workspace's own vCPU count (at least 1, at most the global maximum, which
+             *     `GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows
+             *     the global default. Stored as the workspace's own setting, so it applies from the first start.
+             */
+            cpus?: number | null;
             /** @description The image to boot; left out or `null` is the default devcontainer image. */
             image?: string | null;
             /**
@@ -5517,7 +5664,7 @@ export interface components {
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
             /**
              * Format: int32
-             * @description Guest vCPUs (1 to 32); applies at the next start.
+             * @description Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
              */
             cpus: number | null;
             /**
@@ -7018,6 +7165,131 @@ export interface operations {
                 };
             };
             /** @description a filter or the limit out of range */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the log's size and growth, and its days */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditSize"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditRetentionRequest"];
+            };
+        };
+        responses: {
+            /** @description saved; the log's size and days now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditSize"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the days are not 1 to 3650 */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -20,23 +20,28 @@ use crate::target::Target;
 /// The default port of `https`, the only port that is terminated.
 pub(crate) const HTTPS_PORT: u16 = 443;
 
+/// The prefix of the header names Puddle uses between the guest agent and the proxy, and on its
+/// own answers. None of them travels upstream, whoever wrote it.
+pub(crate) const PROXY_HEADER_PREFIX: &str = "x-puddle-";
+
 /// Headers the proxy sets or owns itself: never copied from the guest, never set by an injector.
 pub(crate) fn is_proxy_owned(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str(),
-        "host"
-            | "connection"
-            | "keep-alive"
-            | "proxy-connection"
-            | "proxy-authorization"
-            | "proxy-authenticate"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-            | "content-length"
-            | "expect"
-    )
+    name.as_str().starts_with(PROXY_HEADER_PREFIX)
+        || matches!(
+            name.as_str(),
+            "host"
+                | "connection"
+                | "keep-alive"
+                | "proxy-connection"
+                | "proxy-authorization"
+                | "proxy-authenticate"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "content-length"
+                | "expect"
+        )
 }
 
 /// A request that passed the checks.

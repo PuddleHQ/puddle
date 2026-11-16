@@ -10,6 +10,7 @@
   import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
+  import AuditRetention from "#lib/components/AuditRetention.svelte";
   import DevicesPanel from "#lib/components/DevicesPanel.svelte";
   import { DevicesStore } from "#lib/stores/devices.svelte.ts";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
@@ -23,13 +24,14 @@
     LOCAL_LABELS,
     type LocalCategory,
   } from "#lib/decision/local-labels.ts";
-  import { CPU_COUNTS, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
+  import { cpuCounts, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import {
     EMPTY_DRAFT,
     isDirty,
     restartNames,
     RESTART_NOTE,
     savePatch,
+    setLimits,
     setLayer,
     setServer,
     setToggle,
@@ -95,6 +97,7 @@
     ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
     ["s-disk", "Disk space"],
+    ["s-audit", "Activity log"],
     ["s-ssh", "SSH agent"],
     ["s-net", "Network"],
     ["s-vsc", "Browser VS Code"],
@@ -745,10 +748,44 @@
             onchange={(e) =>
               editLayer("cpus", Number(e.currentTarget.value), eff.cpus.value)}
           >
-            {#each CPU_COUNTS as count (count)}
+            {#each cpuCounts(view.effective_limits.max_cpus, eff.cpus.value) as count (count)}
               <option value={String(count)}>{cpuLabel(count)}</option>
             {/each}
           </select>
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-max-cpus">Most CPUs a workspace may have</label>
+            <p class="desc" id="set-max-cpus-desc">
+              Leave empty to allow as many as this computer has ({view
+                .effective_limits.host_cpus}). The default and every workspace's
+              own count stay within it.
+            </p>
+          </div>
+          <input
+            id="set-max-cpus"
+            type="number"
+            class="narrow"
+            min="1"
+            max="255"
+            step="1"
+            placeholder={String(view.effective_limits.host_cpus)}
+            aria-describedby="set-max-cpus-desc"
+            value={("max_cpus" in draft.limits
+              ? draft.limits.max_cpus
+              : view.limits.max_cpus) ?? ""}
+            onchange={(e) => {
+              const text = e.currentTarget.value.trim();
+              edit(
+                setLimits(
+                  draft,
+                  "max_cpus",
+                  text === "" ? null : Number(text),
+                  view.limits.max_cpus,
+                ),
+              );
+            }}
+          />
         </div>
         <div class="setting">
           <div class="grow">
@@ -936,6 +973,11 @@
           />
         </div>
         {#if linesError}<p class="error" role="alert">{linesError}</p>{/if}
+      </section>
+
+      <section class="card" id="s-audit" aria-labelledby="h-audit">
+        <h2 id="h-audit">Activity log</h2>
+        <AuditRetention />
       </section>
 
       <section class="card" id="s-ssh" aria-labelledby="h-ssh">
@@ -1439,6 +1481,7 @@
     flex: none;
   }
   select,
+  input[type="number"],
   input[type="text"] {
     min-height: var(--control-size);
     max-width: 18rem;

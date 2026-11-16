@@ -6,6 +6,7 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = await vi.hoisted(async () => {
@@ -64,7 +65,10 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
-import { FakeSettings } from "#lib/testing/fake-settings.ts";
+import {
+  FAKE_EFFECTIVE_LIMITS,
+  FakeSettings,
+} from "#lib/testing/fake-settings.ts";
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
 import { sshAgentAsks } from "#lib/stores/ssh-agent-asks.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -278,13 +282,17 @@ describe("the inbox page", () => {
     seed();
     await ready();
     const fetched = inbox.calls.length;
+    // A new row also schedules a refetch 150 ms later, which replaces the rows with the service's
+    // (no row 9 here). Each step below waits on a Svelte flush, a microtask, so that timer cannot
+    // fire between them however long the worker is starved; waiting on the clock instead let it.
     source.emit({
       type: "pending_opened",
       request: request(9, { host: "new.example.com", first_seen: 9_000 }),
       registrable_domain: "example.com",
     });
+    await tick();
     expect(
-      await screen.findByText("new.example.com", { selector: ".host" }),
+      screen.getByText("new.example.com", { selector: ".host" }),
     ).toBeInTheDocument();
     source.emit({
       type: "pending_updated",
@@ -292,18 +300,16 @@ describe("the inbox page", () => {
       attempts: 4,
       last_seen: 9_500,
     });
-    await vi.waitFor(() =>
-      expect(rowOf("new.example.com")).toHaveTextContent("4 attempts"),
-    );
+    await tick();
+    expect(rowOf("new.example.com")).toHaveTextContent("4 attempts");
     source.emit({
       type: "pending_closed",
       id: 9,
       state: "allowed",
       rule_id: 1,
     });
-    await vi.waitFor(() =>
-      expect(screen.queryByText("new.example.com")).toBeNull(),
-    );
+    await tick();
+    expect(screen.queryByText("new.example.com")).toBeNull();
     expect(
       inbox.calls.slice(fetched).filter((c) => c === "GET /api/inbox"),
     ).toEqual([]);
@@ -611,6 +617,8 @@ describe("every workspace needs a confirm", () => {
       unknown_fields: [],
       vscode_server: fake.vscode,
       tools: fake.tools,
+      limits: fake.limits,
+      effective_limits: FAKE_EFFECTIVE_LIMITS,
       workspace_defaults: fake.layer,
     };
     seed();
@@ -653,6 +661,8 @@ function shortcuts(on: boolean | null) {
     unknown_fields: [],
     vscode_server: fake.vscode,
     tools: fake.tools,
+    limits: fake.limits,
+    effective_limits: FAKE_EFFECTIVE_LIMITS,
     workspace_defaults: fake.layer,
   };
 }

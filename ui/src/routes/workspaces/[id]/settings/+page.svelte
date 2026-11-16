@@ -295,7 +295,7 @@
           value={cpusToChoice(overrides.cpus)}
           onchange={(e) => void saveCpus(e.currentTarget)}
         >
-          {#each cpuOptions(global.cpus.value) as option (option.value)}
+          {#each cpuOptions(global.cpus.value, settings.maxCpus, overrides.cpus) as option (option.value)}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>

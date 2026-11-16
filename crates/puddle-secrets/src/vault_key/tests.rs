@@ -381,3 +381,54 @@ fn the_config_home_reads_the_environment() {
         )
     );
 }
+
+mod retry {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// The answers an `encrypt` gives, one per attempt; the clock plays no part.
+    async fn run(
+        answers: &[Result<u8, SourceError>],
+        attempts: usize,
+    ) -> (Result<u8, SourceError>, usize) {
+        let calls = Cell::new(0);
+        let result = retry_on_timeout(attempts, || {
+            let answer = answers[calls.get()].clone();
+            calls.set(calls.get() + 1);
+            async move { answer }
+        })
+        .await;
+        (result, calls.get())
+    }
+
+    fn slow() -> Result<u8, SourceError> {
+        Err(SourceError::Timeout(Tool::SystemdCreds))
+    }
+
+    #[tokio::test]
+    async fn a_slow_first_try_is_followed_by_another_that_answers() {
+        let (result, calls) = run(&[slow(), Ok(7)], 3).await;
+        assert_eq!((result.unwrap(), calls), (7, 2));
+    }
+
+    #[tokio::test]
+    async fn two_slow_tries_leave_a_third() {
+        let (result, calls) = run(&[slow(), slow(), Ok(9)], 3).await;
+        assert_eq!((result.unwrap(), calls), (9, 3));
+    }
+
+    #[tokio::test]
+    async fn three_slow_tries_are_a_timeout_and_no_fourth_is_made() {
+        let (result, calls) = run(&[slow(), slow(), slow()], 3).await;
+        assert!(matches!(result, Err(SourceError::Timeout(_))));
+        assert_eq!(calls, 3);
+    }
+
+    #[tokio::test]
+    async fn any_other_answer_ends_at_once() {
+        let (result, calls) = run(&[Err(SourceError::CouldNotRun(Tool::SystemdCreds))], 3).await;
+        assert!(matches!(result, Err(SourceError::CouldNotRun(_))));
+        assert_eq!(calls, 1);
+    }
+}

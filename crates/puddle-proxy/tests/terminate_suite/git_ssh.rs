@@ -20,7 +20,9 @@ use puddle_proxy::{
     GitSshGreeting, GitSshHostKey, GitSshHostKeys, GitSshHttps, GitSshLimits, GitSshStream,
     GitSshUpstream,
 };
-use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionReason, Host, WorkspaceId};
+use puddle_types::{
+    ConnectionDecision, ConnectionEvent, ConnectionReason, Host, ReasonCode, WorkspaceId,
+};
 use russh::ChannelMsg;
 use russh::Preferred;
 use russh::client::{self, Handle};
@@ -447,7 +449,10 @@ async fn a_push_to_a_repository_off_the_list_ends_before_anything_goes_upstream(
     drop(ssh);
     let events = t.events(1).await;
     assert_eq!(events[0].decision, ConnectionDecision::Blocked);
-    assert_eq!(events[0].reason, ConnectionReason::Refused("push_denied"));
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused(ReasonCode::PushDenied)
+    );
     let line = events[0].http.as_ref().unwrap();
     assert_eq!(
         (line.method(), line.path()),
@@ -554,7 +559,7 @@ async fn commands_outside_the_grammar_are_refused_and_nothing_goes_upstream() {
     let events = t.events(1).await;
     assert_eq!(
         events[0].reason,
-        ConnectionReason::Refused("ssh_command_unsupported")
+        ConnectionReason::Refused(ReasonCode::SshCommandUnsupported)
     );
 }
 
@@ -733,7 +738,7 @@ async fn forwarding_in_either_direction_is_refused_with_a_reason() {
     let events = t.events(1).await;
     assert_eq!(
         events[0].reason,
-        ConnectionReason::Refused("ssh_channel_refused")
+        ConnectionReason::Refused(ReasonCode::SshChannelRefused)
     );
 }
 
@@ -774,7 +779,7 @@ async fn each_forwarding_request_is_recorded_as_a_channel_refusal() {
         let events = t.events(round + 1).await;
         assert_eq!(
             events[round].reason,
-            ConnectionReason::Refused("ssh_channel_refused"),
+            ConnectionReason::Refused(ReasonCode::SshChannelRefused),
             "round {round}"
         );
     }
@@ -1133,7 +1138,10 @@ async fn a_download_of_lfs_objects_asks_the_table_about_a_fetch() {
     assert_eq!(on.exit, Some(0), "{on:?}");
     drop(ssh);
     let events = t.events(1).await;
-    assert_eq!(events[0].reason, ConnectionReason::Refused("pull_denied"));
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused(ReasonCode::PullDenied)
+    );
     let line = events[0].http.as_ref().unwrap();
     assert_eq!(line.method(), "git-lfs-download");
 }

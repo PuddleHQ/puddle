@@ -17,6 +17,7 @@ export function rule(id: number, over: Partial<Rule> = {}): Rule {
     created_by: "ui",
     source_pending_id: null,
     enabled: true,
+    precedence: 5,
     ...over,
   };
 }

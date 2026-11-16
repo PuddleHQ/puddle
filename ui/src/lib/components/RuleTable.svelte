@@ -44,6 +44,7 @@
     { key: "pattern", label: "Host" },
     { key: "effect", label: "Effect" },
     { key: "scope", label: "Workspace" },
+    { key: "precedence", label: "Precedence" },
     { key: "expires", label: "Expires" },
     { key: "created", label: "Created" },
   ];
@@ -115,6 +116,7 @@
               <span class="mono">{scopeLabel(rule)}</span>
             {/if}
           </td>
+          <td class="precedence">{rule.precedence}</td>
           <td>
             {#if rule.expires_at === null}
               <span class="muted">Never</span>
@@ -180,6 +182,9 @@
 
 <style>
   .wrap {
+    /* The visually hidden "Actions" header is absolutely positioned; without a positioned
+       ancestor it escapes this scroll box and makes the whole page scroll sideways. */
+    position: relative;
     overflow-x: auto;
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);

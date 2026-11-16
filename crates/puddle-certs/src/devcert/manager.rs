@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The development certificate end to end: reuse what Windows already trusts, else keep one
-//! localhost leaf in the data folder and trust it once.
+//! The development certificate end to end: keep one localhost leaf in the data folder and trust
+//! it once.
 
 use std::fs;
 use std::io;
@@ -11,8 +11,7 @@ use std::time::SystemTime;
 use zeroize::{Zeroize as _, Zeroizing};
 
 use super::leaf::{self, RENEW_WITHIN, check_trust_shape, unix_secs};
-use super::material::{DevCertMaterial, Origin, PrivateKey};
-use super::reuse::{SkipReason, SkippedExisting, rank};
+use super::material::{DevCertMaterial, PrivateKey};
 use super::trust::{DevCertTrust, TrustError, TrustOutcome};
 
 /// The folder under the data folder that holds the leaf.
@@ -26,8 +25,6 @@ pub const LEAF_FILE: &str = "localhost.pem";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DevCertStatus {
-    /// An ASP.NET development certificate Windows already trusts is in use. No dialog.
-    ReusingExisting,
     /// Puddle's own leaf is in use and trusted.
     Trusted,
     /// Puddle's own leaf is not trusted yet; the system will ask the user once.
@@ -48,8 +45,6 @@ pub struct DevCertReport {
     /// The certificate and key for the boot plan: always present after a successful run, even
     /// when trust was declined (the guest trusts it on its own).
     pub material: DevCertMaterial,
-    /// Existing development certificates passed over, and why.
-    pub skipped: Vec<SkippedExisting>,
     /// For [`DevCertStatus::TrustFailed`], what failed.
     pub detail: Option<String>,
 }
@@ -100,12 +95,8 @@ impl<T: DevCertTrust> DevCertManager<T> {
     /// Where it stands, from what is there now. Reads only: it makes nothing, exports no key and
     /// never asks the user anything.
     pub fn status(&self, now: SystemTime) -> DevCertStatus {
-        match self.trust.existing() {
-            Err(TrustError::Unsupported) => return DevCertStatus::Unsupported,
-            Ok(existing) if !rank(&existing, now).eligible.is_empty() => {
-                return DevCertStatus::ReusingExisting;
-            }
-            Ok(_) | Err(TrustError::Failed(_)) => {}
+        if !self.trust.is_supported() {
+            return DevCertStatus::Unsupported;
         }
         let own_trusted = self
             .load_leaf(now)
@@ -130,58 +121,15 @@ impl<T: DevCertTrust> DevCertManager<T> {
     ///
     /// The data folder can't be written or the leaf can't be generated.
     pub fn ensure(&self, now: SystemTime) -> Result<DevCertReport, DevCertError> {
-        let mut skipped = Vec::new();
-        let mut unsupported = false;
-        let mut detail = None;
-        match self.trust.existing() {
-            Ok(existing) => {
-                let ranking = rank(&existing, now);
-                skipped = ranking.skipped;
-                for cert in ranking.eligible {
-                    match self.trust.export_key(&cert.der) {
-                        Ok(key) => {
-                            return Ok(self.finish(
-                                DevCertStatus::ReusingExisting,
-                                DevCertMaterial::new(Origin::ReusedAspNet, cert.der.clone(), key),
-                                skipped,
-                                None,
-                            ));
-                        }
-                        Err(error) => skipped.push(SkippedExisting {
-                            fingerprint: crate::Fingerprint::of(&cert.der),
-                            marker_version: leaf::inspect(&cert.der)
-                                .ok()
-                                .and_then(|i| i.marker_version)
-                                .unwrap_or_default(),
-                            reason: SkipReason::ExportFailed(error.to_string()),
-                        }),
-                    }
-                }
-            }
-            Err(TrustError::Unsupported) => unsupported = true,
-            Err(TrustError::Failed(why)) => detail = Some(why),
-        }
-
         let (cert_der, key) = self.leaf(now)?;
-        let (status, why) = if unsupported {
-            (DevCertStatus::Unsupported, None)
-        } else {
-            self.trust_leaf(&cert_der)
-        };
-        let detail = why.or(detail);
-        Ok(self.finish(
-            status,
-            DevCertMaterial::new(Origin::Generated, cert_der, key),
-            skipped,
-            detail,
-        ))
+        let (status, detail) = self.trust_leaf(&cert_der);
+        Ok(self.finish(status, DevCertMaterial::new(cert_der, key), detail))
     }
 
     fn finish(
         &self,
         status: DevCertStatus,
         material: DevCertMaterial,
-        skipped: Vec<SkippedExisting>,
         detail: Option<String>,
     ) -> DevCertReport {
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) =
@@ -189,7 +137,6 @@ impl<T: DevCertTrust> DevCertManager<T> {
         DevCertReport {
             status,
             material,
-            skipped,
             detail,
         }
     }

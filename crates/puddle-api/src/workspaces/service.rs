@@ -2,12 +2,12 @@
 //! The workspace service: the trait the API calls and the stand-in for a host without workspaces.
 
 use std::fmt;
-use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_types::{EntryId, SessionUser, WorkspaceId};
+use puddle_types::{EntryId, SessionUser, ToolName, ToolVersion, ToolsFileHash, WorkspaceId};
 
 use crate::checkouts::{AddRepository, Checkouts};
+use crate::wire::{ToolRegistry, ToolVersions, ToolsListing};
 
 use super::{
     AttachMode, Attached, DeleteCheck, DisplayName, GitSetup, LocalCheckoutError, LocalSource,
@@ -327,6 +327,70 @@ pub trait WorkspaceService: Send + Sync {
         unavailable()
     }
 
+    /// The tools every mise file of the workspace asks for, listed by mise in the guest. A
+    /// stopped workspace answers the last listing of this run, or says to start it; a listing
+    /// that cannot be made is [`ToolsListing::problem`], not an error.
+    fn tools<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// Sets `_name` to a version in the workspace's root `mise.toml` through mise's own command,
+    /// keeping every other line, then installs; answers the listing that follows.
+    /// [`WorkspaceError::Conflict`] when the workspace is not running, tools are off for it, or
+    /// the file's hash is not `_hash` (changed by hand since the user looked).
+    fn set_tool<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _name: &'a ToolName,
+        _version: &'a ToolVersion,
+        _hash: &'a ToolsFileHash,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// Takes `_name` out of the workspace's root `mise.toml`; the rest stays as it was. Errors as
+    /// [`WorkspaceService::set_tool`].
+    fn remove_tool<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _name: &'a ToolName,
+        _hash: &'a ToolsFileHash,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// The tools mise knows by name (cached per mise version). [`WorkspaceError::Conflict`] when
+    /// the workspace is not running or tools are off for it; a mise that cannot answer is
+    /// [`ToolRegistry::problem`].
+    fn tool_registry<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<ToolRegistry, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// The newest versions mise lists for `_name`. Errors as [`WorkspaceService::tool_registry`];
+    /// a mise that cannot list them is [`ToolVersions::reason`].
+    fn tool_versions<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _name: &'a ToolName,
+    ) -> BoxFuture<'a, Result<ToolVersions, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// Starts the install of what the workspace's mise files ask for, in the background (the
+    /// retry of a failed one). Errors as [`WorkspaceService::tool_registry`].
+    fn install_tools<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        unavailable()
+    }
+
     /// Adds a repository to a running workspace's list. A clone is
     /// accepted like any operation: the record returned is busy `cloning`. Managing a checkout
     /// that is already on the volume answers at once with the changed record. `git` sets up the
@@ -370,13 +434,6 @@ pub trait WorkspaceService: Send + Sync {
     /// The default does nothing.
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
-    }
-
-    /// The lock the settings routes hold from reading a settings document to writing it, when the
-    /// service also writes settings documents itself (a delete removes a workspace's): it takes
-    /// the same lock, so the two never interleave. `None` when it writes none.
-    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
-        None
     }
 }
 

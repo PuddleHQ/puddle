@@ -16,6 +16,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use puddle_types::LimitCode;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 // tokio's clock, the one the header deadline's `Sleep` runs on: both limits are measured on one
 // clock, which a test can hold still.
@@ -54,10 +55,10 @@ pub(crate) enum Violation {
 
 impl Violation {
     /// The audit's `limit:` code.
-    fn code(self) -> &'static str {
+    fn code(self) -> LimitCode {
         match self {
-            Self::HeaderBlockTooSlow => "header_block_too_slow",
-            Self::ControlFrameFlood => "control_frame_flood",
+            Self::HeaderBlockTooSlow => LimitCode::HeaderBlockTooSlow,
+            Self::ControlFrameFlood => LimitCode::ControlFrameFlood,
         }
     }
 

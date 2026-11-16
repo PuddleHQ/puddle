@@ -15,6 +15,7 @@ use bytes::Bytes;
 use http::Response;
 use http_body_util::{BodyExt as _, Full};
 use puddle_proxy::{InjectDecision, InjectRefusal, Unauthorized};
+use puddle_types::ReasonCode;
 use terminate_support::h2_rig::{H2Server, Script, full};
 use terminate_support::{CANARY, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, inject};
 
@@ -24,7 +25,7 @@ fn rejected() -> Unauthorized {
     Unauthorized::new(|| {
         InjectRefusal::new(
             403,
-            "credential_rejected",
+            ReasonCode::CredentialRejected,
             "the server did not accept the credential Puddle added",
         )
     })
@@ -269,5 +270,8 @@ fn an_injection_compares_by_what_it_would_answer_with() {
     assert_eq!(guard, guard.clone());
     assert_ne!(guard, rejected());
     assert_eq!(format!("{guard:?}"), "Unauthorized");
-    assert_eq!(guard.refusal().unwrap().code(), "credential_rejected");
+    assert_eq!(
+        guard.refusal().unwrap().code(),
+        ReasonCode::CredentialRejected
+    );
 }

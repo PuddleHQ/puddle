@@ -7,18 +7,25 @@ fn name(s: &str) -> WorkspaceId {
     WorkspaceId::new(s).unwrap()
 }
 
+fn summary_of(id: i64, workspace: &str, host: &str) -> PendingSummary {
+    PendingSummary {
+        id,
+        workspace: name(workspace),
+        host: host.to_owned(),
+        registrable_domain: host.to_owned(),
+        port: 443,
+        first_seen: 1,
+        last_seen: 1,
+        attempts: 1,
+    }
+}
+
+/// The service's word that the app is picked to announce this new request.
 fn open(id: i64, workspace: &str, host: &str) -> Event {
-    Event::PendingOpened {
-        request: PendingSummary {
-            id,
-            workspace: name(workspace),
-            host: host.to_owned(),
-            registrable_domain: host.to_owned(),
-            port: 443,
-            first_seen: 1,
-            last_seen: 1,
-            attempts: 1,
-        },
+    Event::PendingNotify {
+        request: summary_of(id, workspace, host),
+        clients: Vec::new(),
+        desktop: true,
     }
 }
 
@@ -405,4 +412,59 @@ fn what_a_workspace_controls_cannot_inject_markup_or_flood_a_notice() {
     assert_eq!(cleaned.chars().count(), MAX_QUOTED_CHARS + 1);
     assert!(cleaned.ends_with('…'));
     assert_eq!(clean("fine.example.org"), "fine.example.org");
+}
+
+#[test]
+fn a_request_the_service_did_not_pick_the_app_for_shows_nothing_and_opens_no_window() {
+    let (mut n, t0) = (Notifier::default(), Instant::now());
+    let elsewhere = Event::PendingNotify {
+        request: summary_of(1, "demo", "a.example"),
+        clients: vec!["tab-1".into()],
+        desktop: false,
+    };
+    assert_eq!(n.handle(t0, &prefs(), false, &elsewhere), NONE);
+    // The request that opened is not announced by itself either.
+    let opened = Event::PendingOpened {
+        request: summary_of(2, "demo", "b.example"),
+    };
+    assert_eq!(n.handle(t0, &prefs(), false, &opened), NONE);
+    // No window started: the next picked request of the workspace shows at once.
+    let shown = n.handle(t0 + secs(1), &prefs(), false, &open(3, "demo", "c.example"));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].request, Some(3));
+    assert_eq!(n.deadline(), None);
+}
+
+#[test]
+fn a_request_the_app_was_picked_for_still_follows_the_requests_switch() {
+    let (mut n, t0) = (Notifier::default(), Instant::now());
+    let mut off = prefs();
+    off.notifications = Some(false);
+    assert_eq!(
+        n.handle(t0, &off, false, &open(1, "demo", "a.example")),
+        NONE
+    );
+}
+
+#[test]
+fn what_a_workspace_sends_in_a_request_is_cleaned_before_it_is_shown() {
+    let (mut n, t0) = (Notifier::default(), Instant::now());
+    let hostile = "evil\n<b>&.example";
+    let notices = n.handle(t0, &prefs(), false, &open(1, "demo", hostile));
+    assert_eq!(notices.len(), 1);
+    assert!(
+        !notices[0].body.contains(['\n', '<', '>', '&']),
+        "{:?}",
+        notices[0]
+    );
+}
+
+#[test]
+fn the_announcement_names_the_same_workspace_as_the_request() {
+    let announced = open(1, "demo", "a.example");
+    let opened = Event::PendingOpened {
+        request: summary_of(1, "demo", "a.example"),
+    };
+    assert_eq!(workspace_of(&announced), workspace_of(&opened));
+    assert_eq!(workspace_of(&announced), Some(&name("demo")));
 }

@@ -656,3 +656,99 @@ async fn the_mise_tools_set_is_hidden_while_the_global_tools_switch_is_off() {
     assert!(decide(&api, "box", "nodejs.org").is_allow());
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_group_holds_a_default_precedence_for_the_rules_added_to_it() {
+    let api = start().await;
+    let made = api
+        .send(
+            "POST",
+            "/api/rule-sets",
+            Some(&json!({"name": "Work", "default_precedence": 8})),
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    assert_eq!(made.json()["default_precedence"], 8);
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    let plain = api
+        .send("POST", "/api/rule-sets", Some(&json!({"name": "Plain"})))
+        .await;
+    assert_eq!(plain.json()["default_precedence"], Value::Null);
+    // A rule made in the group takes it; a named precedence wins.
+    let set_id: i64 = id.trim_start_matches("user:").parse().unwrap();
+    let scope = json!({"type": "set", "set": set_id});
+    for (pattern, precedence, want) in [("a.example.com", None, 8), ("b.example.com", Some(3), 3)] {
+        let mut body = json!({"scope": scope, "pattern": pattern, "effect": "allow"});
+        if let Some(precedence) = precedence {
+            body["precedence"] = json!(precedence);
+        }
+        let rule = api.send("POST", "/api/rules", Some(&body)).await;
+        assert_eq!(rule.json()["precedence"], want, "{}", rule.body);
+    }
+    let entries = api.get("/api/rule-sets").await.json();
+    let work = entries["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id.as_str())
+        .unwrap();
+    let ranks: Vec<_> = work["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["precedence"].clone())
+        .collect();
+    assert_eq!(ranks, vec![json!(8), json!(3)]);
+    // An update changes the default for later rules only.
+    let updated = api
+        .send(
+            "PUT",
+            &format!("/api/rule-sets/{id}"),
+            Some(&json!({"name": "Work", "default_precedence": 2})),
+        )
+        .await;
+    assert_eq!(updated.json()["default_precedence"], 2);
+    assert_eq!(updated.json()["entries"][0]["precedence"], 8);
+    // Left out keeps what it has; built-in entries show 0.
+    let kept = api
+        .send(
+            "PUT",
+            &format!("/api/rule-sets/{id}"),
+            Some(&json!({"name": "Work"})),
+        )
+        .await;
+    assert_eq!(kept.json()["default_precedence"], 2);
+    let github = api.get("/api/rule-sets").await.json();
+    let built_in = github["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "builtin:github")
+        .unwrap();
+    assert!(
+        built_in["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["precedence"] == 0)
+    );
+    for bad in [0, 10] {
+        let refused = api
+            .send(
+                "POST",
+                "/api/rule-sets",
+                Some(&json!({"name": "Bad", "default_precedence": bad})),
+            )
+            .await;
+        assert_eq!(refused.status, 422, "{}", refused.body);
+        let refused = api
+            .send(
+                "PUT",
+                &format!("/api/rule-sets/{id}"),
+                Some(&json!({"name": "Work", "default_precedence": bad})),
+            )
+            .await;
+        assert_eq!(refused.status, 422, "{}", refused.body);
+    }
+    api.running.shutdown().await;
+}

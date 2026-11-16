@@ -15,6 +15,7 @@ use proptest::prelude::*;
 use puddle_inject::testing::{OnlyListed, World};
 use puddle_proxy::InjectDecision;
 use puddle_store::RepoToggles;
+use puddle_types::ReasonCode;
 use support::{Ask as _, basic};
 
 /// Tokens that are each other's near misses: the names that are covered, case and encoding
@@ -425,7 +426,11 @@ fn the_generated_requests_reach_every_kind_of_answer() {
     assert!(injected > 300, "injected {injected}");
     assert!(passed > 100, "passed {passed}");
     assert!(refused > 100, "refused {refused}");
-    for code in ["bad_git_path", "push_denied", "pull_denied"] {
-        assert!(codes.contains(code), "{codes:?}");
+    for code in [
+        ReasonCode::BadGitPath,
+        ReasonCode::PushDenied,
+        ReasonCode::PullDenied,
+    ] {
+        assert!(codes.contains(&code), "{codes:?}");
     }
 }

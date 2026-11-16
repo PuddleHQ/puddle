@@ -95,7 +95,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 events: parts.events,
                 clock: parts.clock,
                 settings: parts.settings,
-                settings_lock: Arc::default(),
                 store: parts.store,
                 all_users: parts.all_users,
                 launcher: parts.launcher,
@@ -860,8 +859,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name: &WorkspaceId,
         cpus: CpuCount,
     ) -> Result<(), String> {
-        let _lock = self.inner.settings_lock.lock().await;
         let repo = self.inner.settings.as_ref();
+        let _lock = repo.lock().await;
         let mut own = crate::settings_read::workspace(repo, name).map_err(|e| e.to_string())?;
         own.overrides.cpus = Some(cpus);
         let document = own.to_document().map_err(|e| e.to_string())?;

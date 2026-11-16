@@ -12,8 +12,8 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlockReason, CompanySignal, Decision, EgressRequest, FailedRequestCode, Host, PendingId,
-    RuleId, RuleSetId, WorkspaceId,
+    BlockReason, CompanySignal, Decision, EgressRequest, FailedRequestCode, Host, LimitCode,
+    PassThroughCode, PendingId, ReasonCode, RuleId, RuleSetId, WorkspaceId,
 };
 
 /// How the proxy handled a connection (R-24).
@@ -175,19 +175,19 @@ pub enum ConnectionReason {
     /// On a decrypted connection the credential rules refused a request, or the server's `401`
     /// to a request whose credential Puddle chose was answered with Puddle's own refusal. The
     /// text is the refusal's machine-readable code.
-    Refused(&'static str),
+    Refused(ReasonCode),
     /// A limit of the proxy ended the connection, or cut a stream or pipe of it (a stream idle
     /// for an hour, an agreed WebSocket that went silent, a flood of control frames, a header
     /// block left open). The decision of the rule stands. The text is the limit's code, shown as
     /// `limit:<code>`. A connection records the first limit that fired.
-    LimitEnded(&'static str),
+    LimitEnded(LimitCode),
     /// A host the workspace decrypts only because it decrypts every host was passed through to
     /// the real server untouched: it is on the never-decrypt list (`never_decrypt`), a tool did
     /// not accept Puddle's certificate for it before (`learned`), the client did not start a
     /// TLS handshake for the name (`not_tls`, `sni_mismatch`), or the server cannot be talked
     /// to through Puddle's TLS (`server_client_certificate`, `server_certificate`, `server_tls`).
     /// The decision of the rule stands. Shown as `pass_through:<code>`.
-    PassedThrough(&'static str),
+    PassedThrough(PassThroughCode),
     /// Puddle's own request (a repository listing) that could not be completed: the code says
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
     /// `host_refused` for a 401 or 403, `rate_limited` for a 429, `host_error` for any other error
@@ -212,7 +212,7 @@ impl fmt::Display for ConnectionReason {
             Self::Suppressed => f.write_str("suppressed"),
             Self::Merged => f.write_str("merged"),
             Self::LimitEnded(code) => write!(f, "limit:{code}"),
-            Self::Refused(code) => f.write_str(code),
+            Self::Refused(code) => f.write_str(code.as_str()),
             Self::PassedThrough(code) => write!(f, "pass_through:{code}"),
             Self::PuddleRequestFailed(code) => write!(f, "puddle_request_failed:{code}"),
         }

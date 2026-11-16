@@ -11,7 +11,7 @@ use puddle_store::{
     Author, Clock, Coverage, CredentialBinding, EnvDraft, EnvName, EnvScope, IdentityDraft, Limits,
     ManualClock, Owner, SecretHost,
 };
-use puddle_types::Host;
+use puddle_types::{Host, PassThroughCode, ReasonCode};
 
 use super::*;
 
@@ -311,6 +311,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
                 methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
                 path: puddle_types::PathPattern::parse(path).unwrap(),
                 created_by: puddle_store::Actor::Api,
+                precedence: puddle_store::Precedence::DEFAULT,
             })
             .unwrap()
     };
@@ -370,7 +371,11 @@ async fn a_workspace_on_the_curated_mode_decrypts_unlisted_hosts_and_passes_the_
     assert!(interception.is_decrypting_all());
     assert_eq!(interception.skipped(&host("unlisted.example")), None);
     for name in CURATED_PASS_THROUGH.iter().filter(|n| !n.starts_with("*.")) {
-        assert_eq!(interception.skipped(&host(name)), Some("curated"), "{name}");
+        assert_eq!(
+            interception.skipped(&host(name)),
+            Some(PassThroughCode::Curated),
+            "{name}"
+        );
     }
 }
 
@@ -396,7 +401,7 @@ async fn a_stored_never_decrypt_name_that_does_not_parse_is_skipped_and_the_othe
     let host = |h: &str| Host::parse_normalised(h).unwrap();
     assert_eq!(
         interception.skipped(&host("bank.example")),
-        Some("never_decrypt")
+        Some(PassThroughCode::NeverDecrypt)
     );
     assert_eq!(interception.skipped(&host("other.example")), None);
 }
@@ -428,7 +433,11 @@ async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_a
     injection.begin(&ws, false).await.unwrap();
     assert_eq!(
         mode(&terminations),
-        (true, Some("never_decrypt"), Some("never_decrypt")),
+        (
+            true,
+            Some(PassThroughCode::NeverDecrypt),
+            Some(PassThroughCode::NeverDecrypt)
+        ),
         "read at the start"
     );
 
@@ -450,7 +459,10 @@ async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_a
         .unwrap();
     store.set_never_decrypt(&ws, &[]).unwrap();
     injection.resync(&ws).unwrap();
-    assert_eq!(mode(&terminations), (true, None, Some("never_decrypt")));
+    assert_eq!(
+        mode(&terminations),
+        (true, None, Some(PassThroughCode::NeverDecrypt))
+    );
     let after = terminations.termination(&ws).unwrap();
     assert!(
         after
@@ -1353,7 +1365,7 @@ async fn without_a_factory_a_workspace_gets_puddles_git_injector_which_reads_the
     let injector = Arc::clone(&injection.running().get(&ws).unwrap().injector);
     let decision = injector.decide(&context, &view).await;
     assert!(
-        matches!(&decision, InjectDecision::Refuse(refusal) if refusal.code() == "push_denied")
+        matches!(&decision, InjectDecision::Refuse(refusal) if refusal.code() == ReasonCode::PushDenied)
     );
 }
 

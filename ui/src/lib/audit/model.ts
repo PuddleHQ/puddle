@@ -14,6 +14,8 @@ type UnknownTokenKind = Schemas["UnknownTokenKind"];
 type CompanySignal = Schemas["CompanySignal"];
 type ReasonCode = Schemas["ReasonCode"];
 type FailedRequestCode = Schemas["FailedRequestCode"];
+type LimitCode = Schemas["LimitCode"];
+type PassThroughCode = Schemas["PassThroughCode"];
 type LocalCategory = Schemas["LocalCategory"];
 
 /** The newest matching records come first and the log is read back from there. */
@@ -317,8 +319,33 @@ const FAILED_REQUEST: Record<FailedRequestCode, string> = {
   rate_limited: "the Git host's request limit is used up (try again later)",
   host_error: "the Git host answered with an error",
 };
+
+/** Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`. */
+const LIMIT_WORDS: Record<LimitCode, string> = {
+  stream_idle: "a request moved no data for too long and was cut",
+  shutdown_ignored: "the connection did not take Puddle's request to wind down",
+  websocket_idle: "a WebSocket carried no data for too long",
+  header_block_too_slow: "the request headers took too long to arrive",
+  control_frame_flood: "the connection sent too many control messages",
+};
+
+/** Why a host Puddle would decrypt was passed through untouched: the code after
+ * `pass_through:`. */
+const PASS_THROUGH_WORDS: Record<PassThroughCode, string> = {
+  never_decrypt: "the host is on the never-decrypt list",
+  curated: "the host is one that cannot be decrypted",
+  learned: "a tool did not accept Puddle's certificate for it before",
+  container: "the connection came from a container",
+  not_tls: "the tool did not start a TLS handshake",
+  sni_mismatch: "the tool asked for another name than the one it connected to",
+  server_client_certificate: "the server asked for a client certificate",
+  server_certificate: "the server's certificate was not accepted",
+  server_tls: "the TLS handshake with the server failed",
+};
 const FAILED_PREFIX = "puddle_request_failed:";
 const TOGGLE_PREFIX = "toggle:";
+const LIMIT_PREFIX = "limit:";
+const PASS_THROUGH_PREFIX = "pass_through:";
 
 function has<T extends string>(
   table: Partial<Record<T, string>>,
@@ -328,7 +355,7 @@ function has<T extends string>(
 }
 
 /** A reason in words: a listed code, `toggle:<category>`, or what came (a code from another
- * version, or `limit:<code>` and `pass_through:<code>`, which are open-ended). */
+ * version). A `limit:` or `pass_through:` reason is a note beside the rule ([`reasonNote`]). */
 function reasonWords(reason: string): string {
   if (has(REASON_WORDS, reason)) return REASON_WORDS[reason];
   if (reason.startsWith(TOGGLE_PREFIX)) {
@@ -353,6 +380,23 @@ const NOTES: Partial<Record<ReasonCode, string>> = {
   certificate_unavailable:
     "Puddle could not make its certificate for this host, so the connection failed on Puddle's side",
 };
+
+/** What a reason says about an allowed connection beside its rule: a note of its own, or the
+ * limit that cut it, or why it was passed through undecrypted. */
+function reasonNote(reason: string): string | undefined {
+  if (has(NOTES, reason)) return NOTES[reason];
+  if (reason.startsWith(LIMIT_PREFIX)) {
+    const code = reason.slice(LIMIT_PREFIX.length);
+    if (has(LIMIT_WORDS, code)) return `cut short: ${LIMIT_WORDS[code]}`;
+  }
+  if (reason.startsWith(PASS_THROUGH_PREFIX)) {
+    const code = reason.slice(PASS_THROUGH_PREFIX.length);
+    if (has(PASS_THROUGH_WORDS, code)) {
+      return `passed through undecrypted: ${PASS_THROUGH_WORDS[code]}`;
+    }
+  }
+  return undefined;
+}
 
 const DECISIONS: Record<string, { label: string; tone: Tone }> = {
   allow: { label: "Allowed", tone: "allow" },
@@ -577,7 +621,7 @@ function connectionDetail(
     failed === null
       ? reasonWords(record.reason)
       : `Puddle's own request failed: ${has(FAILED_REQUEST, failed) ? FAILED_REQUEST[failed] : failed}`;
-  const note = has(NOTES, record.reason) ? NOTES[record.reason] : undefined;
+  const note = reasonNote(record.reason);
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
   if (record.request_rule !== null) {

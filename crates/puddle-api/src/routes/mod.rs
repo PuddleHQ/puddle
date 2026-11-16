@@ -9,7 +9,7 @@ use puddle_secrets::SecretStore;
 use puddle_store::{
     Actor, Clock, NewWorkspaceOp, Store, UserId, WorkspaceOpKind, WorkspaceOpOutcome,
 };
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -50,6 +50,7 @@ mod network_health;
 mod orphan_volumes;
 mod pending;
 mod ports;
+mod presence;
 mod problems;
 mod proxy_sign_in;
 mod repos;
@@ -63,6 +64,7 @@ mod shell_init;
 mod ssh_agent;
 mod start_folder;
 mod terminals;
+mod tools;
 mod workspaces;
 
 /// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
@@ -93,9 +95,9 @@ pub(crate) struct AppState {
     /// Who may do what; every route asks it before its handler runs.
     pub(crate) authorizer: Arc<dyn Authorizer>,
     pub(crate) settings: Arc<dyn SettingsRepo>,
-    /// Serialises settings read-modify-write cycles.
-    pub(crate) settings_lock: Arc<Mutex<()>>,
     pub(crate) events: Arc<EventHub>,
+    /// What each user's clients last reported, for picking who a new request is told to.
+    pub(crate) presence: Arc<crate::presence::Presence>,
     pub(crate) problems: Arc<puddle_types::Problems>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
@@ -135,6 +137,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(meta::health))
         .routes(routes!(problems::list_problems))
         .routes(routes!(events::events))
+        .routes(routes!(presence::report))
         .routes(routes!(network_health::network_health))
         .routes(routes!(
             proxy_sign_in::list_proxy_sign_ins,
@@ -188,6 +191,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(repositories::add_repository))
         .routes(routes!(repositories::clone_again))
         .routes(routes!(repositories::remove_repository))
+        .merge(tools_router())
         .routes(routes!(
             identities::list_identities,
             identities::create_identity
@@ -254,6 +258,17 @@ fn admin_router() -> OpenApiRouter<AppState> {
         .routes(routes!(admin::reissue_invite))
         .routes(routes!(admin::delete_user))
         .routes(routes!(admin::admin_audit))
+}
+
+/// A workspace's managed tools, in a router of their own like the rules.
+#[inline(never)]
+fn tools_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(tools::list_tools))
+        .routes(routes!(tools::tool_registry))
+        .routes(routes!(tools::install_tools))
+        .routes(routes!(tools::tool_versions))
+        .routes(routes!(tools::put_tool, tools::delete_tool))
 }
 
 /// The terminals, in a router of their own like the rules.

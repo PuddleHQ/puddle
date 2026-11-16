@@ -64,6 +64,9 @@ pub enum StoreError {
     /// The pattern was refused.
     #[error(transparent)]
     Pattern(#[from] PatternError),
+    /// A precedence outside 1 to 9 (R-59).
+    #[error("precedence must be a whole number from 1 to 9, not {0}")]
+    PrecedenceOutOfRange(i64),
     /// An expiry that is not in the future.
     #[error("expiry must be in the future")]
     ExpiryNotInFuture,

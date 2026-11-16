@@ -590,6 +590,8 @@ pub struct NewWorkspace {
     pub image: Option<ImageRef>,
     /// The memory, or the default.
     pub memory: Option<MemoryMib>,
+    /// The workspace's own vCPU count, stored as its own setting; `None` follows the global default.
+    pub cpus: Option<puddle_types::CpuCount>,
 }
 
 impl NewWorkspace {
@@ -603,6 +605,7 @@ impl NewWorkspace {
             start_folder: None,
             image: None,
             memory: None,
+            cpus: None,
         }
     }
 

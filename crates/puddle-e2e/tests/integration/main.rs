@@ -11,6 +11,7 @@ mod corporate_lab;
 mod corporate_lab_windows;
 mod corporate_reroute;
 mod forgejo_lab;
+mod forgejo_lab_program;
 mod forward_unreachable;
 mod front_unreachable;
 mod git_inject;

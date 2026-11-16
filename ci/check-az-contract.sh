@@ -1,11 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Checks what Puddle's Azure CLI source assumes about `az account get-access-token` (CD-93 to CD-95) against the
+# Checks what Puddle's Azure CLI source assumes about `az account get-access-token` against the
 # pinned azure-cli release in ci/az-cli.pin, with no Azure account:
 #   1. the two source files at the release's tag still hash to the pin (a changed file means: read it again);
 #   2. they still build the answer from the fields Puddle reads (accessToken, expires_on, expiresOn, tenant,
 #      tokenType), the tenant is echoed as asked, and the no-login message is "Please run 'az login' to setup account.";
-#   3. the real `az` of that version, run with an empty config dir and the exact arguments of CD-93, exits non-zero
+#   3. the real `az` of that version, run with an empty config dir and the exact arguments the source uses, exits non-zero
 #      with that message on stderr and nothing on stdout (the not-signed-in error).
 # AZ (the program, default `az`), AZ_PIN_FILE and AZ_SOURCE_URL replace the real ones in tests; step 3 also checks
 # `az version` against the pin. Run nightly by live-contracts.yml, never on a pull request: it needs the network.
@@ -41,9 +41,9 @@ for key in tokenType accessToken expires_on expiresOn tenant; do
     grep -q "'$key':" "$custom" || fail "custom.py no longer builds the \`$key\` field"
 done
 grep -q "str(tenant if tenant else account\[_TENANT_ID\])" "$profile" ||
-    fail "_profile.py no longer returns the asked tenant as typed (CD-93 says a domain name is not resolved)"
+    fail "_profile.py no longer returns the asked tenant as typed (a domain name is not resolved)"
 grep -q "^_AZ_LOGIN_MESSAGE = \"Please run 'az login' to setup account.\"" "$profile" ||
-    fail "_profile.py no longer words the not-signed-in error as CD-95 reads it"
+    fail "_profile.py no longer words the not-signed-in error"
 
 have=$("$az" version --query '"azure-cli"' -o tsv 2>/dev/null) || fail "\`$az version\` failed"
 [ "$have" = "$version" ] || fail "the az on PATH is $have, the pin is $version"

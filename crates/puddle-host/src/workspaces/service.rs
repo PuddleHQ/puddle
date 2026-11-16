@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `TerminalService` and `WorkspaceService` implementations of the host.
 
-use std::sync::Arc;
-
 use futures_util::future::BoxFuture;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, KeptLogins,
@@ -855,9 +853,5 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move { self.apply_direct_ssh().await })
-    }
-
-    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
-        Some(self.inner.settings_lock.clone())
     }
 }

@@ -50,7 +50,7 @@ impl EventHub {
         }
     }
 
-    /// How many SSE streams are open (the server's own taps, [`EventHub::tap`], are not).
+    /// How many SSE streams are open (the server's own taps, `EventHub::tap`, are not).
     #[must_use]
     pub fn subscribers(&self) -> usize {
         self.tx

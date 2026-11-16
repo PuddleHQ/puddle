@@ -230,4 +230,38 @@ printf '%s\n' "$out" | grep -q 'notices: skipped' || fail "stamp-dir: a stamp re
 echo "# stamp dir 2" >>"$n/Cargo.lock"
 [ "$(cd "$n" && PATH="$n/bin:$PATH" sh scripts/check.sh --stamp-key notices)" != "$key" ] || fail "stamp-key: a changed Cargo.lock kept the key"
 (cd "$n" && sh scripts/check.sh --stamp-key clippy >/dev/null 2>&1) && fail "stamp-key: an unknown gate was accepted"
+# A diff-coverage-fast that has nothing to measure ends that gate, not the run: the gate after it still runs. A scratch repository with
+# this check.sh, stub scripts for what the gate asks (the crates the diff touches) and a stub `standalone` gate.
+d=$tmp/dcf
+mkdir -p "$d/scripts" "$d/bin"
+cp "$here/scripts/check.sh" "$here/scripts/gate-sched.sh" "$d/scripts/"
+printf '#!/bin/sh\necho HEAD\n' >"$d/scripts/diff-base.sh"
+cat >"$d/scripts/diff-coverage-crates.sh" <<'STUB'
+#!/bin/sh
+printf '%s' "${STUB_CRATES:-}"
+STUB
+cat >"$d/scripts/check-standalone.sh" <<'STUB'
+#!/bin/sh
+echo "$0 $*" >>"$(dirname "$0")/../standalone.calls"
+STUB
+printf '#!/bin/sh\nexit 0\n' >"$d/scripts/check-product-name.sh"
+printf '#!/bin/sh\nexit 1\n' >"$d/bin/pkg-config"
+chmod +x "$d"/scripts/*.sh "$d/bin/pkg-config"
+(cd "$d" && git init -q && git add . && git -c user.email=t@example.org -c user.name=t commit -q -m init)
+dcf() { # dcf <crates the stub reports> <gate>...: one run of check.sh; prints its output
+    crates=$1
+    shift
+    : >"$d/standalone.calls"
+    (cd "$d" && env CI= STUB_CRATES="$crates" PATH="$d/bin:$PATH" sh scripts/check.sh "$@" 2>&1)
+}
+for crates in "" "*"; do
+    out=$(dcf "$crates" diff-coverage-fast standalone) || fail "diff-coverage-fast (crates '$crates') then standalone: the run failed: $out"
+    [ -s "$d/standalone.calls" ] || fail "diff-coverage-fast (crates '$crates') ended the run: standalone, named after it, never ran"
+    printf '%s\n' "$out" | grep -q '^==> standalone$' || fail "diff-coverage-fast (crates '$crates'): standalone did not start"
+done
+if [ "$(uname -s)" = Linux ]; then
+    out=$(dcf puddle-app diff-coverage-fast standalone) || fail "diff-coverage-fast (only puddle-app) then standalone: the run failed: $out"
+    printf '%s\n' "$out" | grep -q 'only puddle-app changed' || fail "diff-coverage-fast (only puddle-app): the skip was not taken"
+    [ -s "$d/standalone.calls" ] || fail "diff-coverage-fast (only puddle-app) ended the run: standalone never ran"
+fi
 echo "gate-sched-test: ok"

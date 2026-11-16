@@ -17,15 +17,18 @@
 #  - A `HEAD` that is empty or only NUL bytes (git then calls the checkout "not a git repository")
 #    is rewritten from the last entry of `logs/HEAD`, and only when that entry names a commit that
 #    exists in the object store. The branch is the target of the last `checkout: moving from X to Y`
-#    entry when `refs/heads/Y` points at that commit, a detached `HEAD` when no such branch
-#    exists. Anything else (a branch somewhere else, no checkout entry, a missing object) is left
-#    alone and reported.
+#    entry when `refs/heads/Y` points at that commit, a detached `HEAD` when Y is no branch (a sha,
+#    a tag, `HEAD~1`, `v1^`). With no checkout entry at all (a clone that never switched branch)
+#    the branch is the one branch that sits on the commit. Anything else (a branch somewhere
+#    else, several candidate branches, a branch that may have been renamed, a missing object) is
+#    left alone and reported.
 #  - An index that is empty, only NUL bytes or fails git's own checksum is rebuilt with
 #    `git read-tree HEAD`, which writes the index only, never the working tree. It is left alone
 #    and reported when `HEAD` has no commit, a merge, rebase, cherry-pick or revert is in progress,
 #    or a sparse checkout is on (the index held state a rebuild cannot restore). A damaged index
 #    that still held data is kept as `index.puddle-corrupt-<time>`. An index with an extension this git
-#    does not know is a newer git's valid index: reported, not rebuilt.
+#    does not know is a newer git's valid index: reported, not rebuilt. So is an index cut off
+#    inside an entry (`unknown index entry format`): git cannot say what is missing.
 # What was staged and not committed cannot be read back from an unreadable index: it is gone, the
 # files themselves are not.
 #
@@ -78,6 +81,31 @@ is_sha() {
 branch_at() {
     grep -rqs -- "^$2" "$1/refs/heads" && return 0
     [ -f "$1/packed-refs" ] && grep -q -- "^$2 refs/heads/" "$1/packed-refs"
+}
+
+# The one branch of common dir $1 that points at commit $2, or nothing when none or several do.
+# Ref names cannot hold control characters, so one name per line is safe.
+only_branch_at() {
+    found=
+    n=0
+    for b in $(
+        {
+            grep -rls -- "^$2" "$1/refs/heads" 2>/dev/null | sed "s|^$1/refs/heads/||"
+            [ -f "$1/packed-refs" ] && awk -v s="$2" '$1 == s && $2 ~ /^refs\/heads\// { sub("^refs/heads/", "", $2); print $2 }' "$1/packed-refs"
+        } | sort -u
+    ); do
+        git check-ref-format "refs/heads/$b" 2>/dev/null || continue
+        [ "$(ref_value "$1" "refs/heads/$b")" = "$2" ] || continue
+        found=$b
+        n=$((n + 1))
+    done
+    [ $n -eq 1 ] && printf %s "$found"
+}
+
+# True when logs/HEAD $1 has a branch rename after its last checkout entry.
+renamed_since_checkout() {
+    first=$(grep -an "$(printf '\t')checkout: moving from .* to " "$1" | tail -n 1 | cut -d: -f1)
+    tail -n +"${first:-1}" "$1" | grep -aq "$(printf '\t')Branch: renamed "
 }
 
 # True when commit $2 exists in the object store of git dir $1. HEAD is zero-filled, so git
@@ -133,16 +161,31 @@ repair_head() {
         problem "$shown" "HEAD is damaged and the last commit in logs/HEAD ($sha) is not in the repository"
         return 0
     fi
-    branch=$(grep -a "$(printf '\t')checkout: moving from .* to " "$log" | tail -n 1 | cut -f 2- | sed 's/^checkout: moving from .* to //')
-    if [ -z "$branch" ] || ! git check-ref-format "refs/heads/$branch" 2>/dev/null; then
-        problem "$shown" "HEAD is damaged and logs/HEAD does not say which branch was checked out"
-        return 0
+    entry=$(grep -a "$(printf '\t')checkout: moving from .* to " "$log" | tail -n 1 | cut -f 2- | sed 's/^checkout: moving from .* to //')
+    named=no
+    if [ -z "$entry" ]; then
+        # No branch switch was ever logged (a plain clone, or `git init` and commits only): the
+        # checkout can only be a branch, and only when exactly one branch sits on the commit.
+        branch=$(only_branch_at "$cd_" "$sha")
+        if [ -z "$branch" ]; then
+            problem "$shown" "HEAD is damaged and logs/HEAD does not say which branch was checked out"
+            return 0
+        fi
+        tip=$sha
+    else
+        branch=$entry
+        tip=
+        if [ "$branch" != HEAD ] && git check-ref-format "refs/heads/$branch" 2>/dev/null; then
+            tip=$(ref_value "$cd_" "refs/heads/$branch")
+            named=yes
+        fi
+        # Otherwise the entry is a revision (`HEAD`, `HEAD~1`, `v1^`), not a branch: git only
+        # attaches HEAD to a branch name, so that checkout was detached.
     fi
-    tip=$(ref_value "$cd_" "refs/heads/$branch")
     if [ -z "$tip" ] && [ ! -e "$gd/refs/heads/$branch" ]; then
-        # No such branch: a detached checkout, unless a branch sits on the commit (a renamed branch
-        # writes no checkout entry), which a guess cannot settle.
-        if branch_at "$cd_" "$sha"; then
+        # No such branch: a detached checkout, unless a branch sits on the commit after the branch
+        # was renamed (a rename writes no checkout entry), which a guess cannot settle.
+        if branch_at "$cd_" "$sha" && { [ $named = yes ] || renamed_since_checkout "$log"; }; then
             problem "$shown" "HEAD is damaged and logs/HEAD cannot tell a detached checkout from a renamed branch at $sha"
             return 0
         fi
@@ -191,6 +234,11 @@ repair_index() {
                 return 0
                 ;;
             *'index file corrupt'* | *'index file smaller than expected'* | *'bad signature'* | *'bad index file sha1 signature'*) ;;
+            # Cut off inside an entry: git cannot say what is missing. Left as it is, but reported.
+            *'unknown index entry format'*)
+                problem "$shown" "the index is cut off inside an entry and was left as it is; git will not work until it is repaired by hand"
+                return 0
+                ;;
             *) return 0 ;;
         esac
     fi

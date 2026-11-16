@@ -8,7 +8,6 @@
 //! test in the binary, so the allocator's count in the parent is the proxy's.
 
 mod hostile_heap;
-mod hostile_support;
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -16,8 +15,8 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use futures_util::stream;
 use hostile_heap::Counting;
-use hostile_support::{Guest, Guests, bystander_round, guest_route, rig_with};
 use puddle_proxy::ProxyConfig;
+use puddle_proxy_test_support::hostile::{Guest, Guests, bystander_round, guest_route, rig_with};
 use tokio::io::AsyncWriteExt;
 
 #[global_allocator]

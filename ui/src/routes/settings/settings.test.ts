@@ -166,6 +166,7 @@ describe("the screen", () => {
       "Git and credentials",
       "Environment",
       "Devices and sign-in",
+      "Back up",
       "Privacy",
       "About",
     ]);

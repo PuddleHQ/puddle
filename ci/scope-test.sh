@@ -1033,8 +1033,13 @@ for wf, (rid, rname, want_specs) in results.items():
 # The VM workflows fail on a missing hypervisor on a pull request and a merge queue run.
 if "ci/vm-skip-policy.sh" not in open(f"{d}/vm-linux.yml").read():
     bad.append("vm-linux: the KVM preflight does not use ci/vm-skip-policy.sh")
-if "$env:GITHUB_EVENT_NAME -eq 'merge_group'" not in open(f"{d}/vm-windows.yml").read():
-    bad.append("vm-windows: the WHP preflight does not fail on a merge queue run")
+# vm-windows uses the shared WHP preflight; its default `fail-events` must name both events, and the partition job must not override it.
+whp = yaml.safe_load(open(f"{d}/../actions/whp-preflight/action.yml"))
+if set(str(whp["inputs"]["fail-events"]["default"]).split()) != {"pull_request", "merge_group"}:
+    bad.append("vm-windows: the WHP preflight does not fail on a pull request and a merge queue run by default")
+part = [x for x in yaml.safe_load(open(f"{d}/vm-windows.yml"))["jobs"]["tests"]["steps"] if x.get("id") == "whp"]
+if len(part) != 1 or part[0].get("uses") != "./.github/actions/whp-preflight" or "fail-events" in (part[0].get("with") or {}):
+    bad.append("vm-windows: the partition job's WHP preflight must be the shared action with its default fail-events")
 for b in bad:
     print("FAIL:", b, file=sys.stderr)
 sys.exit(1 if bad else 0)

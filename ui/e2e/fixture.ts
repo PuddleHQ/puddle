@@ -17,7 +17,7 @@ import {
 } from "../scripts/backend-start.ts";
 import { throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
-import { loadFactor } from "../scripts/load-budget.ts";
+import { loadFactor, MAX_LOAD_FACTOR } from "../scripts/load-budget.ts";
 import { WARM_UP_TIMEOUT_MS, within } from "./warm-up.ts";
 
 export interface Control {
@@ -239,7 +239,10 @@ export const test = base.extend<
   // The open has its own limit, the one the warm-up gives the same call, so the test's 30 s are
   // spent on what it checks: a WebKit page took 8 to 14 s to open on a host at load 335 on 40
   // cores, and once over 30 s, which failed a one-second test on its setup. A page that is
-  // stalled still fails, by name, after that limit.
+  // stalled still fails, by name, after that limit. Like the test's own limit, the open's grows
+  // with the load read when it starts: WebKit's `newPage` took over 45 s at a load of 165 on a
+  // 40-core host. Playwright fixes a fixture's own limit up front, so that is the largest the
+  // open can be given and `within` holds it to the scaled one.
   page: [
     async ({ context, browserName }, use) => {
       const began = Date.now();
@@ -250,7 +253,10 @@ export const test = base.extend<
       }, SLOW_PAGE_MS);
       let page: Page;
       try {
-        page = await context.newPage();
+        const limit =
+          WARM_UP_TIMEOUT_MS *
+          loadFactor(loadavg()[0] ?? 0, availableParallelism());
+        page = await within(limit, context.newPage(), "opening the page");
       } finally {
         clearTimeout(slow);
       }
@@ -262,7 +268,7 @@ export const test = base.extend<
       await throttleCpu(page, browserName);
       await use(page);
     },
-    { scope: "test", timeout: WARM_UP_TIMEOUT_MS },
+    { scope: "test", timeout: WARM_UP_TIMEOUT_MS * MAX_LOAD_FACTOR },
   ],
   baseURL: async ({ workerBackend }, use) => {
     await use(workerBackend.url);

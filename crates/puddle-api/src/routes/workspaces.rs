@@ -261,7 +261,7 @@ impl StoreGitSetup {
     }
 
     /// Sets up as [`Self::new`] does and, before the first clone, allows each repository's host
-    /// for the workspace unless a rule decides it already (ST-44a).
+    /// for the workspace unless a rule decides it already (rules R-58).
     pub(super) fn allowing_hosts(store: Arc<Store>) -> Self {
         Self {
             allow_hosts: true,

@@ -22,7 +22,7 @@
 //! | sudo | `/etc/sudoers.d/puddle-proxy`: `env_keep` for every variable above |
 //! | mise (managed tools) | `MISE_*` and `PATH` from [`mise_config`], and `/etc/sudoers.d/puddle-mise` |
 //! | containers (Docker CLI) | `~/.docker/config.json` `proxies.default`, at the bridge gateway, merged |
-//! | `ssh` (and `git`, `scp`, `rsync` over it) | `/etc/ssh/ssh_config.d/00-puddle.conf`: the agent as `ProxyCommand`, which refuses SSH with a message (not supported yet); loopback and the container bridge stay direct |
+//! | `ssh` (and `git`, `scp`, `rsync` over it) | `/etc/ssh/ssh_config.d/00-puddle.conf`: the agent as `ProxyCommand`, which carries the connection to the proxy (Puddle's SSH server answers for the Git hosts it serves, the rules decide the rest); loopback and the container bridge stay direct |
 //!
 //! Every file is one Puddle owns outright, except the Docker CLI config, where Puddle owns only
 //! `proxies.default` and the boot hook merges it in (`docker login`'s `auths` survive a restart).

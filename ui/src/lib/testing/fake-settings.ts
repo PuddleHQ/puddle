@@ -91,6 +91,20 @@ export class FakeSettings {
   proxyPasswords = new Map<string, string>();
   /** How long and how many learned hosts are passed through. */
   learnedLimits: S["LearnedLimits"] = { ttl_secs: 43_200, cap: 1024 };
+  /** The activity log's size and days, answered on `/api/audit/retention`. */
+  auditSize: S["AuditSize"] = {
+    records: 1200,
+    bytes: 480_000,
+    oldest_ts: 1_700_000_000_000,
+    records_last_day: 40,
+    bytes_last_day: 16_000,
+    records_last_week: 280,
+    bytes_last_week: 112_000,
+    retention_days: 90,
+    warn_bytes: 2_147_483_648,
+    file_bytes: 4_194_304,
+    free_bytes: 65_536,
+  };
   calls: string[] = [];
   bodies: unknown[] = [];
   down = false;
@@ -119,6 +133,7 @@ export class FakeSettings {
     this.consent = fresh.consent;
     this.neverDecrypt = [];
     this.learnedLimits = { ttl_secs: 43_200, cap: 1024 };
+    this.auditSize = fresh.auditSize;
     this.proxySignIns = [];
     this.proxyPasswords = new Map();
     this.health = null;
@@ -228,6 +243,8 @@ export class FakeSettings {
         return this.reply(200, { never_decrypt: this.neverDecrypt });
       case "/api/interception/learned-limits":
         return this.reply(200, this.learnedLimits);
+      case "/api/audit/retention":
+        return this.reply(200, this.auditSize);
       case "/api/proxy-sign-ins":
         return this.reply(200, { sign_ins: this.proxySignIns });
       case "/api/network-health":
@@ -267,6 +284,11 @@ export class FakeSettings {
     if (path === "/api/interception/learned-limits") {
       this.learnedLimits = init.body as S["LearnedLimits"];
       return this.reply(200, this.learnedLimits);
+    }
+    if (path === "/api/audit/retention") {
+      const { days } = init.body as S["AuditRetentionRequest"];
+      this.auditSize = { ...this.auditSize, retention_days: days };
+      return this.reply(200, this.auditSize);
     }
     if (path === "/api/proxy-sign-ins") {
       const b = init.body as S["ProxySignInRequest"];

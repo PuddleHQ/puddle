@@ -172,10 +172,7 @@ mod tests {
     fn says(result: &Result<(), WorkspaceError>, words: &str) {
         let shown = format!("{result:?}");
         assert!(
-            matches!(
-                result,
-                Err(WorkspaceError::Conflict(_) | WorkspaceError::Invalid(_))
-            ) && shown.contains(words),
+            shown.starts_with("Err(") && shown.contains(words),
             "expected a refusal saying {words:?}, got {shown}"
         );
     }

@@ -11,9 +11,10 @@ use crate::facts::{
     AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
     CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
     DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
-    Protection, RuntimeFacts, RuntimeState, SshAgentFacts, SwapFacts, VaultFacts, WritableFolder,
+    Protection, RuntimeFacts, RuntimeState, SealedKeyFacts, SshAgentFacts, SwapFacts, TpmFacts,
+    VaultFacts, WritableFolder,
 };
-use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
+use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth, Unseal};
 
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -1342,6 +1343,7 @@ fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
                     check
                 }
             }
+            VaultFacts::Sealed { tag, key, tpm } => sealed_vault_key(tag, key, tpm),
             VaultFacts::NoVaultYet => Check::new(
                 id,
                 Status::Info,
@@ -1366,6 +1368,47 @@ fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
         .fix(
             "Restore the file from a copy. It records the first start's choice of store, and Puddle does not choose again by itself.",
         ),
+    }
+}
+
+/// The file vault whose key is sealed by systemd: whether the key opens, and whether it was sealed
+/// without a TPM2 that the machine has. The causes of a refusal overlap (`systemd-creds` says one
+/// text for all of them), so the entry lists them and the fix is to restore the old state.
+fn sealed_vault_key(tag: KeySourceTag, key: SealedKeyFacts, tpm: Option<TpmFacts>) -> Check {
+    let id = CheckId::CredentialStore;
+    let words = format!("Puddle's file vault, {}", key_words(tag));
+    match key {
+        SealedKeyFacts::Fails(Unseal::Rejected) => Check::new(
+            id,
+            Status::Warn,
+            format!("{words}, and the key no longer opens: the machine id, the host key or the Secure Boot setting changed"),
+        )
+        .finding(Finding::CredentialStoreKeyRejected)
+        .fix(
+            "systemd refused to open the vault key. This happens when the machine id changed (a cloned or restored disk image, a restore onto another computer), when systemd's host key (`/var/lib/systemd/credential.secret`) was lost, or when the Secure Boot setting changed. Restoring a Secure Boot setting brings the key back. A changed machine id does not: systemd deletes the host key the first time it fails to open anything, so restoring the old machine id no longer helps. If you cannot restore a Secure Boot setting, the secrets in the vault cannot be read: stop Puddle, move `secrets/vault` in the data folder and `puddle/vault-key.cred` in your config folder aside, start Puddle again and enter the secrets again.",
+        ),
+        SealedKeyFacts::Fails(why) => Check::new(
+            id,
+            Status::Warn,
+            format!("{words}, and the key does not open: {why}"),
+        )
+        .finding(Finding::CredentialStoreKeyUnopenable)
+        .fix(match why {
+            Unseal::ToolMissing => "Install systemd's `systemd-creds` (it ships in the `systemd` package on most distributions, in `systemd-container` or `systemd-creds` on some), then run `puddle doctor` again.",
+            Unseal::Unsupported => "This systemd is older than 256 and cannot open a key sealed for a user. Use the machine the key was sealed on, or move `secrets/vault` and `puddle/vault-key.cred` aside and enter the secrets again; Puddle then keeps the key in a file.",
+            Unseal::NameMismatch => "The key file was sealed under another name than `puddle-vault-key`. Restore `puddle/vault-key.cred` in your config folder from a copy.",
+            _ => "`systemd-creds` did not give a key. Check that systemd's credential service answers (`systemd-creds --user has-tpm2` should print), then run `puddle doctor` again.",
+        }),
+        SealedKeyFacts::Opens if tpm == Some(TpmFacts::LibrariesMissing) => Check::new(
+            id,
+            Status::Warn,
+            format!("{words}; this computer has a TPM2 chip, but its software libraries are missing, so the key is not tied to the TPM2"),
+        )
+        .finding(Finding::CredentialStoreTpmLibrariesMissing)
+        .fix(
+            "Install the TPM2 libraries (`apt install tpm2-tools` on Debian and Ubuntu, `dnf install tpm2-tools` on Fedora) and check with `systemd-analyze has-tpm2`, which should print `yes`. The existing key stays sealed with the host key only; a key made after the libraries are installed is tied to the TPM2 too.",
+        ),
+        SealedKeyFacts::Opens => Check::new(id, Status::Ok, format!("{words}; the key opens")),
     }
 }
 

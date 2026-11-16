@@ -10,10 +10,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use futures_util::future::BoxFuture;
 use puddle_api::{RepoUrl, Repository, SettingsRepo, SettingsRepoError, StartFolder};
 use puddle_types::{CheckoutDir, EntryId, SessionUser, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::OwnedMutexGuard;
 
 use crate::HostError;
 
@@ -157,6 +159,7 @@ enum BookError {
 pub struct FileSettings {
     dir: PathBuf,
     cache: Mutex<Cache>,
+    lock: puddle_api::SettingsLock,
 }
 
 #[derive(Debug, Default)]
@@ -175,6 +178,7 @@ impl FileSettings {
         Self {
             dir: dir.into(),
             cache: Mutex::new(Cache::default()),
+            lock: puddle_api::SettingsLock::default(),
         }
     }
 
@@ -203,6 +207,10 @@ impl FileSettings {
 }
 
 impl SettingsRepo for FileSettings {
+    fn lock(&self) -> BoxFuture<'static, OwnedMutexGuard<()>> {
+        self.lock.hold()
+    }
+
     fn load_global(&self) -> Result<Option<Value>, SettingsRepoError> {
         let mut cache = self.cache();
         if cache.global_read {

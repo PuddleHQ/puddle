@@ -59,7 +59,7 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
         .iter()
         .any(|r| r.state == PendingState::Requested && local_category(&r.host, signals).is_some());
     let blocked: HashMap<PendingId, LocalCategory> = if wanted {
-        let _lock = state.settings_lock.lock().await;
+        let _lock = state.settings.lock().await;
         let settings = state.settings.clone();
         let candidates: Vec<(PendingId, WorkspaceId, LocalCategory)> = rows
             .iter()

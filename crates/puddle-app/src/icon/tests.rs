@@ -77,6 +77,10 @@ fn a_missing_or_damaged_own_image_falls_back_to_the_duck() {
 struct Broken;
 
 impl SettingsRepo for Broken {
+    /// Nothing changes these documents, so the cycles it would serialise do not exist.
+    fn lock(&self) -> futures_util::future::BoxFuture<'static, tokio::sync::OwnedMutexGuard<()>> {
+        puddle_api::SettingsLock::default().hold()
+    }
     fn load_global(&self) -> Result<Option<serde_json::Value>, puddle_api::SettingsRepoError> {
         Ok(None)
     }

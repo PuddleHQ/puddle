@@ -44,6 +44,7 @@
     { key: "pattern", label: "Host" },
     { key: "effect", label: "Effect" },
     { key: "scope", label: "Workspace" },
+    { key: "precedence", label: "Precedence" },
     { key: "expires", label: "Expires" },
     { key: "created", label: "Created" },
   ];
@@ -115,6 +116,7 @@
               <span class="mono">{scopeLabel(rule)}</span>
             {/if}
           </td>
+          <td class="precedence">{rule.precedence}</td>
           <td>
             {#if rule.expires_at === null}
               <span class="muted">Never</span>

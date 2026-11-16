@@ -119,6 +119,7 @@ export class FakeInbox {
       created_by: "api",
       source_pending_id: id,
       enabled: true,
+      precedence: 5,
     };
     this.rules.push(rule);
     return this.reply(200, {

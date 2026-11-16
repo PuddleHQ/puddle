@@ -772,6 +772,9 @@ fn arb_rule() -> impl Strategy<Value = Rule> {
         })
 }
 
+/// A candidate of the plain reference: precedence, specificity, scope rank, deny, the hit.
+type Candidate<'a> = (u8, (u8, usize), u8, bool, Hit<'a>);
+
 /// R-60 written as plainly as possible, for the property test below: every candidate checked
 /// one by one, then the best by precedence, specificity, scope, deny over allow.
 fn reference_p3(
@@ -785,7 +788,7 @@ fn reference_p3(
     let owner = index.owner_of(workspace)?;
     let ignore = suffix_allows == SuffixAllows::Ignore;
     // (precedence, specificity, scope rank, deny, the hit)
-    let mut all: Vec<(u8, (u8, usize), u8, bool, Hit<'_>)> = Vec::new();
+    let mut all: Vec<Candidate<'_>> = Vec::new();
     for r in index.rules() {
         if !r.pattern.matches(h) || r.is_expired(now) || !r.enabled || r.user != owner {
             continue;

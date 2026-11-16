@@ -13,9 +13,28 @@ const rules = [
 ];
 
 describe("RuleTable", () => {
+  it("shows each rule's precedence and sorts by it", async () => {
+    const onSort = vi.fn();
+    const ranked = [
+      rule(1, { pattern: "a.example.com", precedence: 5 }),
+      rule(2, { pattern: "b.example.com", precedence: 8 }),
+    ];
+    render(RuleTable, {
+      props: { rules: ranked, sort: DEFAULT_SORT, now: 5_000_000, onSort },
+    });
+    const cells = [...document.querySelectorAll("td.precedence")].map(
+      (cell) => cell.textContent,
+    );
+    expect(cells).toEqual(["5", "8"]);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Sort by precedence" }),
+    );
+    expect(onSort).toHaveBeenCalledWith("precedence");
+  });
+
   it("is read-only without handlers: plain headers and no action buttons", () => {
     render(RuleTable, { props: { rules, sort: DEFAULT_SORT, now: 5_000_000 } });
-    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.getByText("a.example.com")).toBeInTheDocument();
   });
@@ -34,7 +53,7 @@ describe("RuleTable", () => {
         onDelete,
       },
     });
-    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
     await fireEvent.click(screen.getByRole("button", { name: "Sort by host" }));
     expect(onSort).toHaveBeenCalledWith("pattern");
     await fireEvent.click(
@@ -56,7 +75,7 @@ describe("RuleTable", () => {
     render(RuleTable, {
       props: { rules: mixed, sort: DEFAULT_SORT, now: 5_000_000, onEnabled },
     });
-    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
     const first = screen.getByRole("switch", {
       name: "Rule on: allow a.example.com for every workspace",
     });

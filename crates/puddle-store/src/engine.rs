@@ -354,7 +354,8 @@ impl RuleIndex {
         for found in self.candidates(host) {
             let applies = match found {
                 Hit::Rule(rule) => {
-                    !(rule.is_expired(now) || !rule.enabled)
+                    !rule.is_expired(now)
+                        && rule.enabled
                         && match &rule.scope {
                             Scope::Set(set) => {
                                 rule.user == user

@@ -685,7 +685,7 @@ async fn a_group_holds_a_default_precedence_for_the_rules_added_to_it() {
         let rule = api.send("POST", "/api/rules", Some(&body)).await;
         assert_eq!(rule.json()["precedence"], want, "{}", rule.body);
     }
-    let entries = api.get(&format!("/api/rule-sets")).await.json();
+    let entries = api.get("/api/rule-sets").await.json();
     let work = entries["sets"]
         .as_array()
         .unwrap()

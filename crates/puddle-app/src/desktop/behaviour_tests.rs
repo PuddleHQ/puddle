@@ -734,7 +734,7 @@ fn service_picked(events: &mut Receiver<Event>, id: i64) -> (Vec<String>, bool) 
             }
         })
         .await
-        .expect("the service said who is told")
+        .unwrap()
     })
 }
 

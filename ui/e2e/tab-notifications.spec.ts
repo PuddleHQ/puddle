@@ -5,6 +5,7 @@
 // what is asserted is exactly what the page asked the browser to show.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
+import { staysEmpty } from "./support";
 
 interface Shown {
   title: string;
@@ -47,7 +48,7 @@ async function open(page: Page, backend: Backend, switchOn = true) {
     (r) => r.url().endsWith("/api/presence") && r.request().method() === "POST",
   );
   await page.goto("/workspaces");
-  expect((await reported).status()).toBe(204);
+  await expect.poll(async () => (await reported).status()).toBe(204);
 }
 
 test("a new request shows one notification in the tab the service picked, and a click opens the request", async ({
@@ -88,7 +89,7 @@ test("a tab with its switch off is not told", async ({ page, backend }) => {
   // The request is in the inbox, which is the proof that the event went past the page.
   await page.goto("/inbox");
   await expect(page.locator("li.req .host").first()).toBeVisible();
-  expect(await shownOn(page)).toEqual([]);
+  await staysEmpty(page, async () => (await shownOn(page)).map((n) => n.title));
 });
 
 test("the settings switch asks the browser and tells the service at once", async ({
@@ -107,7 +108,9 @@ test("the settings switch asks the browser and tells the service at once", async
   await box.check();
   await reported;
   await expect(box).toBeChecked();
-  expect(
-    await page.evaluate(() => localStorage.getItem("puddle.tab-notifications")),
-  ).toBe("on");
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem("puddle.tab-notifications")),
+    )
+    .toBe("on");
 });

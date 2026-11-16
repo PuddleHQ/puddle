@@ -32,7 +32,11 @@ on:
   workflow_dispatch:
     inputs:
       vscode_only:
-        description: "Run only the desktop VS Code job (the partitions are skipped; the vm-windows result then reports their skip)"
+        description: "Run only the desktop VS Code job (the partitions and the Microsoft editor job are skipped; the vm-windows result then reports their skip)"
+        type: boolean
+        default: false
+      microsoft_editor_only:
+        description: "Run only the Microsoft editor window job (the partitions and the desktop VS Code job are skipped)"
         type: boolean
         default: false
 
@@ -199,7 +203,7 @@ jobs:
   tests:
     name: vm-windows tests (partition ${{ matrix.partition }} of 12)
     needs: [build, agent]
-    if: ${{ needs.build.outputs.run == 'true' && !inputs.vscode_only }}
+    if: ${{ needs.build.outputs.run == 'true' && !inputs.vscode_only && !inputs.microsoft_editor_only }}
     permissions:
       contents: read
       actions: write
@@ -390,7 +394,7 @@ jobs:
   vscode:
     name: vm-windows desktop VS Code (nightly)
     needs: [build, agent]
-    if: ${{ needs.build.outputs.run == 'true' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) }}
+    if: ${{ needs.build.outputs.run == 'true' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && !inputs.microsoft_editor_only }}
     permissions:
       contents: read
       actions: write
@@ -511,6 +515,93 @@ jobs:
             ${{ runner.temp }}/vscode-out/**
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             ${{ runner.temp }}/msb-logs/**
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # Microsoft's real VS Code server in the app's real WebView2 window (W9 check 1b, T-553's Microsoft-server half): the debug
+  # app runs the Puddle host on real microVMs, the editor window is opened from the Connect step and read over DevTools, a test
+  # extension's canary session survives closing and reopening the window, and a two-checkout workspace shows one root per
+  # checkout (crates/puddle-app/e2e/microsoft-editor.mjs). Accepts Microsoft's server licence terms on the runner, as the
+  # product does once for a person. Nightly and by dispatch; it is in no partition and not a required check.
+  microsoft-editor:
+    name: vm-windows Microsoft editor window (nightly)
+    needs: [build, agent]
+    if: ${{ needs.build.outputs.run == 'true' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && !inputs.vscode_only }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: whp
+        uses: ./.github/actions/whp-preflight
+        with:
+          title: vm-windows Microsoft editor window
+          fail-events: ''
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.whp.outputs.ok == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      # The app embeds ui/build, so it is built first.
+      - name: UI build (embedded in the app)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: cd ui && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+      - name: the debug app on the Puddle host (no fixture) and its pinned runtime folder
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          cargo build -p puddle-app --locked
+          cargo xtask runtime --out target/debug/runtime
+      - name: the guest agent from the agent job
+        id: agent
+        if: steps.whp.outputs.ok == 'true'
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job (second try)
+        if: steps.whp.outputs.ok == 'true' && steps.agent.outcome != 'success'
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/bundle
+      - name: the Microsoft editor window run
+        if: steps.whp.outputs.ok == 'true'
+        shell: pwsh
+        timeout-minutes: 50
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'ms-editor-out'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $env:MS_EDITOR_OUT = $out
+          $env:MS_EDITOR_PIN = (Resolve-Path 'ci/vscode-server.sha256').Path
+          $env:PUDDLE_APP_EXE = (Resolve-Path 'target\debug\puddle-app.exe').Path
+          $env:PUDDLE_AGENT_BIN = (Resolve-Path (Join-Path $env:RUNNER_TEMP 'bundle\puddle-agent')).Path
+          node crates/puddle-app/e2e/microsoft-editor.mjs
+      - name: stop what the run left
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        shell: pwsh
+        run: Get-Process puddle-app, msb -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      - name: upload pictures and logs
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-windows-microsoft-editor-results
+          path: ${{ runner.temp }}/ms-editor-out/**
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group

@@ -35,7 +35,7 @@ pub struct SystemProbe {
     data_dir: Option<PathBuf>,
     ssh_agent_pipe: Option<String>,
     az_search_path: Option<std::ffi::OsString>,
-    sealed_key_search: Option<(PathBuf, std::ffi::OsString)>,
+    sealed_key_search: (Option<PathBuf>, Option<std::ffi::OsString>),
     opened: OnceCell<BundledRuntime>,
 }
 
@@ -53,7 +53,7 @@ impl SystemProbe {
             data_dir: None,
             ssh_agent_pipe: None,
             az_search_path: None,
-            sealed_key_search: None,
+            sealed_key_search: (puddle_secrets::config_home(), std::env::var_os("PATH")),
             opened: OnceCell::new(),
         }
     }
@@ -100,7 +100,7 @@ impl SystemProbe {
         config_home: impl Into<PathBuf>,
         path: impl Into<std::ffi::OsString>,
     ) -> Self {
-        self.sealed_key_search = Some((config_home.into(), path.into()));
+        self.sealed_key_search = (Some(config_home.into()), Some(path.into()));
         self
     }
 
@@ -281,19 +281,9 @@ impl Probe for SystemProbe {
             data.as_deref(),
             puddle_secrets::probe_os_store,
             || login_session_in(std::env::var_os("PATH"), Duration::from_secs(2)),
-            |tag| match &self.sealed_key_search {
-                Some((config_home, path)) => sealed_key_facts_in(
-                    tag,
-                    Some(config_home),
-                    Some(path.clone()),
-                    SEALED_KEY_LIMIT,
-                ),
-                None => sealed_key_facts_in(
-                    tag,
-                    puddle_secrets::config_home().as_deref(),
-                    std::env::var_os("PATH"),
-                    SEALED_KEY_LIMIT,
-                ),
+            |tag| {
+                let (config_home, path) = &self.sealed_key_search;
+                sealed_key_facts_in(tag, config_home.as_deref(), path.clone(), SEALED_KEY_LIMIT)
             },
         )
     }

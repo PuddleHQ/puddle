@@ -522,7 +522,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
-  # Microsoft's real VS Code server in the app's real WebView2 window (W9 check 1b, T-553's Microsoft-server half): the debug
+  # Microsoft's real VS Code server in the app's real WebView2 window (a secret kept across a reopen, and the multi-root view): the debug
   # app runs the Puddle host on real microVMs, the editor window is opened from the Connect step and read over DevTools, a test
   # extension's canary session survives closing and reopening the window, and a two-checkout workspace shows one root per
   # checkout (crates/puddle-app/e2e/microsoft-editor.mjs). Accepts Microsoft's server licence terms on the runner, as the

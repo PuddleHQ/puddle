@@ -4,14 +4,6 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-
-#[path = "../checks/dns_transport.rs"]
-mod checks;
-#[path = "../checks/dns_message.rs"]
-#[allow(dead_code, reason = "only the grammar module calls it here")]
-mod dns_message;
-#[path = "../checks/dns_message_grammar.rs"]
-#[allow(dead_code, reason = "this target needs the message builder, not the grammar's checks")]
-mod dns_message_grammar;
+use puddle_fuzz::dns_transport as checks;
 
 fuzz_target!(|stream: checks::Stream| checks::dns_tcp_stream(&stream));

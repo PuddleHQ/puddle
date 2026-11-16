@@ -17,6 +17,14 @@ else the per-user folder (the same table as [serve](serve.md)). A host started w
 environment variable or a config file is the one the backup copies when you pass the same.
 `puddle doctor` takes the same two options.
 
+## From Settings
+
+Settings has a "Back up" card with the button "Back up now". It makes the same backup and your
+browser or the app saves it as one file, `puddle-backup-<UTC time>.tar.gz`, that holds `puddle.db`,
+`settings/` and `workspaces.json` at its top level. The owner alone can do it, and the file is
+built while Puddle runs, with no lock taken. It holds and leaves out what the next section lists.
+A script can ask the same thing: `POST /api/backup` with the API token answers with the file.
+
 ## What the backup holds
 
 | In the backup | What it is |

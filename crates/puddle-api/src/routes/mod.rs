@@ -268,11 +268,13 @@ fn rules_router() -> OpenApiRouter<AppState> {
         .routes(routes!(rules::list_rules, rules::create_rule))
         .routes(routes!(rules::delete_rule))
         .routes(routes!(rules::set_rule_expiry))
+        .routes(routes!(rules::set_rule_enabled))
         .routes(routes!(
             request_rules::list_request_rules,
             request_rules::create_request_rule
         ))
         .routes(routes!(request_rules::delete_request_rule))
+        .routes(routes!(request_rules::set_request_rule_enabled))
         .routes(routes!(
             rule_sets::list_rule_sets,
             rule_sets::create_rule_set
@@ -282,6 +284,7 @@ fn rules_router() -> OpenApiRouter<AppState> {
             rule_sets::delete_rule_set
         ))
         .routes(routes!(rule_sets::switch_rule_set))
+        .routes(routes!(rule_sets::switch_builtin_entry))
 }
 
 /// The upload of the user's own app icon: the one route whose body may be a few megabytes.

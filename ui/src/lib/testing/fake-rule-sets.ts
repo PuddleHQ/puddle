@@ -20,6 +20,7 @@ export function builtIn(slug: string, over: Partial<RuleSet> = {}): RuleSet {
         pattern_kind: "exact",
         effect: "allow",
         note: "main host",
+        enabled: true,
         rule_id: null,
         expires_at: null,
       },

@@ -2,7 +2,7 @@
 //! The in-memory rule index and the matching rules R-5 to R-7 and R-39. Pure: no I/O, no clock.
 
 use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
 
@@ -32,6 +32,8 @@ pub(crate) struct SetEntry {
 pub(crate) struct Switches {
     global: HashMap<(UserId, RuleSetId), bool>,
     workspace: HashMap<(RuleSetId, WorkspaceId), bool>,
+    /// Built-in entries a user switched off (R-65), by the user, the set and the entry's pattern.
+    off_entries: HashSet<(UserId, RuleSetId, String)>,
 }
 
 impl Switches {
@@ -51,6 +53,19 @@ impl Switches {
                 self.global.insert((user, set), enabled);
             }
         }
+    }
+
+    /// Records that `user` switched the entry `pattern` of the built-in `set` off.
+    pub(crate) fn insert_entry_off(&mut self, user: UserId, set: RuleSetId, pattern: String) {
+        self.off_entries.insert((user, set, pattern));
+    }
+
+    /// Whether `user` switched the entry `pattern` of `set` off. Only built-in entries have a
+    /// switch of their own.
+    fn entry_off(&self, user: UserId, set: RuleSetId, pattern: &Pattern) -> bool {
+        !self.off_entries.is_empty()
+            && matches!(set, RuleSetId::BuiltIn(_))
+            && self.off_entries.contains(&(user, set, pattern.to_string()))
     }
 
     /// `user`'s switch for every workspace, if set.
@@ -275,6 +290,11 @@ impl RuleIndex {
             .is_some_and(|user| self.switches.is_on(user, set, workspace))
     }
 
+    /// Whether `user` switched the entry `pattern` of the built-in `set` off (R-65).
+    pub(crate) fn entry_off(&self, user: UserId, set: RuleSetId, pattern: &Pattern) -> bool {
+        self.switches.entry_off(user, set, pattern)
+    }
+
     /// `user`'s workspaces that override `set`, sorted by name.
     pub(crate) fn overrides(&self, user: UserId, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
         self.switches
@@ -338,7 +358,7 @@ impl RuleIndex {
         for found in self.candidates(host) {
             let hit = match found {
                 Hit::Rule(rule) => {
-                    if rule.is_expired(now) {
+                    if rule.is_expired(now) || !rule.enabled {
                         continue;
                     }
                     match &rule.scope {
@@ -373,7 +393,10 @@ impl RuleIndex {
                         (RuleSetId::System, Some(s)) => s == workspace,
                         (set, _) => self.switches.is_on(user, *set, workspace),
                     };
-                    if !applies || (ignore && entry.effect == Effect::Allow) {
+                    if !applies
+                        || (ignore && entry.effect == Effect::Allow)
+                        || self.switches.entry_off(user, entry.set, &entry.pattern)
+                    {
                         continue;
                     }
                     Hit::Entry(entry)

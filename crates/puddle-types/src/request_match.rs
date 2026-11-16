@@ -15,15 +15,13 @@
 
 use std::fmt;
 
+use crate::percent::{decode_once, percent_decoded};
+
 /// Longest pattern text, in bytes.
 pub const MAX_PATH_PATTERN: usize = 512;
 
 /// Most segments a pattern has.
 pub const MAX_PATH_SEGMENTS: usize = 32;
-
-/// Most percent-decoding rounds: `%252e` is `%2e` after one and `.` after two. A path that is
-/// still changing after this many is matched in its last form.
-const DECODE_ROUNDS: usize = 4;
 
 /// The path of a request target, as the server will read it: origin form (`/a/b?q`), absolute
 /// form (`http://host/a/b?q`) or `*`. Query and fragment are cut; nothing is decoded.
@@ -165,67 +163,6 @@ fn without_authority(text: &str) -> Option<&str> {
         rest.find(['/', '\\'])
             .map_or("", |at| rest.get(at..).unwrap_or_default()),
     )
-}
-
-fn hex(byte: u8) -> Option<u8> {
-    char::from(byte)
-        .to_digit(16)
-        .and_then(|digit| u8::try_from(digit).ok())
-}
-
-/// One round of percent-decoding, including the `%uXXXX` form some servers accept. An escape
-/// that is not valid stays as written.
-fn decode_once(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while let Some(&byte) = bytes.get(at) {
-        if byte == b'%' {
-            if let (Some(b'u' | b'U'), Some(digits)) =
-                (bytes.get(at + 1), bytes.get(at + 2..at + 6))
-                && let Some(code) = digits
-                    .iter()
-                    .try_fold(0u32, |acc, &d| hex(d).map(|v| acc * 16 + u32::from(v)))
-                && let Some(c) = char::from_u32(code)
-            {
-                let mut buffer = [0u8; 4];
-                out.extend_from_slice(c.encode_utf8(&mut buffer).as_bytes());
-                at += 6;
-                continue;
-            }
-            if let (Some(&high), Some(&low)) = (bytes.get(at + 1), bytes.get(at + 2))
-                && let (Some(high), Some(low)) = (hex(high), hex(low))
-            {
-                out.push(high * 16 + low);
-                at += 3;
-                continue;
-            }
-        }
-        out.push(byte);
-        at += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// `text` with its percent-escapes decoded, as often as a server might decode them (a few
-/// rounds), and nothing else changed. For values a rule reads beside the path, such as a
-/// method named in a query string.
-///
-/// ```
-/// assert_eq!(puddle_types::percent_decoded("%44ELETE"), "DELETE");
-/// assert_eq!(puddle_types::percent_decoded("%2544ELETE"), "DELETE");
-/// ```
-#[must_use]
-pub fn percent_decoded(text: &str) -> String {
-    let mut text = text.to_owned();
-    for _ in 0..DECODE_ROUNDS {
-        let next = decode_once(&text);
-        if next == text {
-            break;
-        }
-        text = next;
-    }
-    text
 }
 
 /// `text` up to its first NUL.

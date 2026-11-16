@@ -160,11 +160,55 @@ function shellPids() {
   return pids;
 }
 
+/**
+ * A message bus of this session's own. The shell's single-instance plugin and notification plugin
+ * talk to the desktop session bus, which on a runner is shared by every process and every earlier
+ * session: a name still held by the shell of the session before, or anything else on the runner,
+ * makes the next shell wait on a bus that is not ours (a `POST /session` that hangs). A fresh bus per
+ * session leaves nothing to collide with. Without `dbus-daemon` the shell gets the ambient bus.
+ */
+async function privateBus() {
+  const daemon = spawn("dbus-daemon", ["--session", "--nofork", "--print-address=1"], { stdio: ["ignore", "pipe", "inherit"] });
+  const address = new Promise((resolve) => {
+    let out = "";
+    daemon.stdout.on("data", (chunk) => {
+      out += chunk;
+      if (out.includes("\n")) resolve(out.split("\n")[0].trim());
+    });
+    daemon.once("error", () => resolve(null));
+    daemon.once("exit", () => resolve(null));
+  });
+  const found = await Promise.race([address, new Promise((resolve) => setTimeout(resolve, 10_000, null))]);
+  if (!found) {
+    daemon.kill();
+    return { address: null, stop() {} };
+  }
+  return { address: found, stop: () => daemon.kill() };
+}
+
+/** What is running when a session cannot start: the processes, with their state, for the failure message. */
+function processTable() {
+  const rows = [];
+  for (const name of readdirSync("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const stat = readFileSync(`/proc/${name}/stat`, "latin1");
+      const comm = stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")"));
+      if (/puddle|WebKit|dbus|Xvfb/i.test(comm)) rows.push(`${name} ${comm} ${stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3)}`);
+    } catch {
+      // gone between listing and reading
+    }
+  }
+  return rows.join("; ");
+}
+
 /** One run of the shell on workspace `id` over the shared data folder, driven through WebKitWebDriver. */
 async function session(n, id, forget, body) {
   const port = driverPort + n;
+  const bus = await privateBus();
   const env = {
     ...process.env,
+    ...(bus.address ? { DBUS_SESSION_BUS_ADDRESS: bus.address } : {}),
     TAURI_WEBVIEW_AUTOMATION: "true",
     PUDDLE_APP_FIXTURE: "1",
     PUDDLE_APP_DATA_DIR: dataDir,
@@ -214,6 +258,8 @@ async function session(n, id, forget, body) {
     session = (
       await call("POST", "/session", {
         capabilities: { alwaysMatch: { browserName: "wry", "webkitgtk:browserOptions": { binary: exe, args: [] } } },
+      }).catch((err) => {
+        throw new Error(`session ${n} did not start (${err.message}); processes: ${processTable()}`);
       })
     ).sessionId;
     // The window is listed from its first navigation: wait for the workspace's page itself.
@@ -237,6 +283,7 @@ async function session(n, id, forget, body) {
       check(`session ${n}: the shell exited`, false, String(err));
       for (const pid of shellPids()) process.kill(pid, "SIGKILL");
     });
+    bus.stop();
   }
 }
 

@@ -7,7 +7,6 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
 use puddle_upstream::{AuthError, Leg, Package, SecurityContext, TokenSource};
 

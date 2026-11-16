@@ -4,9 +4,8 @@
 //! response body (so a test passes only for the limit or rule it is about, not because the
 //! connection ended), no rule is asked, and a second workspace on the same proxy keeps
 //! getting through while the attack runs.
-use crate::hostile_support;
 
-use hostile_support::{Guest, assert_unharmed, bystander_round, rig};
+use puddle_proxy_test_support::hostile::{Guest, assert_unharmed, bystander_round, rig};
 
 /// What a guest may send that is not a head: what it is, the bytes, the status and the reason the
 /// refusal gives.

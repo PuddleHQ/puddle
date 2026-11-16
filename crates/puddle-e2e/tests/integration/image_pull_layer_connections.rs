@@ -30,9 +30,9 @@ use puddle_types::ImageRef;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-use crate::lab;
+use puddle_e2e::pull_lab;
 
-use lab::{REGISTRY, sha256};
+use pull_lab::{REGISTRY, sha256};
 
 const REPO: &str = "puddle/layers";
 
@@ -267,7 +267,7 @@ async fn layers_that_would_queue_behind_each_other_on_one_connection_still_pull(
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
-    let (root, tls) = lab::lab_pki();
+    let (root, tls) = pull_lab::lab_pki();
     tokio::spawn(serve(
         TcpListener::from_std(listener).unwrap(),
         tls,
@@ -275,7 +275,7 @@ async fn layers_that_would_queue_behind_each_other_on_one_connection_still_pull(
     ));
     let proxy = PullProxy::bind(&PuddleEndpoints::new())
         .unwrap()
-        .with_resolver(Arc::new(lab::LabResolver(addr)));
+        .with_resolver(Arc::new(pull_lab::LabResolver(addr)));
     let proxy_url = proxy.proxy_url().expose().to_owned();
     let _route = proxy.serve().unwrap();
     let home = puddle_test_kit::private_tempdir();

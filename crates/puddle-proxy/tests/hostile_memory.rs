@@ -7,14 +7,15 @@
 //! nothing else allocates meanwhile.
 
 mod hostile_heap;
-mod hostile_support;
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use hostile_heap::Counting;
-use hostile_support::{Guest, Guests, assert_unharmed, bystander_round, guest_route, rig};
+use puddle_proxy_test_support::hostile::{
+    Guest, Guests, assert_unharmed, bystander_round, guest_route, rig,
+};
 
 #[global_allocator]
 static HEAP: Counting = Counting::new();

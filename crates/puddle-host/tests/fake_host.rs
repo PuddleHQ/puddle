@@ -1407,6 +1407,21 @@ async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRun
 
 // ---- credential injection: the CA, what is decrypted, the authors ---------------------------------
 
+/// The path of the author file that holds `author`'s name (the file names follow the author's text).
+fn author_file(files: &std::collections::BTreeMap<String, Vec<u8>>, author: &str) -> String {
+    let wanted = format!("name = \"{author}\"");
+    let hits: Vec<_> = files
+        .iter()
+        .filter(|(path, bytes)| {
+            path.starts_with("/etc/puddle/git-author-")
+                && String::from_utf8_lossy(bytes).contains(&wanted)
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    assert_eq!(hits.len(), 1, "one author file for {author}: {hits:?}");
+    hits[0].clone()
+}
+
 fn pem_of(files: &std::collections::BTreeMap<String, Vec<u8>>, path: &str) -> String {
     String::from_utf8(files[path].clone()).unwrap()
 }

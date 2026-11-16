@@ -433,11 +433,12 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     // The fallback is the first identity's; the rest-of-host rule comes before the named owner's,
     // so git, which lets the last match win, gives acme's remotes to Work.
     assert!(config.contains("[user]\n\tname = \"Personal\""), "{config}");
-    let personal_at = config.find("path = git-author-1.gitconfig").unwrap();
-    let work_at = config.find("path = git-author-2.gitconfig").unwrap();
+    let personal_file = author_file(&files, "Personal");
+    let work_file = author_file(&files, "Work");
+    let at = |path: &str| config.find(&format!("path = {}", path.rsplit('/').next().unwrap()));
+    let (personal_at, work_at) = (at(&personal_file).unwrap(), at(&work_file).unwrap());
     assert!(personal_at < work_at, "{config}");
     assert!(config.contains("[aA][cC][mM][eE]"), "{config}");
-    assert!(pem_of(&files, "/etc/puddle/git-author-2.gitconfig").contains("name = \"Work\""));
     // The guest's trust is what it booted with: the same CA in every run.
     let ca = host
         .workspaces()
@@ -472,7 +473,7 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     }
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(!pem_of(&files, "/etc/puddle/gitconfig").contains("[user]"));
-    assert!(!files.contains_key("/etc/puddle/git-author-1.gitconfig"));
+    assert!(files.keys().all(|path| !path.contains("git-author-")));
     host.shutdown().await;
 }
 
@@ -511,8 +512,6 @@ async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
         "/usr/local/share/ca-certificates/puddle/puddle-ca-1.crt",
         "/etc/profile.d/01-puddle-env.sh",
         "/etc/puddle/gitconfig",
-        "/etc/puddle/git-author-1.gitconfig",
-        "/etc/puddle/git-author-2.gitconfig",
     ] {
         assert!(
             files.contains_key(path),
@@ -520,6 +519,8 @@ async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
             files.keys()
         );
     }
+    author_file(&files, "Personal");
+    author_file(&files, "Work");
     host.shutdown().await;
 }
 

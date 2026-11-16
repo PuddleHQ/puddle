@@ -402,6 +402,12 @@ shells=$(ps -eo args= | grep -c -e 'shellIntegration-bas[h]' || true)
 echo "hosts=$hosts pty=$pty shells=$shells health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
 "#;
 
+/// Stops every extension host (`STOP`), keeping it in the process table.
+const STOP_HOSTS: &str = r#"
+ps -eo pid=,args= | grep -e '--type=extensionHos[t]' | while read -r pid _; do kill -STOP "$pid"; done
+echo stopped
+"#;
+
 /// Parses `key=<n>` out of [`COUNT`]'s line.
 fn count(line: &str, key: &str) -> usize {
     line.split_whitespace()
@@ -589,6 +595,12 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 
     // The window closes: the front counts none, and the cleanup ends the real extension host and
     // leaves the terminal host and the server.
+    // The server ends a window's extension host itself when the window closes cleanly, and does it
+    // in the same moments the cleanup looks for it, so a live host to end is not a given. Stopping
+    // the host first (a stopped process ignores `TERM` until it is continued) makes the closed
+    // window leave one behind, so the cleanup has one to end, and the `KILL` after its grace is
+    // what ends it.
+    guest(&runtime, &sandbox, STOP_HOSTS).await;
     shell.close_pages(&name).await;
     windows_become(windows, &sandbox, false).await;
     let reply = host

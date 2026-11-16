@@ -141,27 +141,51 @@ fn free_port_from(first: u16, span: u16, start: u32, call: u32) -> Option<u16> {
 /// The claims this process holds, for as long as it lives.
 static CLAIMS: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
 
+/// The folder every test process on this computer claims ports in, whatever its `TMPDIR`.
+///
+/// Test lanes run side by side on one machine with a `TMPDIR` each (so one lane's test data cannot
+/// fill another's), but they share the one loopback. A claim folder under the lane's own temp dir
+/// let two lanes pick the same number without either seeing the other's lock. On Unix the folder is
+/// therefore fixed; on Windows the temp dir is already per user, not per lane.
+fn claim_dir() -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        std::path::PathBuf::from("/tmp/puddle-test-ports")
+    }
+    #[cfg(not(unix))]
+    {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the folder must be the same one for every test process, so it cannot be a unique tempfile path"
+        )]
+        let temp = std::env::temp_dir();
+        temp.join("puddle-test-ports")
+    }
+}
+
 /// The exclusive lock that makes `port` this process's, or `None` when it cannot be taken (another
 /// process holds it; a lock that fails for another reason skips the port too, and a pick with no
 /// port left fails loudly in the caller).
 ///
 /// # Panics
-/// When the claim folder or file cannot be made.
+/// When the claim folder cannot be made.
 fn claim(port: u16) -> Option<std::fs::File> {
     use std::fs::File;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the folder must be the same one for every test process, so it cannot be a unique tempfile path"
-    )]
-    let temp = std::env::temp_dir();
-    let dir = temp.join("puddle-test-ports");
+    let dir = claim_dir();
     std::fs::create_dir_all(&dir).expect("make the folder test processes claim ports in");
+    // Another user's tests may share the folder: let them in (best effort, the owner's umask may
+    // have narrowed it), and skip a port whose file this user cannot open.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777));
+    }
     let file = File::options()
         .create(true)
         .truncate(false)
         .write(true)
         .open(dir.join(port.to_string()))
-        .expect("open a port's claim file");
+        .ok()?;
     file.try_lock().is_ok().then_some(file)
 }
 

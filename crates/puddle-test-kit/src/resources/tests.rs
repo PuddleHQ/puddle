@@ -82,6 +82,43 @@ fn two_picks_that_start_at_the_same_point_get_different_ports() {
     assert_ne!(first, second);
 }
 
+#[cfg(unix)]
+/// Marks the copy of the test below that runs as the second process.
+const OTHER_LANE: &str = "PUDDLE_TEST_KIT_OTHER_LANE";
+
+#[cfg(unix)]
+#[test]
+fn two_processes_with_different_tmpdirs_are_never_given_the_same_port() {
+    let range = (30_000, 200);
+    if std::env::var_os(OTHER_LANE).is_some() {
+        let port = free_port_from(range.0, range.1, 17, 0).unwrap();
+        println!("picked={port}");
+        return; // skip-ok: the helper role of this test, the second process, not a skip
+    }
+    // The first process holds its pick. The second is another lane: its own `TMPDIR`, the same
+    // starting point, the same loopback. Claims kept under the temp dir let it pick the same port.
+    let mine = free_port_from(range.0, range.1, 17, 0).unwrap();
+    let lane = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "resources::tests::two_processes_with_different_tmpdirs_are_never_given_the_same_port",
+            "--nocapture",
+        ])
+        .env(OTHER_LANE, "1")
+        .env("TMPDIR", lane.path())
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    let theirs: u16 = said
+        .lines()
+        .find_map(|l| l.strip_prefix("picked="))
+        .unwrap_or_else(|| panic!("the other process picked no port: {said}"))
+        .parse()
+        .unwrap();
+    assert_ne!(mine, theirs, "both lanes were given port {mine}");
+}
+
 #[test]
 fn a_range_with_every_port_held_has_none_free() {
     let (_held, port) = bound_port();

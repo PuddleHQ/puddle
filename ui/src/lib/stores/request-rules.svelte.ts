@@ -26,7 +26,7 @@ export type AddResult =
   { ok: true; rule: RequestRule } | ({ ok: false } & RequestRuleRefusal);
 export type RemoveResult = { ok: true } | { ok: false; message: string };
 
-type StoreApi = Pick<ApiClient, "GET" | "POST" | "DELETE">;
+type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
 
 export interface RequestRulesDeps {
   api?: StoreApi;
@@ -89,6 +89,30 @@ export class RequestRulesStore {
       return { ok: true, rule: data };
     } catch {
       return { ok: false, field: "form", message: SERVICE_DOWN };
+    }
+  }
+
+  /** Switches a rule on or off; an off rule is kept and refuses nothing. */
+  async setEnabled(id: number, enabled: boolean): Promise<RemoveResult> {
+    try {
+      const { data, error, response } = await this.#api.PUT(
+        "/api/request-rules/{id}/enabled",
+        { params: { path: { id } }, body: { enabled } },
+      );
+      if (!data) {
+        if (response.status === 404) {
+          this.rules = this.rules.filter((r) => r.id !== id);
+          return { ok: false, message: "That rule is already gone." };
+        }
+        return {
+          ok: false,
+          message: sentence(error?.message ?? "Puddle refused the change"),
+        };
+      }
+      this.rules = this.rules.map((r) => (r.id === id ? data : r));
+      return { ok: true };
+    } catch {
+      return { ok: false, message: SERVICE_DOWN };
     }
   }
 

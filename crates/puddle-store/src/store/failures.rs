@@ -541,6 +541,7 @@ fn request_rule() -> NewRequestRule {
         methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
         path: puddle_types::PathPattern::parse("/**").unwrap(),
         created_by: Actor::Cli,
+        precedence: Precedence::DEFAULT,
     }
 }
 

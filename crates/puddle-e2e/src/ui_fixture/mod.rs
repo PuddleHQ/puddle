@@ -1258,6 +1258,7 @@ impl State {
                 .map_err(|err| err.to_string())?,
             path: PathPattern::parse(&seed.path).map_err(|err| err.to_string())?,
             created_by: Actor::Api,
+            precedence: puddle_store::Precedence::DEFAULT,
         };
         self.at(now, seed.ago_ms, || {
             self.store.as_user(UserId::OWNER).add_request_rule(&new)

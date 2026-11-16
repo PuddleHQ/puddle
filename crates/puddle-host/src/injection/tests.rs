@@ -311,6 +311,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
                 methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
                 path: puddle_types::PathPattern::parse(path).unwrap(),
                 created_by: puddle_store::Actor::Api,
+                precedence: puddle_store::Precedence::DEFAULT,
             })
             .unwrap()
     };

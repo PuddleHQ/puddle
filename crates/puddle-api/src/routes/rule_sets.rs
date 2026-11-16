@@ -14,7 +14,7 @@ use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
     NewRuleSetRequest, RuleSetEntrySwitchRequest, RuleSetList, RuleSetSwitchRequest,
-    RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
+    RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost, checked_precedence,
 };
 
 /// The set a path names, or 404.
@@ -101,14 +101,24 @@ pub(crate) async fn create_rule_set(
     principal: Principal,
     crate::extract::Json(body): crate::extract::Json<NewRuleSetRequest>,
 ) -> Result<(StatusCode, Json<RuleSetView>), ApiError> {
+    let default = checked_precedence(body.default_precedence)?;
     let set = blocking(move || {
-        Ok(state.store.create_rule_set(
+        let set = state.store.create_rule_set(
             principal.user,
             &body.name,
             &body.description,
             body.fill,
             Actor::Api,
-        )?)
+        )?;
+        match default {
+            Some(default) => Ok(state.store.set_rule_set_default_precedence(
+                principal.user,
+                user_set(&set.id.to_string())?,
+                Some(default),
+                Actor::Api,
+            )?),
+            None => Ok(set),
+        }
     })
     .await?;
     Ok((StatusCode::CREATED, Json(RuleSetView::from_store(set))))
@@ -134,15 +144,25 @@ pub(crate) async fn update_rule_set(
     crate::extract::Json(body): crate::extract::Json<RuleSetUpdateRequest>,
 ) -> Result<Json<RuleSetView>, ApiError> {
     let id = user_set(&id)?;
+    let default = checked_precedence(body.default_precedence)?;
     let set = blocking(move || {
-        Ok(state.store.update_rule_set(
+        let set = state.store.update_rule_set(
             principal.user,
             id,
             &body.name,
             &body.description,
             body.fill,
             Actor::Api,
-        )?)
+        )?;
+        match default {
+            Some(default) => Ok(state.store.set_rule_set_default_precedence(
+                principal.user,
+                id,
+                Some(default),
+                Actor::Api,
+            )?),
+            None => Ok(set),
+        }
     })
     .await?;
     Ok(Json(RuleSetView::from_store(set)))

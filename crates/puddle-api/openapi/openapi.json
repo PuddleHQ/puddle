@@ -14131,7 +14131,8 @@
           "methods",
           "path",
           "created_at",
-          "created_by"
+          "created_by",
+          "precedence"
         ],
         "properties": {
           "created_at": {
@@ -14163,6 +14164,12 @@
           "path": {
             "type": "string",
             "description": "The path pattern, in canonical form."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the rule ranked, 1 to 9; a record from before precedence existed says 5.",
+            "minimum": 0
           },
           "scope": {
             "$ref": "#/components/schemas/AuditRequestRuleScope",
@@ -14215,7 +14222,8 @@
           "created_at",
           "created_by",
           "source_pending_id",
-          "set_id"
+          "set_id",
+          "precedence"
         ],
         "properties": {
           "created_at": {
@@ -14253,6 +14261,12 @@
           "pattern_kind": {
             "$ref": "#/components/schemas/PatternKind",
             "description": "Exact or suffix."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the rule ranked, 1 to 9; a record from before precedence existed says 5.",
+            "minimum": 0
           },
           "scope": {
             "$ref": "#/components/schemas/AuditRuleScope",
@@ -14301,7 +14315,8 @@
           "description",
           "created_at",
           "created_by",
-          "fill"
+          "fill",
+          "default_precedence"
         ],
         "properties": {
           "created_at": {
@@ -14313,6 +14328,15 @@
           "created_by": {
             "type": "string",
             "description": "`cli`, `ui` or `api`."
+          },
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The precedence a new rule in the set took when none was named; `null` means 5.",
+            "minimum": 0
           },
           "description": {
             "type": "string",
@@ -18255,6 +18279,15 @@
             "type": "string",
             "description": "`example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is\nrefused)."
           },
+          "precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9, higher wins. Left out: the default of the group the rule goes into, else 5.",
+            "minimum": 0
+          },
           "scope": {
             "$ref": "#/components/schemas/RuleScope",
             "description": "Global or one workspace."
@@ -18269,6 +18302,15 @@
           "name"
         ],
         "properties": {
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9: what a new rule in the set takes when none is named; left out for 5.",
+            "minimum": 0
+          },
           "description": {
             "type": "string",
             "description": "At most 500 characters."
@@ -19875,7 +19917,8 @@
           "created_at",
           "created_by",
           "source_pending_id",
-          "enabled"
+          "enabled",
+          "precedence"
         ],
         "properties": {
           "created_at": {
@@ -19917,6 +19960,12 @@
           "pattern_kind": {
             "$ref": "#/components/schemas/PatternKind",
             "description": "Exact or suffix."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the rule ranks against the others that match, 1 to 9: the highest precedence decides,\neven over a more specific rule.",
+            "minimum": 0
           },
           "scope": {
             "$ref": "#/components/schemas/RuleScope",
@@ -20061,7 +20110,8 @@
           "note",
           "enabled",
           "rule_id",
-          "expires_at"
+          "expires_at",
+          "precedence"
         ],
         "properties": {
           "effect": {
@@ -20092,6 +20142,12 @@
           "pattern_kind": {
             "$ref": "#/components/schemas/PatternKind",
             "description": "Exact or suffix."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the entry ranks, 1 to 9; a built-in entry is fixed at 0, below every rule of yours.",
+            "minimum": 0
           },
           "rule_id": {
             "type": [
@@ -20229,6 +20285,15 @@
           "name"
         ],
         "properties": {
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9: what a new rule in the set takes when none is named; left out keeps the one the\nset has. Rules already in the set keep theirs.",
+            "minimum": 0
+          },
           "description": {
             "type": "string",
             "description": "At most 500 characters."
@@ -20265,7 +20330,8 @@
           "overrides",
           "entries",
           "changed_at",
-          "created_at"
+          "created_at",
+          "default_precedence"
         ],
         "properties": {
           "changed_at": {
@@ -20289,6 +20355,15 @@
           "default_on": {
             "type": "boolean",
             "description": "Whether it is on where nobody switched it: built-in sets ship off, your sets start on."
+          },
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Your sets: the precedence a new rule in the set takes when none is named, 1 to 9; `null`\nmeans 5. Changing it changes no rule already in the set.",
+            "minimum": 0
           },
           "description": {
             "type": "string",

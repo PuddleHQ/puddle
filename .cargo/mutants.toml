@@ -83,17 +83,15 @@ exclude_re = [
     # `high << 4 | low` joins two hexadecimal digits (as in `decode_segment` above): both are below 16,
     # so `|` and `^` give the same byte.
     "workspace_git\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_address_segment",
-    # `set_key` puts the rule id last, and an entry (no rule row) takes the placeholder -1 there. Only two
+    # `key` puts the rule id last, and an entry (no rule row) takes the placeholder -1 there. Only two
     # keys of the same set are ever compared on it, and a set's entries all have no id, so the placeholder's
     # value (-1 or 1) never decides.
-    "engine\\.rs:\\d+:\\d+: delete - in set_key",
+    "engine\\.rs:\\d+:\\d+: delete - in key",
     # `RuleIndex::decide` replaces its best hit when a candidate's key is greater; `>=` only differs for
     # an equal key. Rule keys end in the rule id, which is unique, and two entries of one set with equal
-    # keys (same kind and length of pattern matching one host, same effect) are the same pattern, so
-    # both give the same answer. The three entries are the `key > best` / `own_key > own_key` comparisons
-    # (not the specificity comparison against an own rule, where equal does matter and a test pins it).
-    # They go through `outranks` so that the function has one `>` to name; the fourth `>` of `decide`
-    # (the specificity comparison) stays measured there.
+    # keys (same precedence, same kind and length of pattern matching one host, same effect) are the
+    # same pattern, so both give the same answer. The comparison goes through `outranks` so that the
+    # function has one `>` to name.
     "replace > with >= in outranks",
     # The default body of `SshTarget::failed` is `let _ = reason;`, so `()` is the same code.
     'replace SshTarget::failed with \(\)',

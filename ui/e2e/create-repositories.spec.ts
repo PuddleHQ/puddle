@@ -452,14 +452,13 @@ test.describe("the host note", () => {
     await remove(3).click();
     await expect(rowOf(page, 3)).toHaveCount(0);
     await toEnd();
-    const settled = await remove(1).boundingBox();
+    await expect.poll(() => remove(1).boundingBox()).not.toBeNull();
     const noteBefore = await dialog.getByTestId("hosts-new").boundingBox();
     await remove(2).click();
     await expect(rowOf(page, 2)).toHaveCount(0);
     await toEnd();
+    await expect.poll(() => remove(1).boundingBox()).not.toBeNull();
     const before = await remove(1).boundingBox();
-    expect(before).not.toBeNull();
-    expect(settled).not.toBeNull();
     // The answer for the shorter list arrives: the note drops gitlab.com.
     await expect(dialog.getByTestId("hosts-new")).not.toContainText(
       "gitlab.com",

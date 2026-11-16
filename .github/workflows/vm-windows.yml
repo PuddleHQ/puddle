@@ -218,26 +218,11 @@ jobs:
         partition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: WHP preflight (infrastructure)
-        id: whp
-        shell: pwsh
-        run: |
-          $cs = Get-CimInstance Win32_ComputerSystem
-          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
-          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
-          if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
-            "ok=true" >> $env:GITHUB_OUTPUT
-          } else {
-            # Same policy as ci/vm-skip-policy.sh (kept inline: plain `bash` from pwsh may be WSL).
-            $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
-            if ($env:GITHUB_EVENT_NAME -eq 'pull_request' -or $env:GITHUB_EVENT_NAME -eq 'merge_group') {
-              "::error title=vm-windows cannot run::$reason; a required VM check must not pass without running VM tests"
-              exit 1
-            }
-            "::warning title=vm-windows skipped::$reason; VM tests did not run (infrastructure, not a test result)"
-            "### vm-windows partition ${{ matrix.partition }}: SKIPPED, WHP not usable on the runner (infrastructure)" >> $env:GITHUB_STEP_SUMMARY
-            "ok=false" >> $env:GITHUB_OUTPUT
-          }
+      - id: whp
+        uses: ./.github/actions/whp-preflight
+        with:
+          title: vm-windows
+          summary: '### vm-windows partition ${{ matrix.partition }}: SKIPPED, WHP not usable on the runner (infrastructure)'
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.whp.outputs.ok == 'true'
         with:
@@ -405,19 +390,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: WHP preflight (infrastructure)
-        id: whp
-        shell: pwsh
-        run: |
-          $cs = Get-CimInstance Win32_ComputerSystem
-          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
-          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
-          if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
-            "ok=true" >> $env:GITHUB_OUTPUT
-          } else {
-            "::warning title=vm-windows desktop VS Code skipped::Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp); VM tests did not run (infrastructure, not a test result)"
-            "ok=false" >> $env:GITHUB_OUTPUT
-          }
+      - id: whp
+        uses: ./.github/actions/whp-preflight
+        with:
+          title: vm-windows desktop VS Code
+          fail-events: ''
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.whp.outputs.ok == 'true'
         with:

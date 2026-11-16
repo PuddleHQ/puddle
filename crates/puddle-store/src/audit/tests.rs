@@ -630,25 +630,25 @@ fn actor_strings() {
 
 #[test]
 fn an_actor_and_a_pending_state_in_the_audit_are_the_words_they_always_were() {
-    for actor in [
-        Actor::Cli,
-        Actor::Ui,
-        Actor::Api,
-        Actor::System,
-        Actor::WorkspaceCreate,
+    for (actor, word) in [
+        (Actor::Cli, "cli"),
+        (Actor::Ui, "ui"),
+        (Actor::Api, "api"),
+        (Actor::System, "system"),
+        (Actor::WorkspaceCreate, "workspace_create"),
     ] {
         assert_eq!(
             serde_json::to_value(ActorWire::from(actor)).unwrap(),
-            json!(actor.as_str())
+            json!(word)
         );
     }
-    for state in [
-        PendingState::Requested,
-        PendingState::Allowed,
-        PendingState::Denied,
-        PendingState::Expired,
+    for (state, word) in [
+        (PendingState::Requested, "requested"),
+        (PendingState::Allowed, "allowed"),
+        (PendingState::Denied, "denied"),
+        (PendingState::Expired, "expired"),
     ] {
-        assert_eq!(serde_json::to_value(state).unwrap(), json!(state.as_str()));
+        assert_eq!(serde_json::to_value(state).unwrap(), json!(word));
     }
 }
 

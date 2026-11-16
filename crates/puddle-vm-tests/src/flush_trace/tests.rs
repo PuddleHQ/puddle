@@ -46,6 +46,22 @@ fn counts_only_flushes_of_the_image_between_the_markers() {
 }
 
 #[test]
+fn a_name_event_ties_a_file_object_to_the_image_like_a_create() {
+    let name = event(10, 100, &[("FileObject", "0xA"), ("FileName", IMAGE)]);
+    let xml = [
+        name,
+        create("0xB", "mark-start"),
+        flush("0xA", 7),
+        create("0xD", "mark-end"),
+        create("0xE", "mark-end-again"),
+        flush("0xA", 7),
+    ]
+    .concat();
+    let got = flushes_between(&xml, "disk.raw", "mark-start", "mark-end").unwrap();
+    assert_eq!(got.total, 1);
+}
+
+#[test]
 fn single_quoted_attributes_and_names_parse() {
     let xml = "<Event><System><EventID Qualifiers='0'>12</EventID><Execution ProcessID='5'/></System><EventData><Data Name='FileObject'>0x1</Data><Data Name='FileName'>disk.raw</Data></EventData></Event>";
     assert_eq!(event_id(xml), Some(12));

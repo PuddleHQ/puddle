@@ -108,6 +108,10 @@ pub trait WorkspaceService: Send + Sync {
     /// Every workspace, ordered by id.
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>>;
 
+    /// Every workspace's id and display name, from memory with no other work: routing a request
+    /// by its `Host` asks on every request, which [`WorkspaceService::list`] is too slow for.
+    fn names(&self) -> Vec<(WorkspaceId, String)>;
+
     /// One workspace.
     fn get<'a>(
         &'a self,
@@ -392,6 +396,9 @@ pub(crate) fn unavailable<T: Send + 'static>() -> BoxFuture<'static, Result<T, W
 impl WorkspaceService for NoWorkspaces {
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>> {
         unavailable()
+    }
+    fn names(&self) -> Vec<(WorkspaceId, String)> {
+        Vec::new()
     }
     fn get<'a>(
         &'a self,

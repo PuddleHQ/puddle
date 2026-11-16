@@ -50,6 +50,7 @@ mod network_health;
 mod orphan_volumes;
 mod pending;
 mod ports;
+mod presence;
 mod problems;
 mod proxy_sign_in;
 mod repos;
@@ -94,6 +95,8 @@ pub(crate) struct AppState {
     pub(crate) authorizer: Arc<dyn Authorizer>,
     pub(crate) settings: Arc<dyn SettingsRepo>,
     pub(crate) events: Arc<EventHub>,
+    /// What each user's clients last reported, for picking who a new request is told to.
+    pub(crate) presence: Arc<crate::presence::Presence>,
     pub(crate) problems: Arc<puddle_types::Problems>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
@@ -133,6 +136,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(meta::health))
         .routes(routes!(problems::list_problems))
         .routes(routes!(events::events))
+        .routes(routes!(presence::report))
         .routes(routes!(network_health::network_health))
         .routes(routes!(
             proxy_sign_in::list_proxy_sign_ins,

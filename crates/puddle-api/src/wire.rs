@@ -32,6 +32,7 @@ mod logins;
 mod network_health;
 mod orphans;
 mod ports;
+mod presence;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
@@ -96,6 +97,7 @@ pub use network_health::{
 };
 pub use orphans::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest};
 pub use ports::{PortEntry, PortForwardRequest, WorkspacePorts};
+pub use presence::{ClientKind, PresenceReport};
 pub use proxy_sign_in::{ProxySignInList, ProxySignInRequest, StoredSignIn};
 pub use repos::{
     AccountProfile, AccountProfileRequest, RepoListState, RepoListing, RepoNote, RepoNoteCode,

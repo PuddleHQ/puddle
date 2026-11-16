@@ -4,13 +4,22 @@
   import "#lib/theme/tokens.css";
   import "#lib/theme/base.css";
   import { onMount, untrack } from "svelte";
+  import { goto } from "$app/navigation";
   import { version } from "$app/env";
   import { page } from "$app/state";
   import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
   import SignInGate from "#lib/components/SignInGate.svelte";
   import { documentTitle } from "#lib/nav.ts";
+  import { api } from "#lib/api/client.ts";
+  import { inDesktopApp } from "#lib/desktop/folder-picker.ts";
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
+  import { TabNotifier } from "#lib/notify/tab-notifier.ts";
+  import { tabNotifications } from "#lib/notify/tab-switch.svelte.ts";
+  import { clientId } from "#lib/presence/client-id.ts";
+  import { PresenceReporter } from "#lib/presence/reporter.ts";
+  import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import { session } from "#lib/session/session.svelte.ts";
   import { BuildGuard } from "#lib/stores/build-guard.ts";
   import { admin } from "#lib/stores/admin.svelte.ts";
@@ -24,6 +33,32 @@
   let { children } = $props();
 
   const watcher = new NoticeWatcher({ source: live });
+  // Where a new request is announced: the service picks one client from what each reports, so a
+  // person with several tabs, a phone and the desktop app is told once. The desktop window raises
+  // its notification itself (the app), so only a browser tab shows a Web Notification.
+  const desktop = inDesktopApp();
+  const tabId = clientId();
+  const reporter = new PresenceReporter({
+    api,
+    clientId: tabId,
+    kind: desktop ? "desktop" : "browser",
+    notify: () =>
+      desktop
+        ? (globalSettings.view?.ui.notifications ?? true)
+        : tabNotifications.active,
+  });
+  const tabNotifier = desktop
+    ? null
+    : new TabNotifier({
+        clientId: tabId,
+        active: () => tabNotifications.active,
+        labelOf: (id) => workspaces.labelOf(id),
+        create: (title, options) => new Notification(title, options),
+        open: (path) => {
+          window.focus();
+          void goto(path);
+        },
+      });
   // A tab left open across a server upgrade reloads into the build the server serves now.
   const build = new BuildGuard({ current: version, source: live });
   // The first-run flow has the whole window: the app's sidebar would invite leaving it half done.
@@ -49,11 +84,15 @@
       void density.sync();
       palette.init();
       void palette.sync();
+      if (desktop) void globalSettings.load(true);
+      tabNotifications.refresh();
       const stops = [
         live.start(),
         networkHealth.start(),
         watcher.start(),
         build.start(),
+        reporter.start(),
+        live.subscribe({ event: (e) => void tabNotifier?.handle(e) }),
       ];
       return () => stops.forEach((stop) => stop());
     });
@@ -68,6 +107,13 @@
     ) {
       void session.recover();
     }
+  });
+
+  // Changing this browser's switch (or the app's own) is told at once, not at the next report.
+  $effect(() => {
+    void tabNotifications.active;
+    void globalSettings.view?.ui.notifications;
+    if (session.ready) untrack(() => reporter.refresh());
   });
 
   // A new report (the first read, or after `network_changed`) raises or withdraws the notice.

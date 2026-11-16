@@ -17,7 +17,7 @@
 //! and a manual dispatch of the VM workflows run it.
 #![expect(
     clippy::unwrap_used,
-    clippy::print_stderr,
+    clippy::panic,
     reason = "VM test: a failed step fails the test; what the guest said goes to the log"
 )]
 

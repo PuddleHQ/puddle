@@ -139,6 +139,37 @@ describe("adding", () => {
   });
 });
 
+describe("switching", () => {
+  it("switches a rule on or off and keeps the others", async () => {
+    api.rules = [requestRule(1), requestRule(2)];
+    const store = make();
+    await store.refresh();
+    expect(await store.setEnabled(1, false)).toEqual({ ok: true });
+    expect(store.rules.map((r) => r.enabled)).toEqual([false, true]);
+    expect(api.calls).toContain("PUT /api/request-rules/{id}/enabled 1");
+    expect(api.bodies.at(-1)).toEqual({ enabled: false });
+    expect(await store.setEnabled(1, true)).toEqual({ ok: true });
+    expect(store.rules[0]?.enabled).toBe(true);
+  });
+  it("drops a rule that is gone, and says so when the service refuses or is down", async () => {
+    api.rules = [requestRule(1)];
+    const store = make();
+    await store.refresh();
+    expect(await store.setEnabled(9, false)).toEqual({
+      ok: false,
+      message: "That rule is already gone.",
+    });
+    api.refuse = { status: 500, message: "x" };
+    expect(await store.setEnabled(1, false)).toEqual({
+      ok: false,
+      message: "X.",
+    });
+    expect(store.rules[0]?.enabled).toBe(true);
+    api.down = true;
+    expect((await store.setEnabled(1, false)).ok).toBe(false);
+  });
+});
+
 describe("deleting", () => {
   it("removes the rule", async () => {
     api.rules = [requestRule(1), requestRule(2)];

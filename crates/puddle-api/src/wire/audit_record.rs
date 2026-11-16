@@ -8,8 +8,8 @@ use utoipa::ToSchema;
 
 use super::{
     AuditPending, AuditRequestRule, AuditRule, AuditRuleSet, ConnectionDecision, ConnectionOrigin,
-    ConnectionOutcome, PendingExpiryReason, RuleDeleteReason, SystemReason, WorkspaceOpKind,
-    WorkspaceOpOutcome,
+    ConnectionOutcome, PendingExpiryReason, RuleDeleteReason, RuleSwitchKind, SystemReason,
+    WorkspaceOpKind, WorkspaceOpOutcome,
 };
 
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
@@ -192,6 +192,28 @@ pub enum AuditRecord {
         /// The rule after.
         rule: AuditRule,
         /// Who changed it.
+        actor: String,
+    },
+    /// A rule, a rule on method and path, or a built-in entry switched on or off.
+    RuleSwitched {
+        /// Epoch ms.
+        ts: u64,
+        /// What was switched.
+        kind: RuleSwitchKind,
+        /// The row id of a rule or rule on method and path; `null` for a built-in entry.
+        #[schema(required = true)]
+        id: Option<i64>,
+        /// `builtin:<slug>` or `user:<id>` for an entry of a set; `null` for a rule outside one.
+        #[schema(required = true)]
+        set_id: Option<String>,
+        /// The host pattern.
+        pattern: String,
+        /// The workspace the rule is for; `null` for every workspace.
+        #[schema(required = true)]
+        workspace_id: Option<String>,
+        /// The new state.
+        enabled: bool,
+        /// Who switched it.
         actor: String,
     },
     /// A rule deleted.
@@ -449,6 +471,25 @@ impl From<store::AuditRecord> for AuditRecord {
                 ts,
                 before: before.into(),
                 rule: rule.into(),
+                actor,
+            },
+            R::RuleSwitched {
+                ts,
+                kind,
+                id,
+                set_id,
+                pattern,
+                workspace_id,
+                enabled,
+                actor,
+            } => Self::RuleSwitched {
+                ts,
+                kind: kind.into(),
+                id,
+                set_id,
+                pattern,
+                workspace_id,
+                enabled,
                 actor,
             },
             R::RuleDeleted {

@@ -132,20 +132,24 @@ pub fn run(args: &VaultAdminArgs) -> ExitCode {
 }
 
 fn execute(args: &VaultAdminArgs) -> Result<Report, String> {
+    execute_with(args, &SecretSetup::default())
+}
+
+/// [`execute`] with the setup given, so a test never reads this machine's key folder.
+fn execute_with(args: &VaultAdminArgs, setup: &SecretSetup) -> Result<Report, String> {
     let options = effective(&ServeArgs {
         flags: args.flags.clone(),
         print_config: false,
     })
     .map_err(|e| e.to_string())?;
-    let data = match options.path("data_dir") {
-        Some(dir) => dir.to_path_buf(),
-        None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
-    };
+    let data = options
+        .path("data_dir")
+        .map_or_else(puddle_fs::data_dir, |dir| Ok(dir.to_path_buf()))
+        .map_err(|e| e.to_string())?;
     let paths = HostPaths::new(data);
-    let setup = SecretSetup::default();
     match args.action {
         Action::Status => {
-            let status = puddle_host::vault_status(&paths, &setup).map_err(|e| e.to_string())?;
+            let status = puddle_host::vault_status(&paths, setup).map_err(|e| e.to_string())?;
             Ok(Report {
                 ok: !matches!(
                     status.state,
@@ -156,7 +160,7 @@ fn execute(args: &VaultAdminArgs) -> Result<Report, String> {
         }
         Action::Migrate(to) => {
             let outcome =
-                puddle_host::vault_migrate(&paths, &setup, to).map_err(|e| e.to_string())?;
+                puddle_host::vault_migrate(&paths, setup, to).map_err(|e| e.to_string())?;
             Ok(Report {
                 ok: true,
                 text: migrate_text(outcome, to),
@@ -164,7 +168,7 @@ fn execute(args: &VaultAdminArgs) -> Result<Report, String> {
         }
         Action::Reset { yes } => {
             let outcome =
-                puddle_host::vault_reset(&paths, &setup, yes).map_err(|e| e.to_string())?;
+                puddle_host::vault_reset(&paths, setup, yes).map_err(|e| e.to_string())?;
             Ok(Report {
                 ok: true,
                 text: reset_text(outcome),

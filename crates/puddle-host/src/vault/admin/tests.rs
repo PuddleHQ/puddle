@@ -504,3 +504,39 @@ fn the_error_and_status_texts_never_hold_a_value_or_an_id() {
         assert!(!text.contains("proxy-"), "{text}");
     }
 }
+
+#[test]
+fn a_recorded_file_vault_with_no_file_cannot_be_moved_from() {
+    let rig = Rig::new();
+    write_record(&rig.data(), StoreKind::File, Rule::Headless).unwrap();
+    let err = vault_migrate(&rig.paths(), &rig.setup(), StoreKind::Os).unwrap_err();
+    assert!(matches!(err, VaultAdminError::NoVault), "{err}");
+    assert_eq!(rig.recorded().unwrap().1, Rule::Headless.why());
+}
+
+#[test]
+fn finishing_a_move_to_os_with_no_vault_left_has_nothing_to_remove() {
+    let rig = Rig::new();
+    write_record(&rig.data(), StoreKind::Os, Rule::Migrated).unwrap();
+    let outcome = vault_migrate(&rig.paths(), &rig.setup(), StoreKind::Os).unwrap();
+    assert_eq!(
+        outcome,
+        MigrateOutcome::Finished {
+            removed: 0,
+            left: 0
+        }
+    );
+}
+
+#[test]
+fn status_of_a_file_that_is_not_a_vault_names_the_vault_problem() {
+    let rig = Rig::new();
+    write_record(&rig.data(), StoreKind::File, Rule::Headless).unwrap();
+    std::fs::write(vault_path(&rig.data()), b"just some text").unwrap();
+    let status = vault_status(&rig.paths(), &rig.setup()).unwrap();
+    assert_eq!(status.key_source, None);
+    let StoreState::Unreadable { title, .. } = status.state else {
+        panic!("{:?}", status.state);
+    };
+    assert!(title.contains("file vault"), "{title}");
+}

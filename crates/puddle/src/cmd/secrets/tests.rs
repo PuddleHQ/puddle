@@ -204,3 +204,75 @@ fn reset_says_what_it_would_do_and_what_it_cost() {
     assert!(!done.contains("Nothing was changed"), "{done}");
     assert!(done.contains("lists each as missing"), "{done}");
 }
+
+fn args_for(action: Action, data: &std::path::Path) -> VaultAdminArgs {
+    let mut flags = Flags::new();
+    flags.insert("data_dir", Value::Path(data.to_path_buf()));
+    VaultAdminArgs { action, flags }
+}
+
+fn exit_is_success(code: ExitCode) -> bool {
+    format!("{code:?}") == format!("{:?}", ExitCode::SUCCESS)
+}
+
+#[test]
+fn migrating_a_folder_with_no_record_to_os_only_records_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let args = args_for(Action::Migrate(StoreKind::Os), dir.path());
+    let report = execute_with(&args, &SecretSetup::default()).unwrap();
+    assert!(report.ok);
+    assert!(report.text.contains("no values moved"), "{}", report.text);
+    assert!(exit_is_success(run(&args)));
+}
+
+#[test]
+fn status_of_a_vault_that_is_not_one_fails_the_command_and_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    puddle_secrets::write_record(dir.path(), StoreKind::File, puddle_secrets::Rule::Headless)
+        .unwrap();
+    std::fs::write(puddle_secrets::vault_path(dir.path()), b"just some text").unwrap();
+    let args = args_for(Action::Status, dir.path());
+    let report = execute_with(&args, &SecretSetup::default()).unwrap();
+    assert!(!report.ok);
+    assert!(
+        report.text.contains("state: cannot be read"),
+        "{}",
+        report.text
+    );
+    assert!(!exit_is_success(run(&args)));
+}
+
+#[test]
+fn a_command_the_folder_refuses_fails_with_the_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let _host = puddle_fs::DataLock::acquire(dir.path()).unwrap();
+    let args = args_for(Action::Migrate(StoreKind::File), dir.path());
+    let err = execute_with(&args, &SecretSetup::default()).unwrap_err();
+    assert!(err.contains("already using the data folder"), "{err}");
+    assert!(!exit_is_success(run(&args)));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reset_says_what_it_would_do_for_a_vault_whose_key_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    puddle_secrets::write_record(&data, StoreKind::File, puddle_secrets::Rule::Headless).unwrap();
+    puddle_secrets::FileVault::create(
+        &puddle_secrets::vault_path(&data),
+        puddle_secrets::VaultKey::from_bytes([3; 32]),
+        KeySourceTag::KeyFile,
+    )
+    .unwrap();
+    let mut setup = SecretSetup::default();
+    setup.key_home = Some(dir.path().join("config"));
+    setup.tools = Some(puddle_secrets::ToolPaths::default());
+    let report = execute_with(&args_for(Action::Reset { yes: false }, &data), &setup).unwrap();
+    assert!(report.ok);
+    assert!(
+        report.text.starts_with("Nothing was changed."),
+        "{}",
+        report.text
+    );
+    assert!(puddle_secrets::vault_path(&data).is_file(), "nothing moved");
+}

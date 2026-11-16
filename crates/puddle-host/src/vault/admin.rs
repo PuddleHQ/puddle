@@ -22,7 +22,7 @@ use puddle_secrets::{
 };
 use puddle_store::{Limits, Store, SystemClock};
 
-use super::choose::{OpenFailure, SecretSetup, key_failure, open_file_vault, vault_failure};
+use super::choose::{OpenFailure, SecretSetup, open_file_vault, vault_failure};
 use super::os_vault;
 use crate::HostPaths;
 use crate::proxy_passwords::stored_ids;
@@ -341,20 +341,13 @@ fn status_within(
                     return Ok(status);
                 }
             }
-            match file_store(paths, setup, false) {
-                Ok(Some(store)) => store,
-                Ok(None) => {
-                    status.state = StoreState::NoVault;
+            let home = key_home(setup);
+            match block_on(open_file_vault(home.as_deref(), &vault, tools(setup)))? {
+                Ok(opened) => Arc::new(IndexedStore::new(opened)),
+                Err(failure) => {
+                    status.state = unreadable(failure);
                     return Ok(status);
                 }
-                Err(VaultAdminError::Vault { title, fix }) => {
-                    status.state = StoreState::Unreadable {
-                        title: title.to_owned(),
-                        fix,
-                    };
-                    return Ok(status);
-                }
-                Err(err) => return Err(err),
             }
         }
     };
@@ -395,10 +388,7 @@ fn read_within(
         Ok(Ok(found)) => StoreState::Readable { found },
         Ok(Err(_)) => StoreState::Unreadable {
             title: format!("{} could not be read", kind.describe()),
-            fix: match kind {
-                StoreKind::Os => "It may be locked: unlock it (sign in to the account that runs Puddle, or unlock the keyring), then run this command again.".to_owned(),
-                StoreKind::File => "Check the permissions of the `secrets` folder in the data folder.".to_owned(),
-            },
+            fix: "If it is locked, unlock it (sign in to the account that runs Puddle, or unlock the keyring), then run this command again.".to_owned(),
         },
         Err(_) => StoreState::Unreadable {
             title: format!(
@@ -434,13 +424,15 @@ pub fn vault_reset(
     if !vault.exists() {
         return Err(VaultAdminError::NoVault);
     }
-    let Some(home) = key_home(setup) else {
-        return Err(key_failure(&puddle_secrets::KeyError::NoKeySource).into());
-    };
-    if block_on(open_file_vault(Some(&home), &vault, tools(setup)))?.is_ok() {
+    let home = key_home(setup);
+    let Err(failure) = block_on(open_file_vault(home.as_deref(), &vault, tools(setup)))? else {
         return Err(VaultAdminError::VaultOpens);
-    }
-    let keys = VaultKeys::new(&home, &vault, tools(setup));
+    };
+    // Without a place for keys there is no vault to start either: the failure says why.
+    let keys = home
+        .as_deref()
+        .map(|home| VaultKeys::new(home, &vault, tools(setup)))
+        .ok_or(VaultAdminError::from(failure))?;
     if !yes {
         return Ok(ResetOutcome::Plan {
             key_files: keys.keys_to_set_aside(),
@@ -455,7 +447,7 @@ pub fn vault_reset(
         .set_keys_aside(&stamp)
         .map_err(|err| VaultAdminError::Aside(err.to_string()))?;
     // No vault and no key now, so this makes both.
-    block_on(open_file_vault(Some(&home), &vault, tools(setup)))??;
+    block_on(open_file_vault(home.as_deref(), &vault, tools(setup)))??;
     Ok(ResetOutcome::Done { key_files })
 }
 

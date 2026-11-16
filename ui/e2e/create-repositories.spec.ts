@@ -421,6 +421,54 @@ test.describe("a clone that fails", () => {
   });
 });
 
+test.describe("the host note", () => {
+  test("no row moves when the note under the buttons loses a line", async ({
+    page,
+    backend,
+  }) => {
+    // A short window and three rows keep the dialog scrolled, as it is on a small screen; the note's
+    // answer (a line fewer once a host is gone) comes 300 ms after the change, while the press
+    // that removes a row is still under way.
+    await page.setViewportSize({ width: 1280, height: 640 });
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await addrOf(page, 1).fill(API);
+    await addButton(page).click();
+    await addrOf(page, 2).fill(DOCS);
+    await addButton(page).click();
+    await addrOf(page, 3).fill("https://codeberg.org/acme/tools.git");
+    await expect(dialog.getByTestId("hosts-new")).toContainText("gitlab.com");
+    const remove = (n: number) =>
+      rowOf(page, n).getByRole("button", { name: `Remove repository ${n}` });
+    const toEnd = () =>
+      dialog.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+    const scrolls = () =>
+      dialog.evaluate((el) => el.scrollHeight > el.clientHeight);
+    await toEnd();
+    await expect.poll(scrolls).toBe(true);
+
+    await remove(3).click();
+    await expect(rowOf(page, 3)).toHaveCount(0);
+    await toEnd();
+    await expect.poll(() => remove(1).boundingBox()).not.toBeNull();
+    const noteBefore = await dialog.getByTestId("hosts-new").boundingBox();
+    await remove(2).click();
+    await expect(rowOf(page, 2)).toHaveCount(0);
+    await toEnd();
+    await expect.poll(() => remove(1).boundingBox()).not.toBeNull();
+    const before = await remove(1).boundingBox();
+    // The answer for the shorter list arrives: the note drops gitlab.com.
+    await expect(dialog.getByTestId("hosts-new")).not.toContainText(
+      "gitlab.com",
+    );
+    const noteAfter = await dialog.getByTestId("hosts-new").boundingBox();
+    expect(noteAfter?.height).toBeLessThan(noteBefore?.height ?? 0);
+    await expect.poll(() => remove(1).boundingBox()).toEqual(before);
+  });
+});
+
 test.describe("the card", () => {
   test("shows the first repository and how many more, or that there is none", async ({
     page,

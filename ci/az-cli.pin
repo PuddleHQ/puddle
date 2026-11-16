@@ -1,0 +1,7 @@
+# The azure-cli release Puddle's Azure CLI source (CD-92 to CD-95) is checked against, and the SHA-256 of the two
+# source files the contract is read from, at that release's tag (https://raw.githubusercontent.com/Azure/azure-cli/azure-cli-<version>/src/...).
+# Bump by hand: read both files again, update the "azure-cli 2.93.0" test in crates/puddle-secrets/src/sources/tests.rs
+# and the facts in CD-93 to CD-95, then update this file. Format: `version <v>` or `<sha256> <path under src/>`.
+version 2.93.0
+1980ffb6d4627dad080a6f5e65b7a43e48ff00eb1485833512ca5fac6e5a4b02 azure-cli/azure/cli/command_modules/profile/custom.py
+c820c59c9b2654a28b66ca9e5a7af7e101caf783bc53ac83cc0cb015db03891e azure-cli-core/azure/cli/core/_profile.py

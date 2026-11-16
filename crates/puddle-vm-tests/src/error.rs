@@ -137,6 +137,12 @@ pub enum HarnessError {
         /// The command's exit status and output.
         detail: String,
     },
+    /// The ETW file trace (`logman`, `tracerpt`) failed or showed too little to judge.
+    #[error("file trace: {detail}")]
+    Trace {
+        /// The command and its output, or what the trace lacked.
+        detail: String,
+    },
     /// A step took longer than its budget.
     #[error("{what} took longer than {limit:?}")]
     Timeout {

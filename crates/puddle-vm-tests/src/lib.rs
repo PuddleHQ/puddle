@@ -56,6 +56,7 @@ mod env;
 mod error;
 mod freeze;
 mod host_memory;
+pub mod keepalive;
 pub mod load;
 mod prefix;
 mod runtime;

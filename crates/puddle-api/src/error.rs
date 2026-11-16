@@ -289,6 +289,7 @@ impl From<StoreError> for ApiError {
             | StoreError::SignInMethod(_)
             | StoreError::Pattern(_)
             | StoreError::ExpiryNotInFuture
+            | StoreError::PrecedenceOutOfRange(_)
             | StoreError::NotSwitchable
             | StoreError::RuleSetName(_)
             | StoreError::IdentityInvalid(_)

@@ -62,7 +62,7 @@ pub use pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
 pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
-pub use rule::{Actor, Effect, NewRule, Rule, Scope};
+pub use rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use ssh_address::{SshAddressError, looks_like_ssh, ssh_address_as_https};

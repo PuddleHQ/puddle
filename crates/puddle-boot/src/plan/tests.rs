@@ -202,21 +202,26 @@ fn author_rules_become_include_if_blocks_in_order_each_with_its_own_file() {
         .git_author_rule(rule(&["https://github.com/acme/**"], "Cy"))
         .build()
         .unwrap();
+    let bob = format!("/etc/puddle/{}", git_author_name(&author("Bob")));
+    let cy = format!("/etc/puddle/{}", git_author_name(&author("Cy")));
+    let name_of = |path: &str| path.rsplit('/').next().unwrap().to_owned();
     assert_eq!(
         text(&plan, GIT_CONFIG_GUEST),
         format!(
             "{GENERATED}[core]\n\tfsync = added\n\tfsyncMethod = batch\n\
                  [user]\n\tname = \"Ada\"\n\temail = \"ada@example.org\"\n\
-                 [includeIf \"hasconfig:remote.*.url:https://github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
-                 [includeIf \"hasconfig:remote.*.url:https://*@github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
-                 [includeIf \"hasconfig:remote.*.url:https://github.com/acme/**\"]\n\tpath = git-author-2.gitconfig\n"
+                 [includeIf \"hasconfig:remote.*.url:https://github.com/**\"]\n\tpath = {bob}\n\
+                 [includeIf \"hasconfig:remote.*.url:https://*@github.com/**\"]\n\tpath = {bob}\n\
+                 [includeIf \"hasconfig:remote.*.url:https://github.com/acme/**\"]\n\tpath = {cy}\n",
+            bob = name_of(&bob),
+            cy = name_of(&cy),
         )
     );
     assert_eq!(
-        text(&plan, "/etc/puddle/git-author-1.gitconfig"),
+        text(&plan, &bob),
         format!("{GENERATED}[user]\n\tname = \"Bob\"\n\temail = \"bob@example.org\"\n")
     );
-    assert!(text(&plan, "/etc/puddle/git-author-2.gitconfig").contains("\"Cy\""));
+    assert!(text(&plan, &cy).contains("\"Cy\""));
     // No rule file without a rule, and still no credential helper anywhere.
     let none = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert!(
@@ -228,6 +233,56 @@ fn author_rules_become_include_if_blocks_in_order_each_with_its_own_file() {
         let body = String::from_utf8_lossy(f.contents()).to_lowercase();
         assert!(!body.contains("credential"), "{}", f.path());
     }
+}
+
+/// The guest takes a plan's files one at a time while git may read them: a file name that stands
+/// for one author for good, and files written before the config that names them, keep every
+/// remote on one author or the next, never on a mix.
+#[test]
+fn an_author_file_keeps_its_author_and_is_written_before_the_config_that_names_it() {
+    let plan_of = |first: &str, second: &str| {
+        BootPlan::builder(&ImageConfig::default())
+            .git_author_rule(rule(&["https://github.com/**"], first))
+            .git_author_rule(rule(&["https://github.com/acme/**"], second))
+            .build()
+            .unwrap()
+    };
+    let before = plan_of("Work", "Cy");
+    let after = plan_of("Personal", "Work");
+    let holder = |plan: &BootPlan, who: &str| {
+        plan.files()
+            .iter()
+            .filter(|f| f.path().as_str().contains("git-author-"))
+            .find(|f| String::from_utf8_lossy(f.contents()).contains(who))
+            .map(|f| f.path().to_string())
+    };
+    // Work's file is the same path whether the rule is first or second.
+    assert_eq!(holder(&before, "\"Work\""), holder(&after, "\"Work\""));
+    assert_ne!(holder(&after, "\"Personal\""), holder(&after, "\"Work\""));
+    // The same author in two rules is one file.
+    let twice = BootPlan::builder(&ImageConfig::default())
+        .git_author_rule(rule(&["https://a.example/**"], "Bob"))
+        .git_author_rule(rule(&["https://b.example/**"], "Bob"))
+        .build()
+        .unwrap();
+    assert_eq!(
+        twice
+            .files()
+            .iter()
+            .filter(|f| f.path().as_str().contains("git-author-"))
+            .count(),
+        1
+    );
+    let order: Vec<&str> = after.files().iter().map(|f| f.path().as_str()).collect();
+    let config_at = order.iter().position(|p| *p == GIT_CONFIG_GUEST).unwrap();
+    assert!(
+        order
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.contains("git-author-"))
+            .all(|(i, _)| i < config_at),
+        "{order:?}"
+    );
 }
 
 #[test]

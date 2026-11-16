@@ -45,6 +45,7 @@ mod query_name;
 mod reason_code;
 mod request_match;
 mod session_user;
+mod tool;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
@@ -79,12 +80,13 @@ pub use policy::{
 };
 pub use problems::{Problem, Problems};
 pub use query_name::{MAX_QUERY_NAME_LEN, QueryName};
-pub use reason_code::{FailedRequestCode, ReasonCode, ReasonPrefix};
+pub use reason_code::{FailedRequestCode, LimitCode, PassThroughCode, ReasonCode, ReasonPrefix};
 pub use request_match::{
     CanonicalPath, MAX_METHODS, MAX_PATH_PATTERN, MAX_PATH_SEGMENTS, MethodError, Methods,
     PathPattern, PathPatternError, target_path,
 };
 pub use session_user::SessionUser;
+pub use tool::{ToolName, ToolVersion, ToolsFileHash};
 
 /// Puddle's version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

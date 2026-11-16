@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
-use crate::rule::Actor;
+use crate::rule::{Actor, Precedence};
 use proptest::prelude::*;
 use puddle_types::PatternKind;
 
@@ -18,6 +18,7 @@ pub(crate) fn rule(id: i64, scope: Option<&str>, pattern: &str, effect: Effect) 
         created_by: Actor::Cli,
         source_pending_id: None,
         enabled: true,
+        precedence: Precedence::DEFAULT,
     }
 }
 
@@ -142,7 +143,7 @@ fn r06_deny_beats_allow_at_equal_scope() {
 fn scope_rank_leaves_room_below_global() {
     assert_eq!(Scope::Global.rank(), 1);
     assert!(Scope::Workspace(sb("a")).rank() > Scope::Global.rank());
-    assert!(Scope::Set(1).rank() < Scope::Global.rank());
+    assert_eq!(Scope::Set(1).rank(), Scope::Global.rank());
 }
 
 fn in_set(id: i64, set: i64, pattern: &str, effect: Effect) -> Rule {
@@ -281,7 +282,7 @@ fn r39_example_two_a_set_block_competes_at_its_level_of_detail() {
         decision(&yours, "a", "ads.example.com"),
         Some(own_allow(3, PatternKind::Exact))
     );
-    // At equal detail your rule ranks above the set's block.
+    // At equal precedence and detail a group's entry counts as global (R-60), so deny wins.
     let equal = new_index(
         vec![
             rule(1, None, ".example.com", Effect::Allow),
@@ -292,8 +293,126 @@ fn r39_example_two_a_set_block_competes_at_its_level_of_detail() {
     );
     assert_eq!(
         decision(&equal, "a", "x.example.com"),
+        Some(Decision::SetDeny {
+            set: RuleSetId::User(7),
+            rule_id: Some(RuleId(2)),
+            pattern: PatternKind::Suffix
+        })
+    );
+    // A higher precedence on your allow turns that round.
+    let mut allow = rule(1, None, ".example.com", Effect::Allow);
+    allow.precedence = prec(6);
+    let higher = new_index(
+        vec![allow, in_set(2, 7, ".example.com", Effect::Deny)],
+        Vec::new(),
+        Switches::default(),
+    );
+    assert_eq!(
+        decision(&higher, "a", "x.example.com"),
         Some(own_allow(1, PatternKind::Suffix))
     );
+}
+
+fn prec(value: u8) -> Precedence {
+    Precedence::new(value).unwrap()
+}
+
+fn with_precedence(mut rule: Rule, value: u8) -> Rule {
+    rule.precedence = prec(value);
+    rule
+}
+
+#[test]
+fn r60_an_exact_allow_at_five_loses_to_a_suffix_deny_at_seven() {
+    let index = index(vec![
+        rule(1, None, "a.example.com", Effect::Allow),
+        with_precedence(rule(2, None, ".example.com", Effect::Deny), 7),
+    ]);
+    assert_eq!(winner(&index, "a", "a.example.com"), Some(2));
+}
+
+#[test]
+fn r60_an_allow_at_one_beats_a_built_in_block_at_zero() {
+    let blocked = built_in_deny("trackers", ".ads.example.com");
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, RuleSetId::BuiltIn("trackers"), None, true);
+    let index = new_index(
+        vec![with_precedence(
+            rule(1, None, ".example.com", Effect::Allow),
+            Precedence::MIN,
+        )],
+        vec![blocked],
+        switches,
+    );
+    // The built-in block is the more specific, and still ranks lowest.
+    assert_eq!(winner(&index, "a", "x.ads.example.com"), Some(1));
+}
+
+#[test]
+fn r60_at_equal_precedence_the_more_specific_allow_wins_and_at_seven_the_deny_does() {
+    let allow = rule(1, None, "a.example.com", Effect::Allow);
+    let deny = rule(2, None, ".example.com", Effect::Deny);
+    assert_eq!(
+        winner(
+            &index(vec![allow.clone(), deny.clone()]),
+            "a",
+            "a.example.com"
+        ),
+        Some(1)
+    );
+    assert_eq!(
+        winner(
+            &index(vec![allow, with_precedence(deny, 7)]),
+            "a",
+            "a.example.com"
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn r60_precedence_ranks_before_scope_and_the_scope_ranks_after_it() {
+    // A global rule at 6 beats a workspace rule at 5 on the same pattern.
+    let global = with_precedence(rule(1, None, "x.example", Effect::Deny), 6);
+    let local = rule(2, Some("a"), "x.example", Effect::Allow);
+    assert_eq!(
+        winner(&index(vec![local.clone(), global]), "a", "x.example"),
+        Some(1)
+    );
+    // Equal precedence: the workspace rule wins as before.
+    let global = rule(1, None, "x.example", Effect::Deny);
+    assert_eq!(
+        winner(&index(vec![local, global]), "a", "x.example"),
+        Some(2)
+    );
+}
+
+#[test]
+fn r60_a_rule_in_a_group_ranks_by_its_own_precedence() {
+    let mut entry = in_set(2, 7, "x.example", Effect::Deny);
+    entry.precedence = prec(8);
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, RuleSetId::User(7), None, true);
+    let set = new_index(
+        vec![rule(1, None, "x.example", Effect::Allow), entry],
+        Vec::new(),
+        switches,
+    );
+    assert_eq!(winner(&set, "a", "x.example"), Some(2));
+}
+
+#[test]
+fn precedence_is_one_to_nine_and_five_by_default() {
+    assert_eq!(Precedence::DEFAULT.get(), 5);
+    assert_eq!(Precedence::default(), Precedence::DEFAULT);
+    assert_eq!(prec(1).to_string(), "1");
+    assert!(Precedence::new(Precedence::MAX).is_ok());
+    for bad in [0u8, 10, 255] {
+        assert!(Precedence::new(bad).is_err(), "{bad}");
+    }
+    assert!(Precedence::from_stored(-1).is_err());
+    assert!(Precedence::from_stored(300).is_err());
+    assert_eq!(Precedence::from_stored(9).unwrap().get(), 9);
 }
 
 #[test]
@@ -327,7 +446,7 @@ fn the_plain_precedence_lets_a_more_specific_set_block_beat_your_rule() {
 }
 
 #[test]
-fn r39_between_sets_most_specific_then_deny_wins() {
+fn r60_between_groups_most_specific_then_deny_wins_at_equal_precedence() {
     let index = new_index(
         vec![
             in_set(1, 1, ".example.com", Effect::Deny),
@@ -343,7 +462,8 @@ fn r39_between_sets_most_specific_then_deny_wins() {
     );
     let set_of = |h| decision(&index, "a", h).and_then(|d| d.rule_set());
     assert_eq!(set_of("x.example.com"), Some(RuleSetId::User(2)));
-    assert_eq!(set_of("y.example.com"), Some(RuleSetId::BuiltIn("github")));
+    // The built-in entry is the most specific here, but sits at 0 below both groups' entries.
+    assert_eq!(set_of("y.example.com"), Some(RuleSetId::User(1)));
     assert!(matches!(
         decision(&index, "a", "z.example.com"),
         Some(Decision::SetDeny { .. })
@@ -652,8 +772,11 @@ fn arb_rule() -> impl Strategy<Value = Rule> {
         })
 }
 
-/// R-39 written as plainly as possible, for the property test below: every candidate
-/// checked one by one.
+/// A candidate of the plain reference: precedence, specificity, scope rank, deny, the hit.
+type Candidate<'a> = (u8, (u8, usize), u8, bool, Hit<'a>);
+
+/// R-60 written as plainly as possible, for the property test below: every candidate checked
+/// one by one, then the best by precedence, specificity, scope, deny over allow.
 fn reference_p3(
     index: &RuleIndex,
     workspace: &WorkspaceId,
@@ -662,30 +785,32 @@ fn reference_p3(
     suffix_allows: SuffixAllows,
 ) -> Option<Decision> {
     // A workspace that is nobody's has no rules.
-    index.owner_of(workspace)?;
+    let owner = index.owner_of(workspace)?;
     let ignore = suffix_allows == SuffixAllows::Ignore;
-    let own: Vec<&Rule> = index
-        .rules()
-        .iter()
-        .filter(|r| r.pattern.matches(h) && !r.is_expired(now))
-        .filter(|r| {
-            (matches!(r.scope, Scope::Global) && Some(r.user) == index.owner_of(workspace))
-                || r.scope.workspace() == Some(workspace)
-        })
-        .filter(|r| {
-            !(ignore && r.effect == Effect::Allow && r.pattern.kind() == PatternKind::Suffix)
-        })
-        .collect();
-    let mut sets: Vec<Hit<'_>> = Vec::new();
+    // (precedence, specificity, scope rank, deny, the hit)
+    let mut all: Vec<Candidate<'_>> = Vec::new();
     for r in index.rules() {
-        if let Scope::Set(set) = r.scope
-            && Some(r.user) == index.owner_of(workspace)
-            && r.pattern.matches(h)
-            && !r.is_expired(now)
-            && index.is_on(RuleSetId::User(set), workspace)
-            && !(ignore && r.effect == Effect::Allow)
-        {
-            sets.push(Hit::Rule(r));
+        if !r.pattern.matches(h) || r.is_expired(now) || !r.enabled || r.user != owner {
+            continue;
+        }
+        let applies = match r.scope {
+            Scope::Global => true,
+            Scope::Workspace(ref w) => w == workspace,
+            Scope::Set(set) => index.is_on(RuleSetId::User(set), workspace),
+        };
+        let dropped = match r.scope {
+            Scope::Set(_) => ignore && r.effect == Effect::Allow,
+            _ => ignore && r.effect == Effect::Allow && r.pattern.kind() == PatternKind::Suffix,
+        };
+        if applies && !dropped {
+            let rank = if r.scope.workspace().is_some() { 2 } else { 1 };
+            all.push((
+                r.precedence.get(),
+                r.pattern.specificity(),
+                rank,
+                r.effect == Effect::Deny,
+                Hit::Rule(r),
+            ));
         }
     }
     for e in index.entries() {
@@ -694,26 +819,23 @@ fn reference_p3(
             set => index.is_on(set, workspace),
         };
         if on && !ignore && e.pattern.matches(h) {
-            sets.push(Hit::Entry(e));
+            all.push((
+                0,
+                e.pattern.specificity(),
+                1,
+                e.effect == Effect::Deny,
+                Hit::Entry(e),
+            ));
         }
     }
-    let best_set = sets.iter().copied().max_by_key(|hit| set_key(*hit));
-    let best_deny = sets
-        .iter()
-        .copied()
-        .filter(|hit| hit.effect() == Effect::Deny)
-        .max_by_key(|hit| set_key(*hit));
-    match own.into_iter().max_by_key(|r| own_key(r)) {
-        Some(r) => match best_deny {
-            Some(d) if d.pattern().specificity() > r.pattern.specificity() => Some(d.decision()),
-            _ => Some(Hit::Rule(r).decision()),
-        },
-        None => best_set.map(Hit::decision),
-    }
+    // Hits that tie on all four decide the same way, so any of them will do.
+    all.iter()
+        .max_by_key(|(p, spec, rank, deny, _)| (*p, *spec, *rank, *deny))
+        .map(|(.., hit)| hit.decision())
 }
 
 #[test]
-fn a_more_specific_set_deny_beats_a_less_specific_rule_of_the_user() {
+fn at_equal_precedence_a_more_specific_set_deny_beats_a_less_specific_rule_of_the_user() {
     let own = rule(1, None, "example.com", Effect::Allow);
     let mut deny = rule(2, None, "x.y.example.com", Effect::Deny);
     deny.scope = Scope::Set(1);
@@ -764,6 +886,7 @@ fn arb_index() -> impl Strategy<Value = RuleIndex> {
             arb_pattern(),
             any::<bool>(),
             proptest::option::of(0..20u64),
+            (1..=9u8, any::<bool>()),
         ),
         0..10,
     );
@@ -801,14 +924,18 @@ fn arb_index() -> impl Strategy<Value = RuleIndex> {
         };
         let rules = rules
             .into_iter()
-            .map(|((id, user), scope, pattern, deny, expires)| {
-                let effect = if deny { Effect::Deny } else { Effect::Allow };
-                let mut r = rule(id, None, pattern, effect);
-                r.user = user_of(&scope, user);
-                r.scope = scope;
-                r.expires_at = expires;
-                r
-            })
+            .map(
+                |((id, user), scope, pattern, deny, expires, (precedence, enabled))| {
+                    let effect = if deny { Effect::Deny } else { Effect::Allow };
+                    let mut r = rule(id, None, pattern, effect);
+                    r.user = user_of(&scope, user);
+                    r.scope = scope;
+                    r.expires_at = expires;
+                    r.precedence = Precedence::new(precedence).unwrap();
+                    r.enabled = enabled;
+                    r
+                },
+            )
             .collect();
         let entries = entries
             .into_iter()
@@ -864,21 +991,29 @@ proptest! {
     }
 
     #[test]
-    fn r39_a_set_never_opens_what_an_own_rule_closes(
+    fn r60_nothing_beats_a_rule_of_higher_precedence_that_matches(
         index in arb_index(),
         workspace in prop_oneof![Just("a"), Just("b")],
         h in prop_oneof![Just("x.y.example.com"), Just("y.example.com"), Just("example.com")],
     ) {
-        let own_only = RuleIndex::new(
-            index.rules().iter().filter(|r| r.scope.set().is_none()).cloned().collect(),
-            Vec::new(),
-            Switches::default(),
-            index.owners.clone(),
-        );
-        let mine = own_only.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
-        let all = index.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
-        if mine == Some(Effect::Deny) {
-            prop_assert_eq!(all, Some(Effect::Deny));
+        let won = match index.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count) {
+            Some(Hit::Rule(rule)) => Some(rule.precedence.get()),
+            Some(Hit::Entry(_)) => Some(Precedence::BUILT_IN),
+            None => None,
+        };
+        // Each rule that would decide on its own: the winner ranks at least as high.
+        for r in index.rules() {
+            let alone = RuleIndex::new(
+                vec![r.clone()],
+                Vec::new(),
+                index.switches.clone(),
+                index.owners.clone(),
+            );
+            if let Some(Hit::Rule(only)) =
+                alone.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count)
+            {
+                prop_assert!(won >= Some(only.precedence.get()));
+            }
         }
     }
 

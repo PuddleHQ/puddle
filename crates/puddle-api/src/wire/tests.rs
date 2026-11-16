@@ -397,6 +397,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
         created_by: store::Actor::Ui,
         source_pending_id: Some(PendingId(9)),
         enabled: false,
+        precedence: store::Precedence::new(7).unwrap(),
     };
     let wire = Rule::from_store(rule).unwrap();
     assert_eq!(
@@ -405,7 +406,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
             "id": 3, "scope": {"type": "workspace", "workspace": "box"},
             "pattern": ".example.com", "pattern_kind": "suffix", "effect": "deny",
             "expires_at": null, "created_at": 5, "created_by": "ui",
-            "source_pending_id": 9, "enabled": false
+            "source_pending_id": 9, "enabled": false, "precedence": 7
         })
     );
     assert_eq!(
@@ -418,9 +419,10 @@ fn rules_map_with_their_scope_and_pattern_kind() {
         pattern: "  *.Bücher.Example.COM. ".into(),
         effect: Effect::Allow,
         expires_at: None,
+        precedence: None,
     };
     assert_eq!(
-        typed.into_new_rule().unwrap().pattern.to_string(),
+        typed.into_new_rule().unwrap().0.pattern.to_string(),
         ".xn--bcher-kva.example.com"
     );
     let new = NewRuleRequest {
@@ -428,9 +430,12 @@ fn rules_map_with_their_scope_and_pattern_kind() {
         pattern: "example.com".into(),
         effect: Effect::Allow,
         expires_at: None,
+        precedence: Some(9),
     }
     .into_new_rule()
     .unwrap();
+    assert_eq!(new.1, Some(store::Precedence::new(9).unwrap()));
+    let new = new.0;
     assert_eq!(new.pattern.to_string(), "example.com");
     assert_eq!(new.created_by, store::Actor::Api);
     assert!(
@@ -439,10 +444,27 @@ fn rules_map_with_their_scope_and_pattern_kind() {
             pattern: "*.com".into(),
             effect: Effect::Allow,
             expires_at: None,
+            precedence: None,
         }
         .into_new_rule()
         .is_err()
     );
+    for bad in [0, 10, 255] {
+        let refused = NewRuleRequest {
+            scope: RuleScope::Global,
+            pattern: "example.com".into(),
+            effect: Effect::Allow,
+            expires_at: None,
+            precedence: Some(bad),
+        }
+        .into_new_rule()
+        .unwrap_err();
+        assert!(
+            refused.message().contains("precedence"),
+            "{}",
+            refused.message()
+        );
+    }
 }
 
 #[test]
@@ -675,12 +697,12 @@ fn audit_types_and_outcomes_cover_the_stores() {
 fn rule_set_records_serialise_as_stored() {
     let set = serde_json::json!({
         "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui",
-        "fill": {"kind": "solid", "color": "#0a6a85"}
+        "fill": {"kind": "solid", "color": "#0a6a85"}, "default_precedence": null
     });
     let rule = serde_json::json!({
         "id": 9, "scope": "set", "workspace_id": null, "set_id": 3, "pattern_kind": "exact",
         "pattern": "a.example", "effect": "deny", "expires_at": null, "created_at": 1,
-        "created_by": "ui", "source_pending_id": null
+        "created_by": "ui", "source_pending_id": null, "precedence": 5
     });
     let pending = serde_json::json!({
         "id": 2, "workspace_id": "box", "host": "open-vsx.org", "port": 443, "first_seen": 1,

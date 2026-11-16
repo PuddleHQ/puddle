@@ -32,6 +32,7 @@ mod logins;
 mod network_health;
 mod orphans;
 mod ports;
+mod presence;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
@@ -43,6 +44,7 @@ mod settings_view;
 mod shell_init;
 mod ssh_agent;
 mod start_folder;
+mod tools;
 mod workspaces;
 
 pub use admin::{
@@ -96,6 +98,7 @@ pub use network_health::{
 };
 pub use orphans::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest};
 pub use ports::{PortEntry, PortForwardRequest, WorkspacePorts};
+pub use presence::{ClientKind, PresenceReport};
 pub use proxy_sign_in::{ProxySignInList, ProxySignInRequest, StoredSignIn};
 pub use repos::{
     AccountProfile, AccountProfileRequest, RepoListState, RepoListing, RepoNote, RepoNoteCode,
@@ -112,6 +115,7 @@ pub use rule_sets::{
     RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView,
     SystemManagedHost, SystemReason,
 };
+pub(crate) use rules::checked_precedence;
 pub use rules::{
     Actor, DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, NewRuleRequest,
     PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleEnabledRequest,
@@ -130,6 +134,9 @@ pub use ssh_agent::{
     SshAgentHostRequest, SshAgentHostView, SshAgentView,
 };
 pub use start_folder::{StartFolderRequest, StartFolderSet};
+pub use tools::{
+    RegistryTool, ToolChangeRequest, ToolEntry, ToolRegistry, ToolVersions, ToolsFile, ToolsListing,
+};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,

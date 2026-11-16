@@ -26,11 +26,11 @@ use std::time::Duration;
 
 use puddle_proxy::{
     BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    RequestView, Unauthorized,
+    RequestView, SecretValue, Unauthorized,
 };
 use puddle_secrets::{SourceError, SourceSpec};
 use puddle_store::{CredentialBinding, CredentialChoice, Identity, WorkspaceGit};
-use puddle_types::{Event, EventSink, GitAccess, WorkspaceId};
+use puddle_types::{Event, EventSink, GitAccess, ReasonCode, WorkspaceId};
 use tokio::time::Instant;
 
 use crate::git_path::{Access, Classified, GitPath, classify};
@@ -106,7 +106,7 @@ impl GitInjector {
             Classified::Ambiguous(why) => {
                 return refuse(
                     400,
-                    "bad_git_path",
+                    ReasonCode::BadGitPath,
                     format!(
                         "this request names a Git repository in a way Puddle cannot read safely ({why}); nothing was sent to {host}. Use the repository's plain address"
                     ),
@@ -120,7 +120,7 @@ impl GitInjector {
                 tracing::warn!(workspace = %self.workspace, error = %err, "the Git settings could not be read");
                 return refuse(
                     502,
-                    "git_settings_unavailable",
+                    ReasonCode::GitSettingsUnavailable,
                     format!(
                         "Puddle could not read this workspace's Git settings ({err}); nothing was sent to {host}"
                     ),
@@ -162,7 +162,7 @@ impl GitInjector {
                     .join(" and ");
                 refuse(
                     409,
-                    "credential_ambiguous",
+                    ReasonCode::CredentialAmbiguous,
                     format!(
                         "{labels} both cover {}/{}; narrow one in Puddle",
                         path.host, path.owner
@@ -170,7 +170,7 @@ impl GitInjector {
                 )
             }
             // A choice a later Puddle adds: nothing it says is trusted.
-            _ => refuse(502, "credential_unavailable", UNCHOOSABLE),
+            _ => refuse(502, ReasonCode::CredentialUnavailable, UNCHOOSABLE),
         }
     }
 
@@ -194,13 +194,13 @@ impl GitInjector {
         }
         let (code, verb, list, switch) = match access {
             GitAccess::Push => (
-                "push_denied",
+                ReasonCode::PushDenied,
                 "push to",
                 "push",
                 "Only push to listed repos",
             ),
             GitAccess::Pull => (
-                "pull_denied",
+                ReasonCode::PullDenied,
                 "pull from",
                 "pull",
                 "Only pull from listed repos",
@@ -227,7 +227,7 @@ impl GitInjector {
                 "{verb} {what} is not allowed: the repository list cannot hold this name, so turn off \"{switch}\" on the workspace's Git tab"
             ),
         };
-        tracing::info!(workspace = %self.workspace, code, repo = %what, "refused by the repository list");
+        tracing::info!(workspace = %self.workspace, %code, repo = %what, "refused by the repository list");
         Some(InjectRefusal::new(403, code, message))
     }
 
@@ -255,7 +255,7 @@ impl GitInjector {
             tracing::warn!(workspace = %self.workspace, identity = %identity.label, "a stored credential is not for the place it covers");
             return refuse(
                 502,
-                "credential_unavailable",
+                ReasonCode::CredentialUnavailable,
                 format!(
                     "the credential of identity {} is not for {named}; fix the identity in Puddle",
                     identity.label
@@ -278,7 +278,7 @@ impl GitInjector {
                 }
                 return refuse(
                     502,
-                    "credential_unavailable",
+                    ReasonCode::CredentialUnavailable,
                     format!(
                         "the credential of identity {} for {named} ({}) is not available: {err}; {advice}",
                         identity.label,
@@ -288,21 +288,9 @@ impl GitInjector {
             }
         };
         let value = authorization(&path.credential_host, credential.secret.expose());
-        let Ok(header) = InjectedHeader::new("authorization", value) else {
-            return refuse(
-                502,
-                "credential_unavailable",
-                format!(
-                    "the credential of identity {} for {named} is not a usable header value; replace it in Puddle",
-                    identity.label
-                ),
-            );
-        };
-        let injection = Injection::new(
-            format!("identity:{}:{}", identity.id, binding.host),
-            vec![header],
-        );
-        InjectDecision::Inject(injection.on_unauthorized(self.rejected(identity, source, path)))
+        let rejected = self.rejected(identity, source, path);
+        let binding_id = format!("identity:{}:{}", identity.id, binding.host);
+        credentialed(value, binding_id, &identity.label, &named, rejected)
     }
 
     /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its secret (not signed in, tool missing) goes
@@ -328,7 +316,7 @@ impl GitInjector {
             source.describe()
         );
         InjectDecision::PassThroughNoting(Unauthorized::new(move || {
-            InjectRefusal::new(502, "credential_unavailable", message.clone())
+            InjectRefusal::new(502, ReasonCode::CredentialUnavailable, message.clone())
         }))
     }
 
@@ -395,7 +383,7 @@ impl GitInjector {
             }
             InjectRefusal::new(
                 403,
-                "credential_rejected",
+                ReasonCode::CredentialRejected,
                 format!(
                     "{host} did not accept the credential of identity {label} ({}) for {named}; sign in again or check that the token can reach it, in Puddle",
                     source.describe()
@@ -426,7 +414,30 @@ impl Injector for GitInjector {
     }
 }
 
-fn refuse(status: u16, code: &'static str, message: impl Into<String>) -> InjectDecision {
+/// The decision that sends `value` as the `Authorization` header, or the refusal that says the
+/// identity's credential cannot be sent as one.
+fn credentialed(
+    value: SecretValue,
+    binding_id: String,
+    label: &str,
+    named: &str,
+    rejected: Unauthorized,
+) -> InjectDecision {
+    match InjectedHeader::new("authorization", value) {
+        Ok(header) => InjectDecision::Inject(
+            Injection::new(binding_id, vec![header]).on_unauthorized(rejected),
+        ),
+        Err(_) => refuse(
+            502,
+            ReasonCode::CredentialUnavailable,
+            format!(
+                "the credential of identity {label} for {named} is not a usable header value; replace it in Puddle"
+            ),
+        ),
+    }
+}
+
+fn refuse(status: u16, code: ReasonCode, message: impl Into<String>) -> InjectDecision {
     InjectDecision::Refuse(InjectRefusal::new(status, code, message))
 }
 
@@ -507,3 +518,6 @@ impl Notices {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

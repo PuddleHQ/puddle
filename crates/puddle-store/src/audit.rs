@@ -333,6 +333,13 @@ pub struct RuleWire {
     pub created_by: ActorWire,
     /// The pending row it came from.
     pub source_pending_id: Option<i64>,
+    /// How it ranks, 1 to 9 (R-59). Records written before precedence existed read as 5.
+    #[serde(default = "default_precedence")]
+    pub precedence: u8,
+}
+
+fn default_precedence() -> u8 {
+    crate::rule::Precedence::DEFAULT.get()
 }
 
 impl From<&Rule> for RuleWire {
@@ -352,6 +359,7 @@ impl From<&Rule> for RuleWire {
             created_at: rule.created_at,
             created_by: rule.created_by.into(),
             source_pending_id: rule.source_pending_id.map(|id| id.0),
+            precedence: rule.precedence.get(),
         }
     }
 }
@@ -462,6 +470,9 @@ pub struct RequestRuleWire {
     pub created_at: u64,
     /// Who made it.
     pub created_by: ActorWire,
+    /// How it ranks, 1 to 9 (R-59). Records written before precedence existed read as 5.
+    #[serde(default = "default_precedence")]
+    pub precedence: u8,
 }
 
 /// A rule set the user made, as it appears in the audit.
@@ -481,6 +492,9 @@ pub struct RuleSetWire {
     /// records written before sets had a colour).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<puddle_types::Fill>,
+    /// The precedence a new rule in the set takes when none is named (R-59); `None` means 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_precedence: Option<u8>,
 }
 
 /// What a `workspace_op` record is about.

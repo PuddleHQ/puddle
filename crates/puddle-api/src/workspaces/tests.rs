@@ -8,6 +8,7 @@ use puddle_store::IdentityId;
 use super::repositories::draw_entry_id;
 use super::*;
 use crate::checkouts::AddRepository;
+use puddle_types::{ToolName, ToolVersion, ToolsFileHash};
 
 struct SecretLogin(String);
 
@@ -311,6 +312,7 @@ async fn the_empty_service_says_it_is_unavailable() {
     let name = DisplayName::parse("w").unwrap();
     let dir = CheckoutDir::new("a").unwrap();
     let entry = EntryId::from_random([1; 5]);
+    let tool = ToolName::new("node").unwrap();
     let url = RepoUrl::parse("https://example.com/a").unwrap();
     let repos = vec![NewRepository {
         repository: Repository::at_default_directory(EntryId::from_random([1; 5]), url),
@@ -354,6 +356,21 @@ async fn the_empty_service_says_it_is_unavailable() {
         .map(|_| ()),
         svc.clone_again(&id, &entry, &NoGitSetup).await.map(|_| ()),
         svc.remove_repository(&id, &entry).await.map(|_| ()),
+        svc.tools(&id).await.map(|_| ()),
+        svc.set_tool(
+            &id,
+            &tool,
+            &ToolVersion::new("22").unwrap(),
+            &ToolsFileHash::absent(),
+        )
+        .await
+        .map(|_| ()),
+        svc.remove_tool(&id, &tool, &ToolsFileHash::absent())
+            .await
+            .map(|_| ()),
+        svc.tool_registry(&id).await.map(|_| ()),
+        svc.tool_versions(&id, &tool).await.map(|_| ()),
+        svc.install_tools(&id).await,
     ];
     for result in all {
         assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));

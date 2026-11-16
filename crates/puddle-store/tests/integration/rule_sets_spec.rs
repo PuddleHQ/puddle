@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use puddle_store::testing::own;
 use puddle_store::{
-    Actor, BUILT_IN_SETS, Effect, Limits, ManualClock, NewRule, Pattern, PendingState, Resolution,
-    Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason, parse_rule_set,
+    Actor, BUILT_IN_SETS, Effect, Limits, ManualClock, NewRule, Pattern, PendingState, Precedence,
+    Resolution, Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason, parse_rule_set,
 };
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Fill, Host,
@@ -1146,4 +1146,124 @@ fn r65_a_built_in_entry_switch_is_the_users_own_and_only_for_real_entries() {
         .switch_builtin_entry(OWNER, github, "codeload.github.com", false, Actor::Ui)
         .unwrap();
     assert_eq!(audit_of(&store, "rule_switched").len(), 1);
+}
+
+fn prec(value: u8) -> Precedence {
+    Precedence::new(value).unwrap()
+}
+
+fn entry_precedences(store: &Store, set: i64) -> Vec<(String, u8)> {
+    store
+        .rule_set(OWNER, RuleSetId::User(set))
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|e| (e.pattern, e.precedence))
+        .collect()
+}
+
+#[test]
+fn r59_a_new_rule_in_a_group_takes_the_groups_default_and_old_ones_keep_theirs() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Mine");
+    let user = store.as_user(OWNER);
+    assert_eq!(
+        store
+            .rule_set(OWNER, RuleSetId::User(set))
+            .unwrap()
+            .default_precedence,
+        None
+    );
+    user.add_rule(&new_rule(Scope::Set(set), "one.example.com", Effect::Allow))
+        .unwrap();
+    let changed = store
+        .set_rule_set_default_precedence(OWNER, set, Some(prec(8)), Actor::Ui)
+        .unwrap();
+    assert_eq!(changed.default_precedence, Some(prec(8)));
+    user.add_rule(&new_rule(Scope::Set(set), "two.example.com", Effect::Allow))
+        .unwrap();
+    // A named precedence beats the group's default.
+    user.add_rule_with_precedence(
+        &new_rule(Scope::Set(set), "three.example.com", Effect::Allow),
+        prec(2),
+    )
+    .unwrap();
+    // A rule outside the group is not touched by the group's default.
+    let outside = user
+        .add_rule(&new_rule(Scope::Global, "four.example.com", Effect::Allow))
+        .unwrap();
+    assert_eq!(outside.precedence, Precedence::DEFAULT);
+    assert_eq!(
+        entry_precedences(&store, set),
+        vec![
+            ("one.example.com".to_owned(), 5),
+            ("two.example.com".to_owned(), 8),
+            ("three.example.com".to_owned(), 2),
+        ]
+    );
+    // Clearing it goes back to 5 for the next rule, and changes nothing already there.
+    store
+        .set_rule_set_default_precedence(OWNER, set, None, Actor::Ui)
+        .unwrap();
+    user.add_rule(&new_rule(
+        Scope::Set(set),
+        "five.example.com",
+        Effect::Allow,
+    ))
+    .unwrap();
+    assert_eq!(
+        entry_precedences(&store, set)[1],
+        ("two.example.com".to_owned(), 8)
+    );
+    assert_eq!(
+        entry_precedences(&store, set)[3],
+        ("five.example.com".to_owned(), 5)
+    );
+}
+
+#[test]
+fn r59_approving_a_request_into_a_group_takes_the_groups_default() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Mine");
+    store
+        .set_rule_set_default_precedence(OWNER, set, Some(prec(7)), Actor::Ui)
+        .unwrap();
+    let row = pending(decide(&store, "a", "approve.example.com"));
+    let mut into_set = Resolution::allow();
+    into_set.scope = ScopeChoice::Set(set);
+    let decided = store.resolve_pending(row, &into_set, Actor::Ui).unwrap();
+    assert_eq!(decided.rule.precedence, prec(7));
+}
+
+#[test]
+fn r59_the_default_is_audited_once_and_a_repeat_writes_nothing() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Mine");
+    for _ in 0..2 {
+        store
+            .set_rule_set_default_precedence(OWNER, set, Some(prec(3)), Actor::Api)
+            .unwrap();
+    }
+    let updates = audit_of(&store, "rule_set_updated");
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0]["rule_set"]["default_precedence"], 3);
+    assert!(updates[0]["before"].get("default_precedence").is_none());
+}
+
+#[test]
+fn r59_a_default_precedence_is_the_users_own_and_never_the_systems() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Mine");
+    assert!(matches!(
+        store.set_rule_set_default_precedence(OWNER, set, Some(prec(4)), Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+    assert!(matches!(
+        store.set_rule_set_default_precedence(OWNER, 999, Some(prec(4)), Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    // Built-in entries sit at 0, below every rule of the user.
+    let github = store.rule_set(OWNER, RuleSetId::BuiltIn("github")).unwrap();
+    assert!(github.entries.iter().all(|e| e.precedence == 0));
+    assert_eq!(github.default_precedence, None);
 }

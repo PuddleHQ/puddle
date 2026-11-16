@@ -102,6 +102,8 @@ pub struct AuditRule {
     #[serde(default)]
     #[schema(required = true)]
     pub set_id: Option<i64>,
+    /// How the rule ranked, 1 to 9; a record from before precedence existed says 5.
+    pub precedence: u8,
 }
 
 impl From<store::RuleWire> for AuditRule {
@@ -118,6 +120,7 @@ impl From<store::RuleWire> for AuditRule {
             created_by,
             source_pending_id,
             set_id,
+            precedence,
         } = rule;
         Self {
             id,
@@ -131,6 +134,7 @@ impl From<store::RuleWire> for AuditRule {
             created_by: created_by.into(),
             source_pending_id,
             set_id,
+            precedence,
         }
     }
 }
@@ -155,6 +159,8 @@ pub struct AuditRequestRule {
     pub created_at: u64,
     /// Who made it.
     pub created_by: Actor,
+    /// How the rule ranked, 1 to 9; a record from before precedence existed says 5.
+    pub precedence: u8,
 }
 
 impl From<store::RequestRuleWire> for AuditRequestRule {
@@ -168,6 +174,7 @@ impl From<store::RequestRuleWire> for AuditRequestRule {
             path,
             created_at,
             created_by,
+            precedence,
         } = rule;
         Self {
             id,
@@ -178,6 +185,7 @@ impl From<store::RequestRuleWire> for AuditRequestRule {
             path,
             created_at,
             created_by: created_by.into(),
+            precedence,
         }
     }
 }
@@ -198,6 +206,10 @@ pub struct AuditRuleSet {
     /// The colour the user chose; `null` when the set had the default of its number.
     #[schema(required = true)]
     pub fill: Option<puddle_types::Fill>,
+    /// The precedence a new rule in the set took when none was named; `null` means 5.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub default_precedence: Option<u8>,
 }
 
 impl From<store::RuleSetWire> for AuditRuleSet {
@@ -209,6 +221,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             created_at,
             created_by,
             fill,
+            default_precedence,
         } = set;
         Self {
             id,
@@ -217,6 +230,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             created_at,
             created_by: created_by.into(),
             fill,
+            default_precedence,
         }
     }
 }

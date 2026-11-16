@@ -45,6 +45,7 @@ fn rule_wire() -> RuleWire {
         created_by: ActorWire::Cli,
         source_pending_id: Some(2),
         set_id: None,
+        precedence: 5,
     }
 }
 

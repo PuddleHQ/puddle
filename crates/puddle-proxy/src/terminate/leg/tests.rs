@@ -59,11 +59,11 @@ fn only_server_side_tls_failures_are_passed_through() {
     use puddle_upstream::TlsConnectError as E;
     assert_eq!(
         tls_pass_through(&E::Certificate("x".into())),
-        Some("server_certificate")
+        Some(PassThroughCode::ServerCertificate)
     );
     assert_eq!(
         tls_pass_through(&E::Handshake("x".into())),
-        Some("server_tls")
+        Some(PassThroughCode::ServerTls)
     );
     assert_eq!(tls_pass_through(&E::InvalidName("x".into())), None);
 }

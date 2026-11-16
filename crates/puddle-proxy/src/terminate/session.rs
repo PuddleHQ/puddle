@@ -10,7 +10,8 @@ use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
 use puddle_types::{
-    ConnectionOutcome, EgressRequest, ForeignCredentialKind, Host, HttpRequestLine, WorkspaceId,
+    ConnectionOutcome, EgressRequest, ForeignCredentialKind, Host, HttpRequestLine, LimitCode,
+    PassThroughCode, ReasonCode, WorkspaceId,
 };
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -118,15 +119,15 @@ pub(crate) struct Outcome {
     pub(crate) certificate_refused: bool,
     /// The connection was passed through to the real server untouched instead of decrypted (a
     /// host decrypted only because the workspace decrypts every host): the code says why.
-    pub(crate) passed_through: Option<&'static str>,
+    pub(crate) passed_through: Option<PassThroughCode>,
     /// The client refused Puddle's certificate for a host decrypted only because the workspace
     /// decrypts every host: it is passed through from now on.
     pub(crate) learned: bool,
     /// The code of the first refusal the credential rules gave a request (`x-puddle-blocked`).
-    pub(crate) refused: Option<&'static str>,
+    pub(crate) refused: Option<ReasonCode>,
     /// The code of the limit that ended the connection or cut one of its streams or pipes
     /// (`limit:<code>`), when one did.
-    pub(crate) ended: Option<&'static str>,
+    pub(crate) ended: Option<LimitCode>,
     /// The connection was passed through, and its first bytes began SSH to a Git host's name: they
     /// were not passed on, and the guest got the SSH refusal.
     pub(crate) ssh: bool,
@@ -408,7 +409,7 @@ where
     let captured = match first {
         Ok(FirstBytes::Tls(captured)) => captured,
         Ok(FirstBytes::Other(read)) => {
-            pass_through(cx, stream, read, "not_tls", outcome).await;
+            pass_through(cx, stream, read, PassThroughCode::NotTls, outcome).await;
             return None;
         }
         Err(err) => {
@@ -417,7 +418,7 @@ where
         }
     };
     let Some(hello) = parse_hello(&captured, &cx.target.host) else {
-        pass_through(cx, stream, captured, "not_tls", outcome).await;
+        pass_through(cx, stream, captured, PassThroughCode::NotTls, outcome).await;
         return None;
     };
     // No credential is at stake on this host, so a client that asks for another name (or hides
@@ -435,12 +436,19 @@ where
             outcome.refused = Some(crate::token_gate::CODE);
             return None;
         }
-        pass_through(cx, stream, captured, "sni_mismatch", outcome).await;
+        pass_through(cx, stream, captured, PassThroughCode::SniMismatch, outcome).await;
         return None;
     }
     let made = match leg::connect_noting(cx, &hello.upstream_offer()).await {
         Ok(made) if made.wants_client_certificate => {
-            pass_through(cx, stream, captured, "server_client_certificate", outcome).await;
+            pass_through(
+                cx,
+                stream,
+                captured,
+                PassThroughCode::ServerClientCertificate,
+                outcome,
+            )
+            .await;
             return None;
         }
         Ok(made) => Ok(made),
@@ -482,12 +490,12 @@ async fn pass_through<S>(
     cx: &Context,
     guest: S,
     replay: Vec<u8>,
-    code: &'static str,
+    code: PassThroughCode,
     outcome: &mut Outcome,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    tracing::info!(workspace = %cx.workspace, host = %cx.target.host, code, "connection passed through undecrypted");
+    tracing::info!(workspace = %cx.workspace, host = %cx.target.host, %code, "connection passed through undecrypted");
     outcome.passed_through = Some(code);
     let out = match connect_out(
         cx.proxy.upstream(),
@@ -607,7 +615,7 @@ where
                                 config.head_timeout.as_secs()
                             ),
                         )
-                        .coded("request_timeout"),
+                        .coded(ReasonCode::RequestTimeout),
                     )
                     .await;
             }
@@ -623,7 +631,7 @@ where
                             "431 Request Header Fields Too Large",
                             format!("request head over {} KiB", http::MAX_HEAD / 1024),
                         )
-                        .coded("head_too_large"),
+                        .coded(ReasonCode::HeadTooLarge),
                     )
                     .await;
             }
@@ -740,7 +748,7 @@ where
         match decision.into_forwarding() {
             Ok(forwarding) => Ok((forwarding, prefetched)),
             Err(refusal) => {
-                tracing::info!(host = %self.cx.target.host, code = refusal.code(), "request refused by the credential rules");
+                tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "request refused by the credential rules");
                 Err(self.refuse(&refusal.to_refusal()).await)
             }
         }
@@ -802,7 +810,7 @@ where
         match read_answer(answer, response, self.cx.proxy.config.body_idle_timeout).await {
             Ok(read) => Ok(read),
             Err(AnswerError::Refused(refusal)) => {
-                tracing::info!(host = %self.cx.target.host, code = refusal.code(), "the answer was refused");
+                tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "the answer was refused");
                 self.upstream = None;
                 Err(self.refuse(&refusal.to_refusal()).await)
             }
@@ -925,7 +933,7 @@ where
                     return Err(self
                         .refuse(
                             &Refusal::new("408 Request Timeout", "the request body did not arrive")
-                                .coded("request_timeout"),
+                                .coded(ReasonCode::RequestTimeout),
                         )
                         .await);
                 }
@@ -1003,7 +1011,7 @@ where
     /// Answers the guest with `refusal` in place of the server's `401`. The server's answer is
     /// left unread, so the upstream connection is not used again.
     async fn replace_unauthorized(&mut self, refusal: InjectRefusal) -> Flow {
-        tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
+        tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
         self.upstream = None;
         self.outcome.refused.get_or_insert(refusal.code());
         self.refuse(&refusal.to_refusal()).await

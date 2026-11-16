@@ -515,3 +515,29 @@ fn a_search_in_flight_on_the_audit_reader_does_not_hold_up_a_rule_change_and_its
         "the first rule's record"
     );
 }
+
+#[test]
+fn closing_a_store_that_read_the_audit_leaves_no_write_ahead_log() {
+    // The read-only audit connection must close before the writer: it cannot delete the log.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let store = Store::open(
+        &path,
+        Arc::new(ManualClock::new(1_000_000)),
+        Limits::default(),
+    )
+    .unwrap();
+    store
+        .record_workspace_op(&NewWorkspaceOp {
+            op: WorkspaceOpKind::Rename,
+            workspace: None,
+            user: None,
+            outcome: WorkspaceOpOutcome::Succeeded,
+            actor: Actor::Ui,
+            detail: None,
+        })
+        .unwrap();
+    store.audit_workspace_names(&[1]).unwrap(); // reads through the read-only connection
+    drop(store);
+    assert!(!dir.path().join("puddle.db-wal").exists());
+}

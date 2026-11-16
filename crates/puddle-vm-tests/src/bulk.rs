@@ -138,60 +138,59 @@ async fn answer(mut tcp: TcpStream, gate: &Barrier, served: &AtomicUsize) -> std
                 )
                 .await;
         };
-        if let Ask::Keepalive(n) = ask {
-            let size = usize::try_from(n).map_or(CHUNK, |n| n.min(CHUNK));
-            // One write, so a request costs one round trip and no more.
-            let mut reply = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {size}\r\nconnection: keep-alive\r\n\r\n"
-            )
-            .into_bytes();
-            reply.resize(reply.len() + size, 0);
-            tcp.write_all(&reply).await?;
-            served.fetch_add(1, Ordering::SeqCst);
-            // The next request starts after this head; a client that does not pipeline leaves nothing.
-            head.drain(..end);
-            continue;
+        match ask {
+            Ask::Keepalive(n) => {
+                let size = usize::try_from(n).map_or(CHUNK, |n| n.min(CHUNK));
+                // One write, so a request costs one round trip and no more.
+                let mut reply =
+                    reply_head(u64::try_from(size).unwrap_or_default(), "keep-alive").into_bytes();
+                reply.resize(reply.len() + size, 0);
+                tcp.write_all(&reply).await?;
+                served.fetch_add(1, Ordering::SeqCst);
+                // The next request starts after this head; a client that does not pipeline leaves nothing.
+                head.drain(..end);
+            }
+            Ask::Gate(n) => return answer_gate(tcp, n, gate, served).await,
+            Ask::Stall(n) => return answer_stall(tcp, n).await,
         }
-        return answer_bulk(tcp, ask, gate, served).await;
     }
 }
 
-/// The one-shot answers: a body of `n` bytes behind the gate, or the stall, then the connection ends.
-async fn answer_bulk(
+fn reply_head(length: u64, connection: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {length}\r\nconnection: {connection}\r\n\r\n"
+    )
+}
+
+/// `n` zero bytes, once the whole load has asked; then the connection ends.
+async fn answer_gate(
     mut tcp: TcpStream,
-    ask: Ask,
+    n: u64,
     gate: &Barrier,
     served: &AtomicUsize,
 ) -> std::io::Result<()> {
-    let (Ask::Gate(n) | Ask::Stall(n) | Ask::Keepalive(n)) = ask;
-    let reply = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {n}\r\nconnection: close\r\n\r\n"
-    );
-    tcp.write_all(reply.as_bytes()).await?;
+    tcp.write_all(reply_head(n, "close").as_bytes()).await?;
     let zeros = vec![0u8; CHUNK];
-    match ask {
-        Ask::Gate(n) => {
-            gate.wait().await;
-            let mut left = n;
-            while left > 0 {
-                let k = usize::try_from(left).map_or(CHUNK, |l| l.min(CHUNK));
-                tcp.write_all(zeros.get(..k).unwrap_or_default()).await?;
-                left -= k as u64;
-            }
-            tcp.shutdown().await?;
-            served.fetch_add(1, Ordering::SeqCst);
-        }
-        Ask::Stall(n) => {
-            let first = usize::try_from(n).map_or(STALL_AFTER_BYTES, |n| n.min(STALL_AFTER_BYTES));
-            tcp.write_all(zeros.get(..first).unwrap_or_default())
-                .await?;
-            let mut chunk = [0u8; 1024];
-            // Hold the connection open until the client gives up: read returns when it closes.
-            let _closed = tcp.read(&mut chunk).await?;
-        }
-        // Answered in the loop of `answer`, never here.
-        Ask::Keepalive(_) => {}
+    gate.wait().await;
+    let mut left = n;
+    while left > 0 {
+        let k = usize::try_from(left).map_or(CHUNK, |l| l.min(CHUNK));
+        tcp.write_all(zeros.get(..k).unwrap_or_default()).await?;
+        left -= k as u64;
     }
+    tcp.shutdown().await?;
+    served.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
+/// The head and the first 64 KiB, then silence until the client leaves.
+async fn answer_stall(mut tcp: TcpStream, n: u64) -> std::io::Result<()> {
+    tcp.write_all(reply_head(n, "close").as_bytes()).await?;
+    let first = usize::try_from(n).map_or(STALL_AFTER_BYTES, |n| n.min(STALL_AFTER_BYTES));
+    tcp.write_all(vec![0u8; first].as_slice()).await?;
+    let mut chunk = [0u8; 1024];
+    // Hold the connection open until the client gives up: read returns when it closes.
+    let _closed = tcp.read(&mut chunk).await?;
     Ok(())
 }
 

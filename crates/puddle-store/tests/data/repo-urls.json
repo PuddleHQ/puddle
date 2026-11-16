@@ -1,5 +1,5 @@
 {
-  "comment": "Clone addresses and the repository each names, shared by the Rust parser (RepoRef::from_https_url) and the UI's (ui/src/lib/identities/repo.ts). `null` is refused.",
+  "comment": "Clone addresses and the repository each names, shared by the Rust parser (RepoRef::from_https_url) and the UI's (ui/src/lib/identities/repo.ts). `null` is refused. `ssh_cases` are SSH addresses (Rust: ssh_address_as_https; UI: sshAsHttps in ui/src/lib/workspaces/model.ts): `https` is the clone address they stand for and `repo` the repository it names; `refusal` is `host` (not a Git host Puddle ends SSH for), `shape` (not an SSH address Puddle can read) or `shape_repo` (an address of a Git host that names no repository).",
   "cases": [
     { "url": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
     { "url": "https://github.com/Acme/Web-Shop", "repo": ["github.com", "acme", "web-shop"] },
@@ -11,7 +11,6 @@
     { "url": "https://contoso.visualstudio.com/DefaultCollection/Platform/_git/Api", "repo": ["contoso.visualstudio.com", "contoso", "platform/api"] },
     { "url": "https://contoso.visualstudio.com/Platform/Api", "repo": null },
     { "url": "http://github.com/acme/web-shop", "repo": null },
-    { "url": "git@github.com:acme/web-shop.git", "repo": null },
     { "url": "https://me@github.com/acme/web-shop", "repo": ["github.com", "acme", "web-shop"] },
     { "url": "https://acme@dev.azure.com/acme/shop/_git/api", "repo": ["dev.azure.com", "acme", "shop/api"] },
     { "url": "https://me@example.com/acme/web-shop", "repo": null },
@@ -43,5 +42,37 @@
     { "url": "https://dev.azure.com/contoso/%20Project/_git/Api", "repo": null },
     { "url": "https://github.com/acme/web%20shop", "repo": null },
     { "url": "", "repo": null }
+  ],
+  "ssh_cases": [
+    { "url": "git@github.com:acme/web-shop.git", "https": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "git@github.com:Acme/Web-Shop", "https": "https://github.com/Acme/Web-Shop", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "  git@GitHub.com:acme/web-shop.git  ", "https": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "github.com:acme/web-shop.git", "https": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "ssh://git@github.com/acme/web-shop.git", "https": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "SSH://github.com/acme/web-shop", "https": "https://github.com/acme/web-shop", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "ssh://git@ssh.github.com:443/acme/web-shop.git", "https": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "git@gitlab.com:group/sub/proj.git", "https": "https://gitlab.com/group/sub/proj.git", "repo": ["gitlab.com", "group", "sub/proj"] },
+    { "url": "git@altssh.gitlab.com:group/proj.git", "https": "https://gitlab.com/group/proj.git", "repo": ["gitlab.com", "group", "proj"] },
+    { "url": "git@bitbucket.org:team/repo.git", "https": "https://bitbucket.org/team/repo.git", "repo": ["bitbucket.org", "team", "repo"] },
+    { "url": "ssh://git@altssh.bitbucket.org:443/team/repo.git", "https": "https://bitbucket.org/team/repo.git", "repo": ["bitbucket.org", "team", "repo"] },
+    { "url": "git@ssh.dev.azure.com:v3/contoso/Platform/Api", "https": "https://dev.azure.com/contoso/Platform/_git/Api", "repo": ["dev.azure.com", "contoso", "platform/api"] },
+    { "url": "git@ssh.dev.azure.com:v3/contoso/My%20Project/Api", "https": "https://dev.azure.com/contoso/My%20Project/_git/Api", "repo": ["dev.azure.com", "contoso", "my project/api"] },
+    { "url": "contoso@vs-ssh.visualstudio.com:v3/contoso/Platform/Api", "https": "https://contoso.visualstudio.com/Platform/_git/Api", "repo": ["contoso.visualstudio.com", "contoso", "platform/api"] },
+    { "url": "git@git.example.com:acme/web.git", "https": null, "refusal": "host" },
+    { "url": "ssh://git@git.example.com/acme/web.git", "https": null, "refusal": "host" },
+    { "url": "user@host:path", "https": null, "refusal": "host" },
+    { "url": "git@github.com.evil.example:acme/web.git", "https": null, "refusal": "host" },
+    { "url": "ssh://git@github.com:notaport/acme/web.git", "https": null, "refusal": "shape" },
+    { "url": "ssh://me:secret@github.com/acme/web.git", "https": null, "refusal": "shape" },
+    { "url": "ssh://github.com", "https": null, "refusal": "shape" },
+    { "url": "git@github.com:", "https": null, "refusal": "shape" },
+    { "url": "git@github.com:acme", "https": null, "refusal": "shape_repo" },
+    { "url": "git@github.com:acme/web/shop.git", "https": null, "refusal": "shape_repo" },
+    { "url": "git@github.com:acme/web.git?x=1", "https": null, "refusal": "shape" },
+    { "url": "git@github.com:acme/web shop.git", "https": null, "refusal": "shape" },
+    { "url": "git@ssh.dev.azure.com:v2/contoso/Api", "https": null, "refusal": "shape" },
+    { "url": "git@ssh.dev.azure.com:v3/contoso/Platform", "https": null, "refusal": "shape" },
+    { "url": "git@ssh.dev.azure.com:v3/contoso/Platform/Api/more", "https": null, "refusal": "shape" },
+    { "url": "git@ssh.dev.azure.com:v3/contoso//Api", "https": null, "refusal": "shape" }
   ]
 }

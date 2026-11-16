@@ -228,6 +228,66 @@ fn a_rule_whose_deletion_cannot_be_recorded_stays() {
 }
 
 #[test]
+fn a_rule_whose_switch_cannot_be_recorded_stays_as_it_was() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_switched");
+
+    let err = store
+        .set_rule_enabled(rule.id, false, Actor::Cli)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
+fn a_request_rule_whose_switch_cannot_be_recorded_stays_as_it_was() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap();
+    store.fail_audit_writes("rule_switched");
+
+    let err = store
+        .set_request_rule_enabled(rule.id, false, Actor::Cli)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        [rule]
+    );
+}
+
+#[test]
+fn a_built_in_entry_whose_switch_cannot_be_recorded_stays_on() {
+    let store = store();
+    let github = RuleSetId::BuiltIn("github");
+    store.fail_audit_writes("rule_switched");
+
+    let err = store
+        .switch_builtin_entry(
+            UserId::OWNER,
+            github,
+            "codeload.github.com",
+            false,
+            Actor::Cli,
+        )
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    let set = store.rule_set(UserId::OWNER, github).unwrap();
+    assert!(set.entries.iter().all(|entry| entry.enabled));
+}
+
+#[test]
 fn a_rule_whose_expiry_change_cannot_be_recorded_keeps_its_expiry() {
     let store = store();
     let rule = store

@@ -28,6 +28,8 @@ fn seed(store: &Store, user: UserId, workspace: &WorkspaceId) {
         "INSERT INTO rule_sets (user_id, name, created_at, created_by) VALUES (?1, 'mine', 1, 'ui')",
         "INSERT INTO env_vars (user_id, workspace_id, name, kind, value, changed_at) VALUES (?1, NULL, 'A', 'plain', 'v', 1)",
         "INSERT INTO git_defaults (user_id, only_push_listed, only_pull_listed) VALUES (?1, 1, 0)",
+        "INSERT INTO builtin_entry_switches (user_id, rule_set, pattern, changed_at)
+             VALUES (?1, 'builtin:github', 'api.github.com', 1)",
     ] {
         conn.execute(sql, [uid]).unwrap();
     }

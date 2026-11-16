@@ -401,6 +401,18 @@ pub enum RuleDeleteReason {
     SetDeleted,
 }
 
+/// What a `rule_switched` record switched (R-65).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleSwitchKind {
+    /// A rule on a host, one of the user's own or an entry of a group they made.
+    Rule,
+    /// A rule on method and path.
+    RequestRule,
+    /// One entry of a built-in group.
+    BuiltinEntry,
+}
+
 /// A rule on method and path as it appears in the audit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestRuleWire {
@@ -552,6 +564,26 @@ pub enum AuditRecord {
         /// The rule after.
         rule: RuleWire,
         /// Who changed it.
+        actor: String,
+    },
+    /// A rule, a rule on method and path, or a built-in entry switched on or off (R-65).
+    RuleSwitched {
+        /// Epoch ms.
+        ts: u64,
+        /// What was switched.
+        kind: RuleSwitchKind,
+        /// The row id, for a rule or a rule on method and path; `None` for a built-in entry.
+        id: Option<i64>,
+        /// `builtin:<slug>` for a built-in entry, `user:<id>` for an entry of a group the user
+        /// made, `None` for a rule outside a group.
+        set_id: Option<String>,
+        /// The host pattern.
+        pattern: String,
+        /// The workspace the rule is for; `None` for every workspace.
+        workspace_id: Option<String>,
+        /// The new state.
+        enabled: bool,
+        /// Who switched it.
         actor: String,
     },
     /// A rule deleted.
@@ -737,7 +769,7 @@ impl AuditOutcome {
 
 impl AuditRecord {
     /// Every `type` tag, in declaration order.
-    pub const KINDS: [&'static str; 19] = [
+    pub const KINDS: [&'static str; 20] = [
         "connection",
         "pending_created",
         "pending_decided",
@@ -745,6 +777,7 @@ impl AuditRecord {
         "pending_suppressed",
         "rule_created",
         "rule_updated",
+        "rule_switched",
         "rule_deleted",
         "rule_expired",
         "request_rule_created",
@@ -774,6 +807,7 @@ impl AuditRecord {
             | Self::RuleUpdated { rule, .. }
             | Self::RuleDeleted { rule, .. }
             | Self::RuleExpired { rule, .. } => &rule.pattern,
+            Self::RuleSwitched { pattern, .. } => pattern,
             Self::RequestRuleCreated { rule, .. } | Self::RequestRuleDeleted { rule, .. } => {
                 &rule.host
             }
@@ -857,6 +891,7 @@ impl AuditRecord {
             Self::PendingSuppressed { .. }
             | Self::RuleCreated { .. }
             | Self::RuleUpdated { .. }
+            | Self::RuleSwitched { .. }
             | Self::RuleDeleted { .. }
             | Self::RuleExpired { .. }
             | Self::RequestRuleCreated { .. }
@@ -882,6 +917,7 @@ impl AuditRecord {
             Self::PendingSuppressed { .. } => "pending_suppressed",
             Self::RuleCreated { .. } => "rule_created",
             Self::RuleUpdated { .. } => "rule_updated",
+            Self::RuleSwitched { .. } => "rule_switched",
             Self::RuleDeleted { .. } => "rule_deleted",
             Self::RuleExpired { .. } => "rule_expired",
             Self::RequestRuleCreated { .. } => "request_rule_created",
@@ -908,6 +944,7 @@ impl AuditRecord {
             | Self::PendingSuppressed { ts, .. }
             | Self::RuleCreated { ts, .. }
             | Self::RuleUpdated { ts, .. }
+            | Self::RuleSwitched { ts, .. }
             | Self::RuleDeleted { ts, .. }
             | Self::RuleExpired { ts, .. }
             | Self::RequestRuleCreated { ts, .. }
@@ -939,7 +976,8 @@ impl AuditRecord {
             Self::RequestRuleCreated { rule, .. } | Self::RequestRuleDeleted { rule, .. } => {
                 rule.workspace_id.as_deref()
             }
-            Self::RuleSetSwitched { workspace_id, .. }
+            Self::RuleSwitched { workspace_id, .. }
+            | Self::RuleSetSwitched { workspace_id, .. }
             | Self::SystemManagedChanged { workspace_id, .. }
             | Self::WorkspaceOp { workspace_id, .. } => workspace_id.as_deref(),
             Self::RuleSetCreated { .. }

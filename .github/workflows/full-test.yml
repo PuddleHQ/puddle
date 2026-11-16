@@ -40,15 +40,7 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: KVM
-        run: |
-          test -e /dev/kvm || { echo "no /dev/kvm on this runner"; exit 1; }
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          sleep 1
-          test -r /dev/kvm && test -w /dev/kvm
+      - uses: ./.github/actions/kvm
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3

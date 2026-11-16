@@ -991,6 +991,10 @@ fn m8_a_hidden_set_cannot_be_switched_and_its_stored_switch_survives() {
         store.switch_rule_set(OWNER, mise_set(), None, Some(false), Actor::Ui),
         Err(StoreError::RuleSetHidden(id)) if id == "builtin:mise-tools"
     ));
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, mise_set(), "nodejs.org", false, Actor::Ui),
+        Err(StoreError::RuleSetHidden(id)) if id == "builtin:mise-tools"
+    ));
     // Showing it again returns the set as the user left it: on everywhere, off in "a".
     store.set_system_managed(&SystemPlan::default()).unwrap();
     let sets = store.rule_sets(OWNER).unwrap();
@@ -1045,4 +1049,101 @@ fn m8_the_hidden_state_is_stored_and_a_repeated_plan_changes_nothing() {
         reopened.rule_sets(OWNER).unwrap().len(),
         BUILT_IN_SETS.len()
     );
+}
+
+#[test]
+fn r65_a_built_in_entry_switches_off_alone_and_back_on() {
+    let (_, store) = fixture();
+    let github = RuleSetId::BuiltIn("github");
+    store
+        .switch_rule_set(OWNER, github, None, Some(true), Actor::Ui)
+        .unwrap();
+    // One entry off: the others of the set still allow.
+    let closed = store
+        .switch_builtin_entry(OWNER, github, "codeload.github.com", false, Actor::Ui)
+        .unwrap();
+    assert_eq!(closed.len(), 0);
+    let waiting = pending(decide(&store, "a", "codeload.github.com"));
+    assert!(matches!(
+        decide(&store, "a", "api.github.com"),
+        Decision::SetAllow { .. }
+    ));
+    let info = store.rule_set(OWNER, github).unwrap();
+    let off: Vec<_> = info
+        .entries
+        .iter()
+        .filter(|e| !e.enabled)
+        .map(|e| e.pattern.as_str())
+        .collect();
+    assert_eq!(off, ["codeload.github.com"]);
+    // On again: the request that waits for it closes.
+    let closed = store
+        .switch_builtin_entry(OWNER, github, "codeload.github.com", true, Actor::Ui)
+        .unwrap();
+    assert_eq!(closed, vec![waiting]);
+    assert!(
+        store
+            .rule_set(OWNER, github)
+            .unwrap()
+            .entries
+            .iter()
+            .all(|e| e.enabled)
+    );
+    let switched = audit_of(&store, "rule_switched");
+    assert_eq!(switched.len(), 2);
+    assert_eq!(switched[0]["kind"], "builtin_entry");
+    assert_eq!(switched[0]["set_id"], "builtin:github");
+    assert_eq!(switched[0]["pattern"], "codeload.github.com");
+    assert_eq!(switched[0]["enabled"], false);
+    assert_eq!(switched[1]["enabled"], true);
+}
+
+#[test]
+fn r65_a_built_in_entry_switch_is_the_users_own_and_only_for_real_entries() {
+    let (_, store) = fixture();
+    let github = RuleSetId::BuiltIn("github");
+    store
+        .switch_rule_set(OWNER, github, None, Some(true), Actor::Ui)
+        .unwrap();
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, github, "codeload.github.com", false, Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, RuleSetId::System, "github.com", false, Actor::Ui),
+        Err(StoreError::NotSwitchable)
+    ));
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, RuleSetId::User(1), "github.com", false, Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, github, "not-in-the-set.example", false, Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, github, "not a host", false, Actor::Ui),
+        Err(StoreError::Pattern(_))
+    ));
+    assert!(matches!(
+        store.switch_builtin_entry(
+            OWNER,
+            RuleSetId::BuiltIn("no-such-set"),
+            "github.com",
+            false,
+            Actor::Ui
+        ),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    // Switching off an entry that is already off, or on one that is on, writes nothing.
+    store
+        .switch_builtin_entry(OWNER, github, "codeload.github.com", true, Actor::Ui)
+        .unwrap();
+    store
+        .switch_builtin_entry(OWNER, github, "codeload.github.com", false, Actor::Ui)
+        .unwrap();
+    store
+        .switch_builtin_entry(OWNER, github, "codeload.github.com", false, Actor::Ui)
+        .unwrap();
+    assert_eq!(audit_of(&store, "rule_switched").len(), 1);
 }

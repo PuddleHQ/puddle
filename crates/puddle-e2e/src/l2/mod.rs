@@ -3,9 +3,10 @@
 //! joined as in a workspace, with local servers to talk to.
 #![expect(
     clippy::unwrap_used,
+    clippy::missing_panics_doc,
+    clippy::missing_errors_doc,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -24,22 +25,30 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-pub(crate) mod stall;
+pub mod stall;
 
-pub(crate) const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+/// The loopback address every server of the rig binds.
+pub const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
-pub(crate) fn workspace() -> WorkspaceId {
+/// The workspace the rig's agent speaks for.
+#[must_use]
+pub fn workspace() -> WorkspaceId {
     WorkspaceId::new("e2e").unwrap()
 }
 
-pub(crate) struct Rig {
-    pub(crate) store: Arc<Store>,
-    pub(crate) agent: Agent,
-    pub(crate) route: Route,
+/// The guest agent, the proxy behind its route and the store they share.
+pub struct Rig {
+    /// The in-memory store holding the rules and the audit log.
+    pub store: Arc<Store>,
+    /// The real guest agent.
+    pub agent: Agent,
+    /// The route from the agent to the proxy.
+    pub route: Route,
     _root: IpcRoot,
 }
 
-pub(crate) async fn rig() -> Rig {
+/// Starts the agent, the proxy and the store, joined as in a workspace.
+pub async fn rig() -> Rig {
     // Four descriptors per proxied connection (client, agent, proxy's upstream, echo server): the
     // 256-connection test alone needs about 1 000, which is the usual default limit of 1 024.
     let _ = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
@@ -78,7 +87,7 @@ pub(crate) async fn rig() -> Rig {
 /// that fails. A guest is told "502" and nothing more when the proxy cannot connect out; the line
 /// with the operating system's error is the only record of why. For the load tests, whose failures
 /// have no other trace.
-pub(crate) fn log_proxy_to_stderr() {
+pub fn log_proxy_to_stderr() {
     let _ = tracing::subscriber::set_global_default(
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
@@ -88,7 +97,8 @@ pub(crate) fn log_proxy_to_stderr() {
     );
 }
 
-pub(crate) fn allow(store: &Store, host: &str) {
+/// Adds a rule that lets the rig's workspace reach `host`.
+pub fn allow(store: &Store, host: &str) {
     store
         .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
@@ -102,7 +112,7 @@ pub(crate) fn allow(store: &Store, host: &str) {
 }
 
 /// The `connection` audit records so far, oldest first.
-pub(crate) fn connection_records(store: &Store) -> Vec<Value> {
+pub fn connection_records(store: &Store) -> Vec<Value> {
     store
         .audit_lines(0, 100_000)
         .unwrap()
@@ -114,7 +124,7 @@ pub(crate) fn connection_records(store: &Store) -> Vec<Value> {
 
 /// Waits up to 5 s for at least `count` `connection` records (one is written when its
 /// connection ends, after the guest has its answer).
-pub(crate) async fn wait_for_records(store: &Store, count: usize) -> Vec<Value> {
+pub async fn wait_for_records(store: &Store, count: usize) -> Vec<Value> {
     eventually(
         &format!("{count} connection records"),
         Duration::from_secs(5),
@@ -131,7 +141,8 @@ pub(crate) async fn wait_for_records(store: &Store, count: usize) -> Vec<Value> 
 }
 
 /// An echo server: sends back everything, then closes after the client's FIN.
-pub(crate) fn echo_server() -> SocketAddr {
+#[must_use]
+pub fn echo_server() -> SocketAddr {
     // The agent's backlog: 2 000 proxied connections dial this at once, and tokio's default of
     // 128 would overflow the accept queue.
     let listener = puddle_agent::serve::listen(SocketAddr::new(LOCAL, 0)).unwrap();
@@ -150,7 +161,7 @@ pub(crate) fn echo_server() -> SocketAddr {
 }
 
 /// Sends `CONNECT authority` through the agent; returns the status code and the connection.
-pub(crate) async fn connect_via(
+pub async fn connect_via(
     agent: SocketAddr,
     authority: &str,
 ) -> io::Result<(u16, BufReader<TcpStream>)> {
@@ -188,11 +199,8 @@ fn echo_payload(i: usize) -> &'static [u8] {
     bytes.split_at(i % 251).1.split_at(LEN).0
 }
 
-pub(crate) async fn round_trip(
-    agent: SocketAddr,
-    authority: &str,
-    i: usize,
-) -> io::Result<Duration> {
+/// Sends connection `i`'s payload to `authority` through the agent and times its echo.
+pub async fn round_trip(agent: SocketAddr, authority: &str, i: usize) -> io::Result<Duration> {
     let payload = echo_payload(i);
     let started = Instant::now();
     let (code, mut conn) = connect_via(agent, authority).await?;

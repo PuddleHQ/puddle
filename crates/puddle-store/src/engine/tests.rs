@@ -17,6 +17,7 @@ pub(crate) fn rule(id: i64, scope: Option<&str>, pattern: &str, effect: Effect) 
         created_at: 0,
         created_by: Actor::Cli,
         source_pending_id: None,
+        enabled: true,
     }
 }
 
@@ -933,4 +934,73 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn a_rule_that_is_off_never_matches_and_the_next_one_decides() {
+    let mut off = rule(1, Some("a"), "api.example.com", Effect::Deny);
+    off.enabled = false;
+    let set = index(vec![off, rule(2, None, "*.example.com", Effect::Allow)]);
+    assert_eq!(winner(&set, "a", "api.example.com"), Some(2));
+    let mut only = rule(3, None, "solo.example", Effect::Allow);
+    only.enabled = false;
+    assert_eq!(winner(&index(vec![only]), "a", "solo.example"), None);
+}
+
+#[test]
+fn a_set_entry_of_a_rule_that_is_off_does_not_count() {
+    let mut entry = in_set(1, 7, "set.example", Effect::Allow);
+    entry.enabled = false;
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, RuleSetId::User(7), None, true);
+    let set = new_index(vec![entry], Vec::new(), switches);
+    assert_eq!(winner(&set, "a", "set.example"), None);
+}
+
+#[test]
+fn a_built_in_entry_that_is_off_is_skipped_for_that_user_only() {
+    let github = RuleSetId::BuiltIn("github");
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, github, None, true);
+    switches.insert_entry_off(UserId::OWNER, github, "api.github.com".to_owned());
+    let set = new_index(
+        Vec::new(),
+        vec![
+            built_in("github", "api.github.com"),
+            built_in("github", "*.github.com"),
+        ],
+        switches,
+    );
+    // The entry that is off is skipped, so the wider one decides.
+    let hit = set
+        .decide(
+            &sb("a"),
+            &host("api.github.com"),
+            1_000,
+            SuffixAllows::Count,
+        )
+        .unwrap();
+    assert!(matches!(
+        hit.decision(),
+        Decision::SetAllow {
+            pattern: PatternKind::Suffix,
+            ..
+        }
+    ));
+    assert!(set.entry_off(
+        UserId::OWNER,
+        github,
+        &Pattern::parse("api.github.com").unwrap()
+    ));
+    assert!(!set.entry_off(
+        UserId::OWNER,
+        github,
+        &Pattern::parse("*.github.com").unwrap()
+    ));
+    // Only built-in entries have a switch: the same text for System managed means nothing.
+    assert!(!set.entry_off(
+        UserId::OWNER,
+        RuleSetId::System,
+        &Pattern::parse("api.github.com").unwrap()
+    ));
 }

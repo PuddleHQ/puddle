@@ -12606,6 +12606,33 @@ async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, A
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_start_folder_whose_list_cannot_be_saved_is_not_changed_and_none_is_taken_after_shutdown_began()
+ {
+    let rig = Rig::named_ids();
+    let (host, api) = quiet_workspace(&rig, "acme").await;
+    put_start_folder(&api, "acme", Some("web")).await;
+    make_unwritable(&list_path(&rig));
+
+    let refused = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    assert!(
+        refused.body.contains("the start folder was not changed"),
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["start_folder"],
+        "web"
+    );
+
+    host.workspaces().close();
+    let late = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(late.status, 503, "{}", late.body);
+    assert!(late.body.contains("shutting down"), "{}", late.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_cannot_look_for_the_start_folder_is_a_problem_until_it_can() {
     let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;

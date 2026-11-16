@@ -551,3 +551,82 @@ fn a_key_file_or_a_key_the_service_passes_is_not_examined() {
         VaultFacts::Header(SystemdHost)
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_probe_checks_the_sealed_key_of_a_file_vault_in_the_folders_it_was_given() {
+    use puddle_secrets::{FileVault, KeySourceTag, StoreKind, VaultKey, vault_path};
+    let data = data_with_store(StoreKind::File);
+    FileVault::create(
+        &vault_path(data.path()),
+        VaultKey::from_bytes([7; 32]),
+        KeySourceTag::SystemdHost,
+    )
+    .unwrap();
+    let creds = fake_systemd_creds(V257, "echo key", 16);
+    let config = tempfile::tempdir().unwrap();
+    let file = puddle_secrets::sealed_key_path(config.path());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, b"sealed").unwrap();
+    let probe = SystemProbe::new(
+        // az-ok: only the credential store is probed here, never `az`
+        data.path().to_path_buf(),
+        RuntimeVersion::built_for(),
+        DevOverride::from_env(),
+    )
+    .with_data_dir(data.path())
+    .with_sealed_key_search(config.path(), creds.path());
+    assert_eq!(
+        probe.credential_store(),
+        CredentialStoreFacts::File(VaultFacts::Sealed {
+            tag: KeySourceTag::SystemdHost,
+            key: SealedKeyFacts::Opens,
+            tpm: Some(TpmFacts::LibrariesMissing)
+        })
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_systemd_creds_that_cannot_start_or_whose_tpm_answer_hangs_is_reported_not_guessed() {
+    use puddle_secrets::{KeySourceTag::SystemdHost, Unseal};
+    let config = tempfile::tempdir().unwrap();
+    let file = puddle_secrets::sealed_key_path(config.path());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, b"sealed").unwrap();
+    // A file that is not executable is found on the path and cannot be started.
+    let broken = tempfile::tempdir().unwrap();
+    std::fs::write(broken.path().join("systemd-creds"), "#!/bin/sh\n").unwrap();
+    assert!(matches!(
+        sealed_key_facts_in(
+            SystemdHost,
+            Some(config.path()),
+            Some(broken.path().as_os_str().to_owned()),
+            Duration::from_secs(5)
+        ),
+        VaultFacts::Sealed {
+            key: SealedKeyFacts::Fails(Unseal::Failed),
+            tpm: Some(TpmFacts::Unknown),
+            ..
+        }
+    ));
+    // The key opens and `has-tpm2` hangs: the limit kills it and the answer is unknown.
+    let hang = tempfile::tempdir().unwrap();
+    puddle_test_kit::write_executable(
+        &hang.path().join("systemd-creds"),
+        "#!/bin/sh\ncase \"$1\" in has-tpm2) sleep 30;; *) echo key;; esac\n",
+    );
+    assert!(matches!(
+        sealed_key_facts_in(
+            SystemdHost,
+            Some(config.path()),
+            Some(hang.path().as_os_str().to_owned()),
+            Duration::from_millis(500)
+        ),
+        VaultFacts::Sealed {
+            key: SealedKeyFacts::Opens,
+            tpm: Some(TpmFacts::Unknown),
+            ..
+        }
+    ));
+}

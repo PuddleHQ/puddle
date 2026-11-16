@@ -160,7 +160,7 @@ impl Mise for SystemMise {
 }
 
 /// The last line with text in `bytes`, trimmed.
-fn last_line(bytes: &[u8]) -> Option<String> {
+pub(crate) fn last_line(bytes: &[u8]) -> Option<String> {
     String::from_utf8_lossy(bytes)
         .lines()
         .rev()

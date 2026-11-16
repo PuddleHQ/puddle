@@ -45,6 +45,7 @@ mod query_name;
 mod reason_code;
 mod request_match;
 mod session_user;
+mod tool;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
@@ -85,6 +86,7 @@ pub use request_match::{
     PathPattern, PathPatternError, target_path,
 };
 pub use session_user::SessionUser;
+pub use tool::{ToolName, ToolVersion, ToolsFileHash};
 
 /// Puddle's version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

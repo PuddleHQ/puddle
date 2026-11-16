@@ -7,7 +7,7 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::{Actor, NewRequestRule};
+use puddle_store::{Actor, NewRequestRule, Precedence};
 use puddle_types::{Methods, PathPattern, WorkspaceId};
 use serde::Deserialize;
 
@@ -94,6 +94,7 @@ pub(crate) async fn create_request_rule(
         methods,
         path,
         created_by: Actor::Api,
+        precedence: Precedence::DEFAULT,
     };
     let rule = blocking(move || {
         let rule = state.store.as_user(principal.user).add_request_rule(&new)?;

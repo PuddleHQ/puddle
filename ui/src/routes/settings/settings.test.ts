@@ -622,6 +622,27 @@ describe("appearance and notifications", () => {
   });
 });
 
+describe("notifications in this browser", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("offers this browser's own switch, apart from the saved settings", async () => {
+    await open();
+    const box = screen.getByLabelText("Notifications in this browser");
+    expect(box).not.toBeChecked();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(putBodies()).toHaveLength(0);
+  });
+
+  it("does not offer it in the desktop app, which raises its own notifications", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    await open();
+    expect(screen.queryByLabelText("Notifications in this browser")).toBeNull();
+    expect(
+      screen.getByLabelText("System notifications for new requests"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("notification and inbox switches", () => {
   const rows: [string, keyof typeof api.ui, boolean][] = [
     [

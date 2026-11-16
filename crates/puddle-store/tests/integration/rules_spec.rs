@@ -15,8 +15,8 @@ use proptest::prelude::*;
 use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditRecord, Effect, Limits, ManualClock, NewRule, Pattern,
-    PatternChoice, PatternError, PendingState, Resolution, Scope, ScopeChoice, Store, StoreError,
-    Sweeper,
+    PatternChoice, PatternError, PendingState, Precedence, Resolution, Scope, ScopeChoice, Store,
+    StoreError, Sweeper,
 };
 use puddle_test_kit::{cpu_time, eventually};
 use puddle_types::{
@@ -1644,5 +1644,96 @@ proptest! {
         }
         let allowed = allowed_by(decide(&store, "a", "example.com")) == Some(id);
         prop_assert_eq!(allowed, at < lifetime);
+    }
+}
+
+fn add_at(store: &Store, pattern: &str, effect: Effect, precedence: u8) -> RuleId {
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule_with_precedence(
+            &rule(None, pattern, effect),
+            Precedence::new(precedence).unwrap(),
+        )
+        .unwrap()
+        .id
+}
+
+fn precedence_of(store: &Store, id: RuleId) -> u8 {
+    store
+        .rules(puddle_store::UserId::OWNER)
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap()
+        .precedence
+        .get()
+}
+
+#[test]
+fn r59_a_rule_has_precedence_five_unless_it_is_given_another() {
+    let (_, store) = fixture();
+    let plain = add(&store, None, "plain.example.com", Effect::Allow);
+    let high = add_at(&store, "high.example.com", Effect::Deny, 9);
+    assert_eq!(
+        (precedence_of(&store, plain), precedence_of(&store, high)),
+        (5, 9)
+    );
+    // The record of the rule names its precedence.
+    let created = audit_of(&store, "rule_created");
+    let named: Vec<(String, u64)> = created
+        .iter()
+        .map(|r| {
+            (
+                r["rule"]["pattern"].as_str().unwrap().to_owned(),
+                r["rule"]["precedence"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        named,
+        vec![
+            ("plain.example.com".into(), 5),
+            ("high.example.com".into(), 9)
+        ]
+    );
+}
+
+#[test]
+fn r59_a_rule_stored_before_precedence_existed_reads_as_five() {
+    let record = json!({
+        "id": 1, "scope": "global", "workspace_id": null, "pattern_kind": "exact",
+        "pattern": "old.example", "effect": "allow", "expires_at": null, "created_at": 1,
+        "created_by": "cli", "source_pending_id": null
+    });
+    let wire: puddle_store::RuleWire = serde_json::from_value(record).unwrap();
+    assert_eq!(wire.precedence, 5);
+}
+
+#[test]
+fn r60_a_higher_precedence_beats_a_more_specific_rule_through_the_store() {
+    let (_, store) = fixture();
+    // An exact allow at 5 loses to a suffix deny at 7.
+    add(&store, Some("a"), "api.example.com", Effect::Allow);
+    let deny = add_at(&store, "*.example.com", Effect::Deny, 7);
+    assert!(matches!(
+        decide(&store, "a", "api.example.com"),
+        Decision::Deny { rule_id, .. } if rule_id == deny
+    ));
+    // The same two at the same precedence: the more specific allow wins.
+    let (_, store) = fixture();
+    let allow = add(&store, Some("a"), "api.example.com", Effect::Allow);
+    add(&store, None, "*.example.com", Effect::Deny);
+    assert_eq!(
+        allowed_by(decide(&store, "a", "api.example.com")),
+        Some(allow)
+    );
+}
+
+#[test]
+fn a_precedence_outside_one_to_nine_is_refused() {
+    for bad in [0u8, 10, 200] {
+        assert!(matches!(
+            Precedence::new(bad),
+            Err(StoreError::PrecedenceOutOfRange(n)) if n == i64::from(bad)
+        ));
     }
 }

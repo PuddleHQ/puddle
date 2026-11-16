@@ -180,8 +180,8 @@ describe("root layout", () => {
     expect(health.start).toHaveBeenCalledTimes(1);
     // The sidebar asks once whether there is an admin screen to list.
     expect(admin.probe).toHaveBeenCalledTimes(1);
-    // The notice watcher and the build guard each listen to the shell's stream.
-    expect(live.subscribe).toHaveBeenCalledTimes(2);
+    // The notice watcher, the build guard and the tab's notifications each listen to the shell…
+    expect(live.subscribe).toHaveBeenCalledTimes(3);
     expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();
     expect(document.title).toBe("Inbox - Puddle");
     unmount();

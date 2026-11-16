@@ -460,11 +460,10 @@ the API. *Added 2026-10-08.*
   or by approving or denying a pending request **into the set** (R-15): the set must be on for
   the request's workspace, or the decision is refused (it would not allow the request). Deleting a
   set deletes its entries (`rule_deleted`, reason `set_deleted`) and its switches.
-- **R-39 Precedence of sets and own rules.** Replaced by R-59 and R-60: an own rule, an entry of a
-  group the user made and a built-in entry are ranked by one explicit precedence, not by the kind
-  of list they sit in. Until precedence is built, the earlier ranking stands: own rules are
-  ranked as R-6, set entries by pattern specificity then deny over allow, and an own rule decides
-  unless a set's deny is strictly more specific than it. The examples of R-60 hold in both.
+- **R-39 Precedence of sets and own rules.** Replaced by R-59 and R-60 (built for rules on hosts): an
+  own rule, an entry of a group the user made and a built-in entry are ranked by one explicit
+  precedence, not by the kind of list they sit in. An entry of a group the user made counts as a
+  `global` rule at its own precedence; built-in entries and System managed hosts sit at 0.
 - **R-40 System managed is shown, with reasons.** The Rules screen lists every System managed
   host with its reason in words and where it applies (every workspace or one). Nothing in it is
   stored as a rule or hidden. To block one of its hosts, the user adds an own deny (R-60); to
@@ -541,7 +540,7 @@ the API. *Added 2026-10-08.*
 
 ### Groups and precedence
 
-*Specified 2026-11-14, amended 2026-11-16 (scale 1 to 9, no migration, precedence ranks rules on method and path, any overlap judged). Built in slices. R-59 to R-66 replace R-39's ranking when built.*
+*Specified 2026-11-14, amended 2026-11-16 (scale 1 to 9, no migration, precedence ranks rules on method and path, any overlap judged). Built in slices. Built: the precedence of every rule and a group's default (R-59), the order among rules on hosts (R-60), the switch (R-65). Not yet built: ranking a rule on method and path against the host rule that allowed the request, and R-61 to R-64 and R-66.*
 
 The Rules screen shows rules in **groups** (what the store calls a rule set, R-38): the locked
 *Built in* group with its parts, System managed under it, the groups the user made, and the rules

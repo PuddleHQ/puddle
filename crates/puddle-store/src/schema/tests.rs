@@ -1069,3 +1069,54 @@ fn v29_keeps_every_rule_on_and_adds_the_entry_switches() {
         "enabled is 0 or 1"
     );
 }
+
+/// V30 adds the precedence columns without rebuilding a table: every rule that exists reads as
+/// 5 (nothing is migrated), the column refuses anything outside 1 to 9, and a group's default
+/// starts empty.
+#[test]
+fn v30_gives_every_existing_rule_precedence_five() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate_up_to(&mut conn, 29).unwrap();
+    conn.execute_batch(
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'a.example', 'allow', 1, 'ui', 1);
+         INSERT INTO request_rules (scope, host, methods, path, created_at, created_by, user_id)
+             VALUES ('global', 'h.example', '', '/*', 1, 'api', 1);
+         INSERT INTO rule_sets (name, created_at, created_by, user_id)
+             VALUES ('Mine', 1, 'ui', 1);",
+    )
+    .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 29);
+    for table in ["rules", "request_rules"] {
+        let other: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE precedence <> 5"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(other, 0, "{table}");
+        assert_eq!(count(&conn, table), 1, "{table}");
+    }
+    let default: Option<i64> = conn
+        .query_row("SELECT default_precedence FROM rule_sets", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(default, None);
+    for bad in [0, 10] {
+        assert!(
+            conn.execute(
+                "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by,
+                                    user_id, precedence)
+                 VALUES ('global', 'exact', 'b.example', 'allow', 1, 'ui', 1, ?1)",
+                [bad],
+            )
+            .is_err(),
+            "precedence {bad}"
+        );
+        assert!(
+            conn.execute("UPDATE rule_sets SET default_precedence = ?1", [bad])
+                .is_err(),
+            "default {bad}"
+        );
+    }
+}

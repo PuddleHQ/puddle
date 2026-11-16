@@ -2,6 +2,7 @@
 <script lang="ts">
   import {
     EXPIRY_OPTIONS,
+    PRECEDENCES,
     expiryFrom,
     workspaceNameError,
   } from "#lib/rules/model.ts";
@@ -38,6 +39,8 @@
   let scope = $state("workspace");
   let workspace = $state("");
   let duration = $state("0");
+  // "" leaves it to the server: the rule set's default, else 5.
+  let precedence = $state("");
   let busy = $state(false);
   let patternProblem = $state<string | null>(null);
   let workspaceProblem = $state<string | null>(null);
@@ -53,6 +56,7 @@
     scope = "workspace";
     workspace = "";
     duration = "0";
+    precedence = "";
     patternProblem = null;
     workspaceProblem = null;
     error = null;
@@ -86,6 +90,7 @@
         pattern: pattern.trim(),
         scope: chosen,
         expires_at: expires,
+        ...(precedence === "" ? {} : { precedence: Number(precedence) }),
       });
       if (refusal) error = refusal;
     } finally {
@@ -235,6 +240,19 @@
           <option value={String(option.secs ?? 0)}>{option.label}</option>
         {/each}
       </select>
+    </div>
+    <div class="field">
+      <label for="{id}-precedence">Precedence</label>
+      <select id="{id}-precedence" bind:value={precedence}>
+        <option value="">Default (5, or the rule set's)</option>
+        {#each PRECEDENCES as value (value)}
+          <option value={String(value)}>{value}</option>
+        {/each}
+      </select>
+      <p class="hint">
+        When rules overlap, the highest precedence decides, even over a more
+        specific rule. At the same precedence the more specific rule wins.
+      </p>
     </div>
     {#if formMessage}
       <p class="error" role="alert">{formMessage}</p>

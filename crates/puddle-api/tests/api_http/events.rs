@@ -176,9 +176,20 @@ async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
     let api = start().await;
     let mut s = Stream::open(&api, "").await;
     let id = api.request("box", "www.example.com");
-    s.read_until(|b| b.contains("audit_appended")).await;
+    s.read_until(|b| b.contains("audit_appended") && b.contains("pending_notify"))
+        .await;
     let data = s.data();
-    assert_eq!(types(&s), ["pending_opened", "audit_appended"], "{}", s.buf);
+    // The notify event is the server's own, sent a moment after the others, so only the opened
+    // event's place is fixed.
+    let mut seen = types(&s);
+    assert_eq!(seen[0], "pending_opened", "{}", s.buf);
+    seen.sort();
+    assert_eq!(
+        seen,
+        ["audit_appended", "pending_notify", "pending_opened"],
+        "{}",
+        s.buf
+    );
     assert_eq!(data[0]["request"]["id"], id);
     assert_eq!(data[0]["request"]["workspace"], "box");
     assert_eq!(data[0]["request"]["host"], "www.example.com");
@@ -188,7 +199,11 @@ async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
 
     api.request("box", "www.example.com");
     s.read_until(|b| b.contains("pending_updated")).await;
-    let updated = &s.data()[2];
+    let updated = s
+        .data()
+        .into_iter()
+        .find(|d| d["type"] == "pending_updated")
+        .unwrap();
     assert_eq!(
         (updated["id"].as_i64(), updated["attempts"].as_u64()),
         (Some(id), Some(2))
@@ -271,7 +286,13 @@ async fn audit_appended_names_the_newest_record_so_a_client_can_read_on() {
     let mut s = Stream::open(&api, "").await;
     api.request("box", "example.com");
     s.read_until(|b| b.contains("audit_appended")).await;
-    let id = s.data().last().unwrap()["id"].as_i64().unwrap();
+    let id = s
+        .data()
+        .iter()
+        .rfind(|d| d["type"] == "audit_appended")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
     let page = api.get("/api/audit?limit=1").await.json();
     assert_eq!(page["entries"][0]["id"], id);
     assert_eq!(page["next_after"], id);

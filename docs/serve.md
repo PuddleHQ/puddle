@@ -268,6 +268,21 @@ No admin route, event, log line or audit entry carries a password hash, an invit
 made, a device key, a session token or credential-store content, and the owner has no way into another
 user's workspace data (no impersonation, no "sign in as").
 
+### Notifications in open tabs
+
+A request that waits for approval can notify you in a browser tab. Each Puddle page tells the
+server every 30 seconds, and whenever it changes, whether it is in front, when you last used it and
+whether you want notifications there. When a request arrives the server picks one place to tell you:
+the page you used in the last two minutes, or, if you used none, every page that wants notifications.
+The desktop app takes part the same way, so a person with a tab, a phone and the app is told once.
+
+Turn it on per browser in Settings, Notifications, "Notifications in this browser". The browser asks
+for permission, and shows notifications only on an address it trusts (`https://` or `localhost`).
+The notification names the workspace and the host and port it asked for, and nothing else a
+workspace sent; clicking it opens that request in the inbox. A request decided in another place
+takes its notification back. With no Puddle page open on a server, nobody is told until someone
+opens one: the request waits and is never denied.
+
 ### The reverse proxy on the same machine
 
 Point the proxy at the API's port on `127.0.0.1` (`port`, so set it to a fixed number) and keep the

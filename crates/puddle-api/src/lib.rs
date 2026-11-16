@@ -49,6 +49,7 @@
 mod admin;
 mod auth;
 mod authz;
+mod backup;
 mod checkouts;
 mod credential_store;
 mod credentials;
@@ -79,6 +80,10 @@ mod ui;
 pub mod wire;
 mod workspaces;
 
+pub use backup::{
+    BackupArchive, BackupService, BackupServiceError, FAKE_BACKUP_BYTES, FakeBackup, NoBackup,
+    archive_file_name,
+};
 pub use checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
     check_seen, checkouts_view, why_no_remote,
@@ -108,7 +113,7 @@ pub use remote::{
 };
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
-pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use settings::{MemorySettings, SettingsLock, SettingsRepo, SettingsRepoError};
 pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};
 pub use terminals::{
     EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,

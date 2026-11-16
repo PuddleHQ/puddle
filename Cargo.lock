@@ -6054,6 +6054,7 @@ dependencies = [
  "puddle-agent-proto",
  "puddle-fd-limit",
  "puddle-front",
+ "puddle-fs",
  "puddle-guest-env",
  "puddle-ipc",
  "puddle-log",
@@ -6442,6 +6443,7 @@ dependencies = [
  "base64 0.23.1",
  "dunce",
  "ed25519-dalek",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "microsandbox",
@@ -6485,6 +6487,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -6645,6 +6648,7 @@ dependencies = [
  "puddle-logins",
  "puddle-netpolicy",
  "puddle-proxy",
+ "puddle-proxy-test-support",
  "puddle-secrets",
  "puddle-ssh-agent",
  "puddle-store",
@@ -6670,6 +6674,21 @@ dependencies = [
  "windows-sys 0.61.2",
  "zeroize",
  "zstd 0.14.3",
+]
+
+[[package]]
+name = "puddle-proxy-test-support"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "futures-util",
+ "puddle-agent-proto",
+ "puddle-ipc",
+ "puddle-netpolicy",
+ "puddle-proxy",
+ "puddle-test-kit",
+ "puddle-types",
+ "tokio",
 ]
 
 [[package]]

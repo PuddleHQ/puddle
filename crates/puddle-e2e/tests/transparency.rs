@@ -7,7 +7,7 @@
 //! Every case has the same bar: no failure, and no stall over 5 s (a stall is a gap between two
 //! pieces of progress on one connection, not a slow total). The gibibyte case leaves out the time
 //! the kernel's own sockets on the path sat in retransmission backoff after it dropped a loopback
-//! segment (runner kernels 6.16 to 6.19 do, and Puddle cannot prevent it): see `support::stall`
+//! segment (runner kernels 6.16 to 6.19 do, and Puddle cannot prevent it): see `l2::stall`
 //! and `stall_meter.rs`, which show that a reader's pause still counts in full. Throughput is reported next to the
 //! same transfer over plain loopback, never asserted: a loaded runner moves both.
 #![cfg(unix)]
@@ -21,8 +21,6 @@
     reason = "a test fails by panicking; the measurements go to stderr, and a rate in MiB/s needs no more precision"
 )]
 
-mod support;
-
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,8 +30,9 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use h2::SendStream;
-use support::stall::{Backoff, Gap, Progress, rcvq_drops};
-use support::{LOCAL, allow, connect_via, echo_server, rig, round_trip};
+use l2::stall::{Backoff, Gap, Progress, rcvq_drops};
+use l2::{LOCAL, allow, connect_via, echo_server, rig, round_trip};
+use puddle_e2e::l2;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 

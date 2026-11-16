@@ -16,9 +16,9 @@ use puddle_compute::{ComputeError, Runtime};
 use puddle_e2e::lab::{BASIC_USER, Squid, SquidOptions, basic_password};
 use puddle_upstream::{Hop, ProxyAddr};
 
-use crate::lab::REGISTRY;
-use crate::lab::pull::{Pull, registry_socket};
 use crate::rig::{basic, connection_records};
+use puddle_e2e::pull_lab::REGISTRY;
+use puddle_e2e::pull_lab::pull::{Pull, registry_socket};
 
 /// What one test runs against: Squid and the pull world behind it.
 struct World {

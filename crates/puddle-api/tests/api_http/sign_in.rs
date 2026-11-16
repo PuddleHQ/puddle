@@ -1012,6 +1012,7 @@ async fn a_plain_user_signs_in_when_several_users_are_on_and_is_not_the_owner() 
             Some(json!({"method": "password", "enabled": true})),
         ),
         ("GET", "/api/settings", None),
+        ("POST", "/api/backup", None),
     ] {
         let reply = site
             .send(method, path, &Req::bearer(&ann), body.as_ref())

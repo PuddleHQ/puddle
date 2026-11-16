@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Checks that the Windows Hypervisor Platform is usable on this runner and sets `ok` to true or false.
+# Where it is not usable: an event in `fail-events` fails the job (a required check must not pass
+# without running its tests), any other event warns and sets `ok=false` so later steps skip.
+# Same policy as ci/vm-skip-policy.sh, kept in PowerShell because plain `bash` from pwsh may be WSL.
+name: whp-preflight
+description: Check the Windows Hypervisor Platform and say whether VM tests can run
+inputs:
+  title:
+    description: Names the job in the error and warning annotations
+    required: true
+  fail-events:
+    description: Space-separated event names that fail the job when WHP is unusable, or `*` for every event
+    default: pull_request merge_group
+  summary:
+    description: A line for the job summary when the job is skipped (empty for none)
+    default: ''
+outputs:
+  ok:
+    description: "true when WHP is usable, false when the job was skipped"
+    value: ${{ steps.check.outputs.ok }}
+runs:
+  using: composite
+  steps:
+    - name: WHP preflight (infrastructure)
+      id: check
+      shell: pwsh
+      env:
+        TITLE: ${{ inputs.title }}
+        FAIL_EVENTS: ${{ inputs.fail-events }}
+        SUMMARY: ${{ inputs.summary }}
+      run: |
+        $cs = Get-CimInstance Win32_ComputerSystem
+        $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
+        "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
+        if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
+          "ok=true" >> $env:GITHUB_OUTPUT
+        } else {
+          $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
+          $events = $env:FAIL_EVENTS -split '\s+'
+          if ($events -contains '*' -or $events -contains $env:GITHUB_EVENT_NAME) {
+            "::error title=$env:TITLE cannot run::$reason; a required check must not pass without running its tests"
+            exit 1
+          }
+          "::warning title=$env:TITLE skipped::$reason; the tests did not run (infrastructure, not a test result)"
+          if ($env:SUMMARY) { $env:SUMMARY >> $env:GITHUB_STEP_SUMMARY }
+          "ok=false" >> $env:GITHUB_OUTPUT
+        }

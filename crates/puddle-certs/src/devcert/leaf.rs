@@ -30,7 +30,7 @@ pub const IP_ADDRESSES: [IpAddr; 2] = [
 ];
 
 /// The ASP.NET development-certificate marker extension (`dotnet dev-certs` writes it, and
-/// recognises a certificate by it).
+/// recognises a certificate by it); Puddle's own leaf carries it too.
 pub const ASPNET_MARKER_OID: [u64; 10] = [1, 3, 6, 1, 4, 1, 311, 84, 1, 1];
 
 /// The marker's value: .NET 10's certificate version, one raw byte.
@@ -39,8 +39,7 @@ pub const MARKER_VERSION: u8 = 6;
 /// How long a new leaf is valid.
 pub const VALIDITY: Duration = Duration::from_hours(365 * 24);
 
-/// A leaf with less than this left is replaced, and an existing certificate with less than this
-/// left is not reused.
+/// A leaf with less than this left is replaced.
 pub const RENEW_WITHIN: Duration = Duration::from_hours(30 * 24);
 
 /// A new leaf starts this long before now, so a host with a slow clock still accepts it.

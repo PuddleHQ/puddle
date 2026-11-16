@@ -94,9 +94,10 @@ pub(crate) async fn certificate_within(
 
 /// One line for the log: where it stands and why, never key material.
 fn log_report(report: &DevCertReport) {
+    let detail = report.detail.as_deref().unwrap_or("");
     tracing::info!(
         status = ?report.status,
-        detail = report.detail.as_deref().unwrap_or(""),
+        detail,
         "development certificate for the workspace"
     );
 }

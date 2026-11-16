@@ -98,6 +98,79 @@ async fn system_managed_follows_the_editor_server_choice() {
 }
 
 #[tokio::test]
+async fn one_entry_of_a_built_in_set_switches_off_and_on() {
+    let api = start().await;
+    api.send(
+        "PUT",
+        "/api/rule-sets/builtin:github/switch",
+        Some(&json!({"enabled": true})),
+    )
+    .await;
+    let off = api
+        .send(
+            "PUT",
+            "/api/rule-sets/builtin:github/entry-switch",
+            Some(&json!({"pattern": "codeload.github.com", "enabled": false})),
+        )
+        .await;
+    assert_eq!(off.status, 200, "{}", off.body);
+    let entries = off.json()["set"]["entries"].clone();
+    let state = |pattern: &str| {
+        entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["pattern"] == pattern)
+            .unwrap()["enabled"]
+            .clone()
+    };
+    assert_eq!(state("codeload.github.com"), false);
+    assert_eq!(state("api.github.com"), true);
+    assert!(decide(&api, "box", "api.github.com").is_allow());
+    assert!(!decide(&api, "box", "codeload.github.com").is_allow());
+    let on = api
+        .send(
+            "PUT",
+            "/api/rule-sets/builtin:github/entry-switch",
+            Some(&json!({"pattern": "codeload.github.com", "enabled": true})),
+        )
+        .await;
+    assert_eq!(on.status, 200, "{}", on.body);
+    assert!(decide(&api, "box", "codeload.github.com").is_allow());
+    for (path, body, status) in [
+        (
+            "/api/rule-sets/system/entry-switch",
+            json!({"pattern": "github.com", "enabled": false}),
+            422,
+        ),
+        (
+            "/api/rule-sets/builtin:nope/entry-switch",
+            json!({"pattern": "github.com", "enabled": false}),
+            404,
+        ),
+        (
+            "/api/rule-sets/user:99/entry-switch",
+            json!({"pattern": "github.com", "enabled": false}),
+            404,
+        ),
+        (
+            "/api/rule-sets/builtin:github/entry-switch",
+            json!({"pattern": "not-in-the-set.example", "enabled": false}),
+            404,
+        ),
+        (
+            "/api/rule-sets/builtin:github/entry-switch",
+            json!({"pattern": "github.com"}),
+            422,
+        ),
+    ] {
+        let reply = api.send("PUT", path, Some(&body)).await;
+        assert_eq!(reply.status, status, "{path}: {}", reply.body);
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn built_in_sets_switch_per_workspace_and_stay_read_only() {
     let api = start().await;
     let list = api.get("/api/rule-sets").await.json();

@@ -390,6 +390,28 @@ impl From<store::RuleDeleteReason> for RuleDeleteReason {
     }
 }
 
+/// What a `rule_switched` record switched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleSwitchKind {
+    /// A rule on a host.
+    Rule,
+    /// A rule on method and path.
+    RequestRule,
+    /// One entry of a built-in set.
+    BuiltinEntry,
+}
+
+impl From<store::RuleSwitchKind> for RuleSwitchKind {
+    fn from(kind: store::RuleSwitchKind) -> Self {
+        match kind {
+            store::RuleSwitchKind::Rule => Self::Rule,
+            store::RuleSwitchKind::RequestRule => Self::RequestRule,
+            store::RuleSwitchKind::BuiltinEntry => Self::BuiltinEntry,
+        }
+    }
+}
+
 /// What a `workspace_op` record is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -561,6 +583,8 @@ pub enum AuditType {
     RuleCreated,
     /// A rule changed.
     RuleUpdated,
+    /// A rule or built-in entry switched on or off.
+    RuleSwitched,
     /// A rule deleted.
     RuleDeleted,
     /// A rule expired.
@@ -598,6 +622,7 @@ impl AuditType {
             Self::PendingSuppressed => "pending_suppressed",
             Self::RuleCreated => "rule_created",
             Self::RuleUpdated => "rule_updated",
+            Self::RuleSwitched => "rule_switched",
             Self::RuleDeleted => "rule_deleted",
             Self::RuleExpired => "rule_expired",
             Self::RequestRuleCreated => "request_rule_created",

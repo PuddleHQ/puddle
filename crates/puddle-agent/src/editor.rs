@@ -329,25 +329,7 @@ pub fn write_password(path: &Path, password: &str) -> io::Result<()> {
 
 /// Writes `text` to `path` for its owner only, through a temporary file renamed over it.
 fn write_private(path: &Path, text: &str) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut partial = path.as_os_str().to_owned();
-    partial.push(".partial");
-    let partial = PathBuf::from(partial);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    {
-        use std::io::Write as _;
-        let mut file = options.open(&partial)?;
-        file.write_all(text.as_bytes())?;
-    }
-    std::fs::rename(&partial, path)
+    puddle_fs::private::write_atomic(path, text.as_bytes())
 }
 
 /// Most of the multi-root file that is read to see whether it lists a folder.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Proof that the stall meter of the transparency bar (`support::stall`) leaves out the kernel's
+//! Proof that the stall meter of the transparency bar (`l2::stall`) leaves out the kernel's
 //! retransmission backoff and nothing else. The bar is "no gap over 5 s that the transfer's own
 //! parties caused"; it holds only if a pause by a reader still fails it and a dropped segment's
 //! backoff does not. Both are planted here on real loopback sockets, with a shorter bound so the
@@ -13,12 +13,11 @@
 #![cfg(target_os = "linux")]
 #![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
-use crate::support;
-
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use support::stall::{Accrual, Backoff, Progress, parse};
+use l2::stall::{Accrual, Backoff, Progress, parse};
+use puddle_e2e::l2;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 

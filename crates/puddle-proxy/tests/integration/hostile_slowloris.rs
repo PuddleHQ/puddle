@@ -13,15 +13,13 @@
 //! [`STALL_LIMIT`], not after a fixed total time, since a machine slowed by other work takes as
 //! long as it takes to refuse 9000 streams but keeps counting.
 
-use crate::hostile_support;
-
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
-use hostile_support::{Guest, assert_unharmed, bystander_round, rig_with};
 use puddle_proxy::ProxyConfig;
+use puddle_proxy_test_support::hostile::{Guest, assert_unharmed, bystander_round, rig_with};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::Instant;

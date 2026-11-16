@@ -148,3 +148,17 @@ fn a_stored_certificate_next_to_the_key_of_another_leaf_is_replaced() {
     );
     assert!(key_belongs_to(again.cert_der(), again.key()));
 }
+
+#[test]
+fn a_stored_certificate_that_does_not_parse_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    let first = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    let mut body = pem::encode(&pem::Pem::new("CERTIFICATE", vec![1, 2, 3]));
+    body.push_str(&first.key().to_pem());
+    puddle_fs::private::write_atomic(&dir.path().join(FOLDER).join(FILE), body.as_bytes()).unwrap();
+    assert!(!key_belongs_to(&[1, 2, 3], first.key()));
+    let again = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    assert_ne!(again.cert_der(), &[1, 2, 3][..]);
+    assert!(key_belongs_to(again.cert_der(), again.key()));
+}

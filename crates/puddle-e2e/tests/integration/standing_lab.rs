@@ -114,6 +114,8 @@ fn a_missing_program_fails_the_self_test_and_names_the_variable() {
     let output = lab()
         .args(["--self-test", "--interceptor"])
         .env_remove("PUDDLE_MITMDUMP_BIN")
+        // CI requires the program: the fixture would panic instead of reporting it missing.
+        .env_remove("PUDDLE_REQUIRE_MITMPROXY")
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));

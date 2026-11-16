@@ -28,6 +28,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use rustls::pki_types::CertificateDer;
+use ssh_key::private::Ed25519Keypair;
+use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey, PublicKey};
 
 use super::git_host::issue;
 use super::{
@@ -37,6 +39,22 @@ use super::{
 
 /// The account that owns every repository of the fixture.
 pub const OWNER: &str = "acme";
+
+/// What a client needs to sign in over SSH as [`OWNER`]: made by [`Forgejo::add_generated_ssh_key`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshLogin {
+    /// The SSH server's port on loopback.
+    pub port: u16,
+    /// The private half of the key the account holds (an OpenSSH file, readable by its owner only).
+    pub key_path: PathBuf,
+    /// The public half, an `authorized_keys` line.
+    pub public_key: String,
+    /// The `SHA256:` fingerprint of the host key a client should expect (the ed25519 one when the
+    /// server has it).
+    pub host_key_fingerprint: String,
+    /// The fingerprints of every host key the server has.
+    pub host_key_fingerprints: Vec<String>,
+}
 
 /// A running Forgejo. Stops when dropped.
 pub struct Forgejo {
@@ -277,6 +295,32 @@ fn await_up(
         )?;
     }
     Ok(())
+}
+
+/// The algorithm and `SHA256:` fingerprint of each `<type> <base64>` host key line; a line that
+/// is not a key is left out.
+fn host_key_fingerprints(lines: &[String]) -> Vec<(Algorithm, String)> {
+    lines
+        .iter()
+        .filter_map(|line| PublicKey::from_openssh(line).ok())
+        .map(|key| {
+            (
+                key.algorithm(),
+                key.fingerprint(HashAlg::Sha256).to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Writes `bytes` to `path`, readable by its owner only (OpenSSH refuses a private key others can
+/// read).
+fn write_private(path: &Path, bytes: &[u8]) {
+    use std::io::Write as _;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path).unwrap().write_all(bytes).unwrap();
 }
 
 /// Checks that the API answered `201 Created` to `what`.
@@ -580,6 +624,39 @@ impl Forgejo {
         let body = serde_json::json!({"title": "lab", "key": public_key.trim()}).to_string();
         let (status, answer) = self.api("POST", "/user/keys", Some(&body));
         expect_created(status, &answer, "add key");
+    }
+
+    /// Makes an ed25519 key pair for the run, adds its public half to [`OWNER`] and writes the
+    /// private half to `ssh_login_key` in [`Self::scratch`]. The key is random (from the
+    /// operating system) and held by nobody else.
+    ///
+    /// # Panics
+    /// When the key cannot be made or written, Forgejo refuses it, or the server has no host key.
+    #[must_use]
+    pub fn add_generated_ssh_key(&self) -> SshLogin {
+        let mut seed = [0_u8; 32];
+        getrandom::fill(&mut seed).unwrap();
+        let key = PrivateKey::from(Ed25519Keypair::from_seed(&seed));
+        let public_key = key.public_key().to_openssh().unwrap();
+        let key_path = self.scratch().join("ssh_login_key");
+        write_private(
+            &key_path,
+            key.to_openssh(LineEnding::LF).unwrap().as_bytes(),
+        );
+        self.add_ssh_key(&public_key);
+        let host_keys = host_key_fingerprints(&self.ssh_host_keys());
+        let primary = host_keys
+            .iter()
+            .find(|(algorithm, _)| *algorithm == Algorithm::Ed25519)
+            .or_else(|| host_keys.first())
+            .unwrap_or_else(|| panic!("the server has no SSH host key"));
+        SshLogin {
+            port: self.ssh_port,
+            key_path,
+            public_key,
+            host_key_fingerprint: primary.1.clone(),
+            host_key_fingerprints: host_keys.iter().map(|(_, f)| f.clone()).collect(),
+        }
     }
 
     /// The server's SSH host keys as `<type> <base64>` lines, as `ssh-keyscan` prints them.

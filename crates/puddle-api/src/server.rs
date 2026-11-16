@@ -12,6 +12,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::IntoResponse;
+use futures_util::future::OptionFuture;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -688,10 +689,8 @@ impl ApiServer {
         // Registered before anything can serve, so there is no moment a guest could reach it.
         let registration = services.endpoints.register(addr, EndpointKind::Api);
         let network = bind_network_for(&config, &services.endpoints).await?;
-        let fronts_names = match config.remote.as_ref() {
-            Some(remote) => Some(front_blocks(remote, &services).await),
-            None => None,
-        };
+        let fronts_names =
+            OptionFuture::from(config.remote.as_ref().map(|r| front_blocks(r, &services))).await;
         let (stop, shutdown) = watch::channel(false);
         let settings_lock = services
             .workspaces

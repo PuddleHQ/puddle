@@ -150,6 +150,7 @@ static CLAIMS: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec:
 fn claim_dir() -> std::path::PathBuf {
     #[cfg(unix)]
     {
+        // flake-ok: Unix-only branch; a fixed folder is the point, since a per-lane temp dir hid the claims.
         std::path::PathBuf::from("/tmp/puddle-test-ports")
     }
     #[cfg(not(unix))]

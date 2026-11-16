@@ -3,9 +3,9 @@
 //! setup ("System managed"), as data (`docs/spec/rules.md` §7).
 //!
 //! A built-in set is single-kind (R-36): every entry allows or every entry denies, as
-//! [`BuiltInSet::effect`] says. System managed only allows. Entries are checked by the tests below
-//! (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an update
-//! of Puddle updates them.
+//! [`BuiltInSet::effect`] says. System managed only allows. Entries are checked by the tests in
+//! `catalogue/tests.rs` (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an
+//! update of Puddle updates them.
 
 use std::fmt;
 

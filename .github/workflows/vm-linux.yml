@@ -276,15 +276,9 @@ jobs:
             echo "### vm-linux partition ${{ matrix.partition }}: SKIPPED, no /dev/kvm on the runner (infrastructure)" >> "$GITHUB_STEP_SUMMARY"
             echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # Hosted runners ship /dev/kvm root-only; open it to the runner user.
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          sleep 1
-          ls -l /dev/kvm
-          test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/kvm
+        if: steps.kvm.outputs.ok == 'true'
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.kvm.outputs.ok == 'true'
         with:

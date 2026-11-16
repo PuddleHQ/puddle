@@ -6,6 +6,7 @@
   import { beforeNavigate } from "$app/navigation";
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
+  import BackupCard from "#lib/components/BackupCard.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
@@ -106,6 +107,7 @@
     ["s-git", "Git and credentials"],
     ["s-env", "Environment"],
     ["s-dev", "Devices"],
+    ["s-backup", "Backup"],
     ["s-priv", "Privacy"],
     ["s-about", "About"],
   ];
@@ -1268,6 +1270,11 @@
       <section class="card" id="s-dev" aria-labelledby="h-dev">
         <h2 id="h-dev">Devices and sign-in</h2>
         <DevicesPanel {session} store={devices} />
+      </section>
+
+      <section class="card" id="s-backup" aria-labelledby="h-backup">
+        <h2 id="h-backup">Back up</h2>
+        <BackupCard />
       </section>
 
       <section class="card" id="s-priv" aria-labelledby="h-priv">

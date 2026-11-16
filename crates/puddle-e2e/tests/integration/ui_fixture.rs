@@ -1991,3 +1991,22 @@ async fn an_ssh_agent_ask_step_puts_one_open_question_for_the_workspace() {
     assert_eq!(asks["asks"][0]["host"], "git.example.org");
     assert_eq!(asks["asks"][0]["workspace"], "demo");
 }
+
+#[tokio::test]
+async fn the_backup_download_works_and_a_step_makes_it_fail_and_recover() {
+    let run = start("default").await;
+    let made = run.api("POST", "/api/backup", None).await;
+    assert_eq!(made.status, 200, "{}", made.body);
+    assert!(made.body.contains("fake backup"), "{}", made.body);
+
+    let failing = json!({"do": "backup_fails", "reason": "the disk is full"});
+    let set = run.control("POST", "/control/step", Some(&failing)).await;
+    assert_eq!(set.status, 204, "{}", set.body);
+    let failed = run.api("POST", "/api/backup", None).await;
+    assert_eq!(failed.status, 503, "{}", failed.body);
+    assert!(failed.body.contains("the disk is full"), "{}", failed.body);
+
+    let clear = json!({"do": "backup_fails"});
+    run.control("POST", "/control/step", Some(&clear)).await;
+    assert_eq!(run.api("POST", "/api/backup", None).await.status, 200);
+}

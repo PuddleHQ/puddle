@@ -47,7 +47,10 @@ use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-pub use feeds::{MAVEN_COORDINATES, NPM_PACKAGE, NUGET_PACKAGE, PIP_PROJECT, private_feeds};
+pub use feeds::{
+    MAVEN_COORDINATES, MAVEN_PUBLISH_COORDINATES, MAVEN_PUBLISH_DIR, NPM_PACKAGE,
+    NPM_PUBLISH_PACKAGE, NUGET_PACKAGE, PIP_PROJECT, private_feeds,
+};
 pub use forgejo::{Forgejo, OWNER as FORGEJO_OWNER, SshLogin};
 pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git, git_available};
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};

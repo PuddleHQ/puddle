@@ -818,6 +818,12 @@ pub enum Step {
     ReleaseRepos,
     /// Replaces what the system check reports from now on.
     Doctor(Box<DoctorReport>),
+    /// Makes every backup fail with `reason` from now on; without one, backups succeed again.
+    BackupFails {
+        /// What the failure says.
+        #[serde(default)]
+        reason: Option<String>,
+    },
     /// Sets where the development certificate stands and what the next presses of "Trust it now"
     /// come to (a yes, a no, a failure with the system's words).
     DevCertificate {

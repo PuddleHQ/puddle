@@ -359,6 +359,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes a backup now and sends it as one file (`application/gzip`, named
+         *     `puddle-backup-<UTC time>.tar.gz`). It holds the rules, settings, workspace list, identities,
+         *     users and audit log as of one moment, and never a secret value, a password hash or a workspace
+         *     disk. The file is sent as it is read, so its size does not set a memory limit; a failure while
+         *     it is moving ends the connection, so a client that sees the whole body has a complete file.
+         *     A `POST` so that no link, prefetch or cache can start one.
+         */
+        post: operations["create_backup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/consents": {
         parameters: {
             query?: never;
@@ -8077,6 +8101,71 @@ export interface operations {
                 };
             };
             /** @description signing in is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_backup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the backup file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": number[];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may make a backup */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the data cannot be read or the file cannot be written */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -84,7 +84,7 @@ pub(crate) async fn refresh(state: &AppState) {
             Err(err) => (Vec::new(), Some(err.to_string())),
         };
     let (store, settings) = (state.store.clone(), state.settings.clone());
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;

@@ -408,6 +408,35 @@ async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exis
     host.shutdown().await;
 }
 
+/// Every run of the boot hook in a running guest settles its report the same way, whatever
+/// asked for the run: here a rewrite for a changed variable, not one for the authors.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plan_rewrite_for_a_variable_notices_an_old_git_too() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    let ada = make_identity(&api, "Ada", "github.com", &["acme"]).await;
+    attach(&api, "acme", ada).await;
+    rig.guest.boots_reach(booted + 1).await;
+    assert!(!has_problem(&host, "git-old:acme"));
+
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.34.1\n".to_owned();
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/A_VAR",
+        json!({"kind": "plain", "value": "1"}),
+    )
+    .await;
+    eventually("the old git is a problem", APPLY, || {
+        has_problem(&host, "git-old:acme")
+    })
+    .await;
+    host.shutdown().await;
+}
+
 /// A binding the store would refuse today, as an older database holds it.
 fn old_binding_on_port(host_name: &str) -> puddle_store::CredentialBinding {
     serde_json::from_value(json!({

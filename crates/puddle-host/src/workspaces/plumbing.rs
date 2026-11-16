@@ -95,7 +95,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 events: parts.events,
                 clock: parts.clock,
                 settings: parts.settings,
-                settings_lock: Arc::default(),
                 store: parts.store,
                 all_users: parts.all_users,
                 launcher: parts.launcher,

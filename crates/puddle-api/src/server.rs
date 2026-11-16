@@ -21,7 +21,7 @@ use puddle_secrets::SecretStore;
 use puddle_store::{AccountSecrets, Clock, Store};
 use puddle_types::Problems;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
@@ -665,10 +665,6 @@ impl ApiServer {
             None => None,
         };
         let (stop, shutdown) = watch::channel(false);
-        let settings_lock = services
-            .workspaces
-            .settings_lock()
-            .unwrap_or_else(|| Arc::new(Mutex::new(())));
         let sign_in = sign_in_for(&config, &services).await?;
         let admin = admin_for(&config, sign_in.as_ref(), &services);
         let state = AppState {
@@ -676,7 +672,6 @@ impl ApiServer {
             authorizer: Arc::new(Isolation::new(services.store.clone())),
             store: services.store,
             settings: services.settings,
-            settings_lock,
             events: services.events,
             problems: services.problems,
             clock: services.clock,

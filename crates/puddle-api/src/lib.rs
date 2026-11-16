@@ -107,7 +107,7 @@ pub use remote::{
 };
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
-pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use settings::{MemorySettings, SettingsLock, SettingsRepo, SettingsRepoError};
 pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};
 pub use terminals::{
     EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,

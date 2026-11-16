@@ -4,14 +4,37 @@
 //! only has to keep JSON values.
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use futures_util::future::BoxFuture;
+use tokio::sync::OwnedMutexGuard;
 
 use puddle_types::WorkspaceId;
 use serde_json::Value;
 
+/// The lock a repository gives out for a read-modify-write cycle on its documents: one holder
+/// at a time, so two changes never read the same document and overwrite each other, and a
+/// delete never falls between a change's read and its write. A repository holds one and
+/// returns it from [`SettingsRepo::lock`].
+#[derive(Debug, Default, Clone)]
+pub struct SettingsLock(Arc<tokio::sync::Mutex<()>>);
+
+impl SettingsLock {
+    /// Waits for the lock; it is released when the guard drops.
+    pub fn hold(&self) -> BoxFuture<'static, OwnedMutexGuard<()>> {
+        let lock = Arc::clone(&self.0);
+        Box::pin(async move { lock.lock_owned().await })
+    }
+}
+
 /// Storage for the two settings document kinds. Calls may block (files, `SQLite`); the API runs
 /// them on a blocking thread.
 pub trait SettingsRepo: Send + Sync {
+    /// Holds the repository's lock until the guard drops. Whoever reads a document, changes it
+    /// and writes it back (or removes it) takes this first, so no two such cycles interleave.
+    /// Single loads and saves need not hold it.
+    fn lock(&self) -> BoxFuture<'static, OwnedMutexGuard<()>>;
+
     /// The global document, or `None` if none was ever written.
     ///
     /// # Errors
@@ -94,12 +117,17 @@ impl SettingsRepoError {
 /// Settings kept in memory, for tests and until the storage row lands.
 #[derive(Debug, Default)]
 pub struct MemorySettings {
+    lock: SettingsLock,
     global: Mutex<Option<Value>>,
     workspaces: Mutex<BTreeMap<WorkspaceId, Value>>,
     app_icon: Mutex<Option<Vec<u8>>>,
 }
 
 impl SettingsRepo for MemorySettings {
+    fn lock(&self) -> BoxFuture<'static, OwnedMutexGuard<()>> {
+        self.lock.hold()
+    }
+
     fn load_global(&self) -> Result<Option<Value>, SettingsRepoError> {
         Ok(self
             .global

@@ -89,7 +89,7 @@ pub(crate) async fn put_custom_icon(
     State(state): State<AppState>,
     File(bytes): File,
 ) -> Result<Json<CustomIcon>, ApiError> {
-    let lock = state.settings_lock.lock().await;
+    let lock = state.settings.lock().await;
     let stored = blocking(move || {
         let png = normalize_upload(&bytes).map_err(|e| refuse(&e))?;
         state.settings.as_ref().save_app_icon(&png)?;
@@ -117,7 +117,7 @@ pub(crate) async fn put_custom_icon(
 pub(crate) async fn delete_custom_icon(
     State(state): State<AppState>,
 ) -> Result<StatusCode, ApiError> {
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     blocking(move || {
         let repo = state.settings.as_ref();
         if load_global(repo)?.settings.ui.app_icon() == AppIconChoice::Custom {

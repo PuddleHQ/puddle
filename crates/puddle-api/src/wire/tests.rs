@@ -396,6 +396,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
         created_at: 5,
         created_by: store::Actor::Ui,
         source_pending_id: Some(PendingId(9)),
+        enabled: false,
     };
     let wire = Rule::from_store(rule).unwrap();
     assert_eq!(
@@ -404,7 +405,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
             "id": 3, "scope": {"type": "workspace", "workspace": "box"},
             "pattern": ".example.com", "pattern_kind": "suffix", "effect": "deny",
             "expires_at": null, "created_at": 5, "created_by": "ui",
-            "source_pending_id": 9
+            "source_pending_id": 9, "enabled": false
         })
     );
     assert_eq!(
@@ -631,6 +632,7 @@ fn audit_types_and_outcomes_cover_the_stores() {
         AuditType::PendingSuppressed,
         AuditType::RuleCreated,
         AuditType::RuleUpdated,
+        AuditType::RuleSwitched,
         AuditType::RuleDeleted,
         AuditType::RuleExpired,
         AuditType::RequestRuleCreated,
@@ -714,6 +716,29 @@ fn rule_set_records_serialise_as_stored() {
         serde_json::to_value(AuditRecord::from(record)).unwrap()["rule_set"]["fill"],
         Value::Null
     );
+    // A rule, a rule on method and path and a built-in entry switched read back as they were written.
+    for (kind, tag) in [
+        (store::RuleSwitchKind::Rule, "rule"),
+        (store::RuleSwitchKind::RequestRule, "request_rule"),
+        (store::RuleSwitchKind::BuiltinEntry, "builtin_entry"),
+    ] {
+        let record = store::AuditRecord::RuleSwitched {
+            ts: 5,
+            kind,
+            id: Some(3),
+            set_id: Some("builtin:github".into()),
+            pattern: "api.github.com".into(),
+            workspace_id: None,
+            enabled: false,
+            actor: "ui".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap(),
+            serde_json::json!({"type": "rule_switched", "ts": 5, "kind": tag, "id": 3,
+                "set_id": "builtin:github", "pattern": "api.github.com",
+                "workspace_id": null, "enabled": false, "actor": "ui"})
+        );
+    }
     // A reason a later Puddle added is left out rather than failing the page.
     let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
             "workspace_id": null, "added": ["zed"], "removed": []});

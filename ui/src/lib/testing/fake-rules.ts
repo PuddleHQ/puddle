@@ -16,6 +16,7 @@ export function rule(id: number, over: Partial<Rule> = {}): Rule {
     created_at: 1_000_000 + id,
     created_by: "ui",
     source_pending_id: null,
+    enabled: true,
     ...over,
   };
 }
@@ -76,7 +77,11 @@ export class FakeRules {
     if (this.refuse) return this.reply(this.refuse.status);
     const found = this.rules.find((r) => r.id === init.params.path.id);
     if (!found) return this.reply(404);
-    found.expires_at = init.body["expires_at"] as number | null;
+    if (path.endsWith("/enabled")) {
+      found.enabled = init.body["enabled"] as boolean;
+    } else {
+      found.expires_at = init.body["expires_at"] as number | null;
+    }
     return this.reply(200, { ...found });
   };
 

@@ -75,6 +75,7 @@ export const TYPES: readonly { value: AuditType; label: string }[] = [
   { value: "pending_suppressed", label: "Requests refused for volume" },
   { value: "rule_created", label: "Rule added" },
   { value: "rule_updated", label: "Rule changed" },
+  { value: "rule_switched", label: "Rule switched" },
   { value: "rule_deleted", label: "Rule deleted" },
   { value: "rule_expired", label: "Rule expired" },
   { value: "request_rule_created", label: "Method and path rule added" },
@@ -818,6 +819,15 @@ export function describe(record: AuditRecord): RowView {
         destination: record.rule_set.name,
         outcome: null,
         detail: `user:${record.rule_set.id}, by ${record.actor}`,
+      };
+    case "rule_switched":
+      return {
+        ts: record.ts,
+        workspace: record.workspace_id,
+        type,
+        destination: record.pattern,
+        outcome: null,
+        detail: `${switchLabel(record.enabled)}${record.kind === "builtin_entry" ? ` in ${record.set_id ?? "a built-in set"}` : record.kind === "request_rule" ? ", rule on method and path" : ""}, by ${record.actor}`,
       };
     case "rule_set_switched":
       return {

@@ -17,12 +17,15 @@
     rules,
     now,
     onDelete,
+    onEnabled,
     selected,
   }: {
     rules: RequestRule[];
     now: number;
     /** Left out, the table is read-only. */
     onDelete?: ((rule: RequestRule) => void) | undefined;
+    /** Left out, the table has no switch column. */
+    onEnabled?: ((rule: RequestRule, enabled: boolean) => void) | undefined;
     /** The rule a link named (from the Activity screen): marked, scrolled to and given focus. */
     selected?: number | undefined;
   } = $props();
@@ -44,6 +47,9 @@
         <th scope="col">Path</th>
         <th scope="col">Workspace</th>
         <th scope="col">Made</th>
+        {#if onEnabled}
+          <th scope="col">On</th>
+        {/if}
         {#if onDelete}
           <th scope="col"><span class="visually-hidden">Actions</span></th>
         {/if}
@@ -54,12 +60,14 @@
         <tr
           data-request-rule-id={rule.id}
           class:selected={rule.id === selected}
+          class:off={!rule.enabled}
           aria-current={rule.id === selected ? "true" : undefined}
           tabindex={rule.id === selected ? -1 : undefined}
           {@attach (row) => reveal(row, rule.id === selected)}
         >
           <td class="host">
             <span class="mono">{rule.host}</span>
+            {#if !rule.enabled}<span class="chip">off</span>{/if}
             {#if rule.host.startsWith("*.")}
               <span class="chip">and subdomains</span>
             {/if}
@@ -89,6 +97,21 @@
               )}">{relativeTime(rule.created_at, now)}</time
             >
           </td>
+          {#if onEnabled}
+            <td class="on">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={rule.enabled}
+                aria-label="Rule on: {requestRuleName(rule)}"
+                onchange={(e) => {
+                  const next = e.currentTarget.checked;
+                  e.currentTarget.checked = rule.enabled;
+                  onEnabled(rule, next);
+                }}
+              />
+            </td>
+          {/if}
           {#if onDelete}
             <td class="actions">
               <button
@@ -129,6 +152,9 @@
   th {
     color: var(--color-text-muted);
     font-weight: 600;
+  }
+  tr.off td:not(.actions):not(.on) {
+    color: var(--color-text-muted);
   }
   tr.selected {
     background: var(--color-accent-subtle);

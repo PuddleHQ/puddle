@@ -12,10 +12,13 @@ use super::{
     AllUsers, PENDING_COLUMNS, Store, append, append_for, decide_row_by, load_rules, lock,
     pending_from_raw, raw_pending, sql_ts, stored_ts, users,
 };
-use crate::audit::{AuditRecord, RuleDeleteReason, RuleSetWire, RuleWire, actor_str};
+use crate::audit::{
+    AuditRecord, RuleDeleteReason, RuleSetWire, RuleSwitchKind, RuleWire, actor_str,
+};
 use crate::catalogue::{self, BUILT_IN_SETS, SystemReason};
 use crate::engine::{RuleIndex, SetEntry, Switches, default_on};
 use crate::error::StoreError;
+use crate::pattern::Pattern;
 use crate::rule::{Actor, Effect, Rule, Scope};
 use crate::users::UserId;
 
@@ -78,6 +81,8 @@ pub struct RuleSetEntryInfo {
     pub effect: Effect,
     /// What it is for (built-in entries).
     pub note: String,
+    /// Whether the entry takes part in decisions (R-65).
+    pub enabled: bool,
     /// The rule row, for a set the user made.
     pub rule_id: Option<RuleId>,
     /// Epoch ms after which the entry no longer counts.
@@ -177,6 +182,7 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
         ))
     })?;
     let mut switches = Switches::default();
+    load_entry_switches(conn, &mut switches)?;
     for row in rows {
         let (rowid, set, workspace, enabled, user) = row?;
         // A switch of a built-in set this version no longer ships is kept but means nothing.
@@ -198,6 +204,26 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
         switches.insert(UserId::from_stored(user), set, workspace, enabled != 0);
     }
     Ok(switches)
+}
+
+/// The built-in entries each user switched off (R-65). A row for a set or entry this version no
+/// longer ships is kept but means nothing.
+fn load_entry_switches(conn: &Connection, switches: &mut Switches) -> Result<(), StoreError> {
+    let mut stmt = conn.prepare("SELECT user_id, rule_set, pattern FROM builtin_entry_switches")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (user, set, pattern) = row?;
+        if let Some(set) = parse_rule_set(&set) {
+            switches.insert_entry_off(UserId::from_stored(user), set, pattern);
+        }
+    }
+    Ok(())
 }
 
 /// Each host of each reason, in catalogue order per reason.
@@ -497,6 +523,8 @@ impl Store {
                         pattern: entry.pattern.to_owned(),
                         effect: set.effect,
                         note: entry.note.to_owned(),
+                        enabled: !Pattern::parse(entry.pattern)
+                            .is_ok_and(|p| index.entry_off(user, id, &p)),
                         rule_id: None,
                         expires_at: None,
                     })
@@ -738,6 +766,93 @@ impl Store {
         Ok(closed)
     }
 
+    /// Switches one entry of a built-in set on or off for every workspace of `user` (R-65), and
+    /// closes the open requests that decides. The entry is named as the catalogue writes it
+    /// (`github.com`, `*.github.com`). Writes one `rule_switched` record, and none when the entry
+    /// is already in that state. Returns the rows it closed.
+    ///
+    /// # Errors
+    /// [`StoreError::NotSwitchable`] for System managed, [`StoreError::UnknownRuleSet`] for a set
+    /// that is not built in or has no such entry, [`StoreError::RuleSetHidden`],
+    /// [`StoreError::SystemActor`], or a database error.
+    pub fn switch_builtin_entry(
+        &self,
+        user: UserId,
+        set: RuleSetId,
+        pattern: &str,
+        enabled: bool,
+        actor: Actor,
+    ) -> Result<Vec<PendingId>, StoreError> {
+        if actor == Actor::System {
+            return Err(StoreError::SystemActor);
+        }
+        let closed = self.change(|tx, now, fx| {
+            let unknown = || StoreError::UnknownRuleSet(format!("{set} entry {pattern}"));
+            let slug = match set {
+                RuleSetId::System => return Err(StoreError::NotSwitchable),
+                RuleSetId::BuiltIn(slug) => slug,
+                _ => return Err(unknown()),
+            };
+            let built_in = catalogue::built_in(slug).ok_or_else(unknown)?;
+            if load_hidden(tx)?.contains(slug) {
+                return Err(StoreError::RuleSetHidden(set.to_string()));
+            }
+            let pattern = Pattern::parse(pattern)?.to_string();
+            if !catalogue::patterns(built_in.entries)
+                .iter()
+                .any(|p| p.to_string() == pattern)
+            {
+                return Err(unknown());
+            }
+            let key = set.to_string();
+            let off_before = tx
+                .query_row(
+                    "SELECT 1 FROM builtin_entry_switches
+                     WHERE user_id = ?1 AND rule_set = ?2 AND pattern = ?3",
+                    params![user.get(), key, pattern],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if off_before != enabled {
+                return Ok(Vec::new());
+            }
+            if enabled {
+                tx.execute(
+                    "DELETE FROM builtin_entry_switches
+                     WHERE user_id = ?1 AND rule_set = ?2 AND pattern = ?3",
+                    params![user.get(), key, pattern],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO builtin_entry_switches (user_id, rule_set, pattern, changed_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![user.get(), key, pattern, sql_ts(now)],
+                )?;
+            }
+            append_for(
+                tx,
+                &AuditRecord::RuleSwitched {
+                    ts: now,
+                    kind: RuleSwitchKind::BuiltinEntry,
+                    id: None,
+                    set_id: Some(key),
+                    pattern,
+                    workspace_id: None,
+                    enabled,
+                    actor: actor_str(actor),
+                },
+                user,
+            )?;
+            let index = load_index(tx)?;
+            let closed = close_rows_now_decided(tx, &index, Some(user), None, actor, now, fx)?;
+            fx.push(Event::RulesChanged {});
+            Ok(closed)
+        })?;
+        tracing::info!(%set, ?enabled, closed = closed.len(), "built-in entry switched");
+        Ok(closed)
+    }
+
     /// The System managed hosts of every workspace and why each is allowed (R-40), in catalogue
     /// order per reason. For the install's own jobs; what a user is shown comes from
     /// [`Store::system_managed`].
@@ -876,6 +991,7 @@ fn user_set_info(
                 pattern: rule.pattern.to_string(),
                 effect: rule.effect,
                 note: String::new(),
+                enabled: rule.enabled,
                 rule_id: Some(rule.id),
                 expires_at: rule.expires_at,
             })

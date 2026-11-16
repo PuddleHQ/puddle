@@ -112,6 +112,9 @@ pub struct RuleSetEntry {
     pub effect: Effect,
     /// What it is for (built-in sets); empty for your own entries.
     pub note: String,
+    /// Whether the entry takes part in decisions. You switch a built-in entry off on its own
+    /// with `PUT /api/rule-sets/{id}/entry-switch`, a rule of your own set through its rule.
+    pub enabled: bool,
     /// The entry's rule, for a set you made (delete or change it through `/api/rules`).
     #[schema(required = true)]
     pub rule_id: Option<i64>,
@@ -193,6 +196,7 @@ impl RuleSetEntry {
             pattern,
             effect,
             note,
+            enabled,
             rule_id,
             expires_at,
         } = entry;
@@ -205,6 +209,7 @@ impl RuleSetEntry {
             pattern,
             effect: effect.into(),
             note,
+            enabled,
             rule_id: rule_id.map(|id| id.0),
             expires_at,
         }
@@ -260,6 +265,16 @@ pub struct RuleSetSwitchRequest {
     /// the set's default).
     #[schema(required = true)]
     pub enabled: Option<bool>,
+}
+
+/// Switch one entry of a built-in set on or off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSetEntrySwitchRequest {
+    /// The entry as the set lists it (`api.github.com`, `*.github.com`).
+    pub pattern: String,
+    /// `true` to switch the entry on, `false` to switch it off.
+    pub enabled: bool,
 }
 
 /// What a switch did.

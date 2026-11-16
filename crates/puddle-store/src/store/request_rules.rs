@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{AllUsers, Store, append_for, lock, users};
 use crate::audit::{
-    AuditRecord, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason, actor_str,
+    AuditRecord, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason, RuleSwitchKind, actor_str,
 };
 use crate::error::StoreError;
 use crate::rule::Actor;
@@ -36,6 +36,8 @@ pub struct RequestRule {
     pub created_at: u64,
     /// Who made it.
     pub created_by: Actor,
+    /// Whether the rule refuses anything. A rule that is off is kept and checks nothing (R-65).
+    pub enabled: bool,
 }
 
 impl RequestRule {
@@ -73,7 +75,8 @@ pub struct NewRequestRule {
     pub created_by: Actor,
 }
 
-const COLUMNS: &str = "id, workspace_id, host, methods, path, created_at, created_by, user_id";
+const COLUMNS: &str =
+    "id, workspace_id, host, methods, path, created_at, created_by, user_id, enabled";
 
 fn corrupt(id: i64, reason: String) -> StoreError {
     StoreError::Corrupt {
@@ -92,6 +95,7 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
     let created_at: i64 = row.get(5)?;
     let created_by: String = row.get(6)?;
     let user: i64 = row.get(7)?;
+    let enabled: i64 = row.get(8)?;
     Ok((|| {
         Ok(RequestRule {
             id,
@@ -107,6 +111,7 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
                 .map_err(|_| corrupt(id, "negative time".into()))?,
             created_by: Actor::parse(&created_by)
                 .ok_or_else(|| corrupt(id, format!("unknown actor {created_by:?}")))?,
+            enabled: enabled != 0,
         })
     })())
 }
@@ -176,7 +181,7 @@ impl Store {
     }
 
     /// The rules on method and path that apply to `workspace` (the global ones of its user and
-    /// its own), in id order: what its requests are checked against.
+    /// its own) and are switched on, in id order: what its requests are checked against.
     ///
     /// # Errors
     /// A database error, or a stored row that no longer reads.
@@ -188,7 +193,7 @@ impl Store {
         let user = users::owner_in(&conn, workspace)?;
         list(
             &conn,
-            "WHERE (workspace_id IS NULL AND user_id = ?2) OR workspace_id = ?1",
+            "WHERE enabled = 1 AND ((workspace_id IS NULL AND user_id = ?2) OR workspace_id = ?1)",
             &[&workspace.as_str(), &user.get()],
         )
     }
@@ -298,6 +303,52 @@ impl Store {
             Ok(rule)
         })?;
         tracing::info!(rule = rule.id, host = %rule.host, "request rule created");
+        Ok(rule)
+    }
+
+    /// Switches a rule on method and path on or off (R-65) and tells running workspaces to read
+    /// their rules again. A rule that is off refuses nothing and no longer makes its host
+    /// decrypt. Writes one `rule_switched` record, none when the rule is already in that state.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRequestRule`], [`StoreError::SystemActor`] or a database error.
+    pub fn set_request_rule_enabled(
+        &self,
+        id: i64,
+        enabled: bool,
+        actor: Actor,
+    ) -> Result<RequestRule, StoreError> {
+        if actor == Actor::System {
+            return Err(StoreError::SystemActor);
+        }
+        let rule = self.change(|tx, now, fx| {
+            let before = load(tx, id)?;
+            if before.enabled == enabled {
+                return Ok(before);
+            }
+            tx.execute(
+                "UPDATE request_rules SET enabled = ?1 WHERE id = ?2",
+                params![i64::from(enabled), id],
+            )?;
+            let rule = load(tx, id)?;
+            append_for(
+                tx,
+                &AuditRecord::RuleSwitched {
+                    ts: now,
+                    kind: RuleSwitchKind::RequestRule,
+                    id: Some(id),
+                    set_id: None,
+                    pattern: rule.host.clone(),
+                    workspace_id: rule.workspace.as_ref().map(ToString::to_string),
+                    enabled,
+                    actor: actor_str(actor),
+                },
+                rule.user,
+            )?;
+            fx.push(Event::RequestRulesChanged {});
+            Ok(rule)
+        })?;
+        tracing::info!(rule = id, enabled, "request rule switched");
         Ok(rule)
     }
 

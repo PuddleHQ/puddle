@@ -18,9 +18,9 @@ use puddle_compute::{ComputeError, Runtime};
 use puddle_e2e::lab::Interceptor;
 use puddle_upstream::{Hop, NoAuth, ProxyAddr};
 
-use crate::lab::REGISTRY;
-use crate::lab::pull::{Pull, registry_socket};
 use crate::rig::connection_records;
+use puddle_e2e::pull_lab::REGISTRY;
+use puddle_e2e::pull_lab::pull::{Pull, registry_socket};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_image_pull_through_an_intercepting_proxy_works_with_its_root_trusted() {

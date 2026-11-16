@@ -18,7 +18,7 @@
 // A session ends by closing its windows and waiting for the webview's browser process to exit, which
 // is what makes it write its cookies and local storage to disk; a kill would lose the last seconds.
 // What it does not show: the host choosing the ids and deleting the folders (the host tests do that
-// with real files), and WebKitGTK (no DevTools Protocol).
+// with real files). The WebKitGTK half, which has no DevTools Protocol, is origins-webkit.mjs.
 //
 // Environment: PUDDLE_APP_EXE (a debug build with all features: the in-memory fixture backend),
 // CDP_PORT (default 9336; each session uses the next two ports).

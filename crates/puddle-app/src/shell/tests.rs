@@ -238,6 +238,14 @@ fn the_probe_needs_a_page_and_a_debug_port() {
 }
 
 #[test]
+fn the_probe_opens_first_only_under_webdriver_automation() {
+    assert!(probe_goes_first(Some("true")));
+    for other in [None, Some("false"), Some("1"), Some("")] {
+        assert!(!probe_goes_first(other), "{other:?}");
+    }
+}
+
+#[test]
 fn the_probe_stands_for_the_workspace_the_environment_names_and_forgets_only_when_told_to() {
     let page = Some("http://k3x9q2ab.localhost:4900/");
     let named = SandboxProbe::parse(page, Some("9444"), Some("k3x9q2ab"), None).unwrap();

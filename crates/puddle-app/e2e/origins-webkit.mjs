@@ -260,7 +260,13 @@ async function session(n, id, forget, body) {
   } finally {
     // Stopping the driver closes the shell's window and ends the shell; wait for it, so the web
     // process has written its storage before the next session reads.
-    if (session) await call("DELETE", `/session/${session}`).catch(() => undefined);
+    if (session) {
+      await call("DELETE", `/session/${session}`).catch(() => undefined);
+      // The driver ends the shell after it has answered the delete, on its own time: stopping the
+      // driver before that leaves the shell running with nobody to stop it. Give the driver its
+      // moment; a shell that is still up after it is judged below, with its state.
+      await until(`session ${n}'s shell to go with its session`, async () => shellPids().length === 0, 10_000).catch(() => undefined);
+    }
     driver.kill();
     await until(`session ${n}'s shell to exit`, async () => shellPids().length === 0, 60_000).catch((err) => {
       check(`session ${n}: the shell exited`, false, `${err} (${shellState()})`);

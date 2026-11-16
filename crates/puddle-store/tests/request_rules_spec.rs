@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use puddle_store::testing::own;
 use puddle_store::{
-    Actor, AuditCursor, AuditFilter, Limits, MAX_REQUEST_RULES, ManualClock, NewRequestRule, Store,
-    StoreError,
+    Actor, AuditCursor, AuditFilter, Limits, MAX_REQUEST_RULES, ManualClock, NewRequestRule,
+    Precedence, Store, StoreError,
 };
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
@@ -43,6 +43,7 @@ fn new_rule(workspace: Option<&str>, host: &str, methods: &[&str], path: &str) -
         methods: Methods::parse(methods.iter().copied()).unwrap(),
         path: PathPattern::parse(path).unwrap(),
         created_by: Actor::Api,
+        precedence: Precedence::DEFAULT,
     }
 }
 

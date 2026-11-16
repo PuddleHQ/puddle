@@ -3,6 +3,7 @@
 
 use puddle_types::{RuleId, WorkspaceId};
 
+use crate::error::StoreError;
 use crate::pattern::Pattern;
 use crate::users::UserId;
 
@@ -15,18 +16,17 @@ pub enum Scope {
     /// One workspace.
     Workspace(WorkspaceId),
     /// An entry of a rule set the user made, by the set's id: it applies wherever the set is
-    /// switched on, and ranks below the user's own rules (R-39).
+    /// switched on, and ranks as a global rule (R-60).
     Set(i64),
 }
 
 impl Scope {
-    /// Precedence at equal pattern specificity (R-6 step 2): higher wins. `Workspace` 2,
-    /// `Global` 1, `Set` 0.
+    /// Rank at equal pattern specificity (R-6 step 2): higher wins. `Workspace` 2; `Global` and
+    /// an entry of a set 1 (R-60).
     #[must_use]
     pub fn rank(&self) -> u8 {
         match self {
-            Self::Set(_) => 0,
-            Self::Global => 1,
+            Self::Set(_) | Self::Global => 1,
             Self::Workspace(_) => 2,
         }
     }
@@ -57,6 +57,61 @@ impl Scope {
             Self::Workspace(_) => "workspace",
             Self::Set(_) => "set",
         }
+    }
+}
+
+/// How a rule ranks against the others that match (R-59, R-60): an integer from 1 to 9, higher
+/// wins. Built-in entries and System managed hosts sit below it at [`Precedence::BUILT_IN`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Precedence(u8);
+
+impl Precedence {
+    /// The lowest a user's rule can have.
+    pub const MIN: u8 = 1;
+    /// The highest a user's rule can have.
+    pub const MAX: u8 = 9;
+    /// What a rule has when nothing says otherwise, and what a rule stored before precedence
+    /// existed reads as.
+    pub const DEFAULT: Self = Self(5);
+    /// The fixed value of built-in entries and System managed hosts, below every user's rule.
+    pub const BUILT_IN: u8 = 0;
+
+    /// A precedence a user may give a rule.
+    ///
+    /// # Errors
+    /// [`StoreError::PrecedenceOutOfRange`] outside 1 to 9.
+    pub fn new(value: u8) -> Result<Self, StoreError> {
+        if (Self::MIN..=Self::MAX).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(StoreError::PrecedenceOutOfRange(i64::from(value)))
+        }
+    }
+
+    /// The number, 1 to 9.
+    #[must_use]
+    pub fn get(self) -> u8 {
+        self.0
+    }
+
+    /// Reads a stored value; a column the schema keeps within 1 to 9 can still hold anything if
+    /// the file was edited by hand.
+    pub(crate) fn from_stored(value: i64) -> Result<Self, StoreError> {
+        u8::try_from(value)
+            .map_err(|_| StoreError::PrecedenceOutOfRange(value))
+            .and_then(Self::new)
+    }
+}
+
+impl Default for Precedence {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl std::fmt::Display for Precedence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -148,6 +203,8 @@ pub struct Rule {
     /// Whether the rule takes part in decisions. A rule that is off never matches and keeps
     /// everything else it has (R-65).
     pub enabled: bool,
+    /// How it ranks against the other rules that match (R-59, R-60).
+    pub precedence: Precedence,
 }
 
 impl Rule {

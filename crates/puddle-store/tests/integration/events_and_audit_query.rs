@@ -436,6 +436,7 @@ fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
         created_by: "cli".into(),
         source_pending_id: None,
         set_id: None,
+        precedence: 5,
     }
 }
 
@@ -861,6 +862,7 @@ fn the_search_box_matches_each_text_column_and_combines_with_the_other_filters()
                 path: "/Admin/**".into(),
                 created_at: T0,
                 created_by: "ui".into(),
+                precedence: 5,
             },
         },
         // 6: no searchable text at all.

@@ -3168,6 +3168,11 @@ export interface components {
             methods: string[];
             /** @description The path pattern, in canonical form. */
             path: string;
+            /**
+             * Format: int32
+             * @description How the rule ranked, 1 to 9; a record from before precedence existed says 5.
+             */
+            precedence: number;
             /** @description Global or one workspace. */
             scope: components["schemas"]["AuditRequestRuleScope"];
             /** @description The workspace, for a workspace rule. */
@@ -3211,6 +3216,11 @@ export interface components {
             pattern: string;
             /** @description Exact or suffix. */
             pattern_kind: components["schemas"]["PatternKind"];
+            /**
+             * Format: int32
+             * @description How the rule ranked, 1 to 9; a record from before precedence existed says 5.
+             */
+            precedence: number;
             /** @description Global, one workspace or a set. */
             scope: components["schemas"]["AuditRuleScope"];
             /**
@@ -3240,6 +3250,11 @@ export interface components {
             created_at: number;
             /** @description `cli`, `ui` or `api`. */
             created_by: string;
+            /**
+             * Format: int32
+             * @description The precedence a new rule in the set took when none was named; `null` means 5.
+             */
+            default_precedence: number | null;
             /** @description Description. */
             description: string;
             fill: components["schemas"]["Fill"] | null;
@@ -4922,11 +4937,21 @@ export interface components {
              *     refused).
              */
             pattern: string;
+            /**
+             * Format: int32
+             * @description 1 to 9, higher wins. Left out: the default of the group the rule goes into, else 5.
+             */
+            precedence?: number | null;
             /** @description Global or one workspace. */
             scope: components["schemas"]["RuleScope"];
         };
         /** @description A rule set to make. */
         NewRuleSetRequest: {
+            /**
+             * Format: int32
+             * @description 1 to 9: what a new rule in the set takes when none is named; left out for 5.
+             */
+            default_precedence?: number | null;
             /** @description At most 500 characters. */
             description?: string;
             fill?: components["schemas"]["Fill"] | null;
@@ -5720,6 +5745,12 @@ export interface components {
             pattern: string;
             /** @description Exact or suffix. */
             pattern_kind: components["schemas"]["PatternKind"];
+            /**
+             * Format: int32
+             * @description How the rule ranks against the others that match, 1 to 9: the highest precedence decides,
+             *     even over a more specific rule.
+             */
+            precedence: number;
             /** @description Global or one workspace. */
             scope: components["schemas"]["RuleScope"];
             /**
@@ -5793,6 +5824,11 @@ export interface components {
             /** @description Exact or suffix. */
             pattern_kind: components["schemas"]["PatternKind"];
             /**
+             * Format: int32
+             * @description How the entry ranks, 1 to 9; a built-in entry is fixed at 0, below every rule of yours.
+             */
+            precedence: number;
+            /**
              * Format: int64
              * @description The entry's rule, for a set you made (delete or change it through `/api/rules`).
              */
@@ -5845,6 +5881,12 @@ export interface components {
         };
         /** @description A rule set's new name, description and colour. */
         RuleSetUpdateRequest: {
+            /**
+             * Format: int32
+             * @description 1 to 9: what a new rule in the set takes when none is named; left out keeps the one the
+             *     set has. Rules already in the set keep theirs.
+             */
+            default_precedence?: number | null;
             /** @description At most 500 characters. */
             description?: string;
             fill?: components["schemas"]["Fill"] | null;
@@ -5865,6 +5907,12 @@ export interface components {
             created_at: number | null;
             /** @description Whether it is on where nobody switched it: built-in sets ship off, your sets start on. */
             default_on: boolean;
+            /**
+             * Format: int32
+             * @description Your sets: the precedence a new rule in the set takes when none is named, 1 to 9; `null`
+             *     means 5. Changing it changes no rule already in the set.
+             */
+            default_precedence: number | null;
             /** @description What it is for. */
             description: string;
             /** @description Its entries. */

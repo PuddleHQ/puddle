@@ -109,6 +109,19 @@ describe("sorting", () => {
     expect(ids({ key: "effect", direction: "desc" })).toEqual([2, 3, 1]);
     expect(ids({ key: "scope", direction: "asc" })).toEqual([3, 1, 2]);
   });
+  it("sorts by precedence, equal ones by id", () => {
+    const ranked = [
+      rule(1, { precedence: 7 }),
+      rule(2, { precedence: 2 }),
+      rule(3, { precedence: 7 }),
+    ];
+    const order = (direction: "asc" | "desc") =>
+      view(ranked, NO_FILTER, { key: "precedence", direction }, NOW).map(
+        (r) => r.id,
+      );
+    expect(order("asc")).toEqual([2, 1, 3]);
+    expect(order("desc")).toEqual([3, 1, 2]);
+  });
   it("puts permanent rules after expiring ones when ascending", () => {
     expect(ids({ key: "expires", direction: "asc" })).toEqual([3, 2, 1]);
     expect(ids({ key: "expires", direction: "desc" })).toEqual([1, 2, 3]);

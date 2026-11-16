@@ -115,6 +115,7 @@ pub use rule_sets::{
     RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView,
     SystemManagedHost, SystemReason,
 };
+pub(crate) use rules::checked_precedence;
 pub use rules::{
     Actor, DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, NewRuleRequest,
     PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleEnabledRequest,

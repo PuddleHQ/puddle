@@ -10,7 +10,11 @@ export function actorLabel(actor: string): string {
   return actor === "workspace_create" ? "the create" : actor;
 }
 
-export type SortKey = "pattern" | "effect" | "scope" | "expires" | "created";
+/** The precedences a rule can have, lowest to highest (built-in entries sit at 0, below them). */
+export const PRECEDENCES = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+
+export type SortKey =
+  "pattern" | "effect" | "scope" | "precedence" | "expires" | "created";
 export type SortDirection = "asc" | "desc";
 export interface Sort {
   key: SortKey;
@@ -114,6 +118,8 @@ function compare(a: Rule, b: Rule, key: SortKey): number {
       return a.effect.localeCompare(b.effect);
     case "scope":
       return scopeLabel(a).localeCompare(scopeLabel(b));
+    case "precedence":
+      return a.precedence - b.precedence;
     case "expires":
       return (a.expires_at ?? FAR) - (b.expires_at ?? FAR);
     case "created":

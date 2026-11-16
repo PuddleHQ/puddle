@@ -9,24 +9,30 @@ use crate::engine::Hit;
 use crate::error::StoreError;
 use crate::pattern::{Pattern, SuffixPattern};
 use crate::pending::{PendingRow, PendingState};
-use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
+use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
 use crate::users::UserId;
 
 use super::audit::{append, append_for};
 use super::sql_ts;
 
-/// Writes a rule of `user`; a workspace or set scope must be theirs.
+/// Writes a rule of `user`; a workspace or set scope must be theirs. `precedence` `None` takes
+/// the default of the set the rule goes into, else 5 (R-59).
 pub(super) fn insert_rule(
     tx: &Transaction<'_>,
     user: UserId,
     new: &NewRule,
     now: u64,
     source: Option<PendingId>,
+    precedence: Option<Precedence>,
 ) -> Result<Rule, StoreError> {
+    let mut group_default = None;
     match &new.scope {
         Scope::Workspace(workspace) => super::users::require_owner(tx, workspace, user)?,
         Scope::Set(set) => {
-            super::sets::require_user_set(tx, user, *set)?;
+            group_default = super::sets::require_user_set(tx, user, *set)?
+                .default_precedence
+                .map(Precedence::new)
+                .transpose()?;
         }
         Scope::Global => {}
     }
@@ -37,8 +43,8 @@ pub(super) fn insert_rule(
     };
     tx.execute(
         "INSERT INTO rules (scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
-                            created_at, created_by, source_pending_id, user_id)
-         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11)",
+                            created_at, created_by, source_pending_id, user_id, precedence)
+         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11, ?12)",
         params![
             new.scope.as_str(),
             workspace,
@@ -51,6 +57,7 @@ pub(super) fn insert_rule(
             source.map(|id| id.0),
             new.scope.set(),
             user.get(),
+            precedence.or(group_default).unwrap_or_default().get(),
         ],
     )?;
     let rule = load_rule(tx, RuleId(tx.last_insert_rowid()))?;
@@ -193,7 +200,8 @@ pub(super) fn expire_rows(
 }
 
 pub(super) const RULE_COLUMNS: &str = "id, scope, workspace_id, pattern_kind, pattern, effect, expires_at, \
-                            created_at, created_by, source_pending_id, set_id, user_id, enabled";
+                            created_at, created_by, source_pending_id, set_id, user_id, enabled, \
+                            precedence";
 
 /// A `rules` row as SQLite holds it, before validation.
 pub(super) struct RawRule {
@@ -210,6 +218,7 @@ pub(super) struct RawRule {
     pub(super) set_id: Option<i64>,
     pub(super) user_id: i64,
     pub(super) enabled: i64,
+    pub(super) precedence: i64,
 }
 
 pub(super) fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
@@ -227,6 +236,7 @@ pub(super) fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
         set_id: row.get(10)?,
         user_id: row.get(11)?,
         enabled: row.get(12)?,
+        precedence: row.get(13)?,
     })
 }
 
@@ -282,6 +292,7 @@ pub(super) fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
         created_by: Actor::parse(&raw.created_by).ok_or_else(|| bad("created_by"))?,
         source_pending_id: raw.source_pending_id.map(PendingId),
         enabled: raw.enabled != 0,
+        precedence: Precedence::from_stored(raw.precedence).map_err(|_| bad("precedence"))?,
     })
 }
 

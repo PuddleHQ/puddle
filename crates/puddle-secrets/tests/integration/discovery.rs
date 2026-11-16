@@ -137,3 +137,18 @@ async fn git_credential_manager_lists_are_read_from_standard_error_too() {
     );
     assert!(!format!("{found:?}").contains(CANARY));
 }
+
+#[tokio::test]
+async fn standard_error_is_not_read_for_gh_or_for_a_failed_gcm_listing() {
+    let fakes = Fakes::new();
+    // gh's JSON is on standard output; a line on standard error must not be glued to it.
+    let gh = fakes.install(
+        "gh",
+        "[auth status --json hosts]\nstdout={\"hosts\":{\"github.com\":[{\"login\":\"me\"}]}}\nstderr={\"hosts\":{}}\\n\n",
+    );
+    // a failed GCM listing is not read, whatever it printed
+    let git = fakes.install("git", "[github list]\nexit=1\nstderr=ghost\\n\n");
+    let found = discover(&ToolPaths::new(Some(gh), Some(git))).await;
+    let names: Vec<_> = found.accounts.iter().map(|a| a.account.as_str()).collect();
+    assert_eq!(names, ["me"]);
+}

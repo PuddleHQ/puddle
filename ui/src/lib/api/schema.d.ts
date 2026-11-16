@@ -3702,7 +3702,7 @@ export interface components {
          * @description The input of a request a refusal is about, so a form can put the message beside it.
          * @enum {string}
          */
-        ErrorField: "name" | "repo_url" | "image" | "memory_mib" | "start_folder" | "local_path" | "url" | "directory";
+        ErrorField: "name" | "repo_url" | "image" | "memory_mib" | "cpus" | "start_folder" | "local_path" | "url" | "directory";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -4696,6 +4696,13 @@ export interface components {
         NewWorkspaceIdentityBasis: "chosen" | "covers" | "default" | "none";
         /** @description `POST /api/workspaces`. */
         NewWorkspaceRequest: {
+            /**
+             * Format: int32
+             * @description The workspace's own vCPU count (at least 1, at most the global maximum, which
+             *     `GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows
+             *     the global default. Stored as the workspace's own setting, so it applies from the first start.
+             */
+            cpus?: number | null;
             /** @description The image to boot; left out or `null` is the default devcontainer image. */
             image?: string | null;
             /**

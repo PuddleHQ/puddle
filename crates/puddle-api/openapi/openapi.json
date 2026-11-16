@@ -12642,7 +12642,8 @@
             "description": "Where in the order; omitted means last.",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "AttachMode": {
         "type": "string",
@@ -14619,7 +14620,8 @@
             "type": "boolean",
             "description": "Every other owner on the host. At least one of the two must be set."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CredentialSource": {
         "oneOf": [
@@ -15512,6 +15514,7 @@
           "repo_url",
           "image",
           "memory_mib",
+          "cpus",
           "start_folder",
           "local_path",
           "url",
@@ -16703,7 +16706,8 @@
             "type": "string",
             "description": "`repo`, or `project/repo` on Azure DevOps; `.git` is dropped."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GitRepoToggles": {
         "type": "object",
@@ -16721,7 +16725,8 @@
             "type": "boolean",
             "description": "A push to it may go out."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GitRepoView": {
         "type": "object",
@@ -16787,7 +16792,8 @@
             ],
             "description": "\"Only push to listed repos\"."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GlobalNeverDecrypt": {
         "type": "object",
@@ -16803,7 +16809,8 @@
             },
             "description": "The names, as for a workspace; sorted. On saving, replaces the whole list. At most 500."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "GlobalSettingsRequest": {
         "type": "object",
@@ -16958,7 +16965,8 @@
             "type": "string",
             "description": "`user.name`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentityCredential": {
         "type": "object",
@@ -16981,7 +16989,8 @@
             "$ref": "#/components/schemas/CredentialSource",
             "description": "Where its value comes from."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentityCredentialView": {
         "type": "object",
@@ -17073,7 +17082,8 @@
             },
             "description": "The ids, first to last."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentityRequest": {
         "type": "object",
@@ -17099,7 +17109,8 @@
             "type": "string",
             "description": "The name you see; unique whatever the case."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "IdentitySigning": {
         "type": "string",
@@ -17250,7 +17261,8 @@
             },
             "description": "Replaces the workspace's never-decrypt names. Each is a host name or `*.` followed by a\ndomain with at least two labels; no IP addresses. At most 500."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "InterceptionSettingsRequest": {
         "type": "object",
@@ -17281,7 +17293,8 @@
             ],
             "description": "Records that the user has seen the notice."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "InterceptionSettingsView": {
         "type": "object",
@@ -17606,7 +17619,8 @@
             "description": "Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Limits": {
         "type": "object",
@@ -17624,7 +17638,8 @@
             "description": "The most vCPUs a workspace may have. `null` is the computer's logical cores.",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "LocalCategory": {
         "type": "string",
@@ -17720,7 +17735,8 @@
             "$ref": "#/components/schemas/PermanentScope",
             "description": "Which never-decrypt list gets the host."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "NetworkHealth": {
         "type": "object",
@@ -17964,6 +17980,15 @@
           "name"
         ],
         "properties": {
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The workspace's own vCPU count (at least 1, at most the global maximum, which\n`GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows\nthe global default. Stored as the workspace's own setting, so it applies from the first start.",
+            "minimum": 1
+          },
           "image": {
             "type": [
               "string",
@@ -20180,7 +20205,8 @@
             "type": "string",
             "description": "The whole script. Line ends become LF. At most 48 KiB, no NUL, not empty (to remove the\nshell init, delete it)."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ShellInitSaved": {
         "type": "object",
@@ -21554,7 +21580,8 @@
             },
             "description": "The ids in order."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "WorkspaceList": {
         "type": "object",
@@ -21828,7 +21855,8 @@
             "type": "boolean",
             "description": "Drop the workspace's own push value, so it follows the default again. Not with\n`only_push_listed`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "WorkspaceTools": {
         "type": "object",

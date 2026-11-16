@@ -74,8 +74,9 @@ To block API writes, add your own request rule on method and path for `api.githu
 refusing `POST`, `PUT`, `PATCH` and `DELETE`. The push list does not do this for you.
 
 An SSH address on the Git tab's add form is listed as the same repository as its HTTPS address.
-The form reads only the four hosts above, so for your own server add the HTTPS address. The
-create-workspace form still asks for an `https://` address.
+The create-workspace form and the add-repository form take an SSH address too and clone the
+repository over HTTPS. They read only the four hosts above, so for your own server give the HTTPS
+address.
 
 ## Limits
 

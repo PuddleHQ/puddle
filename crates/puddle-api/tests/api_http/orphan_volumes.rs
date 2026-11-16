@@ -62,7 +62,7 @@ async fn a_disk_with_no_readable_address_asks_for_one_and_refuses_one_that_is_no
         .send(
             "POST",
             "/api/orphan-volumes/bare/restore",
-            Some(&json!({"repository": "git@github.com:acme/api.git"})),
+            Some(&json!({"repository": "git@git.example.com:acme/api.git"})),
         )
         .await;
     assert_eq!(ssh.status, 422, "{}", ssh.body);

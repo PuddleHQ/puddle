@@ -236,8 +236,9 @@ pub struct WorkspaceList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewRepositoryRequest {
-    /// The repository to clone, as an `https://` URL without credentials. SSH remotes
-    /// (`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it
+    /// The repository to clone, as an `https://` URL without credentials. An SSH address
+    /// (`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its
+    /// HTTPS address; one of any other host is refused with a message that says so. With `local_path` it
     /// may be left out or empty: the checkout's `origin` remote gives it (an SSH remote of
     /// GitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form).
     #[serde(default)]

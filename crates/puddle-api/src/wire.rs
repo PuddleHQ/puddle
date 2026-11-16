@@ -52,8 +52,9 @@ pub use admin::{
 pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
 pub use audit::{
     AuditEntry, AuditOutcome, AuditPage, AuditPending, AuditRequestRule, AuditRequestRuleScope,
-    AuditRule, AuditRuleScope, AuditRuleSet, AuditType, ConnectionDecision, ConnectionOrigin,
-    ConnectionOutcome, PendingExpiryReason, RuleDeleteReason, WorkspaceOpKind, WorkspaceOpOutcome,
+    AuditRetentionRequest, AuditRule, AuditRuleScope, AuditRuleSet, AuditSize, AuditType,
+    ConnectionDecision, ConnectionOrigin, ConnectionOutcome, PendingExpiryReason, RuleDeleteReason,
+    WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use audit_record::AuditRecord;
 pub use auth::{

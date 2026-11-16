@@ -26,7 +26,7 @@ fn workspace() -> tempfile::TempDir {
     puddle_test_kit::write_executable(
         &root.path().join(".puddle/mise/bin/mise"),
         &format!(
-            "#!/bin/sh\ncase \"$1\" in\n  ls) echo '{{\"node\":[{{\"requested_version\":\"22\",\"installed\":true,\"source\":{{\"path\":\"{dir}/mise.toml\"}}}}]}}' ;;\n  config) echo \"$5=$6\" >> \"{dir}/mise.toml\" ;;\n  unuse) grep -vF \"tools.\\\"$5\\\"\" \"{dir}/mise.toml\" > \"{dir}/tmp\"; cat \"{dir}/tmp\" > \"{dir}/mise.toml\" ;;\n  registry) echo '[{{\"short\":\"node\",\"description\":\"JS\"}}]' ;;\n  ls-remote) [ \"$2\" = broken ] && {{ echo 'mise ERROR no route to mise-versions.jdx.dev' >&2; exit 1; }}; printf '20.0.0\\n22.0.0\\n' ;;\nesac\n"
+            "#!/bin/sh\ncase \"$1\" in\n  ls) echo '{{\"node\":[{{\"requested_version\":\"22\",\"installed\":true,\"source\":{{\"path\":\"{dir}/mise.toml\"}}}}]}}' ;;\n  config) echo \"$5=$6\" >> \"{dir}/mise.toml\" ;;\n  unuse) grep -vF \"tools.\\\"$5\\\"\" \"{dir}/mise.toml\" > \"{dir}/tmp\"; cat \"{dir}/tmp\" > \"{dir}/mise.toml\" ;;\n  registry) echo '[{{\"short\":\"node\",\"description\":\"JS\"}}]' ;;\n  ls-remote) [ \"$2\" = silent ] && exit 3; [ \"$2\" = broken ] && {{ echo 'mise ERROR no route to mise-versions.jdx.dev' >&2; exit 1; }}; printf '20.0.0\\n22.0.0\\n' ;;\nesac\n"
         ),
     );
     root
@@ -98,6 +98,12 @@ fn the_registry_and_the_versions_are_records_and_a_failure_names_its_reason() {
     assert_eq!(
         text(&broken.stderr).trim(),
         "mise ERROR no route to mise-versions.jdx.dev"
+    );
+    let silent = mise_tools(root.path(), &["versions", "silent"]);
+    assert_eq!(silent.status.code(), Some(1), "{silent:?}");
+    assert!(
+        text(&silent.stderr).starts_with("mise ls-remote ended with exit status: 3"),
+        "{silent:?}"
     );
 }
 

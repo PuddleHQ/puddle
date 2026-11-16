@@ -20,7 +20,7 @@ use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::profile::{Profile, Slot};
-// The tests below name roles through `super::*`.
+// The tests in `vault/tests.rs` name roles through `super::*`.
 #[cfg(test)]
 use crate::profile::Role;
 

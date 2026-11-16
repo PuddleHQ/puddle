@@ -169,7 +169,7 @@ mod tests {
         record
     }
 
-    fn says(result: Result<(), WorkspaceError>, words: &str) {
+    fn says(result: &Result<(), WorkspaceError>, words: &str) {
         let shown = format!("{result:?}");
         assert!(
             matches!(
@@ -188,17 +188,17 @@ mod tests {
             assert!(admit_start(&r).is_ok());
             assert!(admit_reset_root_disk(&r).is_ok());
             assert!(admit_delete_status(&r).is_ok());
-            says(admit_stop(&r), "is not running");
+            says(&admit_stop(&r), "is not running");
         }
         for status in [Running, Starting, Draining] {
             let r = record(status);
-            says(admit_start(&r), "is already");
-            says(admit_reset_root_disk(&r), "stop it before resetting");
-            says(admit_delete_status(&r), "stop it before deleting");
+            says(&admit_start(&r), "is already");
+            says(&admit_reset_root_disk(&r), "stop it before resetting");
+            says(&admit_delete_status(&r), "stop it before deleting");
         }
         assert!(admit_stop(&record(Running)).is_ok());
-        says(admit_settled(&record(Starting)), "try again in a moment");
-        says(admit_settled(&record(Draining)), "try again in a moment");
+        says(&admit_settled(&record(Starting)), "try again in a moment");
+        says(&admit_settled(&record(Draining)), "try again in a moment");
         assert!(admit_settled(&record(Running)).is_ok());
     }
 
@@ -207,14 +207,14 @@ mod tests {
         let mut r = record(WorkspaceStatus::Running);
         assert!(admit_idle(&r).is_ok());
         r.busy = Some(Operation::Stopping);
-        says(admit_idle(&r), "is busy (stopping)");
+        says(&admit_idle(&r), "is busy (stopping)");
     }
 
     #[test]
     fn a_root_disk_only_grows() {
         assert!(admit_grow_size(5000, 4096).is_ok());
-        says(admit_grow_size(4096, 4096), "only grows");
-        says(admit_grow_size(100, 4096), "its 4096 MiB");
+        says(&admit_grow_size(4096, 4096), "only grows");
+        says(&admit_grow_size(100, 4096), "its 4096 MiB");
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         assert!(admit_delete_fingerprint(&r, None, &clean).is_ok());
         assert!(admit_delete_fingerprint(&r, Some(&clean.fingerprint), &clean).is_ok());
         says(
-            admit_delete_fingerprint(&r, Some("stale"), &clean),
+            &admit_delete_fingerprint(&r, Some("stale"), &clean),
             "has changed since it was checked",
         );
     }

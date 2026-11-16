@@ -26,6 +26,7 @@ on:
       - fake-host-starved
       - lab-override
       - live-contracts
+      - real-tools
       - lab-forgejo
       - freshness
     types: [completed]

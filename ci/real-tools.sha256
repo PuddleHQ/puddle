@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The real GitHub CLI and Git Credential Manager that ci/fetch-real-tools.sh installs for the
+# real-tools contract (crates/puddle-secrets/tests/integration/real_tools.rs): <tool> <version> <asset> <sha256>.
+# gh: github.com/cli/cli releases (the asset's digest on the release page). gcm: github.com/git-ecosystem/git-credential-manager
+# releases; the Windows zip holds the same git-credential-manager.exe that Git for Windows bundles.
+# Move a pin only together with a green run of .github/workflows/real-tools.yml.
+gh 2.104.0 gh_2.104.0_windows_amd64.zip 08c06d10482f12c478018cd259f64acbd5f625712cadf331aad19ba973c879e5
+gh 2.104.0 gh_2.104.0_linux_amd64.tar.gz 98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e
+gcm 3.0.2 gcm-win-x64-3.0.2.zip 9d2bef6e42a37654ea7ef33172bbcf1b6a1df6191fcf6a57dfbf39e1cbc27a0f
+gcm 3.0.2 gcm-linux-x64-3.0.2.tar.gz b8e59e22a830006ca4d93e34513effbb2d9fc0c45d9ccf40395eaab7c4c1b97e

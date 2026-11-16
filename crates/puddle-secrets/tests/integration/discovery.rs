@@ -104,3 +104,36 @@ async fn a_missing_tool_or_a_logged_out_cli_is_a_problem_not_a_failure() {
             .contains(&(Listing::GcmAzureRepos, SourceError::ToolMissing(Tool::Git)))
     );
 }
+
+#[tokio::test]
+async fn git_credential_manager_lists_are_read_from_standard_error_too() {
+    // GCM 3.0.2 prints both `list` commands on standard error and leaves standard output empty.
+    let fakes = Fakes::new();
+    let git = fakes.install(
+        "git",
+        &format!(
+            "[github list]\nstderr=me\\nwarning: a diagnostic line\\n\n\
+             [azure-repos list]\nstderr=acme:\\n  (global) -> me@example.com\\n\nstdout=token {CANARY}\\n\n"
+        ),
+    );
+    let found = discover(&ToolPaths::new(None, Some(git))).await;
+    let rows: Vec<_> = found
+        .accounts
+        .iter()
+        .map(|a| {
+            (
+                a.via,
+                a.account.as_str(),
+                a.org.as_ref().map(puddle_secrets::OrgName::as_str),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (Listing::GcmGithub, "me", None),
+            (Listing::GcmAzureRepos, "me@example.com", Some("acme")),
+        ]
+    );
+    assert!(!format!("{found:?}").contains(CANARY));
+}

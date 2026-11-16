@@ -1785,6 +1785,82 @@
         ]
       }
     },
+    "/api/backup": {
+      "post": {
+        "tags": [
+          "backup"
+        ],
+        "summary": "Makes a backup now and sends it as one file (`application/gzip`, named\n`puddle-backup-<UTC time>.tar.gz`). It holds the rules, settings, workspace list, identities,\nusers and audit log as of one moment, and never a secret value, a password hash or a workspace\ndisk. The file is sent as it is read, so its size does not set a memory limit; a failure while\nit is moving ends the connection, so a client that sees the whole body has a complete file.\nA `POST` so that no link, prefetch or cache can start one.",
+        "operationId": "create_backup",
+        "responses": {
+          "200": {
+            "description": "the backup file",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may make a backup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the data cannot be read or the file cannot be written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/consents": {
       "get": {
         "tags": [
@@ -6092,6 +6168,99 @@
         }
       }
     },
+    "/api/request-rules/{id}/enabled": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Switches a rule on method and path on or off. A rule that is off is kept, refuses nothing\nand no longer makes its host decrypt.",
+        "operationId": "set_request_rule_enabled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the changed rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestRule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rule-sets": {
       "get": {
         "tags": [
@@ -6424,6 +6593,108 @@
         }
       }
     },
+    "/api/rule-sets/{id}/entry-switch": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Switches one entry of a built-in set on or off for every workspace, and closes the open\nrequests that now decides. The rest of the set is unchanged.",
+        "operationId": "switch_builtin_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`builtin:<slug>`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleSetEntrySwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the set and the requests it closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetSwitched"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such set or entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "System managed or a set you made",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rule-sets/{id}/switch": {
       "put": {
         "tags": [
@@ -6688,6 +6959,99 @@
         "responses": {
           "200": {
             "description": "the deleted rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rules/{id}/enabled": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Switches a rule on or off. A rule that is off is kept and never matches; switching one on\ncloses the open requests it now decides.",
+        "operationId": "set_rule_enabled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the changed rule",
             "content": {
               "application/json": {
                 "schema": {
@@ -13306,6 +13670,73 @@
           },
           {
             "type": "object",
+            "description": "A rule, a rule on method and path, or a built-in entry switched on or off.",
+            "required": [
+              "ts",
+              "kind",
+              "id",
+              "set_id",
+              "pattern",
+              "workspace_id",
+              "enabled",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who switched it."
+              },
+              "enabled": {
+                "type": "boolean",
+                "description": "The new state."
+              },
+              "id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "The row id of a rule or rule on method and path; `null` for a built-in entry."
+              },
+              "kind": {
+                "$ref": "#/components/schemas/RuleSwitchKind",
+                "description": "What was switched."
+              },
+              "pattern": {
+                "type": "string",
+                "description": "The host pattern."
+              },
+              "set_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`builtin:<slug>` or `user:<id>` for an entry of a set; `null` for a rule outside one."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_switched"
+                ]
+              },
+              "workspace_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The workspace the rule is for; `null` for every workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A rule deleted.",
             "required": [
               "ts",
@@ -14084,6 +14515,7 @@
           "pending_suppressed",
           "rule_created",
           "rule_updated",
+          "rule_switched",
           "rule_deleted",
           "rule_expired",
           "request_rule_created",
@@ -19220,6 +19652,7 @@
           "path",
           "created_at",
           "created_by",
+          "enabled",
           "warning"
         ],
         "properties": {
@@ -19232,6 +19665,10 @@
           "created_by": {
             "type": "string",
             "description": "`cli`, `ui` or `api`."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the rule refuses anything. A rule that is off is kept and checks nothing."
           },
           "host": {
             "type": "string",
@@ -19513,7 +19950,8 @@
           "expires_at",
           "created_at",
           "created_by",
-          "source_pending_id"
+          "source_pending_id",
+          "enabled"
         ],
         "properties": {
           "created_at": {
@@ -19529,6 +19967,10 @@
           "effect": {
             "$ref": "#/components/schemas/Effect",
             "description": "Allow or deny."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the rule takes part in decisions. A rule that is off is kept and never matches."
           },
           "expires_at": {
             "type": [
@@ -19574,6 +20016,20 @@
           "workspace_deleted",
           "set_deleted"
         ]
+      },
+      "RuleEnabledRequest": {
+        "type": "object",
+        "description": "Switch a rule on or off.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`true` to switch the rule on, `false` to switch it off. Off keeps the rule and its place."
+          }
+        },
+        "additionalProperties": false
       },
       "RuleExpiryRequest": {
         "type": "object",
@@ -19679,6 +20135,7 @@
           "pattern_kind",
           "effect",
           "note",
+          "enabled",
           "rule_id",
           "expires_at"
         ],
@@ -19686,6 +20143,10 @@
           "effect": {
             "$ref": "#/components/schemas/Effect",
             "description": "Allow or deny (a built-in set's entries all do the same; your own set may mix them)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the entry takes part in decisions. You switch a built-in entry off on its own\nwith `PUT /api/rule-sets/{id}/entry-switch`, a rule of your own set through its rule."
           },
           "expires_at": {
             "type": [
@@ -19717,6 +20178,25 @@
             "description": "The entry's rule, for a set you made (delete or change it through `/api/rules`)."
           }
         }
+      },
+      "RuleSetEntrySwitchRequest": {
+        "type": "object",
+        "description": "Switch one entry of a built-in set on or off.",
+        "required": [
+          "pattern",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`true` to switch the entry on, `false` to switch it off."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "The entry as the set lists it (`api.github.com`, `*.github.com`)."
+          }
+        },
+        "additionalProperties": false
       },
       "RuleSetKind": {
         "type": "string",
@@ -19928,6 +20408,15 @@
             "description": "Workspaces with a switch of their own."
           }
         }
+      },
+      "RuleSwitchKind": {
+        "type": "string",
+        "description": "What a `rule_switched` record switched.",
+        "enum": [
+          "rule",
+          "request_rule",
+          "builtin_entry"
+        ]
       },
       "SandboxName": {
         "type": "string",
@@ -21933,6 +22422,10 @@
     {
       "name": "consents",
       "description": "What the user agreed to"
+    },
+    {
+      "name": "backup",
+      "description": "A backup of Puddle's own state as one download. Owner only"
     },
     {
       "name": "doctor",

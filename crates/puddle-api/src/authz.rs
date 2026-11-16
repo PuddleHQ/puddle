@@ -124,6 +124,8 @@ pub(crate) enum Action {
     UseComputerAccounts,
     /// The user list and its changes (the admin screen).
     ManageUsers,
+    /// A backup of the whole install: every user's rules, settings and audit.
+    BackUp,
     /// Serving the API beyond this computer.
     #[cfg_attr(
         not(test),
@@ -163,6 +165,7 @@ impl Action {
             | Self::ChangeInstall
             | Self::UseComputerAccounts
             | Self::ManageUsers
+            | Self::BackUp
             | Self::SetRemoteServing => true,
         }
     }
@@ -386,6 +389,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         ("PUT", "/api/auth/password")
         | ("GET", "/api/devices")
         | ("DELETE", "/api/devices/{id}") => (A::ManageSessions, T::Own),
+        ("POST", "/api/backup") => (A::BackUp, T::Install),
         ("GET", "/api/admin/users" | "/api/admin/stats" | "/api/admin/audit")
         | ("POST", "/api/admin/users" | "/api/admin/users/{id}/invite")
         | ("DELETE", "/api/admin/users/{id}") => (A::ManageUsers, T::Install),
@@ -502,14 +506,19 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         }
         ("GET", "/api/rules" | "/api/request-rules") => (A::ReadRules, T::Own),
         ("POST", "/api/rules" | "/api/request-rules") => (A::ChangeRules, T::Own),
-        ("DELETE", "/api/rules/{id}") | ("PUT", "/api/rules/{id}/expiry") => {
+        ("DELETE", "/api/rules/{id}")
+        | ("PUT", "/api/rules/{id}/expiry" | "/api/rules/{id}/enabled") => {
             (A::ChangeRules, T::Rule)
         }
-        ("DELETE", "/api/request-rules/{id}") => (A::ChangeRules, T::RequestRule),
+        ("DELETE", "/api/request-rules/{id}") | ("PUT", "/api/request-rules/{id}/enabled") => {
+            (A::ChangeRules, T::RequestRule)
+        }
         ("GET", "/api/rule-sets") => (A::ReadGlobalRules, T::Own),
         ("POST", "/api/rule-sets")
         | ("PUT" | "DELETE", "/api/rule-sets/{id}")
-        | ("PUT", "/api/rule-sets/{id}/switch") => (A::ChangeGlobalRules, T::Own),
+        | ("PUT", "/api/rule-sets/{id}/switch" | "/api/rule-sets/{id}/entry-switch") => {
+            (A::ChangeGlobalRules, T::Own)
+        }
         ("GET", "/api/audit") => (A::ReadAudit, T::Own),
         ("GET", "/api/identities" | "/api/identities/git-defaults" | "/api/identities/{id}") => {
             (A::ReadIdentities, T::Own)

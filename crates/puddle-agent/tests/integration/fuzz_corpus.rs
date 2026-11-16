@@ -14,14 +14,11 @@ use arbitrary::{Arbitrary, Unstructured};
 use puddle_agent::capture::wire::{self, MAX_QUERY, QueryName, Reject};
 
 // The same checks the cargo-fuzz target runs.
-#[path = "../../../../fuzz/checks/dns_message.rs"]
-mod dns_message;
-#[path = "../../../../fuzz/checks/dns_message_grammar.rs"]
-mod dns_message_grammar;
-use dns_message_grammar::Message;
-#[path = "../../../../fuzz/checks/dns_transport.rs"]
-mod dns_transport;
-use dns_transport::{Probe, Stream};
+#[path = "../../../../fuzz/src/lib.rs"]
+pub mod fuzz_checks;
+use fuzz_checks::dns_message_builder::Message;
+use fuzz_checks::dns_transport::{self, Probe, Stream};
+use fuzz_checks::{dns_message, dns_message_grammar};
 
 fn corpus() -> Vec<(String, Vec<u8>)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/dns_message");

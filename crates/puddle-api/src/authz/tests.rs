@@ -130,6 +130,7 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
             "PUT /api/identities/{id} Own",
             "PUT /api/identities/{id}/default Own",
             "PUT /api/rule-sets/{id} Own",
+            "PUT /api/rule-sets/{id}/entry-switch Own",
             "PUT /api/rule-sets/{id}/switch Own",
         ]
     );
@@ -185,6 +186,7 @@ fn owner_only_actions_and_the_install_token_rule() {
         Action::ChangeInstall,
         Action::UseComputerAccounts,
         Action::ManageUsers,
+        Action::BackUp,
         Action::SetRemoteServing,
     ] {
         assert!(action.owner_only(), "{action:?}");
@@ -251,6 +253,7 @@ fn the_owner_alone_does_install_things_and_only_with_the_token_widens_reach() {
         (Action::ReadInstall, ResourceRef::Install),
         (Action::ReadService, ResourceRef::Install),
         (Action::ManageUsers, ResourceRef::Own),
+        (Action::BackUp, ResourceRef::Install),
         (Action::UseComputerAccounts, ResourceRef::Install),
     ] {
         assert!(
@@ -687,7 +690,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 54, "routes that name a resource");
+    assert_eq!(checked, 56, "routes that name a resource");
     shut_down(pair).await;
 }
 

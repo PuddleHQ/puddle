@@ -15,6 +15,7 @@ use utoipa_axum::routes;
 
 use crate::admin::AdminService;
 use crate::authz::Authorizer;
+use crate::backup::BackupService;
 use crate::credential_store::CredentialStoreService;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
@@ -34,6 +35,7 @@ mod admin;
 mod app_icon;
 mod audit;
 pub(crate) mod auth;
+mod backup;
 mod credential_store;
 mod credentials;
 mod doctor;
@@ -103,6 +105,8 @@ pub(crate) struct AppState {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) repos: Arc<dyn RepoService>,
     pub(crate) doctor: Arc<dyn DoctorService>,
+    /// Makes the backup Settings downloads.
+    pub(crate) backup: Arc<dyn BackupService>,
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
     /// The credential store check the first-run banner retries.
@@ -268,11 +272,13 @@ fn rules_router() -> OpenApiRouter<AppState> {
         .routes(routes!(rules::list_rules, rules::create_rule))
         .routes(routes!(rules::delete_rule))
         .routes(routes!(rules::set_rule_expiry))
+        .routes(routes!(rules::set_rule_enabled))
         .routes(routes!(
             request_rules::list_request_rules,
             request_rules::create_request_rule
         ))
         .routes(routes!(request_rules::delete_request_rule))
+        .routes(routes!(request_rules::set_request_rule_enabled))
         .routes(routes!(
             rule_sets::list_rule_sets,
             rule_sets::create_rule_set
@@ -282,6 +288,7 @@ fn rules_router() -> OpenApiRouter<AppState> {
             rule_sets::delete_rule_set
         ))
         .routes(routes!(rule_sets::switch_rule_set))
+        .routes(routes!(rule_sets::switch_builtin_entry))
 }
 
 /// The upload of the user's own app icon: the one route whose body may be a few megabytes.
@@ -348,10 +355,11 @@ fn environment_router() -> OpenApiRouter<AppState> {
 }
 
 /// The routes that may take far longer than the rest (the system check boots a test machine, the
-/// certificate's trust waits for the user), so they get their own, longer time limit.
+/// certificate's trust waits for the user, a backup copies a large database), so they get their own, longer time limit.
 pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
+        .routes(routes!(backup::create_backup))
         .routes(routes!(first_run::trust_dev_certificate))
         .routes(routes!(credential_store::retry_credential_store))
 }

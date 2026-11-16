@@ -25,6 +25,8 @@ pub struct RequestRule {
     pub created_at: u64,
     /// `cli`, `ui` or `api`.
     pub created_by: String,
+    /// Whether the rule refuses anything. A rule that is off is kept and checks nothing.
+    pub enabled: bool,
     /// Set when the rule's host is on a never-decrypt list the rule applies under (the global
     /// one, and the workspace's own or, for a global rule, any workspace's): the rule decrypts the
     /// host anyway, so a tool there that does not trust Puddle's certificate fails on it. Names
@@ -46,6 +48,7 @@ impl RequestRule {
             path: rule.path.to_string(),
             created_at: rule.created_at,
             created_by: rule.created_by.as_str().to_owned(),
+            enabled: rule.enabled,
             warning,
         }
     }

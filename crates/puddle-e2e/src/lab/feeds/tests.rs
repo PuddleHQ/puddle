@@ -2,12 +2,22 @@
 use super::*;
 
 fn ask(feeds: &Responder, host: &str, target: &str, auth: Option<&str>) -> WebAnswer {
+    ask_with(feeds, "GET", host, target, auth)
+}
+
+fn ask_with(
+    feeds: &Responder,
+    method: &str,
+    host: &str,
+    target: &str,
+    auth: Option<&str>,
+) -> WebAnswer {
     let mut headers = vec![("host".to_owned(), host.to_owned())];
     if let Some(auth) = auth {
         headers.push(("authorization".to_owned(), auth.to_owned()));
     }
     feeds(&Seen {
-        method: "GET".into(),
+        method: method.into(),
         target: target.into(),
         headers,
         version: "HTTP/1.1",
@@ -148,4 +158,27 @@ fn the_npm_document_names_the_sha1_of_the_tarball_it_serves() {
         doc["versions"]["1.0.0"]["dist"]["shasum"],
         hex(&sha1::Sha1::digest(&tarball.body))
     );
+}
+
+#[test]
+fn an_upload_needs_the_token_and_only_the_publish_package_is_accepted() {
+    let feeds = feeds();
+    let basic = format!("Basic {}", STANDARD.encode("user:real-token"));
+    let wrong = format!("Basic {}", STANDARD.encode("user:stand-in"));
+    let npm = format!("/{NPM_PUBLISH_PACKAGE}");
+    let jar = format!("{MAVEN_PUBLISH_DIR}1.0/probe-published-1.0.jar");
+    for (host, path, auth) in [
+        ("npm.test", npm.as_str(), "Bearer real-token"),
+        ("mvn.test", jar.as_str(), basic.as_str()),
+    ] {
+        let put = |auth| ask_with(&feeds, "PUT", host, path, auth).status;
+        assert_eq!(put(None), 401, "{host}");
+        assert_eq!(put(Some(&wrong)), 401, "{host}");
+        assert_eq!(put(Some(auth)), 201, "{host}");
+    }
+    let put = |host, path, auth| ask_with(&feeds, "PUT", host, path, Some(auth)).status;
+    assert_eq!(put("npm.test", "/probe-private", "Bearer real-token"), 405);
+    assert_eq!(put("mvn.test", &npm, &basic), 405);
+    assert_eq!(put("nuget.test", "/v3/index.json", &basic), 405);
+    assert_eq!(put("pip.test", "/simple/probe-private/", &basic), 405);
 }

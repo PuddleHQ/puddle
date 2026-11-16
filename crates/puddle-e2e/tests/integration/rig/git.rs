@@ -8,7 +8,6 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
 use std::io;
 use std::net::SocketAddr;
@@ -110,6 +109,7 @@ impl GitRig {
 
     /// As [`Self::new`], with the proxy's upstream leg going through the company proxy that the
     /// PAC answer `hops` names, signing in with `auth`.
+    #[cfg(unix)]
     pub(crate) async fn via(hops: Vec<Hop>, auth: Arc<dyn ProxyAuth>) -> Self {
         let host = GitHost::start(NAME, Versions::Http1).await;
         Self::via_host(host, hops, auth, None).await
@@ -117,6 +117,7 @@ impl GitRig {
 
     /// As [`Self::via`] for a host started by the caller (a lab proxy needs its port first) and
     /// with the roots the proxy trusts for the upstream leg (the host's own root when `None`).
+    #[cfg(unix)]
     pub(crate) async fn via_host(
         host: GitHost,
         hops: Vec<Hop>,

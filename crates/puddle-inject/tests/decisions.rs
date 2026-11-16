@@ -3,6 +3,12 @@
 //! passes unchanged, a request with none gets the credential of the identity that covers its
 //! owner, the repository table gates every push and (when asked) pull, and every refusal says
 //! why in one line.
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "helpers outside #[test] functions fail the test by panicking"
+)]
+
 mod support;
 
 use std::fmt::Write as _;
@@ -19,7 +25,63 @@ use puddle_secrets::{
 use puddle_store::RepoToggles;
 use puddle_store::WorkspaceGit;
 use puddle_types::{Event, GitAccess, Host, ReasonCode};
-use support::{Ask as _, basic, injected, refusal};
+use support::{Ask as _, basic};
+
+/// Shortcuts over [`Ask`] for the cases that send no body, and the body the injector asked for.
+trait Shortcuts {
+    async fn decide(
+        &self,
+        host: &str,
+        method: &str,
+        target: &str,
+        headers: &[&str],
+    ) -> InjectDecision;
+
+    fn body_wanted(&self, host: &str, method: &str, target: &str) -> Option<usize>;
+}
+
+impl Shortcuts for World {
+    async fn decide(
+        &self,
+        host: &str,
+        method: &str,
+        target: &str,
+        headers: &[&str],
+    ) -> InjectDecision {
+        self.decide_with(host, method, target, headers, None).await
+    }
+
+    fn body_wanted(&self, host: &str, method: &str, target: &str) -> Option<usize> {
+        let host = Host::parse_normalised(host).unwrap();
+        let context = InjectContext {
+            workspace: &self.workspace,
+            host: &host,
+        };
+        let view = RequestView::new(method, target, &[]);
+        self.injector.body_wanted(&context, &view)
+    }
+}
+
+/// Whether `decision` injects exactly one `authorization` header with the value `expected`.
+fn injected(decision: &InjectDecision, expected: &str) -> bool {
+    match decision {
+        InjectDecision::Inject(injection) => {
+            injection.headers().len() == 1
+                && injection
+                    .headers()
+                    .iter()
+                    .all(|h| h.name().as_str() == "authorization" && h.value_is(expected))
+        }
+        _ => false,
+    }
+}
+
+fn refusal(decision: &InjectDecision) -> (u16, &'static str, String) {
+    match decision {
+        InjectDecision::Refuse(r) => (r.status(), r.code().as_str(), r.message().to_owned()),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
 
 const FETCH: &str = "/acme/web.git/info/refs?service=git-upload-pack";
 const PUSH_ADVERT: &str = "/acme/web.git/info/refs?service=git-receive-pack";

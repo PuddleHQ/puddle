@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use puddle_proxy::{AnswerHead, ExchangeRewriter, SecretValue, StandIns};
+use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, SecretValue, StandIns, Want};
 use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
@@ -116,8 +116,10 @@ async fn answer_at(rig: &Rig, login: &str, path: &str, body: &Value) -> Option<V
         content_length: Some(bytes.len() as u64),
     };
     let answer = exchange.answer_mut().unwrap();
-    assert!(answer.wants(&head));
-    let out = answer.rewrite(&head, &bytes).await?;
+    assert_eq!(answer.wants(&head), Want::Read);
+    let Rewrite::Replace(out) = answer.rewrite(&head, &bytes).await else {
+        return None;
+    };
     Some(serde_json::from_slice(&out).unwrap())
 }
 
@@ -354,8 +356,11 @@ async fn a_token_over_the_registry_limit_fails_closed_with_a_notice_and_is_not_k
         content_length: Some(bytes.len() as u64),
     };
     let answer = exchange.answer_mut().unwrap();
-    assert!(answer.wants(&head));
-    assert!(answer.rewrite(&head, &bytes).await.is_none());
+    assert_eq!(answer.wants(&head), Want::Read);
+    assert!(matches!(
+        answer.rewrite(&head, &bytes).await,
+        Rewrite::Refuse(_)
+    ));
     assert_eq!(*rig.notices.0.lock().unwrap(), [Problem::UnusableToken]);
     assert_eq!(rig.registry.len(), 0);
 }
@@ -540,8 +545,11 @@ async fn a_token_that_no_field_of_the_profile_takes_fails_closed_and_is_not_kept
         content_length: Some(body.len() as u64),
     };
     let answer = exchange.answer_mut().unwrap();
-    assert!(answer.wants(&head));
-    assert!(answer.rewrite(&head, &body).await.is_none());
+    assert_eq!(answer.wants(&head), Want::Read);
+    assert!(matches!(
+        answer.rewrite(&head, &body).await,
+        Rewrite::Refuse(_)
+    ));
     assert_eq!(*notices.0.lock().unwrap(), [Problem::UnusableToken]);
     assert_eq!(registry.len(), 0);
 }

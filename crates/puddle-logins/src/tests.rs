@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use puddle_proxy::{AnswerHead, Exchange, ExchangeRewriter, StandIns};
+use puddle_proxy::{AnswerHead, Exchange, ExchangeRewriter, Rewrite, StandIns, Want};
 use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::{Host, ReasonCode, WorkspaceId};
 use serde_json::{Value, json};
@@ -117,10 +117,13 @@ async fn answered(
         content_encoding: None,
         content_length: Some(body.len() as u64),
     };
-    if !answer.wants(&head) {
+    if answer.wants(&head) != Want::Read {
         return None;
     }
-    answer.rewrite(&head, body).await
+    match answer.rewrite(&head, body).await {
+        Rewrite::Replace(bytes) => Some(bytes),
+        Rewrite::Keep | Rewrite::Refuse(_) => None,
+    }
 }
 
 async fn claude_login(rig: &Rig, access: &str, refresh: &str) -> Value {
@@ -442,7 +445,7 @@ async fn a_success_answer_puddle_cannot_read_is_passed_on_and_the_user_is_told()
             content_length: length,
         };
         assert!(
-            !answer.wants(&head),
+            matches!(answer.wants(&head), Want::Refuse(r) if r.code() == ReasonCode::LoginNotKept),
             "{content_type:?} {encoding:?} {length:?}"
         );
     }
@@ -1302,10 +1305,10 @@ async fn an_answer_found_too_large_while_it_streams_is_refused_and_the_user_is_t
         .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token")
         .unwrap();
     let answer = exchange.answer_mut().unwrap();
-    answer.too_large();
-    let refusal = answer.refusal().expect("the answer is refused");
+    let Rewrite::Refuse(refusal) = answer.too_large() else {
+        panic!("the answer is refused");
+    };
     assert_eq!(refusal.code(), ReasonCode::LoginNotKept);
-    assert!(answer.refusal().is_none());
     assert_eq!(
         rig.notices.seen(),
         [("claude".to_owned(), Problem::UnexpectedAnswer)]

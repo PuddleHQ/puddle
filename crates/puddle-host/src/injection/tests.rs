@@ -1428,11 +1428,11 @@ async fn claude_answer(terminations: &Terminations, ws: &WorkspaceId) -> Option<
         content_encoding: None,
         content_length: Some(body.len() as u64),
     };
-    assert!(answer.wants(&head));
-    answer
-        .rewrite(&head, body.as_bytes())
-        .await
-        .map(|bytes| bytes.to_vec())
+    assert_eq!(answer.wants(&head), puddle_proxy::Want::Read);
+    match answer.rewrite(&head, body.as_bytes()).await {
+        puddle_proxy::Rewrite::Replace(bytes) => Some(bytes.to_vec()),
+        _ => None,
+    }
 }
 
 fn login_ids(terminations: &Terminations, ws: &WorkspaceId) -> Vec<String> {

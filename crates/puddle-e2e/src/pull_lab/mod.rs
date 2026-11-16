@@ -3,12 +3,12 @@
 //! listener, the lab root and a server certificate signed by it, and the digest format.
 #![expect(
     clippy::unwrap_used,
+    clippy::missing_panics_doc,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
-pub(crate) mod pull;
-pub(crate) mod registry;
+pub mod pull;
+pub mod registry;
 
 use std::fmt::Write as _;
 use std::io;
@@ -21,10 +21,10 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
 
 /// The registry's name; only the pull proxy's resolver knows it.
-pub(crate) const REGISTRY: &str = "registry.lab.test";
+pub const REGISTRY: &str = "registry.lab.test";
 
 /// Resolves [`REGISTRY`] to the local lab registry, whatever port was asked for.
-pub(crate) struct LabResolver(pub(crate) SocketAddr);
+pub struct LabResolver(pub SocketAddr);
 
 impl Resolver for LabResolver {
     fn resolve<'a>(
@@ -40,7 +40,8 @@ impl Resolver for LabResolver {
 }
 
 /// The lab root (PEM) and the registry's server config, its leaf signed by that root.
-pub(crate) fn lab_pki() -> (String, rustls::ServerConfig) {
+#[must_use]
+pub fn lab_pki() -> (String, rustls::ServerConfig) {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -71,7 +72,9 @@ pub(crate) fn lab_pki() -> (String, rustls::ServerConfig) {
     (ca.pem(), config)
 }
 
-pub(crate) fn sha256(bytes: &[u8]) -> String {
+/// The digest of `bytes` in the `sha256:<hex>` form registries use.
+#[must_use]
+pub fn sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().fold(String::from("sha256:"), |mut out, b| {
         let _ = write!(out, "{b:02x}");

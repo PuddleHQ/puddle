@@ -92,7 +92,9 @@ use puddle_ca::WorkspaceCa;
 use puddle_ssh_agent::filter::AllowedKeys;
 use puddle_types::{Host, PassThroughCode, WorkspaceId};
 
-pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
+pub use exchange::{
+    AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY, Rewrite, Want,
+};
 pub use foreign::ForeignCredentialWarning;
 pub(crate) use guest::{ALPN_HTTP11, Prefixed};
 pub use inject::{

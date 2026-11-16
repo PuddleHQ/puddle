@@ -160,3 +160,56 @@ fn a_ca_file_without_a_certificate_fails_the_interceptor_check() {
             .contains("root in")
     );
 }
+
+#[test]
+fn checks_are_sorted_into_passes_and_one_joined_failure() {
+    let both = vec![
+        Ok("a".to_owned()),
+        Err("b broke".to_owned()),
+        Err("c broke".to_owned()),
+    ];
+    assert_eq!(sort_checks(both).unwrap_err(), "b broke\nc broke");
+    assert_eq!(
+        sort_checks(vec![Ok("a".to_owned()), Ok("d".to_owned())]).unwrap(),
+        ["a", "d"]
+    );
+}
+
+#[test]
+fn a_407_offers_ntlm_or_the_head_is_shown() {
+    assert!(ntlm_offered("HTTP/1.1 407 X\r\nProxy-Authenticate: NTLM\r\n\r\n").is_ok());
+    let wrong = ntlm_offered("HTTP/1.1 407 X\r\nProxy-Authenticate: Basic\r\n\r\n").unwrap_err();
+    assert!(
+        wrong.contains("does not offer NTLM") && wrong.contains("Basic"),
+        "{wrong}"
+    );
+}
+
+#[test]
+fn the_connect_head_stops_at_the_blank_line_or_when_the_server_closes() {
+    let serve = |answer: &'static str, hold: bool| {
+        let listener = TcpListener::bind((LOCAL, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let _ = conn.read(&mut [0_u8; 256]);
+            conn.write_all(answer.as_bytes()).unwrap();
+            if hold {
+                // Stays open after the head, as the real proxy does, until the client is done.
+                let _ = conn.read(&mut [0_u8; 1]);
+            }
+        });
+        port
+    };
+    let open = connect_head(
+        serve(
+            "HTTP/1.1 407 X\r\nProxy-Authenticate: NTLM\r\n\r\nbody",
+            true,
+        ),
+        1,
+    )
+    .unwrap();
+    assert_eq!(open, "HTTP/1.1 407 X\r\nProxy-Authenticate: NTLM\r\n\r\n");
+    let truncated = connect_head(serve("HTTP/1.1 407 X\r\n", false), 1);
+    assert_eq!(truncated.unwrap(), "HTTP/1.1 407 X\r\n");
+}

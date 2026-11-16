@@ -15,7 +15,7 @@
 //! The programs the pieces need are the fixtures' own: `PUDDLE_SQUID_BIN` or
 //! `PUDDLE_SQUID_DOCKER`, and `PUDDLE_MITMDUMP_BIN`.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -417,17 +417,11 @@ fn expect_status(answer: &str, code: &str, what: &str) -> Result<(), String> {
 #[cfg(unix)]
 fn check_squid(port: u16, auth: Option<SquidAuth>, origin: u16) -> Result<String, String> {
     if auth == Some(SquidAuth::Basic) {
-        expect_status(
-            &via_proxy(port, origin, "")?,
-            "407",
-            "squid without credentials",
-        )?;
+        let anonymous = via_proxy(port, origin, "")?;
+        expect_status(&anonymous, "407", "squid without credentials")?;
         let login = base64_basic(&format!("{BASIC_USER}:{}", basic_password()));
-        let signed_in = via_proxy(
-            port,
-            origin,
-            &format!("Proxy-Authorization: Basic {login}\r\n"),
-        )?;
+        let header = format!("Proxy-Authorization: Basic {login}\r\n");
+        let signed_in = via_proxy(port, origin, &header)?;
         expect_status(&signed_in, "200", "squid with the Basic login")?;
         return Ok(format!("squid on {port}: 407 without a login, 200 with it"));
     }
@@ -453,34 +447,47 @@ fn check_interceptor(port: u16, ca: &Path, origin: u16) -> Result<String, String
     ))
 }
 
-fn check_ntlm(port: u16, ntlm: &NtlmProxy, origin: u16) -> Result<String, String> {
-    // A CONNECT is what the proxy's handshake is for (and what it logs); its 407 stays open, so
-    // read the head only.
+/// Whether a `407` head offers NTLM.
+fn ntlm_offered(head: &str) -> Result<(), String> {
+    if head
+        .to_ascii_lowercase()
+        .contains("proxy-authenticate: ntlm")
+    {
+        return Ok(());
+    }
+    Err(format!("NTLM proxy: the 407 does not offer NTLM\n{head}"))
+}
+
+/// The head of the answer to a CONNECT: its `407` stays open, so the body is not read.
+fn connect_head(port: u16, origin: u16) -> Result<String, String> {
     let addr = SocketAddr::from((LOCAL, port));
     let mut conn =
         TcpStream::connect_timeout(&addr, ANSWER_WAIT).map_err(|e| format!("{addr}: {e}"))?;
     conn.set_read_timeout(Some(ANSWER_WAIT))
         .map_err(|e| e.to_string())?;
-    conn.write_all(
-        format!("CONNECT {LOCAL}:{origin} HTTP/1.1\r\nHost: {LOCAL}:{origin}\r\n\r\n").as_bytes(),
-    )
-    .map_err(|e| format!("{addr}: {e}"))?;
-    let mut head = Vec::new();
-    let mut chunk = [0_u8; 512];
-    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-        match conn.read(&mut chunk).map_err(|e| format!("{addr}: {e}"))? {
-            0 => break,
-            n => head.extend_from_slice(chunk.get(..n).unwrap_or_default()),
+    let request = format!("CONNECT {LOCAL}:{origin} HTTP/1.1\r\nHost: {LOCAL}:{origin}\r\n\r\n");
+    conn.write_all(request.as_bytes())
+        .map_err(|e| format!("{addr}: {e}"))?;
+    let mut reader = std::io::BufReader::new(conn);
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("{addr}: {e}"))?;
+        head.push_str(&line);
+        if read == 0 || line == "\r\n" {
+            break;
         }
     }
-    let answer = String::from_utf8_lossy(&head).into_owned();
-    expect_status(&answer, "407", "NTLM proxy")?;
-    if !answer
-        .to_ascii_lowercase()
-        .contains("proxy-authenticate: ntlm")
-    {
-        return Err(format!("NTLM proxy: the 407 does not offer NTLM\n{answer}"));
-    }
+    Ok(head)
+}
+
+fn check_ntlm(port: u16, ntlm: &NtlmProxy, origin: u16) -> Result<String, String> {
+    // A CONNECT is what the proxy's handshake is for (and what it logs).
+    let head = connect_head(port, origin)?;
+    expect_status(&head, "407", "NTLM proxy")?;
+    ntlm_offered(&head)?;
     // The proxy logs the demand as it answers; the log file can trail by a moment.
     puddle_test_kit::eventually_blocking("the NTLM demand is logged", ANSWER_WAIT, || {
         ntlm.legs()
@@ -501,10 +508,8 @@ fn check_pac(pac: &PacServer, hops: &[String]) -> Result<String, String> {
         .next()
         .and_then(|p| p.parse().ok())
         .ok_or_else(|| format!("PAC url {url} has no port"))?;
-    let answer = http(
-        port,
-        &format!("GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
-    )?;
+    let request = format!("GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    let answer = http(port, &request)?;
     expect_status(&answer, "200", "PAC server")?;
     if !answer.contains("FindProxyForURL") || !hops.iter().all(|hop| answer.contains(hop)) {
         return Err(format!("PAC server: the script is wrong\n{answer}"));
@@ -539,15 +544,15 @@ pub fn self_test(plan: &Plan) -> Result<Vec<String>, String> {
     plan.allowed_ports.push(origin);
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let lab = Lab::start(&plan, &dir.path().join("lab-ca.pem"))?;
-    let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for line in lab.check(origin) {
-        match line {
-            Ok(line) => ok.push(line),
-            Err(line) => bad.push(line),
-        }
-    }
+    sort_checks(lab.check(origin))
+}
+
+/// The checks that passed, or every failure joined when any failed.
+fn sort_checks(checks: Vec<Result<String, String>>) -> Result<Vec<String>, String> {
+    let (ok, bad): (Vec<_>, Vec<_>) = checks.into_iter().partition(Result::is_ok);
+    let bad: Vec<String> = bad.into_iter().filter_map(Result::err).collect();
     if bad.is_empty() {
-        Ok(ok)
+        Ok(ok.into_iter().filter_map(Result::ok).collect())
     } else {
         Err(bad.join("\n"))
     }

@@ -1044,3 +1044,59 @@ describe("run fails a stale exclusion", () => {
     }
   });
 });
+
+describe("run on a file split", () => {
+  it("does not judge lines that only moved to another file, and still fails a new line beside them", () => {
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "dc-moved-")));
+    try {
+      const g = (...a: string[]) =>
+        execFileSync(
+          "git",
+          ["-c", "user.email=t@example.com", "-c", "user.name=t", ...a],
+          { cwd: dir, env: cleanGitEnv() },
+        );
+      const moved =
+        "    let first = compute_the_first_value();\n    let second = compute_the_second_value();\n";
+      g("init", "-q");
+      mkdirSync(join(dir, "src"));
+      writeFileSync(join(dir, "src/a.rs"), `fn a() {\n${moved}}\n`);
+      g("add", ".");
+      g("commit", "-q", "-m", "base");
+      writeFileSync(join(dir, "src/a.rs"), "fn a() {\n    b();\n}\n");
+      writeFileSync(
+        join(dir, "src/b.rs"),
+        `fn b() {\n${moved}    let third = a_brand_new_uncovered_line();\n}\n`,
+      );
+      g("add", "-N", "src/b.rs");
+      writeFileSync(
+        join(dir, "l.info"),
+        `SF:${dir}/src/a.rs\nDA:2,1\nend_of_record\nSF:${dir}/src/b.rs\nDA:2,0\nDA:3,0\nDA:4,0\nend_of_record\n`,
+      );
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const code = run(
+        {
+          base: "HEAD",
+          lcov: join(dir, "l.info"),
+          exts: [".rs"],
+          prefix: "",
+          label: "t",
+        },
+        dir,
+      );
+      vi.restoreAllMocks();
+      expect(code).toBe(1);
+      expect(log.mock.calls.flat().join("\n")).toContain(
+        "2 added line(s) only moved",
+      );
+      expect(err.mock.calls.flat().join("\n")).toContain(
+        "src/b.rs:4: let third = a_brand_new_uncovered_line();",
+      );
+      expect(err.mock.calls.flat().join("\n")).toContain(
+        "1 added or changed line(s)",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -66,6 +66,7 @@ mod openapi;
 mod ports;
 mod proxy_sign_in;
 mod remote;
+mod remote_editor;
 mod repos;
 mod routes;
 mod server;

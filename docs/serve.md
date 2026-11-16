@@ -396,6 +396,18 @@ computer is idle; it makes no key file then. `puddle doctor` names the store and
 missing or does not open leaves Puddle running with a problem that says what to do; saving a secret then
 fails.
 
+#### Problems with a sealed vault key
+
+When the file vault's key is sealed by `systemd-creds` (`puddle/vault-key.cred` in your config folder),
+`puddle doctor` opens it once to see whether it works (the key is not shown or kept) and reports
+these cases under "Credential store":
+
+| What doctor says | Cause | What to do |
+|---|---|---|
+| "the key no longer opens: the machine id, the host key or the Secure Boot setting changed" | The disk was cloned or restored onto another machine (new `/etc/machine-id`), systemd's host key `/var/lib/systemd/credential.secret` was lost, or the Secure Boot setting changed. systemd gives one message for all three. | Restore a changed Secure Boot setting and the key opens again. A changed machine id does not come back: systemd deletes the host key the first time it fails, so restoring the old id no longer helps. Then stop Puddle, move `secrets/vault` in the data folder and `puddle/vault-key.cred` in your config folder aside, start Puddle and enter the secrets again. |
+| "the key does not open: ..." with a reason | `systemd-creds` is missing, systemd is older than 256 (no per-user sealing), the key was sealed under another name, or systemd's credential service does not answer. | The fix line names the step for each reason. |
+| "this computer has a TPM2 chip, but its software libraries are missing, so the key is not tied to the TPM2" | The key was sealed with the host key only because `systemd-analyze has-tpm2` answers `partial` (exit 16) without the TPM2 libraries. The key still opens. | Install the TPM2 libraries (`apt install tpm2-tools` on Debian and Ubuntu, `dnf install tpm2-tools` on Fedora). The existing key stays host-key only; a key made after that is tied to the TPM2 too. |
+
 ### The operating system's store must be unlocked
 
 When the store is `os`: on Linux, that store is a Secret

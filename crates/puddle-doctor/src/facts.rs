@@ -637,12 +637,46 @@ pub struct DiskEncryptionFacts {
 /// What the doctor found of the vault a data folder keeps its secrets in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultFacts {
-    /// The vault's header names this key source.
+    /// The vault's header names this key source, and the key was not examined (a key file, or a
+    /// key the service passes).
     Header(puddle_secrets::KeySourceTag),
+    /// The header names a systemd-sealed key and its sealed file is in the config folder. The key
+    /// is opened once to see whether it opens and dropped at once; it is never shown or kept.
+    Sealed {
+        /// What the header names.
+        tag: puddle_secrets::KeySourceTag,
+        /// Whether `systemd-creds` opens the sealed file.
+        key: SealedKeyFacts,
+        /// The TPM2 libraries, asked only when the key was sealed without the TPM2 (`None`
+        /// otherwise).
+        tpm: Option<TpmFacts>,
+    },
     /// No vault file yet.
     NoVaultYet,
     /// The file is there and its header cannot be read.
     Unreadable,
+}
+
+/// Whether `systemd-creds` opens the sealed vault key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedKeyFacts {
+    /// It opened.
+    Opens,
+    /// It did not open, for this reason.
+    Fails(puddle_secrets::Unseal),
+}
+
+/// What `systemd-creds has-tpm2` says about the TPM2 on this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TpmFacts {
+    /// Fully usable (exit 0).
+    Usable,
+    /// A TPM2 device is there and the userspace libraries are not (exit 16).
+    LibrariesMissing,
+    /// No device, a container, or another partial answer (exit 19, 27, ...): nothing to fix.
+    Unavailable,
+    /// The answer could not be read.
+    Unknown,
 }
 
 /// Which store keeps this install's secrets, and how it is doing. Everything is read; nothing is

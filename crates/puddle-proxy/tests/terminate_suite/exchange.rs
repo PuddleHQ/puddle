@@ -17,8 +17,8 @@ use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
 use puddle_proxy::{
     AnswerHead, AnswerRewriter, BoxFuture, Exchange, ExchangeRewriter, InjectContext,
-    InjectDecision, Injector, RequestView, SecretValue, StandIn, StandInOrigin, StandIns,
-    TerminationSet,
+    InjectDecision, Injector, RequestView, Rewrite, SecretValue, StandIn, StandInOrigin, StandIns,
+    TerminationSet, Want,
 };
 use puddle_types::Host;
 use terminate_support::h2_rig::{H2Server, Reply as H2Reply, Script, full};
@@ -66,7 +66,7 @@ struct Answer {
 }
 
 impl AnswerRewriter for Answer {
-    fn wants(&mut self, head: &AnswerHead<'_>) -> bool {
+    fn wants(&mut self, head: &AnswerHead<'_>) -> Want {
         self.seen
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -77,31 +77,32 @@ impl AnswerRewriter for Answer {
                 head.content_encoding.map(str::to_owned),
                 head.content_length,
             ));
-        !matches!(self.plan, Plan::Skip)
+        if matches!(self.plan, Plan::Skip) {
+            Want::Pass
+        } else {
+            Want::Read
+        }
     }
 
-    fn rewrite<'a>(
-        &'a mut self,
-        _: &'a AnswerHead<'a>,
-        body: &'a [u8],
-    ) -> BoxFuture<'a, Option<Bytes>> {
+    fn rewrite<'a>(&'a mut self, _: &'a AnswerHead<'a>, body: &'a [u8]) -> BoxFuture<'a, Rewrite> {
         self.seen
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .bodies
             .push(body.to_vec());
         let new = match self.plan {
-            Plan::Replace(text) => Some(Bytes::from_static(text.as_bytes())),
-            Plan::Skip | Plan::Keep => None,
+            Plan::Replace(text) => Rewrite::Replace(Bytes::from_static(text.as_bytes())),
+            Plan::Skip | Plan::Keep => Rewrite::Keep,
         };
         Box::pin(std::future::ready(new))
     }
 
-    fn too_large(&mut self) {
+    fn too_large(&mut self) -> Rewrite {
         self.seen
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .too_large += 1;
+        Rewrite::Keep
     }
 }
 

@@ -11089,9 +11089,11 @@ async fn a_shell_init_check_that_times_out_is_refused_with_how_long_it_may_take(
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
+    // Every command in the sandbox times out, not one: a background command (the checkouts
+    // refresh after the create) could otherwise take the one fault before the check runs.
     rig.runtime.inject(
         Op::Exec,
-        Fault::once(puddle_compute::ComputeError::ExecTimeout {
+        Fault::always(puddle_compute::ComputeError::ExecTimeout {
             sandbox: "acme".to_owned(),
             program: "sh".to_owned(),
             timeout: Duration::from_secs(10),
@@ -11099,6 +11101,7 @@ async fn a_shell_init_check_that_times_out_is_refused_with_how_long_it_may_take(
         .only_for("acme"),
     );
     let slow = put_shell_init(&api, "acme", "sleep 60\n").await;
+    rig.runtime.clear_faults();
     assert_eq!(slow.status, 422, "{}", slow.body);
     assert!(
         slow.body.contains("took more than") && slow.body.contains("seconds to finish"),

@@ -169,9 +169,11 @@ fn warn_without_headless_flag(session: LoginSession, health: StoreHealth) {
     if !warns(session, health) {
         return;
     }
+    let graphical_session = session != LoginSession::NotGraphical;
+    let store_works = health == StoreHealth::Working;
     tracing::warn!(
-        graphical_session = session != LoginSession::NotGraphical,
-        store_works = health == StoreHealth::Working,
+        graphical_session,
+        store_works,
         "Puddle was started without --headless and keeps its secrets in the operating \
          system's credential store, which has no unlocked keyring to rely on here. On a \
          server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \

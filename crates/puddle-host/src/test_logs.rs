@@ -13,6 +13,7 @@ pub(crate) struct Logs(Arc<Mutex<Vec<u8>>>);
 
 impl Logs {
     pub(crate) fn text(&self) -> String {
+        Sink(Arc::clone(&self.0)).flush().unwrap();
         String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
     }
 }

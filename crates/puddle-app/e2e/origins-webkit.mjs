@@ -162,6 +162,31 @@ function shellPids() {
   return pids;
 }
 
+/** What the run's shell is doing when it will not exit: its state and kernel wait point, and its threads' wait points. */
+function shellState() {
+  return shellPids()
+    .map((pid) => {
+      const read = (file) => {
+        try {
+          return readFileSync(`/proc/${pid}/${file}`, "utf8").trim();
+        } catch {
+          return "?";
+        }
+      };
+      const state = read("status").match(/^State:\s*(.*)$/m)?.[1] ?? "?";
+      let threads = "";
+      try {
+        threads = readdirSync(`/proc/${pid}/task`)
+          .map((tid) => `${readFileSync(`/proc/${pid}/task/${tid}/comm`, "utf8").trim()}:${readFileSync(`/proc/${pid}/task/${tid}/wchan`, "utf8").trim() || "-"}`)
+          .join(" ");
+      } catch {
+        // the process is gone
+      }
+      return `pid ${pid} ${state}, wchan ${read("wchan")}, threads ${threads}`;
+    })
+    .join("; ");
+}
+
 /** One run of the shell on workspace `id` over the shared data folder, driven through WebKitWebDriver. */
 async function session(n, id, forget, body) {
   const port = driverPort + n;
@@ -238,7 +263,7 @@ async function session(n, id, forget, body) {
     if (session) await call("DELETE", `/session/${session}`).catch(() => undefined);
     driver.kill();
     await until(`session ${n}'s shell to exit`, async () => shellPids().length === 0, 60_000).catch((err) => {
-      check(`session ${n}: the shell exited`, false, String(err));
+      check(`session ${n}: the shell exited`, false, `${err} (${shellState()})`);
       for (const pid of shellPids()) process.kill(pid, "SIGKILL");
     });
   }

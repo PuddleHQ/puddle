@@ -159,6 +159,7 @@ describe("the screen", () => {
       "Inbox",
       "Workspaces",
       "Disk space",
+      "Activity log",
       "SSH agent",
       "Network",
       "Browser VS Code",

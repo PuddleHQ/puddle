@@ -407,9 +407,9 @@ async fn adding_a_repository_that_makes_no_sense_is_a_422_that_never_echoes_a_cr
     for (workspace, body, status, part) in [
         (
             "web",
-            json!({"kind": "clone", "url": "git@github.com:a/b.git"}),
+            json!({"kind": "clone", "url": "git@git.example.com:a/b.git"}),
             422,
-            "ssh remotes",
+            "reads SSH addresses",
         ),
         (
             "web",

@@ -27,7 +27,7 @@ A **rule** says what happens to matching requests:
 | `pattern` | `exact` host or IP, or `suffix` (stored as `.example.com`) |
 | `effect` | `allow` or `deny` |
 | `expires_at` | epoch ms, or `null` for permanent |
-| `created_at`, `created_by` | `ts`; actor `cli`, `ui` or `api` |
+| `created_at`, `created_by` | `ts`; actor `cli`, `ui`, `api` or `workspace_create` (R-58) |
 | `source_pending_id` | the pending row it was approved from, or `null` |
 
 A **pending row** is a request that matched no rule (§3). Rules and pending rows live in SQLite;
@@ -530,48 +530,58 @@ the API. *Added 2026-10-08.*
   its place, the ink on a filled chip is chosen for at least 4.5:1 contrast, and the edge of a
   dot or chip is the theme's border colour, so it shows in the light and the dark theme.
 
+- **R-58 Creating a workspace allows the host of each of its repositories.** The grant is an exact `allow`
+  rule (§1), workspace scope, no expiry, made before the first clone, with `created_by` `workspace_create`.
+  A host a rule already decides gets no new rule, and a deny rule is never overridden: it refuses the create
+  (`409`) and nothing is made. A suffix rule such as `.github.com` does not cover the apex `github.com`
+  (R-3), so the grant names the exact host. A credential alone never allows a host (the built-in GitHub set
+  ships off, R-36), so without the grant a clone into a fresh workspace would wait for the user. Cloning
+  again and adopting an existing checkout make no grant. A grant that closes a pending row records
+  `decided_by` `system`. The create answer lists the hosts it allowed with their rule ids.
+
 ### Groups and precedence
 
-*Specified 2026-11-14; built in slices. R-59 to R-66 replace R-39's ranking when built.*
+*Specified 2026-11-14, amended 2026-11-16 (scale 1 to 9, no migration, precedence ranks rules on method and path, any overlap judged). Built in slices. R-59 to R-66 replace R-39's ranking when built.*
 
 The Rules screen shows rules in **groups** (what the store calls a rule set, R-38): the locked
 *Built in* group with its parts, System managed under it, the groups the user made, and the rules
 in no group. A group organises rules and switches them together. It never decides an order: what
 decides is each rule's own precedence.
 
-- **R-59 Every rule has a precedence.** An integer from 1 to 999, higher wins, default 500. It is
+- **R-59 Every rule has a precedence.** An integer from 1 to 9, higher wins, default 5. It is
   stored on every rule the user can make: a host rule (global or workspace, in a group or in none),
   a rule on method and path (§8). Built-in entries and System managed hosts sit at the fixed
   precedence 0, below every rule the user can make; the user cannot change it. A rule keeps its
-  precedence when it moves between groups. A group may hold a default precedence (1 to 999, none
-  means 500) that a new rule in it takes when the request to add it names none; changing the default
-  changes no existing rule. A migration gives every rule that exists before precedence the value 500.
-- **R-60 Decision order.** Of the rules that match a request, the highest precedence decides. A rule
+  precedence when it moves between groups. A group may hold a default precedence (1 to 9, none
+  means 5) that a new rule in it takes when the request to add it names none; changing the default
+  changes no existing rule. A rule stored before precedence existed reads as 5, and an answer that
+  changes because of it changes.
+- **R-60 Decision order.** Of the rules that match a request, the highest precedence decides, and a
+  higher precedence always beats a lower one, even when the lower rule is more specific. A rule
   matches only when it is switched on (R-65), unexpired (R-7), in scope for the workspace (R-5) and,
   for an entry of a group, the group is on for that workspace (R-37). Rules of the same precedence
   are ranked as R-6: (1) pattern specificity, (2) a `workspace` rule over a `global` one (an entry
-  of a group counts as `global`), (3) `deny` over `allow`. Precedence comes first, so an own exact
-  allow at 500 loses to an own `*.example.com` deny at 600, and an own allow of any pattern at 1
-  beats a built-in block at 0. A group's own switches and a request's workspace never change a
-  rule's precedence. Examples: an own deny of `*.visualstudio.com` beats System managed's
-  `update.code.visualstudio.com` (500 over 0); an own deny of `.example.com` and an own exact allow
-  of `a.example.com` at the same precedence: the allow wins by specificity (R-6), and R-63 warns;
-  the same two with the deny at 600: the deny wins. A rule on method and path (§8) is checked after
-  the host's decision, as R-50 says, and refuses whatever the precedence of the host rule that
-  allowed the host: a rule that only refuses cannot open anything. Its precedence is stored, shown
-  and compared only among rules of its own kind, where it has no effect today because they only refuse.
-- **R-61 What the migration changes.** Own rules rank among themselves as before (R-6 is the tie
-  rule), and built-in and System managed entries keep their place below every own rule: no answer
-  changes for them. A built-in entry that blocks and an own allow of the same host used to be
-  decided by pattern specificity; no built-in block has shipped, so no answer changes. The entries of
-  groups the user made move from "below own rules, except a strictly more specific deny" to the same
-  precedence as own rules, so an answer changes only where such an entry and an own rule overlap
-  with opposite effects and one of two cases holds: (A) the group's allow is more specific than
-  an own deny (today the own deny wins, now the allow wins), or (B) the group's deny and a global
-  own allow are equally specific (today the allow wins, now the deny wins). The migration finds
-  every such pair, writes one `precedence_migrated` record that names them with the old and new
-  answer, and shows it once on the Rules screen; setting a precedence restores any answer. The
-  screen and the API say "group" where the store and the routes say "set".
+  of a group counts as `global`), (3) `deny` over `allow`. Examples: an own exact allow at 5 loses
+  to an own `*.example.com` deny at 7; an own allow of any pattern at 1 beats a built-in block at
+  0; an own deny of `*.visualstudio.com` beats System managed's `update.code.visualstudio.com`
+  (5 over 0); an own deny of `.example.com` and an own exact allow of `a.example.com` at the same
+  precedence: the allow wins by specificity (R-6), and R-63 warns; the same two with the deny at 7:
+  the deny wins. A group's own switches and a request's workspace never change a rule's precedence.
+  A rule on method and path (§8) is a deny that narrows a host: it is checked after the host's
+  decision, as R-50 says, and takes part in the same order. It refuses a request that a host rule
+  allowed when its precedence is equal to or higher than the allowing rule's precedence (at equal
+  precedence deny wins). A host allow of a higher precedence beats it: `api.example.com` allowed at
+  7 and "never `DELETE`" at 5 lets the `DELETE` through. A host that no rule allows stays pending
+  as before; a rule on method and path never opens a host.
+- **R-61 A rule covered by a higher one is marked.** A rule is **covered** when a rule of higher
+  precedence, switched on, unexpired and in scope wherever it is (a `global` rule covers any scope;
+  a `workspace` rule covers only its own workspace) matches every request the first one matches:
+  its host pattern contains the other's (the same exact host, or a suffix that ends the other's
+  host or suffix), its path pattern contains the other's, its methods include the other's, and it
+  does not expire sooner. The covered rule never decides anything, so its row is shown with an
+  info marker or in a darker colour, with the covering rule named and linked; it is not a warning
+  and does not block anything. Built-in entries are not marked. The marker comes from the same
+  index as R-63 and is recomputed only for the rules a change touches (R-63).
 - **R-62 A request names the rules that matched.** The `connection` record of a request a rule
   decided (§5; R-25 holds: no query, no header value) carries `precedence` (the winning rule's) and `matches`, a list of every rule that
   matched it, at most 20 (the winner first, then by precedence, then as R-60), with a count of the
@@ -583,30 +593,58 @@ decides is each rule's own precedence.
   the winning rule's precedence in words and in `x-puddle-precedence`; it still does not repeat the
   path or the query (R-53). A request no rule matched is pending and has no matches. The Activity
   screen shows the matches and their links.
-- **R-63 Overlap warning.** Two rules **overlap** when both match some host, they can apply to the
-  same workspace (two `workspace` rules of different workspaces never do), both are switched on and
-  unexpired, and their precedence is equal. An overlap is a warning, not a refusal, when the rules
-  have opposite effects or are duplicates (same pattern, scope and effect); two rules of the
-  same effect where one pattern contains the other overlap harmlessly and warn of nothing. The
-  warning says in words which rule decides and why: "decided by specificity: `a.example.com` beats
-  `*.example.com`", "decided by workspace scope", or "deny wins at equal rank", and says that a
+- **R-63 Overlap.** Two rules **overlap** when some request could match both. That is true when
+  all of these hold: their host patterns can match a common host, their path patterns can match a
+  common path (a host rule has every path, a rule on method and path its pattern, R-51), their
+  methods share one (a host rule has every method), they can apply to the same workspace (two
+  `workspace` rules of different workspaces never do), and both are switched on and unexpired. The
+  judgement is about patterns, not about traffic seen. Only rules of the **same precedence** are
+  judged; a different precedence is the explicit order and says nothing. Built-in entries (0) take
+  no part.
+  - Same effect: a **warning** (this includes a duplicate: same pattern, scope and effect).
+  - Opposite effects: an **error** (R-64).
+
+  How overlap is decided. Host patterns are exact (`a.example.com`, an IP literal) or suffix
+  (`.example.com`, R-3; the user may type `*.example.com` or `**.example.com`, both are stored as
+  the suffix). Two exact patterns overlap when equal. An exact host and a suffix overlap when the
+  host ends with the suffix, and an IP literal overlaps no suffix. Two suffixes overlap when one
+  ends the other: `.test.example.com` and `.example.com` overlap (every `x.test.example.com` matches
+  both), `.a.example.com` and `.b.example.com` do not, and equal suffixes overlap. An exact
+  `example.com` and the suffix `.example.com` do not overlap (R-3: the suffix never matches the apex).
+  Path patterns overlap when, read segment by segment, every pair of segments is equal or one of
+  them is `*`, and either both end together or one of them ends in `**` after that point; two
+  patterns that end in `**` overlap whenever their segments before it fit. The same test on paths
+  as written in the canonical form (R-51), at most 32 segments. A rule with no path is `/**`.
+
+  The check stays cheap: it is incremental and indexed, never a recompute of all pairs. The engine
+  keeps, for each precedence from 1 to 9, an index of the host patterns by their labels read from
+  the right (a tree where `.example.com` sits above `.test.example.com`). The candidates for a
+  rule are the rules on the path from the root down to its pattern and, for a suffix, the rules
+  below it: no other rule can overlap, so the cost of a change is the labels of its host plus the
+  rules that share its hosts, each judged by the segment test above. Saving a rule judges only that
+  rule against its candidates and stops at the first error. A rule's warnings are kept next to it
+  and updated for the rules a change touches (the changed rule and its candidates); a list of
+  overlaps per rule is cut at 20 with a count of the rest, so a hot pattern costs a bounded amount
+  to show. Switching a rule on or off, an expiry and a precedence change update the index the same
+  way. The API returns each rule's overlaps from the index, and an overlap is never an audit
+  record.
+
+  A warning says in words which rule decides and why ("decided by specificity: `a.example.com`
+  beats `*.example.com`", "decided by workspace scope", "deny wins at equal precedence") and that a
   different precedence makes the order explicit. Giving one of the two another precedence, or
-  switching one off, clears it. Rules on method and path warn only for a duplicate (same host
-  pattern, methods and path pattern); overlap of different path patterns is not judged. The API
-  returns the overlaps of each rule, computed from the engine's index, and an overlap is never an
-  audit record.
-- **R-64 Conflict error.** A rule **conflicts** with another when they have the same pattern and the
-  same scope, opposite effects, equal precedence, and both are switched on and unexpired: the only
-  thing that would decide is "deny wins". That is an error, shown in red on both rows. Saving
-  a rule that would create a conflict (adding, editing, importing, moving, or switching
-  it on, R-65) is refused with `409` and the code `rule_conflict`, naming the other rule: the
-  rule that creates it is not saved, and nothing else is blocked. Switching a group or a built-in
-  entry on is never refused, because a switch is the user's safety control; a conflict that arises
-  that way, and one that already exists after the migration, stays shown as an error, and deny
-  wins meanwhile (R-6). A row of an import that would conflict is skipped, counted and listed in
-  the preview and the result, and the other rows are imported. The fix is another precedence, another
-  scope, or removing a rule. Built-in entries never conflict with the user's rules (precedence 0
-  against 1 to 999); two built-in entries that would conflict fail the build (R-36).
+  switching one off, clears it.
+- **R-64 Conflict error.** Two rules that overlap (R-63) at the same precedence with opposite
+  effects are an error, shown in red on both rows. Saving a rule that would create one (adding,
+  editing, importing, moving, or switching it on, R-65) is refused with `409` and the code
+  `rule_conflict`, naming the first other rule: the rule that creates it is not saved, and nothing
+  else is blocked. This includes a rule on method and path against a host allow at the same
+  precedence ("allow this host, block `DELETE`" needs the block at a higher precedence). Switching a
+  group or a built-in entry on is never refused, because a switch is the user's safety control; a
+  conflict that arises that way stays shown as an error, and deny wins meanwhile (R-60). A row of
+  an import that would conflict is skipped, counted and listed in the preview and the result, and
+  the other rows are imported. The fix is another precedence, another scope, or removing a rule.
+  Built-in entries never conflict with the user's rules (precedence 0 against 1 to 9); two
+  built-in entries that would conflict fail the build (R-36).
 - **R-65 A rule can be switched off.** Every rule and rule on method and path has an `enabled`
   flag (default on). A rule that is off never matches, appears in no `matches` list, takes part
   in no overlap or conflict, and keeps its precedence and place. A single entry of a built-in
@@ -615,17 +653,17 @@ decides is each rule's own precedence.
   `rule_switched` (the rule, the new state, the actor). Switching one on closes the open requests
   it now decides, like a new rule (R-16).
 - **R-66 What is recorded.** `rule_switched` (R-65), `rule_updated` (a rule edited in place:
-  the fields that changed, including precedence, with the actor), `precedence_migrated` (R-61) and
+  the fields that changed, including precedence, with the actor) and
   `rules_imported` (the group, the counts, the skipped conflicts). They use the actors of §1.
 
 ## 8. Rules on method and path
 
 A rule on a host decides whether a workspace may reach it. A rule on method and path narrows that
 for a host the workspace reaches anyway: "this host, but never `DELETE` on `/repos/**`". It only
-ever refuses, so no rule of this kind can open anything: it is checked after the host's decision and
-refuses whatever precedence decided it (R-60). It carries a precedence (R-59) so that it sorts and
-warns with the other rules, and so that a rule on method and path that allows can be ranked when
-one exists.
+ever refuses, so no rule of this kind can open anything: it is checked after the host's decision
+and takes part in the order of R-60, so a host allow of a higher precedence beats it. It carries a
+precedence (R-59), sorts and warns with the other rules (R-63), and a rule on method and path that
+allows can be ranked when one exists.
 
 - **R-49 A rule on method and path** names a host (`example.com` or `*.example.com`, the grammar of
   the never-decrypt names), the methods it covers (none named: every method) and a path pattern

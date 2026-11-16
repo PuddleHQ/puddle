@@ -31,6 +31,10 @@ const HEALTHY: &str = "[--version]\nstdout=systemd 257 (257.13-1~deb13u1)\\n\n\
 /// limit on every call made the answers depend on the clock.
 const HANG_LIMIT: Duration = Duration::from_millis(500);
 
+/// A `systemd-creds` whose `encrypt` takes ten times the limit of [`HANG_LIMIT`].
+const HANGING_ENCRYPT: &str =
+    "[--version]\nstdout=systemd 257 (257.13)\\n\n[encrypt]\nsleep_ms=5000\n";
+
 struct Setup {
     fakes: Fakes,
     dir: tempfile::TempDir,
@@ -156,8 +160,8 @@ async fn a_machine_with_a_usable_tpm_gets_the_tpm_tag() {
 async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
     // Each case is something a real machine said when sealing: systemd 255 (no `--user`: exit 1
     // and the text), the varlink service refusing, an unreadable answer, a seal that does not open
-    // again, a tool that hangs.
-    let cases: [(&str, String); 7] = [
+    // again.
+    let cases: [(&str, String); 6] = [
         (
             "systemd 255",
             "[--version]\nstdout=systemd 255 (255.4-1ubuntu8.18)\\n\n\
@@ -195,26 +199,91 @@ async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
              [decrypt]\nstdout=0123456789abcdef0123456789abcdef\n"
                 .to_owned(),
         ),
-        (
-            "it hangs",
-            "[--version]\nstdout=systemd 257 (257.13)\\n\n[encrypt]\nsleep_ms=5000\n".to_owned(),
-        ),
     ];
     for (name, behaviour) in cases {
         let setup = Setup::new();
         let (keys, _) = setup.keys(&behaviour);
-        // The outcome is the same whether `--version` answers in time or not.
-        let keys = if name == "it hangs" {
-            keys.with_timeout(HANG_LIMIT)
-        } else {
-            keys
-        };
         let found = keys.find_or_make().await.unwrap();
         assert_eq!(found.source, KeySource::KeyFile, "{name}");
         assert_eq!(found.tag, KeySourceTag::KeyFile, "{name}");
         assert!(!setup.sealed().exists(), "{name}: a sealed file was left");
         assert_eq!(mode_of(&setup.key_file()), 0o600, "{name}");
     }
+}
+
+#[tokio::test]
+async fn a_first_start_where_encrypt_keeps_timing_out_fails_and_makes_no_key() {
+    // The outcome is the same whether `--version` answers in time or not (a timed-out `--version`
+    // goes on to seal), and `encrypt` outlasts the limit ten times over.
+    let setup = Setup::new();
+    let (keys, tool) = setup.keys(HANGING_ENCRYPT);
+    let err = keys
+        .with_timeout(HANG_LIMIT)
+        .find_or_make()
+        .await
+        .unwrap_err();
+    assert_eq!(err, KeyError::SealTimedOut);
+    assert!(!setup.sealed().exists(), "a sealed file was left");
+    assert!(!setup.key_file().exists(), "a weaker key file was made");
+    // Tried three times and never read back.
+    let log = Fakes::log(&tool);
+    let encrypts = calls(&log)
+        .iter()
+        .filter(|c| c.contains(" encrypt "))
+        .count();
+    assert_eq!(encrypts, 3, "{log}");
+    assert!(!log.contains("decrypt"), "{log}");
+}
+
+#[tokio::test]
+async fn a_start_that_failed_on_a_timeout_seals_on_the_next_start() {
+    let setup = Setup::new();
+    let (keys, _) = setup.keys(HANGING_ENCRYPT);
+    keys.with_timeout(HANG_LIMIT)
+        .find_or_make()
+        .await
+        .unwrap_err();
+    let (keys, _) = setup.keys(HEALTHY);
+    let found = keys.find_or_make().await.unwrap();
+    assert_eq!(found.source, KeySource::SystemdSealed);
+    assert!(!setup.key_file().exists());
+}
+
+#[tokio::test]
+async fn a_seal_that_cannot_be_read_back_in_time_fails_instead_of_falling_back() {
+    let setup = Setup::new();
+    let (keys, _) = setup.keys(
+        "[--version]\nstdout=systemd 257 (257.13)\\n\n\
+         [encrypt]\nstdout=c2VhbGVk\n[decrypt]\nsleep_ms=5000\n",
+    );
+    let err = keys
+        .with_timeout(HANG_LIMIT)
+        .find_or_make()
+        .await
+        .unwrap_err();
+    assert_eq!(err, KeyError::SealTimedOut);
+    assert!(!setup.sealed().exists() && !setup.key_file().exists());
+}
+
+#[tokio::test]
+async fn a_tool_that_cannot_be_started_is_a_cannot_seal_not_a_timeout() {
+    let setup = Setup::new();
+    let paths = ToolPaths::default()
+        .with_systemd_creds(Some(setup.dir.path().join("no-such-systemd-creds")));
+    let keys = VaultKeys::new(&setup.config(), &setup.vault(), paths).with_credentials_dir(None);
+    let found = keys.find_or_make().await.unwrap();
+    assert_eq!(found.source, KeySource::KeyFile);
+}
+
+#[tokio::test]
+async fn a_seal_that_cannot_be_stored_is_a_cannot_seal_and_leaves_the_key_file() {
+    let setup = Setup::new();
+    // Something that is not a file sits where the sealed key goes, so storing it fails.
+    std::fs::create_dir_all(setup.sealed()).unwrap();
+    let (keys, _) = setup.keys(HEALTHY);
+    let found = keys.find_or_make().await.unwrap();
+    assert_eq!(found.source, KeySource::KeyFile);
+    assert!(setup.sealed().is_dir());
 }
 
 #[tokio::test]

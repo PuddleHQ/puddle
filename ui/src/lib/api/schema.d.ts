@@ -2510,8 +2510,7 @@ export interface components {
              * @description Epoch ms.
              */
             decided_at: number | null;
-            /** @description `cli`, `ui`, `api` or `system`. */
-            decided_by: string | null;
+            decided_by: components["schemas"]["Actor"] | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -2541,8 +2540,8 @@ export interface components {
             rule_id: number | null;
             /** @description The rule set whose entry decided it. */
             rule_set: string | null;
-            /** @description `requested`, `allowed`, `denied` or `expired`. */
-            state: string;
+            /** @description Where it is in its life. */
+            state: components["schemas"]["PendingState"];
             /** @description The workspace. */
             workspace_id: string;
         };
@@ -2921,8 +2920,8 @@ export interface components {
              * @description Epoch ms.
              */
             created_at: number;
-            /** @description `cli`, `ui` or `api`. */
-            created_by: string;
+            /** @description Who made it. */
+            created_by: components["schemas"]["Actor"];
             /** @description The host pattern: `example.com` or `*.example.com`. */
             host: string;
             /**
@@ -2959,8 +2958,8 @@ export interface components {
              * @description Epoch ms.
              */
             created_at: number;
-            /** @description `cli`, `ui` or `api`. */
-            created_by: string;
+            /** @description Who made it. */
+            created_by: components["schemas"]["Actor"];
             /** @description Allow or deny. */
             effect: components["schemas"]["Effect"];
             /**
@@ -3004,8 +3003,8 @@ export interface components {
              * @description Epoch ms.
              */
             created_at: number;
-            /** @description `cli`, `ui` or `api`. */
-            created_by: string;
+            /** @description Who made it. */
+            created_by: components["schemas"]["Actor"];
             /** @description Description. */
             description: string;
             fill: components["schemas"]["Fill"] | null;

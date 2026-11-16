@@ -103,23 +103,25 @@ pub enum AuditRecord {
         /// The ids (`stand-in:<secret|login>:<name>`) of the secret stand-ins that went out
         /// unchanged, to a host outside their hosts or in the path or query. Records written
         /// before it existed read as empty.
+        // The four lists are boxed only to keep this variant within clippy's size limit
+        // against the other records; the JSON is a plain array.
         #[serde(default)]
         #[schema(required = true)]
-        unswapped_stand_ins: Vec<String>,
+        unswapped_stand_ins: Box<Vec<String>>,
         /// The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
         /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
         /// each once, at most 16. Records written
         /// before it existed read as empty.
         #[serde(default)]
         #[schema(required = true)]
-        scrubbed_stand_ins: Vec<String>,
+        scrubbed_stand_ins: Box<Vec<String>>,
         /// The kinds of credential the requests carried that Puddle did not add or swap, each
         /// once: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,
         /// `azure_devops_token` or `git_authorization`. Never a value. Records written before it
         /// existed, and connections of a workspace that turned the warning off, read as empty.
         #[serde(default)]
         #[schema(required = true, value_type = Vec<ForeignCredentialKind>)]
-        foreign_credentials: Vec<String>,
+        foreign_credentials: Box<Vec<String>>,
         /// The kinds of token the answers held that Puddle does not hold, each once:
         /// `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
         /// `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
@@ -127,7 +129,7 @@ pub enum AuditRecord {
         /// the warning off, read as empty.
         #[serde(default)]
         #[schema(required = true, value_type = Vec<UnknownTokenKind>)]
-        answer_credentials: Vec<String>,
+        answer_credentials: Box<Vec<String>>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -382,10 +384,10 @@ impl From<store::ConnectionRecord> for AuditRecord {
             pending_id,
             binding_id,
             injected,
-            unswapped_stand_ins,
-            scrubbed_stand_ins,
-            foreign_credentials,
-            answer_credentials,
+            unswapped_stand_ins: Box::new(unswapped_stand_ins),
+            scrubbed_stand_ins: Box::new(scrubbed_stand_ins),
+            foreign_credentials: Box::new(foreign_credentials),
+            answer_credentials: Box::new(answer_credentials),
             method,
             path,
             path_truncated,
@@ -404,7 +406,7 @@ impl From<store::AuditRecord> for AuditRecord {
     fn from(record: store::AuditRecord) -> Self {
         use store::AuditRecord as R;
         match record {
-            R::Connection(record) => record.into(),
+            R::Connection(record) => (*record).into(),
             R::PendingCreated { ts, pending } => Self::PendingCreated {
                 ts,
                 pending: pending.into(),

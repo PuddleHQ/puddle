@@ -42,7 +42,7 @@ fn rule_wire() -> RuleWire {
         effect: Effect::Allow,
         expires_at: None,
         created_at: 5,
-        created_by: "cli".into(),
+        created_by: ActorWire::Cli,
         source_pending_id: Some(2),
         set_id: None,
     }
@@ -57,7 +57,7 @@ fn pending_wire() -> PendingWire {
         first_seen: 1,
         last_seen: 2,
         attempts: 3,
-        state: PendingState::Requested.as_str().into(),
+        state: PendingState::Requested,
         decided_at: None,
         decided_by: None,
         rule_id: None,
@@ -67,8 +67,8 @@ fn pending_wire() -> PendingWire {
 
 fn every_record() -> Vec<AuditRecord> {
     vec![
-        AuditRecord::Connection(ConnectionRecord::from_event(9, &event())),
-        AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, Some(&sb()), 12)),
+        AuditRecord::connection(ConnectionRecord::from_event(9, &event())),
+        AuditRecord::connection(ConnectionRecord::suppressed_summary(9, Some(&sb()), 12)),
         AuditRecord::PendingCreated {
             ts: 9,
             pending: pending_wire(),
@@ -169,13 +169,13 @@ fn a_connection_line_without_the_stand_in_list_reads_as_empty_and_a_list_is_kept
     let record: AuditRecord = serde_json::from_value(line).unwrap();
     assert!(matches!(
         record,
-        AuditRecord::Connection(ConnectionRecord { unswapped_stand_ins, .. })
-            if unswapped_stand_ins.is_empty()
+        AuditRecord::Connection(c)
+            if c.unswapped_stand_ins.is_empty()
     ));
     assert!(matches!(
-        AuditRecord::Connection(ConnectionRecord::from_event(1, &event())),
-        AuditRecord::Connection(ConnectionRecord { scrubbed_stand_ins, .. })
-            if scrubbed_stand_ins.is_empty()
+        AuditRecord::connection(ConnectionRecord::from_event(1, &event())),
+        AuditRecord::Connection(c)
+            if c.scrubbed_stand_ins.is_empty()
     ));
     let flagged = ConnectionRecord::from_event(1, &{
         let mut event = event();
@@ -190,9 +190,9 @@ fn a_connection_line_without_the_stand_in_list_reads_as_empty_and_a_list_is_kept
         ["stand-in:secret:A", "stand-in:secret:B"]
     );
     assert!(matches!(
-        AuditRecord::Connection(ConnectionRecord::from_event(1, &event())),
-        AuditRecord::Connection(ConnectionRecord { foreign_credentials, .. })
-            if foreign_credentials.is_empty()
+        AuditRecord::connection(ConnectionRecord::from_event(1, &event())),
+        AuditRecord::Connection(c)
+            if c.foreign_credentials.is_empty()
     ));
     let mut warned = event();
     warned.foreign_credentials = vec!["github_token".to_owned()];
@@ -224,11 +224,8 @@ fn a_connection_line_without_a_refused_address_reads_as_none_and_one_is_kept() {
     let record: AuditRecord = serde_json::from_value(line).unwrap();
     assert!(matches!(
         record,
-        AuditRecord::Connection(ConnectionRecord {
-            refused_address: None,
-            refused_reason: None,
-            ..
-        })
+        AuditRecord::Connection(c)
+            if c.refused_address.is_none() && c.refused_reason.is_none()
     ));
     let mut mixed = event();
     mixed.refused_address = Some((
@@ -267,7 +264,7 @@ fn the_outcome_of_reaching_the_destination_is_kept_and_old_records_read_as_none(
         ConnectionOutcome::Timeout,
     ] {
         event.outcome = Some(outcome);
-        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &event))
+        let line = AuditRecord::connection(ConnectionRecord::from_event(1, &event))
             .to_line()
             .unwrap();
         let value: Value = serde_json::from_str(&line).unwrap();
@@ -301,7 +298,7 @@ fn r23_records_are_internally_tagged_snake_case_with_nulls_written() {
         let back: AuditRecord = serde_json::from_str(&line).unwrap();
         assert_eq!(back, record);
     }
-    let line = AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, Some(&sb()), 12))
+    let line = AuditRecord::connection(ConnectionRecord::suppressed_summary(9, Some(&sb()), 12))
         .to_line()
         .unwrap();
     assert!(line.contains(r#""host":null"#), "{line}");
@@ -313,7 +310,7 @@ fn r23_records_are_internally_tagged_snake_case_with_nulls_written() {
 fn r23_control_characters_come_out_escaped() {
     let mut e = event();
     e.binding_id = Some("a\u{1b}[31m\u{7f}\u{9b}\u{2028}\n\"\\z".into());
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     assert!(!line.chars().any(char::is_control), "{line:?}");
@@ -343,7 +340,7 @@ fn r24_record_types_and_connection_fields() {
     ] {
         assert!(kinds.contains(&kind), "{kind}");
     }
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &event()))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &event()))
         .to_line()
         .unwrap();
     let value: Value = serde_json::from_str(&line).unwrap();
@@ -390,7 +387,7 @@ fn a_company_network_destination_is_recorded_with_its_category_and_signal() {
     e.decision = ConnectionDecision::Blocked;
     e.reason = ConnectionReason::Blocked(BlockReason::CompanyNetwork(CompanySignal::VpnRoute));
     e.company_network = Some(CompanySignal::VpnRoute);
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     let value: Value = serde_json::from_str(&line).unwrap();
@@ -407,7 +404,7 @@ fn r24_reason_and_decision_reach_the_record_as_codes() {
     let mut e = event();
     e.decision = ConnectionDecision::Blocked;
     e.reason = ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::Private));
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     let value: Value = serde_json::from_str(&line).unwrap();
@@ -422,7 +419,7 @@ fn r25_no_secrets_in_connection_records() {
         "POST",
         &format!("https://user:{CANARY}@api.example.com/login?token={CANARY}#{CANARY}"),
     ));
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     assert!(!line.contains(CANARY), "{line}");
@@ -433,7 +430,7 @@ fn r25_no_secrets_in_connection_records() {
 fn r25_query_string_is_dropped_even_from_a_hand_built_record() {
     let mut record = ConnectionRecord::from_event(1, &event());
     record.path = Some(format!("/a?secret={CANARY}"));
-    let line = AuditRecord::Connection(record).to_line().unwrap();
+    let line = AuditRecord::connection(record).to_line().unwrap();
     assert!(!line.contains(CANARY), "{line}");
 }
 
@@ -463,7 +460,7 @@ fn r26_path_cut_to_1kib_and_flagged() {
         "GET",
         &format!("/{}", "é".repeat(2000)),
     ));
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     let value: Value = serde_json::from_str(&line).unwrap();
@@ -477,7 +474,7 @@ fn r26_line_never_exceeds_4kib_even_with_escapes() {
     let nasty = "\u{1}".repeat(1024);
     e.binding_id = Some(nasty.clone());
     e.http = Some(HttpRequestLine::new(nasty.clone(), &format!("/{nasty}")));
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     assert!(line.len() <= MAX_LINE_BYTES, "{}", line.len());
@@ -535,7 +532,7 @@ fn a_string_of_exactly_the_field_limit_is_kept_and_not_flagged() {
         "GET",
         &format!("/{}", "a".repeat(MAX_FIELD_BYTES - 1)),
     ));
-    let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+    let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e))
         .to_line()
         .unwrap();
     let value: Value = serde_json::from_str(&line).unwrap();
@@ -631,6 +628,37 @@ fn actor_strings() {
     assert_eq!(actor_str(Actor::Ui), "ui");
 }
 
+#[test]
+fn an_actor_and_a_pending_state_in_the_audit_are_the_words_they_always_were() {
+    for actor in [
+        Actor::Cli,
+        Actor::Ui,
+        Actor::Api,
+        Actor::System,
+        Actor::WorkspaceCreate,
+    ] {
+        assert_eq!(
+            serde_json::to_value(ActorWire::from(actor)).unwrap(),
+            json!(actor.as_str())
+        );
+    }
+    for state in [
+        PendingState::Requested,
+        PendingState::Allowed,
+        PendingState::Denied,
+        PendingState::Expired,
+    ] {
+        assert_eq!(serde_json::to_value(state).unwrap(), json!(state.as_str()));
+    }
+}
+
+#[test]
+fn a_pending_in_the_audit_with_an_unknown_actor_is_not_a_record() {
+    let mut line = serde_json::to_value(pending_wire()).unwrap();
+    line["decided_by"] = json!("robot");
+    assert!(serde_json::from_value::<PendingWire>(line).is_err());
+}
+
 proptest! {
     #[test]
     fn r26_any_strings_give_a_parseable_line_within_the_cap(
@@ -641,7 +669,7 @@ proptest! {
         let mut e = event();
         e.binding_id = Some(binding);
         e.http = Some(HttpRequestLine::new(method, &target));
-        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e)).to_line().unwrap();
+        let line = AuditRecord::connection(ConnectionRecord::from_event(1, &e)).to_line().unwrap();
         prop_assert!(line.len() <= MAX_LINE_BYTES);
         prop_assert!(!line.chars().any(char::is_control));
         let value: Value = serde_json::from_str(&line).unwrap();
@@ -715,9 +743,9 @@ fn a_workspace_op_line_round_trips_and_one_without_a_detail_reads() {
 #[test]
 fn host_and_outcome_per_record_kind() {
     let mut denied = pending_wire();
-    denied.state = "denied".into();
+    denied.state = PendingState::Denied;
     let mut allowed = pending_wire();
-    allowed.state = "allowed".into();
+    allowed.state = PendingState::Allowed;
     let decided = |pending| AuditRecord::PendingDecided { ts: 1, pending };
     assert_eq!(decided(allowed).outcome(), Some(AuditOutcome::Allow));
     assert_eq!(decided(denied).outcome(), Some(AuditOutcome::Deny));
@@ -727,7 +755,7 @@ fn host_and_outcome_per_record_kind() {
     let created = AuditRecord::RuleCreated { ts: 1, rule: upper };
     assert_eq!(created.host().as_deref(), Some(".example.com"));
     assert_eq!(created.outcome(), None);
-    let summary = AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
+    let summary = AuditRecord::connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
     assert_eq!((summary.host(), summary.outcome()), (None, None));
     for decision in [
         ConnectionDecision::Allow,
@@ -737,7 +765,7 @@ fn host_and_outcome_per_record_kind() {
     ] {
         let mut record = ConnectionRecord::from_event(1, &event());
         record.decision = Some(decision);
-        let outcome = AuditRecord::Connection(record).outcome().unwrap();
+        let outcome = AuditRecord::connection(record).outcome().unwrap();
         assert_eq!(
             serde_json::to_value(outcome).unwrap(),
             serde_json::to_value(decision).unwrap()
@@ -764,14 +792,14 @@ fn migration_backfills_host_outcome_and_search_text_as_the_code_derives_them() {
     shouting.host = Some("API.Example.COM".into());
     shouting.method = Some("PoSt".into());
     shouting.path = Some("/V1/Ítems".into());
-    records.push(AuditRecord::Connection(shouting.clone()));
+    records.push(AuditRecord::connection(shouting.clone()));
     shouting.path = Some(String::new());
     shouting.host = None;
-    records.push(AuditRecord::Connection(shouting));
+    records.push(AuditRecord::connection(shouting));
     let mut allowed = pending_wire();
-    allowed.state = "allowed".into();
+    allowed.state = PendingState::Allowed;
     let mut denied = pending_wire();
-    denied.state = "denied".into();
+    denied.state = PendingState::Denied;
     records.extend([
         AuditRecord::PendingDecided {
             ts: 9,
@@ -831,16 +859,16 @@ fn search_text_is_the_lower_case_fields_a_person_would_type() {
     connection.method = Some("GET".into());
     connection.path = Some("/V1/Items".into());
     assert_eq!(
-        AuditRecord::Connection(connection).search_text().as_deref(),
+        AuditRecord::connection(connection).search_text().as_deref(),
         Some("api.example.com\nget\n/v1/items\nrule")
     );
     let mut company = ConnectionRecord::from_event(9, &event());
     company.category = Some("company_network".into());
     assert_eq!(
-        AuditRecord::Connection(company).search_text().as_deref(),
+        AuditRecord::connection(company).search_text().as_deref(),
         Some("api.example.com\nget\n/v1/items\nrule\ncompany_network")
     );
-    let summary = AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
+    let summary = AuditRecord::connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
     assert_eq!(summary.search_text().as_deref(), Some("suppressed"));
     let mut rule = rule_wire();
     rule.pattern = ".Example.COM".into();

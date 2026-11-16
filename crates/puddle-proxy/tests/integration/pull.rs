@@ -4,7 +4,6 @@
 //! connected; the right token tunnels and forwards; the guard blocks Puddle's own endpoints and
 //! metadata; the token never shows up in a log line
 //! (`pull_logs.rs`, its own process for a global subscriber).
-use crate::pull_support;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -15,11 +14,13 @@ use futures_util::future::BoxFuture;
 use puddle_netpolicy::{EndpointKind, LocalAccess, PuddleEndpoints};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{ProxyConfig, PullProxy, Resolver};
+use puddle_proxy_test_support::pull::{
+    LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send,
+};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
     DomainName, LocalCategory,
 };
-use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

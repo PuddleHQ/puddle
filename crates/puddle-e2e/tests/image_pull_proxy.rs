@@ -38,11 +38,8 @@ use puddle_store::{AuditCursor, AuditFilter, AuditRecord, Clock, Limits, Store, 
 use puddle_types::{ConnectionDecision, ConnectionOrigin, ImageRef};
 use tokio::net::TcpListener;
 
-#[path = "integration/lab/mod.rs"]
-mod lab;
-
-use lab::REGISTRY;
-use lab::registry::{REPO, Seen, registry};
+use puddle_e2e::pull_lab::registry::{REPO, Seen, registry};
+use puddle_e2e::pull_lab::{self, REGISTRY};
 
 /// Every log line of the process.
 #[derive(Clone, Default)]
@@ -236,12 +233,12 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
     );
     let proxy = PullProxy::bind(&endpoints)
         .unwrap()
-        .with_resolver(Arc::new(lab::LabResolver(registry_addr)))
+        .with_resolver(Arc::new(pull_lab::LabResolver(registry_addr)))
         .with_connection_log(store.clone());
     let token = proxy.token().expose().to_owned();
     let proxy_url = proxy.proxy_url().expose().to_owned();
 
-    let (root, tls) = lab::lab_pki();
+    let (root, tls) = pull_lab::lab_pki();
     let tls = Arc::new(tls);
     let home = puddle_test_kit::private_tempdir();
     let seen = Arc::new(Seen::default());

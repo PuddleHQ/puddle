@@ -3,7 +3,7 @@
 //! its two transports. UDP goes through a real socket on the loopback address (the receive buffer is the
 //! length check); TCP goes through an in-memory stream, because a server that closes with unread bytes
 //! resets the connection and a reset loses answers the test wants to read. Included, beside
-//! `dns_message.rs` and `dns_message_grammar.rs`, by the fuzz targets and by the stable corpus replay in
+//! `dns_message.rs` and `dns_message_builder.rs`, by the fuzz targets and by the stable corpus replay in
 //! `puddle-agent`'s tests.
 //!
 //! The expected answer to a message is what the stub gives the same message called directly
@@ -30,7 +30,7 @@ use puddle_agent_proto::resolve::{
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::UdpSocket;
 
-use super::dns_message_grammar::Message;
+use super::dns_message_builder::Message;
 
 /// A host that answers from the name alone, so asking twice gives the same answer. `big.` names have
 /// a text answer of about 3 KB: it fits a TCP answer and an advertised UDP size of 4096, and not the
@@ -116,7 +116,7 @@ thread_local! {
 /// What a client puts in a message: a grammar-built DNS message, a query laid out so its `OPT` record
 /// ends at a chosen byte (around the limits that matter: 512, 1232 and `MAX_QUERY`), or raw bytes.
 #[derive(Debug)]
-pub(crate) enum Probe {
+pub enum Probe {
     Grammar(Message),
     Bounded(Vec<u8>),
     Raw(Vec<u8>),
@@ -124,7 +124,7 @@ pub(crate) enum Probe {
 
 impl Probe {
     /// The message bytes.
-    pub(crate) fn bytes(&self) -> &[u8] {
+    pub fn bytes(&self) -> &[u8] {
         match self {
             Self::Grammar(message) => message.bytes(),
             Self::Bounded(bytes) | Self::Raw(bytes) => bytes,
@@ -133,7 +133,7 @@ impl Probe {
 
     /// Which of the three it is, for the corpus test.
     #[cfg(test)]
-    pub(crate) fn shape(&self) -> &'static str {
+    pub fn shape(&self) -> &'static str {
         match self {
             Self::Grammar(_) => "grammar",
             Self::Bounded(_) => "bounded",
@@ -206,7 +206,7 @@ fn sentinel() -> Vec<u8> {
 }
 
 /// A query the stub answers, padded with zero bytes after the question to `len` bytes.
-pub(crate) fn padded_query(len: usize) -> Vec<u8> {
+pub fn padded_query(len: usize) -> Vec<u8> {
     let mut message = sentinel();
     message.resize(len, 0);
     message
@@ -219,7 +219,7 @@ pub(crate) fn padded_query(len: usize) -> Vec<u8> {
 /// When the answer (or the lack of one) differs from what the stub says to the
 /// datagram called directly (a datagram over `MAX_QUERY` bytes is dropped, as on every OS), or
 /// when no answer comes in two seconds.
-pub(crate) fn dns_udp_datagram(probe: &Probe) {
+pub fn dns_udp_datagram(probe: &Probe) {
     dns_udp_bytes(probe.bytes());
 }
 
@@ -228,7 +228,7 @@ pub(crate) fn dns_udp_datagram(probe: &Probe) {
 /// # Panics
 ///
 /// As [`dns_udp_datagram`].
-pub(crate) fn dns_udp_bytes(sent: &[u8]) {
+pub fn dns_udp_bytes(sent: &[u8]) {
     RIG.with(|rig| {
         rig.runtime.block_on(async {
             let mut want: Vec<Vec<u8>> = if sent.len() > MAX_QUERY {
@@ -298,7 +298,7 @@ struct Frame {
 /// A TCP stream of length-prefixed messages: honest and lying prefixes, the limit and one past it, a
 /// stream cut anywhere.
 #[derive(Debug)]
-pub(crate) struct Stream {
+pub struct Stream {
     frames: Vec<Frame>,
     cut: Option<usize>,
 }
@@ -332,7 +332,7 @@ impl<'a> Arbitrary<'a> for Stream {
 impl Stream {
     /// How each frame states its length, and whether the stream is cut, for the corpus test.
     #[cfg(test)]
-    pub(crate) fn kinds(&self) -> Vec<&'static str> {
+    pub fn kinds(&self) -> Vec<&'static str> {
         let mut kinds: Vec<&'static str> = self
             .frames
             .iter()
@@ -382,7 +382,7 @@ impl Stream {
 /// not zero and not over `MAX_QUERY`, that many bytes of message, an answer framed the same way,
 /// and an end at the first prefix that fails, the first cut-off message or the first message the
 /// stub drops), or when the connection does not end.
-pub(crate) fn dns_tcp_stream(stream: &Stream) {
+pub fn dns_tcp_stream(stream: &Stream) {
     let input = stream.bytes();
     RIG.with(|rig| {
         rig.runtime.block_on(async {

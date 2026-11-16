@@ -306,19 +306,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let ticket = self.accept(
                 id,
                 Operation::Reclaiming,
-                |r| {
-                    if matches!(
-                        r.status,
-                        WorkspaceStatus::Starting | WorkspaceStatus::Draining
-                    ) {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; try again in a moment",
-                            r.name, r.status
-                        )))
-                    } else {
-                        Ok(())
-                    }
-                },
+                // `Starting` and `Draining` are set only together with the busy mark `accept`
+                // refuses first, so no status needs checking here.
+                |_| Ok(()),
                 |_| {},
             )?;
             let record = ticket.record().clone();
@@ -411,19 +401,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let ticket = self.accept(
                 id,
                 Operation::GrowingRootDisk,
-                |r| {
-                    if matches!(
-                        r.status,
-                        WorkspaceStatus::Starting | WorkspaceStatus::Draining
-                    ) {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; try again in a moment",
-                            r.name, r.status
-                        )))
-                    } else {
-                        Ok(())
-                    }
-                },
+                // `Starting` and `Draining` are set only together with the busy mark `accept`
+                // refuses first, so no status needs checking here.
+                |_| Ok(()),
                 |_| {},
             )?;
             let record = ticket.record().clone();

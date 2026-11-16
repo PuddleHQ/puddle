@@ -8,6 +8,10 @@
 //   the two characters `\n`; the entry then needs those lines directly above the last one as well,
 //   which is how a bare `)?;` or `}` is pinned to the statement it ends. A backslash escapes
 //   the next character, since `|` separates the fields: `\|` is a bar and `\\` a backslash in the code.
+// - A run of added lines that the same diff removes elsewhere (same trimmed text, same order, 20 letters
+//   and digits or more: `diff-moved.ts`) only moved, so it is not judged: a file split needs no entries.
+//   The gate has no coverage report of the base, so a moved line that a test covered before the move
+//   and no longer does is caught only by the workspace ratchet (STANDARDS.md, "Coverage").
 // - The file may hold at most N places where the text matches (`xN`, default 1). A copy added later
 //   makes the count N+1 and the entry stops excusing anything in that file, visibly.
 // - An entry whose text is gone from every file under its glob fails the gate, named by exclusion file and
@@ -37,6 +41,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { runCli } from "./cli.ts";
+import { movedLines } from "./diff-moved.ts";
 
 /** Execution counts per line, per repository-relative path. */
 export type Coverage = Map<string, Map<number, number>>;
@@ -603,11 +608,18 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
     ],
     repoRoot,
   );
-  const added = parseDiff(diff).filter(
+  const moved = movedLines(diff);
+  const changed = parseDiff(diff).filter(
     (a) =>
       a.path.startsWith(opts.prefix) &&
       opts.exts.some((x) => a.path.endsWith(x)),
   );
+  const added = changed.filter((a) => !moved.has(`${a.path}:${a.line}`));
+  if (added.length < changed.length) {
+    console.log(
+      `${opts.label}: note: ${changed.length - added.length} added line(s) only moved (the diff removes the same lines elsewhere) and are not judged`,
+    );
+  }
   const reports = lcovs.map((f) =>
     parseLcov(readFileSync(f, "utf8"), repoRoot, opts.prefix),
   );

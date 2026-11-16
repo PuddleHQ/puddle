@@ -18,8 +18,8 @@ use puddle_doctor::{
     CheckId, CodeIntegrity, CodeIntegrityFacts, CredentialStoreFacts, DataEncryption,
     DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding, GsaFacts, HypervisorApi,
     HypervisorFacts, JobFacts, KeptLogs, KeySourceTag, LoginSession, Options, Os, Probe,
-    ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
-    StoreHealth, SwapArea, SwapFacts, VaultFacts, WritableFolder, diagnose,
+    ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SealedKeyFacts, SshAgentFacts,
+    Status, StoreHealth, SwapArea, SwapFacts, TpmFacts, VaultFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -2078,6 +2078,98 @@ fn a_vault_file_with_a_header_that_cannot_be_read_is_a_warning_with_the_fix() {
         r.ok,
         "a vault that does not open stops secrets, not sandboxes"
     );
+}
+
+fn sealed(key: SealedKeyFacts, tpm: Option<TpmFacts>) -> Fake {
+    with_store(CredentialStoreFacts::File(VaultFacts::Sealed {
+        tag: KeySourceTag::SystemdHost,
+        key,
+        tpm,
+    }))
+}
+
+#[test]
+fn a_sealed_key_that_systemd_refuses_names_the_three_causes_and_the_way_out() {
+    let r = check(
+        "credential_store_sealed_key_rejected",
+        &sealed(
+            SealedKeyFacts::Fails(puddle_secrets::Unseal::Rejected),
+            None,
+        ),
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreKeyRejected),
+    );
+    let c = r.check(CheckId::CredentialStore).unwrap();
+    assert_eq!(c.status, Status::Warn);
+    let fix = c.fix.clone().unwrap();
+    for needle in [
+        "machine id changed",
+        "host key",
+        "Secure Boot",
+        "restoring the old machine id no longer helps",
+        "move `secrets/vault`",
+    ] {
+        assert!(fix.contains(needle), "{needle}: {fix}");
+    }
+    assert!(
+        r.ok,
+        "a vault that does not open stops secrets, not sandboxes"
+    );
+}
+
+#[test]
+fn a_sealed_key_that_does_not_open_for_another_reason_says_why_and_what_to_do() {
+    use puddle_secrets::Unseal;
+    for (why, fix_has) in [
+        (Unseal::ToolMissing, "Install systemd's `systemd-creds`"),
+        (Unseal::Unsupported, "older than 256"),
+        (Unseal::NameMismatch, "another name than `puddle-vault-key`"),
+        (Unseal::Failed, "did not give a key"),
+        (Unseal::TimedOut, "did not give a key"),
+        (Unseal::NotAKey, "did not give a key"),
+    ] {
+        let r = run(
+            &sealed(SealedKeyFacts::Fails(why), None),
+            &Options::default(),
+        );
+        let c = r.check(CheckId::CredentialStore).unwrap();
+        assert_eq!(c.status, Status::Warn, "{why:?}");
+        assert_eq!(c.finding, Some(Finding::CredentialStoreKeyUnopenable));
+        assert!(c.summary.contains(&why.to_string()), "{}", c.summary);
+        assert!(c.fix.as_deref().unwrap().contains(fix_has), "{why:?}");
+    }
+}
+
+#[test]
+fn a_key_sealed_without_the_tpm_on_a_computer_with_one_whose_libraries_are_missing_is_a_warning() {
+    let r = check(
+        "credential_store_tpm_libraries_missing",
+        &sealed(SealedKeyFacts::Opens, Some(TpmFacts::LibrariesMissing)),
+        CheckId::CredentialStore,
+        Some(Finding::CredentialStoreTpmLibrariesMissing),
+    );
+    let c = r.check(CheckId::CredentialStore).unwrap();
+    assert_eq!(c.status, Status::Warn);
+    let fix = c.fix.clone().unwrap();
+    assert!(
+        fix.contains("tpm2-tools") && fix.contains("systemd-analyze has-tpm2"),
+        "{fix}"
+    );
+}
+
+#[test]
+fn a_sealed_key_that_opens_is_ok_whatever_the_tpm_says_when_there_is_nothing_to_fix() {
+    for tpm in [
+        None,
+        Some(TpmFacts::Usable),
+        Some(TpmFacts::Unavailable),
+        Some(TpmFacts::Unknown),
+    ] {
+        let r = run(&sealed(SealedKeyFacts::Opens, tpm), &Options::default());
+        let c = r.check(CheckId::CredentialStore).unwrap();
+        assert_eq!((c.status, c.finding), (Status::Ok, None), "{tpm:?}");
+        assert!(c.summary.ends_with("the key opens"), "{}", c.summary);
+    }
 }
 
 #[test]

@@ -70,4 +70,7 @@ pub use signin::{SignInError, SignInStart, SignIns};
 pub use sources::{Credential, Fetch, Fetched, Sources, pasted_token};
 pub use spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 pub use store::{MemoryStore, SecretStore, StoreError, Sweep};
-pub use vault_key::{FoundKey, KeyError, KeySource, Unseal, VaultKeys, config_home};
+pub use vault_key::{
+    FoundKey, KeyError, KeySource, Unseal, VaultKeys, classify_unseal_failure, config_home,
+    sealed_key_name, sealed_key_path, systemd_lacks_user_sealing,
+};

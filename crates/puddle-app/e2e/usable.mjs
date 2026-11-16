@@ -423,7 +423,8 @@ async function checkTheCompanyProxyCarriedTheTraffic(branch) {
   const flows = log.split(/\r?\n/).filter((l) => l.includes("] FLOW ") && l.includes(`https://${forge}/`));
   check("the company proxy decrypted the clone's requests to the forge", flows.some((l) => /git-upload-pack/.test(l) && / 200$/.test(l)), flows.slice(0, 3).join(" | "));
   check("the company proxy decrypted the push to the forge", flows.some((l) => /git-receive-pack/.test(l) && / 200$/.test(l)), flows.filter((l) => /receive-pack/.test(l)).join(" | ") || `${branch}: no receive-pack line, ${flows.length} forge lines`);
-  check("the company proxy carried the package archive's requests", /debian\.org/.test(log), `${log.length} bytes of log`);
+  const archive = log.split(/\r?\n/).filter((l) => l.includes("] FLOW GET http://deb.debian.org/") && / 200$/.test(l));
+  check("the company proxy carried the package archive's requests (plain HTTP, signed in)", archive.length > 0, `${archive.length} answered requests`);
 }
 
 // ---- the run ---------------------------------------------------------------------------------------

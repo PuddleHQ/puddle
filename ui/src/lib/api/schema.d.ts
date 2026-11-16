@@ -3570,7 +3570,7 @@ export interface components {
          *     servers in a workspace open in the browser without a warning.
          * @enum {string}
          */
-        DevCertificate: "not_checked" | "reusing_existing" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
+        DevCertificate: "not_checked" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
         /** @description The signed-in user's devices. */
         DeviceList: {
             /** @description The ones that still work, the one used last first. */

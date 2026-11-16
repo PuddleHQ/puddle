@@ -327,6 +327,7 @@ describe("actions", () => {
     ["repo_url", "repo_url"],
     ["image", "image"],
     ["memory_mib", "memory_mib"],
+    ["cpus", "cpus"],
     ["start_folder", "start_folder"],
   ] as const)(
     "puts a refusal the service puts at %s on that field",

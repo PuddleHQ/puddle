@@ -75,6 +75,8 @@ pub enum ErrorField {
     Image,
     /// The memory size.
     MemoryMib,
+    /// The vCPU count.
+    Cpus,
     /// The start folder.
     StartFolder,
     /// With `row`: that entry's `local_path`.

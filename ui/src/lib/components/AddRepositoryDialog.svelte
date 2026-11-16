@@ -173,7 +173,8 @@
         <p class="error" id="{id}-url-error" role="alert">{shownUrl}</p>
       {:else}
         <p class="hint" id="{id}-url-hint">
-          SSH addresses aren't supported yet: use the HTTPS URL.
+          An HTTPS URL, or an SSH address of GitHub, GitLab, Bitbucket or Azure
+          DevOps; the repository is cloned over HTTPS.
         </p>
       {/if}
     </div>

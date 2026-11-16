@@ -159,21 +159,47 @@ fn https_urls_pass() {
 }
 
 #[test]
-fn ssh_remotes_get_the_not_supported_message() {
+fn an_ssh_address_of_a_git_host_puddle_ends_ssh_for_is_kept_as_its_https_address() {
+    for (ssh, https) in [
+        (
+            "git@github.com:acme/api.git",
+            "https://github.com/acme/api.git",
+        ),
+        (
+            "ssh://git@github.com/acme/api.git",
+            "https://github.com/acme/api.git",
+        ),
+        ("SSH://github.com/acme/api", "https://github.com/acme/api"),
+        ("github.com:acme/api", "https://github.com/acme/api"),
+        (
+            "  git@gitlab.com:g/s/p.git ",
+            "https://gitlab.com/g/s/p.git",
+        ),
+        (
+            "git@ssh.dev.azure.com:v3/org/proj/repo",
+            "https://dev.azure.com/org/proj/_git/repo",
+        ),
+    ] {
+        assert_eq!(RepoUrl::parse(ssh).unwrap().as_str(), https, "{ssh}");
+    }
+}
+
+#[test]
+fn an_ssh_address_of_any_other_host_says_to_use_the_https_url() {
     for ssh in [
-        "git@github.com:acme/api.git",
-        "ssh://git@github.com/acme/api.git",
-        "SSH://github.com/acme/api",
-        "github.com:acme/api",
+        "ssh://git@git.example.com/acme/api.git",
         "user@host:path",
+        "git@github.com.example.org:acme/api.git",
     ] {
         let err = RepoUrl::parse(ssh).unwrap_err().to_string();
         assert!(
-            err.contains("ssh remotes are not supported yet"),
+            err.contains("reads SSH addresses of GitHub"),
             "{ssh}: {err}"
         );
-        assert!(err.contains("HTTPS"), "{err}");
+        assert!(err.contains("use the repository's HTTPS URL"), "{err}");
     }
+    let err = RepoUrl::parse("git@github.com:").unwrap_err().to_string();
+    assert!(err.contains("not an SSH address Puddle can read"), "{err}");
 }
 
 #[test]
@@ -874,9 +900,11 @@ fn a_repository_list_is_refused_naming_the_entry() {
         ghost,
         "repository 2 (https://github.com/acme/web): there is no identity 9"
     );
-    let ssh = refused(&[draft("git@github.com:acme/api.git")]);
+    let ssh = refused(&[draft("git@git.example.com:acme/api.git")]);
     assert!(
-        ssh.starts_with("repository 1 (git@github.com:acme/api.git): ssh remotes"),
+        ssh.starts_with(
+            "repository 1 (git@git.example.com:acme/api.git): Puddle reads SSH addresses"
+        ),
         "{ssh}"
     );
     let bad_dir = refused(&[RepositoryDraft {

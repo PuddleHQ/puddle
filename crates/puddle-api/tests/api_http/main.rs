@@ -43,5 +43,6 @@ mod shell_init;
 mod sign_in;
 mod ssh_agent;
 mod terminals;
+mod tools;
 mod ui;
 mod workspaces;

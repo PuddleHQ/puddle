@@ -61,6 +61,7 @@ mod shell_init;
 mod ssh_agent;
 mod start_folder;
 mod terminals;
+mod tools;
 mod workspaces;
 
 /// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
@@ -184,6 +185,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(repositories::add_repository))
         .routes(routes!(repositories::clone_again))
         .routes(routes!(repositories::remove_repository))
+        .merge(tools_router())
         .routes(routes!(
             identities::list_identities,
             identities::create_identity
@@ -250,6 +252,17 @@ fn admin_router() -> OpenApiRouter<AppState> {
         .routes(routes!(admin::reissue_invite))
         .routes(routes!(admin::delete_user))
         .routes(routes!(admin::admin_audit))
+}
+
+/// A workspace's managed tools, in a router of their own like the rules.
+#[inline(never)]
+fn tools_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(tools::list_tools))
+        .routes(routes!(tools::tool_registry))
+        .routes(routes!(tools::install_tools))
+        .routes(routes!(tools::tool_versions))
+        .routes(routes!(tools::put_tool, tools::delete_tool))
 }
 
 /// The terminals, in a router of their own like the rules.

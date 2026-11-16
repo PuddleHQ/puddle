@@ -14,12 +14,13 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_store::Clock;
 use puddle_types::{
-    CheckoutDir, EntryId, Event, EventSink, SessionUser, WorkspaceId, WorkspaceStatus,
-    WorkspaceStep,
+    CheckoutDir, EntryId, Event, EventSink, SessionUser, ToolName, ToolVersion, ToolsFileHash,
+    WorkspaceId, WorkspaceStatus, WorkspaceStep,
 };
 use tokio::sync::watch;
 
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
+use crate::wire::{RegistryTool, ToolRegistry, ToolVersions, ToolsFile, ToolsListing};
 use crate::workspaces::{
     AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB,
     DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
@@ -132,6 +133,8 @@ struct State {
     /// The workspace disks the list does not name, each with the remote address a read of its
     /// checkout finds (`None`: no readable address).
     orphans: BTreeMap<WorkspaceId, Option<crate::workspaces::RepoUrl>>,
+    /// The managed tools of every workspace.
+    tools: tools::FakeTools,
 }
 
 struct Inner {
@@ -195,6 +198,7 @@ impl FakeWorkspaces {
                     guest: BTreeMap::new(),
                     last_listing: BTreeMap::new(),
                     orphans: BTreeMap::new(),
+                    tools: tools::FakeTools::default(),
                 }),
                 events,
                 clock,
@@ -263,6 +267,43 @@ impl FakeWorkspaces {
     /// Sets what `id`'s guest holds: the checkouts a listing of the running workspace finds.
     pub fn set_checkouts(&self, id: &WorkspaceId, checkouts: FoundList) {
         lock(&self.inner.state).guest.insert(id.clone(), checkouts);
+    }
+
+    /// Sets what the root `mise.toml` of `id` holds, as (name, version, installed); changes the
+    /// file's hash.
+    pub fn set_tools(&self, id: &WorkspaceId, tools: Vec<(ToolName, ToolVersion, bool)>) {
+        lock(&self.inner.state).tools.set_root(id, tools);
+    }
+
+    /// Switches the managed tools off (or on) for `id`.
+    pub fn set_tools_off(&self, id: &WorkspaceId, off: bool) {
+        lock(&self.inner.state).tools.set_off(id, off);
+    }
+
+    /// Changes the root `mise.toml` of `id` as a hand edit does: its hash differs afterwards.
+    pub fn edit_tools_file_by_hand(&self, id: &WorkspaceId) {
+        lock(&self.inner.state).tools.hand_edit(id);
+    }
+
+    /// Sets the repositories' own mise files a listing of `id` shows after the root file.
+    pub fn set_tool_files(&self, id: &WorkspaceId, files: Vec<ToolsFile>) {
+        lock(&self.inner.state).tools.set_repo_files(id, files);
+    }
+
+    /// Sets the registry the Add tool search reads, and why it is empty when it is.
+    pub fn set_tool_registry(&self, tools: Vec<RegistryTool>, problem: Option<String>) {
+        lock(&self.inner.state).tools.set_registry(tools, problem);
+    }
+
+    /// Sets the versions listed for `name`, or why mise could not list them.
+    pub fn set_tool_versions(&self, name: ToolName, answer: Result<Vec<ToolVersion>, String>) {
+        lock(&self.inner.state).tools.set_versions(name, answer);
+    }
+
+    /// The workspaces an install was started for (by an edit or a retry), in order.
+    #[must_use]
+    pub fn tool_installs(&self) -> Vec<WorkspaceId> {
+        lock(&self.inner.state).tools.installs()
     }
 
     /// Replaces what deleting `id` would lose. `false` if there is no such workspace.
@@ -607,6 +648,38 @@ impl FakeWorkspaces {
         let state = lock(&self.inner.state);
         let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
         Ok(delete_check(entry))
+    }
+}
+
+impl FakeWorkspaces {
+    /// Whether `id` exists and is running.
+    fn is_running(&self, id: &WorkspaceId) -> Result<bool, WorkspaceError> {
+        lock(&self.inner.state)
+            .entries
+            .get(id)
+            .map(|e| e.record.status == WorkspaceStatus::Running)
+            .ok_or_else(|| not_found(id))
+    }
+
+    fn tools_listing(&self, id: &WorkspaceId) -> Result<ToolsListing, WorkspaceError> {
+        let running = self.is_running(id)?;
+        let now = self.inner.clock.now_ms();
+        Ok(lock(&self.inner.state).tools.listing(id, running, now))
+    }
+
+    /// Runs an edit of the root file when the workspace can take it, then lists again.
+    fn tools_edit(
+        &self,
+        id: &WorkspaceId,
+        edit: impl FnOnce(&mut tools::FakeTools) -> Result<(), WorkspaceError>,
+    ) -> Result<ToolsListing, WorkspaceError> {
+        let running = self.is_running(id)?;
+        {
+            let mut state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            edit(&mut state.tools)?;
+        }
+        self.tools_listing(id)
     }
 }
 
@@ -1231,6 +1304,70 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
+    fn tools<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.tools_listing(id) })
+    }
+
+    fn set_tool<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        name: &'a ToolName,
+        version: &'a ToolVersion,
+        hash: &'a ToolsFileHash,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.tools_edit(id, |tools| tools.set(id, name, version, hash)) })
+    }
+
+    fn remove_tool<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        name: &'a ToolName,
+        hash: &'a ToolsFileHash,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.tools_edit(id, |tools| tools.remove(id, name, hash)) })
+    }
+
+    fn tool_registry<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<ToolRegistry, WorkspaceError>> {
+        Box::pin(async move {
+            let running = self.is_running(id)?;
+            let state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            Ok(state.tools.registry())
+        })
+    }
+
+    fn tool_versions<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        name: &'a ToolName,
+    ) -> BoxFuture<'a, Result<ToolVersions, WorkspaceError>> {
+        Box::pin(async move {
+            let running = self.is_running(id)?;
+            let state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            Ok(state.tools.versions(name))
+        })
+    }
+
+    fn install_tools<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async move {
+            let running = self.is_running(id)?;
+            let mut state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            state.tools.install(id);
+            Ok(())
+        })
+    }
+
     fn checkouts<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -1357,6 +1494,8 @@ impl WorkspaceService for FakeWorkspaces {
         Box::pin(async {})
     }
 }
+
+mod tools;
 
 #[cfg(test)]
 mod tests;

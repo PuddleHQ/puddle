@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.31.0";
+pub const API_VERSION: &str = "0.32.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -63,6 +63,7 @@ const BEARER: &str = "bearer";
         (name = "interception", description = "Decrypting every host: a workspace's switch and the names that are never decrypted"),
         (name = "ssh-agent", description = "The filtered SSH agent: the hosts a workspace may use the user's SSH agent for"),
         (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"),
+        (name = "tools", description = "A workspace's managed tools: what its mise files ask for, and edits of the root mise.toml through mise's own commands"),
         (name = "logins", description = "The logins Puddle kept for a workspace: listing them and forgetting one"),
         (name = "orphan-volumes", description = "Workspace disks the workspace list does not name, and restoring one as a workspace"),
         (name = "start-folder", description = "Where a workspace's new terminals land and what its editor opens")

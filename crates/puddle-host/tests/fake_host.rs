@@ -15,6 +15,8 @@ mod support;
 mod dropped_requests;
 #[path = "fake_host/grow_room.rs"]
 mod grow_room;
+#[path = "fake_host/tools_edit.rs"]
+mod tools_edit;
 #[path = "fake_host/tools_install.rs"]
 mod tools_install;
 
@@ -211,6 +213,16 @@ struct Guest {
     tools_runs: Mutex<Vec<(Vec<String>, Option<String>)>>,
     /// A report (`--missing`) answers with lines that are not the agent's.
     tools_report_garbled: AtomicBool,
+    /// The root `mise.toml` as `puddle-agent mise-tools` sees it: its tools and how often it
+    /// changed (the hash is made from the count; 0 is no file).
+    mise_file: Mutex<(std::collections::BTreeMap<String, String>, u64)>,
+    /// What every `mise-tools` call answers on standard error with exit code 1, instead of its
+    /// answer.
+    mise_tools_failure: Mutex<Option<&'static str>>,
+    /// `mise-tools list` prints lines that are not the agent's.
+    mise_tools_garbled: AtomicBool,
+    /// Every `puddle-agent mise-tools` as (arguments after the workspace folder, user).
+    mise_tools_runs: Mutex<Vec<(Vec<String>, Option<String>)>>,
     /// How often the trust step for a new JDK ran, and as whom.
     java_trusts: Mutex<Vec<Option<String>>>,
     /// The trust step for a new JDK fails.
@@ -371,6 +383,7 @@ impl Guest {
             match (r.program.as_str(), r.args.first().map(String::as_str)) {
                 ("/puddle/puddle-agent", Some("mise-fetch")) => self.answer_mise_fetch(r),
                 ("/puddle/puddle-agent", Some("mise-install")) => self.answer_mise_install(r),
+                ("/puddle/puddle-agent", Some("mise-tools")) => self.answer_mise_tools(r),
                 ("sh", Some(puddle_certs::JAVA_STEP_PATH)) => {
                     self.java_trusts.lock().unwrap().push(r.user.clone());
                     if self.java_trust_fails.load(Ordering::SeqCst) {
@@ -434,6 +447,57 @@ impl Guest {
         }
         self.tools_missing.lock().unwrap().clear();
         ExecOutput::new(0, out, "")
+    }
+
+    /// Answers `mise-tools` like the agent over a stand-in root file: a listing, an edit that
+    /// refuses a stale hash with exit code 5, the registry and the versions.
+    fn answer_mise_tools(&self, r: &ExecRequest) -> ExecOutput {
+        let words: Vec<String> = r.args.iter().skip(2).cloned().collect();
+        self.mise_tools_runs
+            .lock()
+            .unwrap()
+            .push((words.clone(), r.user.clone()));
+        if let Some(said) = *self.mise_tools_failure.lock().unwrap() {
+            return ExecOutput::new(1, "", said);
+        }
+        let mut file = self.mise_file.lock().unwrap();
+        let hash = |revision: u64| {
+            if revision == 0 {
+                "absent".to_owned()
+            } else {
+                format!("{revision:064x}")
+            }
+        };
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        match words.as_slice() {
+            ["list"] if self.mise_tools_garbled.load(Ordering::SeqCst) => {
+                ExecOutput::new(0, "Segmentation fault\n", "")
+            }
+            ["list"] => {
+                let mut out = format!("hash\t{}\n", hash(file.1));
+                for (name, version) in &file.0 {
+                    writeln!(out, "tool\tmise.toml\t{name}\t{version}\t0").unwrap();
+                }
+                out.push_str("end\n");
+                ExecOutput::new(0, out, "")
+            }
+            ["set" | "remove", ..] if words.last().copied() != Some(hash(file.1).as_str()) => {
+                ExecOutput::new(5, "", "mise.toml changed since it was listed")
+            }
+            ["set", name, version, _] => {
+                file.0.insert((*name).to_owned(), (*version).to_owned());
+                file.1 += 1;
+                ExecOutput::new(0, format!("hash\t{}\nend\n", hash(file.1)), "")
+            }
+            ["remove", name, _] => {
+                file.0.remove(*name);
+                file.1 += 1;
+                ExecOutput::new(0, format!("hash\t{}\nend\n", hash(file.1)), "")
+            }
+            ["registry"] => ExecOutput::new(0, "reg\tnode\tJavaScript runtime\nend\n", ""),
+            ["versions", _] => ExecOutput::new(0, "ver\t22.1.0\nver\t22.0.0\nend\n", ""),
+            other => ExecOutput::new(2, "", format!("unexpected {other:?}")),
+        }
     }
 
     /// The installs (not the reports) `mise-install` ran.

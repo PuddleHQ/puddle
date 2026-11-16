@@ -23,6 +23,7 @@ mod merge_file;
 mod microsoft_server;
 mod mise_fetch;
 mod mise_install;
+mod mise_tools;
 mod oom;
 mod real_bridge;
 mod relay;

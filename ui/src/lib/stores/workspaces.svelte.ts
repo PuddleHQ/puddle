@@ -63,7 +63,13 @@ export interface OomEvent {
 
 /** `field` tells a form where to put the message; `form` is anything else. */
 export type Field =
-  "name" | "repo_url" | "image" | "memory_mib" | "start_folder" | "form";
+  | "name"
+  | "repo_url"
+  | "image"
+  | "memory_mib"
+  | "cpus"
+  | "start_folder"
+  | "form";
 
 /** The input of a repository row of the create form. */
 export type RowInput = "localPath" | "url" | "directory";
@@ -106,6 +112,7 @@ const PLACES: Record<
   repo_url: { field: "repo_url" },
   image: { field: "image" },
   memory_mib: { field: "memory_mib" },
+  cpus: { field: "cpus" },
   start_folder: { field: "start_folder" },
   local_path: { field: "repo_url", input: "localPath" },
   url: { field: "repo_url", input: "url" },

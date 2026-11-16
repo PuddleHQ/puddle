@@ -888,6 +888,7 @@ pub struct GlobalSettingsRequest {
 
 /// Upper bounds on what a workspace may be given (global only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Limits {
     /// The most vCPUs a workspace may have. `null` is the computer's logical cores.
     #[serde(default)]

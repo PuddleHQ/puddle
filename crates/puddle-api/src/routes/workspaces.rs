@@ -261,7 +261,7 @@ impl StoreGitSetup {
     }
 
     /// Sets up as [`Self::new`] does and, before the first clone, allows each repository's host
-    /// for the workspace unless a rule decides it already (ST-44a).
+    /// for the workspace unless a rule decides it already (rules R-58).
     pub(super) fn allowing_hosts(store: Arc<Store>) -> Self {
         Self {
             allow_hosts: true,
@@ -423,6 +423,12 @@ pub(crate) async fn create_workspace(
     })
     .await?;
     let new = body.into_new(user, |id| known.contains(&id), &locals)?;
+    let settings = state.clone();
+    let cpus = new.cpus;
+    blocking(move || {
+        crate::routes::settings::check_new_workspace_cpus(settings.settings.as_ref(), cpus)
+    })
+    .await?;
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
     blocking(move || Ok(store.check_repository_git(user, None, &requests)?)).await?;

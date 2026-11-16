@@ -55,7 +55,7 @@ pub use audit::{
     AuditEntry, AuditOutcome, AuditPage, AuditPending, AuditRequestRule, AuditRequestRuleScope,
     AuditRetentionRequest, AuditRule, AuditRuleScope, AuditRuleSet, AuditSize, AuditType,
     ConnectionDecision, ConnectionOrigin, ConnectionOutcome, PendingExpiryReason, RuleDeleteReason,
-    WorkspaceOpKind, WorkspaceOpOutcome,
+    RuleSwitchKind, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use audit_record::AuditRecord;
 pub use auth::{
@@ -110,14 +110,14 @@ pub use repository_hosts::{
 };
 pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
 pub use rule_sets::{
-    NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
-    RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
-    SystemReason,
+    NewRuleSetRequest, RuleSetEntry, RuleSetEntrySwitchRequest, RuleSetKind, RuleSetList,
+    RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView,
+    SystemManagedHost, SystemReason,
 };
 pub use rules::{
     Actor, DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, NewRuleRequest,
-    PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleExpiryRequest, RuleList,
-    RuleScope, ScopeChoice,
+    PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleEnabledRequest,
+    RuleExpiryRequest, RuleList, RuleScope, ScopeChoice,
 };
 pub use settings_view::{
     ClipboardRead, CloseBehaviour, DensityChoice, EffectiveLimits, EffectiveSettings,

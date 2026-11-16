@@ -130,6 +130,7 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
             "PUT /api/identities/{id} Own",
             "PUT /api/identities/{id}/default Own",
             "PUT /api/rule-sets/{id} Own",
+            "PUT /api/rule-sets/{id}/entry-switch Own",
             "PUT /api/rule-sets/{id}/switch Own",
         ]
     );
@@ -687,7 +688,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 54, "routes that name a resource");
+    assert_eq!(checked, 56, "routes that name a resource");
     shut_down(pair).await;
 }
 

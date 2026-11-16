@@ -104,8 +104,8 @@ pub use terminate::{
     ExchangeRewriter, FieldKind, ForeignCredentialWarning, HeaderError, InjectContext,
     InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector, Interception, LEARNED_CAP,
     LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough, PatternError, Placement, RequestRule,
-    RequestRules, RequestView, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
-    Termination, TerminationSet, TerminationSource, Terminations, TokenBody, TokenBodyError,
-    Unauthorized, secret_stand_in,
+    RequestRules, RequestView, Rewrite, SecretValue, StandIn, StandInError, StandInOrigin,
+    StandIns, Termination, TerminationSet, TerminationSource, Terminations, TokenBody,
+    TokenBodyError, Unauthorized, Want, secret_stand_in,
 };
 pub use upstream::Upstream;

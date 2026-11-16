@@ -6,7 +6,6 @@
     clippy::expect_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use std::collections::HashMap;
@@ -1378,6 +1377,7 @@ impl Guest {
     /// Listens on a loopback port and relays each connection byte for byte over a new stream into
     /// the route, as the agent relays the guest's proxy port: the program on the other end speaks
     /// to the proxy itself (`CONNECT`, or plain HTTP).
+    #[cfg(unix)]
     pub(crate) async fn proxy_port(&self) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();

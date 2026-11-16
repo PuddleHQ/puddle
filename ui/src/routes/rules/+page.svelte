@@ -198,6 +198,16 @@
     return null;
   }
 
+  async function switchRule(rule: Rule, enabled: boolean) {
+    const result = await store.setEnabled(rule.id, enabled);
+    toasts.push(
+      result.ok
+        ? `${patternLabel(rule)} is ${enabled ? "on" : "off"}.`
+        : result.message,
+      result.ok ? {} : { tone: "error", ms: 8000 },
+    );
+  }
+
   function askDelete(rule: Rule) {
     deleting = rule;
     deleteOpen = true;
@@ -333,6 +343,7 @@
       onSort={sortBy}
       onExpiry={changeExpiry}
       onDelete={askDelete}
+      onEnabled={(rule, enabled) => void switchRule(rule, enabled)}
     />
   {/if}
 {/if}

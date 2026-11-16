@@ -252,6 +252,7 @@ impl Store {
                 "DELETE FROM rules WHERE user_id = ?1",
                 "DELETE FROM request_rules WHERE user_id = ?1",
                 "DELETE FROM rule_set_switches WHERE user_id = ?1",
+                "DELETE FROM builtin_entry_switches WHERE user_id = ?1",
                 "DELETE FROM rule_sets WHERE user_id = ?1",
                 "DELETE FROM audit WHERE user_id = ?1",
                 "DELETE FROM identities WHERE user_id = ?1",

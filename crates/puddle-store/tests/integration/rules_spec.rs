@@ -818,6 +818,79 @@ fn r16_a_decision_closes_every_other_row_the_rule_decides() {
 }
 
 #[test]
+fn r65_a_rule_that_is_off_decides_nothing_and_switching_it_on_closes_what_it_decides() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    store.set_rule_enabled(id, false, Actor::Ui).unwrap();
+    let waiting = new_pending(decide(&store, "a", "example.com"));
+    assert_eq!(
+        store.rules(puddle_store::UserId::OWNER)[0]
+            .pattern
+            .to_string(),
+        "example.com",
+        "an off rule keeps its row"
+    );
+    // On again: the waiting request closes as allowed by that rule.
+    store.set_rule_enabled(id, true, Actor::Ui).unwrap();
+    let row = store.pending(waiting).unwrap();
+    assert_eq!((row.state, row.rule_id), (PendingState::Allowed, Some(id)));
+    assert_eq!(allowed_by(decide(&store, "a", "example.com")), Some(id));
+    // Off again: the next request waits.
+    store.set_rule_enabled(id, false, Actor::Ui).unwrap();
+    assert!(matches!(
+        decide(&store, "a", "example.com"),
+        Decision::Pending(_)
+    ));
+}
+
+#[test]
+fn r65_an_off_rule_lets_the_next_best_rule_decide() {
+    let (_, store) = fixture();
+    let exact = add(&store, Some("a"), "api.example.com", Effect::Deny);
+    let wide = add(&store, None, "*.example.com", Effect::Allow);
+    assert!(matches!(
+        decide(&store, "a", "api.example.com"),
+        Decision::Deny { .. }
+    ));
+    store.set_rule_enabled(exact, false, Actor::Api).unwrap();
+    assert_eq!(
+        allowed_by(decide(&store, "a", "api.example.com")),
+        Some(wide)
+    );
+}
+
+#[test]
+fn r65_switching_is_recorded_once_per_change_and_refuses_the_system_actor() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    assert!(matches!(
+        store.set_rule_enabled(id, false, Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+    assert!(matches!(
+        store.set_rule_enabled(RuleId(999), false, Actor::Ui),
+        Err(StoreError::UnknownRule(RuleId(999)))
+    ));
+    store.set_rule_enabled(id, false, Actor::Ui).unwrap();
+    store.set_rule_enabled(id, false, Actor::Ui).unwrap();
+    store.set_rule_enabled(id, true, Actor::Cli).unwrap();
+    let switched = audit_of(&store, "rule_switched");
+    assert_eq!(
+        switched.len(),
+        2,
+        "a switch to the state it has writes nothing"
+    );
+    assert_eq!(switched[0]["kind"], "rule");
+    assert_eq!(switched[0]["id"], id.0);
+    assert_eq!(switched[0]["pattern"], "example.com");
+    assert_eq!(switched[0]["workspace_id"], "a");
+    assert_eq!(switched[0]["enabled"], false);
+    assert_eq!(switched[0]["actor"], "ui");
+    assert_eq!(switched[1]["enabled"], true);
+    assert_eq!(switched[1]["actor"], "cli");
+}
+
+#[test]
 fn r16_adding_a_rule_directly_closes_the_rows_it_decides() {
     let (_, store) = fixture();
     let row = new_pending(decide(&store, "a", "example.com"));

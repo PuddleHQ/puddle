@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28,
+    V22, V23, V24, V25, V26, V27, V28, V29,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 28;
+pub const SCHEMA_VERSION: u32 = 29;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -956,6 +956,23 @@ const V28: &str = "
 CREATE TABLE audit_retention (
     id   INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
     days INTEGER NOT NULL CHECK (days BETWEEN 1 AND 3650)
+) STRICT;
+";
+
+const V29: &str = "
+-- A rule can be switched off without losing it (R-65). Added columns: every row that exists is on.
+ALTER TABLE rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1));
+ALTER TABLE request_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1));
+
+-- One row per built-in entry the user switched off, kept apart from the catalogue (R-36, R-65).
+-- `rule_set` is `builtin:<slug>`, `pattern` the entry as the catalogue writes it. An entry with no
+-- row is on; switching it on again deletes the row, so the table holds only what differs.
+CREATE TABLE builtin_entry_switches (
+    user_id    INTEGER NOT NULL,
+    rule_set   TEXT    NOT NULL,
+    pattern    TEXT    NOT NULL,
+    changed_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, rule_set, pattern)
 ) STRICT;
 ";
 

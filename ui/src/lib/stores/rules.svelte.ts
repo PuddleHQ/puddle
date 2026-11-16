@@ -143,6 +143,31 @@ export class RulesStore {
     }
   }
 
+  /** Switches a rule on or off; an off rule is kept and never matches. */
+  async setEnabled(id: number, enabled: boolean): Promise<ChangeResult> {
+    try {
+      const { data, error, response } = await this.#api.PUT(
+        "/api/rules/{id}/enabled",
+        { params: { path: { id } }, body: { enabled } },
+      );
+      if (!data) {
+        if (response.status === 404) {
+          this.rules = this.rules.filter((r) => r.id !== id);
+          return { ok: false, message: "That rule is already gone." };
+        }
+        return {
+          ok: false,
+          message: sentence(error?.message ?? "Puddle refused the change"),
+        };
+      }
+      this.rules = this.rules.map((r) => (r.id === id ? data : r));
+      this.#onChange?.();
+      return { ok: true };
+    } catch {
+      return { ok: false, message: DOWN };
+    }
+  }
+
   /** Deletes a rule. A rule that is already gone counts as deleted. */
   async remove(id: number): Promise<ChangeResult> {
     try {

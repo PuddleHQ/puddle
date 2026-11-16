@@ -105,18 +105,6 @@ async fn vm_perf_guest_fsync_reaches_flushfilebuffers_on_the_volume_image() {
     };
     let xml = trace.stop().expect("stop and read the trace");
     eprintln!("trace: {} bytes of XML, VMM pid {pid}", xml.len());
-    // A sample of the trace's own format, for the day a Windows build changes it.
-    for sample in xml
-        .split("<Event ")
-        .skip(1)
-        .take(1)
-        .chain(xml.split("<Event ").filter(|e| e.contains(&image)).take(2))
-    {
-        eprintln!(
-            "sample event: {}",
-            sample.chars().take(900).collect::<String>()
-        );
-    }
 
     let writes = flushes_between(
         &xml,

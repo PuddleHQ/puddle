@@ -258,6 +258,37 @@ async fn create_with_no_repositories_is_an_ordinary_workspace() {
 }
 
 #[tokio::test]
+async fn create_takes_an_ssh_address_of_a_git_host_as_its_https_address() {
+    let api = start().await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "ssh", "repositories": [
+                {"url": "git@github.com:Acme/Web.git"},
+                {"url": "ssh://git@ssh.dev.azure.com:443/v3/contoso/Platform/Api"},
+            ]})),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let urls: Vec<String> = reply.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["url"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            "https://github.com/Acme/Web.git",
+            "https://dev.azure.com/contoso/Platform/_git/Api"
+        ]
+    );
+    api.workspaces.idle().await;
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn create_with_three_repositories_sets_each_up_and_answers_their_identities_in_order() {
     let api = start().await;
     let work = make_identity(&api, "Work", &["acme"]).await;
@@ -391,12 +422,12 @@ fn refused_bodies() -> [(Value, &'static str); 20] {
     let long = "w".repeat(61);
     [
         (
-            json!({"name": "a", "repositories": [{"url": "git@github.com:acme/api.git"}]}),
-            "ssh remotes are not supported yet",
+            json!({"name": "a", "repositories": [{"url": "git@git.example.com:acme/api.git"}]}),
+            "reads SSH addresses of GitHub",
         ),
         (
-            json!({"name": "a", "repositories": [{"url": "ssh://git@github.com/acme/api.git"}]}),
-            "ssh remotes are not supported yet",
+            json!({"name": "a", "repositories": [{"url": "ssh://git@git.example.com/acme/api.git"}]}),
+            "reads SSH addresses of GitHub",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "http://github.com/a/b"}]}),

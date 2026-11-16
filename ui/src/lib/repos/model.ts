@@ -11,6 +11,7 @@ import {
   type Identity,
 } from "#lib/identities/model.ts";
 import { parseRepoUrl } from "#lib/identities/repo.ts";
+import { looksLikeSsh, sshAsHttps } from "#lib/workspaces/model.ts";
 
 export type RepoListing = components["schemas"]["RepoListing"];
 export type RepoView = components["schemas"]["RepoView"];
@@ -159,7 +160,13 @@ export function matchingUrl(
  * cannot hold the repository.
  */
 export function tableCannotHold(url: string): boolean {
-  const rest = url.trim().replace(/^https:\/\//i, "");
+  let address = url.trim();
+  if (looksLikeSsh(address)) {
+    const https = sshAsHttps(address);
+    if ("message" in https) return false;
+    address = https.url;
+  }
+  const rest = address.replace(/^https:\/\//i, "");
   const slash = rest.indexOf("/");
   if (slash < 0) return false;
   const host = rest.slice(0, slash).toLowerCase();

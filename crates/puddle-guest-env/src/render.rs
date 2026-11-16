@@ -362,8 +362,8 @@ pub fn ssh_known_hosts_file(lines: &str) -> Result<GuestFile, ConfigError> {
     Ok(GuestFile::merged(path, spec))
 }
 
-/// Every outbound `ssh` connection goes through the agent, which says that SSH is not supported
-/// yet. What is inside the workspace is not outbound: a host named `localhost` or `::1` stays
+/// Every outbound `ssh` connection goes through the agent, which carries it to the proxy: Puddle's
+/// SSH server answers for the Git hosts it serves, and the rules decide any other name. What is inside the workspace is not outbound: a host named `localhost` or `::1` stays
 /// ssh's own, and the agent dials any other destination itself when every address it resolves to
 /// is loopback or inside the container bridge's /16 (`ssh 127.0.0.1`, a container running an SSH
 /// server). Those are decided by address, never by name: a DNS name that starts with `127.` is
@@ -383,10 +383,11 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
     }
     let mut config = format!(
         "# {GENERATED}\n\
-         # SSH from a workspace is not supported yet: ssh runs the agent as its ProxyCommand, which\n\
-         # refuses the connection and says why. Loopback and the container bridge stay direct (the\n\
-         # agent checks the address). A ProxyCommand or ProxyJump in ~/.ssh/config comes first and\n\
-         # wins.\n\
+         # ssh runs the agent as its ProxyCommand, which carries the connection to Puddle's proxy.\n\
+         # SSH to a Git host that Puddle serves works through Puddle's SSH server; SSH to any\n\
+         # other host is decided by your rules like any connection. Loopback and the container\n\
+         # bridge stay direct (the agent checks the address). A ProxyCommand or ProxyJump in\n\
+         # ~/.ssh/config comes first and wins.\n\
          Match host \"*,!localhost,!::1\"\n    \
          ProxyCommand {command} %h %p %n\n"
     );

@@ -361,9 +361,8 @@ pub(super) fn require_user_set(
     .ok_or_else(|| StoreError::UnknownRuleSet(RuleSetId::User(id).to_string()))
     .and_then(
         |(id, name, description, created_at, created_by, fill, default)| {
-            let created_by = Actor::parse(&created_by).ok_or_else(|| {
-                corrupt("rule_sets", id, format!("unknown actor {created_by:?}"))
-            })?;
+            let created_by = Actor::parse(&created_by)
+                .ok_or_else(|| corrupt("rule_sets", id, format!("unknown actor {created_by:?}")))?;
             Ok(RuleSetWire {
                 id,
                 name,

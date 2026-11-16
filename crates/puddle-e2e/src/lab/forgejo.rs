@@ -388,20 +388,29 @@ impl Forgejo {
 
     /// Starts the Forgejo at `bin`, on `fixed_port` when given.
     fn start_from(bin: &std::ffi::OsStr, name: &str, fixed_port: Option<u16>) -> Self {
+        Self::start_picking(bin, name, fixed_port, free_port)
+    }
+
+    /// [`Self::start_from`] with the way a free port is picked given, so a test can make the
+    /// pick collide. Forgejo reads its ports from `app.ini` and takes no inherited socket, so a
+    /// port cannot be held across the start; a taken one makes Forgejo exit with "address already
+    /// in use", which `launch` returns as `Err`, and the start retries on fresh ports. That holds
+    /// for the SSH port on a fixed HTTP port and for both ports when neither is fixed.
+    fn start_picking(
+        bin: &std::ffi::OsStr,
+        name: &str,
+        fixed_port: Option<u16>,
+        pick: impl FnMut() -> u16,
+    ) -> Self {
+        let pick = std::cell::RefCell::new(pick);
+        let next = || (pick.borrow_mut())();
         if let Some(http_port) = fixed_port {
-            // flake-ok: the HTTP port is the caller's and fixed; the SSH port is only free-picked, and a clash
-            // fails the start with Forgejo's own "address already in use" in the panic message.
-            return Self::launch(bin, name, http_port, free_port())
-                .unwrap_or_else(|why| panic!("Forgejo did not start on port {http_port}\n{why}"));
+            // A fixed HTTP port that is taken fails every attempt alike and ends in the panic.
+            return on_free_port(next, |ssh_port| {
+                Self::launch(bin, name, http_port, ssh_port)
+            });
         }
-        // Forgejo reads its ports from `app.ini` and takes no inherited socket, so a port cannot
-        // be held across the start; a collision retries on fresh ports.
-        on_free_port(free_port, |http_port| {
-            // flake-ok: a taken SSH port makes Forgejo exit at once with "address already in use" in
-            // its log (tried by holding the port), which `launch` returns as `Err` and `on_free_port`
-            // retries on fresh ports; nothing can hold a port across Forgejo's own bind.
-            Self::launch(bin, name, http_port, free_port())
-        })
+        on_free_port(next, |http_port| Self::launch(bin, name, http_port, next()))
     }
 
     /// One start attempt. `Err` is Forgejo's own log when it did not come up.

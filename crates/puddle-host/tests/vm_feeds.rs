@@ -12,7 +12,11 @@
 //! `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS` (the variant that takes a password; the
 //! plain `..._FEED_ENDPOINTS` takes a service principal's client id and certificate) carries the stand-in inside a JSON value.
 //!
-//! A third test (`vm_radar_token_placements_*`) covers clients that put the token somewhere other
+//! A publish test (`vm_radar_publish_*`) has `npm publish` and `mvn deploy` upload a package to a
+//! feed that answers `401` to an upload without its token: the stand-in is in the header and the
+//! body is a request body upload the proxy forwards untouched.
+//!
+//! A further test (`vm_radar_token_placements_*`) covers clients that put the token somewhere other
 //! than a header: the query string, the URL path, `.netrc`, a `cargo` registry token, and `pnpm`,
 //! `yarn`, Gradle and `go`.
 //!
@@ -33,8 +37,9 @@ use std::time::Duration;
 
 use puddle_compute_msb::MsbRuntime;
 use puddle_e2e::lab::{
-    CARGO_CRATE, GO_MODULE, MAVEN_COORDINATES, NPM_PACKAGE, NUGET_PACKAGE, PIP_PROJECT,
-    PlacementHosts, WebOptions, placement_feeds, private_feeds, wheel_file,
+    CARGO_CRATE, GO_MODULE, MAVEN_COORDINATES, MAVEN_PUBLISH_DIR, NPM_PACKAGE, NPM_PUBLISH_PACKAGE,
+    NUGET_PACKAGE, PIP_PROJECT, PlacementHosts, WebOptions, placement_feeds, private_feeds,
+    wheel_file,
 };
 use puddle_host::Host;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope, StartValue};
@@ -317,6 +322,23 @@ struct Reach {
     refused: usize,
 }
 
+/// The credential a request carried (the `authorization` value, basic authentication decoded)
+/// and its request target.
+fn carried(seen: &puddle_e2e::lab::Seen) -> String {
+    let auth = seen.headers_named("authorization").join(" ");
+    let decoded = auth
+        .strip_prefix("Basic ")
+        .and_then(|b| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.decode(b).ok()
+        })
+        .map_or_else(
+            || auth.clone(),
+            |b| String::from_utf8_lossy(&b).into_owned(),
+        );
+    format!("{decoded} {}", seen.target)
+}
+
 fn reach(web: &puddle_e2e::lab::WebHost, host: &str, from: usize) -> Reach {
     let mut r = Reach {
         ok: 0,
@@ -329,20 +351,9 @@ fn reach(web: &puddle_e2e::lab::WebHost, host: &str, from: usize) -> Reach {
             .first()
             .is_some_and(|h| h.split(':').next() == Some(host))
     }) {
-        let auth = seen.headers_named("authorization").join(" ");
-        let decoded = auth
-            .strip_prefix("Basic ")
-            .and_then(|b| {
-                use base64::Engine as _;
-                base64::engine::general_purpose::STANDARD.decode(b).ok()
-            })
-            .map_or_else(
-                || auth.clone(),
-                |b| String::from_utf8_lossy(&b).into_owned(),
-            );
         r.ok += usize::from(seen.status == 200);
         r.refused += usize::from(seen.status == 401);
-        let carried = format!("{decoded} {}", seen.target);
+        let carried = carried(seen);
         r.real += usize::from(carried.contains(REAL));
         r.stand_in += usize::from(carried.contains("puddle-secret-"));
     }
@@ -433,6 +444,40 @@ async fn boot_placed(
     (net, vm, workspace)
 }
 
+/// Runs the installs with no credential. Each must fail at the feed, not for some other reason:
+/// the feed's own log shows 401s for the tool's host, no 200 and no credential.
+async fn run_controls(
+    net: &WebInternet,
+    vm: &VmHost,
+    workspace: &WorkspaceId,
+) -> Vec<(&'static str, Reach)> {
+    let from = net.web.seen().len();
+    let control = run(vm, workspace, &control_script(), 5).await;
+    let mut controls = Vec::new();
+    for (tool, host) in [
+        ("npm", NPM),
+        ("pip", PIP),
+        ("nuget", NUGET),
+        ("maven", MAVEN),
+    ] {
+        assert!(
+            control.contains(&format!("control={tool} rc="))
+                && !control.contains(&format!("control={tool} rc=0")),
+            "{tool} installed from the feed with no credential, so a pass above proves nothing: {control}"
+        );
+        let r = reach(&net.web, host, from);
+        assert!(
+            r.refused > 0 && r.ok == 0 && r.real == 0,
+            "{tool} control: the feed should have refused (401) every request, got 200={} 401={} real-token={}: {control}",
+            r.ok,
+            r.refused,
+            r.real
+        );
+        controls.push((tool, r));
+    }
+    controls
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_in() {
     let (net, vm, workspace) = boot(
@@ -468,14 +513,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
         report.push((tool, worked, r));
     }
 
-    let control = run(&vm, &workspace, &control_script(), 5).await;
-    for tool in ["npm", "pip", "nuget", "maven"] {
-        assert!(
-            control.contains(&format!("control={tool} rc="))
-                && !control.contains(&format!("control={tool} rc=0")),
-            "{tool} installed from the feed with no credential, so a pass above proves nothing: {control}"
-        );
-    }
+    let controls = run_controls(&net, &vm, &workspace).await;
 
     // The real token is nowhere in the guest: no file, no process environment. The tools' own
     // config and caches are included (they live under /root and /tmp).
@@ -498,6 +536,10 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
             "{tool:<7} {worked:<10} {:<9} {:<11} {:<19} {}",
             r.ok, r.real, r.stand_in, r.refused
         );
+    }
+    eprintln!("control (no credential)  feed-200  refused (401)");
+    for (tool, r) in &controls {
+        eprintln!("{tool:<24} {:<9} {}", r.ok, r.refused);
     }
     eprintln!("stand-ins held by the guest: {stand_ins:?}");
     eprintln!("files with a stand-in (config and caches): {on_disk}");
@@ -607,6 +649,240 @@ async fn vm_radar_artifacts_credential_provider_hands_the_stand_in_to_nuget_unch
         failures.is_empty(),
         "azure artifacts credential provider: {failures:#?}"
     );
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// Installs `npm` and Maven with a JDK (`jar` builds the Maven upload). No `dotnet`, no `pip`.
+const PUBLISH_INSTALL: &str = r#"
+export DEBIAN_FRONTEND=noninteractive
+{ apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm maven default-jdk-headless ca-certificates-java curl ca-certificates; } >/tmp/apt.log 2>&1
+echo "apt=$?"
+tail -5 /tmp/apt.log
+node --version; npm --version; mvn -v | head -1
+true
+"#;
+
+/// `npm publish` to the feed, the token in `.npmrc` as the stand-in's variable (`with_credential`)
+/// or absent (the control).
+fn npm_publish_script(tag: &str, with_credential: bool) -> String {
+    let auth = if with_credential {
+        format!("//{NPM}/:_authToken=${{NPM_FEED_TOKEN}}\\n")
+    } else {
+        String::new()
+    };
+    format!(
+        r#"rm -rf /tmp/npp-{tag} && mkdir -p /tmp/npp-{tag} && cd /tmp/npp-{tag}
+printf 'registry=https://{NPM}/\n{auth}' > .npmrc
+echo '{{"name":"{NPM_PUBLISH_PACKAGE}","version":"1.0.0","main":"index.js"}}' > package.json
+echo "module.exports = 'published';" > index.js
+npm publish --loglevel=http 2>&1 | tail -12
+echo "tool={tag} rc=${{PIPESTATUS[0]}}"
+"#
+    )
+}
+
+/// `mvn deploy:deploy-file` of a small jar to the feed, the server entry (id `feed`) holding the
+/// stand-in's variable (`with_credential`) or absent (the control).
+fn maven_deploy_script(tag: &str, with_credential: bool) -> String {
+    let servers = if with_credential {
+        "<server><id>feed</id><username>feeduser</username><password>${env.MAVEN_FEED_TOKEN}</password></server>"
+    } else {
+        ""
+    };
+    let artifact = MAVEN_PUBLISH_DIR
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    format!(
+        r#"rm -rf /tmp/mp-{tag} /tmp/m2-{tag} && mkdir -p /tmp/mp-{tag}/c && cd /tmp/mp-{tag}
+printf '%s\n' '<settings><servers>{servers}</servers></settings>' > settings.xml
+echo published > c/a.txt && jar cf probe.jar -C c .
+mvn -B -q -s settings.xml -Dmaven.repo.local=/tmp/m2-{tag} org.apache.maven.plugins:maven-deploy-plugin:3.1.3:deploy-file \
+  -Dfile=probe.jar -DgroupId=com.example -DartifactId={artifact} -Dversion=1.0 -Dpackaging=jar \
+  -DrepositoryId=feed -Durl=https://{MAVEN}/m2 2>&1 | tail -12
+echo "tool={tag} rc=${{PIPESTATUS[0]}}"
+"#
+    )
+}
+
+/// What the feed's log says of the uploads (`PUT`) one tool made: the paths accepted (`201`),
+/// those refused (`401`), those whose credential was the real token or a stand-in, and the
+/// uploads whose body held a token in any form.
+struct Uploads {
+    accepted: Vec<String>,
+    refused: usize,
+    real: usize,
+    stand_in: usize,
+    body_bytes: usize,
+    token_in_body: usize,
+}
+
+fn uploads(web: &puddle_e2e::lab::WebHost, host: &str, from: usize) -> Uploads {
+    let mut u = Uploads {
+        accepted: Vec::new(),
+        refused: 0,
+        real: 0,
+        stand_in: 0,
+        body_bytes: 0,
+        token_in_body: 0,
+    };
+    for seen in web.seen().iter().skip(from).filter(|s| {
+        s.method == "PUT"
+            && s.headers_named("host")
+                .first()
+                .is_some_and(|h| h.split(':').next() == Some(host))
+    }) {
+        if seen.status == 201 {
+            u.accepted
+                .push(seen.target.split('?').next().unwrap_or_default().to_owned());
+            u.body_bytes += seen.body.len();
+        }
+        u.refused += usize::from(seen.status == 401);
+        let credential = carried(seen);
+        u.real += usize::from(credential.contains(REAL));
+        u.stand_in += usize::from(credential.contains("puddle-secret-"));
+        let body = String::from_utf8_lossy(&seen.body);
+        u.token_in_body += usize::from(body.contains(REAL) || body.contains("puddle-secret-"));
+    }
+    u
+}
+
+type PublishRow = (&'static str, bool, Uploads);
+type ControlRow = (&'static str, String, Uploads);
+
+/// What is wrong with the publish test's measurements, one line each.
+fn publish_failures(report: &[PublishRow], controls: &[ControlRow], search: &str) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (tool, worked, u) in report {
+        if !worked {
+            failures.push(format!("{tool}: the upload did not work"));
+        }
+        if u.accepted.is_empty() || u.real == 0 {
+            failures.push(format!(
+                "{tool}: the feed accepted no upload with the real token"
+            ));
+        }
+        if u.body_bytes == 0 {
+            failures.push(format!("{tool}: the accepted upload had no request body"));
+        }
+        if u.stand_in > 0 || u.token_in_body > 0 {
+            failures.push(format!(
+                "{tool}: a stand-in or token reached the feed unswapped (header {}, body {})",
+                u.stand_in, u.token_in_body
+            ));
+        }
+    }
+    let npm = &report[0].2;
+    if !npm
+        .accepted
+        .iter()
+        .any(|p| p == &format!("/{NPM_PUBLISH_PACKAGE}"))
+    {
+        failures.push(format!("npm: wrong upload path {:?}", npm.accepted));
+    }
+    let maven = &report[1].2;
+    for ext in [".jar", ".pom"] {
+        if !maven
+            .accepted
+            .iter()
+            .any(|p| p.starts_with(MAVEN_PUBLISH_DIR) && p.ends_with(ext))
+        {
+            failures.push(format!("maven: no {ext} upload in {:?}", maven.accepted));
+        }
+    }
+    for (tool, out, u) in controls {
+        if out.contains(&format!("tool={tool} rc=0")) || !u.accepted.is_empty() {
+            failures.push(format!(
+                "{tool}: an upload with no credential went through (npm refuses on its own before it sends a request, Maven gets a 401), so a pass above proves nothing: {out}"
+            ));
+        }
+    }
+    if search.trim() != "files=[] processes=[0]" {
+        failures.push(format!("the real token is in the guest: {search}"));
+    }
+    failures
+}
+
+/// `npm publish` and `mvn deploy` (the deploy plugin's `deploy-file`) upload a package to a feed
+/// that answers `401` to an upload without the token. The guest's config names the stand-in; the
+/// test says, per tool: did the upload work, did the feed accept a request body upload that
+/// carried the real token, did a stand-in or token reach the feed unswapped (header or body), and
+/// does the same upload with no credential fail. The real token must be nowhere in the guest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_publish_to_a_private_feed_carries_the_real_token_in_the_header() {
+    let (net, vm, workspace) = boot(
+        "feed-publish",
+        &[("NPM_FEED_TOKEN", NPM), ("MAVEN_FEED_TOKEN", MAVEN)],
+        MIRRORS,
+    )
+    .await;
+
+    let installed = run(&vm, &workspace, PUBLISH_INSTALL, 20).await;
+    assert!(
+        installed.contains("apt=0"),
+        "the tools could not be installed (live third party: the Debian mirrors; an outage there fails this test): {installed}"
+    );
+
+    let mut report = Vec::new();
+    for (tool, host, script) in [
+        ("npm-publish", NPM, npm_publish_script("npm-publish", true)),
+        (
+            "maven-deploy",
+            MAVEN,
+            maven_deploy_script("maven-deploy", true),
+        ),
+    ] {
+        let from = net.web.seen().len();
+        let out = run(&vm, &workspace, &script, 15).await;
+        let worked = out.contains(&format!("tool={tool} rc=0"));
+        report.push((tool, worked, uploads(&net.web, host, from)));
+    }
+
+    let mut controls = Vec::new();
+    for (tool, host, script) in [
+        ("npm-control", NPM, npm_publish_script("npm-control", false)),
+        (
+            "maven-control",
+            MAVEN,
+            maven_deploy_script("maven-control", false),
+        ),
+    ] {
+        let from = net.web.seen().len();
+        let out = run(&vm, &workspace, &script, 10).await;
+        controls.push((tool, out, uploads(&net.web, host, from)));
+    }
+
+    let search = search_for_real_token(&vm, &workspace).await;
+
+    eprintln!(
+        "tool          worked  accepted  real-token  stand-in  token-in-body  body-bytes  refused"
+    );
+    for (tool, worked, u) in &report {
+        eprintln!(
+            "{tool:<13} {worked:<7} {:<9} {:<11} {:<9} {:<14} {:<11} {}",
+            u.accepted.len(),
+            u.real,
+            u.stand_in,
+            u.token_in_body,
+            u.body_bytes,
+            u.refused
+        );
+        eprintln!("  accepted paths: {:?}", u.accepted);
+    }
+    for (tool, _, u) in &controls {
+        eprintln!(
+            "{tool}: accepted={} refused={}",
+            u.accepted.len(),
+            u.refused
+        );
+    }
+    eprintln!("search for the real token: {search}");
+
+    let failures = publish_failures(&report, &controls, &search);
+    assert!(failures.is_empty(), "publish: {failures:#?}");
 
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

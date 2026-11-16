@@ -4,7 +4,6 @@
     clippy::expect_used,
     reason = "test code: a panic is how a test fails"
 )]
-#![allow(dead_code, reason = "each test binary uses part of this")]
 //! Shared by the source tests: fake `gh` and `git` executables.
 
 use std::path::{Path, PathBuf};
@@ -42,9 +41,5 @@ impl Fakes {
         }
         std::fs::write(format!("{}.behaviour", path.display()), behaviour).unwrap();
         path
-    }
-
-    pub(crate) fn log(path: &Path) -> String {
-        std::fs::read_to_string(format!("{}.log", path.display())).unwrap_or_default()
     }
 }

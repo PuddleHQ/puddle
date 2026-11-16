@@ -8,7 +8,7 @@
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 use crate::plain_keepalive::{answer, get as keepalive_get, keep_alive_server};
-use crate::pull_support;
+use puddle_proxy_test_support::pull;
 
 use std::io;
 use std::net::IpAddr;
@@ -25,13 +25,13 @@ use puddle_ipc::IpcRoot;
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, PullProxy, Route, Upstream};
+use puddle_proxy_test_support::pull::{LOCAL, echo};
 use puddle_types::fixture;
 use puddle_types::{ConnectionEvent, ConnectionOutcome, Host, NullSink, WorkspaceId};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
     Hop, NoAuth, ProxyAddr, ProxyAuth, ProxyConfig,
 };
-use pull_support::{LOCAL, echo};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -979,9 +979,9 @@ fn pull_rig(resolver: StaticResolver, upstream: Upstream) -> PullRig {
 }
 
 async fn pull_connect(rig: &PullRig, target: &str) -> (String, tokio::net::TcpStream) {
-    pull_support::send(
+    pull::send(
         rig.route.local_addr(),
-        &pull_support::connect(target, Some(&format!("Basic {}", rig.credentials))),
+        &pull::connect(target, Some(&format!("Basic {}", rig.credentials))),
     )
     .await
 }
@@ -1031,9 +1031,9 @@ async fn pulls_still_need_the_token_and_the_guard_before_any_hop() {
         StaticResolver::new().with("meta.test", &[ip("169.254.169.254")]),
         up,
     );
-    let (head, _) = pull_support::send(
+    let (head, _) = pull::send(
         rig.route.local_addr(),
-        &pull_support::connect("registry.test:443", None),
+        &pull::connect("registry.test:443", None),
     )
     .await;
     assert!(head.starts_with("HTTP/1.1 407 "), "{head}");
@@ -1069,7 +1069,7 @@ async fn plain_http_pulls_carry_the_proxy_credential_not_the_pull_token() {
     .await;
     let (up, _) = upstream(vec![via(&proxy)], basic("alice", &secret));
     let rig = pull_rig(StaticResolver::new().with("mirror.test", &[LOCAL]), up);
-    let (head, mut stream) = pull_support::send(
+    let (head, mut stream) = pull::send(
         rig.route.local_addr(),
         &format!(
             "GET http://mirror.test:8081/v2/ HTTP/1.1\r\nHost: mirror.test\r\nProxy-Authorization: Basic {}\r\n\r\n",

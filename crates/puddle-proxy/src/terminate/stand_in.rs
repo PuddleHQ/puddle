@@ -623,24 +623,9 @@ fn stale_in_value(value: &[u8], entries: &[Arc<StandIn>]) -> Vec<String> {
 
 /// `input` with its `%XX` escapes decoded, or `None` when it has none.
 fn percent_decoded(input: &[u8]) -> Option<Vec<u8>> {
-    input.contains(&b'%').then(|| {
-        let mut out = Vec::with_capacity(input.len());
-        let mut at = 0;
-        while let Some(&byte) = input.get(at) {
-            let escaped = (byte == b'%')
-                .then(|| input.get(at + 1..at + 3))
-                .flatten()
-                .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
-            if let Some(decoded) = escaped {
-                out.push(decoded);
-                at += 3;
-            } else {
-                out.push(byte);
-                at += 1;
-            }
-        }
-        out
-    })
+    input
+        .contains(&b'%')
+        .then(|| puddle_types::percent_decoded_bytes(input))
 }
 
 /// The new value of one header, or `None` when nothing in it was swapped.

@@ -4,8 +4,6 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-
-#[path = "../checks/dns_message.rs"]
-mod checks;
+use puddle_fuzz::dns_message as checks;
 
 fuzz_target!(|data: &[u8]| checks::dns_message(data));

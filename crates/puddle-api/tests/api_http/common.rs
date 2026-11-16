@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
-    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeProxySignIns, FakeRepos,
-    FakeTerminals, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, NoNames,
-    RepoService, RunningApi, Services, SettingsRepo,
+    ApiConfig, ApiServer, ApiToken, BackupService, CredentialService, DevCertService,
+    DoctorService, EventHub, FakeCredentials, FakeLauncher, FakeLearned, FakePorts,
+    FakeProxySignIns, FakeRepos, FakeTerminals, FakeWorkspaces, Launcher, MemorySettings,
+    NetworkHealthService, NoNames, RepoService, RunningApi, Services, SettingsRepo,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
@@ -69,6 +69,15 @@ pub(crate) async fn start_with(config: ApiConfig) -> Api {
 pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
     start_inner(Options {
         network: Some(network),
+        ..Options::default()
+    })
+    .await
+}
+
+/// An API making backups through `backup`.
+pub(crate) async fn start_with_backup(backup: Arc<dyn BackupService>) -> Api {
+    start_inner(Options {
+        backup: Some(backup),
         ..Options::default()
     })
     .await
@@ -148,6 +157,7 @@ struct Options {
     network: Option<Arc<dyn NetworkHealthService>>,
     own_credentials: Option<Arc<dyn CredentialService>>,
     doctor: Option<Arc<dyn DoctorService>>,
+    backup: Option<Arc<dyn BackupService>>,
     with_repos: bool,
     dev_cert: Option<Arc<dyn DevCertService>>,
     company_signals: Option<Arc<dyn CompanySignals>>,
@@ -161,6 +171,7 @@ impl Default for Options {
             network: None,
             own_credentials: None,
             doctor: None,
+            backup: None,
             with_repos: true,
             dev_cert: None,
             company_signals: None,
@@ -175,6 +186,7 @@ async fn start_inner(options: Options) -> Api {
         network,
         own_credentials,
         doctor,
+        backup,
         with_repos,
         dev_cert,
         company_signals,
@@ -217,14 +229,9 @@ async fn start_inner(options: Options) -> Api {
     let services = services.with_credentials(
         own_credentials.unwrap_or_else(|| credentials.clone() as Arc<dyn CredentialService>),
     );
-    let services = match doctor {
-        Some(doctor) => services.with_doctor(doctor),
-        None => services,
-    };
-    let services = match dev_cert {
-        Some(dev_cert) => services.with_dev_cert(dev_cert),
-        None => services,
-    };
+    let services = doctor.into_iter().fold(services, Services::with_doctor);
+    let services = backup.into_iter().fold(services, Services::with_backup);
+    let services = dev_cert.into_iter().fold(services, Services::with_dev_cert);
     let repos = Arc::new(FakeRepos::new());
     let services = if with_repos {
         services.with_repos(repos.clone() as Arc<dyn RepoService>)
@@ -240,10 +247,9 @@ async fn start_inner(options: Options) -> Api {
     let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
     let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
     let services = services.with_account_secrets(store.take_account_secrets().unwrap());
-    let services = match company_signals {
-        Some(signals) => services.with_company_signals(signals),
-        None => services,
-    };
+    let services = company_signals
+        .into_iter()
+        .fold(services, Services::with_company_signals);
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();

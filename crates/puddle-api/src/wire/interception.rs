@@ -62,6 +62,7 @@ pub struct InterceptionView {
 
 /// A change to a workspace's interception. A field that is absent stays as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InterceptionRequest {
     /// Sets the workspace's own mode. It applies to the running workspace at once.
     #[serde(default)]
@@ -93,6 +94,7 @@ pub struct InterceptionSettingsView {
 
 /// A change to the global interception setting. A field that is absent stays as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InterceptionSettingsRequest {
     /// Chooses the mode.
     #[serde(default)]
@@ -107,6 +109,7 @@ pub struct InterceptionSettingsRequest {
 
 /// The names no workspace decrypts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalNeverDecrypt {
     /// The names, as for a workspace; sorted. On saving, replaces the whole list. At most 500.
     pub never_decrypt: Vec<String>,
@@ -176,6 +179,7 @@ pub enum PermanentScope {
 
 /// Makes a learned host permanent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MakePermanentRequest {
     /// Which never-decrypt list gets the host.
     pub scope: PermanentScope,
@@ -184,6 +188,7 @@ pub struct MakePermanentRequest {
 /// How long and how many hosts Puddle passes through after a tool refused its certificate. The
 /// same for every workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LearnedLimits {
     /// Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).
     pub ttl_secs: u32,

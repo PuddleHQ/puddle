@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The hosts a workspace create allows for its repositories (storage ST-44a).
+//! The hosts a workspace create allows for its repositories (rules R-58).
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

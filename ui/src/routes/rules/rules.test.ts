@@ -513,6 +513,38 @@ describe("changing the expiry", () => {
   });
 });
 
+describe("switching a rule", () => {
+  it("switches a rule off and on again with a toast, and the row shows it", async () => {
+    seed();
+    await loaded();
+    const name = "Rule on: allow registry.npmjs.org for every workspace";
+    const toggle = screen.getByRole("switch", { name });
+    expect(toggle).toBeChecked();
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(api.calls).toContain("PUT /api/rules/{id}/enabled");
+    expect(api.bodies.at(-1)).toEqual({ enabled: false });
+    expect(toasts.items.at(-1)?.message).toBe("registry.npmjs.org is off.");
+    expect(toggle.closest("tr")).toHaveTextContent("off");
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(toasts.items.at(-1)?.message).toBe("registry.npmjs.org is on.");
+  });
+  it("says why when Puddle refuses, and leaves the switch as it was", async () => {
+    seed();
+    await loaded();
+    api.refuse = { status: 500, message: "could not save" };
+    const toggle = screen.getByRole("switch", {
+      name: "Rule on: allow registry.npmjs.org for every workspace",
+    });
+    await fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(toasts.items.at(-1)?.message).toBe("Could not save."),
+    );
+    expect(toggle).toBeChecked();
+  });
+});
+
 describe("deleting", () => {
   it("asks first, names the rule, and Cancel keeps it", async () => {
     seed();
@@ -630,6 +662,7 @@ describe("rule sets and System managed (rules spec §7)", () => {
             pattern_kind: "exact",
             effect: "deny",
             note: "",
+            enabled: true,
             rule_id: 9,
             expires_at: null,
           },
@@ -826,6 +859,33 @@ describe("method and path rules", () => {
     expect(
       await within(section()).findByText(/No rules on method and path yet/),
     ).toBeInTheDocument();
+  });
+
+  it("switches a rule off and on with a toast", async () => {
+    requestApi.rules = [requestRule(1, { host: "api.example.com" })];
+    render(RulesPage);
+    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
+    const toggle = within(section()).getByRole("switch", {
+      name: /^Rule on: refuse/,
+    });
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(requestApi.calls).toContain("PUT /api/request-rules/{id}/enabled 1");
+    expect(toasts.items.at(-1)?.message).toMatch(/is off\.$/);
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(toasts.items.at(-1)?.message).toMatch(/is on\.$/);
+  });
+
+  it("says why when a switch is refused", async () => {
+    requestApi.rules = [requestRule(1)];
+    render(RulesPage);
+    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
+    requestApi.refuse = { status: 500, message: "x" };
+    await fireEvent.click(
+      within(section()).getByRole("switch", { name: /^Rule on: refuse/ }),
+    );
+    await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("X."));
   });
 
   it("reads a rule that was added elsewhere when the event arrives", async () => {

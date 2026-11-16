@@ -36,7 +36,8 @@ pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
     PendingExpiryReason, PendingWire, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason,
-    RuleSetWire, RuleWire, RuleWirePatternKind, RuleWireScope, WorkspaceOpKind, WorkspaceOpOutcome,
+    RuleSetWire, RuleSwitchKind, RuleWire, RuleWirePatternKind, RuleWireScope, WorkspaceOpKind,
+    WorkspaceOpOutcome,
 };
 pub use backup::{BackupInfo, backup_database};
 pub use catalogue::{

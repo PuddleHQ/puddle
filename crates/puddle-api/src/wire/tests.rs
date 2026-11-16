@@ -396,6 +396,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
         created_at: 5,
         created_by: store::Actor::Ui,
         source_pending_id: Some(PendingId(9)),
+        enabled: false,
     };
     let wire = Rule::from_store(rule).unwrap();
     assert_eq!(
@@ -404,7 +405,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
             "id": 3, "scope": {"type": "workspace", "workspace": "box"},
             "pattern": ".example.com", "pattern_kind": "suffix", "effect": "deny",
             "expires_at": null, "created_at": 5, "created_by": "ui",
-            "source_pending_id": 9
+            "source_pending_id": 9, "enabled": false
         })
     );
     assert_eq!(
@@ -622,6 +623,7 @@ fn audit_types_and_outcomes_cover_the_stores() {
         AuditType::PendingSuppressed,
         AuditType::RuleCreated,
         AuditType::RuleUpdated,
+        AuditType::RuleSwitched,
         AuditType::RuleDeleted,
         AuditType::RuleExpired,
         AuditType::RequestRuleCreated,

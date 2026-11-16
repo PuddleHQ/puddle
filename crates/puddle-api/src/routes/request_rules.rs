@@ -17,7 +17,7 @@ use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
 use crate::routes::interception::pattern;
-use crate::wire::{NewRequestRuleRequest, RequestRule, RequestRuleList};
+use crate::wire::{NewRequestRuleRequest, RequestRule, RequestRuleList, RuleEnabledRequest};
 
 /// Which rules to list.
 #[derive(Debug, Deserialize)]
@@ -120,6 +120,34 @@ pub(crate) async fn delete_request_rule(
 ) -> Result<Json<RequestRule>, ApiError> {
     let rule = blocking(move || {
         let rule = state.store.delete_request_rule(id, Actor::Api)?;
+        Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
+    })
+    .await?;
+    Ok(Json(rule))
+}
+
+/// Switches a rule on method and path on or off. A rule that is off is kept, refuses nothing
+/// and no longer makes its host decrypt.
+#[utoipa::path(
+    put,
+    path = "/api/request-rules/{id}/enabled",
+    tag = "rules",
+    params(("id" = i64, Path, description = "rule id")),
+    request_body = RuleEnabledRequest,
+    responses(
+        (status = OK, description = "the changed rule", body = RequestRule),
+        (status = NOT_FOUND, description = "no such rule", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn set_request_rule_enabled(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    crate::extract::Json(body): crate::extract::Json<RuleEnabledRequest>,
+) -> Result<Json<RequestRule>, ApiError> {
+    let rule = blocking(move || {
+        let rule = state
+            .store
+            .set_request_rule_enabled(id, body.enabled, Actor::Api)?;
         Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
     })
     .await?;

@@ -341,3 +341,62 @@ fn a_column_of_the_wrong_type_is_an_error_for_the_listing_and_never_a_guess() {
         );
     }
 }
+
+#[test]
+fn a_rule_on_method_and_path_that_is_off_is_kept_listed_and_checks_nothing() {
+    let (sink, store) = fixture();
+    let owner = puddle_store::UserId::OWNER;
+    let rule = store
+        .as_user(owner)
+        .add_request_rule(&new_rule(
+            Some("shop"),
+            "api.example.com",
+            &["DELETE"],
+            "/x",
+        ))
+        .unwrap();
+    assert!(rule.enabled);
+    drop(sink.take());
+    assert!(matches!(
+        store.set_request_rule_enabled(rule.id, false, Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+    assert!(matches!(
+        store.set_request_rule_enabled(99, false, Actor::Ui),
+        Err(StoreError::UnknownRequestRule(99))
+    ));
+    assert_eq!(changed(&sink), 0);
+    let off = store
+        .set_request_rule_enabled(rule.id, false, Actor::Ui)
+        .unwrap();
+    assert!(!off.enabled);
+    assert_eq!(
+        changed(&sink),
+        1,
+        "running workspaces read their rules again"
+    );
+    assert_eq!(store.request_rules_for(&sb("shop")).unwrap().len(), 0);
+    let listed = store.request_rules(owner, None).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].enabled);
+    // The same state again changes and records nothing.
+    store
+        .set_request_rule_enabled(rule.id, false, Actor::Ui)
+        .unwrap();
+    assert_eq!(changed(&sink), 0);
+    store
+        .set_request_rule_enabled(rule.id, true, Actor::Cli)
+        .unwrap();
+    assert_eq!(store.request_rules_for(&sb("shop")).unwrap().len(), 1);
+    let switched: Vec<_> = records(&store)
+        .into_iter()
+        .filter(|r| r["type"] == "rule_switched")
+        .collect();
+    assert_eq!(switched.len(), 2);
+    assert_eq!(switched[0]["kind"], "request_rule");
+    assert_eq!(switched[0]["id"], rule.id);
+    assert_eq!(switched[0]["pattern"], "api.example.com");
+    assert_eq!(switched[0]["workspace_id"], "shop");
+    assert_eq!(switched[0]["enabled"], false);
+    assert_eq!(switched[1]["actor"], "cli");
+}

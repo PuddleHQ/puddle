@@ -539,6 +539,23 @@ async fn an_allowed_proxy_reaches_the_api_over_tls_under_a_public_name() {
 }
 
 #[tokio::test]
+async fn a_workspace_name_goes_to_the_editor_entry_on_both_listeners() {
+    let proxy = proxied(&[IpAddr::V4(Ipv4Addr::LOCALHOST)]).await;
+    // No workspace has this id, so the editor's entry, not the API's guard, refuses it.
+    let host = [("Host", "abcdefgh.puddle.example.org")];
+    let over_tls = proxy.tls_get("/api/health", &host).await;
+    let on_loopback = proxy.api.get("/api/health", &host).await;
+    for reply in [over_tls, on_loopback] {
+        assert_eq!(reply.status, 421, "{reply:?}");
+        assert!(
+            reply.body.contains("not the address of a Puddle workspace"),
+            "{reply:?}"
+        );
+    }
+    proxy.api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_network_listener_refuses_every_loopback_host() {
     let proxy = proxied(&[IpAddr::V4(Ipv4Addr::LOCALHOST)]).await;
     let auth = format!("Bearer {}", proxy.api.token);

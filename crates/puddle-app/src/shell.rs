@@ -333,6 +333,13 @@ pub fn open<R: Runtime>(
     options: &Options,
     backend: Backend,
 ) -> Result<(), ShellError> {
+    // WebKitGTK automates one web context, the first one a window makes, and a WebDriver test
+    // drives the probe window, so under automation the probe opens before the main window.
+    let probe_first = probe_goes_first(std::env::var("TAURI_WEBVIEW_AUTOMATION").ok().as_deref());
+    let probe = options.sandbox_probe.as_ref();
+    if let Some(probe) = probe.filter(|_| probe_first) {
+        open_probe(app, probe, &data_folder(options).unwrap_or_default())?;
+    }
     let window = open_main(
         app,
         backend.url(),
@@ -349,7 +356,7 @@ pub fn open<R: Runtime>(
     } else {
         data_folder(options)
     };
-    if let Some(probe) = &options.sandbox_probe {
+    if let Some(probe) = probe.filter(|_| !probe_first) {
         open_probe(app, probe, &data_folder(options).unwrap_or_default())?;
     }
     let tray = desktop::attach(app, &window, &backend, marker_folder, options.login.clone());
@@ -358,6 +365,12 @@ pub fn open<R: Runtime>(
     }
     app.manage(backend);
     Ok(())
+}
+
+/// Whether the probe window opens before the main window: when Tauri's `WebDriver` switch
+/// (`TAURI_WEBVIEW_AUTOMATION`) is `true`, which hands automation to the first window's web context.
+fn probe_goes_first(automation: Option<&str>) -> bool {
+    automation == Some("true")
 }
 
 /// What the smoke test's window asks of the shell: its links are logged, so a test run starts no

@@ -145,6 +145,7 @@ impl CredentialSource {
 
 /// What a credential covers on its host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CredentialCoverage {
     /// Named owners and organisations (case does not matter; stored lower-case).
     pub owners: Vec<String>,
@@ -154,6 +155,7 @@ pub struct CredentialCoverage {
 
 /// One credential of an identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IdentityCredential {
     /// The Git host (`github.com`, `dev.azure.com`).
     pub host: String,
@@ -290,6 +292,7 @@ impl IdentityCredential {
 
 /// The name and email git writes into a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IdentityAuthor {
     /// `user.name`.
     pub name: String,
@@ -364,6 +367,7 @@ pub struct IdentityList {
 
 /// Makes or replaces an identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IdentityRequest {
     /// The name you see; unique whatever the case.
     pub label: String,
@@ -398,6 +402,7 @@ impl IdentityRequest {
 
 /// The order of the identities: every id once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IdentityOrderRequest {
     /// The ids, first to last.
     pub ids: Vec<i64>,
@@ -509,6 +514,7 @@ impl From<store::SwitchSource> for SwitchSource {
 
 /// The identities a workspace has, replacing its list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceIdentitiesRequest {
     /// The ids in order.
     pub ids: Vec<i64>,
@@ -516,6 +522,7 @@ pub struct WorkspaceIdentitiesRequest {
 
 /// Adds one identity to a workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AttachIdentityRequest {
     /// The identity.
     pub identity: i64,
@@ -527,6 +534,7 @@ pub struct AttachIdentityRequest {
 
 /// Sets either switch; a switch left out stays as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GitSwitchesRequest {
     /// "Only push to listed repos".
     #[serde(default)]
@@ -540,6 +548,7 @@ pub struct GitSwitchesRequest {
 
 /// Changes a workspace's two switches; a switch left out stays as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceSwitchesRequest {
     /// "Only push to listed repos": the workspace's own value.
     #[serde(default)]
@@ -581,6 +590,7 @@ impl WorkspaceSwitchesRequest {
 
 /// Adds a repository to the table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GitRepoRequest {
     /// The host (`github.com`).
     pub host: String,
@@ -609,6 +619,7 @@ impl GitRepoRequest {
 
 /// A repository row's toggles.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GitRepoToggles {
     /// A fetch from it may go out.
     pub pull: bool,

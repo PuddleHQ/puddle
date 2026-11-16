@@ -190,6 +190,73 @@ async fn bad_decisions_are_refused_without_changing_anything() {
 }
 
 #[tokio::test]
+async fn a_rule_is_switched_off_and_on_and_a_switched_off_rule_decides_nothing() {
+    let api = start().await;
+    api.own("box");
+    let made = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(
+                &json!({"scope": {"type": "global"}, "pattern": "example.com", "effect": "allow"}),
+            ),
+        )
+        .await;
+    let id = made.json()["id"].as_i64().unwrap();
+    assert_eq!(made.json()["enabled"], true);
+    let off = api
+        .send(
+            "PUT",
+            &format!("/api/rules/{id}/enabled"),
+            Some(&json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(off.status, 200, "{}", off.body);
+    assert_eq!(off.json()["enabled"], false);
+    assert_eq!(
+        api.get("/api/rules").await.json()["rules"][0]["enabled"],
+        false
+    );
+    // The rule is kept, but the next request waits for an answer.
+    let waiting = api.request("box", "example.com");
+    assert_eq!(
+        api.get(&format!("/api/pending/{waiting}")).await.json()["state"],
+        "requested"
+    );
+    // Switching it on answers the request it now decides.
+    let on = api
+        .send(
+            "PUT",
+            &format!("/api/rules/{id}/enabled"),
+            Some(&json!({"enabled": true})),
+        )
+        .await;
+    assert_eq!(on.json()["enabled"], true);
+    assert_eq!(
+        api.get(&format!("/api/pending/{waiting}")).await.json()["state"],
+        "allowed"
+    );
+    for (path, body, status) in [
+        ("/api/rules/999/enabled", json!({"enabled": false}), 404),
+        (&format!("/api/rules/{id}/enabled"), json!({}), 422),
+        (
+            &format!("/api/rules/{id}/enabled"),
+            json!({"enabled": null}),
+            422,
+        ),
+        (
+            &format!("/api/rules/{id}/enabled"),
+            json!({"enabled": true, "x": 1}),
+            422,
+        ),
+    ] {
+        let reply = api.send("PUT", path, Some(&body)).await;
+        assert_eq!(reply.status, status, "{path}: {}", reply.body);
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn rules_are_created_listed_changed_and_deleted() {
     let api = start().await;
     api.own("box");

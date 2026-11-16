@@ -1387,17 +1387,10 @@ async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent
 /// Waits until the guest agent `editor_stand_in` started has said hello on `name`'s route, so the
 /// host holds a link to it.
 async fn agent_linked(host: &Host<FakeRuntime>, name: &WorkspaceId) {
-    let linked = async {
-        while host.workspaces().end_extension_hosts(name).await.is_err() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    };
-    assert!(
-        tokio::time::timeout(Duration::from_secs(20), linked)
-            .await
-            .is_ok(),
-        "the guest agent never connected"
-    );
+    puddle_test_kit::eventually_async("the guest agent connected", Duration::from_secs(20), || {
+        host.workspaces().end_extension_hosts(name)
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -991,6 +991,10 @@ fn m8_a_hidden_set_cannot_be_switched_and_its_stored_switch_survives() {
         store.switch_rule_set(OWNER, mise_set(), None, Some(false), Actor::Ui),
         Err(StoreError::RuleSetHidden(id)) if id == "builtin:mise-tools"
     ));
+    assert!(matches!(
+        store.switch_builtin_entry(OWNER, mise_set(), "nodejs.org", false, Actor::Ui),
+        Err(StoreError::RuleSetHidden(id)) if id == "builtin:mise-tools"
+    ));
     // Showing it again returns the set as the user left it: on everywhere, off in "a".
     store.set_system_managed(&SystemPlan::default()).unwrap();
     let sets = store.rule_sets(OWNER).unwrap();

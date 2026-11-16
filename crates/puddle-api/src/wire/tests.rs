@@ -707,6 +707,29 @@ fn rule_set_records_serialise_as_stored() {
         serde_json::to_value(AuditRecord::from(record)).unwrap()["rule_set"]["fill"],
         Value::Null
     );
+    // A rule, a rule on method and path and a built-in entry switched read back as they were written.
+    for (kind, tag) in [
+        (store::RuleSwitchKind::Rule, "rule"),
+        (store::RuleSwitchKind::RequestRule, "request_rule"),
+        (store::RuleSwitchKind::BuiltinEntry, "builtin_entry"),
+    ] {
+        let record = store::AuditRecord::RuleSwitched {
+            ts: 5,
+            kind,
+            id: Some(3),
+            set_id: Some("builtin:github".into()),
+            pattern: "api.github.com".into(),
+            workspace_id: None,
+            enabled: false,
+            actor: "ui".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap(),
+            serde_json::json!({"type": "rule_switched", "ts": 5, "kind": tag, "id": 3,
+                "set_id": "builtin:github", "pattern": "api.github.com",
+                "workspace_id": null, "enabled": false, "actor": "ui"})
+        );
+    }
     // A reason a later Puddle added is left out rather than failing the page.
     let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
             "workspace_id": null, "added": ["zed"], "removed": []});

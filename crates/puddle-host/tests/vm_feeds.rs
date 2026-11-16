@@ -444,6 +444,40 @@ async fn boot_placed(
     (net, vm, workspace)
 }
 
+/// Runs the installs with no credential. Each must fail at the feed, not for some other reason:
+/// the feed's own log shows 401s for the tool's host, no 200 and no credential.
+async fn run_controls(
+    net: &WebInternet,
+    vm: &VmHost,
+    workspace: &WorkspaceId,
+) -> Vec<(&'static str, Reach)> {
+    let from = net.web.seen().len();
+    let control = run(vm, workspace, &control_script(), 5).await;
+    let mut controls = Vec::new();
+    for (tool, host) in [
+        ("npm", NPM),
+        ("pip", PIP),
+        ("nuget", NUGET),
+        ("maven", MAVEN),
+    ] {
+        assert!(
+            control.contains(&format!("control={tool} rc="))
+                && !control.contains(&format!("control={tool} rc=0")),
+            "{tool} installed from the feed with no credential, so a pass above proves nothing: {control}"
+        );
+        let r = reach(&net.web, host, from);
+        assert!(
+            r.refused > 0 && r.ok == 0 && r.real == 0,
+            "{tool} control: the feed should have refused (401) every request, got 200={} 401={} real-token={}: {control}",
+            r.ok,
+            r.refused,
+            r.real
+        );
+        controls.push((tool, r));
+    }
+    controls
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_in() {
     let (net, vm, workspace) = boot(
@@ -479,14 +513,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
         report.push((tool, worked, r));
     }
 
-    let control = run(&vm, &workspace, &control_script(), 5).await;
-    for tool in ["npm", "pip", "nuget", "maven"] {
-        assert!(
-            control.contains(&format!("control={tool} rc="))
-                && !control.contains(&format!("control={tool} rc=0")),
-            "{tool} installed from the feed with no credential, so a pass above proves nothing: {control}"
-        );
-    }
+    let controls = run_controls(&net, &vm, &workspace).await;
 
     // The real token is nowhere in the guest: no file, no process environment. The tools' own
     // config and caches are included (they live under /root and /tmp).
@@ -509,6 +536,10 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
             "{tool:<7} {worked:<10} {:<9} {:<11} {:<19} {}",
             r.ok, r.real, r.stand_in, r.refused
         );
+    }
+    eprintln!("control (no credential)  feed-200  refused (401)");
+    for (tool, r) in &controls {
+        eprintln!("{tool:<24} {:<9} {}", r.ok, r.refused);
     }
     eprintln!("stand-ins held by the guest: {stand_ins:?}");
     eprintln!("files with a stand-in (config and caches): {on_disk}");

@@ -128,31 +128,50 @@ impl<'a> AnswerHead<'a> {
     }
 }
 
-/// Reads one answer and may replace its body.
+/// What a rewriter wants of an answer, from its head alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Want {
+    /// Read the body in full and ask [`AnswerRewriter::rewrite`].
+    Read,
+    /// Pass the answer to the guest as it is, unread: an error, a body the rewriter cannot read,
+    /// or one it has nothing to say about.
+    Pass,
+    /// The answer must not reach the guest: the upstream answer is dropped unread and the guest
+    /// gets this refusal.
+    Refuse(InjectRefusal),
+}
+
+/// What a rewriter did with an answer it saw in full.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rewrite {
+    /// The guest gets the body as the upstream sent it.
+    Keep,
+    /// The guest gets this body instead.
+    Replace(Bytes),
+    /// The answer must not reach the guest (it holds something real the rewriter could not
+    /// replace): the guest gets this refusal.
+    Refuse(InjectRefusal),
+}
+
+/// Reads one answer and may replace its body. Every way out is a value the caller matches, so a
+/// rewriter cannot let an answer through by forgetting to say it must not.
 pub trait AnswerRewriter: Send {
     /// Whether to read this answer in full: asked from the head alone, so a rewriter passes an
     /// error, a body it cannot read or a body in an encoding it does not decode on without the
     /// proxy holding it.
-    fn wants(&mut self, head: &AnswerHead<'_>) -> bool;
+    fn wants(&mut self, head: &AnswerHead<'_>) -> Want;
 
-    /// The answer's body, read in full (at most [`MAX_EXCHANGE_BODY`]). `Some(new)` replaces the
-    /// body the guest gets; `None` leaves it.
+    /// The answer's body, read in full (at most [`MAX_EXCHANGE_BODY`]).
     fn rewrite<'a>(
         &'a mut self,
         head: &'a AnswerHead<'a>,
         body: &'a [u8],
-    ) -> BoxFuture<'a, Option<Bytes>>;
+    ) -> BoxFuture<'a, Rewrite>;
 
     /// The answer turned out larger than [`MAX_EXCHANGE_BODY`] (it had no length to say so up
-    /// front). It goes to the guest as it is unless [`Self::refusal`] says otherwise.
-    fn too_large(&mut self) {}
-
-    /// Asked once the rewriter has seen the answer (not wanted, too large, or rewritten): `Some`
-    /// when the answer must not reach the guest. The upstream answer is dropped unread and the
-    /// guest gets this refusal instead. A rewriter that holds something the guest must never see
-    /// (a real token it could not replace) says so here.
-    fn refusal(&mut self) -> Option<InjectRefusal> {
-        None
+    /// front). It goes to the guest as it is unless this refuses it.
+    fn too_large(&mut self) -> Rewrite {
+        Rewrite::Keep
     }
 }
 
@@ -290,11 +309,10 @@ pub(crate) async fn read_answer(
 ) -> Result<Response<AnswerBody>, AnswerError> {
     let (mut parts, mut body) = response.into_parts();
     let head = AnswerHead::of(parts.status, &parts.headers);
-    if !answer.wants(&head) {
-        if let Some(refusal) = answer.refusal() {
-            return Err(AnswerError::Refused(refusal));
-        }
-        return Ok(Response::from_parts(parts, AnswerBody::Streaming(body)));
+    match answer.wants(&head) {
+        Want::Read => {}
+        Want::Pass => return Ok(Response::from_parts(parts, AnswerBody::Streaming(body))),
+        Want::Refuse(refusal) => return Err(AnswerError::Refused(refusal)),
     }
     // The answer carries the real tokens: it is gathered in a buffer that is overwritten, and
     // never reallocated unwiped, however the upstream frames it.
@@ -312,8 +330,7 @@ pub(crate) async fn read_answer(
         whole.extend_from_slice(&data);
         if whole.len() > MAX_EXCHANGE_BODY {
             tracing::info!("a token answer is larger than expected and goes through unread");
-            answer.too_large();
-            if let Some(refusal) = answer.refusal() {
+            if let Rewrite::Refuse(refusal) = answer.too_large() {
                 return Err(AnswerError::Refused(refusal));
             }
             return Ok(Response::from_parts(
@@ -325,11 +342,11 @@ pub(crate) async fn read_answer(
             ));
         }
     }
-    let replaced = answer.rewrite(&head, whole.as_ref()).await;
-    if let Some(refusal) = answer.refusal() {
-        return Err(AnswerError::Refused(refusal));
-    }
-    let body = replaced.unwrap_or_else(|| whole.into_bytes());
+    let body = match answer.rewrite(&head, whole.as_ref()).await {
+        Rewrite::Keep => whole.into_bytes(),
+        Rewrite::Replace(body) => body,
+        Rewrite::Refuse(refusal) => return Err(AnswerError::Refused(refusal)),
+    };
     // Whatever framing the upstream used, the guest gets this body at its own length.
     if let Ok(length) = HeaderValue::from_str(&body.len().to_string()) {
         parts.headers.insert(header::CONTENT_LENGTH, length);

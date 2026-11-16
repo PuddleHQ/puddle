@@ -60,13 +60,20 @@ const listPages = async (port) => (await (await fetch(`http://127.0.0.1:${port}/
 /**
  * Waits for `target`'s own document. A window is listed at the address it is navigating to while its
  * document is still the initial about:blank (already "complete", with a body), so readyState alone
- * can pass on the blank document, which the navigation then replaces. `ready` is an expression the
- * loaded page must satisfy.
+ * can pass on the blank document, which the navigation then replaces. The page may route on to
+ * another path or hash, so the document is the target's when its origin is. `ready` is an
+ * expression the loaded page must satisfy. A timeout says what the window shows.
  */
-function loaded(page, target, ready) {
-  return until(`${target.url} to load`, () =>
-    page.evaluate(`location.href === ${JSON.stringify(target.url)} && document.readyState === 'complete' && (${ready})`),
-  );
+async function loaded(page, target, ready) {
+  const origin = new URL(target.url).origin;
+  const shows = () => page.evaluate("({ href: location.href, readyState: document.readyState, body: !!document.body })");
+  try {
+    await until(`${target.url} to load`, () =>
+      page.evaluate(`location.origin === ${JSON.stringify(origin)} && document.readyState === 'complete' && (${ready})`),
+    );
+  } catch (err) {
+    throw new Error(`${err.message}; the window shows ${JSON.stringify(await shows().catch(() => null))}`);
+  }
 }
 
 function start(env) {

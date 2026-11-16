@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The development certificate's Windows side: the current user's `My` store (certificates with
-//! keys), the `Root` store (what is trusted, and the one place a trust request goes), and key
-//! export through CNG. Part of the crate's `unsafe`, like `windows.rs`.
+//! The development certificate's Windows side: the current user's `Root` store (what is trusted,
+//! and the one place a trust request goes). Part of the crate's `unsafe`, like `windows.rs`.
 //!
 //! The user's `CurrentUser\Root` is opened by name, so it is the merged view Windows itself and
 //! `dotnet dev-certs` use (the user's own roots plus machine, Group Policy and enterprise ones).
@@ -9,27 +8,20 @@
 //! reported, never worked around.
 
 use std::ffi::c_void;
-use std::marker::PhantomData;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
     ERROR_CANCELLED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError,
 };
 use windows_sys::Win32::Security::Cryptography::{
-    CERT_CONTEXT, CERT_KEY_PROV_INFO_PROP_ID, CERT_KEY_SPEC, CERT_NCRYPT_KEY_SPEC,
-    CERT_STORE_ADD_USE_EXISTING, CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_PROV_SYSTEM_W,
-    CERT_STORE_READONLY_FLAG, CERT_SYSTEM_STORE_CURRENT_USER, CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG,
-    CRYPT_ACQUIRE_SILENT_FLAG, CertAddCertificateContextToStore, CertCloseStore,
-    CertCreateCertificateContext, CertEnumCertificatesInStore, CertFreeCertificateContext,
-    CertGetCertificateContextProperty, CertOpenStore, CryptAcquireCertificatePrivateKey,
-    HCERTSTORE, NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG, NCRYPT_EXPORT_POLICY_PROPERTY,
-    NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NCryptExportKey, NCryptFreeObject, NCryptGetProperty,
+    CERT_CONTEXT, CERT_STORE_ADD_USE_EXISTING, CERT_STORE_OPEN_EXISTING_FLAG,
+    CERT_STORE_PROV_SYSTEM_W, CERT_STORE_READONLY_FLAG, CERT_SYSTEM_STORE_CURRENT_USER,
+    CertAddCertificateContextToStore, CertCloseStore, CertCreateCertificateContext,
+    CertEnumCertificatesInStore, CertFreeCertificateContext, CertOpenStore, HCERTSTORE,
     X509_ASN_ENCODING,
 };
-use zeroize::Zeroizing;
 
-use crate::devcert::leaf;
-use crate::devcert::{DevCertTrust, ExistingCert, KeyAccess, PrivateKey, TrustError, TrustOutcome};
+use crate::devcert::{DevCertTrust, TrustError, TrustOutcome};
 
 /// [`DevCertTrust`] over the current user's Windows certificate stores.
 #[derive(Debug, Default, Clone, Copy)]
@@ -43,7 +35,7 @@ fn failed(what: &str, code: u32) -> TrustError {
 struct Store(HCERTSTORE);
 
 impl Store {
-    /// The current user's store `name` (`My`, `Root`); `write` opens it for adding.
+    /// The current user's store `name` (`Root`, or a memory store in tests); `write` opens it for adding.
     #[expect(unsafe_code, reason = "CryptoAPI store handle")]
     fn current_user(name: &str, write: bool) -> Result<Option<Self>, u32> {
         let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
@@ -188,192 +180,6 @@ impl CertContext {
             std::slice::from_raw_parts(c.pbCertEncoded, c.cbCertEncoded as usize)
         }
     }
-
-    /// Whether Windows knows a key for the certificate.
-    #[expect(unsafe_code, reason = "CryptoAPI property query")]
-    fn has_key_info(&self) -> bool {
-        let mut size = 0_u32;
-        // SAFETY: the context is valid; a null data pointer asks only for the size.
-        let found = unsafe {
-            CertGetCertificateContextProperty(
-                self.0,
-                CERT_KEY_PROV_INFO_PROP_ID,
-                ptr::null_mut(),
-                &raw mut size,
-            )
-        };
-        found != 0
-    }
-
-    /// What can be done with the certificate's key, without ever prompting (silent).
-    #[expect(unsafe_code, reason = "CNG key handle and export policy")]
-    fn key_access(&self) -> KeyAccess {
-        if !self.has_key_info() {
-            return KeyAccess::Missing;
-        }
-        match self.open_key() {
-            Err(code) => KeyAccess::NotExportable(format!(
-                "the key can't be opened without a prompt (os error {code:#x}); it may be on a legacy provider or a smart card"
-            )),
-            Ok(key) => {
-                let mut policy = 0_u32;
-                let mut got = 0_u32;
-                // SAFETY: `key.0` is an open key handle; the output is the 4 bytes of `policy`.
-                let status = unsafe {
-                    NCryptGetProperty(
-                        key.0,
-                        NCRYPT_EXPORT_POLICY_PROPERTY,
-                        (&raw mut policy).cast::<u8>(),
-                        4,
-                        &raw mut got,
-                        0,
-                    )
-                };
-                if status != 0 {
-                    KeyAccess::NotExportable(format!(
-                        "the key's export policy can't be read (status {status:#x})"
-                    ))
-                } else if policy & NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG == 0 {
-                    KeyAccess::NotExportable(
-                        "the key is not marked exportable in plain form".to_owned(),
-                    )
-                } else {
-                    KeyAccess::Exportable
-                }
-            }
-        }
-    }
-
-    /// Opens the certificate's CNG key silently. Legacy (CAPI) keys fail here, which counts as
-    /// not exportable.
-    #[expect(unsafe_code, reason = "CryptoAPI key acquisition")]
-    fn open_key(&self) -> Result<KeyHandle<'_>, u32> {
-        let mut handle = 0_usize;
-        let mut spec: CERT_KEY_SPEC = 0;
-        let mut caller_frees = 0;
-        // SAFETY: the context is valid; the three out pointers are valid for writes. The silent
-        // flag asks for no PIN or consent window: if the provider needs one, the call fails
-        // (`NTE_SILENT_CONTEXT`) instead of showing it. Only CNG keys are asked for. With
-        // `caller_frees` zero the key belongs to the certificate context, so the returned
-        // `KeyHandle` borrows `self`.
-        let ok = unsafe {
-            CryptAcquireCertificatePrivateKey(
-                self.0,
-                CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
-                ptr::null(),
-                &raw mut handle,
-                &raw mut spec,
-                &raw mut caller_frees,
-            )
-        };
-        // Built first, so a key the caller must free is freed on every path below.
-        let key = (ok != 0).then_some(KeyHandle(handle, caller_frees != 0, PhantomData));
-        match key {
-            Some(key) if spec == CERT_NCRYPT_KEY_SPEC => Ok(key),
-            // SAFETY: no preconditions; reads the last error of the call just made (for a
-            // success with another key spec, which `ONLY_NCRYPT_KEY` rules out, it is stale).
-            _ => Err(unsafe { GetLastError() }),
-        }
-    }
-}
-
-/// A CNG key handle; freed on drop when the call that gave it says the caller must. When it is
-/// not freed, it is valid only while the certificate context is, which `'a` ties it to.
-struct KeyHandle<'a>(usize, bool, PhantomData<&'a CertContext>);
-
-impl Drop for KeyHandle<'_> {
-    #[expect(unsafe_code, reason = "CNG handle release")]
-    fn drop(&mut self) {
-        if self.1 {
-            // SAFETY: the handle was handed out for the caller to free, once.
-            let _ = unsafe { NCryptFreeObject(self.0) };
-        }
-    }
-}
-
-/// The certificate in `store` whose DER is `der`, handed to `f`.
-fn with_cert<T>(store: &Store, der: &[u8], f: impl FnOnce(&CertContext) -> T) -> Option<T> {
-    let mut f = Some(f);
-    let mut out = None;
-    store.each(|cert| {
-        if cert.der() == der {
-            out = f.take().map(|f| f(cert));
-            return false;
-        }
-        true
-    });
-    out
-}
-
-/// Every certificate of `my` that carries the ASP.NET marker, with what is known about its key
-/// and whether `roots` (none: no trusted roots store) holds it. Other certificates are left alone:
-/// their keys are never opened.
-fn existing_in(my: &Store, roots: Option<&Store>) -> Vec<ExistingCert> {
-    let mut found = Vec::new();
-    my.each(|cert| {
-        let der = cert.der();
-        let is_dev_cert = leaf::inspect(der).is_ok_and(|info| info.marker_version.is_some());
-        if is_dev_cert {
-            found.push(ExistingCert {
-                der: der.to_vec(),
-                key: cert.key_access(),
-                trusted: roots.is_some_and(|roots| roots.contains(der)),
-            });
-        }
-        true
-    });
-    found
-}
-
-#[expect(unsafe_code, reason = "CNG key export")]
-fn export_pkcs8(cert: &CertContext) -> Result<PrivateKey, TrustError> {
-    if cert.key_access() != KeyAccess::Exportable {
-        return Err(TrustError::Failed(
-            "the key is not exportable in plain form".into(),
-        ));
-    }
-    let key = cert
-        .open_key()
-        .map_err(|code| failed("opening the key", code))?;
-    let mut size = 0_u32;
-    // SAFETY: `key.0` is an open key handle; a null output asks for the size. The blob type is the
-    // documented PKCS#8 one and the parameter list may be null for an unencrypted export.
-    let status = unsafe {
-        NCryptExportKey(
-            key.0,
-            0,
-            NCRYPT_PKCS8_PRIVATE_KEY_BLOB,
-            ptr::null(),
-            ptr::null_mut(),
-            0,
-            &raw mut size,
-            0,
-        )
-    };
-    if status != 0 {
-        return Err(failed("sizing the key export", status.cast_unsigned()));
-    }
-    let mut buffer = Zeroizing::new(vec![0_u8; size as usize]);
-    let mut written = 0_u32;
-    // SAFETY: as above; `buffer` has `size` writable bytes and `written` receives how many were
-    // used.
-    let status = unsafe {
-        NCryptExportKey(
-            key.0,
-            0,
-            NCRYPT_PKCS8_PRIVATE_KEY_BLOB,
-            ptr::null(),
-            buffer.as_mut_ptr(),
-            size,
-            &raw mut written,
-            0,
-        )
-    };
-    if status != 0 {
-        return Err(failed("exporting the key", status.cast_unsigned()));
-    }
-    buffer.truncate(written as usize);
-    Ok(PrivateKey::from_pkcs8_der(std::mem::take(&mut *buffer)))
 }
 
 fn open(name: &str, write: bool) -> Result<Option<Store>, TrustError> {
@@ -382,24 +188,6 @@ fn open(name: &str, write: bool) -> Result<Option<Store>, TrustError> {
 }
 
 impl DevCertTrust for WindowsTrust {
-    fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
-        let Some(my) = open("My", false)? else {
-            return Ok(Vec::new());
-        };
-        let roots = open("Root", false)?;
-        Ok(existing_in(&my, roots.as_ref()))
-    }
-
-    fn export_key(&self, cert_der: &[u8]) -> Result<PrivateKey, TrustError> {
-        let my = open("My", false)?
-            .ok_or_else(|| TrustError::Failed("the personal certificate store is empty".into()))?;
-        with_cert(&my, cert_der, export_pkcs8).unwrap_or_else(|| {
-            Err(TrustError::Failed(
-                "the certificate is not in the store".into(),
-            ))
-        })
-    }
-
     fn is_trusted(&self, cert_der: &[u8]) -> Result<bool, TrustError> {
         Ok(open("Root", false)?.is_some_and(|roots| roots.contains(cert_der)))
     }

@@ -92,20 +92,12 @@ pub(crate) async fn certificate_within(
     }
 }
 
-/// One line for the log: where it stands, whose certificate and what was passed over (names and
-/// reasons only, never key material).
+/// One line for the log: where it stands and why, never key material.
 fn log_report(report: &DevCertReport) {
-    let skipped: Vec<String> = report
-        .skipped
-        .iter()
-        .map(|s| format!("{}: {}", s.fingerprint, s.reason))
-        .collect();
     let detail = report.detail.as_deref().unwrap_or("");
     tracing::info!(
         status = ?report.status,
-        origin = ?report.material.origin,
         detail,
-        passed_over = ?skipped,
         "development certificate for the workspace"
     );
 }
@@ -153,7 +145,6 @@ impl<T: DevCertTrust> DevCertService for HostDevCert<T> {
 /// The API's name for a state.
 fn wire(status: DevCertStatus) -> DevCertificate {
     match status {
-        DevCertStatus::ReusingExisting => DevCertificate::ReusingExisting,
         DevCertStatus::Trusted => DevCertificate::Trusted,
         DevCertStatus::NeedsTrust => DevCertificate::NeedsTrust,
         DevCertStatus::TrustDeclined => DevCertificate::TrustDeclined,

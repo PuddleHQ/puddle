@@ -6,8 +6,7 @@
 //!
 //! | Step | Piece |
 //! |---|---|
-//! | an existing ASP.NET development certificate the user's Windows trusts, with an exportable key, is reused: no dialog | [`DevCertTrust::existing`], choice in [`SkipReason`] |
-//! | otherwise one leaf per host user (`CA:false`, loopback names, ASP.NET marker, 365 days, replaced under 30) in the owner-only data folder | [`DevCertManager::ensure`], [`leaf`] |
+//! | one leaf per host user (`CA:false`, loopback names, ASP.NET marker, 365 days, replaced under 30) in the owner-only data folder | [`DevCertManager::ensure`], [`leaf`] |
 //! | that leaf is trusted once in the user's `Root` store (one Windows confirmation, never overriding a policy) | [`DevCertTrust::trust`] |
 //! | where it stands, for the first-run line | [`DevCertStatus`] |
 //!
@@ -22,7 +21,6 @@ pub mod leaf;
 pub mod listener;
 mod manager;
 mod material;
-mod reuse;
 mod trust;
 
 pub use guest::{
@@ -30,9 +28,8 @@ pub use guest::{
     GuestDevCert, dotnet_ssl_cert_dir,
 };
 pub use manager::{DevCertError, DevCertManager, DevCertReport, DevCertStatus, FOLDER, LEAF_FILE};
-pub use material::{DevCertMaterial, Origin, PrivateKey};
-pub use reuse::{SkipReason, SkippedExisting};
-pub use trust::{DevCertTrust, ExistingCert, KeyAccess, TrustError, TrustOutcome, Unsupported};
+pub use material::{DevCertMaterial, PrivateKey};
+pub use trust::{DevCertTrust, TrustError, TrustOutcome, Unsupported};
 
 #[cfg(windows)]
 pub use crate::platform::WindowsTrust;

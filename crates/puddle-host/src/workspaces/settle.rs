@@ -2,6 +2,7 @@
 //! Settling a running workspace: plans, environment, shell init, locks and repairs.
 
 use crate::agent_reports::{clear_no_sudo, entrypoint_problem, no_sudo_problem};
+use crate::git_hosts::Authors;
 use crate::op_error::OpError;
 use std::sync::{Arc, PoisonError};
 
@@ -16,7 +17,42 @@ use puddle_workspace::Layout;
 use super::{GuestState, HostWorkspaces, problem_key, with_leftovers};
 use crate::boot::GuestInputs;
 
+/// Which run of the boot hook a report comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HookRun {
+    /// The hook that starts the guest.
+    Boot,
+    /// The plan run again in the running guest.
+    Rewrite,
+}
+
 impl<R: Runtime + Clone> HostWorkspaces<R> {
+    /// What every run of the boot hook tells the user, from its report: the merge notices and
+    /// the old-git problem (when `authors` are known) after any run, the loader notice after a
+    /// rewrite, and after a boot the entrypoint, `sudo` and Kubernetes problems (the hook starts
+    /// the entrypoint and makes the session user only then). Every place that runs the hook calls
+    /// this, so a new notice is added once.
+    pub(super) fn settle_after_hook(
+        &self,
+        name: &WorkspaceId,
+        report: &puddle_boot::BootReport,
+        authors: Option<&Authors>,
+        run: HookRun,
+    ) {
+        self.settle_merge_notices(name, report);
+        if let Some(authors) = authors {
+            self.settle_git_version(name, report, authors);
+        }
+        match run {
+            HookRun::Boot => {
+                self.settle_entrypoint(name, report);
+                self.settle_no_sudo(name, report);
+                self.settle_kubernetes(name, report);
+            }
+            HookRun::Rewrite => self.announce_loader_replaced(name, report),
+        }
+    }
+
     /// Plans the guest as `guest` says and runs the plan in it. When the hook put the loader of
     /// the shell init back, the user is told, as a boot would.
     pub(super) async fn run_plan(
@@ -52,8 +88,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         let report = kit.hook().run(gated.ungated(), &plan).await?;
-        self.announce_loader_replaced(name, &report);
-        self.settle_merge_notices(name, &report);
+        self.settle_after_hook(name, &report, Some(&guest.authors), HookRun::Rewrite);
         Ok(report)
     }
 
@@ -447,19 +482,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await?;
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
-        self.settle_entrypoint(name, gated.boot_report());
-        self.settle_no_sudo(name, gated.boot_report());
-        self.settle_kubernetes(name, gated.boot_report());
-        self.settle_merge_notices(name, gated.boot_report());
         let authors = inner
             .live
             .lock()
             .await
             .get(name)
             .and_then(|live| live.guest.as_ref().map(|guest| guest.authors.clone()));
-        if let Some(authors) = authors {
-            self.settle_git_version(name, gated.boot_report(), &authors);
-        }
+        self.settle_after_hook(name, gated.boot_report(), authors.as_ref(), HookRun::Boot);
         let root = Layout::new(id)?.mount().clone();
         self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
             .await;

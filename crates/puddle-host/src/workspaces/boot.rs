@@ -383,9 +383,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ..guest
         };
         match self.run_plan_report(name, &gated, &replanned).await {
-            Ok(report) => {
+            Ok(_) => {
                 GitProblem::AuthorSync.settle(&inner.problems, name, None);
-                self.settle_git_version(name, &report, &wanted);
                 if let Some(entry) = inner.live.lock().await.get_mut(name)
                     && let Some(state) = entry.guest.as_mut()
                 {

@@ -60,6 +60,8 @@ fn workspace() -> tempfile::TempDir {
 }
 
 fn entry(tool: &str, version: &str, installed: bool, path: &str) -> String {
+    // A Windows path has backslashes, which JSON needs escaped.
+    let path = path.replace('\\', "\\\\");
     format!(
         r#""{tool}":[{{"requested_version":"{version}","installed":{installed},"source":{{"type":"mise.toml","path":"{path}"}}}}]"#
     )

@@ -53,8 +53,8 @@ describe("parseRepoUrl", () => {
       return got.ok ? "" : got.message;
     };
     expect(message("")).toMatch(/Enter the repository/);
-    expect(message("git@github.com:a/b.git")).toMatch(
-      /SSH remotes are not supported/,
+    expect(message("git@git.example.com:a/b.git")).toMatch(
+      /Puddle reads SSH addresses of GitHub/,
     );
     expect(message("https://me@example.com/a/b")).toMatch(
       /Remove the user name/,
@@ -85,7 +85,7 @@ describe("parseRepoUrl", () => {
   ])(
     "lists SSH address %s as its HTTPS repository",
     (url, [host, owner, repo]) => {
-      expect(parseRepoUrl(url, { ssh: true })).toEqual({
+      expect(parseRepoUrl(url)).toEqual({
         ok: true,
         host,
         owner,
@@ -94,12 +94,9 @@ describe("parseRepoUrl", () => {
     },
   );
 
-  it("keeps refusing SSH where a workspace is cloned, and says why on the Git tab", () => {
-    const ssh = "git@github.com:acme/web.git";
-    expect(parseRepoUrl(ssh).ok).toBe(false);
-    expect(parseRepoUrl(ssh, { ssh: false }).ok).toBe(false);
+  it("says why an SSH address is refused", () => {
     const message = (url: string) => {
-      const got = parseRepoUrl(url, { ssh: true });
+      const got = parseRepoUrl(url);
       return got.ok ? "" : got.message;
     };
     expect(message("git@example.com:acme/web.git")).toMatch(

@@ -11,6 +11,7 @@
     workspacesText,
     type AdminUser,
   } from "#lib/admin/model.ts";
+  import AuditRetention from "#lib/components/AuditRetention.svelte";
   import CreateUserDialog from "#lib/components/CreateUserDialog.svelte";
   import DeleteUserDialog from "#lib/components/DeleteUserDialog.svelte";
   import Toast from "#lib/components/Toast.svelte";
@@ -242,6 +243,11 @@
         </li>
       {/each}
     </ul>
+  </section>
+
+  <section aria-labelledby="log-heading">
+    <h2 id="log-heading">Activity log</h2>
+    <AuditRetention />
   </section>
 
   <section aria-labelledby="audit-heading">

@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use puddle_store::{IdentityId, RepoRef, is_bare_user};
+use puddle_store::{
+    IdentityId, RepoRef, SshAddressError, is_bare_user, looks_like_ssh, ssh_address_as_https,
+};
 use puddle_types::{CheckoutDir, EntryId};
 
 use super::MAX_ID_DRAWS;
@@ -14,9 +16,9 @@ use super::MAX_ID_DRAWS;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RepoUrlError {
-    /// An `ssh://` or scp-like remote.
-    #[error("ssh remotes are not supported yet; use the repository's HTTPS URL instead")]
-    Ssh,
+    /// An `ssh://` or scp-like remote that is not one Puddle can turn into an HTTPS address.
+    #[error("{0}")]
+    Ssh(#[from] SshAddressError),
     /// Longer than [`MAX_REPO_URL_LEN`].
     #[error("the repository URL is longer than {MAX_REPO_URL_LEN} characters")]
     TooLong,
@@ -46,14 +48,19 @@ impl RepoUrl {
     ///
     /// # Errors
     ///
-    /// [`RepoUrlError`]: SSH remotes get the "not supported yet" one, anything else that is not a
-    /// plain `https://` URL says what to change.
+    /// [`RepoUrlError`]: an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps is kept in its
+    /// HTTPS form (a workspace is cloned over HTTPS); one of another host, and anything else that is
+    /// not a plain `https://` URL, says what to change.
     pub fn parse(url: &str) -> Result<Self, RepoUrlError> {
         let url = url.trim();
+        let converted;
+        let url = if looks_like_ssh(url) {
+            converted = ssh_address_as_https(url)?;
+            converted.as_str()
+        } else {
+            url
+        };
         let lower = url.to_ascii_lowercase();
-        if lower.starts_with("ssh://") || is_scp_like(url) {
-            return Err(RepoUrlError::Ssh);
-        }
         if url.len() > MAX_REPO_URL_LEN {
             return Err(RepoUrlError::TooLong);
         }
@@ -92,19 +99,6 @@ impl RepoUrl {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// `git@host:owner/repo`-style remotes: no scheme, a `:` before any `/`.
-fn is_scp_like(url: &str) -> bool {
-    if url.contains("://") || url.to_ascii_lowercase().starts_with("http") {
-        return false;
-    }
-    match (url.find(':'), url.find('/')) {
-        // A colon at index 1 is a Windows drive letter, not a host.
-        (Some(colon), Some(slash)) => colon > 1 && colon < slash,
-        (Some(colon), None) => colon > 1,
-        _ => false,
     }
 }
 

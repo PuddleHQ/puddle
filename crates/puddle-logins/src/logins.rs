@@ -27,8 +27,8 @@ use std::time::Duration;
 use bytes::Bytes;
 use puddle_proxy::{
     AnswerHead, AnswerRewriter, BodyField, Exchange, ExchangeRewriter, FieldKind, InjectRefusal,
-    MAX_EXCHANGE_BODY, SecretValue, StandIn, StandInError, StandInOrigin, StandIns, TerminationSet,
-    TokenBody,
+    MAX_EXCHANGE_BODY, Rewrite, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
+    TerminationSet, TokenBody, Want,
 };
 use puddle_secrets::SecretStore;
 use puddle_types::{Host, WorkspaceId};
@@ -924,22 +924,21 @@ struct Capture {
     logins: Logins,
     profile: &'static Profile,
     endpoint: &'static Endpoint,
-    /// Set when the answer could not be kept: the tool then gets this and not the answer.
-    refusal: Option<InjectRefusal>,
 }
 
 impl Capture {
-    fn refuse(&mut self, problem: Problem) {
+    /// Tells the user the login was not kept; the tool then gets the refusal, not the answer.
+    fn refuse(&self, problem: Problem) -> InjectRefusal {
         self.logins.notify(self.profile, problem);
-        self.refusal = Some(refusal_for(self.profile, problem));
+        refusal_for(self.profile, problem)
     }
 }
 
 impl AnswerRewriter for Capture {
-    fn wants(&mut self, head: &AnswerHead<'_>) -> bool {
+    fn wants(&mut self, head: &AnswerHead<'_>) -> Want {
         // Only a success answer has tokens; an error answer is the tool's to read.
         if !(200..300).contains(&head.status) || head.status == 204 {
-            return false;
+            return Want::Pass;
         }
         let identity = head
             .content_encoding
@@ -948,36 +947,29 @@ impl AnswerRewriter for Capture {
             .content_length
             .is_none_or(|n| n <= MAX_EXCHANGE_BODY as u64);
         if TokenBody::reads(head.content_type) && identity && small {
-            return true;
+            return Want::Read;
         }
-        self.refuse(Problem::UnexpectedAnswer);
-        false
+        Want::Refuse(self.refuse(Problem::UnexpectedAnswer))
     }
 
-    fn too_large(&mut self) {
-        self.refuse(Problem::UnexpectedAnswer);
-    }
-
-    fn refusal(&mut self) -> Option<InjectRefusal> {
-        self.refusal.take()
+    fn too_large(&mut self) -> Rewrite {
+        Rewrite::Refuse(self.refuse(Problem::UnexpectedAnswer))
     }
 
     fn rewrite<'a>(
         &'a mut self,
         head: &'a AnswerHead<'a>,
         body: &'a [u8],
-    ) -> puddle_proxy::BoxFuture<'a, Option<Bytes>> {
+    ) -> puddle_proxy::BoxFuture<'a, Rewrite> {
         Box::pin(async move {
             match self
                 .logins
                 .capture((self.profile, self.endpoint), body, head.content_type)
                 .await
             {
-                Ok(replaced) => replaced,
-                Err(problem) => {
-                    self.refuse(problem);
-                    None
-                }
+                Ok(Some(replaced)) => Rewrite::Replace(replaced),
+                Ok(None) => Rewrite::Keep,
+                Err(problem) => Rewrite::Refuse(self.refuse(problem)),
             }
         })
     }
@@ -1017,7 +1009,6 @@ impl ExchangeRewriter for Logins {
             logins: self.clone(),
             profile: route.profile,
             endpoint: route.endpoint,
-            refusal: None,
         })))
     }
 }

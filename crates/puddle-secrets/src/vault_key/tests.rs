@@ -450,8 +450,9 @@ fn only_a_systemd_before_256_lacks_per_user_sealing() {
 #[test]
 fn the_sealed_key_is_named_and_placed_as_the_service_reads_it() {
     assert_eq!(sealed_key_name(), "puddle-vault-key");
+    let config = tempfile::tempdir().unwrap();
     assert_eq!(
-        sealed_key_path(Path::new("/home/u/.config")),
-        Path::new("/home/u/.config/puddle/vault-key.cred")
+        sealed_key_path(config.path()),
+        config.path().join("puddle").join("vault-key.cred")
     );
 }

@@ -6105,6 +6105,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "proptest",
+ "puddle-api",
  "puddle-appicon",
  "puddle-certs",
  "puddle-doctor",

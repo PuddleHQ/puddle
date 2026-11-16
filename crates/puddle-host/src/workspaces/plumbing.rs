@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
-use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
+use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord, admit_idle};
 use puddle_compute::{ImageConfig, Runtime};
 use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
@@ -429,12 +429,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ));
         }
         let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-        if let Some(busy) = slot.record.busy {
-            return Err(WorkspaceError::Conflict(format!(
-                "{} is busy ({busy}); wait for it to finish",
-                slot.record.name
-            )));
-        }
+        admit_idle(&slot.record)?;
         check(&slot.record)?;
         slot.record.busy = Some(op);
         enter(&mut slot.record);

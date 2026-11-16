@@ -14,6 +14,9 @@ publish.workspace = true
 # Serves the built SPA (`ui/build`) at `/` from inside the binary. Off by default so the crate
 # builds and tests without Node; the app turns it on.
 embedded-ui = ["dep:rust-embed"]
+# `FakeWorkspaces`, `FakeLauncher` and `contract`, the workspace-service suite every implementation runs.
+# For tests and the UI fixture; never in a shipped program.
+testing = []
 
 [dependencies]
 argon2 = { workspace = true }
@@ -51,6 +54,8 @@ utoipa-axum = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# The integration tests run on the in-memory workspace service.
+puddle-api = { path = ".", features = ["testing"] }
 # The tests record their workspaces' users through `puddle_store::testing`.
 puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }

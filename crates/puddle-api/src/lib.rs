@@ -50,6 +50,8 @@ mod admin;
 mod auth;
 mod authz;
 mod checkouts;
+#[cfg(any(test, feature = "testing"))]
+pub mod contract;
 mod credential_store;
 mod credentials;
 mod dev_cert;
@@ -57,6 +59,7 @@ mod doctor;
 mod error;
 mod events;
 mod extract;
+#[cfg(any(test, feature = "testing"))]
 mod fake_workspaces;
 mod front;
 mod learned;
@@ -91,6 +94,7 @@ pub use dev_cert::{DevCertService, FakeDevCert, NoDevCert};
 pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
 pub use error::{ApiErrorBody, ErrorCode, ErrorField};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
+#[cfg(any(test, feature = "testing"))]
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
 pub use front::{NameResolver, NoNames, SystemResolver};
 pub use learned::{FakeLearned, LearnedService, NoLearned};
@@ -127,7 +131,9 @@ pub use workspaces::{
     NewWorkspace, NoFreeEntryId, NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation,
     RandomIds, RepoFindings, RepoUrl, RepoUrlError, Repository, RepositoryDraft,
     RepositoryListError, ShellInitCheck, StartFolder, StartFolderChange, StartFolderError,
-    WorkspaceError, WorkspaceRecord, WorkspaceService, check_rename, check_repositories,
-    check_repositories_with, check_session_user_change, check_start_folder_change,
-    entry_id_from_text, label_taken, new_entry_id,
+    WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
+    admit_delete_status, admit_grow_size, admit_idle, admit_reset_root_disk, admit_settled,
+    admit_start, admit_stop, check_rename, check_repositories, check_repositories_with,
+    check_session_user_change, check_start_folder_change, entry_id_from_text, label_taken,
+    new_entry_id, not_found,
 };

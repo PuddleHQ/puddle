@@ -3,7 +3,7 @@
 //! types it speaks, and the [`Launcher`] that opens a desktop editor.
 //!
 //! The routes know nothing about volumes, workspaces or the runtime. The real service (over
-//! `puddle-workspace` and `puddle-lifecycle`) is wired in by the application; [`crate::FakeWorkspaces`]
+//! `puddle-workspace` and `puddle-lifecycle`) is wired in by the application; `FakeWorkspaces`
 //! is the in-memory one for tests and the UI fixture. Every method returns promptly: a long
 //! operation (create, start, stop, reclaim, delete) is *accepted* by the call, returns the
 //! workspace with [`WorkspaceRecord::busy`] set, and reports the rest through
@@ -19,10 +19,15 @@ use puddle_types::{
 };
 use sha2::{Digest, Sha256};
 
+mod admission;
 mod launch;
 mod repositories;
 mod service;
 
+pub use admission::{
+    admit_delete_fingerprint, admit_delete_status, admit_grow_size, admit_idle,
+    admit_reset_root_disk, admit_settled, admit_start, admit_stop, not_found,
+};
 pub use launch::{
     BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
     Launcher, OpenTarget,

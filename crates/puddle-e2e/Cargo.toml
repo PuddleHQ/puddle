@@ -31,7 +31,7 @@ futures-util = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
-puddle-api = { workspace = true }
+puddle-api = { workspace = true, features = ["testing"] }
 puddle-logins = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true }

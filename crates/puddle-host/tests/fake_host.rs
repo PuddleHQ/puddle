@@ -11,6 +11,8 @@
 
 mod support;
 
+#[path = "fake_host/contract.rs"]
+mod contract;
 #[path = "fake_host/dropped_requests.rs"]
 mod dropped_requests;
 #[path = "fake_host/grow_room.rs"]

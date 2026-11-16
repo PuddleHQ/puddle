@@ -700,7 +700,7 @@ impl ApiServer {
             shutdown,
         };
         crate::presence::spawn_picker(
-            state.events.clone(),
+            &state.events,
             state.store.clone(),
             state.presence.clone(),
             state.clock.clone(),

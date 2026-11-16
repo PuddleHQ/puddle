@@ -133,15 +133,17 @@ impl Presence {
 }
 
 /// Follows the hub until the server stops and, after each new request, says who is to be told.
-/// The task holds a tap on the hub that [`EventHub::subscribers`] does not count.
+/// The task holds a tap on the hub that [`EventHub::subscribers`] does not count, and only a weak
+/// reference to it, so it also ends when the hub is gone.
 pub(crate) fn spawn_picker(
-    events: Arc<EventHub>,
+    events: &Arc<EventHub>,
     store: Arc<Store>,
     presence: Arc<Presence>,
     clock: Arc<dyn Clock>,
     mut shutdown: watch::Receiver<bool>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let (mut rx, tap) = events.tap();
+    let events = Arc::downgrade(events);
     tokio::spawn(async move {
         let _tap = tap;
         loop {
@@ -151,13 +153,15 @@ pub(crate) fn spawn_picker(
             };
             match received {
                 Ok(Event::PendingOpened { request }) => {
-                    notify_about(&events, &store, &presence, clock.as_ref(), request).await;
+                    if let Some(events) = events.upgrade() {
+                        notify_about(&events, &store, &presence, clock.as_ref(), request).await;
+                    }
                 }
                 Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return,
             }
         }
-    });
+    })
 }
 
 async fn notify_about(

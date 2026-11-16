@@ -173,3 +173,37 @@ fn client_ids_are_short_and_plain() {
     assert!(!valid_client_id("a b"));
     assert!(!valid_client_id("a\u{202e}b"));
 }
+
+fn picker_parts() -> (Arc<Store>, Arc<dyn Clock>) {
+    let clock = Arc::new(puddle_store::ManualClock::new(1));
+    let store = Store::open_in_memory(clock.clone(), puddle_store::Limits::default()).unwrap();
+    (Arc::new(store), clock)
+}
+
+#[tokio::test]
+async fn the_picker_ends_when_the_hub_is_gone() {
+    let hub = Arc::new(EventHub::default());
+    let (store, clock) = picker_parts();
+    let (_stop, shutdown) = watch::channel(false);
+    let picker = spawn_picker(&hub, store, Arc::default(), clock, shutdown);
+    drop(hub);
+    tokio::time::timeout(std::time::Duration::from_secs(10), picker)
+        .await
+        .expect("the picker ended")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_picker_ends_on_shutdown_and_does_not_count_as_a_stream() {
+    let hub = Arc::new(EventHub::default());
+    let (store, clock) = picker_parts();
+    let (stop, shutdown) = watch::channel(false);
+    let picker = spawn_picker(&hub, store, Arc::default(), clock, shutdown);
+    assert_eq!(hub.subscribers(), 0);
+    stop.send(true).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), picker)
+        .await
+        .expect("the picker ended")
+        .unwrap();
+    assert_eq!(hub.subscribers(), 0);
+}

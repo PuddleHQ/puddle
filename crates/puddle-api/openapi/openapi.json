@@ -15412,7 +15412,6 @@
         "description": "Where Puddle's development certificate stands on this computer: the one that makes HTTPS\nservers in a workspace open in the browser without a warning.",
         "enum": [
           "not_checked",
-          "reusing_existing",
           "trusted",
           "needs_trust",
           "trust_declined",

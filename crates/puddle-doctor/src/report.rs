@@ -210,6 +210,15 @@ pub enum Finding {
     CredentialStoreVaultUnreadable,
     /// `secrets/store.json` cannot be read.
     CredentialStoreRecordUnreadable,
+    /// The sealed vault key does not open: a changed machine id, a lost host key or a changed
+    /// Secure Boot setting.
+    CredentialStoreKeyRejected,
+    /// The sealed vault key does not open for another reason (no `systemd-creds`, systemd before
+    /// 256, a wrong name, a service that does not answer).
+    CredentialStoreKeyUnopenable,
+    /// The key was sealed without the TPM2 although a TPM2 device is there: its libraries are
+    /// missing.
+    CredentialStoreTpmLibrariesMissing,
 }
 
 /// One line of the report.

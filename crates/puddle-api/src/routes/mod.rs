@@ -9,7 +9,7 @@ use puddle_secrets::SecretStore;
 use puddle_store::{
     Actor, Clock, NewWorkspaceOp, Store, UserId, WorkspaceOpKind, WorkspaceOpOutcome,
 };
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -93,8 +93,6 @@ pub(crate) struct AppState {
     /// Who may do what; every route asks it before its handler runs.
     pub(crate) authorizer: Arc<dyn Authorizer>,
     pub(crate) settings: Arc<dyn SettingsRepo>,
-    /// Serialises settings read-modify-write cycles.
-    pub(crate) settings_lock: Arc<Mutex<()>>,
     pub(crate) events: Arc<EventHub>,
     pub(crate) problems: Arc<puddle_types::Problems>,
     pub(crate) clock: Arc<dyn Clock>,

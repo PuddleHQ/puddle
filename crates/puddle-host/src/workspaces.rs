@@ -340,9 +340,6 @@ struct Inner<R: Runtime + Clone> {
     events: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
     settings: Arc<dyn puddle_api::SettingsRepo>,
-    /// The settings routes' lock, shared so a delete's removal of a settings file never falls
-    /// between a settings change's read and its write.
-    settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
     /// The install's reach across every user's data, for the tool install's look at a
     /// workspace's pending requests whoever owns it.

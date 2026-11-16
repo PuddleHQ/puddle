@@ -121,7 +121,6 @@ async fn settings_from_a_newer_puddle_are_left_alone() {
 async fn the_certificates_step_reports_where_the_development_certificate_stands() {
     let cases = [
         (DevCertificate::NotChecked, "not_checked"),
-        (DevCertificate::ReusingExisting, "reusing_existing"),
         (DevCertificate::Trusted, "trusted"),
         (DevCertificate::NeedsTrust, "needs_trust"),
         (DevCertificate::TrustDeclined, "trust_declined"),

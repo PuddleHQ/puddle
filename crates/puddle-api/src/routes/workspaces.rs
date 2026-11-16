@@ -62,7 +62,7 @@ impl DirectSsh {
 async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<DirectSsh> {
     let names: Vec<_> = records.iter().map(|r| r.id.clone()).collect();
     let settings = state.settings.clone();
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let loaded = blocking(move || {
         let repo = settings.as_ref();
         let global = match crate::routes::settings::load_global(repo) {

@@ -6,12 +6,11 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
 use std::fmt::Write as _;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::LOCAL;
 use puddle_agent::config::Target;
@@ -27,7 +26,7 @@ use puddle_upstream::{
 };
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
 pub(crate) fn workspace() -> WorkspaceId {
     WorkspaceId::new("e2e").unwrap()

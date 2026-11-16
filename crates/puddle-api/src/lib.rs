@@ -49,6 +49,7 @@
 mod admin;
 mod auth;
 mod authz;
+mod backup;
 mod checkouts;
 mod credential_store;
 mod credentials;
@@ -79,6 +80,10 @@ mod ui;
 pub mod wire;
 mod workspaces;
 
+pub use backup::{
+    BackupArchive, BackupService, BackupServiceError, FAKE_BACKUP_BYTES, FakeBackup, NoBackup,
+    archive_file_name,
+};
 pub use checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
     check_seen, checkouts_view, why_no_remote,

@@ -25,7 +25,7 @@
 //!   onto the workspace volume first ([`microsoft`]).
 //!
 //! It also applies merged guest files for the boot hook ([`merge_file`]) and is the `ProxyCommand`
-//! of the guest's `ssh` ([`connect`]), which today only refuses: SSH is not supported yet.
+//! of the guest's `ssh` ([`connect`]), which carries the SSH connection to the proxy.
 //!
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
 //! ([`config`]). The binary's `main` only parses the command line ([`cli`]) and starts an

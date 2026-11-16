@@ -20,6 +20,10 @@ const store = vi.hoisted(() => ({
   remove: vi.fn(),
 }));
 vi.mock("#lib/stores/admin.svelte.ts", () => ({ admin: store }));
+vi.mock("#lib/api/client.ts", async () => {
+  const { FakeSettings } = await import("#lib/testing/fake-settings.ts");
+  return { api: new FakeSettings() };
+});
 
 import { user } from "#lib/testing/fake-admin.ts";
 import Page from "./+page.svelte";
@@ -75,6 +79,15 @@ describe("the admin page", () => {
     expect(totals).toHaveTextContent(/Disk in use\s*2 GiB/);
     expect(totals).toHaveTextContent(/Processors\s*8/);
     expect(totals).toHaveTextContent("no per-user limits");
+  });
+
+  it("shows the activity log card, so the owner sees its size here too", async () => {
+    render(Page);
+    const card = screen.getByRole("region", { name: "Activity log" });
+    expect(await within(card).findByText(/1,200 records/)).toBeInTheDocument();
+    expect(
+      within(card).getByLabelText(/Keep the activity log for/),
+    ).toHaveValue(90);
   });
 
   it("lists each user with counts only, and offers actions on others, not the owner", () => {

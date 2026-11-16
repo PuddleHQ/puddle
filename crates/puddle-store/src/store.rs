@@ -20,8 +20,8 @@ use rusqlite::{
 };
 
 use crate::audit::{
-    AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleDeleteReason, RuleWire,
-    WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
+    AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleDeleteReason, RuleSwitchKind,
+    RuleWire, WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
 };
 use crate::clock::Clock;
 use crate::engine::{Hit, RuleIndex};
@@ -703,6 +703,56 @@ impl Store {
             fx.push(Event::RulesChanged {});
             Ok(after)
         })
+    }
+
+    /// Switches a rule on or off (R-65). A rule that is off never matches and keeps its place,
+    /// expiry and group. Switching one on closes the open requests it now decides, like a new
+    /// rule (R-16). Writes one `rule_switched` record, and none when the rule is already in that
+    /// state.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRule`], [`StoreError::SystemActor`], or a database error.
+    pub fn set_rule_enabled(
+        &self,
+        id: RuleId,
+        enabled: bool,
+        actor: Actor,
+    ) -> Result<Rule, StoreError> {
+        if actor == Actor::System {
+            return Err(StoreError::SystemActor);
+        }
+        let rule = self.change(|tx, now, fx| {
+            let before = load_rule(tx, id)?;
+            if before.enabled == enabled {
+                return Ok(before);
+            }
+            tx.execute(
+                "UPDATE rules SET enabled = ?1 WHERE id = ?2",
+                params![i64::from(enabled), id.0],
+            )?;
+            let rule = load_rule(tx, id)?;
+            append_for(
+                tx,
+                &AuditRecord::RuleSwitched {
+                    ts: now,
+                    kind: RuleSwitchKind::Rule,
+                    id: Some(id.0),
+                    set_id: rule.scope.set().map(|set| format!("user:{set}")),
+                    pattern: rule.pattern.to_string(),
+                    workspace_id: rule.scope.workspace().map(ToString::to_string),
+                    enabled,
+                    actor: actor_str(actor),
+                },
+                rule.user,
+            )?;
+            if enabled {
+                close_decided_rows(tx, &rule, None, actor, now, fx)?;
+            }
+            fx.push(Event::RulesChanged {});
+            Ok(rule)
+        })?;
+        tracing::info!(rule = %id, enabled, "rule switched");
+        Ok(rule)
     }
 
     /// Approves or denies an open pending row (R-15 to R-17), in one transaction.

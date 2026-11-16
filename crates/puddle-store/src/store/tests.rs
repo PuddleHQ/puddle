@@ -204,6 +204,7 @@ fn raw_rows_with_bad_fields_are_corrupt() {
         source_pending_id: None,
         set_id: None,
         user_id: 1,
+        enabled: 1,
     };
     assert!(rule_from_raw(&base()).is_ok());
     let cases: Vec<fn(&mut RawRule)> = vec![

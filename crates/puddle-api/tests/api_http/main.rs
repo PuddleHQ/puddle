@@ -31,6 +31,7 @@ mod presence;
 mod problems;
 mod proxy_sign_in;
 mod remote;
+mod remote_editor;
 mod repos;
 mod repositories;
 mod repository_hosts;

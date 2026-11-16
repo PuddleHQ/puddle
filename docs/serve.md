@@ -331,19 +331,26 @@ Puddle is not offered.
 
 ### Workspace names
 
-Workspace web apps and editors will need a name of their own, so one workspace's page cannot plant
-cookies for another or for Puddle. The names are `<workspace>.<base domain>`. With nothing set the
-base domain is the first public host, so the names are `<workspace>.puddle.example.org`, which sits
-on the same site as the UI. Setting `workspace_base_domain` to a domain with a different registrable
-domain (`ws.example.net` next to `puddle.example.org`) is safer, and the advice.
+Each workspace's browser editor and forwarded ports have a name of their own, so one workspace's
+page cannot plant cookies for another or for Puddle. The editor is `<id>.<base domain>` and a
+forwarded port is `<port>-<id>.<base domain>`, where `<id>` is the workspace's id,
+never its name, so a rename changes no address. With nothing set the base domain is the
+first public host, so the names are `<id>.puddle.example.org`, which sits on the same site as the
+UI. Setting `workspace_base_domain` to a domain with a different registrable domain
+(`ws.example.net` next to `puddle.example.org`) is safer, and the advice.
 
-Today Puddle only reserves these names: it blocks the base domain and everything below it for
-guests, and it refuses a public host that is one label below the base domain (a workspace of that
-name would share it). It does not yet accept a request whose `Host` is a workspace name, route one
-to its workspace or build links from them, so a request with such a `Host` gets 421. When it does,
-DNS records and certificates for the names stay the proxy's job, and a wildcard certificate is
-needed: without one the web apps and editors are not available in a browser, while the UI itself
-works.
+Puddle blocks the base domain and everything below it for guests, and it refuses a public host that
+is one label below the base domain (a workspace could share it). A request whose `Host` is one of
+these names goes to the workspace's editor instead of the UI, on the loopback listener and on the
+network listener alike; a name of no workspace gets 421, and so does any other unknown name. The
+editor answers only a browser that Puddle let in. DNS records and certificates for the names are
+the proxy's job, and a wildcard certificate is needed (`*.ws.example.net`): without one the editors
+and forwarded ports are not available in a browser, while the UI itself works.
+
+Two workspaces from an older Puddle, whose ids were their names, can share an address when one id
+is a port, a hyphen and the other id (`api` and `8080-api`). The editor wins, and Puddle lists the
+problem while both exist (a rename keeps the id); the port stays reachable through the editor's
+`/proxy/<port>/` links.
 
 ## Run as a Linux user service
 
@@ -398,7 +405,9 @@ the next start, with the flag, may still pick the file vault.
 The file vault's key is read from, in order, a credential the service passes (`puddle-vault-key`), a key
 sealed by `systemd-creds --user` in `puddle/vault-key.cred` in your config folder, and a key file
 (`puddle/vault.key`, owner-only) in your config folder, which Puddle makes at the first start when sealing
-is not possible. `puddle doctor` names the store and where its key comes from. A vault whose key is
+is not possible (systemd older than 256, or the service refuses). When `systemd-creds` is only slow, Puddle
+tries sealing three times and then leaves the first start with a problem that says to restart when the
+computer is idle; it makes no key file then. `puddle doctor` names the store and where its key comes from. A vault whose key is
 missing or does not open leaves Puddle running with a problem that says what to do; saving a secret then
 fails.
 

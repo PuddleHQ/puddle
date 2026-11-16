@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The company-network lab as a standing program (`puddle-lab`): the same fixtures the tests start
-//! ([`Squid`], [`Interceptor`], [`NtlmProxy`], [`PacServer`]), started by hand on free loopback
+//! (`Squid`, [`Interceptor`], [`NtlmProxy`], [`PacServer`]), started by hand on free loopback
 //! ports and left running while a person or a script drives the app against them.
 //!
 //! ```text

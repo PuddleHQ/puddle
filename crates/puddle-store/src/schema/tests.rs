@@ -1031,3 +1031,41 @@ fn a_copy_that_cannot_be_replaced_stops_the_migration_before_any_step() {
     ));
     assert_eq!(version(&conn), 1);
 }
+
+/// V29 adds the `enabled` columns without rebuilding a table: every rule and rule on method and
+/// path that exists before it stays on, and the built-in entry switches start empty.
+#[test]
+fn v29_keeps_every_rule_on_and_adds_the_entry_switches() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate_up_to(&mut conn, 28).unwrap();
+    conn.execute_batch(
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'a.example', 'allow', 1, 'ui', 1);
+         INSERT INTO request_rules (scope, host, methods, path, created_at, created_by, user_id)
+             VALUES ('global', 'h.example', '', '/*', 1, 'api', 1);",
+    )
+    .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 28);
+    for table in ["rules", "request_rules"] {
+        let off: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE enabled <> 1"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(off, 0, "{table}");
+        assert_eq!(count(&conn, table), 1, "{table}");
+    }
+    assert_eq!(count(&conn, "builtin_entry_switches"), 0);
+    assert!(
+        conn.execute(
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by,
+                                user_id, enabled)
+             VALUES ('global', 'exact', 'b.example', 'allow', 1, 'ui', 1, 2)",
+            [],
+        )
+        .is_err(),
+        "enabled is 0 or 1"
+    );
+}

@@ -13,8 +13,8 @@ use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
-    NewRuleSetRequest, RuleSetList, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest,
-    RuleSetView, SystemManagedHost,
+    NewRuleSetRequest, RuleSetEntrySwitchRequest, RuleSetList, RuleSetSwitchRequest,
+    RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
 };
 
 /// The set a path names, or 404.
@@ -205,6 +205,42 @@ pub(crate) async fn switch_rule_set(
             body.enabled,
             Actor::Api,
         )?;
+        Ok(RuleSetSwitched {
+            set: RuleSetView::from_store(state.store.rule_set(user, id)?),
+            closed: closed.into_iter().map(|p| p.0).collect(),
+        })
+    })
+    .await?;
+    Ok(Json(switched))
+}
+
+/// Switches one entry of a built-in set on or off for every workspace, and closes the open
+/// requests that now decides. The rest of the set is unchanged.
+#[utoipa::path(
+    put,
+    path = "/api/rule-sets/{id}/entry-switch",
+    tag = "rules",
+    params(("id" = String, Path, description = "`builtin:<slug>`")),
+    request_body = RuleSetEntrySwitchRequest,
+    responses(
+        (status = OK, description = "the set and the requests it closed", body = RuleSetSwitched),
+        (status = NOT_FOUND, description = "no such set or entry", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "System managed or a set you made", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn switch_builtin_entry(
+    State(state): State<AppState>,
+    principal: Principal,
+    Path(id): Path<String>,
+    crate::extract::Json(body): crate::extract::Json<RuleSetEntrySwitchRequest>,
+) -> Result<Json<RuleSetSwitched>, ApiError> {
+    let id = set_id(&id)?;
+    let user = principal.user;
+    let switched = blocking(move || {
+        let closed =
+            state
+                .store
+                .switch_builtin_entry(user, id, &body.pattern, body.enabled, Actor::Api)?;
         Ok(RuleSetSwitched {
             set: RuleSetView::from_store(state.store.rule_set(user, id)?),
             closed: closed.into_iter().map(|p| p.0).collect(),

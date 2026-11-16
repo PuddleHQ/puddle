@@ -234,25 +234,11 @@ jobs:
       FORGE_NAME: forgejo.lab.test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: WHP preflight (infrastructure)
-        id: whp
-        shell: pwsh
-        run: |
-          $cs = Get-CimInstance Win32_ComputerSystem
-          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
-          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
-          if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
-            "ok=true" >> $env:GITHUB_OUTPUT
-          } else {
-            # Same policy as vm-windows.yml and ci/vm-skip-policy.sh.
-            $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
-            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
-              "::error title=usable cannot run::$reason; a pull request must not pass without running it"
-              exit 1
-            }
-            "::warning title=usable skipped::$reason; the run did not happen (infrastructure, not a test result)"
-            "ok=false" >> $env:GITHUB_OUTPUT
-          }
+      - id: whp
+        uses: ./.github/actions/whp-preflight
+        with:
+          title: msi usable
+          fail-events: pull_request
       - name: the MSI this run built
         if: ${{ steps.whp.outputs.ok == 'true' && inputs.msi_run_id == '' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

@@ -7,6 +7,48 @@ use crate::common::start;
 use crate::interception::workspace;
 
 #[tokio::test]
+async fn a_rule_on_method_and_path_is_switched_off_and_on() {
+    let api = start().await;
+    api.own("shop");
+    let made = api
+        .send(
+            "POST",
+            "/api/request-rules",
+            Some(&json!({"workspace": "shop", "host": "api.example.com", "methods": ["DELETE"], "path": "/x"})),
+        )
+        .await;
+    assert_eq!(made.json()["enabled"], true);
+    let id = made.json()["id"].as_i64().unwrap();
+    let path = format!("/api/request-rules/{id}/enabled");
+    let off = api
+        .send("PUT", &path, Some(&json!({"enabled": false})))
+        .await;
+    assert_eq!(off.status, 200, "{}", off.body);
+    assert_eq!(off.json()["enabled"], false);
+    assert_eq!(
+        api.get("/api/request-rules").await.json()["rules"][0]["enabled"],
+        false,
+        "an off rule stays in the list"
+    );
+    let on = api
+        .send("PUT", &path, Some(&json!({"enabled": true})))
+        .await;
+    assert_eq!(on.json()["enabled"], true);
+    for (path, body, status) in [
+        (
+            "/api/request-rules/999/enabled".to_owned(),
+            json!({"enabled": false}),
+            404,
+        ),
+        (path, json!({"enabled": "no"}), 422),
+    ] {
+        let reply = api.send("PUT", &path, Some(&body)).await;
+        assert_eq!(reply.status, status, "{path}: {}", reply.body);
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_rule_is_made_listed_by_scope_and_deleted() {
     let api = start().await;
     api.own("other");

@@ -285,6 +285,8 @@ pub struct Rule {
     /// The pending request it was decided from.
     #[schema(required = true)]
     pub source_pending_id: Option<i64>,
+    /// Whether the rule takes part in decisions. A rule that is off is kept and never matches.
+    pub enabled: bool,
 }
 
 impl Rule {
@@ -299,6 +301,7 @@ impl Rule {
             created_at,
             created_by,
             source_pending_id,
+            enabled,
         } = rule;
         Ok(Self {
             id: id.0,
@@ -313,6 +316,7 @@ impl Rule {
             created_at,
             created_by: Actor::from_store(created_by)?,
             source_pending_id: source_pending_id.map(|p| p.0),
+            enabled,
         })
     }
 }
@@ -483,6 +487,14 @@ pub(super) fn normalise_pattern(field: &str, input: &str) -> Result<(bool, Strin
     let target = puddle_netpolicy::normalise_host(rest)
         .map_err(|err| ApiError::invalid(format!("{field}: {err}")))?;
     Ok((suffix, target.host().to_string()))
+}
+
+/// Switch a rule on or off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleEnabledRequest {
+    /// `true` to switch the rule on, `false` to switch it off. Off keeps the rule and its place.
+    pub enabled: bool,
 }
 
 /// A rule's new expiry.

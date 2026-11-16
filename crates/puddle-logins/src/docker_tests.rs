@@ -222,7 +222,7 @@ async fn the_pat_in_the_nested_data_field_is_replaced_and_the_rest_of_the_answer
 
 #[tokio::test]
 async fn a_pat_answer_with_no_token_in_it_keeps_nothing() {
-    use puddle_proxy::AnswerHead;
+    use puddle_proxy::{AnswerHead, Rewrite};
     let rig = rig_for(&PROFILES);
     let mut exchange = rig
         .logins
@@ -240,7 +240,10 @@ async fn a_pat_answer_with_no_token_in_it_keeps_nothing() {
         content_length: Some(bytes.len() as u64),
     };
     let answer = exchange.answer_mut().unwrap();
-    assert!(answer.rewrite(&head, bytes).await.is_none());
+    assert!(matches!(
+        answer.rewrite(&head, bytes).await,
+        Rewrite::Refuse(_)
+    ));
     assert!(kept(&rig, Role::ApiKey).is_none());
     assert_eq!(rig.registry.len(), 0);
 }

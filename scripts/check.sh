@@ -190,7 +190,7 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
@@ -475,7 +475,7 @@ run_gate() {
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then
             echo "diff-coverage-fast: only the tests of$packages ran; a line another crate's tests run is reported here and cleared by the full coverage gate" >&2
-            exit "$rc"
+            exit "$rc" # exit-ok: rc is non-zero inside this if
         fi
         ;;
     diff-coverage)

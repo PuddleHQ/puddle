@@ -763,9 +763,9 @@ fn publish_failures(report: &[PublishRow], controls: &[ControlRow], search: &str
         }
     }
     for (tool, out, u) in controls {
-        if out.contains(&format!("tool={tool} rc=0")) || !u.accepted.is_empty() || u.refused == 0 {
+        if out.contains(&format!("tool={tool} rc=0")) || !u.accepted.is_empty() {
             failures.push(format!(
-                "{tool}: an upload with no credential was not refused, so a pass above proves nothing: {out}"
+                "{tool}: an upload with no credential went through (npm refuses on its own before it sends a request, Maven gets a 401), so a pass above proves nothing: {out}"
             ));
         }
     }

@@ -618,8 +618,10 @@ impl BootPlanBuilder {
                 reason: "has more rules than a plan holds",
             });
         }
-        files.push(git_config(&self));
+        // The author files first: the config that names them is written last, so the guest never
+        // holds a config that points at a file not written yet.
         files.extend(git_author_files(&self.git_rules)?);
+        files.push(git_config(&self));
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
         files.extend(session_files(port, self.session_user)?);
         files.extend(shell_env::files(&self.env)?);
@@ -789,10 +791,17 @@ fn git_user(id: &GitIdentity) -> String {
     )
 }
 
-/// The file name of the author of rule number `n` (counted from 1), relative to
-/// [`GIT_CONFIG_GUEST`]'s directory.
-fn git_author_name(n: usize) -> String {
-    format!("git-author-{n}.gitconfig")
+/// The file name of an author, relative to [`GIT_CONFIG_GUEST`]'s directory. The name follows the
+/// author's text, so a file never changes meaning: the guest takes a plan's files one at a time
+/// while git may read them, and a name that stood for another author after an update (rule
+/// number 1 first Work, then Personal) made a remote get the wrong author between two writes.
+fn git_author_name(author: &GitIdentity) -> String {
+    let hash = git_user(author)
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    format!("git-author-{hash:016x}.gitconfig")
 }
 
 /// Puddle's git settings: `core.fsync=added` and `core.fsyncMethod=batch` always (ADR 0006: no
@@ -811,13 +820,13 @@ fn git_config(plan: &BootPlanBuilder) -> GuestFile {
     if let Some(id) = &plan.git {
         text.push_str(&git_user(id));
     }
-    for (i, rule) in plan.git_rules.iter().enumerate() {
+    for rule in &plan.git_rules {
         for glob in &rule.globs {
             text.extend([
                 "[includeIf \"hasconfig:remote.*.url:",
                 glob,
                 "\"]\n\tpath = ",
-                &git_author_name(i + 1),
+                &git_author_name(&rule.author),
                 "\n",
             ]);
         }
@@ -828,11 +837,12 @@ fn git_config(plan: &BootPlanBuilder) -> GuestFile {
 /// The author file of each rule: only a `[user]` section (an included file may not define
 /// remotes, and needs nothing else).
 fn git_author_files(rules: &[GitAuthorRule]) -> Result<Vec<GuestFile>, PlanError> {
+    let mut seen = BTreeSet::new();
     rules
         .iter()
-        .enumerate()
-        .map(|(i, rule)| {
-            let path = format!("{GIT_AUTHOR_DIR_GUEST}/{}", git_author_name(i + 1));
+        .filter(|rule| seen.insert(git_author_name(&rule.author)))
+        .map(|rule| {
+            let path = format!("{GIT_AUTHOR_DIR_GUEST}/{}", git_author_name(&rule.author));
             let path = GuestPath::new(&path).map_err(|_| PlanError::UnsafePath { path })?;
             Ok(GuestFile::new(
                 path,

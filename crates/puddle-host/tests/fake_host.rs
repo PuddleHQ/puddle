@@ -7374,6 +7374,21 @@ fn pem_of(files: &std::collections::BTreeMap<String, Vec<u8>>, path: &str) -> St
     String::from_utf8(files[path].clone()).unwrap()
 }
 
+/// The path of the author file that holds `author`'s name (the file names follow the author's text).
+fn author_file(files: &std::collections::BTreeMap<String, Vec<u8>>, author: &str) -> String {
+    let wanted = format!("name = \"{author}\"");
+    let hits: Vec<_> = files
+        .iter()
+        .filter(|(path, bytes)| {
+            path.starts_with("/etc/puddle/git-author-")
+                && String::from_utf8_lossy(bytes).contains(&wanted)
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    assert_eq!(hits.len(), 1, "one author file for {author}: {hits:?}");
+    hits[0].clone()
+}
+
 /// `POST /api/identities`: a `gh` credential on `host` covering the rest of it (or `owners`).
 async fn make_identity(api: &Api, label: &str, host: &str, owners: &[&str]) -> i64 {
     let body = json!({
@@ -7868,11 +7883,12 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     // The fallback is the first identity's; the rest-of-host rule comes before the named owner's,
     // so git, which lets the last match win, gives acme's remotes to Work.
     assert!(config.contains("[user]\n\tname = \"Personal\""), "{config}");
-    let personal_at = config.find("path = git-author-1.gitconfig").unwrap();
-    let work_at = config.find("path = git-author-2.gitconfig").unwrap();
+    let personal_file = author_file(&files, "Personal");
+    let work_file = author_file(&files, "Work");
+    let at = |path: &str| config.find(&format!("path = {}", path.rsplit('/').next().unwrap()));
+    let (personal_at, work_at) = (at(&personal_file).unwrap(), at(&work_file).unwrap());
     assert!(personal_at < work_at, "{config}");
     assert!(config.contains("[aA][cC][mM][eE]"), "{config}");
-    assert!(pem_of(&files, "/etc/puddle/git-author-2.gitconfig").contains("name = \"Work\""));
     // The guest's trust is what it booted with: the same CA in every run.
     let ca = host
         .workspaces()
@@ -7907,7 +7923,7 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     }
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(!pem_of(&files, "/etc/puddle/gitconfig").contains("[user]"));
-    assert!(!files.contains_key("/etc/puddle/git-author-1.gitconfig"));
+    assert!(files.keys().all(|path| !path.contains("git-author-")));
     host.shutdown().await;
 }
 
@@ -7946,8 +7962,6 @@ async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
         "/usr/local/share/ca-certificates/puddle/puddle-ca-1.crt",
         "/etc/profile.d/01-puddle-env.sh",
         "/etc/puddle/gitconfig",
-        "/etc/puddle/git-author-1.gitconfig",
-        "/etc/puddle/git-author-2.gitconfig",
     ] {
         assert!(
             files.contains_key(path),
@@ -7955,6 +7969,8 @@ async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
             files.keys()
         );
     }
+    author_file(&files, "Personal");
+    author_file(&files, "Work");
     host.shutdown().await;
 }
 
@@ -8699,7 +8715,7 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
     let config = pem_of(&files, "/etc/puddle/gitconfig");
     // Both identities are in the retry: the first change was never written.
     assert!(config.contains("name = \"Ada\""), "{config}");
-    assert!(pem_of(&files, "/etc/puddle/git-author-1.gitconfig").contains("Bob"));
+    author_file(&files, "Bob");
     host.shutdown().await;
 }
 
@@ -8763,7 +8779,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     })
     .await;
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
-    assert!(pem_of(&files, "/etc/puddle/git-author-1.gitconfig").contains("Bob"));
+    author_file(&files, "Bob");
     host.shutdown().await;
 }
 

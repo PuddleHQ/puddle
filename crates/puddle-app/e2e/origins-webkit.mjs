@@ -22,7 +22,9 @@
 //   4. delete: the first id's data is removed (the shell logs it); the same id is then empty.
 //   5. the second workspace's data is untouched by the delete.
 // A session ends by closing the workspace's window and stopping the shell, then waiting for the
-// shell to exit, so the web process has written its storage to disk.
+// shell to exit. Local storage is the one store WebKit writes out late (about half a second after a
+// write, not at once like IndexedDB and cookies), and a session lasts about as long, so a session
+// first waits until every value it wrote is in its local storage files.
 //
 // Environment: PUDDLE_APP_EXE (a debug build with all features: the in-memory fixture backend),
 // WEBKIT_DRIVER (default `WebKitWebDriver`), DRIVER_PORT (default 4466).
@@ -228,6 +230,8 @@ async function session(n, id, forget, body) {
       await until(`the report of ${hostsOf(id)[p]}`, async () => reports.get(hostsOf(id)[p]), 120_000);
     }
     await body({ log: () => appLog, inPage, reports });
+    await until("the session's local storage writes to reach the disk", async () => [...unsaved].every(savedLocally), 30_000);
+    unsaved.clear();
   } finally {
     // Stopping the driver closes the shell's window and ends the shell; wait for it, so the web
     // process has written its storage before the next session reads.
@@ -271,13 +275,36 @@ function expectKept(label, id, all) {
 async function writeWorkspace(id, { inPage }) {
   const origin = await inPage(`(${writeProbe})(${JSON.stringify(tagOf(id, "workspace"))})`);
   check(`${id} workspace: wrote on ${hostsOf(id).workspace}`, origin === `http://${hostsOf(id).workspace}:${sitePort}`, origin);
+  unsaved.add(tagOf(id, "workspace"));
 }
 
 function expectForwardedWrites(id, reports) {
   for (const p of FORWARDED) {
     const after = reports.get(hostsOf(id)[p])?.after;
     check(`${id} ${p}: wrote on ${hostsOf(id)[p]}`, after?.origin === `http://${hostsOf(id)[p]}:${sitePort}` && after.local === tagOf(id, p), JSON.stringify(after));
+    unsaved.add(tagOf(id, p));
   }
+}
+
+/** The local storage values this session wrote and WebKit has not yet been seen to keep on disk. */
+const unsaved = new Set();
+
+/** Whether the local storage files under the data folder hold `value`. */
+function savedLocally(value) {
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (/\.localstorage(-wal)?$/.test(entry.name)) files.push(path);
+    }
+  };
+  walk(join(dataDir, "webview"));
+  const utf16 = Buffer.from(value, "utf16le");
+  return files.some((file) => {
+    const bytes = readFileSync(file);
+    return bytes.includes(value) || bytes.includes(utf16);
+  });
 }
 
 const first = newId();

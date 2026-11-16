@@ -760,6 +760,14 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
+    fn names(&self) -> Vec<(WorkspaceId, String)> {
+        lock(&self.inner.state)
+            .entries
+            .values()
+            .map(|e| (e.record.id.clone(), e.record.name.as_str().to_owned()))
+            .collect()
+    }
+
     fn get<'a>(
         &'a self,
         id: &'a WorkspaceId,

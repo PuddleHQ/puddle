@@ -105,6 +105,14 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn names(&self) -> Vec<(WorkspaceId, String)> {
+        self.state()
+            .slots
+            .values()
+            .map(|s| (s.record.id.clone(), s.record.name.as_str().to_owned()))
+            .collect()
+    }
+
     fn get<'a>(
         &'a self,
         id: &'a WorkspaceId,

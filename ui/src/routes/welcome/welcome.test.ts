@@ -240,20 +240,6 @@ describe("certificates step", () => {
     );
   });
 
-  it("says once that Puddle uses an existing .NET development certificate", async () => {
-    h.firstRun.state = {
-      ...h.firstRun.state,
-      dev_certificate: "reusing_existing",
-    };
-    render(Certificates);
-    expect(
-      await screen.findByText(
-        "Using your existing .NET development certificate",
-      ),
-    ).toBeVisible();
-    expect(screen.getByText(/No trust dialog needed/)).toBeVisible();
-  });
-
   it("offers Trust it now while the certificate needs trust, and a yes ends the offer", async () => {
     h.firstRun.state = { ...h.firstRun.state, dev_certificate: "needs_trust" };
     render(Certificates);

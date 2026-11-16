@@ -129,7 +129,7 @@ fn workspace_view(
 pub(crate) async fn get_global(
     State(state): State<AppState>,
 ) -> Result<Json<GlobalSettingsView>, ApiError> {
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let loaded = blocking(move || load_global(state.settings.as_ref())).await?;
     Ok(Json(GlobalSettingsView::new(&loaded)))
 }
@@ -153,7 +153,7 @@ pub(crate) async fn put_global(
 ) -> Result<Json<GlobalSettingsView>, ApiError> {
     let workspaces = state.workspaces.clone();
     let after = state.clone();
-    let lock = state.settings_lock.lock().await;
+    let lock = state.settings.lock().await;
     let loaded = blocking(move || {
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
@@ -209,7 +209,7 @@ pub(crate) async fn get_workspace_settings(
     State(state): State<AppState>,
     Path(workspace): Path<WorkspaceId>,
 ) -> Result<Json<WorkspaceSettingsView>, ApiError> {
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let view = blocking(move || {
         let repo = state.settings.as_ref();
         let global = load_global(repo)?;
@@ -242,7 +242,7 @@ pub(crate) async fn put_workspace_settings(
 ) -> Result<Json<WorkspaceSettingsView>, ApiError> {
     let workspaces = state.workspaces.clone();
     let after = state.clone();
-    let lock = state.settings_lock.lock().await;
+    let lock = state.settings.lock().await;
     let view = blocking(move || {
         let repo = state.settings.as_ref();
         let global = load_global(repo)?;
@@ -279,7 +279,7 @@ pub(crate) async fn put_workspace_settings(
 pub(crate) async fn get_consents(
     State(state): State<AppState>,
 ) -> Result<Json<Consents>, ApiError> {
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let loaded = blocking(move || load_global(state.settings.as_ref())).await?;
     Ok(Json(Consents::from(&loaded.settings.consents)))
 }
@@ -311,7 +311,7 @@ pub(crate) async fn put_consent(
 ) -> Result<Json<Consents>, ApiError> {
     let consent = body.into_consent(state.clock.now_ms())?;
     let after = state.clone();
-    let lock = state.settings_lock.lock().await;
+    let lock = state.settings.lock().await;
     let consents = blocking(move || {
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;

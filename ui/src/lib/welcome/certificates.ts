@@ -45,12 +45,6 @@ export function trustNote(press: {
 /** The line about the development certificate: what Puddle uses and whether the browser trusts it. */
 export function devCertificateLine(status: DevCertificate | undefined): Line {
   switch (status) {
-    case "reusing_existing":
-      return {
-        tone: "ok",
-        title: "Using your existing .NET development certificate",
-        text: "Windows already trusts it, so HTTPS on localhost works in your browser for apps in every workspace. No trust dialog needed.",
-      };
     case "trusted":
       return {
         tone: "ok",

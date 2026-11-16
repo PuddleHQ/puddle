@@ -40,33 +40,17 @@ impl fmt::Debug for PrivateKey {
     }
 }
 
-/// Where the certificate in use came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Origin {
-    /// The ASP.NET development certificate Windows already trusts.
-    ReusedAspNet,
-    /// Puddle's own localhost leaf, kept in the data folder.
-    Generated,
-}
-
-/// The certificate every workspace gets at boot and its key. The key is the leaf's own: this
-/// type never holds a certificate authority key.
+/// The certificate every workspace gets at boot and its key: Puddle's own localhost leaf. The
+/// key is the leaf's own: this type never holds a certificate authority key.
 #[derive(Debug)]
 pub struct DevCertMaterial {
-    /// Where it came from.
-    pub origin: Origin,
     cert_der: Vec<u8>,
     key: PrivateKey,
 }
 
 impl DevCertMaterial {
-    pub(crate) fn new(origin: Origin, cert_der: Vec<u8>, key: PrivateKey) -> Self {
-        Self {
-            origin,
-            cert_der,
-            key,
-        }
+    pub(crate) fn new(cert_der: Vec<u8>, key: PrivateKey) -> Self {
+        Self { cert_der, key }
     }
 
     /// The certificate, DER.

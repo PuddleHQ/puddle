@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use crate::error::ErrorCode;
-use crate::settings::SettingsRepoError;
+use crate::settings::{SettingsLock, SettingsRepoError};
+use futures_util::future::BoxFuture;
+use tokio::sync::OwnedMutexGuard;
 
 use super::*;
 
@@ -8,6 +10,10 @@ use super::*;
 struct Unreadable;
 
 impl SettingsRepo for Unreadable {
+    /// Nothing changes these documents, so the cycles it would serialise do not exist.
+    fn lock(&self) -> BoxFuture<'static, OwnedMutexGuard<()>> {
+        SettingsLock::default().hold()
+    }
     fn load_global(&self) -> Result<Option<Value>, SettingsRepoError> {
         Err(SettingsRepoError::new(
             "/data/global.json is not valid JSON",

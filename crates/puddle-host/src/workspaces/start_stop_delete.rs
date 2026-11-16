@@ -282,12 +282,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes the workspace's settings document. A failure is a notice (the file stays). A new
     /// workspace has a new id, so it never inherits a stuck file.
-    /// Under the settings routes' lock, so a settings change that read the file before this
+    /// Under the settings repository's lock, so a settings change that read the file before this
     /// removal cannot write it back after.
     pub(super) async fn forget_settings_file(&self, id: &WorkspaceId, name: &str) {
         let inner = &self.inner;
         let key = problem_key("settings", id);
-        let _lock = inner.settings_lock.lock().await;
+        let _lock = inner.settings.lock().await;
         match inner.settings.delete_workspace(id) {
             Ok(()) => inner.problems.clear(&key),
             Err(e) => inner.problems.raise(Problem::new(

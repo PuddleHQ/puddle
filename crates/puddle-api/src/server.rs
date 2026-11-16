@@ -699,7 +699,6 @@ impl ApiServer {
         let fronts_names =
             OptionFuture::from(config.remote.as_ref().map(|r| front_blocks(r, &services))).await;
         let (stop, shutdown) = watch::channel(false);
-        let settings_lock = services.workspaces.settings_lock().unwrap_or_default();
         let sign_in = sign_in_for(&config, &services).await?;
         let admin = admin_for(&config, sign_in.as_ref(), &services);
         let state = AppState {
@@ -707,7 +706,6 @@ impl ApiServer {
             authorizer: Arc::new(Isolation::new(services.store.clone())),
             store: services.store,
             settings: services.settings,
-            settings_lock,
             events: services.events,
             presence: Arc::new(crate::presence::Presence::default()),
             problems: services.problems,

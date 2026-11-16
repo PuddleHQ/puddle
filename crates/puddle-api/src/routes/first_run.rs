@@ -41,7 +41,7 @@ fn view(first_run: &puddle_settings::FirstRun, dev_certificate: DevCertificate) 
 pub(crate) async fn get_first_run(
     State(state): State<AppState>,
 ) -> Result<Json<FirstRun>, ApiError> {
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let loaded = blocking(move || {
         let loaded = load_global(state.settings.as_ref())?;
         Ok(view(&loaded.settings.first_run, state.dev_cert.status()))
@@ -67,7 +67,7 @@ pub(crate) async fn put_first_run(
     crate::extract::Json(body): crate::extract::Json<FirstRunRequest>,
 ) -> Result<Json<FirstRun>, ApiError> {
     let now = state.clock.now_ms();
-    let _lock = state.settings_lock.lock().await;
+    let _lock = state.settings.lock().await;
     let first_run = blocking(move || {
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;

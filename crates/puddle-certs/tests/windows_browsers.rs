@@ -6,10 +6,8 @@
 //! adds it to `CurrentUser\Root` through the product's own trust code and removes it again.
 //!
 //! The second test is what a person who already ran ASP.NET has: a certificate made and trusted by
-//! the real `dotnet dev-certs https`. Its key is exported only encrypted (CNG policy
-//! `AllowExport`, no plain export), which the reuse rules refuse, so Puddle passes it over,
-//! makes its own leaf, asks its own confirmation, and the same three browsers load a page with
-//! that leaf.
+//! the real `dotnet dev-certs https`. Puddle never uses it: it makes its own leaf, asks its own
+//! confirmation, and the same three browsers load a page with that leaf.
 //!
 //! It runs in the Windows UI job (which has Node and the browsers), where
 //! `PUDDLE_REQUIRE_BROWSER_TRUST` is set; elsewhere it says so and passes, unless
@@ -26,9 +24,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use puddle_certs::devcert::{
-    DevCertManager, DevCertStatus, DevCertTrust, KeyAccess, Origin, SkipReason, WindowsTrust,
-};
+use puddle_certs::devcert::{DevCertManager, DevCertStatus, WindowsTrust};
 
 mod trust_dialog;
 use trust_dialog::Answer;
@@ -200,8 +196,41 @@ impl Drop for MyGuard {
     }
 }
 
+/// The thumbprints of the ASP.NET development certificates (the marker extension) in
+/// `CurrentUser\My`.
+fn dotnet_thumbprints() -> Vec<String> {
+    let out = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .arg(
+            "Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.Extensions | \
+             Where-Object { $_.Oid.Value -eq '1.3.6.1.4.1.311.84.1.1' } } | \
+             ForEach-Object { $_.Thumbprint }",
+        )
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "listing the personal store failed");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Whether `CurrentUser\Root` holds a certificate with `thumbprint`.
+fn root_has(thumbprint: &str) -> bool {
+    let out = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .arg(format!("Test-Path Cert:\\CurrentUser\\Root\\{thumbprint}"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "reading the trusted roots failed");
+    String::from_utf8_lossy(&out.stdout).trim() == "True"
+}
+
 #[test]
-fn a_certificate_from_dotnet_dev_certs_is_passed_over_for_its_key_and_the_own_leaf_loads_in_the_browsers()
+fn puddle_makes_and_trusts_its_own_leaf_beside_a_dotnet_dev_certs_certificate_and_the_browsers_load_it()
  {
     if !enabled() {
         return;
@@ -210,7 +239,7 @@ fn a_certificate_from_dotnet_dev_certs_is_passed_over_for_its_key_and_the_own_le
     // The test makes and removes the machine's ASP.NET certificate, so it refuses to run where a
     // person already has one (the hosted runner has none; `PUDDLE_STORE_TESTS` is for a
     // workstation without one).
-    let before = WindowsTrust.existing().unwrap();
+    let before = dotnet_thumbprints();
     assert!(
         before.is_empty(),
         "this machine already has {} ASP.NET development certificate(s); the test makes and removes its own, so it will not run beside yours",
@@ -220,35 +249,17 @@ fn a_certificate_from_dotnet_dev_certs_is_passed_over_for_its_key_and_the_own_le
     // What a person who already ran ASP.NET has: the certificate in CurrentUser\My, then trusted
     // (the Windows dialog, answered Yes here).
     dotnet_dev_certs(&[], None);
-    let made = WindowsTrust.existing().unwrap();
-    assert_eq!(made.len(), 1, "dotnet made one certificate");
-    let dotnet_der = made[0].der.clone();
-    let dotnet_thumbprint = trust_dialog::thumbprint(&dotnet_der);
+    let made = dotnet_thumbprints();
+    assert_eq!(made.len(), 1, "dotnet made one certificate: {made:?}");
+    let dotnet_thumbprint = made[0].clone();
     let _my = MyGuard(dotnet_thumbprint.clone());
     let _dotnet_root = trust_dialog::RootGuard::new(&dotnet_thumbprint);
-    assert!(
-        !WindowsTrust.is_trusted(&dotnet_der).unwrap(),
-        "not trusted before --trust"
-    );
+    assert!(!root_has(&dotnet_thumbprint), "not trusted before --trust");
     let dialog = dotnet_dev_certs(&["--trust"], Some(Answer::Yes));
     trust_dialog::assert_dialog_names(&dialog, &dotnet_thumbprint);
-    assert!(WindowsTrust.is_trusted(&dotnet_der).unwrap());
+    assert!(root_has(&dotnet_thumbprint));
 
-    // dotnet's key is exportable only encrypted, which is why reuse refuses it. The hosted runner's
-    // dotnet 10 made it this way; if a dotnet ever makes it plain-exportable, this fails and the
-    // reuse path can be tested here with no dialog of Puddle's own.
-    let existing = WindowsTrust.existing().unwrap();
-    assert_eq!(existing.len(), 1, "{existing:?}");
-    assert!(existing[0].trusted);
-    let KeyAccess::NotExportable(why) = &existing[0].key else {
-        panic!(
-            "dotnet's key is now plain-exportable ({:?}): restore the reuse assertions",
-            existing[0].key
-        );
-    };
-    assert!(why.contains("plain form"), "{why}");
-
-    // So Puddle passes it over and makes its own leaf, which Windows asks about once.
+    // Puddle makes its own leaf, which Windows asks about once: dotnet's certificate is not used.
     let data = tempfile::tempdir().unwrap();
     let manager = Arc::new(DevCertManager::new(data.path(), WindowsTrust));
     let answered =
@@ -257,20 +268,12 @@ fn a_certificate_from_dotnet_dev_certs_is_passed_over_for_its_key_and_the_own_le
     let der = report.material.cert_der().to_vec();
     let thumbprint = trust_dialog::thumbprint(&der);
     let _leaf_root = trust_dialog::RootGuard::new(&thumbprint);
-    assert_ne!(thumbprint, dotnet_thumbprint);
+    assert!(
+        !thumbprint.eq_ignore_ascii_case(&dotnet_thumbprint),
+        "Puddle used dotnet's certificate"
+    );
     trust_dialog::assert_dialog_names(&answered.dialog, &thumbprint);
     assert_eq!(report.status, DevCertStatus::Trusted);
-    assert_eq!(report.material.origin, Origin::Generated);
-    assert_eq!(report.skipped.len(), 1, "{:?}", report.skipped);
-    assert_eq!(
-        report.skipped[0].fingerprint,
-        puddle_certs::Fingerprint::of(&dotnet_der)
-    );
-    assert!(
-        matches!(&report.skipped[0].reason, SkipReason::NotExportable(r) if r == why),
-        "{:?}",
-        report.skipped[0].reason
-    );
 
     // The leaf and its key serve a page the three browsers load without a warning, with dotnet's
     // trusted certificate beside it in the store.

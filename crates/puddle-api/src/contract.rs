@@ -69,6 +69,7 @@ fn expect_refusal(case: &str, step: &str, reply: &Reply, status: u16, words: &st
 async fn settled(subject: &dyn Subject, case: &str, id: &str) -> Reply {
     let path = format!("/api/workspaces/{id}");
     let deadline = tokio::time::Instant::now() + SETTLE;
+    // flake-ok: this library code runs under the `testing` feature and the test kit's waits are dev-dependency only; the loop is bounded by SETTLE and names what it waited for.
     loop {
         let reply = subject.call("GET", &path, None).await;
         if reply.status == 200 && field(&reply, "busy").is_null() {
@@ -282,6 +283,7 @@ async fn delete_checks_what_the_caller_confirmed(subject: &dyn Subject) {
     expect_status(case, "delete", &deleted, 202);
     let path = format!("/api/workspaces/{id}");
     let deadline = tokio::time::Instant::now() + SETTLE;
+    // flake-ok: this library code runs under the `testing` feature and the test kit's waits are dev-dependency only; the loop is bounded by SETTLE and names what it waited for.
     loop {
         let reply = subject.call("GET", &path, None).await;
         if reply.status == 404 {

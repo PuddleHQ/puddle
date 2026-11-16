@@ -359,6 +359,7 @@ impl FakeWorkspaces {
         if self.inner.step_delay.is_zero() {
             tokio::task::yield_now().await;
         } else {
+            // The configured step latency: a simulated delay, not a wait for a condition.
             tokio::time::sleep(self.inner.step_delay).await;
         }
     }

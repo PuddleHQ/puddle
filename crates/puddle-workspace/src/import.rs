@@ -313,7 +313,12 @@ pub fn https_form(url: &str) -> Result<String, String> {
                 Some([org, project, repo])
                     if [org, project, repo].iter().all(|p| !p.is_empty()) =>
                 {
-                    Ok(format!("https://dev.azure.com/{org}/{project}/_git/{repo}"))
+                    // The same address the proxy and the create form read it as.
+                    Ok(if host == "ssh.dev.azure.com" {
+                        format!("https://dev.azure.com/{org}/{project}/_git/{repo}")
+                    } else {
+                        format!("https://{org}.visualstudio.com/{project}/_git/{repo}")
+                    })
                 }
                 _ => Err(format!(
                     "its origin {shown} is an Azure DevOps SSH address Puddle can't read; \

@@ -146,7 +146,7 @@
   async function addRepo(event: SubmitEvent) {
     event.preventDefault();
     repoProblem = null;
-    const parsed = parseRepoUrl(repoUrl, { ssh: true });
+    const parsed = parseRepoUrl(repoUrl);
     if (!parsed.ok) {
       repoProblem = parsed.message;
       document.getElementById(`${fid}-url`)?.focus();

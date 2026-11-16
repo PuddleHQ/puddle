@@ -22,6 +22,7 @@ mod recorder;
 mod rule;
 mod schema;
 mod shell_init;
+mod ssh_address;
 mod store;
 mod sweeper;
 #[cfg(test)]
@@ -64,6 +65,7 @@ pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
+pub use ssh_address::{SshAddressError, looks_like_ssh, ssh_address_as_https};
 pub use store::{
     AllUsers, AuditCursor, AuditFilter, AuditPrune, AuditStats, DEFAULT_AUDIT_RETENTION_DAYS,
     DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits, LearnedRow,

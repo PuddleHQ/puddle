@@ -83,6 +83,8 @@ async fn vm_perf_guest_fsync_reaches_flushfilebuffers_on_the_volume_image() {
         .await
         .unwrap();
     sh_ok(&sb, "sync").await;
+    // Ordering with no signal: let the volume's mount and the guest's own startup writes finish, so
+    // they do not fall into the measured window.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     marker("a");
@@ -92,6 +94,7 @@ async fn vm_perf_guest_fsync_reaches_flushfilebuffers_on_the_volume_image() {
     )
     .await;
     marker("b");
+    // The control window is an absence window: the guest does nothing for `IDLE`.
     tokio::time::sleep(IDLE).await;
     marker("c");
 

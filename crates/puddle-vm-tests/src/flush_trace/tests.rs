@@ -93,15 +93,12 @@ fn a_trace_that_never_saw_the_image_or_a_marker_is_an_error() {
 
 #[cfg(unix)]
 mod session {
-    use std::os::unix::fs::PermissionsExt as _;
-
     use super::*;
 
     /// A shell script that stands in for a Windows tool.
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        puddle_test_kit::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
         path
     }
 

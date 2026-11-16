@@ -159,13 +159,13 @@ describe("ProxySignInStore", () => {
     });
   });
 
-  it("ignores a failed read that a newer call has overtaken", async () => {
+  it("settles on failed when a read and a save both fail", async () => {
     const { stub, store } = make();
     stub.down = true;
     const first = store.load();
-    await store.save("p:1", "x", "y").catch(() => undefined);
+    await store.save("p:1", "x", "y");
     await first;
-    expect(store.status).toBe("loading");
+    expect(store.status).toBe("failed");
   });
 
   it("ignores a read that a newer call has overtaken", async () => {
@@ -174,6 +174,7 @@ describe("ProxySignInStore", () => {
     await store.save("p:1", "x", "y");
     await first;
     expect(store.signIns).toEqual([{ proxy: "p:1", user: "x" }]);
+    expect(store.status).toBe("ready");
     void stub;
   });
 });

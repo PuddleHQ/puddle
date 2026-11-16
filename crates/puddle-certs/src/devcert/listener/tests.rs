@@ -130,3 +130,21 @@ fn a_second_private_key_block_does_not_replace_the_first() {
     assert_eq!(first.cert_der(), again.cert_der());
     assert_eq!(first.key().pkcs8_der(), again.key().pkcs8_der());
 }
+
+#[test]
+fn a_stored_certificate_next_to_the_key_of_another_leaf_is_replaced() {
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let now = SystemTime::now();
+    let cert = ensure(one.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    let stranger = ensure(two.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    let mut body = pem::encode(&pem::Pem::new("CERTIFICATE", cert.cert_der().to_vec()));
+    body.push_str(&stranger.key().to_pem());
+    puddle_fs::private::write_atomic(&one.path().join(FOLDER).join(FILE), body.as_bytes()).unwrap();
+    let again = ensure(one.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    assert_ne!(
+        again.cert_der(),
+        cert.cert_der(),
+        "the mismatched pair is not reused"
+    );
+    assert!(key_belongs_to(again.cert_der(), again.key()));
+}

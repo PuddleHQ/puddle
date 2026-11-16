@@ -47,7 +47,11 @@ export const canGrowRootDisk = (w: Workspace): boolean =>
   w.status !== "draining" &&
   w.status !== "volume_missing";
 
-/** The largest root disk size the API takes, in whole GiB (its size is an `i32` of MiB). */
+/**
+ * The largest root disk size the form offers, in whole GiB. A limit of the form, not of the API
+ * (which takes any `u32` of MiB and refuses what this computer cannot hold): it keeps a typo
+ * from asking for terabytes.
+ */
 export const MAX_ROOT_DISK_GIB = 2047;
 
 /** What the grow form offers first: ten GiB above the current size, in whole GiB. */

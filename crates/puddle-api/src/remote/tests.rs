@@ -75,6 +75,8 @@ fn a_public_host_refuses_what_is_not_a_bare_authority() {
         "a_b.example.org",
         "2001:db8::1",
         "[2001:db8::1",
+        "[::1]junk",
+        "[::1]443",
         "[puddle.example.org]",
         "[1.2.3.4]",
         "1.2.3.4.5",

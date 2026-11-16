@@ -487,11 +487,11 @@ pub enum ForeignCredentialKind {
     /// A stand-in Puddle made once and no longer holds (a removed secret, a forgotten login, or
     /// another workspace's): it cannot be swapped, so the server will refuse it.
     StaleStandIn,
-    /// A GitHub token with a valid checksum.
+    /// A GitHub token: a classic one with a valid checksum, or a fine-grained one by its shape.
     GithubToken,
     /// An npm token with a valid checksum.
     NpmToken,
-    /// A GitLab token with a valid checksum.
+    /// A GitLab token, recognised by prefix and shape (its checksum is not checked).
     GitlabToken,
     /// An Azure DevOps personal access token of the newer, 84-character kind.
     AzureDevopsToken,

@@ -165,7 +165,7 @@ function guest(id, script, { root = false, within = 600_000 } = {}) {
 const approved = [];
 
 /** The hosts this run's workspace is meant to reach: the lab forge and the distribution's package archive. */
-const expectedHost = (host) => host === forge || /(^|\.)debian\.org$/.test(host) || /fastly/.test(host);
+const expectedHost = (host) => host === forge || /(^|\.)debian\.org$/.test(host) || /(^|\.)fastly(dns)?\.net$/.test(host);
 
 /** Approves the expected pending requests, as the inbox's Allow does (others stay for the user); how many. */
 async function approvePending(what) {

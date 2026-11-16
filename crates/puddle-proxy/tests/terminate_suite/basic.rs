@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_proxy::{InjectDecision, ProxyConfig, Upstream};
-use puddle_types::ConnectionDecision;
+use puddle_types::{ConnectionDecision, ReasonCode};
 use terminate_support::{
     CANARY, FakeServer, Flaw, Handler, Pki, Reply, RigBuilder, TestInjector, host, inject, refuse,
 };
@@ -443,7 +443,7 @@ async fn expect_continue_is_answered_by_the_proxy_once_the_request_is_accepted()
     let server = upstream(&pki, Arc::new(|r| Reply::ok(&r.body.len().to_string()))).await;
     let refusing = TestInjector::new(|view| {
         if view.path() == "/deny" {
-            refuse(403, "push_denied")
+            refuse(403, ReasonCode::PushDenied)
         } else {
             inject(CANARY)
         }
@@ -557,8 +557,8 @@ async fn a_refusal_from_the_injector_is_sent_and_nothing_goes_upstream() {
     let pki = Pki::new();
     let server = upstream(&pki, ok_handler()).await;
     let injector = TestInjector::new(|view| match view.path() {
-        "/denied" => refuse(403, "push_denied"),
-        "/signin" => refuse(401, "credential_unavailable"),
+        "/denied" => refuse(403, ReasonCode::PushDenied),
+        "/signin" => refuse(401, ReasonCode::CredentialUnavailable),
         "/pass" => InjectDecision::PassThrough,
         _ => inject(CANARY),
     });

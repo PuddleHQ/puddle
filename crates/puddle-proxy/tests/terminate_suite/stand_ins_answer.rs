@@ -18,7 +18,7 @@ use http_body_util::BodyExt as _;
 use puddle_proxy::{
     InjectDecision, SecretValue, StandIn, StandInOrigin, StandIns, TerminationSet, secret_stand_in,
 };
-use puddle_types::ConnectionReason;
+use puddle_types::{ConnectionReason, ReasonCode};
 use terminate_support::h2_rig::{BoxError, H2Server, collect};
 use terminate_support::{
     FakeServer, Flaw, Handler, Pki, Reply, RigBuilder, TestInjector, captured_logs,
@@ -199,7 +199,10 @@ async fn an_answer_in_an_encoding_puddle_cannot_read_is_refused_with_its_reason(
     assert_eq!(response.header("x-puddle-blocked"), Some("answer_encoding"));
     drop(client);
     let event = &rig.events(1).await[0];
-    assert_eq!(event.reason, ConnectionReason::Refused("answer_encoding"));
+    assert_eq!(
+        event.reason,
+        ConnectionReason::Refused(ReasonCode::AnswerEncoding)
+    );
 }
 
 #[tokio::test]
@@ -229,7 +232,10 @@ async fn hostile_a_real_value_inside_longer_base64_cuts_the_answer_off_before_it
     );
     drop(client);
     let event = &rig.events(1).await[0];
-    assert_eq!(event.reason, ConnectionReason::Refused("answer_withheld"));
+    assert_eq!(
+        event.reason,
+        ConnectionReason::Refused(ReasonCode::AnswerWithheld)
+    );
 }
 
 #[tokio::test]

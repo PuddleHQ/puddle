@@ -125,9 +125,18 @@ fn only_a_decrypting_workspace_skips_hosts_and_it_says_why() {
     assert_eq!(off.skipped(&host("bank.example")), None, "switch off");
     let on = off.decrypt_all(true);
     assert!(on.is_decrypting_all() && on.never().contains(&host("bank.example")));
-    assert_eq!(on.skipped(&host("bank.example")), Some("never_decrypt"));
-    assert_eq!(on.skipped(&host("a.health.example")), Some("never_decrypt"));
-    assert_eq!(on.skipped(&host("pinned.example")), Some("learned"));
+    assert_eq!(
+        on.skipped(&host("bank.example")),
+        Some(PassThroughCode::NeverDecrypt)
+    );
+    assert_eq!(
+        on.skipped(&host("a.health.example")),
+        Some(PassThroughCode::NeverDecrypt)
+    );
+    assert_eq!(
+        on.skipped(&host("pinned.example")),
+        Some(PassThroughCode::Learned)
+    );
     assert_eq!(on.skipped(&host("registry.npmjs.org")), None);
     assert_eq!(
         on.skipped(&host("140.82.112.3")),
@@ -146,11 +155,20 @@ fn a_curated_host_is_passed_through_after_the_never_decrypt_names_and_before_lea
         .decrypt_all(true)
         .never_decrypt(never)
         .curated(curated);
-    assert_eq!(on.skipped(&host("bank.example")), Some("never_decrypt"));
-    assert_eq!(on.skipped(&host("a.docker.example")), Some("curated"));
+    assert_eq!(
+        on.skipped(&host("bank.example")),
+        Some(PassThroughCode::NeverDecrypt)
+    );
+    assert_eq!(
+        on.skipped(&host("a.docker.example")),
+        Some(PassThroughCode::Curated)
+    );
     assert_eq!(on.skipped(&host("other.example")), None);
     learned.learn(&host("a.docker.example"));
-    assert_eq!(on.skipped(&host("a.docker.example")), Some("curated"));
+    assert_eq!(
+        on.skipped(&host("a.docker.example")),
+        Some(PassThroughCode::Curated)
+    );
     let off = on.clone().decrypt_all(false);
     assert_eq!(off.skipped(&host("a.docker.example")), None, "switch off");
     assert!(on.is_learning());

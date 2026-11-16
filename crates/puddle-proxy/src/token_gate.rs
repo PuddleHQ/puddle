@@ -17,12 +17,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use puddle_types::ReasonCode;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::terminate::{Scan, Termination, scan_hello};
 
 /// The audit code of a tunnel this refuses.
-pub(crate) const CODE: &str = "token_endpoint_spliced";
+pub(crate) const CODE: ReasonCode = ReasonCode::TokenEndpointSpliced;
 
 /// How much of the upload is read while looking for the end of the hello; a longer one is not a
 /// hello any client sends.
@@ -109,7 +110,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for TokenGate<S> {
 }
 
 fn refusal() -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, CODE)
+    io::Error::new(io::ErrorKind::PermissionDenied, CODE.as_str())
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for TokenGate<S> {

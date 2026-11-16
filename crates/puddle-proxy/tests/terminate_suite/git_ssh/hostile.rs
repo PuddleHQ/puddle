@@ -195,7 +195,10 @@ async fn hostile_hg47_a_push_to_an_unlisted_repository_is_denied_in_every_spelli
     assert_eq!(t.upstream.calls().len(), 0, "no receive-pack went upstream");
     drop(ssh);
     let events = t.events(1).await;
-    assert_eq!(events[0].reason, ConnectionReason::Refused("push_denied"));
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused(ReasonCode::PushDenied)
+    );
 }
 
 #[tokio::test]

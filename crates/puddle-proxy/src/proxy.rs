@@ -19,8 +19,8 @@ use puddle_agent_proto::host::{
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
-    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, Policy, PolicyError,
-    ProtocolHint, SuffixAllows, WorkspaceId,
+    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PassThroughCode, Policy,
+    PolicyError, ProtocolHint, ReasonCode, SuffixAllows, WorkspaceId,
 };
 use tokio::io::{AsyncBufRead, BufReader};
 use tokio::sync::Semaphore;
@@ -345,7 +345,7 @@ impl Proxy {
 
     /// Why a host that the workspace would decrypt (it decrypts every host) is passed through
     /// instead: on its never-decrypt list, or one its tools did not accept the certificate for.
-    fn skipped(&self, request: &EgressRequest, from_container: bool) -> Option<&'static str> {
+    fn skipped(&self, request: &EgressRequest, from_container: bool) -> Option<PassThroughCode> {
         let terminations = self.terminations.as_ref()?;
         if request.port != terminate::request::HTTPS_PORT {
             return None;
@@ -739,7 +739,7 @@ pub(crate) fn refuse_by_request_rule(
         }
         // Only port 443 is decrypted, so a tunnel to another port of a covered host would carry
         // requests the rules never see.
-        let code = "request_rule_port";
+        let code = ReasonCode::RequestRulePort;
         let refusal = Refusal::new(
             "403 Forbidden",
             format!(

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use puddle_proxy::{AnswerHead, Exchange, ExchangeRewriter, Rewrite, StandIns, Want};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{Host, ReasonCode, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::profile::{CLAUDE, DOCKER, GITHUB, OPENAI, Profile, Role, builtin};
@@ -445,7 +445,7 @@ async fn a_success_answer_puddle_cannot_read_is_passed_on_and_the_user_is_told()
             content_length: length,
         };
         assert!(
-            matches!(answer.wants(&head), Want::Refuse(r) if r.code() == "login_not_kept"),
+            matches!(answer.wants(&head), Want::Refuse(r) if r.code() == ReasonCode::LoginNotKept),
             "{content_type:?} {encoding:?} {length:?}"
         );
     }
@@ -1308,7 +1308,7 @@ async fn an_answer_found_too_large_while_it_streams_is_refused_and_the_user_is_t
     let Rewrite::Refuse(refusal) = answer.too_large() else {
         panic!("the answer is refused");
     };
-    assert_eq!(refusal.code(), "login_not_kept");
+    assert_eq!(refusal.code(), ReasonCode::LoginNotKept);
     assert_eq!(
         rig.notices.seen(),
         [("claude".to_owned(), Problem::UnexpectedAnswer)]

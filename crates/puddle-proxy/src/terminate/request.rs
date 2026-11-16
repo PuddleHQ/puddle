@@ -9,6 +9,7 @@
 
 use ::http::header::{HeaderMap, HeaderName, HeaderValue};
 use puddle_netpolicy::normalise_host;
+use puddle_types::ReasonCode;
 
 use super::inject::Injection;
 use super::response::GuestHttp;
@@ -77,7 +78,7 @@ impl Parsed {
 }
 
 pub(crate) fn bad(why: impl Into<String>) -> Refusal {
-    Refusal::new("400 Bad Request", why).coded("bad_request")
+    Refusal::new("400 Bad Request", why).coded(ReasonCode::BadRequest)
 }
 
 /// Checks `head` as a request to `target` (the `CONNECT` host, port 443).
@@ -130,7 +131,7 @@ pub(crate) fn framed(head: &Head, path: String) -> Result<Parsed, Refusal> {
                 "417 Expectation Failed",
                 "only Expect: 100-continue is supported",
             )
-            .coded("expectation_unsupported"));
+            .coded(ReasonCode::ExpectationUnsupported));
         }
         expect_continue = http11 && body != Body::None;
     }
@@ -165,7 +166,7 @@ pub(crate) fn misdirected(target: &Target) -> Refusal {
             target.host
         ),
     )
-    .coded("misdirected_host")
+    .coded(ReasonCode::MisdirectedHost)
 }
 
 /// Whether an authority (`host` or `host:port`) names `target`.

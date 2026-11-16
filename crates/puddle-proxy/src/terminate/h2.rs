@@ -26,7 +26,7 @@ use hyper::body::Incoming;
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use puddle_types::HttpRequestLine;
+use puddle_types::{HttpRequestLine, LimitCode, ReasonCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 use tokio::time::Instant;
@@ -231,7 +231,7 @@ impl Shared {
                 "too many open requests from this workspace; retry when some have finished",
             )
             .header("retry-after", "1")
-            .coded("stream_limit"));
+            .coded(ReasonCode::StreamLimit));
         };
         Ok(self
             .streams
@@ -257,7 +257,7 @@ where
         Some(Connected::H1(conn)) => LegState::H1(H1Pool::new(conn, Arc::clone(&cx.connections))),
         None => LegState::None,
     };
-    let limit_hit: Arc<OnceLock<&'static str>> = Arc::default();
+    let limit_hit: Arc<OnceLock<LimitCode>> = Arc::default();
     let unknown_tokens = Arc::new(AnswerReport::of(&cx));
     let shared = Arc::new(Shared {
         cx,
@@ -309,7 +309,7 @@ where
                 Step::Nothing => {}
                 Step::Shutdown => connection.as_mut().graceful_shutdown(),
                 Step::Drop(code) => {
-                    tracing::info!(host = %shared.cx.target.host, reason = code, "guest HTTP/2 connection dropped");
+                    tracing::info!(host = %shared.cx.target.host, reason = %code, "guest HTTP/2 connection dropped");
                     // the first limit hit wins; a later one finds the cell already set
                     let _ = limit_hit.set(code);
                     break;
@@ -497,7 +497,7 @@ pub(crate) fn check<B>(
                 "417 Expectation Failed",
                 "only Expect: 100-continue is supported",
             )
-            .coded("expectation_unsupported"));
+            .coded(ReasonCode::ExpectationUnsupported));
         }
     }
     Ok(Checked {
@@ -553,7 +553,7 @@ async fn exchange(
             "501 Not Implemented",
             format!("the :protocol {} is not supported", protocol.as_str()),
         )
-        .coded("protocol_unsupported"));
+        .coded(ReasonCode::ProtocolUnsupported));
     }
     let mut route = shared.route().await?;
     let version = route.version();
@@ -724,7 +724,7 @@ async fn read_exchange_answer(
         .await
         .map_err(|err| match err {
             AnswerError::Refused(refusal) => {
-                tracing::info!(host = %cx.target.host, code = refusal.code(), "the answer was refused");
+                tracing::info!(host = %cx.target.host, code = %refusal.code(), "the answer was refused");
                 refusal.to_refusal()
             }
             AnswerError::Upstream(err) => {
@@ -807,7 +807,7 @@ async fn decide(
         None => cx.termination.injector().decide(&context, &view).await,
     };
     decision.into_forwarding().map_err(|refusal| {
-        tracing::info!(host = %cx.target.host, code = refusal.code(), "request refused by the credential rules");
+        tracing::info!(host = %cx.target.host, code = %refusal.code(), "request refused by the credential rules");
         refusal.to_refusal()
     })
 }
@@ -868,7 +868,7 @@ async fn read_whole_body(
             Err(_) => {
                 return Err(
                     Refusal::new("408 Request Timeout", "the request body did not arrive")
-                        .coded("request_timeout"),
+                        .coded(ReasonCode::RequestTimeout),
                 );
             }
             Ok(None) => break,
@@ -904,7 +904,7 @@ fn unauthorized_answer<B>(
         return None;
     }
     let refusal = unauthorized?.refusal()?;
-    tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
+    tracing::info!(host = %shared.cx.target.host, code = %refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
     Some(refusal.to_refusal())
 }
 

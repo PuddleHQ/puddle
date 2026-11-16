@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use puddle_types::Host;
+use puddle_types::{Host, PassThroughCode};
 
 use super::TerminationSet;
 
@@ -289,16 +289,16 @@ impl Interception {
     /// Why `host`, not bound to a credential, is not decrypted although the switch is on: the
     /// audit code. `None` when it is decrypted (or the switch is off).
     #[must_use]
-    pub fn skipped(&self, host: &Host) -> Option<&'static str> {
+    pub fn skipped(&self, host: &Host) -> Option<PassThroughCode> {
         if !self.decrypt_all || !matches!(host, Host::Name(_)) {
             return None;
         }
         if self.never.contains(host) {
-            Some("never_decrypt")
+            Some(PassThroughCode::NeverDecrypt)
         } else if self.curated.contains(host) {
-            Some("curated")
+            Some(PassThroughCode::Curated)
         } else if self.learned.contains(host) {
-            Some("learned")
+            Some(PassThroughCode::Learned)
         } else {
             None
         }

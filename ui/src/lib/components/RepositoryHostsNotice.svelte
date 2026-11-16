@@ -26,6 +26,16 @@
 
   let hosts = $state<RepositoryHost[]>([]);
 
+  // The notes sit at the end of a scrollable dialog. When the answer drops a line (a row removed,
+  // an address edited) the dialog's scroll position clamps and every row above moves down with
+  // it, so a press that began on a row's button ends on nothing. The slot therefore never gets
+  // shorter than the tallest it has been: a late answer can grow it, never move what is above.
+  let slotHeight = $state(0);
+  let held = $state(0);
+  $effect(() => {
+    if (slotHeight > held) held = slotHeight;
+  });
+
   const wanted = $derived(
     urls.map((u) => u.trim()).filter((u) => u.startsWith("https://")),
   );
@@ -55,14 +65,32 @@
   });
 </script>
 
-{#each refused as host (host.host)}
-  <p class="error" role="alert" data-testid="hosts-blocked">
-    {host.blocked_by ?? `${host.host} is blocked by a rule.`}
-  </p>
-{/each}
-{#if fresh.length > 0}
-  <p class="hint" data-testid="hosts-new">
-    Creating this allows {hostList(fresh.map((h) => h.host))} for this workspace,
-    so the clone does not wait for you. You can remove the rule on the Rules screen.
-  </p>
-{/if}
+<div
+  class="slot"
+  class:held={held > 0}
+  style:min-height={held > 0 ? `${held}px` : undefined}
+  bind:clientHeight={slotHeight}
+>
+  {#each refused as host (host.host)}
+    <p class="error" role="alert" data-testid="hosts-blocked">
+      {host.blocked_by ?? `${host.host} is blocked by a rule.`}
+    </p>
+  {/each}
+  {#if fresh.length > 0}
+    <p class="hint" data-testid="hosts-new">
+      Creating this allows {hostList(fresh.map((h) => h.host))} for this workspace,
+      so the clone does not wait for you. You can remove the rule on the Rules screen.
+    </p>
+  {/if}
+</div>
+
+<style>
+  .slot {
+    display: grid;
+    gap: var(--space-4);
+    align-content: start;
+  }
+  .slot:not(.held):empty {
+    display: none;
+  }
+</style>

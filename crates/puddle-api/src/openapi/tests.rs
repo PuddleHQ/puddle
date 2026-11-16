@@ -360,3 +360,50 @@ fn only_a_new_invite_carries_an_invite_secret_and_no_admin_answer_carries_a_cred
         }
     }
 }
+
+/// Every object a request body can carry refuses fields it does not name (ADR 0004), so the spec
+/// is enforced and not only published: a typo in a field name is an error, never a silent default.
+#[test]
+fn every_request_body_object_refuses_unknown_fields() {
+    fn walk(value: &Value, schemas: &Value, seen: &mut BTreeSet<String>, open: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(r)) = map.get("$ref") {
+                    let name = r.rsplit('/').next().unwrap_or_default();
+                    if seen.insert(name.to_owned()) {
+                        let schema = &schemas[name];
+                        if schema.get("properties").is_some()
+                            && schema.get("additionalProperties") != Some(&Value::Bool(false))
+                        {
+                            open.push(name.to_owned());
+                        }
+                        walk(schema, schemas, seen, open);
+                    }
+                    return;
+                }
+                map.values().for_each(|v| walk(v, schemas, seen, open));
+            }
+            Value::Array(items) => items.iter().for_each(|v| walk(v, schemas, seen, open)),
+            _ => {}
+        }
+    }
+    let s = spec();
+    let schemas = &s["components"]["schemas"];
+    let mut seen = BTreeSet::new();
+    let mut open = Vec::new();
+    let mut bodies = 0;
+    for item in s["paths"].as_object().unwrap().values() {
+        for op in item.as_object().unwrap().values() {
+            if let Some(body) = op.get("requestBody") {
+                bodies += 1;
+                walk(body, schemas, &mut seen, &mut open);
+            }
+        }
+    }
+    assert!(bodies > 20, "the walk found only {bodies} request bodies");
+    open.sort();
+    assert!(
+        open.is_empty(),
+        "request body objects without deny_unknown_fields: {open:?}"
+    );
+}

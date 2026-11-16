@@ -299,7 +299,7 @@ fn finish(
 }
 
 /// Which store this data folder keeps its secrets in, and whether it can be read. Reads only,
-/// takes no lock, and gives a locked keyring [`STATUS_WAIT`] to answer.
+/// takes no lock, and gives a locked keyring 20 seconds to answer.
 ///
 /// # Errors
 /// [`VaultAdminError`] when the record or the rows cannot be read.

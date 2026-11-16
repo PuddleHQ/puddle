@@ -425,6 +425,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   working tree against a base commit: locally the merge base with `origin/develop`, in CI the PR's base or
   the push's previous head (`DIFF_BASE`). Tool: `ui/scripts/diff-coverage.ts` (own code, no dependency;
   tests beside it).
+  **A moved line is not a changed line.** A run of added lines that the same diff removes elsewhere (same
+  trimmed text and order, 20 letters and digits or more, each removed line used once) is not judged, so a
+  file split needs no exclusion entries. A line
+  edited in the move is still a change. The gate has no coverage report of the base, so a moved line that a
+  test covered before and no longer does shows only in the workspace ratchet.
   A line that legitimately can't run in CI goes in the file of its own crate under
   `scripts/diff-coverage-exclusions/` (`<crate>.txt`, `ui.txt` for the SPA; the gate refuses an entry
   whose path glob is outside its file's crate): `path glob | whole line, or * | [xN |] reason`, one

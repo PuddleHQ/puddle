@@ -13,12 +13,17 @@
 //! never made over a vault and a weaker source never opens a vault a stronger one sealed.
 //!
 //! The first start decides the source: nothing found and no vault means sealing (when systemd 256
-//! or later answers and the sealed key opens again at once), else the key file. Two processes
+//! or later answers and the sealed key opens again at once), else the key file. The key file is
+//! only for a definite "cannot seal here" (no tool, systemd before 256, a refusal, an answer that
+//! is no key); a `systemd-creds` that is too slow is tried [`SEAL_ATTEMPTS`] times and then fails
+//! the start with [`KeyError::SealTimedOut`], so a busy machine never gets the weaker source for
+//! good. Two processes
 //! starting at once would each make a key; the data-folder lock, which the host holds, prevents it.
 //! Only Linux has key sources; other platforms answer [`KeyError::NoKeySource`] until one is added.
 
 use std::ffi::OsString;
 use std::fs;
+use std::future::Future;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -37,6 +42,8 @@ const KEY_FILE: &str = "vault.key";
 /// The first systemd with `--user` for `systemd-creds` (measured on 255: `unrecognized option`).
 const FIRST_USER_SCOPE: u32 = 256;
 const KEY_LEN: usize = 32;
+/// How often `encrypt` is tried when it times out, before the first start fails.
+const SEAL_ATTEMPTS: usize = 3;
 
 /// Where a key was found or made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +150,10 @@ pub enum KeyError {
     /// The key file is not 32 bytes.
     #[error("the vault key file is not a 32-byte key")]
     KeyFileInvalid,
+    /// The first start could not seal a key because `systemd-creds` kept timing out. Nothing was
+    /// made, so the next start tries again.
+    #[error("systemd-creds did not answer in time when sealing the vault key")]
+    SealTimedOut,
     /// The sealed key exists and does not open.
     #[error("the sealed vault key cannot be opened: {0}")]
     Sealed(Unseal),
@@ -284,7 +295,7 @@ impl VaultKeys {
 
     async fn make(&self) -> Result<FoundKey, KeyError> {
         let key = VaultKey::generate().map_err(|_| KeyError::Random)?;
-        if let Some(tag) = self.try_seal(&key).await {
+        if let Some(tag) = self.try_seal(&key).await? {
             return Ok(FoundKey {
                 key,
                 source: KeySource::SystemdSealed,
@@ -303,10 +314,13 @@ impl VaultKeys {
     }
 
     /// Seals `key` and stores the result when this machine can, and the sealed key opens again at
-    /// once (a seal that cannot be opened would lose every value in the vault). Any failure answers
-    /// `None` and leaves nothing behind.
-    async fn try_seal(&self, key: &VaultKey) -> Option<KeySourceTag> {
-        let program = self.tools.get(Tool::SystemdCreds).ok()?;
+    /// once (a seal that cannot be opened would lose every value in the vault). A definite "cannot"
+    /// answers `Ok(None)` and leaves nothing behind; `encrypt` timing out on every attempt, or the
+    /// read-back timing out, is an error, because a slow machine is not one that cannot seal.
+    async fn try_seal(&self, key: &VaultKey) -> Result<Option<KeySourceTag>, KeyError> {
+        let Ok(program) = self.tools.get(Tool::SystemdCreds) else {
+            return Ok(None);
+        };
         if let Ok(output) = run_with_input(
             Tool::SystemdCreds,
             program,
@@ -318,32 +332,41 @@ impl VaultKeys {
             && output.success
             && major_version(&output.stdout).is_some_and(|v| v < FIRST_USER_SCOPE)
         {
-            return None;
+            return Ok(None);
         }
-        let output = run_with_input(
-            Tool::SystemdCreds,
-            program,
-            &[
-                "--user",
-                "encrypt",
-                &format!("--name={CREDENTIAL_NAME}"),
-                "-",
-                "-",
-            ],
-            Some(key.expose()),
-            self.timeout,
-        )
-        .await
-        .ok()?;
+        let name = format!("--name={CREDENTIAL_NAME}");
+        let encrypted = retry_on_timeout(SEAL_ATTEMPTS, || async {
+            let args = ["--user", "encrypt", &name, "-", "-"];
+            run_with_input(
+                Tool::SystemdCreds,
+                program,
+                &args,
+                Some(key.expose()),
+                self.timeout,
+            )
+            .await
+        })
+        .await;
+        let output = match encrypted {
+            Ok(output) => output,
+            Err(SourceError::Timeout(_)) => return Err(KeyError::SealTimedOut),
+            Err(_) => return Ok(None),
+        };
         if !output.success || output.stdout.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let opened = self.unseal(program, &output.stdout).await.ok()?;
+        let opened = match self.unseal(program, &output.stdout).await {
+            Ok(opened) => opened,
+            Err(Unseal::TimedOut) => return Err(KeyError::SealTimedOut),
+            Err(_) => return Ok(None),
+        };
         if opened.expose() != key.expose() {
-            return None;
+            return Ok(None);
         }
-        puddle_fs::private::write_atomic(&self.sealed_path(), &output.stdout).ok()?;
-        Some(self.seal_tag(program).await)
+        if puddle_fs::private::write_atomic(&self.sealed_path(), &output.stdout).is_err() {
+            return Ok(None);
+        }
+        Ok(Some(self.seal_tag(program).await))
     }
 
     /// Whether the service seals with the TPM2 too: it does when a TPM2 is fully usable and the
@@ -408,6 +431,23 @@ impl VaultKeys {
             classify(&output.stderr)
         })
     }
+}
+
+/// Runs `op` up to `attempts` times while it times out; any other answer ends it at once.
+async fn retry_on_timeout<T, Fut>(
+    attempts: usize,
+    mut op: impl FnMut() -> Fut,
+) -> Result<T, SourceError>
+where
+    Fut: Future<Output = Result<T, SourceError>>,
+{
+    for _ in 1..attempts {
+        match op().await {
+            Err(SourceError::Timeout(_)) => {}
+            answered => return answered,
+        }
+    }
+    op().await
 }
 
 /// What a failed `decrypt` says, by the two texts measured on 257 to 259 (systemd gives no other

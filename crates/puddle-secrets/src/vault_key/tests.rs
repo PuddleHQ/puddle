@@ -432,3 +432,26 @@ mod retry {
         assert_eq!(calls, 1);
     }
 }
+
+#[test]
+fn only_a_systemd_before_256_lacks_per_user_sealing() {
+    for (line, lacks) in [
+        ("systemd 255 (255.4-1ubuntu8.18)", true),
+        ("systemd 256 (256.1-1)", false),
+        ("systemd 257 (257.13-1~deb13u1)", false),
+        ("systemd 259 (259.5-1ubuntu1)", false),
+        ("not a version line", false),
+        ("", false),
+    ] {
+        assert_eq!(systemd_lacks_user_sealing(line), lacks, "{line:?}");
+    }
+}
+
+#[test]
+fn the_sealed_key_is_named_and_placed_as_the_service_reads_it() {
+    assert_eq!(sealed_key_name(), "puddle-vault-key");
+    assert_eq!(
+        sealed_key_path(Path::new("/home/u/.config")),
+        Path::new("/home/u/.config/puddle/vault-key.cred")
+    );
+}

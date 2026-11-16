@@ -18,6 +18,7 @@ mod foreign_credentials;
 mod git_inject;
 mod git_ssh;
 mod grpc;
+mod guest_proxy_headers;
 mod guest_tls;
 mod h2;
 mod h2_edges;

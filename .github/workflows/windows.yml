@@ -323,6 +323,12 @@ jobs:
           RUSTUP_TOOLCHAIN="$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)"
           [ -n "$RUSTUP_TOOLCHAIN" ] || { echo "no channel in rust-toolchain.toml"; exit 1; }
           export RUSTUP_TOOLCHAIN
+          # The tests' scratch directories go to the runner's D: drive. C: wrote 3000 small files in 2.6 to 4.5 s
+          # against 0.3 to 0.6 s on D: (probe on all four runners), and a partition's test time was 47 to 72 s
+          # with the default temp directory against 28 to 48 s with this one. lab-forgejo.yml does the same.
+          TEMP="$(cygpath -w "$RUNNER_TEMP")"
+          TMP="$TEMP"
+          export TEMP TMP
           cargo-nextest nextest run --profile ci --retries "$RETRIES" ${MAX_FAIL:+--max-fail "$MAX_FAIL"} \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/tests.tar.zst" \
             --extract-to "$(cygpath -m "$PWD")" --workspace-remap . \

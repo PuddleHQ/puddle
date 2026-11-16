@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Just enough DER to select roots: issuer, subject, `notAfter`, public key and common name of an
 //! X.509 certificate. Input is the host's own certificate stores, but any bytes are handled
-//! without panicking (property test below).
+//! without panicking (the property test in `der/tests.rs`).
 
 /// What a certificate that can't be read lacks, for the skipped list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

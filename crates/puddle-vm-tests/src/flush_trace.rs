@@ -26,15 +26,32 @@ const FLUSH: u32 = 21;
 /// Reads and writes are left out: they are most of the volume and the check needs none of them.
 const KEYWORDS: &str = "0xF0";
 
+/// The two Windows tools a session drives, by program name (tests put stand-ins here).
+#[derive(Clone, Debug)]
+struct Tools {
+    logman: PathBuf,
+    tracerpt: PathBuf,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Self {
+            logman: "logman".into(),
+            tracerpt: "tracerpt".into(),
+        }
+    }
+}
+
 /// An ETW session on the file provider that writes to a file until [`FlushTrace::stop`].
 #[derive(Debug)]
 pub struct FlushTrace {
+    tools: Tools,
     name: String,
     etl: PathBuf,
     running: bool,
 }
 
-fn run(program: &str, args: &[&str]) -> Result<String, HarnessError> {
+fn run(program: &Path, args: &[&str]) -> Result<String, HarnessError> {
     let out = Command::new(program)
         .args(args)
         .output()
@@ -48,7 +65,12 @@ fn run(program: &str, args: &[&str]) -> Result<String, HarnessError> {
         Ok(text)
     } else {
         Err(HarnessError::Trace {
-            detail: format!("{program} {}: {} {text}", args.join(" "), out.status),
+            detail: format!(
+                "{} {}: {} {text}",
+                program.display(),
+                args.join(" "),
+                out.status
+            ),
         })
     }
 }
@@ -60,10 +82,14 @@ impl FlushTrace {
     ///
     /// [`HarnessError::Trace`] when `logman` refuses (not an administrator, name in use).
     pub fn start(dir: &Path, name: &str) -> Result<Self, HarnessError> {
+        Self::start_with(Tools::default(), dir, name)
+    }
+
+    fn start_with(tools: Tools, dir: &Path, name: &str) -> Result<Self, HarnessError> {
         let etl = dir.join(format!("{name}.etl"));
         let etl_text = etl.to_string_lossy().into_owned();
         run(
-            "logman",
+            &tools.logman,
             &[
                 "start",
                 name,
@@ -82,6 +108,7 @@ impl FlushTrace {
             ],
         )?;
         Ok(Self {
+            tools,
             name: name.to_owned(),
             etl,
             running: true,
@@ -96,12 +123,12 @@ impl FlushTrace {
     /// cannot be read.
     pub fn stop(mut self) -> Result<String, HarnessError> {
         self.running = false;
-        run("logman", &["stop", &self.name, "-ets"])?;
+        run(&self.tools.logman, &["stop", &self.name, "-ets"])?;
         let xml = self.etl.with_extension("xml");
         let etl_text = self.etl.to_string_lossy().into_owned();
         let xml_text = xml.to_string_lossy().into_owned();
         run(
-            "tracerpt",
+            &self.tools.tracerpt,
             &[&etl_text, "-o", &xml_text, "-of", "XML", "-y", "-lr"],
         )?;
         std::fs::read_to_string(&xml).map_err(|e| HarnessError::io("read", &xml, e))
@@ -113,7 +140,7 @@ impl Drop for FlushTrace {
         if self.running {
             // Best effort: a panic is already unwinding, and a session left running would keep
             // tracing the whole runner.
-            let _ = run("logman", &["stop", &self.name, "-ets"]);
+            let _ = run(&self.tools.logman, &["stop", &self.name, "-ets"]);
         }
     }
 }

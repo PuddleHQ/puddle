@@ -74,3 +74,90 @@ fn a_trace_that_never_saw_the_image_or_a_marker_is_an_error() {
     let e = flushes_between(&no_end, "disk.raw", "mark-start", "mark-end").unwrap_err();
     assert!(e.to_string().contains("the end marker"), "{e}");
 }
+
+#[cfg(unix)]
+mod session {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::*;
+
+    /// A shell script that stands in for a Windows tool.
+    fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// `logman` appends its arguments to a log; `tracerpt` writes `xml` to the `-o` path.
+    fn tools(dir: &Path, xml: &str) -> Tools {
+        Tools {
+            logman: script(
+                dir,
+                "logman",
+                &format!("echo \"$@\" >> {}/calls", dir.display()),
+            ),
+            tracerpt: script(dir, "tracerpt", &format!("printf '%s' '{xml}' > \"$3\"")),
+        }
+    }
+
+    #[test]
+    fn a_session_starts_on_the_file_provider_and_stop_returns_the_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace =
+            FlushTrace::start_with(tools(dir.path(), "<Event>x"), dir.path(), "s1").unwrap();
+        let xml = trace.stop().unwrap();
+        assert_eq!(xml, "<Event>x");
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        let lines: Vec<_> = calls.lines().collect();
+        assert_eq!(lines.len(), 2, "{calls}");
+        assert!(lines[0].starts_with("start s1 -p Microsoft-Windows-Kernel-File 0xF0"));
+        assert!(lines[0].ends_with("-ets"));
+        assert_eq!(lines[1], "stop s1 -ets");
+    }
+
+    #[test]
+    fn a_dropped_session_is_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(FlushTrace::start_with(tools(dir.path(), ""), dir.path(), "s2").unwrap());
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(calls.ends_with("stop s2 -ets\n"), "{calls}");
+    }
+
+    #[test]
+    fn a_failing_tool_is_a_trace_error_with_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = Tools {
+            logman: script(dir.path(), "logman", "echo denied >&2; exit 5"),
+            tracerpt: PathBuf::from("tracerpt"),
+        };
+        let e = FlushTrace::start_with(broken, dir.path(), "s3").unwrap_err();
+        assert!(matches!(e, HarnessError::Trace { .. }), "{e}");
+        assert!(e.to_string().contains("denied"), "{e}");
+    }
+
+    #[test]
+    fn a_missing_tool_is_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = Tools {
+            logman: dir.path().join("no-such-logman"),
+            tracerpt: PathBuf::from("tracerpt"),
+        };
+        let e = FlushTrace::start_with(missing, dir.path(), "s4").unwrap_err();
+        assert!(matches!(e, HarnessError::Io { .. }), "{e}");
+    }
+
+    #[test]
+    fn stop_without_a_trace_file_is_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools {
+            logman: script(dir.path(), "logman", "true"),
+            tracerpt: script(dir.path(), "tracerpt", "true"),
+        };
+        let e = FlushTrace::start_with(tools, dir.path(), "s5")
+            .unwrap()
+            .stop()
+            .unwrap_err();
+        assert!(matches!(e, HarnessError::Io { .. }), "{e}");
+    }
+}

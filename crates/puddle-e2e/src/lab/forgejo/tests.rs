@@ -175,3 +175,24 @@ fn a_branch_answer_is_its_commit_nothing_for_404_and_a_panic_otherwise() {
     let text = caught.downcast_ref::<String>().unwrap();
     assert_eq!(text, "branch acme/app/main: 500 oops");
 }
+
+#[test]
+fn host_key_fingerprints_name_each_key_and_skip_lines_that_are_not_keys() {
+    // Public keys of a throwaway key.
+    let ed = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL9qygvUTQlQ6FYjTLjckfijP/J7+lFVhiEa/B99Xtv1";
+    let found = host_key_fingerprints(&[ed.to_owned(), "ssh-rsa notbase64".to_owned()]);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, Algorithm::Ed25519);
+    assert!(found[0].1.starts_with("SHA256:"), "{found:?}");
+}
+
+#[test]
+fn a_private_key_file_is_readable_by_its_owner_only_and_never_overwritten() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("key");
+    write_private(&path, b"secret");
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
+    assert!(std::panic::catch_unwind(|| write_private(&path, b"again")).is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"secret");
+}

@@ -12,6 +12,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use futures_util::future::BoxFuture;
 use puddle_api::{RepoUrl, Repository, SettingsRepo, SettingsRepoError, StartFolder};
+use puddle_store::{UserId, WorkspaceOwners};
 use puddle_types::{CheckoutDir, EntryId, SessionUser, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -338,6 +339,8 @@ impl SettingsRepo for FileSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Stored {
     pub(crate) id: WorkspaceId,
+    /// The user the workspace belongs to.
+    pub(crate) owner: UserId,
     /// What the user calls the workspace: display text, nothing is keyed by it.
     pub(crate) name: puddle_api::DisplayName,
     /// The repositories Puddle manages for it, in the order they were added.
@@ -363,8 +366,17 @@ pub(crate) struct Stored {
 
 /// The version the book is written in. Version 1 held one `repo_url` per workspace; version 2
 /// holds a list of repositories and a start folder; version 3 holds the display text as `name`
-/// and has no `display_name`, and lists the ids of deleted workspaces as `retired_ids`.
-const BOOK_VERSION: u32 = 3;
+/// and has no `display_name`, and lists the ids of deleted workspaces as `retired_ids`; version 4
+/// names the owner of every workspace.
+const BOOK_VERSION: u32 = 4;
+
+/// A version 4 entry as it is on disk: a version 3 entry and its owner, which is required.
+#[derive(Debug, Serialize, Deserialize)]
+struct EntryV4 {
+    owner: i64,
+    #[serde(flatten)]
+    entry: EntryV3,
+}
 
 /// A version 3 entry as it is on disk.
 #[derive(Debug, Serialize, Deserialize)]
@@ -489,7 +501,8 @@ impl From<EntryV1> for EntryV2 {
 }
 
 impl EntryV3 {
-    fn check(self) -> Result<Stored, BookError> {
+    /// The entry as a [`Stored`] of `owner`.
+    fn check(self, owner: UserId) -> Result<Stored, BookError> {
         let id = WorkspaceId::new(&self.id).map_err(|e| bad_entry(&self.id, "has a bad id", e))?;
         let name = puddle_api::DisplayName::parse(&self.name)
             .map_err(|e| bad_entry(&self.id, "has a bad name", e))?;
@@ -533,6 +546,7 @@ impl EntryV3 {
             .map_err(|e| bad_entry(&self.id, "has a bad start folder", e))?;
         Ok(Stored {
             id,
+            owner,
             name,
             repositories,
             start_folder,
@@ -548,8 +562,17 @@ impl EntryV3 {
     }
 }
 
-impl From<Stored> for EntryV3 {
+impl From<Stored> for EntryV4 {
     fn from(s: Stored) -> Self {
+        Self {
+            owner: s.owner.get(),
+            entry: EntryV3::from_stored(s),
+        }
+    }
+}
+
+impl EntryV3 {
+    fn from_stored(s: Stored) -> Self {
         Self {
             id: s.id.to_string(),
             name: s.name.to_string(),
@@ -572,6 +595,19 @@ impl From<Stored> for EntryV3 {
             creating: s.creating,
             deleting: s.deleting,
         }
+    }
+}
+
+/// A version 1 to 3 entry as version 4 says it: the user `owners` records for the workspace, else
+/// the install's owner. A bad id stays for [`EntryV3::check`] to refuse.
+fn with_owner(entry: EntryV3, owners: &WorkspaceOwners) -> EntryV4 {
+    let owner = WorkspaceId::new(&entry.id)
+        .ok()
+        .and_then(|id| owners.of(&id))
+        .unwrap_or(UserId::OWNER);
+    EntryV4 {
+        owner: owner.get(),
+        entry,
     }
 }
 
@@ -615,15 +651,17 @@ impl WorkspaceBook {
         }
     }
 
-    /// Every stored workspace; none when there is no book yet. A missing book costs no
+    /// Every stored workspace, each with its owner; none when there is no book yet. A missing book costs no
     /// volume: reconcile keeps every workspace volume the book doesn't name, and the host logs it.
-    /// A version 1 or 2 book is read as version 3 and stays on disk as it is until the next save; a
-    /// book newer than this Puddle knows is refused, so it is never read wrongly or overwritten.
-    pub(crate) fn load(&self) -> Result<Book, HostError> {
-        self.read_book().map_err(Self::error)
+    /// A version 1 to 3 book is read as version 4 and stays on disk as it is until the next save;
+    /// those entries name no owner, so each goes to the user `owners` records for it, else to the
+    /// install's owner. A book newer than this Puddle knows is refused, so it is never read
+    /// wrongly or overwritten.
+    pub(crate) fn load(&self, owners: &WorkspaceOwners) -> Result<Book, HostError> {
+        self.read_book(owners).map_err(Self::error)
     }
 
-    fn read_book(&self) -> Result<Book, BookError> {
+    fn read_book(&self, owners: &WorkspaceOwners) -> Result<Book, BookError> {
         let Some(value) = read_json(&self.path)? else {
             return Ok(Book::default());
         };
@@ -632,13 +670,13 @@ impl WorkspaceBook {
             source,
         };
         let version = Version::deserialize(&value).map_err(not_a_list)?.version;
-        let (entries, retired): (Vec<EntryV3>, Vec<String>) = match version {
+        let (entries, retired): (Vec<EntryV4>, Vec<String>) = match version {
             1 => (
                 BookFile::<EntryV1>::deserialize(&value)
                     .map_err(not_a_list)?
                     .workspaces
                     .into_iter()
-                    .map(|e| EntryV3::from(EntryV2::from(e)))
+                    .map(|e| with_owner(EntryV3::from(EntryV2::from(e)), owners))
                     .collect(),
                 Vec::new(),
             ),
@@ -647,12 +685,21 @@ impl WorkspaceBook {
                     .map_err(not_a_list)?
                     .workspaces
                     .into_iter()
-                    .map(EntryV3::from)
+                    .map(|e| with_owner(EntryV3::from(e), owners))
                     .collect(),
                 Vec::new(),
             ),
-            BOOK_VERSION => {
+            3 => {
                 let file = BookFile::<EntryV3>::deserialize(&value).map_err(not_a_list)?;
+                let entries = file
+                    .workspaces
+                    .into_iter()
+                    .map(|e| with_owner(e, owners))
+                    .collect();
+                (entries, file.retired_ids)
+            }
+            BOOK_VERSION => {
+                let file = BookFile::<EntryV4>::deserialize(&value).map_err(not_a_list)?;
                 (file.workspaces, file.retired_ids)
             }
             newer if newer > BOOK_VERSION => {
@@ -670,7 +717,7 @@ impl WorkspaceBook {
         };
         let workspaces = entries
             .into_iter()
-            .map(EntryV3::check)
+            .map(|e| e.entry.check(UserId::from_stored(e.owner)))
             .collect::<Result<_, _>>()?;
         let retired = retired
             .iter()
@@ -696,7 +743,7 @@ impl WorkspaceBook {
             version: BOOK_VERSION,
             workspaces: workspaces
                 .into_iter()
-                .map(EntryV3::from)
+                .map(EntryV4::from)
                 .collect::<Vec<_>>(),
             retired_ids: retired.iter().map(ToString::to_string).collect(),
         };

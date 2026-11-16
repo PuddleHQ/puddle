@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_store::Clock;
+use puddle_store::{Clock, UserId};
 use puddle_types::{
     CheckoutDir, EntryId, Event, EventSink, SessionUser, ToolName, ToolVersion, ToolsFileHash,
     WorkspaceId, WorkspaceStatus, WorkspaceStep,
@@ -795,7 +795,8 @@ impl WorkspaceService for FakeWorkspaces {
                 let id = new
                     .id(&NameIds, |id| state.entries.contains_key(id))
                     .map_err(WorkspaceError::unavailable)?;
-                let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
+                let mut record =
+                    WorkspaceRecord::new(id.clone(), new.owner, new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new
                     .image
@@ -812,6 +813,7 @@ impl WorkspaceService for FakeWorkspaces {
                 record.busy = Some(Operation::Creating);
                 if crate::label_taken(
                     state.entries.values().map(|e| &e.record),
+                    new.owner,
                     new.name.as_str(),
                     None,
                 )
@@ -1109,6 +1111,7 @@ impl WorkspaceService for FakeWorkspaces {
     fn restore_orphan<'a>(
         &'a self,
         id: &'a WorkspaceId,
+        owner: UserId,
         repository: Option<crate::workspaces::RepoUrl>,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
@@ -1127,6 +1130,7 @@ impl WorkspaceService for FakeWorkspaces {
                 if state.entries.contains_key(id)
                     || crate::label_taken(
                         state.entries.values().map(|e| &e.record),
+                        owner,
                         name.as_str(),
                         None,
                     )
@@ -1149,7 +1153,7 @@ impl WorkspaceService for FakeWorkspaces {
                     url,
                 };
                 let mut record =
-                    WorkspaceRecord::new(id.clone(), name.clone(), vec![entry.clone()]);
+                    WorkspaceRecord::new(id.clone(), owner, name.clone(), vec![entry.clone()]);
                 record.created_at = self.inner.clock.now_ms();
                 record.status = WorkspaceStatus::Stopped;
                 state.orphans.remove(id);

@@ -17,6 +17,7 @@ use tokio::net::TcpListener;
 
 use super::*;
 use crate::sandbox_window::Hooks;
+use puddle_store::UserId;
 
 /// A front that signs in anyone with `password` and counts the logins it answered.
 async fn front(password: &str) -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
@@ -68,6 +69,7 @@ impl EditorLogin for Password {
 fn record(name: &str) -> WorkspaceRecord {
     WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
+        UserId::OWNER,
         puddle_api::DisplayName::parse(name).unwrap(),
         Vec::new(),
     )

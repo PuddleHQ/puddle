@@ -662,7 +662,7 @@ fn open_state(
     let crate::files::Book {
         workspaces: stored,
         retired,
-    } = book.load()?;
+    } = book.load(&store.workspace_owners()?)?;
     steps.push(Step::StoreOpened);
     Ok(State {
         store,

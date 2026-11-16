@@ -1785,6 +1785,82 @@
         ]
       }
     },
+    "/api/backup": {
+      "post": {
+        "tags": [
+          "backup"
+        ],
+        "summary": "Makes a backup now and sends it as one file (`application/gzip`, named\n`puddle-backup-<UTC time>.tar.gz`). It holds the rules, settings, workspace list, identities,\nusers and audit log as of one moment, and never a secret value, a password hash or a workspace\ndisk. The file is sent as it is read, so its size does not set a memory limit; a failure while\nit is moving ends the connection, so a client that sees the whole body has a complete file.\nA `POST` so that no link, prefetch or cache can start one.",
+        "operationId": "create_backup",
+        "responses": {
+          "200": {
+            "description": "the backup file",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may make a backup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the data cannot be read or the file cannot be written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/consents": {
       "get": {
         "tags": [
@@ -23181,6 +23257,10 @@
     {
       "name": "consents",
       "description": "What the user agreed to"
+    },
+    {
+      "name": "backup",
+      "description": "A backup of Puddle's own state as one download. Owner only"
     },
     {
       "name": "doctor",

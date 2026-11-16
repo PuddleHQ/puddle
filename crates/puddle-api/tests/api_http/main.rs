@@ -14,6 +14,7 @@ mod audit_retention;
 mod common;
 
 mod admin;
+mod backup;
 mod credentials;
 mod doctor;
 mod endpoints;

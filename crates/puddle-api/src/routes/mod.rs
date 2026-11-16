@@ -15,6 +15,7 @@ use utoipa_axum::routes;
 
 use crate::admin::AdminService;
 use crate::authz::Authorizer;
+use crate::backup::BackupService;
 use crate::credential_store::CredentialStoreService;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
@@ -34,6 +35,7 @@ mod admin;
 mod app_icon;
 mod audit;
 pub(crate) mod auth;
+mod backup;
 mod credential_store;
 mod credentials;
 mod doctor;
@@ -104,6 +106,8 @@ pub(crate) struct AppState {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) repos: Arc<dyn RepoService>,
     pub(crate) doctor: Arc<dyn DoctorService>,
+    /// Makes the backup Settings downloads.
+    pub(crate) backup: Arc<dyn BackupService>,
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
     /// The credential store check the first-run banner retries.
@@ -364,10 +368,11 @@ fn environment_router() -> OpenApiRouter<AppState> {
 }
 
 /// The routes that may take far longer than the rest (the system check boots a test machine, the
-/// certificate's trust waits for the user), so they get their own, longer time limit.
+/// certificate's trust waits for the user, a backup copies a large database), so they get their own, longer time limit.
 pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
+        .routes(routes!(backup::create_backup))
         .routes(routes!(first_run::trust_dev_certificate))
         .routes(routes!(credential_store::retry_credential_store))
 }

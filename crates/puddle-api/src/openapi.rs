@@ -53,6 +53,7 @@ const BEARER: &str = "bearer";
         (name = "audit", description = "The audit log"),
         (name = "settings", description = "Global and per-workspace settings"),
         (name = "consents", description = "What the user agreed to"),
+        (name = "backup", description = "A backup of Puddle's own state as one download. Owner only"),
         (name = "doctor", description = "The system check: what this computer needs to run workspaces, and the fix for what is missing"),
         (name = "first-run", description = "Whether the first-run flow has been through"),
         (name = "network", description = "How Puddle reaches the internet: proxy, sign-in, company roots"),

@@ -58,10 +58,10 @@ fn expect_status(case: &str, step: &str, reply: &Reply, status: u16) {
 
 fn expect_refusal(case: &str, step: &str, reply: &Reply, status: u16, words: &str) {
     expect_status(case, step, reply, status);
+    let shown = text(reply);
     assert!(
-        text(reply).contains(words),
-        "{case}: {step}: the refusal should say {words:?}: {}",
-        text(reply)
+        shown.contains(words),
+        "{case}: {step}: the refusal should say {words:?}: {shown}"
     );
 }
 
@@ -74,10 +74,10 @@ async fn settled(subject: &dyn Subject, case: &str, id: &str) -> Reply {
         if reply.status == 200 && field(&reply, "busy").is_null() {
             return reply;
         }
+        let shown = text(&reply);
         assert!(
             tokio::time::Instant::now() < deadline,
-            "{case}: {id} never settled: {}",
-            text(&reply)
+            "{case}: {id} never settled: {shown}"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -111,10 +111,10 @@ async fn created(subject: &dyn Subject, case: &str) -> String {
         .as_str()
         .unwrap_or_default()
         .to_owned();
+    let shown = text(&idle);
     assert!(
         matches!(status.as_str(), "created" | "stopped"),
-        "{case}: a created workspace is down once it settles: {}",
-        text(&idle)
+        "{case}: a created workspace is down once it settles: {shown}"
     );
     id
 }
@@ -287,10 +287,10 @@ async fn delete_checks_what_the_caller_confirmed(subject: &dyn Subject) {
         if reply.status == 404 {
             break;
         }
+        let shown = text(&reply);
         assert!(
             tokio::time::Instant::now() < deadline,
-            "{case}: {id} was never removed: {}",
-            text(&reply)
+            "{case}: {id} was never removed: {shown}"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }

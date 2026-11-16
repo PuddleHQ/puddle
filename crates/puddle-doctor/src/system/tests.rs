@@ -262,7 +262,7 @@ fn a_data_folder_that_records_the_file_vault_reads_its_header_and_asks_nothing_e
     let dir = data_with_store(StoreKind::File);
     // The record names the vault and there is none yet.
     assert_eq!(
-        credential_store_facts(Some(dir.path()), never, never),
+        credential_store_facts(Some(dir.path()), never, never, VaultFacts::Header),
         CredentialStoreFacts::File(VaultFacts::NoVaultYet)
     );
     FileVault::create(
@@ -272,12 +272,12 @@ fn a_data_folder_that_records_the_file_vault_reads_its_header_and_asks_nothing_e
     )
     .unwrap();
     assert_eq!(
-        credential_store_facts(Some(dir.path()), never, never),
+        credential_store_facts(Some(dir.path()), never, never, VaultFacts::Header),
         CredentialStoreFacts::File(VaultFacts::Header(KeySourceTag::SystemdHostTpm2))
     );
     std::fs::write(vault_path(dir.path()), b"not a vault at all").unwrap();
     assert_eq!(
-        credential_store_facts(Some(dir.path()), never, never),
+        credential_store_facts(Some(dir.path()), never, never, VaultFacts::Header),
         CredentialStoreFacts::File(VaultFacts::Unreadable)
     );
 }
@@ -290,7 +290,8 @@ fn the_operating_system_store_is_probed_when_it_is_recorded_or_nothing_is_decide
         credential_store_facts(
             Some(recorded.path()),
             || StoreHealth::Locked,
-            || LoginSession::NotGraphical
+            || LoginSession::NotGraphical,
+            VaultFacts::Header
         ),
         CredentialStoreFacts::Os {
             recorded: true,
@@ -301,7 +302,12 @@ fn the_operating_system_store_is_probed_when_it_is_recorded_or_nothing_is_decide
     let fresh = tempfile::tempdir().unwrap();
     for data in [Some(fresh.path()), None] {
         assert_eq!(
-            credential_store_facts(data, || StoreHealth::Working, || LoginSession::Graphical),
+            credential_store_facts(
+                data,
+                || StoreHealth::Working,
+                || LoginSession::Graphical,
+                VaultFacts::Header
+            ),
             CredentialStoreFacts::Os {
                 recorded: false,
                 health: StoreHealth::Working,
@@ -318,7 +324,7 @@ fn a_record_that_cannot_be_read_is_reported_and_nothing_is_probed() {
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("store.json"), "{").unwrap();
     assert_eq!(
-        credential_store_facts(Some(dir.path()), never, never),
+        credential_store_facts(Some(dir.path()), never, never, VaultFacts::Header),
         CredentialStoreFacts::Unreadable
     );
 }
@@ -363,4 +369,264 @@ fn the_login_session_is_read_from_loginctl_found_on_the_path() {
         login_session_in(Some("/nonexistent".into()), Duration::from_secs(1)),
         LoginSession::Unknown
     );
+}
+
+/// A `systemd-creds` that answers like the ones measured on real machines. `decrypt` prints a
+/// value that must never reach a report.
+#[cfg(target_os = "linux")]
+fn fake_systemd_creds(version: &str, decrypt: &str, has_tpm2: i32) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let body = format!(
+        "#!/bin/sh\ncase \"$1 $2\" in\n\
+         \"--version \") echo '{version}';;\n\
+         \"has-tpm2 \") exit {has_tpm2};;\n\
+         \"--user decrypt\") {decrypt};;\nesac\n"
+    );
+    puddle_test_kit::write_executable(&dir.path().join("systemd-creds"), &body);
+    dir
+}
+
+#[cfg(target_os = "linux")]
+fn sealed_key_with(
+    tag: puddle_secrets::KeySourceTag,
+    creds: &tempfile::TempDir,
+    sealed_file: bool,
+) -> VaultFacts {
+    let config = tempfile::tempdir().unwrap();
+    if sealed_file {
+        let file = puddle_secrets::sealed_key_path(config.path());
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"sealed").unwrap();
+    }
+    sealed_key_facts_in(
+        tag,
+        Some(config.path()),
+        Some(creds.path().as_os_str().to_owned()),
+        Duration::from_secs(5),
+    )
+}
+
+#[cfg(target_os = "linux")]
+const V257: &str = "systemd 257 (257.13-1~deb13u1)";
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_machine_id_or_secure_boot_change_is_read_from_the_refusal_systemd_gives() {
+    use puddle_secrets::{KeySourceTag::SystemdHost, Unseal};
+    // Exit 1 and this text, measured on Debian 13 (257) and Ubuntu 26.04 (259) for a changed
+    // machine id and, on Debian 13 with a vTPM, for a changed PCR 7.
+    let creds = fake_systemd_creds(
+        V257,
+        "echo 'Failed to decrypt: io.systemd.System' >&2; exit 1",
+        19,
+    );
+    assert_eq!(
+        sealed_key_with(SystemdHost, &creds, true),
+        VaultFacts::Sealed {
+            tag: SystemdHost,
+            key: SealedKeyFacts::Fails(Unseal::Rejected),
+            tpm: Some(TpmFacts::Unavailable)
+        }
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_sealed_key_systemd_opens_is_ok_and_its_value_is_not_kept() {
+    use puddle_secrets::KeySourceTag::SystemdHostTpm2;
+    let creds = fake_systemd_creds(V257, "echo hunter2-the-vault-key", 0);
+    let facts = sealed_key_with(SystemdHostTpm2, &creds, true);
+    assert_eq!(
+        facts,
+        VaultFacts::Sealed {
+            tag: SystemdHostTpm2,
+            key: SealedKeyFacts::Opens,
+            tpm: None
+        }
+    );
+    assert!(!format!("{facts:?}").contains("hunter2"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_tpm_whose_libraries_are_missing_is_read_from_the_exit_of_has_tpm2() {
+    use puddle_secrets::KeySourceTag::SystemdHost;
+    // `has-tpm2` exits: 0 yes, 16 a TPM with no libraries (Debian 13 cloud image with a vTPM),
+    // 19 no TPM device (a VM), 27 a container; other codes are partial answers.
+    for (exit, expected) in [
+        (0, TpmFacts::Usable),
+        (16, TpmFacts::LibrariesMissing),
+        (19, TpmFacts::Unavailable),
+        (27, TpmFacts::Unavailable),
+    ] {
+        let creds = fake_systemd_creds(V257, "echo key", exit);
+        assert_eq!(
+            sealed_key_with(SystemdHost, &creds, true),
+            VaultFacts::Sealed {
+                tag: SystemdHost,
+                key: SealedKeyFacts::Opens,
+                tpm: Some(expected)
+            },
+            "exit {exit}"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_other_ways_a_sealed_key_fails_are_told_apart() {
+    use puddle_secrets::{KeySourceTag::SystemdHost, Unseal};
+    let key_of = |facts: VaultFacts| match facts {
+        VaultFacts::Sealed { key, .. } => key,
+        other => panic!("{other:?}"),
+    };
+    // Ubuntu 24.04 (255): `--user` is unknown, found out from `--version`, not from the English.
+    let old = fake_systemd_creds(
+        "systemd 255 (255.4-1ubuntu8.18)",
+        "echo \"systemd-creds: unrecognized option '--user'\" >&2; exit 1",
+        19,
+    );
+    assert_eq!(
+        key_of(sealed_key_with(SystemdHost, &old, true)),
+        SealedKeyFacts::Fails(Unseal::Unsupported)
+    );
+    // Wrong or missing `--name` on 257 to 259.
+    let name = fake_systemd_creds(
+        V257,
+        "echo \"Name in credential doesn't match expectations.\" >&2; exit 1",
+        19,
+    );
+    assert_eq!(
+        key_of(sealed_key_with(SystemdHost, &name, true)),
+        SealedKeyFacts::Fails(Unseal::NameMismatch)
+    );
+    // The service does not answer (Debian 13 user unit without a key, an unreachable bus).
+    let silent = fake_systemd_creds(V257, "echo 'Failed to connect' >&2; exit 1", 19);
+    assert_eq!(
+        key_of(sealed_key_with(SystemdHost, &silent, true)),
+        SealedKeyFacts::Fails(Unseal::Failed)
+    );
+    // No `systemd-creds` on the path.
+    let none = tempfile::tempdir().unwrap();
+    assert_eq!(
+        key_of(sealed_key_with(SystemdHost, &none, true)),
+        SealedKeyFacts::Fails(Unseal::ToolMissing)
+    );
+    // A call that hangs is killed and reported as a timeout.
+    let hang = fake_systemd_creds(V257, "sleep 30", 19);
+    let config = tempfile::tempdir().unwrap();
+    let file = puddle_secrets::sealed_key_path(config.path());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, b"sealed").unwrap();
+    assert!(matches!(
+        sealed_key_facts_in(
+            SystemdHost,
+            Some(config.path()),
+            Some(hang.path().as_os_str().to_owned()),
+            Duration::from_millis(300)
+        ),
+        VaultFacts::Sealed {
+            key: SealedKeyFacts::Fails(Unseal::TimedOut),
+            ..
+        }
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_key_file_or_a_key_the_service_passes_is_not_examined() {
+    use puddle_secrets::KeySourceTag::{KeyFile, SystemdHost};
+    // A fake that would fail the test if it ran: neither case calls `systemd-creds`.
+    let creds = fake_systemd_creds(V257, "exit 99", 99);
+    assert_eq!(
+        sealed_key_with(KeyFile, &creds, true),
+        VaultFacts::Header(KeyFile)
+    );
+    assert_eq!(
+        sealed_key_with(SystemdHost, &creds, false),
+        VaultFacts::Header(SystemdHost)
+    );
+    assert_eq!(
+        sealed_key_facts_in(SystemdHost, None, None, Duration::from_secs(1)),
+        VaultFacts::Header(SystemdHost)
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_probe_checks_the_sealed_key_of_a_file_vault_in_the_folders_it_was_given() {
+    use puddle_secrets::{FileVault, KeySourceTag, StoreKind, VaultKey, vault_path};
+    let data = data_with_store(StoreKind::File);
+    FileVault::create(
+        &vault_path(data.path()),
+        VaultKey::from_bytes([7; 32]),
+        KeySourceTag::SystemdHost,
+    )
+    .unwrap();
+    let creds = fake_systemd_creds(V257, "echo key", 16);
+    let config = tempfile::tempdir().unwrap();
+    let file = puddle_secrets::sealed_key_path(config.path());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, b"sealed").unwrap();
+    let probe = SystemProbe::new(
+        // az-ok: only the credential store is probed here, never `az`
+        data.path().to_path_buf(),
+        RuntimeVersion::built_for(),
+        DevOverride::from_env(),
+    )
+    .with_data_dir(data.path())
+    .with_sealed_key_search(config.path(), creds.path());
+    assert_eq!(
+        probe.credential_store(),
+        CredentialStoreFacts::File(VaultFacts::Sealed {
+            tag: KeySourceTag::SystemdHost,
+            key: SealedKeyFacts::Opens,
+            tpm: Some(TpmFacts::LibrariesMissing)
+        })
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_systemd_creds_that_cannot_start_or_whose_tpm_answer_hangs_is_reported_not_guessed() {
+    use puddle_secrets::{KeySourceTag::SystemdHost, Unseal};
+    let config = tempfile::tempdir().unwrap();
+    let file = puddle_secrets::sealed_key_path(config.path());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, b"sealed").unwrap();
+    // A file that is not executable is found on the path and cannot be started.
+    let broken = tempfile::tempdir().unwrap();
+    std::fs::write(broken.path().join("systemd-creds"), "#!/bin/sh\n").unwrap();
+    assert!(matches!(
+        sealed_key_facts_in(
+            SystemdHost,
+            Some(config.path()),
+            Some(broken.path().as_os_str().to_owned()),
+            Duration::from_secs(5)
+        ),
+        VaultFacts::Sealed {
+            key: SealedKeyFacts::Fails(Unseal::Failed),
+            tpm: Some(TpmFacts::Unknown),
+            ..
+        }
+    ));
+    // The key opens and `has-tpm2` hangs: the limit kills it and the answer is unknown.
+    let hang = tempfile::tempdir().unwrap();
+    puddle_test_kit::write_executable(
+        &hang.path().join("systemd-creds"),
+        "#!/bin/sh\ncase \"$1\" in has-tpm2) sleep 30;; *) echo key;; esac\n",
+    );
+    assert!(matches!(
+        sealed_key_facts_in(
+            SystemdHost,
+            Some(config.path()),
+            Some(hang.path().as_os_str().to_owned()),
+            Duration::from_millis(500)
+        ),
+        VaultFacts::Sealed {
+            key: SealedKeyFacts::Opens,
+            tpm: Some(TpmFacts::Unknown),
+            ..
+        }
+    ));
 }

@@ -4437,6 +4437,11 @@ export interface components {
             effective_limits: components["schemas"]["EffectiveLimits"];
             /** @description The limits the user set (global only). */
             limits: components["schemas"]["Limits"];
+            /**
+             * @description Whether this build has the managed mise layer at all. When false (the v0.1 build)
+             *     the window shows no mise setting and the layer is off whatever `tools.mise` holds.
+             */
+            mise_available: boolean;
             /** @description The tool switches (global only). */
             tools: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */

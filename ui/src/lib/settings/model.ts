@@ -155,9 +155,12 @@ export function bodyFrom(
   };
 }
 
-/** Whether Puddle manages tools with mise in workspaces: an unset global switch is on. */
+/**
+ * Whether Puddle manages tools with mise in workspaces: an unset global switch is on, and a build
+ * without the mise layer (the v0.1 build) never does.
+ */
 export const miseManaged = (view: GlobalView): boolean =>
-  view.tools.mise ?? true;
+  view.mise_available && (view.tools.mise ?? true);
 
 /** What a toggle shows: the stored value, else Puddle's default (off). */
 export const toggleOn = (value: boolean | null | undefined): boolean =>

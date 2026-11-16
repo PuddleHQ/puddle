@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, test-hooks, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks   (pre-commit hook)
-#   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all      = fast quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
 #              the day's advisory databases and not on the change, plus diff-coverage-fast right after the fast gates
@@ -247,6 +247,14 @@ run_gate() {
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
         ;;
+    dormant)
+        # the build that ships (default features, so the `serve` and `mise` cargo features
+        # are off) shows nothing of `puddle serve`, mise or the built-in mise rule set: not in the
+        # CLI help or usage, not in the rule list, and no stored switch turns the layer on. The
+        # `test` gate runs these tests with every feature on, where they check the opposite.
+        "$cargo" test --locked -p puddle --test dormant
+        "$cargo" test --locked -p puddle-api --test api_http nothing_of_the_mise_layer_shows_in_a_build_without_it
+        ;;
     clippy-windows)
         # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)
         # build for the msvc target. It drives clang as clang-cl and the toolchain's llvm-ar as
@@ -485,7 +493,7 @@ run_gate() {
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
 fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks"
-all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
+all_gates="$fast_gates quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"
 for g in $all_gates; do

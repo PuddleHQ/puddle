@@ -1,5 +1,9 @@
 # Running Puddle without a window: `puddle serve`
 
+> **Not in the v0.1 build.** The `serve` command is switched off in the build that ships: it is not in
+> `puddle --help` and `puddle serve` answers "unknown argument". The code is all still there. Build with
+> `cargo build -p puddle --features serve` to get it back; this page describes that build.
+
 `puddle serve` runs the Puddle host with no desktop window: the store, the proxies, the sandbox
 runtime, the workspaces and the local API. It runs until Ctrl-C, a termination signal or the end of
 the console session, then stops every workspace cleanly.

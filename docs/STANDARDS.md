@@ -572,7 +572,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 **Concurrent gates.** Within a set, `fast` (and, in `pre-push`, `diff-coverage-fast` after it) runs first, one gate at a time, and a failure stops the run.
 The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates (`git-env`, `clippy`,
-`clippy-windows`, `openapi`, `doc`, `coverage`), the UI chain (`ui`, `ui-licences`, `ui-audit`, `ui-e2e`) and the
+`clippy-windows`, `dormant`, `openapi`, `doc`, `coverage`), the UI chain (`ui`, `ui-licences`, `ui-audit`, `ui-e2e`) and the
 read-only scans (`secrets`, `deny`, `advisories`, `notices`). `coverage` waits for `ui`, which builds the UI it tests against.
 A gate's output is kept and printed whole under its `==> <gate>` line when it finishes, followed by
 `-- <gate>: ok, N s`; a failed gate stops its own stream only, the other streams finish, and the run exits with the

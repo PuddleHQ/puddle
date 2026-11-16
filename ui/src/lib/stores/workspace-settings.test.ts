@@ -141,6 +141,13 @@ describe("the tool switches", () => {
     expect(settings.globalMise).toBe(false);
   });
 
+  it("treats the layer as off in a build without it, whatever the switch stores", async () => {
+    api.globalMise = true;
+    api.miseAvailable = false;
+    await settings.load("demo");
+    expect(settings.globalMise).toBe(false);
+  });
+
   it("treats an unset global switch as on", async () => {
     await settings.load("demo");
     expect(settings.globalMise).toBe(true);

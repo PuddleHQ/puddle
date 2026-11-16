@@ -63,6 +63,7 @@ describe("the change a save sends", () => {
       unknown_fields: [],
       vscode_server: fake.vscode,
       tools: fake.tools,
+      mise_available: true,
       limits: fake.limits,
       effective_limits: FAKE_EFFECTIVE_LIMITS,
       workspace_defaults: fake.layer,

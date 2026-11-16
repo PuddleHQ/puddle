@@ -374,10 +374,6 @@ const HOP_BY_HOP: [&str; 8] = [
     "upgrade",
 ];
 
-/// The prefix of the header names Puddle uses between the guest agent and the proxy, and on its
-/// own answers. None of them travels upstream, whoever wrote it.
-const PUDDLE_HEADER_PREFIX: &str = "x-puddle-";
-
 /// The head sent upstream for a plain-HTTP request. Hop-by-hop and proxy headers and Puddle's
 /// own header names are dropped, `Host` is replaced by the checked target (RFC 9112 §3.2.2: a proxy ignores the client's `Host`
 /// for an absolute-form target), and `Connection: close` ends the upstream connection after this
@@ -407,7 +403,8 @@ pub(crate) fn upstream_head(
     }
     for h in &head.headers {
         let name = header_name(h);
-        if !hop.contains(&name) && !name.starts_with(PUDDLE_HEADER_PREFIX) {
+        if !hop.contains(&name) && !name.starts_with(crate::terminate::request::PROXY_HEADER_PREFIX)
+        {
             out.push_str(h);
             out.push_str("\r\n");
         }

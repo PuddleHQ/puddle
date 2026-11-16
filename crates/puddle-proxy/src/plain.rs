@@ -16,7 +16,7 @@
 use std::net::SocketAddr;
 
 use ::http::HeaderValue;
-use ::http::header::{HOST, HeaderName, PROXY_AUTHORIZATION};
+use ::http::header::{HOST, PROXY_AUTHORIZATION};
 use http_body_util::BodyExt as _;
 use hyper_util::rt::TokioIo;
 use puddle_types::{
@@ -39,10 +39,6 @@ use crate::upstream::{Admitted, ProxyForm, connect_out};
 
 /// What feeds a request body to the upstream client.
 type BodySender = tokio::sync::mpsc::Sender<bytes::Bytes>;
-
-/// The prefix of the header names Puddle uses between the guest agent and the proxy. None of them
-/// travels upstream, whoever wrote it.
-const PUDDLE_HEADER_PREFIX: &str = "x-puddle-";
 
 /// One plain-HTTP request whose head passed the checks that need no rule.
 pub(crate) struct Incoming {
@@ -430,14 +426,6 @@ fn upstream_request(
     let host = HeaderValue::from_str(&target.host_header())
         .map_err(|_| Refusal::new("400 Bad Request", "host"))?;
     headers.insert(HOST, host);
-    let ours: Vec<HeaderName> = headers
-        .keys()
-        .filter(|name| name.as_str().starts_with(PUDDLE_HEADER_PREFIX))
-        .cloned()
-        .collect();
-    for name in ours {
-        headers.remove(name);
-    }
     let uri = match via {
         Some(proxy) => {
             if let Some(secret) = proxy.authorization.as_ref() {

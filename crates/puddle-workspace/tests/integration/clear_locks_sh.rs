@@ -857,17 +857,15 @@ async fn a_gitdir_pointer_that_leaves_the_volume_is_reported_and_not_followed() 
     }
 }
 
-/// Detaches `api` the way `how` says and returns the commit it is now at.
-fn detach(api: &Path, how: &str) -> String {
+/// Detaches `api` with `git checkout -q <args>` after adding a third commit and the tags `v1`
+/// (on `feature`) and `v2` (on the new tip), and returns the commit it is now at.
+fn detach(api: &Path, args: &[&str]) -> String {
     git_ok(api, &["tag", "v1", "feature"]);
     git_ok(api, &["commit", "--allow-empty", "-qm", "third"]);
     git_ok(api, &["tag", "v2"]);
-    match how {
-        "HEAD~1" => git_ok(api, &["checkout", "-q", "HEAD~1"]),
-        "v2^" => git_ok(api, &["checkout", "-q", "v2^"]),
-        "--detach" => git_ok(api, &["checkout", "-q", "--detach"]),
-        other => panic!("unknown way {other}"),
-    }
+    let mut checkout = vec!["checkout", "-q"];
+    checkout.extend_from_slice(args);
+    git_ok(api, &checkout);
     git_text(api, &["rev-parse", "HEAD"])
 }
 
@@ -877,7 +875,7 @@ async fn a_zero_filled_head_detached_by_a_revision_is_rewritten_detached() {
         for how in ["HEAD~1", "v2^", "--detach"] {
             let fx = repair_fixture();
             let api = fx.vol.join("api");
-            let at = detach(&api, how);
+            let at = detach(&api, &[how]);
             zero_fill(&api.join(".git/HEAD"), 41);
             let report = run(shell, &fx).await;
             assert_eq!(

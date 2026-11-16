@@ -6109,6 +6109,7 @@ dependencies = [
  "puddle-appicon",
  "puddle-certs",
  "puddle-doctor",
+ "puddle-front",
  "puddle-fs",
  "puddle-netpolicy",
  "puddle-repos",

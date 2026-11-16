@@ -30,6 +30,7 @@ hyper-util = { workspace = true }
 puddle-appicon = { workspace = true }
 puddle-certs = { workspace = true }
 puddle-doctor = { workspace = true }
+puddle-front = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-repos = { workspace = true }

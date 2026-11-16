@@ -11,6 +11,7 @@
   import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
+  import AuditRetention from "#lib/components/AuditRetention.svelte";
   import DevicesPanel from "#lib/components/DevicesPanel.svelte";
   import { DevicesStore } from "#lib/stores/devices.svelte.ts";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
@@ -97,6 +98,7 @@
     ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
     ["s-disk", "Disk space"],
+    ["s-audit", "Activity log"],
     ["s-ssh", "SSH agent"],
     ["s-net", "Network"],
     ["s-vsc", "Browser VS Code"],
@@ -973,6 +975,11 @@
           />
         </div>
         {#if linesError}<p class="error" role="alert">{linesError}</p>{/if}
+      </section>
+
+      <section class="card" id="s-audit" aria-labelledby="h-audit">
+        <h2 id="h-audit">Activity log</h2>
+        <AuditRetention />
       </section>
 
       <section class="card" id="s-ssh" aria-labelledby="h-ssh">

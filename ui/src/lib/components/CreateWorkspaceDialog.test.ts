@@ -351,12 +351,25 @@ describe("CreateWorkspaceDialog", () => {
     );
     expect(field("Git repository (HTTPS)")).toHaveFocus();
     expect(create).not.toHaveBeenCalled();
-    await type("Git repository (HTTPS)", "git@github.com:acme/web.git");
+    await type("Git repository (HTTPS)", "git@git.example.com:acme/web.git");
     await type("Name", "web");
     await fireEvent.click(submit());
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "SSH remotes are not supported yet; use the repository's HTTPS URL instead.",
+      "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.",
     );
+  });
+
+  it("takes an SSH address of a Git host and sends it as typed for the host to turn into HTTPS", async () => {
+    const { create } = mount();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "git@github.com:acme/web.git");
+    await type("Name", "web");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      repositories: [{ url: "git@github.com:acme/web.git" }],
+    });
   });
 
   it("checks the memory field too", async () => {

@@ -201,6 +201,27 @@ async fn plain_http_is_forwarded_without_the_proxy_credentials() {
 }
 
 #[tokio::test]
+async fn a_guest_puddle_header_never_reaches_the_registry_over_plain_http() {
+    let endpoints = PuddleEndpoints::new();
+    let (server, heads) = http_server().await;
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let target = format!("registry.test:{}", server.port());
+    let (head, _s) = send(
+        route.local_addr(),
+        &format!(
+            "GET http://{target}/v2/ HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {good}\r\nX-Kept: yes\r\nx-puddle-workspace: other\r\nX-Puddle-Decision: allow\r\n\r\n"
+        ),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    let heads = heads.lock().unwrap().clone();
+    assert_eq!(heads.len(), 1);
+    let upstream = heads[0].to_ascii_lowercase();
+    assert!(upstream.contains("x-kept: yes"), "{upstream}");
+    assert!(!upstream.contains("x-puddle-"), "{upstream}");
+}
+
+#[tokio::test]
 async fn puddles_own_endpoints_and_metadata_are_blocked() {
     let endpoints = PuddleEndpoints::new();
     let api = echo().await;

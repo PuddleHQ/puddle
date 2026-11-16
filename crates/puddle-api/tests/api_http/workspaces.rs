@@ -197,6 +197,31 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
 }
 
 #[tokio::test]
+async fn create_takes_a_cpu_count_up_to_the_global_maximum() {
+    let api = start().await;
+    let put = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"limits": {"max_cpus": 6}})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    let body = |cpus: u32| json!({"name": "c", "repositories": [{"url": REPO}], "cpus": cpus});
+    let reply = api.send("POST", "/api/workspaces", Some(&body(7))).await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert!(
+        reply.body.contains("cpus: 7 is more than"),
+        "{}",
+        reply.body
+    );
+    let reply = api.send("POST", "/api/workspaces", Some(&body(6))).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    api.workspaces.idle().await;
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn create_takes_an_image_and_memory() {
     let api = start().await;
     let reply = api
@@ -418,7 +443,7 @@ async fn create_with_two_identities_that_cover_the_same_place_is_a_409_and_makes
 }
 
 /// Create bodies the API refuses with 422, each with a part of the message it gives.
-fn refused_bodies() -> [(Value, &'static str); 20] {
+fn refused_bodies() -> [(Value, &'static str); 21] {
     let long = "w".repeat(61);
     [
         (
@@ -464,6 +489,10 @@ fn refused_bodies() -> [(Value, &'static str); 20] {
         (
             json!({"name": "a", "repositories": [{"url": REPO}], "memory_mib": 10}),
             "memory",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}], "cpus": 0}),
+            "cpu count",
         ),
         (
             json!({"name": "a", "repositories": [{"url": REPO}], "image": "no spaces allowed"}),

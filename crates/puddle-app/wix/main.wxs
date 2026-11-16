@@ -63,19 +63,23 @@
         </InstallExecuteSequence>
 
         <!-- The installer never replaces files under a running Puddle and never ends it by force.
-             WixCloseApplications (a compiled action of WixUtilExtension, no script) only looks: the
-             CloseApplication rows below set a property when the shell (puddle-app.exe) or a
+             The compiled action of WixUtilExtension that reads the CloseApplication rows (no script)
+             only looks: the rows below set a property when the shell (puddle-app.exe) or a
              workspace runtime (msb.exe) runs, and name no close message, no end-session message and
-             no process termination, so it asks nothing of the program. PuddleRunning then stops
-             the install with the message, before InstallInitialize, so nothing has been changed:
+             no process termination, so it asks nothing of the program. The extension schedules its
+             own run after the old version is already removed, too late, so PuddleDetect runs the
+             same entry point before InstallValidate. PuddleRunning then stops the install with
+             the message, before InstallInitialize, so nothing has been changed:
              the installed files, its data and its workspaces stay as they were, and no file is
              queued for replacement at the next restart. A silent run exits with the standard
              failure code and the same text in its log. ci/msi-install-test.ps1 checks all of it. -->
         <util:CloseApplication Id="PuddleShellRunning" Target="puddle-app.exe" Property="PUDDLE_SHELL_RUNNING" RebootPrompt="no" />
         <util:CloseApplication Id="PuddleRuntimeRunning" Target="msb.exe" Property="PUDDLE_RUNTIME_RUNNING" RebootPrompt="no" />
+        <CustomAction Id="PuddleDetect" BinaryKey="WixCA" DllEntry="WixCloseApplications" Execute="immediate" Return="check" SuppressModularization="yes" />
         <CustomAction Id="PuddleRunning" Error="Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again." />
         <InstallExecuteSequence>
-            <Custom Action="PuddleRunning" After="WixCloseApplications"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
+            <Custom Action="PuddleDetect" Before="InstallValidate" />
+            <Custom Action="PuddleRunning" After="PuddleDetect"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
         </InstallExecuteSequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />

@@ -22,6 +22,7 @@ pub struct ShellInitView {
 
 /// The script to save.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ShellInitRequest {
     /// The whole script. Line ends become LF. At most 48 KiB, no NUL, not empty (to remove the
     /// shell init, delete it).

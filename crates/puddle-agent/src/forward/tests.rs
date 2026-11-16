@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_yamux::{Config, Session};
+use tokio::net::TcpListener;
+use tokio_test::io::Builder;
+use tokio_yamux::{Config, Session, StreamHandle};
 
 use super::*;
 use crate::host_streams::HostStreams;
@@ -90,5 +92,24 @@ fn a_refusal_means_nothing_listens_and_any_other_failure_is_named() {
     assert!(
         other.contains("did not take a connection on port 80") && other.contains("timed out"),
         "{other}"
+    );
+}
+
+#[tokio::test]
+async fn a_host_stream_that_fails_while_the_answer_is_written_leaves_the_connection_closed() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // The request arrives, the agent connects, and the stream fails at the answer.
+    let host = Builder::new()
+        .read(format!("{port}\n").as_bytes())
+        .write_error(io::Error::from(io::ErrorKind::BrokenPipe))
+        .build();
+    Forwards::new(vec![]).serve(host).await;
+    let (mut accepted, _) = listener.accept().await.unwrap();
+    let mut rest = Vec::new();
+    accepted.read_to_end(&mut rest).await.unwrap();
+    assert!(
+        rest.is_empty(),
+        "the guest's server got {rest:?} from a forward that never started"
     );
 }

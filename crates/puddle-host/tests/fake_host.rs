@@ -13704,6 +13704,134 @@ async fn a_disk_that_cannot_be_read_makes_no_entry() {
     host.shutdown().await;
 }
 
+/// A runtime that cannot list its disks: the list says so and a restore still works, only the
+/// notice about the other disks stays as it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_that_cannot_list_its_disks_is_reported_and_does_not_stop_a_restore() {
+    let logs = support::capture_logs();
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    rig.runtime
+        .inject(Op::ListVolumes, Fault::always(disk_error("list volumes")));
+
+    let listed = api.get("/api/orphan-volumes").await;
+    assert_eq!(listed.status, 503, "{}", listed.body);
+    assert!(
+        listed.body.contains("cannot list its workspace disks"),
+        "{}",
+        listed.body
+    );
+
+    let restored = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(restored.status, 201, "{}", restored.body);
+    let logged = String::from_utf8_lossy(&logs.lock().unwrap()).into_owned();
+    assert!(
+        logged.contains("the unclaimed workspace disks could not be listed"),
+        "{logged}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_the_runtime_cannot_look_up_makes_no_entry() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    let host = rig.start().await;
+    let api = api(&host);
+    rig.runtime
+        .inject(Op::Volume, Fault::always(disk_error("volume")));
+
+    let reply = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(
+        reply.body.contains("cannot look up ws-lost"),
+        "{}",
+        reply.body
+    );
+    rig.runtime.clear_faults();
+    assert_eq!(orphan_ids(&api).await, ["lost"]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_is_refused_while_the_settings_cannot_say_how_much_memory_it_gets() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    damage_global_settings(&rig);
+    let host = rig.start().await;
+    let api = api(&host);
+
+    let reply = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("how much memory the workspace gets"),
+        "{}",
+        reply.body
+    );
+    assert_eq!(orphan_ids(&api).await, ["lost"]);
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_asked_after_shutdown_began_is_refused_and_leaves_the_disk() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    let host = rig.start().await;
+    let api = api(&host);
+    host.workspaces().close();
+
+    let reply = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("shutting down"), "{}", reply.body);
+    host.shutdown().await;
+}
+
+/// The disk is read without the lock, so shutdown can begin while the listing runs: the restore
+/// then makes no entry.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_whose_listing_ends_after_shutdown_began_makes_no_entry() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    *rig.guest.listing_hold.lock().unwrap() = Some(hold);
+    let asked = {
+        let api = api(&host);
+        tokio::spawn(async move { api.post("/api/orphan-volumes/lost/restore", "{}").await })
+    };
+    eventually("the listing is held", Duration::from_secs(20), || {
+        rig.guest.listing_waits.load(Ordering::SeqCst)
+    })
+    .await;
+    host.workspaces().close();
+    release.send(()).unwrap();
+
+    let reply = asked.await.unwrap();
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("shutting down"), "{}", reply.body);
+    assert!(
+        api(&host).get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    host.shutdown().await;
+}
+
 /// An event already in the socket when the deadline has passed is read, not reported as a timeout.
 #[tokio::test]
 async fn event_reader_sees_an_event_queued_past_the_deadline() {

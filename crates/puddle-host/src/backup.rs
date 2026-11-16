@@ -12,8 +12,8 @@
 //! This process never takes the data-folder lock, since the host that runs holds it, and it
 //! writes nothing in the data folder.
 
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use puddle_fs::private;
@@ -173,6 +173,126 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize, BackupError> {
         }
     }
     Ok(copied)
+}
+
+/// Makes backups of one data folder for the API: [`puddle_api::BackupService`] over
+/// [`backup_archive`]. The copy runs on a blocking thread, since it reads and writes files and
+/// waits for the database.
+#[derive(Debug, Clone)]
+pub(crate) struct DataFolderBackup {
+    paths: HostPaths,
+}
+
+impl DataFolderBackup {
+    pub(crate) fn new(paths: HostPaths) -> Self {
+        Self { paths }
+    }
+}
+
+impl puddle_api::BackupService for DataFolderBackup {
+    fn create(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        Result<puddle_api::BackupArchive, puddle_api::BackupServiceError>,
+    > {
+        let paths = self.paths.clone();
+        Box::pin(async move {
+            let archive = blocking(move || backup_archive(&paths)).await?;
+            Ok(puddle_api::BackupArchive::new(
+                archive.size,
+                tokio::fs::File::from_std(archive.file),
+            ))
+        })
+    }
+}
+
+/// Runs `job` on a blocking thread; a job that fails or panics is a failed backup that says why.
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, BackupError> + Send + 'static,
+) -> Result<T, puddle_api::BackupServiceError> {
+    let made = tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|e| puddle_api::BackupServiceError::Failed(format!("the backup stopped: {e}")))?;
+    made.map_err(|e| puddle_api::BackupServiceError::Failed(e.to_string()))
+}
+
+/// A backup packed into one file: a gzip-compressed tar archive of the three parts at its top
+/// level (`puddle.db`, `settings/…`, `workspaces.json`), ready to read from the start.
+#[derive(Debug)]
+pub struct BackupArchive {
+    /// The archive, open and positioned at its first byte. It has no name on disk: it is gone when
+    /// the last handle closes, so a half-sent download leaves nothing behind.
+    pub file: File,
+    /// The archive's size in bytes.
+    pub size: u64,
+    /// What the backup inside holds.
+    pub report: BackupReport,
+}
+
+/// Makes a backup of the data folder `paths` names (see [`backup`]) and packs it into one archive.
+///
+/// The parts are staged in a private temporary folder that is removed before this returns, and the
+/// archive is an unnamed temporary file; nothing is written in the data folder.
+///
+/// # Errors
+///
+/// [`BackupError`] as for [`backup`], or [`BackupError::Io`] when the archive cannot be written.
+pub fn backup_archive(paths: &HostPaths) -> Result<BackupArchive, BackupError> {
+    backup_archive_in(paths, &tempfile::env::temp_dir())
+}
+
+/// [`backup_archive`] with its temporary folder and file made in `scratch`.
+fn backup_archive_in(paths: &HostPaths, scratch: &Path) -> Result<BackupArchive, BackupError> {
+    let staging = tempfile::Builder::new()
+        .prefix("puddle-backup-")
+        .tempdir_in(scratch)
+        .map_err(io_error("cannot create a temporary folder in", scratch))?;
+    let folder = staging.path().join("backup");
+    let report = backup(paths, &folder)?;
+    let (file, size) = pack(&folder, scratch)?;
+    Ok(BackupArchive { file, size, report })
+}
+
+/// Packs the backup folder `folder` into a new unnamed temporary file made in `scratch`, with no
+/// owner, group or modification time in the entries, so the same backup always packs to the same
+/// entries.
+fn pack(folder: &Path, scratch: &Path) -> Result<(File, u64), BackupError> {
+    pack_io(folder, scratch).map_err(io_error("cannot write the archive of", folder))
+}
+
+fn pack_io(folder: &Path, scratch: &Path) -> io::Result<(File, u64)> {
+    let file = tempfile::tempfile_in(scratch)?;
+    let gzip = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut tar = tar::Builder::new(gzip);
+    tar.mode(tar::HeaderMode::Deterministic);
+    tar.follow_symlinks(false);
+    append_below(&mut tar, folder, Path::new(""))?;
+    let mut file = tar.into_inner()?.finish()?;
+    let size = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(0))?;
+    Ok((file, size))
+}
+
+/// Appends the files below `folder/relative`, in name order so the archive is stable. A backup
+/// folder holds only regular files and folders; anything else would be written as the link or
+/// special entry it is, which a restore refuses.
+fn append_below<W: io::Write>(
+    tar: &mut tar::Builder<W>,
+    folder: &Path,
+    relative: &Path,
+) -> io::Result<()> {
+    let mut entries = fs::read_dir(folder.join(relative))?.collect::<io::Result<Vec<_>>>()?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let name = relative.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            append_below(tar, folder, &name)?;
+        } else {
+            tar.append_path_with_name(entry.path(), &name)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

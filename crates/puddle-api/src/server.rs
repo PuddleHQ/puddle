@@ -12,6 +12,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::IntoResponse;
+use futures_util::future::OptionFuture;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -31,6 +32,7 @@ use tower_http::timeout::TimeoutLayer;
 use crate::admin::AdminService;
 use crate::auth::{Guard, Listener, guard};
 use crate::authz::{Isolation, Principal, authorize};
+use crate::backup::{BackupService, NoBackup};
 use crate::credential_store::{CredentialStoreService, NoCredentialStore};
 use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
 use crate::dev_cert::{DevCertService, NoDevCert};
@@ -57,8 +59,9 @@ use crate::workspaces::{NoWorkspaces, WorkspaceService};
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
 /// How long the routes of [`slow_router`] may take: the system check's test boot (up to about 30
-/// s) and a few checks queued behind each other, or the trust route's wait for the user, which
-/// gives up after two minutes on its own.
+/// s) and a few checks queued behind each other, the trust route's wait for the user, which
+/// gives up after two minutes on its own, or the copy a backup makes before it answers (the
+/// download itself is not under this limit).
 const SLOW_REQUEST_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// How long a client may take to send a request's headers.
@@ -165,6 +168,9 @@ pub struct Services {
     /// [`Services::new`] starts with [`NoRepos`], which answers 503; set the real one with
     /// [`Services::with_repos`].
     pub repos: Arc<dyn RepoService>,
+    /// The backup download in Settings. [`Services::new`] starts with [`NoBackup`], which answers
+    /// 503; set the real one with [`Services::with_backup`].
+    pub backup: Arc<dyn BackupService>,
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
@@ -225,6 +231,7 @@ impl Services {
             credentials: Arc::new(NoCredentials),
             secrets: Arc::new(NoSecretStore),
             repos: Arc::new(NoRepos),
+            backup: Arc::new(NoBackup),
             doctor: Arc::new(NoDoctor),
             credential_store: Arc::new(NoCredentialStore),
             dev_cert: Arc::new(NoDevCert),
@@ -302,6 +309,13 @@ impl Services {
         credential_store: Arc<dyn CredentialStoreService>,
     ) -> Self {
         self.credential_store = credential_store;
+        self
+    }
+
+    /// These services with this backup maker.
+    #[must_use]
+    pub fn with_backup(mut self, backup: Arc<dyn BackupService>) -> Self {
+        self.backup = backup;
         self
     }
 
@@ -675,10 +689,8 @@ impl ApiServer {
         // Registered before anything can serve, so there is no moment a guest could reach it.
         let registration = services.endpoints.register(addr, EndpointKind::Api);
         let network = bind_network_for(&config, &services.endpoints).await?;
-        let fronts_names = match config.remote.as_ref() {
-            Some(remote) => Some(front_blocks(remote, &services).await),
-            None => None,
-        };
+        let fronts_names =
+            OptionFuture::from(config.remote.as_ref().map(|r| front_blocks(r, &services))).await;
         let (stop, shutdown) = watch::channel(false);
         let settings_lock = services
             .workspaces
@@ -700,6 +712,7 @@ impl ApiServer {
             credentials: services.credentials,
             secrets: services.secrets,
             repos: services.repos,
+            backup: services.backup,
             doctor: services.doctor,
             credential_store: services.credential_store,
             dev_cert: services.dev_cert,

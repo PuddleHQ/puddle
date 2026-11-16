@@ -44,7 +44,7 @@ sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 tokio-rustls = { workspace = true }
-tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
 tower-http = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }

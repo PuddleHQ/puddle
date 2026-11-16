@@ -12,9 +12,6 @@ use utoipa::ToSchema;
 pub enum DevCertificate {
     /// Puddle has not looked (no service is wired in this build or state).
     NotChecked,
-    /// Windows already trusts an ASP.NET development certificate, so Puddle uses it in every
-    /// workspace with no dialog.
-    ReusingExisting,
     /// Puddle made its own localhost certificate and Windows trusts it.
     Trusted,
     /// Puddle's own certificate is not trusted yet: Windows asks the user once to confirm.

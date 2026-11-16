@@ -18,7 +18,6 @@ describe("the Trust button", () => {
     expect(canTrust("trust_declined")).toBe(true);
     for (const status of [
       "trusted",
-      "reusing_existing",
       "trust_failed",
       "unsupported",
       "not_checked",
@@ -69,13 +68,6 @@ describe("the note under the Trust button", () => {
 });
 
 describe("the development certificate line", () => {
-  it("says Puddle uses the one Windows already trusts", () => {
-    const line = devCertificateLine("reusing_existing");
-    expect(line.tone).toBe("ok");
-    expect(line.title).toBe("Using your existing .NET development certificate");
-    expect(line.text).toMatch(/No trust dialog/);
-  });
-
   it("says every other state in words, and which of them warns", () => {
     const cases = [
       ["trusted", "ok", "Development certificate trusted", /restart Firefox/],

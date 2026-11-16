@@ -577,154 +577,9 @@ fn reading_the_stores_twice_gives_the_same_selection() {
 
 // ---- the development certificate ---------------------------------------------------------------
 
-use puddle_certs::devcert::{
-    DevCertManager, DevCertStatus, DevCertTrust, KeyAccess, Origin, WindowsTrust,
-};
+use puddle_certs::devcert::{DevCertManager, DevCertStatus, DevCertTrust, WindowsTrust};
 
 mod trust_dialog;
-
-/// A certificate with the ASP.NET marker and a CNG key in `CurrentUser\My`, made like `dotnet
-/// dev-certs` makes its own. `policy` is `New-SelfSignedCertificate`'s `-KeyExportPolicy`:
-/// `Exportable` allows plain export, `ExportableEncrypted` and `NonExportable` do not.
-fn dev_cert(tag: &str, policy: &str) -> TestCert {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join(format!("puddle-devcert-{tag}.cer"));
-    // `Stop` makes a failed cmdlet fail the script: without it a failed New-SelfSignedCertificate
-    // left `$c` empty, Export-Certificate wrote no file and the script still exited 0.
-    let thumbprint = powershell(&format!(
-        "$ErrorActionPreference = 'Stop'; \
-         $c = New-SelfSignedCertificate -Subject 'CN=puddle devcert {tag} {nanos}' -DnsName localhost \
-           -KeyAlgorithm ECDSA_nistP256 -KeyExportPolicy {policy} -CertStoreLocation Cert:\\CurrentUser\\My \
-           -NotAfter (Get-Date).AddDays(90) -TextExtension @('1.3.6.1.4.1.311.84.1.1={{hex}}06'); \
-         Export-Certificate -Cert $c -FilePath '{}' | Out-Null; \
-         $c.Thumbprint",
-        file.display()
-    ))
-    .unwrap_or_else(|e| panic!("making a development certificate: {e}"))
-    .trim()
-    .to_owned();
-    assert!(!thumbprint.is_empty(), "no thumbprint for {tag}");
-    let der = std::fs::read(&file).unwrap();
-    TestCert {
-        der,
-        file,
-        thumbprint,
-        _dir: Some(dir),
-    }
-}
-
-const CU_MY: &str = "Cert:\\CurrentUser\\My";
-/// `New-SelfSignedCertificate` also leaves a copy in the user's intermediate store, which the
-/// corporate-root selection reads; the cleanup removes it there too.
-const CU_CA: &str = "Cert:\\CurrentUser\\CA";
-
-#[test]
-fn an_exportable_development_certificate_is_found_and_its_key_exports() {
-    let Some(_stores) = enabled() else {
-        return;
-    };
-    let cert = dev_cert("exportable", "Exportable");
-    let _cleanup = Cleanup(vec![(&cert, vec![CU_MY, CU_CA], vec![])]);
-
-    let found = WindowsTrust.existing().unwrap();
-    let ours = found
-        .iter()
-        .find(|c| c.der == cert.der)
-        .expect("the certificate in CurrentUser\\My is listed");
-    assert_eq!(ours.key, KeyAccess::Exportable);
-    assert!(!ours.trusted, "it is in My only");
-
-    let key = WindowsTrust.export_key(&cert.der).unwrap();
-    // PKCS#8 (RFC 5958): SEQUENCE { INTEGER version, SEQUENCE algorithm, OCTET STRING key,
-    // [0] attributes OPTIONAL, [1] public key OPTIONAL }. CNG adds optional trailing fields
-    // (the first CI run saw four elements), so the three required ones are checked and the rest
-    // may only be those two context tags.
-    let (_, parsed) = x509_parser::der_parser::parse_der(key.pkcs8_der()).unwrap();
-    let items = parsed.as_sequence().unwrap();
-    let tags: Vec<_> = items.iter().map(|i| i.header.tag().0).collect();
-    eprintln!("exported PKCS#8 element tags {tags:?}");
-    assert!(
-        (3..=5).contains(&items.len()),
-        "a PrivateKeyInfo: tags {tags:?}"
-    );
-    assert_eq!(items[0].as_u32().unwrap(), 0, "version");
-    assert!(items[1].as_sequence().is_ok(), "algorithm identifier");
-    assert!(
-        items[2].as_slice().is_ok_and(|k| !k.is_empty()),
-        "private key"
-    );
-    for extra in &items[3..] {
-        assert!(
-            extra.header.class() == x509_parser::der_parser::ber::Class::ContextSpecific
-                && extra.header.tag().0 <= 1,
-            "optional trailing field: tags {tags:?}"
-        );
-    }
-    // ring is strict about the key's layout; when it accepts it, it must be the certificate's key.
-    if let Ok(pair) = rcgen::KeyPair::try_from(key.pkcs8_der()) {
-        let (_, x509) = x509_parser::parse_x509_certificate(&cert.der).unwrap();
-        assert_eq!(
-            pair.public_key_raw(),
-            x509.public_key().subject_public_key.data.as_ref()
-        );
-    } else {
-        eprintln!("note: the exported PKCS#8 is not in ring's layout (valid for OpenSSL and .NET)");
-    }
-}
-
-#[test]
-fn keys_that_cannot_be_exported_in_plain_form_are_reported_so() {
-    let Some(_stores) = enabled() else {
-        return;
-    };
-    for policy in ["ExportableEncrypted", "NonExportable"] {
-        let cert = dev_cert(policy, policy);
-        let _cleanup = Cleanup(vec![(&cert, vec![CU_MY, CU_CA], vec![])]);
-        let found = WindowsTrust.existing().unwrap();
-        let ours = found.iter().find(|c| c.der == cert.der).unwrap();
-        assert!(
-            matches!(ours.key, KeyAccess::NotExportable(_)),
-            "{policy}: {:?}",
-            ours.key
-        );
-        assert!(WindowsTrust.export_key(&cert.der).is_err(), "{policy}");
-    }
-}
-
-#[test]
-fn a_trusted_exportable_development_certificate_is_reused() {
-    let Some(_stores) = enabled() else {
-        return;
-    };
-    let cert = dev_cert("reuse", "Exportable");
-    // Machine roots are part of the user's trusted roots; the runner is elevated.
-    let _cleanup = Cleanup(vec![(
-        &cert,
-        vec![CU_MY, CU_CA, "Cert:\\LocalMachine\\Root"],
-        vec![],
-    )]);
-    add(&cert, "Cert:\\LocalMachine\\Root");
-
-    let data = tempfile::tempdir().unwrap();
-    let manager = DevCertManager::new(data.path(), WindowsTrust);
-    assert_eq!(
-        manager.status(SystemTime::now()),
-        DevCertStatus::ReusingExisting
-    );
-    let report = manager.ensure(SystemTime::now()).unwrap();
-    assert_eq!(report.status, DevCertStatus::ReusingExisting);
-    assert_eq!(report.material.origin, Origin::ReusedAspNet);
-    assert_eq!(report.material.cert_der(), cert.der);
-    assert_ne!(report.material.key().pkcs8_der().len(), 0);
-    assert!(
-        !data.path().join(puddle_certs::devcert::FOLDER).exists(),
-        "reusing makes no leaf"
-    );
-}
 
 #[test]
 fn the_machine_roots_count_as_trusted_and_an_unknown_certificate_does_not() {
@@ -760,7 +615,6 @@ fn declining_the_trust_dialog_reports_trust_declined_and_leaves_the_store_alone(
     eprintln!("dialog:\n{}", answered.dialog);
 
     assert_eq!(answered.report.status, DevCertStatus::TrustDeclined);
-    assert_eq!(answered.report.material.origin, Origin::Generated);
     trust_dialog::assert_dialog_names(&answered.dialog, &thumbprint);
     assert_eq!(
         trust_dialog::current_user_root(),
@@ -784,7 +638,6 @@ fn trusting_the_leaf_in_the_dialog_adds_it_to_current_user_root() {
     eprintln!("dialog:\n{}", answered.dialog);
 
     assert_eq!(answered.report.status, DevCertStatus::Trusted);
-    assert_eq!(answered.report.material.origin, Origin::Generated);
     trust_dialog::assert_dialog_names(&answered.dialog, &thumbprint);
     assert!(
         trust_dialog::current_user_root().contains(&der),

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_certs::devcert::{ExistingCert, PrivateKey, TrustError, TrustOutcome};
+use puddle_certs::devcert::{TrustError, TrustOutcome};
 use puddle_store::ManualClock;
 
 use super::*;
@@ -7,10 +7,6 @@ use super::*;
 #[test]
 fn every_state_has_a_wire_name() {
     let all = [
-        (
-            DevCertStatus::ReusingExisting,
-            DevCertificate::ReusingExisting,
-        ),
         (DevCertStatus::Trusted, DevCertificate::Trusted),
         (DevCertStatus::NeedsTrust, DevCertificate::NeedsTrust),
         (DevCertStatus::TrustDeclined, DevCertificate::TrustDeclined),
@@ -22,16 +18,10 @@ fn every_state_has_a_wire_name() {
     }
 }
 
-/// A host with an empty personal store that trusts nothing.
+/// A host that trusts nothing.
 struct Empty;
 
 impl DevCertTrust for Empty {
-    fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
-        Ok(Vec::new())
-    }
-    fn export_key(&self, _: &[u8]) -> Result<PrivateKey, TrustError> {
-        Err(TrustError::Failed("none".into()))
-    }
     fn is_trusted(&self, _: &[u8]) -> Result<bool, TrustError> {
         Ok(false)
     }
@@ -47,7 +37,6 @@ fn the_service_reads_the_manager_with_the_hosts_clock() {
     let service = HostDevCert::new(dir.path(), Empty, clock.clone());
     assert_eq!(service.status(), DevCertificate::NeedsTrust);
     // The double's other answers, so no line of it goes unread.
-    assert!(Empty.export_key(b"cert").is_err());
     assert_eq!(Empty.is_trusted(b"cert"), Ok(false));
     assert_eq!(Empty.trust(b"cert"), Ok(TrustOutcome::Declined));
     let unsupported = HostDevCert::new(dir.path(), puddle_certs::devcert::Unsupported, clock);
@@ -119,12 +108,6 @@ impl Answering {
 }
 
 impl DevCertTrust for &Answering {
-    fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
-        Ok(Vec::new())
-    }
-    fn export_key(&self, _: &[u8]) -> Result<PrivateKey, TrustError> {
-        Err(TrustError::Failed("none".into()))
-    }
     fn is_trusted(&self, _: &[u8]) -> Result<bool, TrustError> {
         Ok(*self.trusted.lock().unwrap())
     }
@@ -165,12 +148,6 @@ struct Open {
 }
 
 impl DevCertTrust for &Open {
-    fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
-        Ok(Vec::new())
-    }
-    fn export_key(&self, _: &[u8]) -> Result<PrivateKey, TrustError> {
-        Err(TrustError::Failed("none".into()))
-    }
     fn is_trusted(&self, _: &[u8]) -> Result<bool, TrustError> {
         Ok(false)
     }
@@ -192,9 +169,6 @@ fn a_press_while_the_confirmation_is_open_asks_nothing_and_says_it_is_waiting() 
     };
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
-    // The double's other answer, so no line of it goes unread.
-    let by_ref = &open;
-    assert!(by_ref.export_key(b"cert").is_err());
     let service = HostDevCert::new(dir.path(), &open, clock);
     std::thread::scope(|scope| {
         let first = scope.spawn(|| service.trust());
@@ -214,9 +188,6 @@ fn a_press_while_the_confirmation_is_open_asks_nothing_and_says_it_is_waiting() 
 fn a_confirmation_that_panicked_does_not_stop_the_next_press() {
     let store = Answering::new(Ok(TrustOutcome::Trusted));
     let (_dir, service) = trusting(&store);
-    // The double's other answer, so no line of it goes unread.
-    let by_ref = &store;
-    assert!(by_ref.export_key(b"cert").is_err());
     // A press that panicked while it held the one-at-a-time lock leaves the lock poisoned.
     std::thread::scope(|scope| {
         let panicked = scope.spawn(|| {

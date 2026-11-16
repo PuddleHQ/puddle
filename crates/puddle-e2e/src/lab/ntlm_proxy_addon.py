@@ -84,8 +84,11 @@ class NtlmProxyAuth:
     def requestheaders(self, flow: http.HTTPFlow) -> None:
         # Plain HTTP through this proxy runs the same handshake on its connection (a tunnel's requests
         # arrive on a connection that has already finished it).
-        if flow.request.method != "CONNECT":
-            let_through(flow)
+        if flow.request.method != "CONNECT" and let_through(flow) and flow.request.pretty_host.endswith(".invalid"):
+            # A name no resolver knows (the client's probe on a signed-in connection): answer as a proxy
+            # does when it cannot resolve it, and keep the connection, which holds the sign-in.
+            flow.response = http.Response.make(
+                502, b"", {"Content-Length": "0", "Connection": "keep-alive"})
 
     def response(self, flow: http.HTTPFlow) -> None:
         # One whole line per request that was not tunnelled blind (an intercepting run decrypts them):

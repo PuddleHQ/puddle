@@ -103,22 +103,18 @@ fn mitmproxy() -> bool {
     mitm
 }
 
-/// The head of the answer to one `CONNECT` on an open connection (`auth` is a
-/// `Proxy-Authorization` value, if any); the connection stays open for the next leg.
-fn connect(
+/// The head of the answer to one request on an open connection (`auth` is a `Proxy-Authorization`
+/// value, if any); the connection stays open for the next leg.
+fn ask(
     conn: &mut std::io::BufReader<std::net::TcpStream>,
-    target: u16,
+    request_line: &str,
+    host: &str,
     auth: Option<&str>,
 ) -> String {
     use std::io::{BufRead, Write};
     let header = auth.map_or_else(String::new, |a| format!("Proxy-Authorization: {a}\r\n"));
     conn.get_mut()
-        .write_all(
-            format!(
-                "CONNECT 127.0.0.1:{target} HTTP/1.1\r\nHost: 127.0.0.1:{target}\r\n{header}\r\n"
-            )
-            .as_bytes(),
-        )
+        .write_all(format!("{request_line} HTTP/1.1\r\nHost: {host}\r\n{header}\r\n").as_bytes())
         .unwrap();
     let mut head = String::new();
     loop {
@@ -131,9 +127,62 @@ fn connect(
     }
 }
 
+fn connect(
+    conn: &mut std::io::BufReader<std::net::TcpStream>,
+    target: u16,
+    auth: Option<&str>,
+) -> String {
+    let host = format!("127.0.0.1:{target}");
+    ask(conn, &format!("CONNECT {host}"), &host, auth)
+}
+
+fn ntlm_token(kind: u32, len: usize) -> String {
+    use base64::Engine as _;
+    let mut message = b"NTLMSSP\0".to_vec();
+    message.extend_from_slice(&kind.to_le_bytes());
+    message.resize(len, 0);
+    format!(
+        "NTLM {}",
+        base64::engine::general_purpose::STANDARD.encode(message)
+    )
+}
+
+#[test]
+fn a_probe_for_a_name_nobody_resolves_keeps_the_signed_in_connection_open() {
+    if !mitmproxy() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, info) = start(&["--interceptor-ntlm"], dir.path(), true);
+    let port = u16::try_from(info["interceptor"]["port"].as_u64().unwrap()).unwrap();
+    let mut conn =
+        std::io::BufReader::new(std::net::TcpStream::connect(("127.0.0.1", port)).unwrap());
+    let probe = "HEAD http://puddle.invalid/";
+    let host = "puddle.invalid";
+    let demand = ask(&mut conn, probe, host, Some(&ntlm_token(1, 16)));
+    assert!(
+        demand.starts_with("HTTP/1.1 407")
+            && demand.contains("Proxy-Authenticate: NTLM TlRMTVNTUA"),
+        "{demand}"
+    );
+    let answer = ask(&mut conn, probe, host, Some(&ntlm_token(3, 64)));
+    assert!(answer.starts_with("HTTP/1.1 502"), "{answer}");
+    assert!(
+        answer
+            .to_ascii_lowercase()
+            .contains("connection: keep-alive"),
+        "the sign-in lives on this connection: {answer}"
+    );
+    // The connection still works for the next request, with no new sign-in.
+    let next = ask(&mut conn, probe, host, None);
+    assert!(next.starts_with("HTTP/1.1 502"), "{next}");
+    drop(conn);
+    std::fs::write(dir.path().join("stop"), "").unwrap();
+    assert!(child.wait().unwrap().success());
+}
+
 #[test]
 fn the_signing_in_interceptor_runs_the_ntlm_handshake_before_it_opens_a_tunnel() {
-    use base64::Engine as _;
     if !mitmproxy() {
         return;
     }
@@ -157,27 +206,13 @@ fn the_signing_in_interceptor_runs_the_ntlm_handshake_before_it_opens_a_tunnel()
         demand.starts_with("HTTP/1.1 407") && demand.contains("Proxy-Authenticate: NTLM"),
         "{demand}"
     );
-    let b64 = base64::engine::general_purpose::STANDARD;
-    let mut type1 = b"NTLMSSP\0".to_vec();
-    type1.extend_from_slice(&1_u32.to_le_bytes());
-    let challenge = connect(
-        &mut conn,
-        origin,
-        Some(&format!("NTLM {}", b64.encode(&type1))),
-    );
+    let challenge = connect(&mut conn, origin, Some(&ntlm_token(1, 16)));
     assert!(
         challenge.starts_with("HTTP/1.1 407")
             && challenge.contains("Proxy-Authenticate: NTLM TlRMTVNTUA"),
         "{challenge}"
     );
-    let mut type3 = b"NTLMSSP\0".to_vec();
-    type3.extend_from_slice(&3_u32.to_le_bytes());
-    type3.resize(64, 0);
-    let opened = connect(
-        &mut conn,
-        origin,
-        Some(&format!("NTLM {}", b64.encode(&type3))),
-    );
+    let opened = connect(&mut conn, origin, Some(&ntlm_token(3, 64)));
     assert!(opened.starts_with("HTTP/1.1 200"), "{opened}");
     let log = std::fs::read_to_string(interceptor["log"].as_str().unwrap()).unwrap();
     assert!(

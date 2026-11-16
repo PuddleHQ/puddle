@@ -20,8 +20,15 @@ echo "$n" >"$STUB_DIR/count"
 echo $$ >>"$STUB_DIR/stub.pids"
 mkdir -p "$STUB_DIR/data"
 exec 3>"$STUB_DIR/data/host.lock"
-sleep 0.4 &   # a child that inherited descriptor 3, as a forked copy does
-sleep 0.4
+sleep 30 &   # a child that inherited descriptor 3, as a forked copy does
+child=$!
+# Stay alive until the sampler has recorded the stub and the child: a sampler that is starved (a loaded machine) must
+# not decide whether the child was seen. Bounded, so a sampler that never records fails the test instead of hanging it.
+for _ in $(seq 300); do
+    grep -q "^$$ " "$STUB_HOLDERS" 2>/dev/null && grep -q "^$child " "$STUB_HOLDERS" 2>/dev/null && break
+    sleep 0.1
+done
+kill "$child" 2>/dev/null
 if [ "$n" = "${STUB_FAIL_ON:-0}" ]; then
     echo "test a_stopped_host_restarts ... FAILED"
     echo "thread 'x' panicked at fake_host.rs:1:1: DataFolder(Held { dir: 'x', holder: Some($$) })"
@@ -35,7 +42,7 @@ cpu=$(taskset -cp $$ | sed 's/.*: //; s/[-,].*//')
 run() { # run <out> <fail-on> ; prints the script's output, returns its status
     rm -rf "$tmp/state"
     mkdir -p "$tmp/state"
-    STUB_DIR="$tmp/state" STUB_FAIL_ON="$2" FAKE_HOST_BIN="$tmp/fake_host_stub" FAKE_HOST_DIR="$tmp" FAKE_HOST_OUT="$1" \
+    STUB_DIR="$tmp/state" STUB_HOLDERS="$1/current-holders.txt" STUB_FAIL_ON="$2" FAKE_HOST_BIN="$tmp/fake_host_stub" FAKE_HOST_DIR="$tmp" FAKE_HOST_OUT="$1" \
         FAKE_HOST_RUNS=3 FAKE_HOST_CPUS="$cpu" FAKE_HOST_BUSY=2 "$here/fake-host-starved.sh"
 }
 
@@ -65,6 +72,10 @@ sleep 1
 # another run on the same machine cannot fail this check.
 ! pgrep -f "fake-host-busy $tmp/" >/dev/null || fail "a busy loop outlived the script"
 ! pgrep -f "sample_holders $tmp" >/dev/null || fail "a sampler outlived the script"
+
+# A sampler that wakes far less often than the stub lives (a starved machine) must still see the child holding a copy.
+FAKE_HOST_SAMPLE_S=0.5 run "$tmp/out-slow" 2 >"$tmp/slow.txt" 2>&1 || true
+[ "$(wc -l <"$tmp/out-slow/first-failure-holders.txt")" -ge 2 ] || fail "a slow sampler missed the child: $(cat "$tmp/out-slow/first-failure-holders.txt")"
 
 # Two copies at once on one machine, as parallel checks are: each must pass although the other's loops are running.
 if [ -z "${FAKE_HOST_STARVED_TEST_COPY:-}" ]; then

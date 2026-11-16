@@ -1208,6 +1208,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/request-rules/{id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Switches a rule on method and path on or off. A rule that is off is kept, refuses nothing
+         *     and no longer makes its host decrypt.
+         */
+        put: operations["set_request_rule_enabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rule-sets": {
         parameters: {
             query?: never;
@@ -1242,6 +1262,26 @@ export interface paths {
         post?: never;
         /** Deletes a rule set of yours with its entries and switches. */
         delete: operations["delete_rule_set"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rule-sets/{id}/entry-switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Switches one entry of a built-in set on or off for every workspace, and closes the open
+         *     requests that now decides. The rest of the set is unchanged.
+         */
+        put: operations["switch_builtin_entry"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1297,6 +1337,26 @@ export interface paths {
         post?: never;
         /** Deletes a rule. */
         delete: operations["delete_rule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rules/{id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Switches a rule on or off. A rule that is off is kept and never matches; switching one on
+         *     closes the open requests it now decides.
+         */
+        put: operations["set_rule_enabled"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2744,6 +2804,31 @@ export interface components {
             /** @enum {string} */
             type: "rule_updated";
         } | {
+            /** @description Who switched it. */
+            actor: string;
+            /** @description The new state. */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description The row id of a rule or rule on method and path; `null` for a built-in entry.
+             */
+            id: number | null;
+            /** @description What was switched. */
+            kind: components["schemas"]["RuleSwitchKind"];
+            /** @description The host pattern. */
+            pattern: string;
+            /** @description `builtin:<slug>` or `user:<id>` for an entry of a set; `null` for a rule outside one. */
+            set_id: string | null;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_switched";
+            /** @description The workspace the rule is for; `null` for every workspace. */
+            workspace_id: string | null;
+        } | {
             /** @description Who deleted it. */
             actor: string;
             /** @description Why. */
@@ -3079,7 +3164,7 @@ export interface components {
          * @description The record types, for the `type` filter.
          * @enum {string}
          */
-        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "workspace_op" | "audit_trimmed";
+        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_switched" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "workspace_op" | "audit_trimmed";
         /**
          * @description Whether this Puddle can be signed in to, and how. Anyone who can reach the address may read
          *     it; it holds no name.
@@ -5277,6 +5362,8 @@ export interface components {
             created_at: number;
             /** @description `cli`, `ui` or `api`. */
             created_by: string;
+            /** @description Whether the rule refuses anything. A rule that is off is kept and checks nothing. */
+            enabled: boolean;
             /** @description The host pattern: `example.com` or `*.example.com`. */
             host: string;
             /**
@@ -5414,6 +5501,8 @@ export interface components {
             created_by: components["schemas"]["Actor"];
             /** @description Allow or deny. */
             effect: components["schemas"]["Effect"];
+            /** @description Whether the rule takes part in decisions. A rule that is off is kept and never matches. */
+            enabled: boolean;
             /**
              * Format: int64
              * @description Epoch ms from which the rule no longer matches; `null` is permanent.
@@ -5441,6 +5530,11 @@ export interface components {
          * @enum {string}
          */
         RuleDeleteReason: "user" | "workspace_deleted" | "set_deleted";
+        /** @description Switch a rule on or off. */
+        RuleEnabledRequest: {
+            /** @description `true` to switch the rule on, `false` to switch it off. Off keeps the rule and its place. */
+            enabled: boolean;
+        };
         /** @description A rule's new expiry. */
         RuleExpiryRequest: {
             /**
@@ -5477,6 +5571,11 @@ export interface components {
             /** @description Allow or deny (a built-in set's entries all do the same; your own set may mix them). */
             effect: components["schemas"]["Effect"];
             /**
+             * @description Whether the entry takes part in decisions. You switch a built-in entry off on its own
+             *     with `PUT /api/rule-sets/{id}/entry-switch`, a rule of your own set through its rule.
+             */
+            enabled: boolean;
+            /**
              * Format: int64
              * @description Epoch ms from which the entry no longer counts; `null` is permanent.
              */
@@ -5495,6 +5594,13 @@ export interface components {
              * @description The entry's rule, for a set you made (delete or change it through `/api/rules`).
              */
             rule_id: number | null;
+        };
+        /** @description Switch one entry of a built-in set on or off. */
+        RuleSetEntrySwitchRequest: {
+            /** @description `true` to switch the entry on, `false` to switch it off. */
+            enabled: boolean;
+            /** @description The entry as the set lists it (`api.github.com`, `*.github.com`). */
+            pattern: string;
         };
         /**
          * @description Who made a rule set.
@@ -5576,6 +5682,11 @@ export interface components {
             /** @description Workspaces with a switch of their own. */
             overrides: components["schemas"]["RuleSetOverride"][];
         };
+        /**
+         * @description What a `rule_switched` record switched.
+         * @enum {string}
+         */
+        RuleSwitchKind: "rule" | "request_rule" | "builtin_entry";
         /**
          * @description A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`).
          * @example my-project
@@ -11614,6 +11725,78 @@ export interface operations {
             };
         };
     };
+    set_request_rule_enabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleEnabledRequest"];
+            };
+        };
+        responses: {
+            /** @description the changed rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestRule"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     list_rule_sets: {
         parameters: {
             query?: never;
@@ -11897,6 +12080,87 @@ export interface operations {
             };
         };
     };
+    switch_builtin_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `builtin:<slug>` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleSetEntrySwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description the set and the requests it closed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetSwitched"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such set or entry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description System managed or a set you made */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     switch_rule_set: {
         parameters: {
             query?: never;
@@ -12116,6 +12380,78 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description the deleted rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rule"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_rule_enabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleEnabledRequest"];
+            };
+        };
+        responses: {
+            /** @description the changed rule */
             200: {
                 headers: {
                     [name: string]: unknown;

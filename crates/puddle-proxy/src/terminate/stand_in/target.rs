@@ -80,7 +80,7 @@ impl StandIns {
         let mut at = 0;
         while let Some(&byte) = raw.get(at) {
             starts.push(at);
-            if let Some(value) = escaped_byte(raw, at) {
+            if let Some(value) = puddle_types::escape_at(raw, at) {
                 decoded.push(value);
                 at += 3;
             } else {
@@ -121,15 +121,6 @@ impl StandIns {
         out.push_str(target.get(copied..).unwrap_or_default());
         Cow::Owned(out)
     }
-}
-
-/// The byte a `%XX` escape at `at` stands for, or `None` when there is no escape there.
-fn escaped_byte(raw: &[u8], at: usize) -> Option<u8> {
-    if raw.get(at) != Some(&b'%') {
-        return None;
-    }
-    let hex = std::str::from_utf8(raw.get(at + 1..at + 3)?).ok()?;
-    u8::from_str_radix(hex, 16).ok()
 }
 
 /// The query with each parameter that is exactly a [`Placement::Query`] stand-in for `host`,

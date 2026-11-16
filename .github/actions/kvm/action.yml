@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Opens /dev/kvm to the runner user (hosted runners ship it root-only) and waits for udev to finish, so
+# the access check does not race the rule that was just loaded. Fails when the device is missing or
+# still not readable and writable. A job that wants to skip politely on a runner without KVM checks
+# `-e /dev/kvm` itself first.
+name: kvm
+description: Make /dev/kvm usable by the runner user
+runs:
+  using: composite
+  steps:
+    - name: open /dev/kvm
+      shell: bash
+      run: |
+        test -e /dev/kvm || { echo "no /dev/kvm on this runner"; exit 1; }
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        sudo udevadm settle
+        ls -l /dev/kvm
+        test -r /dev/kvm && test -w /dev/kvm

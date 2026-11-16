@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use http_body_util::BodyExt as _;
 use puddle_proxy::ProxyConfig;
-use puddle_types::{ConnectionDecision, ConnectionReason};
+use puddle_types::{ConnectionDecision, ConnectionReason, ReasonCode};
 use terminate_support::h2_rig::{H2Server, Script, full, reply};
 use terminate_support::{
     CANARY, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, inject, refuse,
@@ -154,7 +154,7 @@ async fn a_refusal_of_the_injector_is_a_response_on_that_stream_only() {
     let server = H2Server::recording(&pki, "bound.test", ok("fine")).await;
     let injector = TestInjector::new(|view| {
         if view.path() == "/denied" {
-            refuse(403, "not-on-the-list")
+            refuse(403, ReasonCode::PushDenied)
         } else {
             inject("x")
         }
@@ -167,7 +167,7 @@ async fn a_refusal_of_the_injector_is_a_response_on_that_stream_only() {
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let denied = client.get("bound.test", "/denied").await;
     assert_eq!(denied.status, 403);
-    assert_eq!(denied.header("x-puddle-blocked"), Some("not-on-the-list"));
+    assert_eq!(denied.header("x-puddle-blocked"), Some("push_denied"));
     assert!(denied.text().contains("puddle:"));
     assert_eq!(client.get("bound.test", "/fine").await.status, 200);
     assert_eq!(
@@ -336,7 +336,7 @@ async fn an_h2_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reas
     assert_eq!(events[0].decision, ConnectionDecision::Blocked);
     assert_eq!(
         events[0].reason,
-        ConnectionReason::Refused("expectation_unsupported")
+        ConnectionReason::Refused(ReasonCode::ExpectationUnsupported)
     );
     assert!(server.recorded().is_empty());
 }

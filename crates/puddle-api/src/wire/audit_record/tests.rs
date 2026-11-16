@@ -15,7 +15,7 @@ fn rule(id: i64, pattern: &str) -> Value {
     json!({
         "id": id, "scope": "global", "workspace_id": null, "pattern_kind": "exact",
         "pattern": pattern, "effect": "allow", "expires_at": null, "created_at": 5,
-        "created_by": "ui", "source_pending_id": null,
+        "created_by": "ui", "source_pending_id": null, "precedence": 5,
     })
 }
 
@@ -124,6 +124,11 @@ fn a_rule_in_the_audit_serves_its_scope_kind_and_effect_as_the_same_words_it_alw
         let out = served(&json!({"type": "rule_created", "ts": 9, "rule": stored.clone()}));
         assert_eq!(out["rule"], stored, "{scope} {kind} {effect}");
     }
+    // A line written before precedence existed is served as a rule of precedence 5.
+    let mut older = rule(4, "older.example.com");
+    older.as_object_mut().unwrap().remove("precedence");
+    let out = served(&json!({"type": "rule_created", "ts": 9, "rule": older}));
+    assert_eq!(out["rule"]["precedence"], 5);
     // A line written before the rename still reads, and is served under the new name.
     let mut old = rule(2, "old.example.com");
     old["scope"] = json!("sandbox");

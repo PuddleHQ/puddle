@@ -31,7 +31,7 @@ use puddle_proxy::{
     TerminationSet, TokenBody, Want,
 };
 use puddle_secrets::SecretStore;
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{Host, ReasonCode, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
@@ -911,7 +911,7 @@ fn refusal_for(profile: &Profile, problem: Problem) -> InjectRefusal {
     };
     InjectRefusal::new(
         502,
-        "login_not_kept",
+        ReasonCode::LoginNotKept,
         format!(
             "Puddle did not let the {} sign-in through: {why}. Nothing reached this workspace; Puddle's notice says what to do.",
             profile.name

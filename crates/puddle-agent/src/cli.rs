@@ -4,9 +4,10 @@
 //! ([`crate::merge_file`]). `puddle-agent connect <host> <port> [<name>]` is the ssh
 //! `ProxyCommand` ([`crate::connect`]). `puddle-agent mise-fetch <dir>` puts the pinned mise below
 //! `<dir>` ([`crate::mise`]). `puddle-agent mise-install <workspace-dir> [--missing]` installs the
-//! workspace's managed tools ([`crate::mise_install`]).
+//! workspace's managed tools ([`crate::mise_install`]). `puddle-agent mise-tools <workspace-dir> ...`
+//! lists and edits them ([`crate::mise_tools`]).
 
-use crate::{connect, merge_file, mise, mise_install};
+use crate::{connect, merge_file, mise, mise_install, mise_tools};
 
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +24,8 @@ pub enum Command {
     MiseFetch(mise::Request),
     /// Install (or with `--missing` only list) the tools a workspace's mise files ask for.
     MiseInstall(mise_install::Request),
+    /// List or edit the tools of a workspace's root mise file, or ask mise for its registry.
+    MiseTools(mise_tools::Request),
     /// Anything else: print this usage error, exit 2.
     Usage(String),
 }
@@ -48,6 +51,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Command {
         }
         [first, rest @ ..] if first.as_ref() == "mise-install" => {
             mise_install::Request::parse(rest).map_or_else(Command::Usage, Command::MiseInstall)
+        }
+        [first, rest @ ..] if first.as_ref() == "mise-tools" => {
+            mise_tools::Request::parse(rest).map_or_else(Command::Usage, Command::MiseTools)
         }
         [first, ..] => Command::Usage(format!(
             "unknown argument {:?}\n{USAGE}",

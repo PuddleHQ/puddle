@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 29;
+pub const SCHEMA_VERSION: u32 = 30;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -974,6 +974,18 @@ CREATE TABLE builtin_entry_switches (
     changed_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, rule_set, pattern)
 ) STRICT;
+";
+
+const V30: &str = "
+-- Every rule has a precedence from 1 to 9, higher wins (R-59). Added columns: a rule stored
+-- before precedence existed reads as 5, and no answer is kept (nothing is migrated).
+ALTER TABLE rules ADD COLUMN precedence INTEGER NOT NULL DEFAULT 5
+    CHECK (precedence BETWEEN 1 AND 9);
+ALTER TABLE request_rules ADD COLUMN precedence INTEGER NOT NULL DEFAULT 5
+    CHECK (precedence BETWEEN 1 AND 9);
+-- A group's default for a new rule in it; none means 5 (R-59).
+ALTER TABLE rule_sets ADD COLUMN default_precedence INTEGER
+    CHECK (default_precedence IS NULL OR default_precedence BETWEEN 1 AND 9);
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

@@ -36,6 +36,7 @@ fn main() -> ExitCode {
         Command::Connect(request) => connect(&request),
         Command::MiseFetch(request) => mise_fetch(&request),
         Command::MiseInstall(request) => mise_install(&request),
+        Command::MiseTools(request) => mise_tools(&request),
         Command::Usage(msg) => {
             eprintln!("{msg}");
             ExitCode::from(2)
@@ -126,6 +127,30 @@ fn mise_install(request: &puddle_agent::mise_install::Request) -> ExitCode {
         Some(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// `mise-tools`: prints the records the host reads; exit code 5 for a changed file, 1 with mise's
+/// last error line on standard error when mise failed.
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "CLI output: the host reads this subcommand's output"
+)]
+fn mise_tools(request: &puddle_agent::mise_tools::Request) -> ExitCode {
+    use puddle_agent::mise_tools::{CONFLICT_EXIT, Failure, SystemMise, run};
+    match run(&SystemMise::new(request.binary()), request) {
+        Ok(records) => {
+            print!("{records}");
+            ExitCode::SUCCESS
+        }
+        Err(failure) => {
+            eprintln!("{failure}");
+            match failure {
+                Failure::Changed => ExitCode::from(CONFLICT_EXIT),
+                Failure::Mise(_) => ExitCode::FAILURE,
+            }
         }
     }
 }

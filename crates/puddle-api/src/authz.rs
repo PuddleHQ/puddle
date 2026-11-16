@@ -379,7 +379,9 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
     const WS: Target = T::Workspace("id");
     let (action, target) = match (method.as_str(), path) {
         ("GET", "/api/health" | "/api/openapi.json") => (A::ReadService, T::Service),
-        ("GET", "/api/events" | "/api/problems") => (A::ReadService, T::Own),
+        ("GET", "/api/events" | "/api/problems") | ("POST", "/api/presence") => {
+            (A::ReadService, T::Own)
+        }
         ("GET", "/api/auth/status")
         | (
             "POST",
@@ -441,7 +443,10 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/workspaces/{id}/interception/learned"
             | "/api/workspaces/{id}/logins"
             | "/api/workspaces/{id}/shell-init"
-            | "/api/workspaces/{id}/ssh-agent",
+            | "/api/workspaces/{id}/ssh-agent"
+            | "/api/workspaces/{id}/tools"
+            | "/api/workspaces/{id}/tools/registry"
+            | "/api/workspaces/{id}/tools/{name}/versions",
         ) => (A::ReadWorkspace, WS),
         ("GET", "/api/settings/workspaces/{workspace}") => {
             (A::ReadWorkspace, T::Workspace("workspace"))
@@ -452,7 +457,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         ("PATCH", "/api/workspaces/{id}")
         | (
             "PUT",
-            "/api/workspaces/{id}/env/{name}"
+            "/api/workspaces/{id}/tools/{name}"
+            | "/api/workspaces/{id}/env/{name}"
             | "/api/workspaces/{id}/interception"
             | "/api/workspaces/{id}/session-user"
             | "/api/workspaces/{id}/shell-init"
@@ -461,7 +467,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         )
         | (
             "DELETE",
-            "/api/workspaces/{id}/env/{name}"
+            "/api/workspaces/{id}/tools/{name}"
+            | "/api/workspaces/{id}/env/{name}"
             | "/api/workspaces/{id}/shell-init"
             | "/api/workspaces/{id}/interception/learned"
             | "/api/workspaces/{id}/interception/learned/{host}"
@@ -471,7 +478,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         )
         | (
             "POST",
-            "/api/workspaces/{id}/interception/learned/{host}/permanent"
+            "/api/workspaces/{id}/tools/install"
+            | "/api/workspaces/{id}/interception/learned/{host}/permanent"
             | "/api/workspaces/{id}/repositories"
             | "/api/workspaces/{id}/repositories/{entry}/clone"
             | "/api/workspaces/{id}/reset-root-disk"

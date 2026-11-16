@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::task::{Context as TaskContext, Poll, Waker};
 use std::time::Duration;
 
+use puddle_types::LimitCode;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::Instant;
 
@@ -27,16 +28,18 @@ use tokio::time::Instant;
 pub(crate) const SWEEP_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The first limit that cut something on a connection, for the audit.
-pub(crate) type LimitHit = Arc<OnceLock<&'static str>>;
+pub(crate) type LimitHit = Arc<OnceLock<LimitCode>>;
 
 /// Why a limit cut a stream or a connection (the audit's `limit:` reasons).
 pub(crate) mod ended {
+    use puddle_types::LimitCode;
+
     /// A stream moved no frame for its limit and never gave way to a reset.
-    pub(crate) const STREAM_IDLE: &str = "stream_idle";
+    pub(crate) const STREAM_IDLE: LimitCode = LimitCode::StreamIdle;
     /// The peer did not take the graceful shutdown.
-    pub(crate) const SHUTDOWN_IGNORED: &str = "shutdown_ignored";
+    pub(crate) const SHUTDOWN_IGNORED: LimitCode = LimitCode::ShutdownIgnored;
     /// An agreed WebSocket pipe moved no byte for its limit.
-    pub(crate) const WEBSOCKET_IDLE: &str = "websocket_idle";
+    pub(crate) const WEBSOCKET_IDLE: LimitCode = LimitCode::WebsocketIdle;
 }
 
 /// When a stream last moved a frame in either direction, and whether it has been told to give up.
@@ -72,7 +75,7 @@ impl Activity {
     }
 
     /// Notes that `code` cut this stream (or its pipe), for the connection's audit record.
-    pub(crate) fn note_limit(&self, code: &'static str) {
+    pub(crate) fn note_limit(&self, code: LimitCode) {
         let _ = self.hit.set(code);
     }
 
@@ -243,7 +246,7 @@ pub(crate) enum Step {
     /// Send the graceful shutdown (GOAWAY).
     Shutdown,
     /// Drop the connection; the reason is the audit's `limit:` code.
-    Drop(&'static str),
+    Drop(LimitCode),
 }
 
 /// The per-connection state of the sweep.

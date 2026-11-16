@@ -665,6 +665,7 @@ describe("rule sets and System managed (rules spec §7)", () => {
             enabled: true,
             rule_id: 9,
             expires_at: null,
+            precedence: 5,
           },
         ],
       }),

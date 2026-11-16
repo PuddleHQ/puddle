@@ -11,7 +11,7 @@
       "name": "AGPL-3.0-or-later",
       "identifier": "AGPL-3.0-or-later"
     },
-    "version": "0.31.0"
+    "version": "0.32.0"
   },
   "paths": {
     "/api/admin/audit": {
@@ -5290,6 +5290,80 @@
           },
           "422": {
             "description": "invalid suffix or expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/presence": {
+      "post": {
+        "tags": [
+          "presence"
+        ],
+        "summary": "A client's report of itself. Clients send it every 30 seconds and when something in it changes.\nA client that stops reporting is no longer picked after about a minute.",
+        "operationId": "report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresenceReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "noted"
+          },
+          "400": {
+            "description": "the client id is not 1 to 64 letters, digits, `-` or `_`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
             "content": {
               "application/json": {
                 "schema": {
@@ -12489,6 +12563,635 @@
           }
         }
       }
+    },
+    "/api/workspaces/{id}/tools": {
+      "get": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "The tools every mise file of the workspace asks for, as mise lists them in the guest\n(`mise ls`), with whether each is installed. `files` has the root `mise.toml` (the only one\nthe API edits) and the repositories' own files, read-only. A stopped workspace answers its\nlast listing of this run with `running` false and `problem` saying to start it; tools off for\nthe workspace, or a mise that failed, is `problem` too, not an error. Send `sha256` back with a\nchange.",
+        "operationId": "list_tools",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsListing"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/tools/install": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Installs what the workspace's mise files ask for, in the background: the retry of a failed\ninstall. Progress and the end come as `workspace_tools` events.",
+        "operationId": "install_tools",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "the install started"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running or tools are off for it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/tools/registry": {
+      "get": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "The tools mise knows by name (`mise registry`, about a thousand), for the Add tool dialog's\nsearch. Cached per mise version. Needs a running workspace with tools on.",
+        "operationId": "tool_registry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the registry; empty with `problem` when mise could not say",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolRegistry"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running or tools are off for it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/tools/{name}": {
+      "put": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Sets a tool's version in the root `mise.toml` with `mise config set`: every other line, comments\nincluded, stays as it was, and only plain `[tools]` strings are written. Puddle then installs\nin the background (`workspace_tools` events). Answers the listing that follows.",
+        "operationId": "put_tool",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the tool's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the tools after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsListing"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running, tools are off for it, or `mise.toml` is not the file the user looked at (its SHA-256 differs): list again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a bad name, version or hash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "mise could not make the change; the message is its last error line",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Takes a tool out of the root `mise.toml` with `mise unuse --no-prune`: the other lines stay,\nand the installed copy stays on the disk. Answers the listing that follows.",
+        "operationId": "delete_tool",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the tool's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sha256",
+            "in": "query",
+            "description": "the `sha256` of the listing the user looked at",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tools after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsListing"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running, tools are off for it, or the file changed since the listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a bad name or hash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "mise could not make the change; the message is its last error line",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/tools/{name}/versions": {
+      "get": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "The newest 200 versions mise lists for a tool (`mise ls-remote`), newest first. With the\nversion host denied the answer is an empty list and `reason`, so the UI can offer a text box.",
+        "operationId": "tool_versions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the tool's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the versions; empty with `reason` when mise could not list them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolVersions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running or tools are off for it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a bad name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -13289,11 +13992,15 @@
                 "minimum": 0
               },
               "category": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "`company_network` when the destination is in the company-network category, allowed or\nrefused; `null` otherwise and in records written before it existed."
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LocalCategory",
+                    "description": "`company_network` when the destination is in the company-network category, allowed or\nrefused; `null` otherwise and in records written before it existed."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "count": {
                 "type": [
@@ -13385,7 +14092,7 @@
               },
               "reason": {
                 "type": "string",
-                "description": "Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with\na `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a\n`FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the\npass-through (open-ended). A reader keeps a string it does not know."
+                "description": "Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with\na `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a\n`FailedRequestCode`, `limit:` and a `LimitCode`, or `pass_through:` and a\n`PassThroughCode`. A reader keeps a string it does not know."
               },
               "refused_address": {
                 "type": [
@@ -14207,7 +14914,8 @@
           "methods",
           "path",
           "created_at",
-          "created_by"
+          "created_by",
+          "precedence"
         ],
         "properties": {
           "created_at": {
@@ -14239,6 +14947,12 @@
           "path": {
             "type": "string",
             "description": "The path pattern, in canonical form."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the rule ranked, 1 to 9; a record from before precedence existed says 5.",
+            "minimum": 0
           },
           "scope": {
             "$ref": "#/components/schemas/AuditRequestRuleScope",
@@ -14291,7 +15005,8 @@
           "created_at",
           "created_by",
           "source_pending_id",
-          "set_id"
+          "set_id",
+          "precedence"
         ],
         "properties": {
           "created_at": {
@@ -14329,6 +15044,12 @@
           "pattern_kind": {
             "$ref": "#/components/schemas/PatternKind",
             "description": "Exact or suffix."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the rule ranked, 1 to 9; a record from before precedence existed says 5.",
+            "minimum": 0
           },
           "scope": {
             "$ref": "#/components/schemas/AuditRuleScope",
@@ -14377,7 +15098,8 @@
           "description",
           "created_at",
           "created_by",
-          "fill"
+          "fill",
+          "default_precedence"
         ],
         "properties": {
           "created_at": {
@@ -14389,6 +15111,15 @@
           "created_by": {
             "type": "string",
             "description": "`cli`, `ui` or `api`."
+          },
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The precedence a new rule in the set took when none was named; `null` means 5.",
+            "minimum": 0
           },
           "description": {
             "type": "string",
@@ -14806,6 +15537,14 @@
             "description": "Whether the workspace is running: `checkouts` is then from the moment of the call."
           }
         }
+      },
+      "ClientKind": {
+        "type": "string",
+        "description": "What kind of client reports.",
+        "enum": [
+          "browser",
+          "desktop"
+        ]
       },
       "ClipboardRead": {
         "type": "string",
@@ -16130,6 +16869,39 @@
                 "type": "string",
                 "enum": [
                   "pending_opened"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Who is to be told about a new open pending request, picked by the server from what the\nclients reported of themselves (`POST /api/presence`) so that nobody is told twice.\nSent right after the [`Event::PendingOpened`] of the same request.",
+            "required": [
+              "request",
+              "clients",
+              "desktop",
+              "type"
+            ],
+            "properties": {
+              "clients": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The picked browser tabs, by the id each reported. A tab raises its notification only\nwhen its own id is listed."
+              },
+              "desktop": {
+                "type": "boolean",
+                "description": "Whether the desktop app's own notification is picked: also true when no client has\nreported, so the app tells its user as it did before clients reported."
+              },
+              "request": {
+                "$ref": "#/components/schemas/PendingSummary",
+                "description": "The request, as in [`Event::PendingOpened`]."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_notify"
                 ]
               }
             }
@@ -18054,6 +18826,17 @@
         },
         "additionalProperties": false
       },
+      "LimitCode": {
+        "type": "string",
+        "description": "Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.",
+        "enum": [
+          "stream_idle",
+          "shutdown_ignored",
+          "websocket_idle",
+          "header_block_too_slow",
+          "control_frame_flood"
+        ]
+      },
       "Limits": {
         "type": "object",
         "description": "Upper bounds on what a workspace may be given (global only).",
@@ -18330,6 +19113,15 @@
             "type": "string",
             "description": "`example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is\nrefused)."
           },
+          "precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9, higher wins. Left out: the default of the group the rule goes into, else 5.",
+            "minimum": 0
+          },
           "scope": {
             "$ref": "#/components/schemas/RuleScope",
             "description": "Global or one workspace."
@@ -18344,6 +19136,15 @@
           "name"
         ],
         "properties": {
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9: what a new rule in the set takes when none is named; left out for 5.",
+            "minimum": 0
+          },
           "description": {
             "type": "string",
             "description": "At most 500 characters."
@@ -18517,6 +19318,21 @@
           "ember",
           "graphite",
           "custom"
+        ]
+      },
+      "PassThroughCode": {
+        "type": "string",
+        "description": "Why a host the workspace decrypts was passed through untouched: the code after `pass_through:`.",
+        "enum": [
+          "never_decrypt",
+          "curated",
+          "learned",
+          "container",
+          "not_tls",
+          "sni_mismatch",
+          "server_client_certificate",
+          "server_certificate",
+          "server_tls"
         ]
       },
       "PasswordSignInRequest": {
@@ -18851,6 +19667,42 @@
         },
         "additionalProperties": false
       },
+      "PresenceReport": {
+        "type": "object",
+        "description": "One client's report: whether it is in front, when it last saw input, and whether the person\nwants notifications there. Sent every 30 seconds and whenever one of them changes.",
+        "required": [
+          "client",
+          "kind",
+          "visible",
+          "idle_ms",
+          "notify"
+        ],
+        "properties": {
+          "client": {
+            "type": "string",
+            "description": "A random id the client made for itself (1 to 64 characters: letters, digits, `-`, `_`).\nA browser tab keeps one for as long as it is open."
+          },
+          "idle_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long ago the last keystroke, click or touch was, in milliseconds. Sent as an age so\nthe client's clock does not matter.",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ClientKind",
+            "description": "What kind of client this is."
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Whether the person wants notifications on this client (its own switch)."
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "Whether the page is in front (visible) now."
+          }
+        },
+        "additionalProperties": false
+      },
       "Problem": {
         "type": "object",
         "description": "One background problem, as `GET /api/problems` lists it.",
@@ -19170,6 +20022,24 @@
           "pass_through",
           "puddle_request_failed"
         ]
+      },
+      "RegistryTool": {
+        "type": "object",
+        "description": "One tool mise knows by name.",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "One line about it; may be empty."
+          },
+          "name": {
+            "$ref": "#/components/schemas/ToolName",
+            "description": "The name to use in `mise.toml`."
+          }
+        }
       },
       "RemoteNote": {
         "type": "string",
@@ -19950,7 +20820,8 @@
           "created_at",
           "created_by",
           "source_pending_id",
-          "enabled"
+          "enabled",
+          "precedence"
         ],
         "properties": {
           "created_at": {
@@ -19992,6 +20863,12 @@
           "pattern_kind": {
             "$ref": "#/components/schemas/PatternKind",
             "description": "Exact or suffix."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the rule ranks against the others that match, 1 to 9: the highest precedence decides,\neven over a more specific rule.",
+            "minimum": 0
           },
           "scope": {
             "$ref": "#/components/schemas/RuleScope",
@@ -20136,7 +21013,8 @@
           "note",
           "enabled",
           "rule_id",
-          "expires_at"
+          "expires_at",
+          "precedence"
         ],
         "properties": {
           "effect": {
@@ -20167,6 +21045,12 @@
           "pattern_kind": {
             "$ref": "#/components/schemas/PatternKind",
             "description": "Exact or suffix."
+          },
+          "precedence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How the entry ranks, 1 to 9; a built-in entry is fixed at 0, below every rule of yours.",
+            "minimum": 0
           },
           "rule_id": {
             "type": [
@@ -20304,6 +21188,15 @@
           "name"
         ],
         "properties": {
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9: what a new rule in the set takes when none is named; left out keeps the one the\nset has. Rules already in the set keep theirs.",
+            "minimum": 0
+          },
           "description": {
             "type": "string",
             "description": "At most 500 characters."
@@ -20340,7 +21233,8 @@
           "overrides",
           "entries",
           "changed_at",
-          "created_at"
+          "created_at",
+          "default_precedence"
         ],
         "properties": {
           "changed_at": {
@@ -20364,6 +21258,15 @@
           "default_on": {
             "type": "boolean",
             "description": "Whether it is on where nobody switched it: built-in sets ship off, your sets start on."
+          },
+          "default_precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Your sets: the precedence a new rule in the set takes when none is named, 1 to 9; `null`\nmeans 5. Changing it changes no rule already in the set.",
+            "minimum": 0
           },
           "description": {
             "type": "string",
@@ -21410,6 +22313,194 @@
               "null"
             ],
             "description": "The organisation, for tokens that belong to one (Azure DevOps)."
+          }
+        }
+      },
+      "ToolChangeRequest": {
+        "type": "object",
+        "description": "`PUT /api/workspaces/{id}/tools/{name}`: set a tool's version in the root `mise.toml`.",
+        "required": [
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "description": "The `sha256` of the listing the user looked at (64 lower-case hex digits, or `absent`). A\ndifferent file answers `409`."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version to ask for: ASCII letters, digits and `. _ - : / @ +`, starting with a letter\nor digit, at most 100 characters. Anything else answers `422`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ToolEntry": {
+        "type": "object",
+        "description": "One tool a mise file asks for.",
+        "required": [
+          "name",
+          "requested",
+          "installed"
+        ],
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "description": "Whether mise has what the request resolves to."
+          },
+          "name": {
+            "$ref": "#/components/schemas/ToolName",
+            "description": "The tool's name as the file spells it."
+          },
+          "requested": {
+            "$ref": "#/components/schemas/ToolVersion",
+            "description": "The version the file asks for: `22`, `lts`, an exact version."
+          }
+        }
+      },
+      "ToolName": {
+        "type": "string",
+        "description": "A tool's name as mise.toml spells it: ASCII letters, digits and `.`, `_`, `-`, `:`, `/`, `@`, starting with a letter or digit.",
+        "example": "node",
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+      },
+      "ToolRegistry": {
+        "type": "object",
+        "description": "`GET /api/workspaces/{id}/tools/registry`.",
+        "required": [
+          "tools",
+          "problem"
+        ],
+        "properties": {
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the list is empty, from mise."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistryTool"
+            },
+            "description": "The tools by name; empty with `problem` set when mise could not say."
+          }
+        }
+      },
+      "ToolVersion": {
+        "type": "string",
+        "description": "A version request as mise reads it: ASCII letters, digits and `.`, `_`, `-`, `:`, `/`, `@`, `+`, starting with a letter or digit.",
+        "example": "22",
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$"
+      },
+      "ToolVersions": {
+        "type": "object",
+        "description": "`GET /api/workspaces/{id}/tools/{name}/versions`.",
+        "required": [
+          "versions",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the list is empty, from mise."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolVersion"
+            },
+            "description": "The newest versions (at most 200), newest first; empty with `reason` set when mise could\nnot list them (a deny rule on its version host, say). The UI then offers a text box."
+          }
+        }
+      },
+      "ToolsFile": {
+        "type": "object",
+        "description": "One mise file of the workspace and the tools in it.",
+        "required": [
+          "path",
+          "root",
+          "tools"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The file, relative to the workspace folder: `mise.toml`, `api/.tool-versions`."
+          },
+          "root": {
+            "type": "boolean",
+            "description": "Whether this is the workspace's own `mise.toml`, the only file the API edits. The others\nbelong to a repository and are shown as they are."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolEntry"
+            },
+            "description": "The tools in it, by name."
+          }
+        }
+      },
+      "ToolsFileHash": {
+        "type": "string",
+        "description": "The SHA-256 of the root mise.toml (64 lower-case hex digits), or `absent` when there is no such file.",
+        "pattern": "^([0-9a-f]{64}|absent)$"
+      },
+      "ToolsListing": {
+        "type": "object",
+        "description": "`GET /api/workspaces/{id}/tools`, and the answer of an edit: the tools of every mise file.",
+        "required": [
+          "running",
+          "listed_at",
+          "problem",
+          "sha256",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolsFile"
+            },
+            "description": "The workspace's mise files: the root file first when it has tools, then the checkouts'."
+          },
+          "listed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the listing was made, epoch ms; `null` when there is none.",
+            "minimum": 0
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is nothing fresh to show (stopped, tools off for the workspace, mise failed);\n`null` otherwise."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "Whether the workspace was running and asked. `false`: this is the last listing of this\nrun, if any, and `problem` says to start it."
+          },
+          "sha256": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ToolsFileHash",
+                "description": "The SHA-256 of the root `mise.toml` as listed. Send it back with a change."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -22465,6 +23556,10 @@
     {
       "name": "shell-init",
       "description": "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"
+    },
+    {
+      "name": "tools",
+      "description": "A workspace's managed tools: what its mise files ask for, and edits of the root mise.toml through mise's own commands"
     },
     {
       "name": "logins",

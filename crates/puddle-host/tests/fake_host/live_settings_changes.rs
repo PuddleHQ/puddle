@@ -120,7 +120,7 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
     let config = pem_of(&files, "/etc/puddle/gitconfig");
     // Both identities are in the retry: the first change was never written.
     assert!(config.contains("name = \"Ada\""), "{config}");
-    assert!(pem_of(&files, "/etc/puddle/git-author-1.gitconfig").contains("Bob"));
+    author_file(&files, "Bob");
     host.shutdown().await;
 }
 
@@ -184,7 +184,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     })
     .await;
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
-    assert!(pem_of(&files, "/etc/puddle/git-author-1.gitconfig").contains("Bob"));
+    author_file(&files, "Bob");
     host.shutdown().await;
 }
 

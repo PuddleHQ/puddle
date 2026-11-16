@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The in-memory rule index and the matching rules R-5 to R-7 and R-39. Pure: no I/O, no clock.
+//! The in-memory rule index and the matching rules R-5 to R-7, R-59 and R-60. Pure: no I/O, no clock.
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -8,7 +8,7 @@ use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceId}
 
 use crate::catalogue;
 use crate::pattern::Pattern;
-use crate::rule::{Effect, Rule, Scope};
+use crate::rule::{Effect, Precedence, Rule, Scope};
 use crate::users::UserId;
 
 /// An entry of a built-in set or of System managed: no rule row (R-36, R-41). System managed
@@ -211,10 +211,10 @@ pub(crate) struct RuleIndex {
     suffix: HashMap<String, Vec<Slot>>,
 }
 
-/// Precedence among the user's own rules (R-6).
-type OwnKey = ((u8, usize), u8, bool, Reverse<RuleId>);
-/// Precedence among set entries (R-39): most specific, then deny over allow, then a stable order.
-type SetKey = ((u8, usize), bool, Reverse<(RuleSetId, i64)>);
+/// How the rules that match a request are ranked (R-60): precedence first, then pattern
+/// specificity, a `workspace` rule over a `global` one (an entry of a group counts as `global`),
+/// `deny` over `allow`, then a stable order that cannot change an answer.
+type Key = (u8, (u8, usize), u8, bool, Reverse<(RuleSetId, i64)>);
 
 /// Whether `key` beats the best so far. A tie keeps the earlier hit; see the mutation exclusion in
 /// `.cargo/mutants.toml` for why that cannot change an answer.
@@ -222,20 +222,18 @@ fn outranks<K: Ord>(key: &K, best: &K) -> bool {
     key > best
 }
 
-fn own_key(rule: &Rule) -> OwnKey {
+/// Two hits that tie on all of it decide the same way: same precedence, same kind of pattern (an
+/// exact entry is the host; suffixes of equal length matching one host are equal), scope rank and
+/// effect.
+fn key(hit: Hit<'_>) -> Key {
+    let (precedence, scope_rank) = match hit {
+        Hit::Rule(rule) => (rule.precedence.get(), rule.scope.rank()),
+        Hit::Entry(_) => (Precedence::BUILT_IN, Scope::Global.rank()),
+    };
     (
-        rule.pattern.specificity(),
-        rule.scope.rank(),
-        rule.effect == Effect::Deny,
-        Reverse(rule.id),
-    )
-}
-
-/// Two entries that tie on all of it decide the same way: same set, same kind of pattern (an
-/// exact entry is the host; suffixes of equal length matching one host are equal) and effect.
-fn set_key(hit: Hit<'_>) -> SetKey {
-    (
+        precedence,
         hit.pattern().specificity(),
+        scope_rank,
         hit.effect() == Effect::Deny,
         Reverse((
             hit.rule_set().unwrap_or(RuleSetId::System),
@@ -323,13 +321,13 @@ impl RuleIndex {
     /// What decides `host` requested by `workspace` at `now`, or `None`; always `None` for a
     /// workspace that is nobody's, which has no rules (the store refuses its requests).
     ///
-    /// Only the rules of the workspace's user count. Their own rules: non-expired global rules
-    /// and non-expired rules of `workspace` (R-5, R-7), ranked by R-6. Set entries: those of sets
-    /// switched on for `workspace` (R-37; a set the user made only for its own user's
-    /// workspaces), and System managed entries for every workspace or for `workspace`. Then R-39: when an own rule
-    /// matches, it decides, unless a set's deny is strictly more specific; when none does, the
-    /// most specific set entry decides, deny over allow. With [`SuffixAllows::Ignore`], own
-    /// suffix allows and every set allow are treated as no match (R-14, R-42).
+    /// Only the rules of the workspace's user count: their non-expired, switched-on global rules
+    /// and rules of `workspace` (R-5, R-7), entries of sets they made that are switched on for
+    /// `workspace` (R-37), entries of switched-on built-in sets, and System managed entries for
+    /// every workspace or for `workspace`. Of those that match, R-60 decides: the highest
+    /// precedence, then specificity, scope and deny over allow; a full tie goes to an own rule
+    /// over a set's entry. With [`SuffixAllows::Ignore`], own suffix allows and every set allow
+    /// are treated as no match (R-14, R-42).
     pub(crate) fn decide(
         &self,
         workspace: &WorkspaceId,
@@ -352,80 +350,46 @@ impl RuleIndex {
         suffix_allows: SuffixAllows,
     ) -> Option<Hit<'_>> {
         let ignore = suffix_allows == SuffixAllows::Ignore;
-        let mut own: Option<&Rule> = None;
-        let mut set_best: Option<(SetKey, Hit<'_>)> = None;
-        let mut set_deny: Option<(SetKey, Hit<'_>)> = None;
+        let mut best: Option<(Key, Hit<'_>)> = None;
         for found in self.candidates(host) {
-            let hit = match found {
+            let applies = match found {
                 Hit::Rule(rule) => {
-                    if rule.is_expired(now) || !rule.enabled {
-                        continue;
-                    }
-                    match &rule.scope {
-                        Scope::Set(set) => {
-                            if rule.user != user
-                                || !self.switches.is_on(user, RuleSetId::User(*set), workspace)
-                                || (ignore && rule.effect == Effect::Allow)
-                            {
-                                continue;
+                    !rule.is_expired(now)
+                        && rule.enabled
+                        && match &rule.scope {
+                            Scope::Set(set) => {
+                                rule.user == user
+                                    && self.switches.is_on(user, RuleSetId::User(*set), workspace)
+                                    && !(ignore && rule.effect == Effect::Allow)
                             }
-                            Hit::Rule(rule)
-                        }
-                        scope => {
-                            let applies = rule.user == user
-                                && scope.workspace().is_none_or(|s| s == workspace);
-                            let dropped = ignore
-                                && rule.effect == Effect::Allow
-                                && matches!(rule.pattern, Pattern::Suffix(_));
-                            if applies
-                                && !dropped
-                                && own.is_none_or(|o| outranks(&own_key(rule), &own_key(o)))
-                            {
-                                own = Some(rule);
+                            scope => {
+                                rule.user == user
+                                    && scope.workspace().is_none_or(|s| s == workspace)
+                                    && !(ignore
+                                        && rule.effect == Effect::Allow
+                                        && matches!(rule.pattern, Pattern::Suffix(_)))
                             }
-                            continue;
                         }
-                    }
                 }
                 Hit::Entry(entry) => {
-                    let applies = match (&entry.set, &entry.workspace) {
+                    let on = match (&entry.set, &entry.workspace) {
                         (RuleSetId::System, None) => true,
                         (RuleSetId::System, Some(s)) => s == workspace,
                         (set, _) => self.switches.is_on(user, *set, workspace),
                     };
-                    if !applies
-                        || (ignore && entry.effect == Effect::Allow)
-                        || self.switches.entry_off(user, entry.set, &entry.pattern)
-                    {
-                        continue;
-                    }
-                    Hit::Entry(entry)
+                    on && !(ignore && entry.effect == Effect::Allow)
+                        && !self.switches.entry_off(user, entry.set, &entry.pattern)
                 }
             };
-            let key = set_key(hit);
-            if set_best
-                .as_ref()
-                .is_none_or(|(best, _)| outranks(&key, best))
-            {
-                set_best = Some((key, hit));
+            if !applies {
+                continue;
             }
-            if hit.effect() == Effect::Deny
-                && set_deny
-                    .as_ref()
-                    .is_none_or(|(best, _)| outranks(&key, best))
-            {
-                set_deny = Some((key, hit));
+            let ranked = key(found);
+            if best.as_ref().is_none_or(|(top, _)| outranks(&ranked, top)) {
+                best = Some((ranked, found));
             }
         }
-        match own {
-            Some(rule) => match set_deny {
-                Some(((specificity, ..), hit)) if specificity > rule.pattern.specificity() => {
-                    Some(hit)
-                }
-                _ => Some(Hit::Rule(rule)),
-            },
-            None => set_best.map(|(_, hit)| hit),
-        }
+        best.map(|(_, hit)| hit)
     }
 
     /// Rows and entries whose pattern matches `host`: its exact entry, then every proper suffix.

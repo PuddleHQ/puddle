@@ -116,6 +116,7 @@ describe("a set you made", () => {
           enabled: true,
           rule_id: 9,
           expires_at: null,
+          precedence: 5,
         },
       ],
     });
@@ -155,6 +156,7 @@ describe("what a set does", () => {
     enabled: true,
     rule_id: null,
     expires_at: null,
+    precedence: 0,
   });
 
   it("says Allows for a set of allows", () => {

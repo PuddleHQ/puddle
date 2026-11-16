@@ -12,7 +12,9 @@ use std::time::{Duration, SystemTime};
 use puddle_netpolicy::{LocalAccess, NetPolicy};
 use puddle_proxy::{AddressCheck, AddressVerdict, ProxyConfig};
 use puddle_types::fixture;
-use puddle_types::{BlockReason, ConnectionDecision, ConnectionReason, LocalCategory, WorkspaceId};
+use puddle_types::{
+    BlockReason, ConnectionDecision, ConnectionReason, LocalCategory, ReasonCode, WorkspaceId,
+};
 use rustls::pki_types::ServerName;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
@@ -364,7 +366,7 @@ async fn hostile_hg16_pipelined_requests_are_each_decided_on_their_own() {
     let server = upstream(&pki, ok_handler()).await;
     let injector = TestInjector::new(|view| {
         if view.path() == "/forbidden" {
-            refuse(403, "push_denied")
+            refuse(403, ReasonCode::PushDenied)
         } else {
             inject(CANARY)
         }
@@ -413,23 +415,23 @@ async fn a_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reason()
         "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Big: {}\r\n\r\n",
         "a".repeat(70 * 1024)
     );
-    let cases: [(&str, u16, &str); 5] = [
+    let cases: [(&str, u16, ReasonCode); 5] = [
         (
             "GET /x HTTP/1.1\r\nHost: evil.example\r\n\r\n",
             421,
-            "misdirected_host",
+            ReasonCode::MisdirectedHost,
         ),
         (
             "GET /x HTTP/1.1\r\nHost: bound.test\r\nExpect: 200-ok\r\n\r\n",
             417,
-            "expectation_unsupported",
+            ReasonCode::ExpectationUnsupported,
         ),
-        ("GET /x HTTP/1.1\r\n\r\n", 400, "bad_request"),
-        (&big, 431, "head_too_large"),
+        ("GET /x HTTP/1.1\r\n\r\n", 400, ReasonCode::BadRequest),
+        (&big, 431, ReasonCode::HeadTooLarge),
         (
             "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Slow: a",
             408,
-            "request_timeout",
+            ReasonCode::RequestTimeout,
         ),
     ];
     for (round, (request, status, code)) in cases.iter().enumerate() {
@@ -438,11 +440,11 @@ async fn a_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reason()
         client.send(request.as_bytes()).await;
         let answer = client.response("GET").await;
         assert_eq!(answer.status, *status, "{code}");
-        assert_eq!(answer.header("x-puddle-blocked"), Some(*code));
+        assert_eq!(answer.header("x-puddle-blocked"), Some(code.as_str()));
         let events = rig.events(round + 1).await;
         let event = &events[round];
         assert_eq!(event.decision, ConnectionDecision::Blocked, "{code}");
-        assert_eq!(event.reason, ConnectionReason::Refused(code), "{code}");
+        assert_eq!(event.reason, ConnectionReason::Refused(*code), "{code}");
     }
     assert!(server.recorded().is_empty());
 }

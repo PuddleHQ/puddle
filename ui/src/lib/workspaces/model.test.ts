@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   cleanCheck,
@@ -29,6 +31,7 @@ import {
   operationLabel,
   parseMemoryGib,
   repoUrlProblem,
+  sshAsHttps,
   sortWorkspaces,
   canRename,
   statusLabel,
@@ -186,17 +189,19 @@ describe("suggested names", () => {
 });
 
 describe("repository URLs", () => {
-  const ssh =
-    "SSH remotes are not supported yet; use the repository's HTTPS URL instead.";
+  const otherHost =
+    "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.";
   it.each([
     ["https://github.com/acme/web-shop.git", null],
     ["  https://github.com/acme/web-shop.git  ", null],
     ["HTTPS://GitHub.com/acme/x", null],
     ["https://host:8443/x.git", null],
     ["", "Enter the repository's HTTPS URL."],
-    ["git@github.com:acme/web-shop.git", ssh],
-    ["ssh://git@github.com/acme/x.git", ssh],
-    ["github.com:acme/x.git", ssh],
+    ["git@github.com:acme/web-shop.git", null],
+    ["ssh://git@github.com/acme/x.git", null],
+    ["github.com:acme/x.git", null],
+    ["git@git.example.com:acme/x.git", otherHost],
+    ["ssh://git@git.example.com/acme/x.git", otherHost],
     ["http://github.com/x.git", "Use an https:// URL."],
     ["ftp://x/y", "Use an https:// URL."],
     ["github.com/acme/x", "Use an https:// URL."],
@@ -254,6 +259,56 @@ describe("repository URLs", () => {
     ["https://github.com/a/b", "https://github.com/a/b"],
   ])("cleans %j to %j", (raw, clean) => {
     expect(cleanRepoUrl(raw)).toBe(clean);
+  });
+
+  describe("SSH addresses", () => {
+    // The same file drives the host's reader (`ssh_address_as_https`).
+    const cases = (
+      JSON.parse(
+        readFileSync(
+          // Vitest runs in `ui/`.
+          resolve(
+            process.cwd(),
+            "../crates/puddle-store/tests/data/repo-urls.json",
+          ),
+          "utf8",
+        ),
+      ) as {
+        ssh_cases: {
+          url: string;
+          https: string | null;
+          refusal?: "host" | "shape" | "shape_repo";
+        }[];
+      }
+    ).ssh_cases;
+
+    it.each(cases)(
+      "reads $url like the host does",
+      ({ url, https, refusal }) => {
+        const converted = sshAsHttps(url);
+        if (https !== null) {
+          expect(converted).toEqual({ url: https });
+          expect(repoUrlProblem(url)).toBeNull();
+        } else if (refusal === "host") {
+          expect(converted).toEqual({ message: otherHost });
+          expect(repoUrlProblem(url)).toBe(otherHost);
+        } else if (refusal === "shape") {
+          expect(converted).toHaveProperty("message");
+          expect(repoUrlProblem(url)).toMatch(
+            /not an SSH address Puddle can read/,
+          );
+        } else {
+          // Reads as an address of a Git host that names no repository.
+          expect(converted).toHaveProperty("url");
+        }
+      },
+    );
+
+    it("names what to use when the address cannot be read", () => {
+      expect(repoUrlProblem("git@github.com:")).toBe(
+        "That is not an SSH address Puddle can read. Use git@github.com:owner/repo.git or the repository's HTTPS URL.",
+      );
+    });
   });
 
   it("does not take a Windows drive letter for an SSH host", () => {

@@ -198,6 +198,16 @@ describe("tableCannotHold", () => {
     ).toBe(true);
   });
 
+  it("reads an SSH address of Azure DevOps as its HTTPS address", () => {
+    expect(
+      tableCannotHold("git@ssh.dev.azure.com:v3/contoso/Shop%20Floor/scanner"),
+    ).toBe(true);
+    expect(
+      tableCannotHold("git@ssh.dev.azure.com:v3/contoso/Platform/api"),
+    ).toBe(false);
+    expect(tableCannotHold("git@git.example.com:contoso/api")).toBe(false);
+  });
+
   it("is false for names without a space and for other hosts", () => {
     expect(
       tableCannotHold("https://dev.azure.com/contoso/Platform/_git/api"),

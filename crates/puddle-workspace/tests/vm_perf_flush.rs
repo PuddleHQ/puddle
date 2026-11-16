@@ -71,7 +71,7 @@ async fn vm_perf_guest_fsync_reaches_flushfilebuffers_on_the_volume_image() {
     let image = format!("{}\\disk.raw", id.volume_name().as_str());
     let scratch = tempfile::tempdir().unwrap();
     let work = scratch.path().to_owned();
-    let marker = |m: &str| std::fs::write(work.join(format!("t1835-mark-{m}-{tag}")), b"").unwrap();
+    let marker = |m: &str| std::fs::write(work.join(format!("flush-mark-{m}-{tag}")), b"").unwrap();
 
     // The trace starts first: the image's Create event is how it knows which file object is it.
     let trace = FlushTrace::start(&work, &format!("puddle-{tag}")).expect("start the ETW trace");
@@ -109,15 +109,15 @@ async fn vm_perf_guest_fsync_reaches_flushfilebuffers_on_the_volume_image() {
     let writes = flushes_between(
         &xml,
         &image,
-        &format!("t1835-mark-a-{tag}"),
-        &format!("t1835-mark-b-{tag}"),
+        &format!("flush-mark-a-{tag}"),
+        &format!("flush-mark-b-{tag}"),
     )
     .unwrap();
     let idle = flushes_between(
         &xml,
         &image,
-        &format!("t1835-mark-b-{tag}"),
-        &format!("t1835-mark-c-{tag}"),
+        &format!("flush-mark-b-{tag}"),
+        &format!("flush-mark-c-{tag}"),
     )
     .unwrap();
     eprintln!(

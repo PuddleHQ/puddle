@@ -76,7 +76,10 @@ async fn two_listeners_share_one_connection_budget() {
         tokio::spawn(serve(
             listener,
             Admission::Loopback,
-            Router::new(),
+            Dispatch {
+                router: Router::new(),
+                editor: None,
+            },
             open.clone(),
             shutdown.clone(),
         ))

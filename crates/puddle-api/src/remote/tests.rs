@@ -90,6 +90,10 @@ fn a_public_host_refuses_what_is_not_a_bare_authority() {
     }
 }
 
+fn id(text: &str) -> WorkspaceId {
+    WorkspaceId::new(text).unwrap()
+}
+
 #[test]
 fn the_base_domain_defaults_to_subdomains_of_the_first_public_host() {
     let remote = RemoteServing::new(
@@ -99,8 +103,16 @@ fn the_base_domain_defaults_to_subdomains_of_the_first_public_host() {
     .unwrap();
     let names = remote.workspace_names();
     assert_eq!(names.base_domain(), "puddle.example.org");
-    assert_eq!(names.host_for("box"), "box.puddle.example.org");
-    assert_eq!(names.origin_for("box"), "https://box.puddle.example.org");
+    let ws = id("k3x9q7m2");
+    assert_eq!(names.host_for(&ws, None), "k3x9q7m2.puddle.example.org");
+    assert_eq!(
+        names.origin_for(&ws, None),
+        "https://k3x9q7m2.puddle.example.org"
+    );
+    assert_eq!(
+        names.origin_for(&ws, Some(5173)),
+        "https://5173-k3x9q7m2.puddle.example.org"
+    );
     assert_eq!(remote.public_hosts().len(), 2);
 }
 
@@ -113,42 +125,69 @@ fn a_set_base_domain_replaces_it_and_keeps_the_front_port() {
     .unwrap();
     let names = remote.workspace_names();
     assert_eq!(names.base_domain(), "ws.example.net");
-    assert_eq!(names.host_for("box"), "box.ws.example.net:8443");
-    assert_eq!(names.origin_for("box"), "https://box.ws.example.net:8443");
+    let ws = id("k3x9q7m2");
+    assert_eq!(names.host_for(&ws, None), "k3x9q7m2.ws.example.net:8443");
+    assert_eq!(
+        names.origin_for(&ws, Some(80)),
+        "https://80-k3x9q7m2.ws.example.net:8443"
+    );
 }
 
 #[test]
-fn a_host_header_maps_to_its_workspace_and_nothing_else_does() {
+fn a_host_header_routes_to_the_editor_or_a_port_of_a_known_workspace_and_nothing_else_does() {
     let remote =
         RemoteServing::new(vec![host("puddle.example.org")], Some("ws.example.net")).unwrap();
     let names = remote.workspace_names();
+    let known = BTreeSet::from([id("k3x9q7m2")]);
+    let editor = names.route("K3X9Q7M2.ws.example.net", &known).unwrap();
     assert_eq!(
-        names.workspace_of("box.ws.example.net").as_deref(),
-        Some("box")
+        (editor.workspace.as_str(), editor.guest_port),
+        ("k3x9q7m2", None)
     );
+    let port = names.route("5173-k3x9q7m2.ws.example.net", &known).unwrap();
     assert_eq!(
-        names.workspace_of("BOX.ws.example.net").as_deref(),
-        Some("box")
+        (port.workspace.as_str(), port.guest_port),
+        ("k3x9q7m2", Some(5173))
     );
+    for (other, why) in [
+        ("ws.example.net", Refusal::Foreign),
+        ("a.k3x9q7m2.ws.example.net", Refusal::Foreign),
+        (".ws.example.net", Refusal::Foreign),
+        ("k3x9q7m2.ws.example.net:8443", Refusal::Foreign),
+        ("k3x9q7m2ws.example.net", Refusal::Foreign),
+        ("k3x9q7m2.ws.example.net.evil.test", Refusal::Foreign),
+        ("puddle.example.org", Refusal::Foreign),
+        ("[::1]", Refusal::Foreign),
+        ("", Refusal::Foreign),
+        ("abcdefgh.ws.example.net", Refusal::NotAWorkspace),
+        ("0-k3x9q7m2.ws.example.net", Refusal::NotAWorkspace),
+        ("05173-k3x9q7m2.ws.example.net", Refusal::NotAWorkspace),
+        ("70000-k3x9q7m2.ws.example.net", Refusal::NotAWorkspace),
+    ] {
+        assert_eq!(names.route(other, &known), Err(why), "{other:?}");
+    }
+    assert!(names.claims("abcdefgh.ws.example.net"));
+    assert!(names.claims("5173-k3x9q7m2.WS.example.net"));
     for other in [
         "ws.example.net",
         "a.b.ws.example.net",
-        ".ws.example.net",
-        "box.ws.example.net:8443",
-        "boxws.example.net",
-        "box.ws.example.net.evil.test",
         "puddle.example.org",
-        "",
+        "x.ws.example.net:1",
     ] {
-        assert_eq!(names.workspace_of(other), None, "{other:?}");
+        assert!(!names.claims(other), "{other:?}");
     }
     let ported = RemoteServing::new(vec![host("puddle.example.org:8443")], None).unwrap();
     let names = ported.workspace_names();
-    assert_eq!(
-        names.workspace_of("box.puddle.example.org:8443").as_deref(),
-        Some("box")
+    assert!(
+        names
+            .route("k3x9q7m2.puddle.example.org:8443", &known)
+            .is_ok()
     );
-    assert_eq!(names.workspace_of("box.puddle.example.org"), None);
+    assert_eq!(
+        names.route("k3x9q7m2.puddle.example.org", &known),
+        Err(Refusal::Foreign)
+    );
+    assert!(!names.claims("k3x9q7m2.puddle.example.org"));
 }
 
 #[test]

@@ -2,6 +2,7 @@
 //! Binding, serving and shutting down. Connections are served by hyper directly (not
 //! `axum::serve`) so headers have a read timeout and every connection task has an owner.
 
+use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::IntoResponse;
+use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
@@ -41,6 +43,7 @@ use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::ports::{NoPorts, PortsService};
 use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
+use crate::remote_editor::RemoteEditor;
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
@@ -405,6 +408,8 @@ pub struct ApiServer {
     remote: Option<RemoteBound>,
     /// Finishes the deletions the owner started.
     admin: Option<Arc<AdminService>>,
+    /// Answers the workspaces' names, when remote serving is on.
+    editor: Option<Arc<RemoteEditor>>,
 }
 
 /// What remote serving binds and registers.
@@ -618,6 +623,16 @@ fn admin_for(
     )))
 }
 
+/// The editor under the workspaces' names, when remote serving is on.
+fn editor_for(config: &ApiConfig, state: &AppState) -> Option<Arc<RemoteEditor>> {
+    let remote = config.remote.as_ref()?;
+    Some(Arc::new(RemoteEditor::new(
+        remote.serving().workspace_names().clone(),
+        state.workspaces.clone(),
+        state.problems.clone(),
+    )))
+}
+
 /// Says so in the log while nobody has made the owner account: the first visitor to the public
 /// address would.
 async fn warn_while_unclaimed(sign_in: &Arc<SignIn>) {
@@ -700,6 +715,7 @@ impl ApiServer {
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).
         crate::system_managed::refresh(&state).await;
+        let editor = editor_for(&config, &state);
         let ui = config
             .ui
             .clone()
@@ -746,6 +762,7 @@ impl ApiServer {
             registration,
             remote,
             admin,
+            editor,
         })
     }
 
@@ -786,6 +803,7 @@ impl ApiServer {
             registration,
             remote,
             admin,
+            editor,
             ..
         } = self;
         let shutdown = stop.subscribe();
@@ -794,7 +812,10 @@ impl ApiServer {
         let mut tasks = vec![tokio::spawn(serve(
             listener,
             Admission::Loopback,
-            router,
+            Dispatch {
+                router,
+                editor: editor.clone(),
+            },
             open.clone(),
             shutdown.clone(),
         ))];
@@ -827,7 +848,11 @@ impl ApiServer {
                 network_addr = Some(addr);
                 held.push(Box::new(registration));
                 tasks.push(tokio::spawn(serve(
-                    listener, admission, router, open, shutdown,
+                    listener,
+                    admission,
+                    Dispatch { router, editor },
+                    open,
+                    shutdown,
                 )));
             }
         }
@@ -934,10 +959,18 @@ fn build_router(
         .with_state(state)
 }
 
+/// Where a listener's requests go: the API's routes, or the workspaces' names under remote
+/// serving.
+#[derive(Clone)]
+struct Dispatch {
+    router: Router,
+    editor: Option<Arc<RemoteEditor>>,
+}
+
 async fn serve(
     listener: TcpListener,
     admission: Admission,
-    router: Router,
+    dispatch: Dispatch,
     open: Arc<Semaphore>,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -968,12 +1001,12 @@ async fn serve(
             drop(stream);
             continue;
         };
-        let router = router.clone();
+        let dispatch = dispatch.clone();
         let stop = shutdown.clone();
         match &admission {
             Admission::Loopback => {
                 connections.spawn(async move {
-                    serve_connection(stream, router, stop).await;
+                    serve_connection(stream, dispatch, stop).await;
                     drop(permit);
                 });
             }
@@ -981,7 +1014,7 @@ async fn serve(
                 let tls = tls.clone();
                 connections.spawn(async move {
                     match tokio::time::timeout(HEADER_READ_TIMEOUT, tls.accept(stream)).await {
-                        Ok(Ok(stream)) => serve_connection(stream, router, stop).await,
+                        Ok(Ok(stream)) => serve_connection(stream, dispatch, stop).await,
                         Ok(Err(err)) => {
                             tracing::debug!(error = %err, "api TLS handshake failed");
                         }
@@ -1002,11 +1035,24 @@ async fn serve(
 }
 
 /// Serves one connection until it ends or shutdown asks it to finish.
-async fn serve_connection<S>(stream: S, router: Router, mut stop: watch::Receiver<bool>)
+async fn serve_connection<S>(stream: S, dispatch: Dispatch, mut stop: watch::Receiver<bool>)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let service = TowerToHyperService::new(router);
+    let Dispatch { router, editor } = dispatch;
+    let api = TowerToHyperService::new(router);
+    let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
+        let api = api.clone();
+        let editor = editor.clone();
+        async move {
+            match editor {
+                Some(editor) if editor.claims(request.headers()) => {
+                    Ok::<_, Infallible>(editor.handle(request.headers()))
+                }
+                _ => hyper::service::Service::call(&api, request).await,
+            }
+        }
+    });
     // `with_upgrades` lets a terminal's WebSocket take the connection over.
     let mut connection = Box::pin(
         http1::Builder::new()

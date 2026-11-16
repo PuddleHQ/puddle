@@ -15519,6 +15519,7 @@
           "repo_url",
           "image",
           "memory_mib",
+          "cpus",
           "start_folder",
           "local_path",
           "url",
@@ -17984,6 +17985,15 @@
           "name"
         ],
         "properties": {
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The workspace's own vCPU count (at least 1, at most the global maximum, which\n`GET /api/settings` reports as `effective_limits.max_cpus`); left out or `null` follows\nthe global default. Stored as the workspace's own setting, so it applies from the first start.",
+            "minimum": 1
+          },
           "image": {
             "type": [
               "string",

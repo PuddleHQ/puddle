@@ -366,9 +366,9 @@ try {
   });
   check("an identity covers the forge's account", identity.status === 201, `${identity.status} ${identity.body.slice(0, 200)}`);
 
-  // 1. An SSH remote is refused with the explicit message, and nothing is made.
+  // 1. An SSH remote of a host Puddle does not end SSH for is refused with the explicit message (use the HTTPS URL), and nothing is made.
   const ssh = await api("POST", "/api/workspaces", { name: "ssh-refused", repositories: [{ url: sshUrl }] });
-  check("an SSH remote is refused with the explicit message", ssh.status >= 400 && ssh.status < 500 && /ssh remotes are not supported yet/.test(ssh.body), `${ssh.status} ${ssh.body.slice(0, 200)}`);
+  check("an SSH remote is refused with the explicit message", ssh.status >= 400 && ssh.status < 500 && /for another host, use the repository.s HTTPS U/.test(ssh.body), `${ssh.status} ${ssh.body.slice(0, 200)}`);
   const none = await api("GET", "/api/workspaces");
   check("the refused create made no workspace", none.json?.workspaces?.length === 0, none.body.slice(0, 200));
 

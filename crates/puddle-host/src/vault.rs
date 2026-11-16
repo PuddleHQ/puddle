@@ -163,6 +163,23 @@ fn warns(session: LoginSession, health: StoreHealth) -> bool {
     session == LoginSession::NotGraphical || health != StoreHealth::Working
 }
 
+/// Logs the advice to start with `--headless` when `session` and `health` say the operating
+/// system's store may not be there for the secrets.
+fn warn_without_headless_flag(session: LoginSession, health: StoreHealth) {
+    if !warns(session, health) {
+        return;
+    }
+    tracing::warn!(
+        graphical_session = session != LoginSession::NotGraphical,
+        store_works = health == StoreHealth::Working,
+        "Puddle was started without --headless and keeps its secrets in the operating \
+         system's credential store, which has no unlocked keyring to rely on here. On a \
+         server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
+         in Puddle's own file vault; that takes effect only for a data folder that has \
+         not recorded a store yet (`secrets/store.json`)"
+    );
+}
+
 fn run_check(
     probe: Probe,
     record_when_working: Option<WriteWhenWorking>,
@@ -181,18 +198,8 @@ fn run_check(
                 "could not write which store keeps the secrets; the next start tries again"
             );
         }
-        if let Some(session) = warn_without_flag
-            && warns(session, health)
-        {
-            tracing::warn!(
-                graphical_session = session != LoginSession::NotGraphical,
-                store_works = health == StoreHealth::Working,
-                "Puddle was started without --headless and keeps its secrets in the operating \
-                 system's credential store, which has no unlocked keyring to rely on here. On a \
-                 server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
-                 in Puddle's own file vault; that takes effect only for a data folder that has \
-                 not recorded a store yet (`secrets/store.json`)"
-            );
+        if let Some(session) = warn_without_flag {
+            warn_without_headless_flag(session, health);
         }
     })
 }

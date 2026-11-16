@@ -378,6 +378,27 @@ async fn the_warning_path_runs_for_a_start_that_deserves_it_and_raises_no_proble
 }
 
 #[test]
+fn the_warning_says_whether_the_login_is_graphical_and_whether_the_store_works() {
+    let (dispatch, logs) = crate::test_logs::capture();
+    tracing::dispatcher::with_default(&dispatch, || {
+        warn_without_headless_flag(LoginSession::NotGraphical, StoreHealth::Working);
+    });
+    let text = logs.text();
+    assert!(
+        text.contains("Puddle was started without --headless")
+            && text.contains("graphical_session=false")
+            && text.contains("store_works=true"),
+        "{text}"
+    );
+    // A graphical login with a store that works has nothing to warn about.
+    let (dispatch, logs) = crate::test_logs::capture();
+    tracing::dispatcher::with_default(&dispatch, || {
+        warn_without_headless_flag(LoginSession::Graphical, StoreHealth::Working);
+    });
+    assert_eq!(logs.text(), "");
+}
+
+#[test]
 fn a_retry_with_nothing_to_check_has_no_answer_and_a_file_vault_is_checked_like_the_store() {
     let skipped = StoreRetry {
         probe: Probe::Skip,

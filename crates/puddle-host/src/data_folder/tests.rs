@@ -57,7 +57,14 @@ fn an_existing_open_install_is_fixed_and_its_data_is_kept() {
     }
     // On Windows the folder under the temporary location inherits the profile's list.
     assert!(!is_owner_only(&paths.store()));
-    make_owner_only(&paths).unwrap();
+    let (dispatch, logs) = crate::test_logs::capture();
+    tracing::dispatcher::with_default(&dispatch, || make_owner_only(&paths)).unwrap();
+    // One line names what was changed.
+    let text = logs.text();
+    assert!(
+        text.contains("made Puddle's data folder owner-only") && text.contains("puddle.db"),
+        "{text}"
+    );
     for name in ["puddle.db", "puddle.db-wal", "puddle.db-shm"] {
         assert!(is_owner_only(&data.join(name)), "{name}");
         assert_eq!(fs::read_to_string(data.join(name)).unwrap(), name);

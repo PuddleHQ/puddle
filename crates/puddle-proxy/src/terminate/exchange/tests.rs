@@ -16,6 +16,7 @@ fn a_rewriter_names_no_token_endpoint_unless_it_says_so() {
 }
 
 use super::*;
+use puddle_types::ReasonCode;
 
 struct Plain;
 
@@ -175,7 +176,7 @@ async fn an_answer_of_exactly_the_limit_is_read_whole_and_one_byte_more_goes_thr
 }
 
 fn no_way() -> InjectRefusal {
-    InjectRefusal::new(502, "no_way", "not for the guest")
+    InjectRefusal::new(502, ReasonCode::CredentialUnavailable, "not for the guest")
 }
 
 /// Says the same thing at each of the three points a rewriter can speak.

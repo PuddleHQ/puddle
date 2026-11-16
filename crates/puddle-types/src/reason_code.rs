@@ -6,8 +6,8 @@
 //!
 //! - a [`ReasonCode`] (`rule`, `push_denied`, ...);
 //! - `<prefix>:<code>` with a [`ReasonPrefix`]: `toggle:` and a [`crate::LocalCategory`] name,
-//!   `puddle_request_failed:` and a [`FailedRequestCode`], or `limit:` and `pass_through:` and a
-//!   code of the limit or the pass-through, which is open-ended (a new limit needs no new type).
+//!   `puddle_request_failed:` and a [`FailedRequestCode`], or `limit:` and a [`LimitCode`],
+//!   or `pass_through:` and a [`PassThroughCode`].
 //!
 //! The enums here are what a reader that explains a reason in words keys its table by, so a code
 //! added here without a sentence is a compile error there.
@@ -17,7 +17,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// The reason codes that stand alone, without a prefix. Serialises as its [`ReasonCode::as_str`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[non_exhaustive]
@@ -283,6 +283,116 @@ impl FailedRequestCode {
 }
 
 impl fmt::Display for FailedRequestCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum LimitCode {
+    /// A stream moved no frame for its limit and never gave way to a reset.
+    StreamIdle,
+    /// The peer did not take the graceful shutdown.
+    ShutdownIgnored,
+    /// An agreed WebSocket pipe moved no byte for its limit.
+    WebsocketIdle,
+    /// An HTTP/2 header block stayed open too long.
+    HeaderBlockTooSlow,
+    /// An HTTP/2 peer sent too many control frames.
+    ControlFrameFlood,
+}
+
+impl LimitCode {
+    /// Every code, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::StreamIdle,
+        Self::ShutdownIgnored,
+        Self::WebsocketIdle,
+        Self::HeaderBlockTooSlow,
+        Self::ControlFrameFlood,
+    ];
+
+    /// The name the record and the API use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StreamIdle => "stream_idle",
+            Self::ShutdownIgnored => "shutdown_ignored",
+            Self::WebsocketIdle => "websocket_idle",
+            Self::HeaderBlockTooSlow => "header_block_too_slow",
+            Self::ControlFrameFlood => "control_frame_flood",
+        }
+    }
+}
+
+impl fmt::Display for LimitCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Why a host the workspace decrypts was passed through untouched: the code after `pass_through:`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum PassThroughCode {
+    /// The host is on the never-decrypt list.
+    NeverDecrypt,
+    /// The host is on the curated list of hosts that cannot be decrypted.
+    Curated,
+    /// A tool did not accept Puddle's certificate for the host before.
+    Learned,
+    /// The connection came from a container, which does not trust Puddle's certificate.
+    Container,
+    /// The client did not start a TLS handshake.
+    NotTls,
+    /// The client asked for another name than the one it `CONNECT`ed to.
+    SniMismatch,
+    /// The server asked for a client certificate.
+    ServerClientCertificate,
+    /// The server's certificate was not accepted.
+    ServerCertificate,
+    /// The TLS handshake with the server failed.
+    ServerTls,
+}
+
+impl PassThroughCode {
+    /// Every code, in declaration order.
+    pub const ALL: [Self; 9] = [
+        Self::NeverDecrypt,
+        Self::Curated,
+        Self::Learned,
+        Self::Container,
+        Self::NotTls,
+        Self::SniMismatch,
+        Self::ServerClientCertificate,
+        Self::ServerCertificate,
+        Self::ServerTls,
+    ];
+
+    /// The name the record and the API use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NeverDecrypt => "never_decrypt",
+            Self::Curated => "curated",
+            Self::Learned => "learned",
+            Self::Container => "container",
+            Self::NotTls => "not_tls",
+            Self::SniMismatch => "sni_mismatch",
+            Self::ServerClientCertificate => "server_client_certificate",
+            Self::ServerCertificate => "server_certificate",
+            Self::ServerTls => "server_tls",
+        }
+    }
+}
+
+impl fmt::Display for PassThroughCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }

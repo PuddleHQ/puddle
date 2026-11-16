@@ -13289,11 +13289,15 @@
                 "minimum": 0
               },
               "category": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "`company_network` when the destination is in the company-network category, allowed or\nrefused; `null` otherwise and in records written before it existed."
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LocalCategory",
+                    "description": "`company_network` when the destination is in the company-network category, allowed or\nrefused; `null` otherwise and in records written before it existed."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "count": {
                 "type": [
@@ -13385,7 +13389,7 @@
               },
               "reason": {
                 "type": "string",
-                "description": "Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with\na `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a\n`FailedRequestCode`, `limit:` or `pass_through:` and a code of the limit or the\npass-through (open-ended). A reader keeps a string it does not know."
+                "description": "Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with\na `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a\n`FailedRequestCode`, `limit:` and a `LimitCode`, or `pass_through:` and a\n`PassThroughCode`. A reader keeps a string it does not know."
               },
               "refused_address": {
                 "type": [
@@ -18054,6 +18058,17 @@
         },
         "additionalProperties": false
       },
+      "LimitCode": {
+        "type": "string",
+        "description": "Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.",
+        "enum": [
+          "stream_idle",
+          "shutdown_ignored",
+          "websocket_idle",
+          "header_block_too_slow",
+          "control_frame_flood"
+        ]
+      },
       "Limits": {
         "type": "object",
         "description": "Upper bounds on what a workspace may be given (global only).",
@@ -18517,6 +18532,21 @@
           "ember",
           "graphite",
           "custom"
+        ]
+      },
+      "PassThroughCode": {
+        "type": "string",
+        "description": "Why a host the workspace decrypts was passed through untouched: the code after `pass_through:`.",
+        "enum": [
+          "never_decrypt",
+          "curated",
+          "learned",
+          "container",
+          "not_tls",
+          "sni_mismatch",
+          "server_client_certificate",
+          "server_certificate",
+          "server_tls"
         ]
       },
       "PasswordSignInRequest": {

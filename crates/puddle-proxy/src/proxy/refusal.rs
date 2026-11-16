@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The error response a refused connection gets.
 
-use puddle_types::ConnectionOutcome;
+use puddle_types::{ConnectionOutcome, ReasonCode};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// An error response: status, extra headers, a one-line explanation for the user.
@@ -12,7 +12,7 @@ pub(crate) struct Refusal {
     pub(crate) message: String,
     /// The reason the connection record carries, for a refusal Puddle made on purpose (not an
     /// upstream failure): also sent as `x-puddle-blocked`.
-    pub(crate) code: Option<&'static str>,
+    pub(crate) code: Option<ReasonCode>,
     /// How reaching the destination went, for a refusal that is a failure to get there (not a
     /// decision): the connection record's `outcome`.
     pub(crate) outcome: Option<ConnectionOutcome>,
@@ -41,9 +41,9 @@ impl Refusal {
 
     /// Marks this refusal as one Puddle made on purpose: the connection record gets `code` as its
     /// reason, and the guest reads it in `x-puddle-blocked`.
-    pub(crate) fn coded(mut self, code: &'static str) -> Self {
+    pub(crate) fn coded(mut self, code: ReasonCode) -> Self {
         self.code = Some(code);
-        self.header("x-puddle-blocked", code)
+        self.header("x-puddle-blocked", code.as_str())
     }
 
     pub(crate) fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {

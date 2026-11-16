@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One test binary for every area below, so the shared support code compiles and links once.
 
-#![cfg_attr(
-    unix,
-    expect(
-        unreachable_pub,
-        reason = "the shared harness is pub for its sibling modules; this is a test binary"
-    )
+#![expect(
+    unreachable_pub,
+    reason = "the shared harness and the path-included fuzz checks are pub for their sibling modules and the fuzz crate; this is a test binary"
 )]
 
 #[cfg(unix)]

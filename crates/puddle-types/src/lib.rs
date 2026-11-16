@@ -38,6 +38,7 @@ mod memory;
 mod merge;
 mod name;
 pub mod panic_hook;
+mod percent;
 mod policy;
 mod problems;
 mod query_name;
@@ -72,6 +73,7 @@ pub use name::{
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 
+pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,
     PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
@@ -81,7 +83,7 @@ pub use query_name::{MAX_QUERY_NAME_LEN, QueryName};
 pub use reason_code::{FailedRequestCode, ReasonCode, ReasonPrefix};
 pub use request_match::{
     CanonicalPath, MAX_METHODS, MAX_PATH_PATTERN, MAX_PATH_SEGMENTS, MethodError, Methods,
-    PathPattern, PathPatternError, percent_decoded, target_path,
+    PathPattern, PathPatternError, target_path,
 };
 pub use session_user::SessionUser;
 pub use tool::{ToolName, ToolVersion, ToolsFileHash};

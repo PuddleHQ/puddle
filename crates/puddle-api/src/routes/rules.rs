@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Rules: list, create, delete, change expiry (docs/spec/rules.md §1–2).
+//! Rules: list, create, delete, change expiry, switch on or off (docs/spec/rules.md §1–2, R-65).
 
 use axum::Json;
 use axum::extract::State;
@@ -12,7 +12,7 @@ use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{NewRuleRequest, Rule, RuleExpiryRequest, RuleList};
+use crate::wire::{NewRuleRequest, Rule, RuleEnabledRequest, RuleExpiryRequest, RuleList};
 
 /// Every rule, including expired ones the sweeper hasn't removed yet.
 #[utoipa::path(
@@ -99,6 +99,33 @@ pub(crate) async fn set_rule_expiry(
         Ok(state
             .store
             .set_rule_expiry(RuleId(id), body.expires_at, Actor::Api)?)
+    })
+    .await?;
+    Ok(Json(Rule::from_store(rule)?))
+}
+
+/// Switches a rule on or off. A rule that is off is kept and never matches; switching one on
+/// closes the open requests it now decides.
+#[utoipa::path(
+    put,
+    path = "/api/rules/{id}/enabled",
+    tag = "rules",
+    params(("id" = i64, Path, description = "rule id")),
+    request_body = RuleEnabledRequest,
+    responses(
+        (status = OK, description = "the changed rule", body = Rule),
+        (status = NOT_FOUND, description = "no such rule", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn set_rule_enabled(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    crate::extract::Json(body): crate::extract::Json<RuleEnabledRequest>,
+) -> Result<Json<Rule>, ApiError> {
+    let rule = blocking(move || {
+        Ok(state
+            .store
+            .set_rule_enabled(RuleId(id), body.enabled, Actor::Api)?)
     })
     .await?;
     Ok(Json(Rule::from_store(rule)?))

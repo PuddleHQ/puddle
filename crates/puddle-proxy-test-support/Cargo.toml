@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "puddle-proxy-test-support"
+description = "Rigs the puddle-proxy integration tests share (hostile guests, pull-proxy servers); dev-dependency only, never part of the product"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+futures-util = { workspace = true }
+puddle-agent-proto = { workspace = true }
+puddle-ipc = { workspace = true }
+puddle-netpolicy = { workspace = true }
+puddle-proxy = { workspace = true, features = ["testing"] }
+puddle-test-kit = { workspace = true }
+puddle-types = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net", "process", "rt", "sync", "time"] }
+
+[lints]
+workspace = true

@@ -12,22 +12,21 @@
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
-use crate::support;
-
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent::config::Target;
-use puddle_agent::{Agent, Config};
-use puddle_store::{Actor, Limits, PendingState, Resolution};
-use puddle_test_kit::cpu_time;
-use serde_json::Value;
-use support::{
+use l2::{
     LOCAL, Rig, allow, connect_via, connection_records, echo_server, rig, round_trip,
     wait_for_records, workspace,
 };
+use puddle_agent::config::Target;
+use puddle_agent::{Agent, Config};
+use puddle_e2e::l2;
+use puddle_store::{Actor, Limits, PendingState, Resolution};
+use puddle_test_kit::cpu_time;
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -36,7 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 /// 0 failures, none starved (slowest within 10 times the median plus 5 s).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_connects_256_through_agent_proxy_and_store() {
-    support::log_proxy_to_stderr();
+    l2::log_proxy_to_stderr();
     let rig = rig().await;
     allow(&rig.store, "echo.test");
     let echo = echo_server();

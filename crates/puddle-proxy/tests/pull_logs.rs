@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The image-pull proxy never logs its token (STANDARDS §7). Alone in its test binary, so
 //! the global subscriber sees every thread.
-#[path = "integration/pull_support/mod.rs"]
-mod pull_support;
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -12,7 +10,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::PullProxy;
 use puddle_proxy::testing::StaticResolver;
-use pull_support::{LOCAL, connect, echo, http_server, send};
+use puddle_proxy_test_support::pull::{LOCAL, connect, echo, http_server, send};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Collects every log line the test writes.

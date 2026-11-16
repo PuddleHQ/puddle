@@ -119,6 +119,27 @@ fn a_probe_in_the_options_opens_its_workspace_window_beside_the_main_one() {
 }
 
 #[test]
+fn a_probe_can_open_before_the_main_window() {
+    let app = app();
+    let dir = tempfile::tempdir().unwrap();
+    let options = Options {
+        data_dir: Some(dir.path().to_owned()),
+        sandbox_probe: SandboxProbe::parse(
+            Some("http://probe.localhost:4900/attack.html"),
+            Some("9444"),
+            None,
+            None,
+        ),
+        ..fixture_options()
+    };
+    let backend = tauri::async_runtime::block_on(start_fixture(0));
+    open_in_order(app.handle(), &options, backend, true).unwrap();
+    assert!(app.get_webview_window("vs-probe").is_some());
+    assert!(app.get_webview_window(MAIN_LABEL).is_some());
+    assert!(stop(app.handle()).is_some());
+}
+
+#[test]
 fn stop_without_a_backend_does_nothing() {
     assert_eq!(stop(app().handle()), None);
 }

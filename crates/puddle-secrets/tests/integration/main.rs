@@ -2,6 +2,7 @@
 //! One test binary for every area below, so the shared support code compiles and links once.
 
 mod common;
+mod fake_log;
 
 mod discovery;
 mod fixture_profile;

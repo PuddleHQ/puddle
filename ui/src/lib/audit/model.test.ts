@@ -1042,6 +1042,34 @@ describe("rule set records (R-43)", () => {
       "follows the next level for workspace api, by ui",
     );
   });
+  it("shows a rule, a method and path rule or a built-in entry switched", () => {
+    const switched = (
+      kind: "rule" | "request_rule" | "builtin_entry",
+      enabled: boolean,
+    ) =>
+      row({
+        type: "rule_switched",
+        ts: 1,
+        kind,
+        id: kind === "builtin_entry" ? null : 4,
+        set_id: kind === "builtin_entry" ? "builtin:github" : null,
+        pattern: "api.github.com",
+        workspace_id: kind === "rule" ? "shop" : null,
+        enabled,
+        actor: "ui",
+      } as AuditRecord);
+    expect(switched("rule", false)).toMatchObject({
+      workspace: "shop",
+      destination: "api.github.com",
+      detail: "off, by ui",
+    });
+    expect(switched("request_rule", true).detail).toBe(
+      "on, rule on method and path, by ui",
+    );
+    expect(switched("builtin_entry", false).detail).toBe(
+      "off in builtin:github, by ui",
+    );
+  });
   it("shows what an update changed in a built-in set", () => {
     const changed = (added: string[], removed: string[]) =>
       row({

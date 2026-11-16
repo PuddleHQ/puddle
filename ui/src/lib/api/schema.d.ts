@@ -2294,6 +2294,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tools every mise file of the workspace asks for, as mise lists them in the guest
+         *     (`mise ls`), with whether each is installed. `files` has the root `mise.toml` (the only one
+         *     the API edits) and the repositories' own files, read-only. A stopped workspace answers its
+         *     last listing of this run with `running` false and `problem` saying to start it; tools off for
+         *     the workspace, or a mise that failed, is `problem` too, not an error. Send `sha256` back with a
+         *     change.
+         */
+        get: operations["list_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/tools/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Installs what the workspace's mise files ask for, in the background: the retry of a failed
+         *     install. Progress and the end come as `workspace_tools` events.
+         */
+        post: operations["install_tools"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/tools/registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tools mise knows by name (`mise registry`, about a thousand), for the Add tool dialog's
+         *     search. Cached per mise version. Needs a running workspace with tools on.
+         */
+        get: operations["tool_registry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/tools/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets a tool's version in the root `mise.toml` with `mise config set`: every other line, comments
+         *     included, stays as it was, and only plain `[tools]` strings are written. Puddle then installs
+         *     in the background (`workspace_tools` events). Answers the listing that follows.
+         */
+        put: operations["put_tool"];
+        post?: never;
+        /**
+         * Takes a tool out of the root `mise.toml` with `mise unuse --no-prune`: the other lines stay,
+         *     and the installed copy stays on the disk. Answers the listing that follows.
+         */
+        delete: operations["delete_tool"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/tools/{name}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The newest 200 versions mise lists for a tool (`mise ls-remote`), newest first. With the
+         *     version host denied the answer is an empty list and `reason`, so the UI can offer a text box.
+         */
+        get: operations["tool_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5231,6 +5340,13 @@ export interface components {
          * @enum {string}
          */
         ReasonPrefix: "toggle" | "limit" | "pass_through" | "puddle_request_failed";
+        /** @description One tool mise knows by name. */
+        RegistryTool: {
+            /** @description One line about it; may be empty. */
+            description: string;
+            /** @description The name to use in `mise.toml`. */
+            name: components["schemas"]["ToolName"];
+        };
         /**
          * @description Why a checkout's remote address is not shown as it stands.
          * @enum {string}
@@ -6232,6 +6348,90 @@ export interface components {
             id: string;
             /** @description The organisation, for tokens that belong to one (Azure DevOps). */
             org: string | null;
+        };
+        /** @description `PUT /api/workspaces/{id}/tools/{name}`: set a tool's version in the root `mise.toml`. */
+        ToolChangeRequest: {
+            /**
+             * @description The `sha256` of the listing the user looked at (64 lower-case hex digits, or `absent`). A
+             *     different file answers `409`.
+             */
+            sha256: string;
+            /**
+             * @description The version to ask for: ASCII letters, digits and `. _ - : / @ +`, starting with a letter
+             *     or digit, at most 100 characters. Anything else answers `422`.
+             */
+            version: string;
+        };
+        /** @description One tool a mise file asks for. */
+        ToolEntry: {
+            /** @description Whether mise has what the request resolves to. */
+            installed: boolean;
+            /** @description The tool's name as the file spells it. */
+            name: components["schemas"]["ToolName"];
+            /** @description The version the file asks for: `22`, `lts`, an exact version. */
+            requested: components["schemas"]["ToolVersion"];
+        };
+        /**
+         * @description A tool's name as mise.toml spells it: ASCII letters, digits and `.`, `_`, `-`, `:`, `/`, `@`, starting with a letter or digit.
+         * @example node
+         */
+        ToolName: string;
+        /** @description `GET /api/workspaces/{id}/tools/registry`. */
+        ToolRegistry: {
+            /** @description Why the list is empty, from mise. */
+            problem: string | null;
+            /** @description The tools by name; empty with `problem` set when mise could not say. */
+            tools: components["schemas"]["RegistryTool"][];
+        };
+        /**
+         * @description A version request as mise reads it: ASCII letters, digits and `.`, `_`, `-`, `:`, `/`, `@`, `+`, starting with a letter or digit.
+         * @example 22
+         */
+        ToolVersion: string;
+        /** @description `GET /api/workspaces/{id}/tools/{name}/versions`. */
+        ToolVersions: {
+            /** @description Why the list is empty, from mise. */
+            reason: string | null;
+            /**
+             * @description The newest versions (at most 200), newest first; empty with `reason` set when mise could
+             *     not list them (a deny rule on its version host, say). The UI then offers a text box.
+             */
+            versions: components["schemas"]["ToolVersion"][];
+        };
+        /** @description One mise file of the workspace and the tools in it. */
+        ToolsFile: {
+            /** @description The file, relative to the workspace folder: `mise.toml`, `api/.tool-versions`. */
+            path: string;
+            /**
+             * @description Whether this is the workspace's own `mise.toml`, the only file the API edits. The others
+             *     belong to a repository and are shown as they are.
+             */
+            root: boolean;
+            /** @description The tools in it, by name. */
+            tools: components["schemas"]["ToolEntry"][];
+        };
+        /** @description The SHA-256 of the root mise.toml (64 lower-case hex digits), or `absent` when there is no such file. */
+        ToolsFileHash: string;
+        /** @description `GET /api/workspaces/{id}/tools`, and the answer of an edit: the tools of every mise file. */
+        ToolsListing: {
+            /** @description The workspace's mise files: the root file first when it has tools, then the checkouts'. */
+            files: components["schemas"]["ToolsFile"][];
+            /**
+             * Format: int64
+             * @description When the listing was made, epoch ms; `null` when there is none.
+             */
+            listed_at: number | null;
+            /**
+             * @description Why there is nothing fresh to show (stopped, tools off for the workspace, mise failed);
+             *     `null` otherwise.
+             */
+            problem: string | null;
+            /**
+             * @description Whether the workspace was running and asked. `false`: this is the last listing of this
+             *     run, if any, and `problem` says to start it.
+             */
+            running: boolean;
+            sha256: components["schemas"]["ToolsFileHash"] | null;
         };
         /**
          * @description Where the install of a workspace's managed tools stands, as [`Event::WorkspaceTools`] reports
@@ -17102,6 +17302,515 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_tools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the tools */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsListing"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    install_tools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the install started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running or tools are off for it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    tool_registry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the registry; empty with `problem` when mise could not say */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolRegistry"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running or tools are off for it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_tool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the tool's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description the tools after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsListing"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running, tools are off for it, or `mise.toml` is not the file the user looked at (its SHA-256 differs): list again */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a bad name, version or hash */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description mise could not make the change; the message is its last error line */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_tool: {
+        parameters: {
+            query: {
+                /** @description the `sha256` of the listing the user looked at */
+                sha256: string;
+            };
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the tool's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the tools after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsListing"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running, tools are off for it, or the file changed since the listing */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a bad name or hash */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description mise could not make the change; the message is its last error line */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    tool_versions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the tool's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the versions; empty with `reason` when mise could not list them */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolVersions"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running or tools are off for it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a bad name */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

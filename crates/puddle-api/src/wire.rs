@@ -44,6 +44,7 @@ mod settings_view;
 mod shell_init;
 mod ssh_agent;
 mod start_folder;
+mod tools;
 mod workspaces;
 
 pub use admin::{
@@ -132,6 +133,9 @@ pub use ssh_agent::{
     SshAgentHostRequest, SshAgentHostView, SshAgentView,
 };
 pub use start_folder::{StartFolderRequest, StartFolderSet};
+pub use tools::{
+    RegistryTool, ToolChangeRequest, ToolEntry, ToolRegistry, ToolVersions, ToolsFile, ToolsListing,
+};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,

@@ -44,6 +44,8 @@ fn arguments_map_to_commands() {
         &["mise-fetch", "a", "b"],
         &["mise-install"],
         &["mise-install", "/workspaces/w", "--force"],
+        &["mise-tools"],
+        &["mise-tools", "/workspaces/w"],
     ] {
         assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
     }
@@ -52,6 +54,13 @@ fn arguments_map_to_commands() {
         Command::MiseInstall(mise_install::Request {
             root: "/workspaces/w".into(),
             report_only: true,
+        })
+    );
+    assert_eq!(
+        parse(&["mise-tools", "/workspaces/w", "list"]),
+        Command::MiseTools(mise_tools::Request {
+            root: "/workspaces/w".into(),
+            operation: mise_tools::Operation::List,
         })
     );
 }

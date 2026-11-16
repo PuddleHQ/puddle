@@ -256,8 +256,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         report_only: bool,
         timeout: Duration,
     ) -> Option<Result<ExecOutput, ComputeError>> {
-        let inner = &self.inner;
-        let gated = inner.live.lock().await.get(name)?.gated.clone()?;
         let mut args = vec![
             "mise-install".to_owned(),
             format!("{WORKSPACES_ROOT}/{name}"),
@@ -265,18 +263,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if report_only {
             args.push("--missing".to_owned());
         }
-        let user = self.booted_user(name).await;
-        let request = ExecRequest::new(puddle_boot::AGENT_GUEST, args)
-            .as_user(user.name())
-            .with_timeout(timeout);
-        let outcome = gated.ungated().exec(request).await;
-        let running = inner
-            .live
-            .lock()
-            .await
-            .get(name)
-            .is_some_and(|l| l.gated.is_some());
-        running.then_some(outcome)
+        self.exec_agent(name, args, timeout).await
     }
 
     /// Imports Puddle's CAs into the JDK mise just installed: the boot ran the same step before

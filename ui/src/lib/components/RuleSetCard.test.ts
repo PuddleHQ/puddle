@@ -113,6 +113,7 @@ describe("a set you made", () => {
           pattern_kind: "suffix",
           effect: "allow",
           note: "",
+          enabled: true,
           rule_id: 9,
           expires_at: null,
         },
@@ -151,6 +152,7 @@ describe("what a set does", () => {
     pattern_kind: "exact" as const,
     effect,
     note: "",
+    enabled: true,
     rule_id: null,
     expires_at: null,
   });

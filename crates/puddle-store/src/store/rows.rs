@@ -193,7 +193,7 @@ pub(super) fn expire_rows(
 }
 
 pub(super) const RULE_COLUMNS: &str = "id, scope, workspace_id, pattern_kind, pattern, effect, expires_at, \
-                            created_at, created_by, source_pending_id, set_id, user_id";
+                            created_at, created_by, source_pending_id, set_id, user_id, enabled";
 
 /// A `rules` row as SQLite holds it, before validation.
 pub(super) struct RawRule {
@@ -209,6 +209,7 @@ pub(super) struct RawRule {
     pub(super) source_pending_id: Option<i64>,
     pub(super) set_id: Option<i64>,
     pub(super) user_id: i64,
+    pub(super) enabled: i64,
 }
 
 pub(super) fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
@@ -225,6 +226,7 @@ pub(super) fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
         source_pending_id: row.get(9)?,
         set_id: row.get(10)?,
         user_id: row.get(11)?,
+        enabled: row.get(12)?,
     })
 }
 
@@ -279,6 +281,7 @@ pub(super) fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
         created_at: stored_ts("rules", raw.id, raw.created_at)?,
         created_by: Actor::parse(&raw.created_by).ok_or_else(|| bad("created_by"))?,
         source_pending_id: raw.source_pending_id.map(PendingId),
+        enabled: raw.enabled != 0,
     })
 }
 

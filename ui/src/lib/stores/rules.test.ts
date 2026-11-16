@@ -137,6 +137,35 @@ describe("changing", () => {
     api.down = true;
     expect((await store.setExpiry(1, 5)).ok).toBe(false);
   });
+  it("switches a rule on or off and keeps the rule's other fields", async () => {
+    api.rules = [rule(1), rule(2)];
+    const store = make();
+    await store.refresh();
+    expect(await store.setEnabled(2, false)).toEqual({ ok: true });
+    expect(store.rules.find((r) => r.id === 2)?.enabled).toBe(false);
+    expect(store.rules.find((r) => r.id === 1)?.enabled).toBe(true);
+    expect(api.calls).toContain("PUT /api/rules/{id}/enabled");
+    expect(api.bodies.at(-1)).toEqual({ enabled: false });
+    expect(await store.setEnabled(2, true)).toEqual({ ok: true });
+    expect(store.rules.find((r) => r.id === 2)?.enabled).toBe(true);
+  });
+  it("drops a rule that is gone when switching it, and reports refusals and outages", async () => {
+    api.rules = [rule(1)];
+    const store = make();
+    await store.refresh();
+    expect(await store.setEnabled(7, false)).toEqual({
+      ok: false,
+      message: "That rule is already gone.",
+    });
+    api.refuse = { status: 500, message: "could not save" };
+    expect(await store.setEnabled(1, false)).toEqual({
+      ok: false,
+      message: "Could not save.",
+    });
+    expect(store.rules[0]?.enabled).toBe(true);
+    api.down = true;
+    expect((await store.setEnabled(1, false)).ok).toBe(false);
+  });
   it("deletes, counts an already deleted rule as deleted, and reports failures", async () => {
     api.rules = [rule(1), rule(2)];
     const store = make();

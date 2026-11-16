@@ -46,4 +46,32 @@ describe("RuleTable", () => {
     );
     expect(onDelete).toHaveBeenCalledWith(rules[0], expect.any(HTMLElement));
   });
+
+  it("has a switch column only when it can switch, and shows an off rule as off", async () => {
+    const onEnabled = vi.fn();
+    const mixed = [
+      rule(1, { pattern: "a.example.com" }),
+      rule(2, { pattern: "b.example.com", enabled: false }),
+    ];
+    render(RuleTable, {
+      props: { rules: mixed, sort: DEFAULT_SORT, now: 5_000_000, onEnabled },
+    });
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    const first = screen.getByRole("switch", {
+      name: "Rule on: allow a.example.com for every workspace",
+    });
+    const second = screen.getByRole("switch", {
+      name: "Rule on: allow b.example.com for every workspace",
+    });
+    expect(first).toBeChecked();
+    expect(second).not.toBeChecked();
+    expect(screen.getAllByText("off")).toHaveLength(1);
+    // The table asks the page and keeps showing what the rule is until the page changes it.
+    await fireEvent.click(first);
+    expect(onEnabled).toHaveBeenCalledWith(mixed[0], false);
+    expect(first).toBeChecked();
+    await fireEvent.click(second);
+    expect(onEnabled).toHaveBeenCalledWith(mixed[1], true);
+    expect(second).not.toBeChecked();
+  });
 });

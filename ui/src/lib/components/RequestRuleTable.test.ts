@@ -46,6 +46,31 @@ describe("the method and path table", () => {
     expect(second).toHaveTextContent("Every workspace");
   });
 
+  it("has a switch column only when it can switch, and shows an off rule as off", async () => {
+    const onEnabled = vi.fn();
+    const rules = [
+      requestRule(1, { host: "a.example.com" }),
+      requestRule(2, { host: "b.example.com", enabled: false }),
+    ];
+    const { unmount } = render(RequestRuleTable, {
+      props: { now: NOW, rules },
+    } as never);
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+    unmount();
+    render(RequestRuleTable, {
+      props: { now: NOW, rules, onEnabled },
+    } as never);
+    const [first, second] = screen.getAllByRole("switch");
+    expect(first).toBeChecked();
+    expect(second).not.toBeChecked();
+    expect(screen.getAllByText("off")).toHaveLength(1);
+    await fireEvent.click(first!);
+    expect(onEnabled).toHaveBeenCalledWith(rules[0], false);
+    expect(first).toBeChecked();
+    await fireEvent.click(second!);
+    expect(onEnabled).toHaveBeenCalledWith(rules[1], true);
+  });
+
   it("marks the selected rule and leaves the others plain", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;

@@ -360,16 +360,15 @@ impl Inner {
 
     /// Writes the whole table (oldest use first) to a temporary file and moves it over `path`.
     fn rewrite(&self, path: &Path) -> io::Result<()> {
-        let temp = path.with_extension("tmp");
-        let mut out = io::BufWriter::new(File::create(&temp)?);
-        for &offset in self.lru.values() {
-            if let Some(Some(entry)) = self.slots.get(slot(offset)) {
-                writeln!(out, "{} {}", address(offset), entry.name)?;
-            }
-        }
-        out.flush()?;
-        drop(out);
-        fs::rename(&temp, path)
+        let text: String = self
+            .lru
+            .values()
+            .filter_map(|&offset| {
+                let entry = self.slots.get(slot(offset))?.as_ref()?;
+                Some(format!("{} {}\n", address(offset), entry.name))
+            })
+            .collect();
+        puddle_fs::private::write_atomic(path, text.as_bytes())
     }
 
     fn append(&mut self, offset: u32, name: &str) {

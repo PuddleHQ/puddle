@@ -24,7 +24,7 @@ use puddle_secrets::{
 };
 use puddle_store::RepoToggles;
 use puddle_store::WorkspaceGit;
-use puddle_types::{Event, GitAccess, Host};
+use puddle_types::{Event, GitAccess, Host, ReasonCode};
 use support::{Ask as _, basic};
 
 /// Shortcuts over [`Ask`] for the cases that send no body, and the body the injector asked for.
@@ -78,7 +78,7 @@ fn injected(decision: &InjectDecision, expected: &str) -> bool {
 
 fn refusal(decision: &InjectDecision) -> (u16, &'static str, String) {
     match decision {
-        InjectDecision::Refuse(r) => (r.status(), r.code(), r.message().to_owned()),
+        InjectDecision::Refuse(r) => (r.status(), r.code().as_str(), r.message().to_owned()),
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
@@ -891,7 +891,7 @@ async fn a_read_with_a_source_that_needs_a_sign_in_goes_out_with_no_credential()
             // A private repository's `401` is the sign-in refusal, never the server's `401`.
             let replaced = unauthorized.refusal().expect("replaced");
             assert_eq!(replaced.status(), 502);
-            assert_eq!(replaced.code(), "credential_unavailable");
+            assert_eq!(replaced.code(), ReasonCode::CredentialUnavailable);
             assert!(replaced.message().contains("sign in to it in Puddle"));
             assert!(replaced.message().contains("Work"));
         }

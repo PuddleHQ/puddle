@@ -11,7 +11,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use ::http::{HeaderName, HeaderValue};
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{Host, ReasonCode, WorkspaceId};
 use zeroize::Zeroize as _;
 
 use super::wiped::Wiped;
@@ -218,7 +218,7 @@ impl Eq for Unauthorized {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InjectRefusal {
     status: u16,
-    code: &'static str,
+    code: ReasonCode,
     message: String,
 }
 
@@ -226,7 +226,7 @@ impl InjectRefusal {
     /// A refusal with `status`, a machine-readable `code` (sent as `x-puddle-blocked: <code>`)
     /// and a one-line `message` for the user.
     #[must_use]
-    pub fn new(status: u16, code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(status: u16, code: ReasonCode, message: impl Into<String>) -> Self {
         let status = if (400..=599).contains(&status) && !matches!(status, 401 | 407) {
             status
         } else {
@@ -247,7 +247,7 @@ impl InjectRefusal {
 
     /// The machine-readable code, sent as `x-puddle-blocked`.
     #[must_use]
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> ReasonCode {
         self.code
     }
 
@@ -299,7 +299,7 @@ pub(crate) fn body_too_large(limit: usize) -> Refusal {
             "this request's body is over {limit} bytes, more than Puddle reads before it decides; send smaller requests"
         ),
     )
-    .coded("body_too_large")
+    .coded(ReasonCode::BodyTooLarge)
 }
 
 /// What the proxy does with a request after the injector decided.

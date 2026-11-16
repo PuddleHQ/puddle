@@ -13,7 +13,7 @@ use bytes::Bytes;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::client::conn::{http1, http2};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use puddle_types::ConnectionOutcome;
+use puddle_types::{ConnectionOutcome, PassThroughCode, ReasonCode};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
@@ -127,7 +127,7 @@ fn over_limit(host: impl std::fmt::Display) -> Refusal {
         format!("too many open connections from this workspace; none left for another to {host}"),
     )
     .header("retry-after", "1")
-    .coded("connection_limit")
+    .coded(ReasonCode::ConnectionLimit)
 }
 
 /// A connection and what the audit learns from making it.
@@ -144,7 +144,7 @@ pub(crate) struct Made {
 /// every host is decrypted may be passed through instead (see [`Mode`]).
 pub(crate) struct ConnectError {
     pub(crate) refusal: Refusal,
-    pub(crate) pass_through: Option<&'static str>,
+    pub(crate) pass_through: Option<PassThroughCode>,
 }
 
 impl From<Refusal> for ConnectError {
@@ -396,10 +396,12 @@ impl Drop for Lease {
 
 /// The pass-through reason a failed upstream TLS connect is remembered under; an invalid name
 /// is the guest's own mistake and is never passed through.
-fn tls_pass_through(err: &puddle_upstream::TlsConnectError) -> Option<&'static str> {
+fn tls_pass_through(err: &puddle_upstream::TlsConnectError) -> Option<PassThroughCode> {
     match err {
-        puddle_upstream::TlsConnectError::Certificate(_) => Some("server_certificate"),
-        puddle_upstream::TlsConnectError::Handshake(_) => Some("server_tls"),
+        puddle_upstream::TlsConnectError::Certificate(_) => {
+            Some(PassThroughCode::ServerCertificate)
+        }
+        puddle_upstream::TlsConnectError::Handshake(_) => Some(PassThroughCode::ServerTls),
         puddle_upstream::TlsConnectError::InvalidName(_) => None,
     }
 }

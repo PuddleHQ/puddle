@@ -828,3 +828,26 @@ fn percent_decoding_leaves_a_broken_escape_and_ignores_input_without_one() {
     assert_eq!(percent_decoded(b"a%41%2g%"), Some(b"aA%2g%".to_vec()));
     assert_eq!(percent_decoded(b"%ff"), Some(vec![0xff]));
 }
+
+#[test]
+fn a_signed_pair_is_no_escape_and_the_swap_reads_escapes_as_the_rule_matcher_does() {
+    assert_eq!(percent_decoded(b"%+1"), Some(b"%+1".to_vec()));
+    for text in [
+        "/a%41b", "%2Fx%2fy", "%+1%-1", "%4", "%%41", "a%zz%7e", "%2541",
+    ] {
+        let swap = percent_decoded(text.as_bytes()).expect("has a percent sign");
+        let rule = puddle_types::percent_decoded(text);
+        let one_round = puddle_types::percent_decoded_bytes(text.as_bytes());
+        assert_eq!(swap, one_round, "{text}");
+        // The rule matcher decodes further rounds, so it is the swap's reading applied again.
+        let mut again = swap.clone();
+        for _ in 0..4 {
+            again = puddle_types::percent_decoded_bytes(&again);
+        }
+        assert_eq!(
+            rule.as_bytes(),
+            String::from_utf8_lossy(&again).as_bytes(),
+            "{text}"
+        );
+    }
+}

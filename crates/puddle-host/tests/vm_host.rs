@@ -32,7 +32,6 @@ use puddle_types::{WorkspaceId, WorkspaceStatus};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
 use support::{Api, TestDevCert, ended, named_id_options};
-#[cfg(not(windows))]
 use vm_support::start_vm_host_config;
 use vm_support::{
     HarnessPlatform, VmHost, guest, guest_within, harness_config, kill_vm, start_vm_host,
@@ -3686,7 +3685,6 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
 }
 
 /// Waits until the editor server in the guest answers its health check.
-#[cfg(not(windows))]
 async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceId) {
     guest(
         runtime,
@@ -3703,7 +3701,6 @@ async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceId) {
 /// What a client sees of the editor server in a fresh sandbox: the release is read-only, the
 /// password is the owner's alone, a client signs in with it, and it is on no command line.
 /// Returns the password.
-#[cfg(not(windows))]
 async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId, name: &str) -> String {
     // The release is read-only in the guest, and the password is the owner's alone.
     let mount = guest(
@@ -3879,7 +3876,6 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
 /// the glob and the read; the redirect that silences that read comes before the input redirect,
 /// because a shell reports a failed `<` on its own stderr when `2>/dev/null` follows it, and that
 /// text lands in the script's output.
-#[cfg(not(windows))]
 const EDITOR_SERVER_PROCS: &str = "for p in /proc/[0-9]*; do \
      case \"$(tr '\\0' ' ' 2>/dev/null <$p/cmdline)\" in \
        /puddle/code-server/*--bind-addr*)";
@@ -3917,7 +3913,6 @@ fn editor_server_scan_is_silent_while_processes_exit() {
 
 /// The editor server's Uid, Gid and Groups lines from its own status, then the session user's
 /// wanted values, one `key value` per line.
-#[cfg(not(windows))]
 async fn server_credentials(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> String {
     guest(
         runtime,
@@ -3939,9 +3934,7 @@ async fn server_credentials(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> Stri
 
 /// K tier. The bundled code-server runs in the guest, started by the agent from the read-only
 /// mount: it listens on loopback with a password only its owner can read, signs a client in, and
-/// keeps its data on the workspace volume, so a rebuilt sandbox finds it again. (The Windows tier
-/// needs the bundle's executable bits to survive the host's file system; that run is a follow-up.)
-#[cfg(not(windows))]
+/// keeps its data on the workspace volume, so a rebuilt sandbox finds it again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox() {
     let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(

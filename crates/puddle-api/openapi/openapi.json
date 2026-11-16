@@ -17829,7 +17829,7 @@
           },
           "url": {
             "type": "string",
-            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it\nmay be left out or empty: the checkout's `origin` remote gives it (an SSH remote of\nGitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form)."
+            "description": "The repository to clone, as an `https://` URL without credentials. An SSH address\n(`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its\nHTTPS address; one of any other host is refused with a message that says so. With `local_path` it\nmay be left out or empty: the checkout's `origin` remote gives it (an SSH remote of\nGitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form)."
           }
         },
         "additionalProperties": false

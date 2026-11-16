@@ -165,7 +165,7 @@ impl Decision {
 /// Why a request was [`Decision::Blocked`]. Each has its audit `reason` code ([`Self::code`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockReason {
-    /// SSH through the proxy isn't supported yet (F-8; audit reason `ssh_unsupported`).
+    /// SSH to a Git host's name that the proxy does not serve (audit reason `ssh_unsupported`).
     SshUnsupported,
     /// UDP other than DNS is not supported: the workspace's capture rules refused the datagram
     /// at once and the agent reported where it was going (audit reason `udp_unsupported`).

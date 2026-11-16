@@ -108,10 +108,11 @@ fn ssh_config_snapshot() {
         text(file_at(&c, SSH_CONFIG_GUEST)),
         "\
 # Written by Puddle at every boot; changes here are overwritten.
-# SSH from a workspace is not supported yet: ssh runs the agent as its ProxyCommand, which
-# refuses the connection and says why. Loopback and the container bridge stay direct (the
-# agent checks the address). A ProxyCommand or ProxyJump in ~/.ssh/config comes first and
-# wins.
+# ssh runs the agent as its ProxyCommand, which carries the connection to Puddle's proxy.
+# SSH to a Git host that Puddle serves works through Puddle's SSH server; SSH to any
+# other host is decided by your rules like any connection. Loopback and the container
+# bridge stay direct (the agent checks the address). A ProxyCommand or ProxyJump in
+# ~/.ssh/config comes first and wins.
 Match host \"*,!localhost,!::1\"
     ProxyCommand '/puddle/puddle-agent' connect --local-net 172.17.0.0/16 %h %p %n
 "

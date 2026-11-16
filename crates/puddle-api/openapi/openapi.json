@@ -17627,6 +17627,17 @@
         },
         "additionalProperties": false
       },
+      "LimitCode": {
+        "type": "string",
+        "description": "Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.",
+        "enum": [
+          "stream_idle",
+          "shutdown_ignored",
+          "websocket_idle",
+          "header_block_too_slow",
+          "control_frame_flood"
+        ]
+      },
       "Limits": {
         "type": "object",
         "description": "Upper bounds on what a workspace may be given (global only).",
@@ -17645,17 +17656,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "LimitCode": {
-        "type": "string",
-        "description": "Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.",
-        "enum": [
-          "stream_idle",
-          "shutdown_ignored",
-          "websocket_idle",
-          "header_block_too_slow",
-          "control_frame_flood"
-        ]
       },
       "LocalCategory": {
         "type": "string",

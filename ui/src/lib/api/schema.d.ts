@@ -4527,6 +4527,11 @@ export interface components {
              */
             ttl_secs: number;
         };
+        /**
+         * @description Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.
+         * @enum {string}
+         */
+        LimitCode: "stream_idle" | "shutdown_ignored" | "websocket_idle" | "header_block_too_slow" | "control_frame_flood";
         /** @description Upper bounds on what a workspace may be given (global only). */
         Limits: {
             /**
@@ -4535,11 +4540,6 @@ export interface components {
              */
             max_cpus: number | null;
         };
-        /**
-         * @description Which limit of the proxy ended a connection or cut a stream of it: the code after `limit:`.
-         * @enum {string}
-         */
-        LimitCode: "stream_idle" | "shutdown_ignored" | "websocket_idle" | "header_block_too_slow" | "control_frame_flood";
         /**
          * @description A class of local destination with its own toggle. Everything outside these is public.
          *

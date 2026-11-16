@@ -15,6 +15,7 @@ mod common;
 mod contract;
 
 mod admin;
+mod backup;
 mod credentials;
 mod doctor;
 mod endpoints;

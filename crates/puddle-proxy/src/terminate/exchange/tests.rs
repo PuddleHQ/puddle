@@ -20,16 +20,12 @@ use super::*;
 struct Plain;
 
 impl AnswerRewriter for Plain {
-    fn wants(&mut self, _: &AnswerHead<'_>) -> bool {
-        false
+    fn wants(&mut self, _: &AnswerHead<'_>) -> Want {
+        Want::Pass
     }
 
-    fn rewrite<'a>(
-        &'a mut self,
-        _: &'a AnswerHead<'a>,
-        _: &'a [u8],
-    ) -> BoxFuture<'a, Option<Bytes>> {
-        Box::pin(std::future::ready(None))
+    fn rewrite<'a>(&'a mut self, _: &'a AnswerHead<'a>, _: &'a [u8]) -> BoxFuture<'a, Rewrite> {
+        Box::pin(std::future::ready(Rewrite::Keep))
     }
 }
 
@@ -53,15 +49,15 @@ fn an_exchange_says_what_it_asks_for_and_holds_nothing_a_log_should_not_have() {
 #[tokio::test]
 async fn an_answer_too_large_is_nothing_to_a_rewriter_that_does_not_care() {
     let mut plain = Plain;
-    plain.too_large();
+    assert_eq!(plain.too_large(), Rewrite::Keep);
     let head = AnswerHead {
         status: 200,
         content_type: None,
         content_encoding: None,
         content_length: None,
     };
-    assert!(!plain.wants(&head));
-    assert_eq!(plain.rewrite(&head, b"{}").await, None);
+    assert_eq!(plain.wants(&head), Want::Pass);
+    assert_eq!(plain.rewrite(&head, b"{}").await, Rewrite::Keep);
 }
 
 #[tokio::test]
@@ -111,20 +107,17 @@ struct Wants {
 }
 
 impl AnswerRewriter for Wants {
-    fn wants(&mut self, _: &AnswerHead<'_>) -> bool {
-        true
+    fn wants(&mut self, _: &AnswerHead<'_>) -> Want {
+        Want::Read
     }
 
-    fn rewrite<'a>(
-        &'a mut self,
-        _: &'a AnswerHead<'a>,
-        _: &'a [u8],
-    ) -> BoxFuture<'a, Option<Bytes>> {
-        Box::pin(std::future::ready(None))
+    fn rewrite<'a>(&'a mut self, _: &'a AnswerHead<'a>, _: &'a [u8]) -> BoxFuture<'a, Rewrite> {
+        Box::pin(std::future::ready(Rewrite::Keep))
     }
 
-    fn too_large(&mut self) {
+    fn too_large(&mut self) -> Rewrite {
         self.too_large += 1;
+        Rewrite::Keep
     }
 }
 
@@ -179,4 +172,108 @@ async fn an_answer_of_exactly_the_limit_is_read_whole_and_one_byte_more_goes_thr
     .unwrap();
     assert!(matches!(over.body(), AnswerBody::Rejoined { .. }));
     assert_eq!(wants.too_large, 1);
+}
+
+fn no_way() -> InjectRefusal {
+    InjectRefusal::new(502, "no_way", "not for the guest")
+}
+
+/// Says the same thing at each of the three points a rewriter can speak.
+struct Scripted {
+    want: Want,
+    rewrite: Rewrite,
+    too_large: Rewrite,
+}
+
+impl AnswerRewriter for Scripted {
+    fn wants(&mut self, _: &AnswerHead<'_>) -> Want {
+        self.want.clone()
+    }
+
+    fn rewrite<'a>(&'a mut self, _: &'a AnswerHead<'a>, _: &'a [u8]) -> BoxFuture<'a, Rewrite> {
+        Box::pin(std::future::ready(self.rewrite.clone()))
+    }
+
+    fn too_large(&mut self) -> Rewrite {
+        self.too_large.clone()
+    }
+}
+
+async fn read_with(rewriter: Scripted, len: usize) -> Result<Response<AnswerBody>, AnswerError> {
+    let mut rewriter = rewriter;
+    read_answer(
+        &mut rewriter,
+        response_of(len).await,
+        Duration::from_secs(5),
+    )
+    .await
+}
+
+fn refused(result: Result<Response<AnswerBody>, AnswerError>) -> bool {
+    matches!(result, Err(AnswerError::Refused(r)) if r == no_way())
+}
+
+#[tokio::test]
+async fn each_way_a_rewriter_refuses_an_answer_reaches_the_guest_as_a_refusal() {
+    let keep = || Scripted {
+        want: Want::Read,
+        rewrite: Rewrite::Keep,
+        too_large: Rewrite::Keep,
+    };
+    assert!(refused(
+        read_with(
+            Scripted {
+                want: Want::Refuse(no_way()),
+                ..keep()
+            },
+            2
+        )
+        .await
+    ));
+    assert!(refused(
+        read_with(
+            Scripted {
+                rewrite: Rewrite::Refuse(no_way()),
+                ..keep()
+            },
+            2
+        )
+        .await
+    ));
+    assert!(refused(
+        read_with(
+            Scripted {
+                too_large: Rewrite::Refuse(no_way()),
+                ..keep()
+            },
+            MAX_EXCHANGE_BODY + 1
+        )
+        .await
+    ));
+}
+
+#[tokio::test]
+async fn keep_pass_and_replace_are_the_only_ways_an_answer_gets_through() {
+    let pass = read_with(
+        Scripted {
+            want: Want::Pass,
+            rewrite: Rewrite::Refuse(no_way()),
+            too_large: Rewrite::Refuse(no_way()),
+        },
+        2,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(pass.body(), AnswerBody::Streaming(_)));
+    let replaced = read_with(
+        Scripted {
+            want: Want::Read,
+            rewrite: Rewrite::Replace(Bytes::from_static(b"new")),
+            too_large: Rewrite::Keep,
+        },
+        2,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(replaced.body(), AnswerBody::Buffered(Some(b)) if b == "new"));
 }

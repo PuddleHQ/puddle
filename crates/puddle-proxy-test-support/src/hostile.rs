@@ -4,7 +4,6 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -31,7 +30,7 @@ const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const GUEST_ROUTE: &str = "PUDDLE_TEST_HOSTILE_GUEST_ROUTE";
 
 /// The attacked route's endpoint when this process is a test's guests (see [`Guests`]).
-pub(crate) fn guest_route() -> Option<PathBuf> {
+pub fn guest_route() -> Option<PathBuf> {
     std::env::var_os(GUEST_ROUTE).map(PathBuf::from)
 }
 
@@ -49,7 +48,7 @@ impl EventSource for GuestLines {
 /// [`guest_route`] set. A real guest runs in its own machine, so what a guest holds (its streams,
 /// the bytes it has queued but not yet sent) is its memory, not the proxy's, and the heap a test
 /// counts in the parent is the proxy's.
-pub(crate) struct Guests {
+pub struct Guests {
     child: Child,
     lines: GuestLines,
     stderr: ChildStderr,
@@ -57,7 +56,9 @@ pub(crate) struct Guests {
 }
 
 impl Guests {
-    pub(crate) fn start(test: &str, route: &Route) -> Self {
+    /// Re-runs the test binary on `test` as the guests of `route`.
+    #[must_use]
+    pub fn start(test: &str, route: &Route) -> Self {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(GUEST_ROUTE, route.endpoint().path())
@@ -78,7 +79,7 @@ impl Guests {
     /// guests' work takes CPU time, so on a starved machine it takes as long as it takes. Each line they
     /// print restarts the `stall` window; the panic names `line`, the last thing the guests said and
     /// what they said in all when `stall` passes with nothing new (or when they end first).
-    pub(crate) async fn until(&mut self, line: &str, stall: Duration) {
+    pub async fn until(&mut self, line: &str, stall: Duration) {
         let mut last = String::from("nothing yet");
         while !self.said.contains(line) {
             let what = format!(
@@ -93,7 +94,7 @@ impl Guests {
     }
 
     /// Waits up to `limit` for the guests to end: whether they succeeded, and all they printed.
-    pub(crate) async fn finish(mut self, limit: Duration) -> (bool, String) {
+    pub async fn finish(mut self, limit: Duration) -> (bool, String) {
         // The rest goes into its own strings: a read cut off by the timeout drops what it was filling.
         let (mut rest, mut stderr) = (String::new(), String::new());
         let status = tokio::time::timeout(limit, async {
@@ -124,25 +125,30 @@ impl Guests {
 }
 
 /// A proxy with two routes, `attacked` and `bystander`, one policy and an echo server on loopback.
-pub(crate) struct Rig {
-    pub(crate) policy: Arc<StaticPolicy>,
-    pub(crate) attacked: Route,
-    pub(crate) bystander: Route,
-    pub(crate) echo: SocketAddr,
+pub struct Rig {
+    /// The one policy both routes answer to.
+    pub policy: Arc<StaticPolicy>,
+    /// The route the hostile guests use.
+    pub attacked: Route,
+    /// The route of the guest that must stay unharmed.
+    pub bystander: Route,
+    /// The loopback echo server both routes reach.
+    pub echo: SocketAddr,
     _root: IpcRoot,
 }
 
-pub(crate) async fn rig() -> Rig {
+/// A [`Rig`] with the default proxy configuration.
+pub async fn rig() -> Rig {
     rig_with(&ProxyConfig::default()).await
 }
 
 /// As [`rig`], with `config` for the proxy.
-pub(crate) async fn rig_with(config: &ProxyConfig) -> Rig {
+pub async fn rig_with(config: &ProxyConfig) -> Rig {
     rig_logged(config, Arc::new(NullConnectionLog)).await
 }
 
 /// As [`rig_with`], with `log` as the proxy's connection log.
-pub(crate) async fn rig_logged(config: &ProxyConfig, log: Arc<dyn ConnectionLog>) -> Rig {
+pub async fn rig_logged(config: &ProxyConfig, log: Arc<dyn ConnectionLog>) -> Rig {
     let policy = Arc::new(StaticPolicy::new());
     policy.allow(&Host::parse_normalised("127.0.0.1").unwrap());
     let proxy = Arc::new(
@@ -181,8 +187,10 @@ pub(crate) async fn rig_logged(config: &ProxyConfig, log: Arc<dyn ConnectionLog>
     }
 }
 
-pub(crate) struct Guest {
-    pub(crate) control: Control,
+/// The guest side of one route: a yamux session over the route's endpoint.
+pub struct Guest {
+    /// Opens streams into the route.
+    pub control: Control,
     driver: JoinHandle<()>,
 }
 
@@ -193,12 +201,13 @@ impl Drop for Guest {
 }
 
 impl Guest {
-    pub(crate) async fn connect(route: &Route) -> Self {
+    /// Connects to `route`'s endpoint.
+    pub async fn connect(route: &Route) -> Self {
         Self::connect_at(route.endpoint().path()).await
     }
 
     /// A guest on the route whose endpoint is `path` (from another process, which has no [`Route`]).
-    pub(crate) async fn connect_at(path: &Path) -> Self {
+    pub async fn connect_at(path: &Path) -> Self {
         let conn = puddle_ipc::connect(path).await.unwrap();
         let mut session = Session::new_client(conn, client_config());
         let control = session.control();
@@ -208,7 +217,7 @@ impl Guest {
 
     /// Sends `bytes` (a writer task, so a refusal that comes before the guest has finished
     /// writing is still read) and returns the status code (0 when no status line came back) and the response body.
-    pub(crate) async fn refused(&mut self, bytes: Arc<[u8]>) -> (u16, String) {
+    pub async fn refused(&mut self, bytes: Arc<[u8]>) -> (u16, String) {
         let stream: StreamHandle = self.control.open_stream().await.unwrap();
         let (mut read, mut write) = tokio::io::split(stream);
         let writer = tokio::spawn(async move {
@@ -268,7 +277,7 @@ fn content_length(head: &[u8]) -> usize {
 impl Guest {
     /// Opens one stream over the workspace's cap: `true` when its answer is the cap's refusal
     /// naming `limit`, `None` when it got no answer within 20 s.
-    pub(crate) async fn refused_at_the_cap(&self, limit: usize) -> Option<bool> {
+    pub async fn refused_at_the_cap(&self, limit: usize) -> Option<bool> {
         let mut control = self.control.clone();
         let mut stream = control.open_stream().await.ok()?;
         stream
@@ -290,7 +299,7 @@ impl Guest {
     }
 
     /// Opens `CONNECT echo` and returns the status code and the stream (open, for the caller to hold).
-    pub(crate) async fn connect_status(&mut self, echo: SocketAddr) -> (u16, StreamHandle) {
+    pub async fn connect_status(&mut self, echo: SocketAddr) -> (u16, StreamHandle) {
         let mut stream = self.control.open_stream().await.unwrap();
         stream
             .write_all(format!("CONNECT {echo} HTTP/1.1\r\n\r\n").as_bytes())
@@ -314,7 +323,7 @@ impl Guest {
 
 /// Holds a [`bystander_round`] that ran beside an attack to the round `quiet` that ran with nobody
 /// attacking, taken in the same test on the same machine.
-pub(crate) fn assert_unharmed(took: Duration, quiet: Duration, what: &str) {
+pub fn assert_unharmed(took: Duration, quiet: Duration, what: &str) {
     // flake-ok: relative, not a fixed bar: 5 s plus ten times the quiet round of this very run, so
     // a loaded machine moves both sides (the round beside an attack took 0.65 to 3.1 s on 4 cores
     // under 16 busy loops); a bystander the attack starves waits on the proxy's timeouts instead.
@@ -325,7 +334,7 @@ pub(crate) fn assert_unharmed(took: Duration, quiet: Duration, what: &str) {
 }
 
 /// 64 CONNECT requests through the bystander's route, each with an echo round trip; returns how long.
-pub(crate) async fn bystander_round(route: &Route, echo: SocketAddr) -> Duration {
+pub async fn bystander_round(route: &Route, echo: SocketAddr) -> Duration {
     let started = Instant::now();
     let mut guest = Guest::connect(route).await;
     for n in 0..64_u32 {

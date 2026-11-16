@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use puddle_proxy::{AnswerHead, ExchangeRewriter, StandIns};
+use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
 use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::{Host, WorkspaceId};
 use serde_json::{Value, json};
@@ -116,8 +116,10 @@ pub(crate) async fn answered(
         content_length: Some(bytes.len() as u64),
     };
     let answer = exchange.answer_mut().unwrap();
-    assert!(answer.wants(&head));
-    let out = answer.rewrite(&head, &bytes).await.expect("captured");
+    assert_eq!(answer.wants(&head), Want::Read);
+    let Rewrite::Replace(out) = answer.rewrite(&head, &bytes).await else {
+        panic!("captured");
+    };
     serde_json::from_slice(&out).unwrap()
 }
 

@@ -94,33 +94,8 @@ fn is_h3(entry: &[u8]) -> bool {
     let (Some(id), Some(_)) = (parts.next(), parts.next()) else {
         return false;
     };
-    let id = percent_decoded(id);
+    let id = puddle_types::percent_decoded_bytes(id);
     id == b"h3" || id == b"quic" || id.starts_with(b"h3-")
-}
-
-fn percent_decoded(raw: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(raw.len());
-    let mut bytes = raw.iter().copied();
-    while let Some(byte) = bytes.next() {
-        if byte == b'%' {
-            let mut ahead = bytes.clone();
-            if let (Some(high), Some(low)) =
-                (ahead.next().and_then(hex), ahead.next().and_then(hex))
-            {
-                out.push((high << 4) | low);
-                bytes = ahead;
-                continue;
-            }
-        }
-        out.push(byte);
-    }
-    out
-}
-
-fn hex(byte: u8) -> Option<u8> {
-    char::from(byte)
-        .to_digit(16)
-        .and_then(|digit| u8::try_from(digit).ok())
 }
 
 #[cfg(test)]

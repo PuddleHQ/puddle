@@ -240,10 +240,7 @@ async fn a_pat_answer_with_no_token_in_it_keeps_nothing() {
         content_length: Some(bytes.len() as u64),
     };
     let answer = exchange.answer_mut().unwrap();
-    assert!(matches!(
-        answer.rewrite(&head, bytes).await,
-        Rewrite::Refuse(_)
-    ));
+    assert_eq!(answer.rewrite(&head, bytes).await, Rewrite::Keep);
     assert!(kept(&rig, Role::ApiKey).is_none());
     assert_eq!(rig.registry.len(), 0);
 }

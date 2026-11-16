@@ -70,7 +70,11 @@ jobs:
             echo "PUDDLE_REAL_TOOLS_CONTRACT=1"
           } >> "$GITHUB_ENV"
           cygpath -w "$tools/gh" >> "$GITHUB_PATH"
-          cygpath -w "$tools/gcm" >> "$GITHUB_PATH"
+          # `git credential-manager` runs the first `git-credential-manager` that Git finds: its own exec path
+          # comes before PATH, and Git for Windows bundles an older one on PATH ahead of ours (the first run
+          # of this job ran 2.9.1). The pinned build goes into the exec path, which this runner's job may write.
+          exec_path=$(git --exec-path)
+          cp -f "$tools/gcm/"* "$exec_path/"
       - name: Which tools the test will run
         shell: bash
         run: |

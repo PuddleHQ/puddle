@@ -42,26 +42,12 @@ export async function backUpNow(): Promise<BackupResult> {
       parseAs: "blob",
     });
     if (!data) {
-      // A failed answer is JSON; with `parseAs: "blob"` it arrives as a blob too.
-      const body: unknown =
-        error instanceof Blob ? await readJson(error) : error;
-      return {
-        ok: false,
-        reason: readFailure(body as { message?: string }, response),
-      };
+      return { ok: false, reason: readFailure(error, response) };
     }
     const name = fileNameFrom(response.headers.get("content-disposition"));
     save(data, name);
     return { ok: true, name, bytes: data.size };
   } catch {
     return { ok: false, reason: "Puddle's service isn't answering." };
-  }
-}
-
-async function readJson(blob: Blob): Promise<unknown> {
-  try {
-    return JSON.parse(await blob.text());
-  } catch {
-    return undefined;
   }
 }

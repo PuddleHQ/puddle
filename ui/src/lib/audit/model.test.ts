@@ -34,6 +34,7 @@ const rule = {
   created_at: 1,
   created_by: "ui",
   source_pending_id: null,
+  precedence: 5,
 };
 const pending = {
   id: 3,
@@ -913,6 +914,7 @@ describe("a record as a row", () => {
       path: "/repos/**",
       created_at: 1,
       created_by: "api",
+      precedence: 5,
     };
     expect(
       row({ type: "request_rule_created", ts: 1, rule } as AuditRecord),

@@ -190,6 +190,66 @@ async fn bad_decisions_are_refused_without_changing_anything() {
 }
 
 #[tokio::test]
+async fn a_rule_carries_a_precedence_that_beats_specificity_and_refuses_anything_but_one_to_nine() {
+    let api = start().await;
+    api.own("box");
+    let rule = |pattern: &str, effect: &str, precedence: Option<u64>| {
+        let mut body = json!({"scope": {"type": "global"}, "pattern": pattern, "effect": effect});
+        if let Some(precedence) = precedence {
+            body["precedence"] = json!(precedence);
+        }
+        body
+    };
+    let plain = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&rule("api.example.com", "allow", None)),
+        )
+        .await;
+    assert_eq!(plain.status, 201, "{}", plain.body);
+    assert_eq!(plain.json()["precedence"], 5);
+    let high = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&rule("*.example.com", "deny", Some(7))),
+        )
+        .await;
+    assert_eq!(high.json()["precedence"], 7);
+    // The wide deny at 7 beats the exact allow at 5.
+    let decision = api
+        .store
+        .decide(
+            &EgressRequest::new(
+                WorkspaceId::new("box").unwrap(),
+                Host::parse_normalised("api.example.com").unwrap(),
+                443,
+            ),
+            puddle_types::SuffixAllows::Count,
+        )
+        .unwrap();
+    assert!(
+        matches!(decision, puddle_types::Decision::Deny { .. }),
+        "{decision:?}"
+    );
+    let listed = api.get("/api/rules").await.json();
+    assert_eq!(listed["rules"][0]["precedence"], 5);
+    assert_eq!(listed["rules"][1]["precedence"], 7);
+    for bad in [0u64, 10, 300] {
+        let refused = api
+            .send(
+                "POST",
+                "/api/rules",
+                Some(&rule("x.example.org", "allow", Some(bad))),
+            )
+            .await;
+        assert_eq!(refused.status, 422, "{bad}: {}", refused.body);
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_rule_is_switched_off_and_on_and_a_switched_off_rule_decides_nothing() {
     let api = start().await;
     api.own("box");

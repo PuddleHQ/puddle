@@ -67,6 +67,7 @@ mod learned;
 mod network_health;
 mod openapi;
 mod ports;
+mod presence;
 mod proxy_sign_in;
 mod remote;
 mod remote_editor;

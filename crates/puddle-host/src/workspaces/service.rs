@@ -683,6 +683,54 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         Box::pin(async move { self.checkouts_of(id).await })
     }
 
+    fn tools<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.tools_of(id).await })
+    }
+
+    fn set_tool<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        name: &'a puddle_types::ToolName,
+        version: &'a puddle_types::ToolVersion,
+        hash: &'a puddle_types::ToolsFileHash,
+    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.set_tool_in(id, name, version, hash).await })
+    }
+
+    fn remove_tool<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        name: &'a puddle_types::ToolName,
+        hash: &'a puddle_types::ToolsFileHash,
+    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.remove_tool_in(id, name, hash).await })
+    }
+
+    fn tool_registry<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolRegistry, WorkspaceError>> {
+        Box::pin(async move { self.tool_registry_of(id).await })
+    }
+
+    fn tool_versions<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        name: &'a puddle_types::ToolName,
+    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolVersions, WorkspaceError>> {
+        Box::pin(async move { self.tool_versions_of(id, name).await })
+    }
+
+    fn install_tools<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async move { self.request_tool_install(id) })
+    }
+
     fn add_repository<'a>(
         &'a self,
         id: &'a WorkspaceId,

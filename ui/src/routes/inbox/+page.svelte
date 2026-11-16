@@ -3,6 +3,7 @@
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
+  import { page } from "$app/state";
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
@@ -93,12 +94,12 @@
 
   // A system notification opens the window at `/inbox?request=<id>`: that request is the current
   // one and has the focus, once the list is in. A request decided meanwhile is simply not there.
-  let wanted: number | null = (() => {
-    const id = Number(
-      new URLSearchParams(window.location.search).get("request"),
-    );
-    return Number.isSafeInteger(id) && id > 0 ? id : null;
-  })();
+  // The address can change while this page is open (a notification clicked in this tab).
+  let wanted = $state<number | null>(null);
+  $effect(() => {
+    const id = Number(page.url.searchParams.get("request"));
+    if (Number.isSafeInteger(id) && id > 0) wanted = id;
+  });
   $effect(() => {
     if (wanted === null || pending.status !== "ready") return;
     const id = wanted;

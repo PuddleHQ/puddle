@@ -23,6 +23,8 @@ pub enum Command {
     User(crate::cmd::user::UserArgs),
     /// Show the activity log's size or delete its old records, see [`crate::cmd::audit`].
     Audit(crate::cmd::audit::AuditArgs),
+    /// Show, move or restart the store that keeps secrets, see [`crate::cmd::secrets`].
+    VaultAdmin(crate::cmd::secrets::VaultAdminArgs),
 }
 
 /// Arguments that don't form a valid command.
@@ -50,7 +52,7 @@ pub enum UsageError {
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--secret-store <store>] [--headless | --no-headless] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] [--multi-user | --no-multi-user] | user add|remove|reset [--config <path>] [--data-dir <path>] <name> | user list [--config <path>] [--data-dir <path>] | backup [--config <path>] [--data-dir <path>] <dest> | audit status|prune [--days <n>] [--config <path>] [--data-dir <path>] | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--secret-store <store>] [--headless | --no-headless] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] [--multi-user | --no-multi-user] | user add|remove|reset [--config <path>] [--data-dir <path>] <name> | user list [--config <path>] [--data-dir <path>] | backup [--config <path>] [--data-dir <path>] <dest> | audit status|prune [--days <n>] [--config <path>] [--data-dir <path>] | secrets status|reset [--yes] [--config <path>] [--data-dir <path>] | secrets migrate --to os|file [--config <path>] [--data-dir <path>] | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
 
 /// Parse the arguments after the program name.
 ///
@@ -74,6 +76,7 @@ where
             "backup" => return crate::cmd::backup::parse(args),
             "user" => return crate::cmd::user::parse(args),
             "audit" => return crate::cmd::audit::parse(args),
+            "secrets" => return crate::cmd::secrets::parse(args),
             other => return Err(UsageError::UnknownArgument(other.to_owned())),
         },
     };

@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use puddle_types::{Problem, WorkspaceId};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 use crate::host_header::{Refusal, Route, guest_port};
 
@@ -115,6 +115,25 @@ pub fn shadow_problems(workspaces: &[(WorkspaceId, String)]) -> Vec<Problem> {
             .about(editor_id.clone())
         })
         .collect()
+}
+
+/// Brings the `host-label-shadow:` problems in `problems` in line with `workspaces`: raises the
+/// clashes that are new or whose names changed and clears the ones that are gone. Nothing changes,
+/// and nothing is logged, when they already match.
+pub fn sync_shadow_problems(problems: &Problems, workspaces: &[(WorkspaceId, String)]) {
+    let wanted = shadow_problems(workspaces);
+    let open = problems.list();
+    for stale in open
+        .iter()
+        .filter(|p| p.key.starts_with(SHADOW_KEY_PREFIX) && !wanted.iter().any(|w| w.key == p.key))
+    {
+        problems.clear(&stale.key);
+    }
+    for problem in wanted {
+        if !open.contains(&problem) {
+            problems.raise(problem);
+        }
+    }
 }
 
 #[cfg(test)]

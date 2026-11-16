@@ -120,6 +120,29 @@ fn two_legacy_ids_that_clash_raise_one_problem_naming_both_workspaces() {
 }
 
 #[test]
+fn syncing_raises_a_new_clash_once_follows_a_rename_and_clears_a_clash_that_is_gone() {
+    let sink = std::sync::Arc::new(puddle_types::CollectingSink::default());
+    let problems = Problems::new(sink.clone());
+    problems.raise(Problem::new("other", "Other", "kept"));
+    let clash = [pair("api", "Shop API"), pair("8080-api", "Eight")];
+    sync_shadow_problems(&problems, &clash);
+    sync_shadow_problems(&problems, &clash);
+    let keys = |p: &Problems| p.list().into_iter().map(|p| p.key).collect::<Vec<_>>();
+    assert_eq!(keys(&problems), ["host-label-shadow:8080-api", "other"]);
+    // the second sync changed nothing, so it announced nothing
+    assert_eq!(sink.take().len(), 2);
+    sync_shadow_problems(&problems, &[pair("api", "Shop"), pair("8080-api", "Eight")]);
+    assert!(
+        problems
+            .list()
+            .iter()
+            .any(|p| p.title == "Eight and Shop share an address on this host")
+    );
+    sync_shadow_problems(&problems, &[pair("api", "Shop")]);
+    assert_eq!(keys(&problems), ["other"]);
+}
+
+#[test]
 fn ids_that_do_not_clash_raise_nothing() {
     let workspaces = [
         pair("api", "A"),

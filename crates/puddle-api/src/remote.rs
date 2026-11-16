@@ -7,10 +7,13 @@
 //! second listener on one chosen network interface for a proxy on another machine
 //! ([`NetworkListener`]).
 
+use std::collections::BTreeSet;
 use std::fmt::{self, Write as _};
 use std::net::IpAddr;
 
-use puddle_types::DomainName;
+use puddle_front::host_header::{Refusal, Route};
+use puddle_front::remote_label::route_of_label;
+use puddle_types::{DomainName, WorkspaceId};
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
@@ -256,9 +259,11 @@ impl RemoteServing {
     }
 }
 
-/// The names of a workspace's web apps: `<name>.<base domain>`. Puddle needs them to check
-/// `Host` and `Origin`, to route a request by its `Host` to a workspace and to build the links it
-/// shows. DNS and certificates for them are the reverse proxy's job.
+/// The names of a workspace's editor and forwarded ports: `<id>.<base domain>` and
+/// `<port>-<id>.<base domain>`, the id alone in one label so one wildcard certificate covers them
+/// and a rename changes no address. Puddle needs them to route a request by its `Host` to a
+/// workspace and to build the links it hands out. DNS and certificates for them are the reverse
+/// proxy's job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceNames {
     base: String,
@@ -272,33 +277,55 @@ impl WorkspaceNames {
         &self.base
     }
 
-    /// The `Host` of a workspace's web apps.
+    /// The `Host` of `workspace`'s editor, or of its forward of `guest_port`.
     #[must_use]
-    pub fn host_for(&self, workspace: &str) -> String {
-        let name = format!("{workspace}.{}", self.base);
+    pub fn host_for(&self, workspace: &WorkspaceId, guest_port: Option<u16>) -> String {
+        let name = match guest_port {
+            Some(port) => format!("{port}-{workspace}.{}", self.base),
+            None => format!("{workspace}.{}", self.base),
+        };
         match self.port {
             Some(port) => format!("{name}:{port}"),
             None => name,
         }
     }
 
-    /// The `Origin` of a workspace's web apps.
+    /// The `Origin` of `workspace`'s editor, or of its forward of `guest_port`.
     #[must_use]
-    pub fn origin_for(&self, workspace: &str) -> String {
-        format!("https://{}", self.host_for(workspace))
+    pub fn origin_for(&self, workspace: &WorkspaceId, guest_port: Option<u16>) -> String {
+        format!("https://{}", self.host_for(workspace, guest_port))
     }
 
-    /// The workspace a `Host` header names, when it is `<workspace>.<base domain>` with the
-    /// right port and one label in front.
+    /// Whether `host` (a `Host` header) is one label below the base domain on the front's port:
+    /// a workspace's address, known or not.
     #[must_use]
-    pub fn workspace_of(&self, host: &str) -> Option<String> {
+    pub fn claims(&self, host: &str) -> bool {
+        self.name_of(host)
+            .is_some_and(|name| self.is_workspace_label_of(&name))
+    }
+
+    /// What `host` (a `Host` header) addresses among the workspaces whose ids are `known`: the
+    /// editor on `<id>.<base>`, a forwarded port on `<port>-<id>.<base>`. An exact id wins over
+    /// the port reading.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Foreign`] for another port or a name that is not one label below the base
+    /// domain, [`Refusal::NotAWorkspace`] for a label that names no known workspace.
+    pub fn route(&self, host: &str, known: &BTreeSet<WorkspaceId>) -> Result<Route, Refusal> {
+        let name = self.name_of(host).ok_or(Refusal::Foreign)?;
+        route_of_label(Some(&name), &self.base, known)
+    }
+
+    /// `host` in lower case without the front's port, when it carries the right one.
+    fn name_of(&self, host: &str) -> Option<String> {
         let host = host.to_ascii_lowercase();
         let name = match self.port {
             Some(port) => host.strip_suffix(&format!(":{port}"))?,
             None => host.as_str(),
         };
-        let label = name.strip_suffix(self.base.as_str())?.strip_suffix('.')?;
-        (!label.is_empty() && !label.contains('.')).then(|| label.to_owned())
+        // A port other than the front's is another authority; IPv6 literals are never labels.
+        (!name.contains([':', '[', ']'])).then(|| name.to_owned())
     }
 
     /// Whether `name` (a DNS name without a port) is one label below the base domain.

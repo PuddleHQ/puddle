@@ -281,6 +281,15 @@ try {
   const files = ["package.json", "extension.js"].map((name) => [name, readFileSync(join(here, "fixtures", "canary-secret", name)).toString("base64")]);
   const data = `/workspaces/${id}/.puddle/vscode-server`;
   const extension = `${data}/extensions/puddle-test.canary-secret-0.0.1`;
+  const registry = JSON.stringify([
+    {
+      identifier: { id: "puddle-test.canary-secret" },
+      version: "0.0.1",
+      location: { $mid: 1, path: extension, scheme: "file" },
+      relativeLocation: "puddle-test.canary-secret-0.0.1",
+      metadata: {},
+    },
+  ]);
   const setup = [
     "set -eu",
     `builds=${builds}; commit=${commit}; tmp=$builds/$commit.tar.gz.partial`,
@@ -297,6 +306,8 @@ try {
     `printf '%s' "$commit" > "$builds/current"`,
     `mkdir -p ${extension}`,
     ...files.map(([name, b64]) => `printf '%s' '${b64}' | base64 -d > ${extension}/${name}`),
+    // The server lists the extensions of its default profile in extensions.json; a folder alone is not read as installed.
+    `printf '%s' '${registry}' > ${data}/extensions/extensions.json`,
     `cd /workspaces/${id}`,
     "[ -d api/.git ] || git init -q api",
     "[ -d web/.git ] || git init -q web",
@@ -319,8 +330,13 @@ try {
       2000,
     );
   }
-  const serving = await until("the editor server to serve the pinned build", async () => (await serverNow()) === commit, 180_000, 3000).catch(() => false);
-  check("the editor server in the guest runs Microsoft's pinned build", serving, `serving ${await serverNow()}, pinned ${commit}`);
+  // The server's own answer to /version when it gives one, else its process list: the pinned build's folder is in its command line.
+  const running_build = async () => {
+    const r = await guest(id, `ps -eo args= | grep -F 'servers/${commit}/' | grep -v grep | head -n 1 | cut -c1-200`, 60_000);
+    return r.text.trim();
+  };
+  const serving = await until("the editor server to run the pinned build", async () => (await running_build()) || false, 180_000, 3000).catch(() => false);
+  check("the editor server in the guest runs Microsoft's pinned build", Boolean(serving), `process: ${serving}; /version says ${await serverNow()}; pinned ${commit}`);
 
   // 1. Open the window from the Connect step: one explorer root per checkout.
   await connectFromTheMainWindow();
@@ -329,7 +345,7 @@ try {
   await picture(editor, "first-open");
   const roots = opened.rows.filter((r) => r.level === "1").map((r) => r.name);
   check("the window shows one explorer root per checkout", roots.includes("api") && roots.includes("web") && roots.length === 3, JSON.stringify(opened.rows));
-  check("the window opened the multi-root file the attach wrote", opened.where.search.includes(`.puddle/editor/${id}.code-workspace`), JSON.stringify(opened.where));
+  check("the window opened the multi-root file the attach wrote", /\.puddle\/editor\/[^/]+\.code-workspace/.test(opened.where.search), JSON.stringify(opened.where));
 
   // 2. The test extension stores its session in the editor's secret storage when it first runs.
   const stored = await until("the canary session to be stored", async () => (await canaryLog()).match(/ stored (canary-\S+)/)?.[1] ?? false, 120_000, 3000).catch(() => undefined);

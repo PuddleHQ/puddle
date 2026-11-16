@@ -553,6 +553,11 @@ jobs:
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
+      # `cargo xtask runtime` writes the runtime folder's notices with cargo-about.
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        if: steps.whp.outputs.ok == 'true'
+        with:
+          tool: cargo-about@0.9.2
       # The app embeds ui/build, so it is built first.
       - name: UI build (embedded in the app)
         if: steps.whp.outputs.ok == 'true'

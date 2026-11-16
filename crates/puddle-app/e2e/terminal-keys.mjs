@@ -57,6 +57,18 @@ function input(action, ...args) {
 
 const listPages = async (port) => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter((t) => t.type === "page");
 
+/**
+ * Waits for `target`'s own document. A window is listed at the address it is navigating to while its
+ * document is still the initial about:blank (already "complete", with a body), so readyState alone
+ * can pass on the blank document, which the navigation then replaces. `ready` is an expression the
+ * loaded page must satisfy.
+ */
+function loaded(page, target, ready) {
+  return until(`${target.url} to load`, () =>
+    page.evaluate(`location.href === ${JSON.stringify(target.url)} && document.readyState === 'complete' && (${ready})`),
+  );
+}
+
 function start(env) {
   const app = spawn(exe, [], { stdio: ["ignore", "inherit", "pipe"], env: { ...process.env, PUDDLE_APP_FIXTURE: "1", ...env } });
   const state = { app, exited: false, code: undefined, log: "" };
@@ -117,7 +129,7 @@ try {
     return (await listPages(keyPort)).find((t) => t.url.startsWith(`http://${workspaceId}.localhost:${sitePort}/`));
   });
   page = await connect(target.webSocketDebuggerUrl);
-  await until("the page to load", () => page.evaluate("document.readyState === 'complete' && typeof window.probe === 'object'"));
+  await loaded(page, target, "typeof window.probe === 'object'");
   const documentId = await page.evaluate("window.probe.document");
   check("a click in the page gives it the focus", await clickIn(page, first, "#input"));
   check("the textarea has the page's focus", await page.evaluate("document.activeElement === document.getElementById('input')"));
@@ -157,7 +169,7 @@ try {
     return (await listPages(mainPort)).find((t) => /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url));
   });
   page = await connect(mainTarget.webSocketDebuggerUrl);
-  await until("the main page to load", () => page.evaluate("document.readyState === 'complete' && !!document.body"));
+  await loaded(page, mainTarget, "!!document.body");
   const focused = await clickIn(page, second, "body");
   check("a click in the main window gives it the focus", focused);
   await page.evaluate(`window.seenKeys = []; addEventListener("keydown", (e) => window.seenKeys.push(e.key + (e.ctrlKey ? "+ctrl" : "")), true); true`);
@@ -177,7 +189,7 @@ try {
     return (await listPages(askPort)).find((t) => /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url));
   });
   page = await connect(askTarget.webSocketDebuggerUrl);
-  await until("the main page to load", () => page.evaluate("document.readyState === 'complete' && !!document.body"));
+  await loaded(page, askTarget, "!!document.body");
   check("a click in the main window gives it the focus", await clickIn(page, third, "body"));
   await page.evaluate(`window.seenKeys = []; addEventListener("keydown", (e) => window.seenKeys.push(e.key + (e.ctrlKey ? "+ctrl" : "")), true); true`);
   input("keys", "ctrl+q");

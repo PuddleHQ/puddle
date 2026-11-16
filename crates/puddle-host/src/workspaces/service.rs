@@ -188,15 +188,28 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             // this finds nothing unless a window wrote some since. Reserved first, so no other
             // create can be clearing the same id.
             self.clear_left_over_browser_state(&id, &new.name).await?;
-            {
+            // The workspace's own CPU count goes to its settings file before the list is saved,
+            // so a workspace that is listed always has it; either failure takes both back.
+            let stored = match new.cpus {
+                Some(cpus) => self.store_own_cpus(&id, cpus).await,
+                None => Ok(()),
+            };
+            let saved = {
                 let mut state = self.state();
-                if let Err(e) = self.persist(&state) {
+                let saved = stored.and_then(|()| self.persist(&state).map_err(|e| e.to_string()));
+                if saved.is_err() {
                     state.slots.remove(&id);
-                    return Err(WorkspaceError::Unavailable(format!(
-                        "{} was not created: {e}; {SAVE_HINT}",
-                        new.name
-                    )));
                 }
+                saved
+            };
+            if let Err(e) = saved {
+                if new.cpus.is_some() {
+                    self.forget_settings_file(&id, new.name.as_str()).await;
+                }
+                return Err(WorkspaceError::Unavailable(format!(
+                    "{} was not created: {e}; {SAVE_HINT}",
+                    new.name
+                )));
             }
             // The name is reserved and the list saved: set up what the clones need first.
             git.set_up(&record.id, &new.repositories).await;

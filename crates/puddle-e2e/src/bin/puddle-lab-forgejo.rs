@@ -3,7 +3,9 @@
 //! that drives the installed app (`crates/puddle-app/e2e/usable.mjs`, the nightly "usable" run).
 //! It starts Forgejo answering to `--name`, makes the repository `acme/app` (a small npm project
 //! with a build and a test), writes what the script needs as JSON to `--info`, and runs until the
-//! file `--stop` exists. The account, its token and the certificates are made for the run.
+//! file `--stop` exists. The account, its token, its SSH key and the certificates are made for
+//! the run. The info file also names the SSH server (`ssh_port`, on 127.0.0.1), the private key
+//! the account holds (`ssh_key`), and the host key `SHA256:` fingerprint to expect.
 //!
 //! `puddle-lab-forgejo --name forgejo.lab.test --port 443 --info <file> --stop <file>`; needs
 //! `PUDDLE_FORGEJO_BIN` like the fixture.
@@ -101,6 +103,7 @@ fn main() -> ExitCode {
     for (path, content) in PROJECT {
         forgejo.add_file(&format!("{FORGEJO_OWNER}/app"), path, content);
     }
+    let ssh = forgejo.add_generated_ssh_key();
     let info = serde_json::json!({
         "name": forgejo.name(),
         "port": args.port,
@@ -108,6 +111,11 @@ fn main() -> ExitCode {
         "repo": "app",
         "token": forgejo.token(),
         "root_pem": forgejo.root_pem(),
+        "ssh_port": ssh.port,
+        "ssh_key": ssh.key_path,
+        "ssh_public_key": ssh.public_key,
+        "ssh_host_key_fingerprint": ssh.host_key_fingerprint,
+        "ssh_host_key_fingerprints": ssh.host_key_fingerprints,
     });
     // Written last and in one go: the script waits for the file.
     let part = args.info.with_extension("part");

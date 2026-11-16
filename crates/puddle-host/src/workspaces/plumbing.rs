@@ -852,6 +852,22 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         })
     }
 
+    /// Writes `cpus` as the workspace's own setting, keeping anything else its document holds.
+    /// Under the settings routes' lock, like every other write of that file.
+    pub(super) async fn store_own_cpus(
+        &self,
+        name: &WorkspaceId,
+        cpus: CpuCount,
+    ) -> Result<(), String> {
+        let _lock = self.inner.settings_lock.lock().await;
+        let repo = self.inner.settings.as_ref();
+        let mut own = crate::settings_read::workspace(repo, name).map_err(|e| e.to_string())?;
+        own.overrides.cpus = Some(cpus);
+        let document = own.to_document().map_err(|e| e.to_string())?;
+        repo.save_workspace(name, document)
+            .map_err(|e| e.to_string())
+    }
+
     /// The workspace's image and what the runtime says about it, pulled if it is not local yet.
     pub(super) async fn pulled_image(
         &self,

@@ -180,34 +180,13 @@ fn upper_hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn any_hex(byte: u8) -> Option<u8> {
-    upper_hex(byte.to_ascii_uppercase())
-}
-
 fn is_unreserved(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
 }
 
 /// Percent-decodes `text` leniently (any hexadecimal case, bad escapes left as they are).
 fn decode_lossy(text: &str) -> String {
-    let mut out = Vec::with_capacity(text.len());
-    let mut rest = text.as_bytes();
-    while let Some((&byte, after)) = rest.split_first() {
-        let escaped = match (byte, after) {
-            (b'%', [high, low, escape_end @ ..]) => any_hex(*high)
-                .zip(any_hex(*low))
-                .map(|(high, low)| (high << 4 | low, escape_end)),
-            _ => None,
-        };
-        if let Some((decoded, escape_end)) = escaped {
-            out.push(decoded);
-            rest = escape_end;
-        } else {
-            out.push(byte);
-            rest = after;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    String::from_utf8_lossy(&puddle_types::percent_decoded_bytes(text.as_bytes())).into_owned()
 }
 
 /// Whether `path` could be a Git request once a server has read it however it likes: decoded

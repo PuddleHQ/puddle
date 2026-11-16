@@ -33,16 +33,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: WHP preflight
-        shell: pwsh
-        run: |
-          $cs = Get-CimInstance Win32_ComputerSystem
-          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
-          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
-          if (-not ($cs.HypervisorPresent -and "$whp" -eq 'Enabled')) {
-            "::error title=no hypervisor::Windows Hypervisor Platform is not usable on this runner"
-            exit 1
-          }
+      - uses: ./.github/actions/whp-preflight
+        with:
+          title: company-network windows
+          fail-events: '*'
       - name: Toolchain (from rust-toolchain.toml)
         shell: bash
         run: rustup toolchain install && rustc --version

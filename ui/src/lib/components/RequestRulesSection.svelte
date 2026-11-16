@@ -104,6 +104,16 @@
     addOpen = true;
   }
 
+  async function switchRule(rule: RequestRule, enabled: boolean) {
+    const result = await store.setEnabled(rule.id, enabled);
+    toasts.push(
+      result.ok
+        ? `${requestRuleName(rule)} is ${enabled ? "on" : "off"}.`
+        : result.message,
+      result.ok ? {} : { tone: "error", ms: 8000 },
+    );
+  }
+
   async function confirmDelete(rule: RequestRule) {
     deleting = null;
     const index = shown.findIndex((r) => r.id === rule.id);
@@ -182,6 +192,9 @@
       rules={shown}
       {now}
       {selected}
+      onEnabled={editable
+        ? (rule, enabled) => void switchRule(rule, enabled)
+        : undefined}
       onDelete={editable
         ? (rule) => {
             deleting = rule;

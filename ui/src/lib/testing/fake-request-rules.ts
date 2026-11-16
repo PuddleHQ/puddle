@@ -15,6 +15,7 @@ export function requestRule(
     workspace: null,
     created_at: 1_000_000 + id,
     created_by: "api",
+    enabled: true,
     warning: null,
     ...over,
   };
@@ -64,6 +65,20 @@ export class FakeRequestRules {
     });
     this.rules.push(created);
     return this.reply(201, created);
+  };
+
+  PUT = async (
+    path: string,
+    init: { params: { path: { id: number } }; body: { enabled: boolean } },
+  ) => {
+    this.calls.push(`PUT ${path} ${init.params.path.id}`);
+    this.bodies.push(init.body);
+    if (this.down) throw new TypeError("down");
+    if (this.refuse) return this.reply(this.refuse.status);
+    const found = this.rules.find((r) => r.id === init.params.path.id);
+    if (!found) return this.reply(404);
+    found.enabled = init.body.enabled;
+    return this.reply(200, { ...found });
   };
 
   DELETE = async (path: string, init: { params: { path: { id: number } } }) => {

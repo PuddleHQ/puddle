@@ -24,7 +24,9 @@ use puddle_ssh_agent::Identity;
 use puddle_ssh_agent::request::{self, Request};
 use puddle_ssh_agent::testing::TestKey;
 use puddle_types::WorkspaceId;
-use russh::server::{Auth, ChannelOpenHandle, Config, Handler, Msg, Session, VerifiedPublicKey};
+use russh::server::{
+    Auth, ChannelOpenHandle, Config, Handler, Msg, PublicKeyOffer, Session, VerifiedPublicKey,
+};
 use russh::{Channel, ChannelId, MethodKind, MethodSet};
 use serde_json::json;
 use support::{Api, ended};
@@ -36,6 +38,12 @@ use vm_support::{
 };
 
 const NAME: &str = "build.invalid";
+/// The jump host of the hostile-jump test: the only host the agent is on for.
+const JUMP: &str = "jump.invalid";
+/// A name of the host the jump test must not log in to, as a GitHub address literal.
+const GITHUB_LITERAL: &str = "140.82.112.3";
+/// The same host under a name the guest's own ssh config gives it.
+const GITHUB_NAME: &str = "github.invalid";
 const SOCKET: &str = "/run/puddle/ssh-agent.sock";
 
 /// What the test's agent was asked, in order: `list` or `sign`.
@@ -222,6 +230,11 @@ struct Ask {
 /// The first use asks the user: waits for the question in the inbox list, checks what it names
 /// (this workspace, this host, the user's key) and gives `answer`. The guest's `ssh` waits for it.
 async fn answer_first_use(api: &Api, workspace: &str, key: &TestKey, answer: &str) {
+    answer_first_use_for(api, workspace, key, NAME, answer).await;
+}
+
+/// [`answer_first_use`] for the question about `host`.
+async fn answer_first_use_for(api: &Api, workspace: &str, key: &TestKey, host: &str, answer: &str) {
     #[derive(serde::Deserialize)]
     struct Asks {
         asks: Vec<Ask>,
@@ -237,7 +250,7 @@ async fn answer_first_use(api: &Api, workspace: &str, key: &TestKey, answer: &st
     )
     .await;
     assert_eq!(ask.workspace, workspace);
-    assert_eq!(ask.host, NAME);
+    assert_eq!(ask.host, host);
     assert_eq!(ask.key_type, "ssh-ed25519");
     assert_eq!(ask.fingerprint, key.fingerprint());
     let reply = api
@@ -367,6 +380,362 @@ async fn vm_ssh_agent_logs_in_with_the_users_key_through_the_filter_and_stops_wh
         signed_before_off,
         "nothing signed once off: {:?}",
         asked.lock().unwrap()
+    );
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// A server that offers a user's key no login: it records the keys offered and the keys that
+/// proved themselves, and rejects every one. It stands for GitHub.
+struct Closed {
+    offered: Arc<Mutex<Vec<String>>>,
+}
+
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the trait's methods are async; the server answers at once"
+)]
+impl Handler for Closed {
+    type Error = russh::Error;
+
+    async fn auth_publickey_offered(
+        &mut self,
+        _user: &str,
+        offer: PublicKeyOffer<'_>,
+    ) -> Result<Auth, Self::Error> {
+        self.offered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(
+                offer
+                    .public_key
+                    .fingerprint(russh::keys::HashAlg::Sha256)
+                    .to_string(),
+            );
+        Ok(Auth::reject())
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        key: VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
+        self.offered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(
+                key.public_key
+                    .fingerprint(russh::keys::HashAlg::Sha256)
+                    .to_string(),
+            );
+        Ok(Auth::reject())
+    }
+}
+
+/// A jump host: the `Server` login, then every `direct-tcpip` channel is joined to `behind`
+/// whatever address it names; the addresses asked for go to `asked_for`.
+struct Jump {
+    login: Server,
+    behind: std::net::SocketAddr,
+    asked_for: Arc<Mutex<Vec<String>>>,
+}
+
+impl Handler for Jump {
+    type Error = russh::Error;
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        key: VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
+        self.login.auth_publickey(user, key).await
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.login
+            .channel_open_session(channel, reply, session)
+            .await
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.login.exec_request(channel, data, session).await
+    }
+
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host: &str,
+        port: u32,
+        _originator: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.asked_for
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(format!("{host}:{port}"));
+        let behind = self.behind;
+        reply.accept().await;
+        tokio::spawn(async move {
+            if let Ok(mut onward) = tokio::net::TcpStream::connect(behind).await {
+                let mut through = channel.into_stream();
+                let _ = tokio::io::copy_bidirectional(&mut through, &mut onward).await;
+            }
+        });
+        Ok(())
+    }
+}
+
+fn server_config(seed: u8) -> Arc<Config> {
+    Arc::new(Config {
+        keys: vec![russh::keys::PrivateKey::from(
+            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[seed; 32]),
+        )],
+        methods: MethodSet::from(&[MethodKind::PublicKey][..]),
+        inactivity_timeout: Some(Duration::from_secs(120)),
+        auth_rejection_time: Duration::ZERO,
+        ..Config::default()
+    })
+}
+
+/// `closed` on a local port: the stand-in for GitHub, which never lets a login in.
+async fn closed_server(offered: Arc<Mutex<Vec<String>>>) -> std::net::SocketAddr {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = server_config(10);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let server = Closed {
+                offered: Arc::clone(&offered),
+            };
+            let config = Arc::clone(&config);
+            tokio::spawn(async move {
+                if let Ok(session) = russh::server::run_stream(config, stream, server).await {
+                    let _ = session.await;
+                }
+            });
+        }
+    });
+    addr
+}
+
+/// A jump host on a local port that forwards to `behind`.
+async fn jump_server(
+    logins: Arc<Mutex<Vec<String>>>,
+    asked_for: Arc<Mutex<Vec<String>>>,
+    behind: std::net::SocketAddr,
+) -> std::net::SocketAddr {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = server_config(11);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let server = Jump {
+                login: Server {
+                    logins: Arc::clone(&logins),
+                },
+                behind,
+                asked_for: Arc::clone(&asked_for),
+            };
+            let config = Arc::clone(&config);
+            tokio::spawn(async move {
+                if let Ok(session) = russh::server::run_stream(config, stream, server).await {
+                    let _ = session.await;
+                }
+            });
+        }
+    });
+    addr
+}
+
+/// With the agent on for the jump host only, the guest's own `ssh` reaches GitHub three ways
+/// and gets no signature from the user's key on any of them: `ssh -J` through the jump host (the
+/// inner session's key exchange is inside the jump host's encrypted channel, so Puddle never
+/// saw it and the agent has no session to bind it to), a GitHub address literal, and an alias
+/// from the guest's own ssh config (the agent is on for neither of those hosts). The jump host
+/// itself still logs in with the key, so the key works and the refusal is the filter's, and the
+/// audit log says why.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_hostile_hg53_the_guests_own_jump_literal_and_alias_logins_to_github_get_no_signature() {
+    let key = Arc::new(TestKey::ed25519(4));
+    let asked: Asked = Arc::default();
+    let (_agent_root, agent_path) = user_agent(Arc::clone(&key), Arc::clone(&asked));
+    let jump_logins = Arc::new(Mutex::new(Vec::new()));
+    let jump_asked_for = Arc::new(Mutex::new(Vec::new()));
+    let github_offered = Arc::new(Mutex::new(Vec::new()));
+    let github = closed_server(Arc::clone(&github_offered)).await;
+    let jump = jump_server(
+        Arc::clone(&jump_logins),
+        Arc::clone(&jump_asked_for),
+        github,
+    )
+    .await;
+    let proxy = NameProxy::start(&[
+        (JUMP, jump),
+        (GITHUB_LITERAL, github),
+        (GITHUB_NAME, github),
+    ])
+    .await;
+    let options = with_fake_names(
+        through_company_proxy(support::named_id_options(), &proxy),
+        [JUMP],
+    );
+    let vm = start_vm_host_platform("hg53", options, &HarnessPlatform::default(), |_| {}).await;
+    let api = Api::new(vm.host.url(), vm.host.token());
+    vm.host
+        .settings()
+        .save_global(json!({"schema_version": 2, "ui": {"ssh_agent_pipe": agent_path}}))
+        .unwrap();
+    let workspace = create_workspace_from(
+        &vm,
+        &api,
+        "hg53",
+        &[JUMP, GITHUB_LITERAL, GITHUB_NAME],
+        json!({"memory_mib": 2048}),
+    )
+    .await;
+    let id = workspace.as_str();
+    let on = api
+        .put(
+            &format!("/api/workspaces/{id}/ssh-agent/{JUMP}"),
+            &json!({"keys": null}).to_string(),
+        )
+        .await;
+    assert_eq!(on.status, 200, "{}", on.body);
+    let mut events = api.events().await;
+    let name: &'static str = Box::leak(id.to_owned().into_boxed_str());
+    for step in ["stop", "start"] {
+        let reply = api.post(&format!("/api/workspaces/{id}/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events.until(ended(name), Duration::from_secs(600)).await;
+        assert_eq!(end["step"], "done", "{end}");
+    }
+    let jump_port = jump.port();
+    let github_port = github.port();
+    // The guest's own ssh config: the options every ssh needs, including the one `-J` starts for
+    // the jump host, which takes none from the command line, and the alias. No known hosts at
+    // all: the image's system file holds GitHub's real keys, which the stand-in does not have.
+    let (code, out) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "agent",
+        &format!(
+            "mkdir -p ~/.ssh && printf '%s\\n' \
+             'Host github-alias' '  HostName {GITHUB_NAME}' '  Port {github_port}' \
+             'Host *' '  BatchMode yes' '  StrictHostKeyChecking accept-new' \
+             '  UserKnownHostsFile /dev/null' '  GlobalKnownHostsFile /dev/null' '  ConnectTimeout 30' > ~/.ssh/config"
+        ),
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    let ssh = "ssh -v";
+
+    // The user's key works at the jump host: ssh binds, lists, one signature after the answer.
+    let jump_login = format!("{ssh} -p {jump_port} tester@{JUMP} run 2>&1");
+    let ((code, out), ()) = tokio::join!(
+        guest_as(
+            &vm.runtime,
+            &workspace,
+            "agent",
+            &jump_login,
+            Duration::from_secs(120),
+        ),
+        answer_first_use_for(&api, id, &key, JUMP, "always")
+    );
+    eprintln!("{out}");
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(*jump_logins.lock().unwrap(), [key.fingerprint()]);
+    let signed_at_jump = asked.lock().unwrap().clone();
+    assert_eq!(signed_at_jump, ["list", "sign"], "{signed_at_jump:?}");
+
+    // `ssh -J`: the jump login signs again (the standing answer), the inner login to GitHub
+    // never reaches the user's agent.
+    let (code, out) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "agent",
+        &format!("{ssh} -J tester@{JUMP}:{jump_port} -p 22 git@github.com true 2>&1"),
+        Duration::from_secs(120),
+    )
+    .await;
+    eprintln!("{out}");
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("Permission denied"), "{out}");
+    assert_eq!(
+        jump_asked_for.lock().unwrap().as_slice(),
+        ["github.com:22"],
+        "the inner session went through the jump host"
+    );
+    assert_eq!(
+        *jump_logins.lock().unwrap(),
+        [key.fingerprint(), key.fingerprint()],
+        "only the jump login was signed"
+    );
+
+    // A GitHub address literal and an alias from the guest's own config.
+    for (via, target) in [
+        ("literal", format!("-p {github_port} git@{GITHUB_LITERAL}")),
+        ("alias", "git@github-alias".to_owned()),
+    ] {
+        let (code, out) = guest_as(
+            &vm.runtime,
+            &workspace,
+            "agent",
+            &format!("{ssh} {target} true 2>&1"),
+            Duration::from_secs(120),
+        )
+        .await;
+        eprintln!("{out}");
+        assert_ne!(code, 0, "{via}: {out}");
+        assert!(out.contains("Permission denied"), "{via}: {out}");
+    }
+
+    // GitHub saw no key from the user's agent on any path, and the agent signed only twice.
+    assert_eq!(*github_offered.lock().unwrap(), Vec::<String>::new());
+    let all = asked.lock().unwrap().clone();
+    assert_eq!(
+        all.iter().filter(|a| **a == "sign").count(),
+        2,
+        "the jump login twice and nothing else: {all:?}"
+    );
+
+    // The record says why.
+    let page = api
+        .get(&format!(
+            "/api/audit?workspace={id}&type=workspace_op&limit=500"
+        ))
+        .await;
+    // One record: the same refusal of a workspace is written once a minute, and every one of
+    // the three logins was refused for the same reason.
+    assert!(
+        page.body.contains("a session no spliced connection showed"),
+        "no record saying why: {}",
+        page.body
+    );
+    assert!(
+        !page
+            .body
+            .contains(&format!("signed a login to {GITHUB_NAME}"))
+            && !page
+                .body
+                .contains(&format!("signed a login to {GITHUB_LITERAL}"))
+            && !page.body.contains("signed a login to github.com"),
+        "{}",
+        page.body
     );
 
     let down = vm.host.shutdown().await;

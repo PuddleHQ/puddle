@@ -1392,9 +1392,12 @@ async fn agent_linked(host: &Host<FakeRuntime>, name: &WorkspaceId) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     };
-    tokio::time::timeout(Duration::from_secs(20), linked)
-        .await
-        .expect("the guest agent never connected");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(20), linked)
+            .await
+            .is_ok(),
+        "the guest agent never connected"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

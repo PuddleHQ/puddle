@@ -101,13 +101,16 @@ fn reasons_serialise_as_documented() {
         ),
         (ConnectionReason::Suppressed, "suppressed"),
         (ConnectionReason::Merged, "merged"),
-        (ConnectionReason::Refused("push_denied"), "push_denied"),
         (
-            ConnectionReason::LimitEnded("stream_idle"),
+            ConnectionReason::Refused(ReasonCode::PushDenied),
+            "push_denied",
+        ),
+        (
+            ConnectionReason::LimitEnded(LimitCode::StreamIdle),
             "limit:stream_idle",
         ),
         (
-            ConnectionReason::PassedThrough("learned"),
+            ConnectionReason::PassedThrough(PassThroughCode::Learned),
             "pass_through:learned",
         ),
     ];
@@ -385,16 +388,23 @@ fn every_reason_the_types_build_is_a_listed_code_or_a_prefixed_one() {
             &[code.as_str()]
         ));
     }
-    assert!(prefixed(
-        &ConnectionReason::LimitEnded("idle").to_string(),
-        ReasonPrefix::Limit,
-        &["idle"]
-    ));
-    assert!(prefixed(
-        &ConnectionReason::PassedThrough("learned").to_string(),
-        ReasonPrefix::PassThrough,
-        &["learned"]
-    ));
+    for code in LimitCode::ALL {
+        assert!(prefixed(
+            &ConnectionReason::LimitEnded(code).to_string(),
+            ReasonPrefix::Limit,
+            &[code.as_str()]
+        ));
+    }
+    for code in PassThroughCode::ALL {
+        assert!(prefixed(
+            &ConnectionReason::PassedThrough(code).to_string(),
+            ReasonPrefix::PassThrough,
+            &[code.as_str()]
+        ));
+    }
+    for code in ReasonCode::ALL {
+        assert!(listed(&ConnectionReason::Refused(code).to_string()));
+    }
     assert!(listed(RefusedReason::IpRule.code()));
 }
 

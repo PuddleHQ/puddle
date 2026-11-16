@@ -90,7 +90,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use puddle_ca::WorkspaceCa;
 use puddle_ssh_agent::filter::AllowedKeys;
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{Host, PassThroughCode, WorkspaceId};
 
 pub use exchange::{
     AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY, Rewrite, Want,
@@ -290,12 +290,12 @@ impl Termination {
     /// workspace's trust settings), the never-decrypt list, or a host its tools did not accept the
     /// certificate for. `None` for a host with a credential, which is always decrypted so the
     /// credential can be added, and for a host that is decrypted.
-    pub(crate) fn skipped(&self, host: &Host, from_container: bool) -> Option<&'static str> {
+    pub(crate) fn skipped(&self, host: &Host, from_container: bool) -> Option<PassThroughCode> {
         if self.set.contains(host) {
             return None;
         }
         if from_container && self.interception.decrypt_all && matches!(host, Host::Name(_)) {
-            return Some("container");
+            return Some(PassThroughCode::Container);
         }
         self.interception.skipped(host)
     }

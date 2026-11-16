@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, HttpRequestLine,
-    WorkspaceId,
+    ReasonCode, WorkspaceId,
 };
 use russh::server::{Auth, Msg, Session};
 use russh::{Channel, ChannelId, ChannelOpenFailure};
@@ -31,17 +31,17 @@ use crate::terminate::{
 };
 
 /// The audit code of a command that is none of the grammar's.
-const UNSUPPORTED: &str = "ssh_command_unsupported";
+const UNSUPPORTED: ReasonCode = ReasonCode::SshCommandUnsupported;
 /// The audit code of a channel request that is refused.
-const CHANNEL_REFUSED: &str = "ssh_channel_refused";
+const CHANNEL_REFUSED: ReasonCode = ReasonCode::SshChannelRefused;
 /// The audit code of a path that is not one Puddle reads.
-const BAD_PATH: &str = "bad_git_path";
+const BAD_PATH: ReasonCode = ReasonCode::BadGitPath;
 
 /// What the connection's record is made of, written by the channels as they go.
 #[derive(Default)]
 struct Summary {
     first: Option<HttpRequestLine>,
-    refused: Option<(HttpRequestLine, &'static str)>,
+    refused: Option<(HttpRequestLine, ReasonCode)>,
     injected: bool,
     binding_id: Option<String>,
 }
@@ -53,7 +53,7 @@ impl Summary {
         }
     }
 
-    fn refusal(&mut self, line: HttpRequestLine, code: &'static str) {
+    fn refusal(&mut self, line: HttpRequestLine, code: ReasonCode) {
         if self.refused.is_none() {
             self.refused = Some((line, code));
         }
@@ -217,7 +217,7 @@ where
     // inside an HTTPS leg.
     if let Some((_, code)) = &summary.refused {
         event.decision = ConnectionDecision::Blocked;
-        event.reason = ConnectionReason::Refused(code);
+        event.reason = ConnectionReason::Refused(*code);
     }
     event
 }

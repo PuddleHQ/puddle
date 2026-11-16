@@ -182,6 +182,9 @@
 
 <style>
   .wrap {
+    /* The visually hidden "Actions" header is absolutely positioned; without a positioned
+       ancestor it escapes this scroll box and makes the whole page scroll sideways. */
+    position: relative;
     overflow-x: auto;
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);

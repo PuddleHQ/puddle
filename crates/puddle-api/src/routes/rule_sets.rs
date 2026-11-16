@@ -111,12 +111,15 @@ pub(crate) async fn create_rule_set(
             Actor::Api,
         )?;
         match default {
-            Some(default) => Ok(state.store.set_rule_set_default_precedence(
-                principal.user,
-                user_set(&set.id.to_string())?,
-                Some(default),
-                Actor::Api,
-            )?),
+            Some(default) => state
+                .store
+                .set_rule_set_default_precedence(
+                    principal.user,
+                    user_set(&set.id.to_string())?,
+                    Some(default),
+                    Actor::Api,
+                )
+                .map_err(ApiError::from),
             None => Ok(set),
         }
     })

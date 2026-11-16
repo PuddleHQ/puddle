@@ -26,8 +26,7 @@ async fn notified(api: &Api, s: &mut Stream, workspace: &str, host: &str) -> Val
         .await;
     s.data()
         .into_iter()
-        .filter(|d| d["type"] == "pending_notify")
-        .next_back()
+        .rfind(|d| d["type"] == "pending_notify")
         .unwrap()
 }
 

@@ -182,6 +182,34 @@ fn a_change_to_the_request_rules_has_a_fixed_shape_and_no_workspace() {
 }
 
 #[test]
+fn a_pick_for_a_new_request_has_a_fixed_shape_and_names_the_workspace() {
+    let request = PendingSummary {
+        id: 7,
+        workspace: name(),
+        host: "www.example.com".into(),
+        registrable_domain: "example.com".into(),
+        port: 443,
+        first_seen: 1,
+        last_seen: 2,
+        attempts: 3,
+    };
+    let event = Event::PendingNotify {
+        request,
+        clients: vec!["tab-1".into()],
+        desktop: false,
+    };
+    assert_eq!(
+        serde_json::to_string(&event).unwrap(),
+        r#"{"type":"pending_notify","request":{"id":7,"workspace":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3},"clients":["tab-1"],"desktop":false}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<Event>(&serde_json::to_string(&event).unwrap()).unwrap(),
+        event
+    );
+    assert_eq!(event.workspace(), Some(&name()));
+}
+
+#[test]
 fn pending_rule_and_audit_events_have_fixed_shapes() {
     let request = PendingSummary {
         id: 7,
@@ -195,19 +223,8 @@ fn pending_rule_and_audit_events_have_fixed_shapes() {
     };
     for (event, json, workspace) in [
         (
-            Event::PendingOpened {
-                request: request.clone(),
-            },
+            Event::PendingOpened { request },
             r#"{"type":"pending_opened","request":{"id":7,"workspace":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
-            Some(name()),
-        ),
-        (
-            Event::PendingNotify {
-                request,
-                clients: vec!["tab-1".into()],
-                desktop: false,
-            },
-            r#"{"type":"pending_notify","request":{"id":7,"workspace":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3},"clients":["tab-1"],"desktop":false}"#,
             Some(name()),
         ),
         (

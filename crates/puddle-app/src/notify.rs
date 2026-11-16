@@ -176,8 +176,8 @@ impl Notifier {
         event: &Event,
     ) -> Vec<Notice> {
         match event {
-            // The request itself says nothing here: the notice waits for the service's pick.
-            Event::PendingOpened { .. } => Vec::new(),
+            // A request that opened says nothing here (the wildcard below): its notice waits for
+            // the service's pick.
             Event::PendingNotify {
                 request, desktop, ..
             } => {

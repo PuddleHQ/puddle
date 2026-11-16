@@ -113,12 +113,12 @@ impl Presence {
             };
         }
         let wanting: Vec<(&String, &Entry)> = live.into_iter().filter(|(_, e)| e.notify).collect();
-        let used = wanting
+        let in_use = wanting
             .iter()
             .filter(|(_, e)| now.saturating_sub(e.last_input) <= ACTIVE_MS)
             .max_by_key(|(id, e)| (e.last_input, e.visible, std::cmp::Reverse(*id)))
             .map(|picked| vec![*picked]);
-        let chosen = used.unwrap_or(wanting);
+        let chosen = in_use.unwrap_or(wanting);
         let mut clients: Vec<String> = chosen
             .iter()
             .filter(|(_, e)| e.kind == ClientKind::Browser)
@@ -130,6 +130,17 @@ impl Presence {
             desktop: chosen.iter().any(|(_, e)| e.kind == ClientKind::Desktop),
         }
     }
+}
+
+/// Starts the picker for a server's state.
+pub(crate) fn start(state: &crate::routes::AppState) -> tokio::task::JoinHandle<()> {
+    spawn_picker(
+        &state.events,
+        state.store.clone(),
+        state.presence.clone(),
+        state.clock.clone(),
+        state.shutdown.clone(),
+    )
 }
 
 /// Follows the hub until the server stops and, after each new request, says who is to be told.
@@ -153,9 +164,11 @@ pub(crate) fn spawn_picker(
             };
             match received {
                 Ok(Event::PendingOpened { request }) => {
-                    if let Some(events) = events.upgrade() {
-                        notify_about(&events, &store, &presence, clock.as_ref(), request).await;
-                    }
+                    // A hub that is gone has nobody left to tell.
+                    let Some(events) = events.upgrade() else {
+                        return;
+                    };
+                    notify_about(&events, &store, &presence, clock.as_ref(), request).await;
                 }
                 Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return,

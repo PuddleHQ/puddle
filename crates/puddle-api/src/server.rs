@@ -699,13 +699,7 @@ impl ApiServer {
             ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
-        crate::presence::spawn_picker(
-            &state.events,
-            state.store.clone(),
-            state.presence.clone(),
-            state.clock.clone(),
-            state.shutdown.clone(),
-        );
+        crate::presence::start(&state);
         // System managed follows the stored setup from the first request on (rules spec R-41).
         crate::system_managed::refresh(&state).await;
         let ui = config

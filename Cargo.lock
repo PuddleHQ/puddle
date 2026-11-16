@@ -6054,6 +6054,7 @@ dependencies = [
  "puddle-agent-proto",
  "puddle-fd-limit",
  "puddle-front",
+ "puddle-fs",
  "puddle-guest-env",
  "puddle-ipc",
  "puddle-log",

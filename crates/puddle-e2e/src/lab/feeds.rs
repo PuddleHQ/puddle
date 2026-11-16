@@ -27,6 +27,14 @@ pub const PIP_PROJECT: &str = "probe-private";
 /// The Maven coordinates the Maven feed serves, `group:artifact:version`.
 pub const MAVEN_COORDINATES: &str = "com.example:probe-private:1.0";
 
+/// The npm package the npm feed accepts an upload of (`npm publish`).
+pub const NPM_PUBLISH_PACKAGE: &str = "probe-published";
+/// The directory under the Maven feed's `/m2` that accepts uploads (`mvn deploy`): the group and
+/// artifact of [`MAVEN_PUBLISH_COORDINATES`].
+pub const MAVEN_PUBLISH_DIR: &str = "/m2/com/example/probe-published/";
+/// The Maven coordinates the Maven feed accepts an upload of, `group:artifact:version`.
+pub const MAVEN_PUBLISH_COORDINATES: &str = "com.example:probe-published:1.0";
+
 /// What a request carried as a credential: a bearer token, the password of basic
 /// authentication, or the whole `authorization` value (`cargo` sends a registry token bare).
 pub(super) fn presented(seen: &Seen) -> Option<String> {
@@ -195,10 +203,32 @@ fn maven_answer(path: &str) -> WebAnswer {
     }
 }
 
+/// What the npm and Maven feeds answer to an upload that carried the token: `201` to the one
+/// package each accepts (npm: `PUT /<name>` with the version document; Maven: `PUT` of every
+/// file under [`MAVEN_PUBLISH_DIR`]: the artifact, its pom, checksums and metadata), `405` to
+/// any other upload. The upload itself stays in the site's log (`Seen::body`).
+fn upload_answer(host: &str, npm: &str, maven: &str, path: &str) -> WebAnswer {
+    let accepted = if host == npm {
+        path == format!("/{NPM_PUBLISH_PACKAGE}")
+    } else {
+        host == maven && path.starts_with(MAVEN_PUBLISH_DIR)
+    };
+    if accepted {
+        WebAnswer {
+            status: 201,
+            content_type: "application/json",
+            body: br#"{"ok":true}"#.to_vec(),
+        }
+    } else {
+        status(405)
+    }
+}
+
 /// The answers of four private feeds on their own hosts: npm on `npm`, `NuGet` on `nuget`, pip on
 /// `pip` and Maven on `maven`. A request to one of them without `token` gets `401` (with a basic
 /// challenge); with it, the one package of the feed (`NPM_PACKAGE`, `NUGET_PACKAGE`,
-/// `PIP_PROJECT`, `MAVEN_COORDINATES`) or `404`. A request to any other host is left alone.
+/// `PIP_PROJECT`, `MAVEN_COORDINATES`) or `404`. A `PUT` with the token is an upload: see
+/// [`NPM_PUBLISH_PACKAGE`] and [`MAVEN_PUBLISH_DIR`] for what the npm and Maven feeds accept. A request to any other host is left alone.
 #[must_use]
 pub fn private_feeds(
     npm: &'static str,
@@ -219,6 +249,9 @@ pub fn private_feeds(
             return Some(status(401));
         }
         let path = seen.target.split('?').next().unwrap_or_default();
+        if seen.method == "PUT" {
+            return Some(upload_answer(&host, npm, maven, path));
+        }
         Some(match host.as_str() {
             h if h == npm => npm_answer(h, "", path),
             h if h == nuget => nuget_answer(h, path),

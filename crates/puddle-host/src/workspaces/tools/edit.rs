@@ -266,10 +266,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if matches!(self.tools_mode(id)?, MiseMode::Off) {
             return Ok(view(running, None, Some(OFF.to_owned())));
         }
-        if !running {
-            return Ok(view(false, kept.as_ref(), Some(STOPPED.to_owned())));
-        }
-        let Some(outcome) = self.mise_tools(id, &["list"], LIST_TIMEOUT).await else {
+        // A workspace that stopped while the call ran answers as a stopped one.
+        let outcome = if running {
+            self.mise_tools(id, &["list"], LIST_TIMEOUT).await
+        } else {
+            None
+        };
+        let Some(outcome) = outcome else {
             return Ok(view(false, kept.as_ref(), Some(STOPPED.to_owned())));
         };
         match read(outcome, parse_listing) {

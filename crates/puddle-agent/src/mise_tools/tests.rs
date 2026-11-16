@@ -124,7 +124,7 @@ fn a_listing_has_the_root_hash_and_the_tools_of_the_workspaces_own_files_only() 
     std::fs::write(root.join("api/.tool-versions"), "python 3.12\n").unwrap();
     let at = |rel: &str| root.join(rel).display().to_string();
     let ls = format!(
-        "{{{},{},{},{},{},{},{},{}}}",
+        "{{{},{},{},{},{},{},{},{},{}}}",
         entry("node", "22", true, &at("mise.toml")),
         entry("python", "3.12", false, &at("api/.tool-versions")),
         entry("go", "1.23", false, "/home/dev/.config/mise/config.toml"),
@@ -132,6 +132,7 @@ fn a_listing_has_the_root_hash_and_the_tools_of_the_workspaces_own_files_only() 
         entry("bad name", "1", false, &at("mise.toml")),
         entry("ruby", "-x", false, &at("mise.toml")),
         entry("rust", "stable", true, &at("notes.txt")),
+        entry("lua", "5", true, &at("../mise.toml")),
         r#""deno":[{"requested_version":"2","installed":false}]"#,
     );
     let mise = FakeMise::new(&ls);
@@ -287,4 +288,22 @@ fn the_versions_are_the_newest_valid_lines_newest_first() {
     assert_eq!(lines.get(MAX_VERSIONS - 1), Some(&"ver\t1.100.0"));
     assert_eq!(lines.last(), Some(&"end"));
     assert_eq!(*mise.calls.borrow(), [["ls-remote", "node"]]);
+}
+
+#[test]
+fn mise_failing_after_the_hash_check_is_reported_for_a_set_and_a_remove() {
+    let dir = workspace();
+    let root = dir.path();
+    std::fs::write(root.join("mise.toml"), "[tools]\n").unwrap();
+    let hash = ToolsFileHash::new(&sha256_of(&root.join("mise.toml")).unwrap()).unwrap();
+    let mut mise = FakeMise::new("{}");
+    mise.fail = Some("mise ERROR read-only file");
+    let version = ToolVersion::new("1").unwrap();
+    for operation in [
+        Operation::Set(name("go"), version, hash.clone()),
+        Operation::Remove(name("go"), hash),
+    ] {
+        let err = run(&mise, &request(root, operation)).unwrap_err();
+        assert_eq!(err.to_string(), "mise ERROR read-only file");
+    }
 }

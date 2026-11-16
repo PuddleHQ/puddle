@@ -336,6 +336,16 @@ pub fn open<R: Runtime>(
     // WebKitGTK automates one web context, the first one a window makes, and a WebDriver test
     // drives the probe window, so under automation the probe opens before the main window.
     let probe_first = probe_goes_first(std::env::var("TAURI_WEBVIEW_AUTOMATION").ok().as_deref());
+    open_in_order(app, options, backend, probe_first)
+}
+
+/// [`open`] with the order of the probe and main windows decided by the caller.
+fn open_in_order<R: Runtime>(
+    app: &AppHandle<R>,
+    options: &Options,
+    backend: Backend,
+    probe_first: bool,
+) -> Result<(), ShellError> {
     let probe = options.sandbox_probe.as_ref();
     if let Some(probe) = probe.filter(|_| probe_first) {
         open_probe(app, probe, &data_folder(options).unwrap_or_default())?;

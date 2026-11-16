@@ -11,7 +11,6 @@
 //! with `retrnsmt` 0, so a reader that stops reading is never forgiven.
 //!
 //! Linux only: elsewhere nothing is sampled, nothing is subtracted, and the bar is the raw gap.
-#![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,7 +20,7 @@ use std::time::{Duration, Instant};
 const SAMPLE_EVERY: Duration = Duration::from_millis(20);
 
 /// One socket of `/proc/net/tcp` that touches a watched port.
-pub(crate) struct Sample {
+pub struct Sample {
     key: (u16, u16),
     /// The timer kind (`tr`): 1 is the retransmit timer, 4 the zero-window probe timer.
     timer: u8,
@@ -32,7 +31,8 @@ pub(crate) struct Sample {
 }
 
 /// The sockets of `table` (the text of `/proc/net/tcp`) whose local or remote port is in `ports`.
-pub(crate) fn parse(table: &str, ports: &[u16]) -> Vec<Sample> {
+#[must_use]
+pub fn parse(table: &str, ports: &[u16]) -> Vec<Sample> {
     table
         .lines()
         .skip(1)
@@ -73,7 +73,7 @@ struct Track {
 /// armed (`tr` 1) and `retrnsmt` above 0, and the wait that led to its first timeout. A closed
 /// window is not backoff: that sender runs the probe timer (`tr` 4) with `retrnsmt` 0.
 #[derive(Default)]
-pub(crate) struct Accrual {
+pub struct Accrual {
     socks: std::collections::HashMap<(u16, u16), Track>,
     credited_until: Option<Instant>,
     total: Duration,
@@ -82,7 +82,7 @@ pub(crate) struct Accrual {
 impl Accrual {
     /// Takes one sample of the table, at `now`. Time is counted once however many sockets are in
     /// backoff at the same moment.
-    pub(crate) fn observe(&mut self, now: Instant, samples: &[Sample]) {
+    pub fn observe(&mut self, now: Instant, samples: &[Sample]) {
         let mut since: Option<Instant> = None;
         for s in samples {
             let armed = s.timer == 1;
@@ -115,7 +115,9 @@ impl Accrual {
         }
     }
 
-    pub(crate) fn total(&self) -> Duration {
+    /// The time credited so far.
+    #[must_use]
+    pub fn total(&self) -> Duration {
         self.total
     }
 }
@@ -126,14 +128,16 @@ impl Accrual {
 /// socket on the host, so with tens of thousands open (a busy test suite) one read takes 50 to
 /// 80 ms, and a sampler on the runtime would hold a worker that long, and back to back once its
 /// interval fell behind, starving the very transfer it measures.
-pub(crate) struct Backoff {
+pub struct Backoff {
     nanos: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Backoff {
-    pub(crate) fn watch(ports: Vec<u16>) -> Self {
+    /// Starts sampling the sockets that touch `ports`.
+    #[must_use]
+    pub fn watch(ports: Vec<u16>) -> Self {
         let nanos = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let (shared, stopped) = (Arc::clone(&nanos), Arc::clone(&stop));
@@ -160,7 +164,8 @@ impl Backoff {
     }
 
     /// The time seen in backoff since the watch began.
-    pub(crate) fn accrued(&self) -> Duration {
+    #[must_use]
+    pub fn accrued(&self) -> Duration {
         Duration::from_nanos(self.nanos.load(Ordering::Relaxed))
     }
 }
@@ -176,36 +181,39 @@ impl Drop for Backoff {
 
 /// One gap between two pieces of progress.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Gap {
+pub struct Gap {
     /// Wall-clock time since the last progress.
-    pub(crate) raw: Duration,
+    pub raw: Duration,
     /// Of that, the time a watched sender sat in retransmission backoff.
-    pub(crate) kernel: Duration,
+    pub kernel: Duration,
 }
 
 impl Gap {
     /// What no one but the transfer's own parties can have caused: the raw gap less the kernel's
     /// backoff. This is what the bar is on.
-    pub(crate) fn own(&self) -> Duration {
+    #[must_use]
+    pub fn own(&self) -> Duration {
         self.raw.saturating_sub(self.kernel)
     }
 }
 
 /// Measures the gaps of one transfer.
-pub(crate) struct Progress<'a> {
+pub struct Progress<'a> {
     backoff: &'a Backoff,
     last: Instant,
     kernel_at_last: Duration,
     /// The gap with the largest own time.
-    pub(crate) worst: Gap,
+    pub worst: Gap,
     /// The gap with the largest wall-clock time, whatever part of it was the kernel's. It is the
     /// one a planted drop makes; `worst` can be another gap, a few hundred milliseconds of
     /// scheduling on a loaded host, once the drop's own time is subtracted.
-    pub(crate) longest: Gap,
+    pub longest: Gap,
 }
 
 impl<'a> Progress<'a> {
-    pub(crate) fn new(backoff: &'a Backoff) -> Self {
+    /// A meter that reads `backoff` between pieces of progress.
+    #[must_use]
+    pub fn new(backoff: &'a Backoff) -> Self {
         Self {
             backoff,
             last: Instant::now(),
@@ -216,7 +224,8 @@ impl<'a> Progress<'a> {
     }
 
     /// The gap so far, without ending it.
-    pub(crate) fn gap(&self) -> Gap {
+    #[must_use]
+    pub fn gap(&self) -> Gap {
         Gap {
             raw: self.last.elapsed(),
             kernel: self.backoff.accrued().saturating_sub(self.kernel_at_last),
@@ -225,13 +234,13 @@ impl<'a> Progress<'a> {
 
     /// Starts the next gap now without closing the current one: for time the transfer did not
     /// spend waiting on its peer, such as a test planting a fault between two writes.
-    pub(crate) fn skip(&mut self) {
+    pub fn skip(&mut self) {
         self.last = Instant::now();
         self.kernel_at_last = self.backoff.accrued();
     }
 
     /// Progress happened: closes the gap and starts the next.
-    pub(crate) fn mark(&mut self) {
+    pub fn mark(&mut self) {
         let gap = self.gap();
         if gap.own() >= self.worst.own() {
             self.worst = gap;
@@ -246,7 +255,8 @@ impl<'a> Progress<'a> {
 
 /// The kernel's count of segments dropped for a full receive queue (`TcpExt: TCPRcvQDrop`), 0 when
 /// it cannot be read.
-pub(crate) fn rcvq_drops() -> u64 {
+#[must_use]
+pub fn rcvq_drops() -> u64 {
     let Ok(text) = std::fs::read_to_string("/proc/net/netstat") else {
         return 0;
     };

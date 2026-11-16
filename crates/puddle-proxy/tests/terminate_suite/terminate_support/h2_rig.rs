@@ -6,7 +6,6 @@
     clippy::expect_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -56,7 +55,6 @@ pub(crate) fn reply(status: u16, body: &str) -> Reply {
 /// What a request looked like when it reached an upstream.
 #[derive(Debug, Clone)]
 pub(crate) struct Seen {
-    pub(crate) conn: usize,
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) authority: Option<String>,
@@ -126,7 +124,7 @@ impl H2Server {
     pub(crate) async fn recording(pki: &Pki, name: &str, script: Script) -> Self {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&seen);
-        let handler: Handler = Arc::new(move |request, conn| {
+        let handler: Handler = Arc::new(move |request, _conn| {
             let script = Arc::clone(&script);
             let log = Arc::clone(&log);
             Box::pin(async move {
@@ -148,7 +146,6 @@ impl H2Server {
                     Err(_) => (Vec::new(), None),
                 };
                 let seen = Seen {
-                    conn,
                     method,
                     path,
                     authority,

@@ -4,7 +4,6 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,15 +17,19 @@ use puddle_proxy::{PullProxy, PullRoute};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-pub(crate) const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+/// The loopback address every server of the pull tests binds.
+pub const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 /// An echo server that counts its connections.
-pub(crate) struct Echo {
-    pub(crate) addr: SocketAddr,
-    pub(crate) accepted: Arc<AtomicUsize>,
+pub struct Echo {
+    /// Where it listens.
+    pub addr: SocketAddr,
+    /// TCP connections accepted so far.
+    pub accepted: Arc<AtomicUsize>,
 }
 
-pub(crate) async fn echo() -> Echo {
+/// Starts an [`Echo`] on a free loopback port.
+pub async fn echo() -> Echo {
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let accepted = Arc::new(AtomicUsize::new(0));
@@ -44,7 +47,7 @@ pub(crate) async fn echo() -> Echo {
 }
 
 /// A plain-HTTP server that records the request heads it gets and answers `200 hello`.
-pub(crate) async fn http_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
+pub async fn http_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let heads = Arc::new(Mutex::new(Vec::new()));
@@ -79,10 +82,8 @@ pub(crate) async fn http_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
 }
 
 /// A pull proxy serving on loopback, with `registry.test` pointing at `target` (if given).
-pub(crate) fn pull_proxy(
-    endpoints: &PuddleEndpoints,
-    target: Option<IpAddr>,
-) -> (PullRoute, String) {
+#[must_use]
+pub fn pull_proxy(endpoints: &PuddleEndpoints, target: Option<IpAddr>) -> (PullRoute, String) {
     let mut resolver =
         StaticResolver::new().with("meta.test", &["169.254.169.254".parse().unwrap()]);
     if let Some(ip) = target {
@@ -96,7 +97,8 @@ pub(crate) fn pull_proxy(
 }
 
 /// Like [`pull_proxy`], with a connection log that keeps what the proxy records.
-pub(crate) fn pull_proxy_logged(
+#[must_use]
+pub fn pull_proxy_logged(
     endpoints: &PuddleEndpoints,
     target: Option<IpAddr>,
 ) -> (PullRoute, String, Arc<CollectingConnectionLog>) {
@@ -115,7 +117,7 @@ pub(crate) fn pull_proxy_logged(
 }
 
 /// Sends `request` to the proxy and reads the response head (and, on a refusal, the body).
-pub(crate) async fn send(proxy: SocketAddr, request: &str) -> (String, TcpStream) {
+pub async fn send(proxy: SocketAddr, request: &str) -> (String, TcpStream) {
     let mut s = TcpStream::connect(proxy).await.unwrap();
     s.write_all(request.as_bytes()).await.unwrap();
     let mut head = Vec::new();
@@ -129,7 +131,9 @@ pub(crate) async fn send(proxy: SocketAddr, request: &str) -> (String, TcpStream
     (String::from_utf8(head).unwrap(), s)
 }
 
-pub(crate) fn connect(target: &str, auth: Option<&str>) -> String {
+/// The `CONNECT` request for `target`, with a `Proxy-Authorization` header when `auth` is given.
+#[must_use]
+pub fn connect(target: &str, auth: Option<&str>) -> String {
     let auth = auth.map_or(String::new(), |a| format!("Proxy-Authorization: {a}\r\n"));
     format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{auth}\r\n")
 }

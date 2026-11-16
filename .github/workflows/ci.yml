@@ -424,7 +424,7 @@ jobs:
     needs: [scope, queue-tested]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: write
@@ -534,6 +534,18 @@ jobs:
         timeout-minutes: 3
         continue-on-error: true
         run: ci/disk-watch.sh snap "rust, after clippy"
+      # What the real Linux webview (WebKitGTK) keeps under a workspace's origins: the Linux half of the `windows`
+      # workflow's WebView2 origins test. The shell is WebKitWebDriver's browser (`TAURI_WEBVIEW_AUTOMATION=true`);
+      # five runs over one data folder under Xvfb. The debug build is cold on a cache miss.
+      - name: workspace origins test (WebKitGTK, WebKitWebDriver)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        env:
+          PUDDLE_APP_EXE: ${{ github.workspace }}/target/debug/puddle-app
+        run: |
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends xvfb webkit2gtk-driver
+          cargo build -p puddle-app --all-features --locked
+          xvfb-run -a node crates/puddle-app/e2e/origins-webkit.mjs
       - name: cargo-deny (bans, licences, sources; advisories run in their own job)
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny

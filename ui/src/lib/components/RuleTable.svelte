@@ -25,6 +25,7 @@
     onSort,
     onExpiry,
     onDelete,
+    onEnabled,
   }: {
     rules: Rule[];
     sort: Sort;
@@ -34,6 +35,8 @@
     /** Left out together with `onDelete`, the table is read-only. */
     onExpiry?: (rule: Rule, anchor: HTMLElement) => void;
     onDelete?: (rule: Rule, anchor: HTMLElement) => void;
+    /** Left out, the table has no switch column. The page changes the rule and the row follows. */
+    onEnabled?: (rule: Rule, enabled: boolean) => void;
   } = $props();
   const editable = $derived(onExpiry !== undefined && onDelete !== undefined);
 
@@ -81,6 +84,9 @@
             {/if}
           </th>
         {/each}
+        {#if onEnabled}
+          <th scope="col">On</th>
+        {/if}
         {#if editable}
           <th scope="col"><span class="visually-hidden">Actions</span></th>
         {/if}
@@ -89,12 +95,13 @@
     <tbody>
       {#each rules as rule (rule.id)}
         {@const expired = isExpired(rule, now)}
-        <tr data-rule-id={rule.id} class:expired>
+        <tr data-rule-id={rule.id} class:expired class:off={!rule.enabled}>
           <td class="host">
             <span class="mono">{patternLabel(rule)}</span>
             {#if rule.pattern_kind === "suffix"}
               <span class="chip">and subdomains</span>
             {/if}
+            {#if !rule.enabled}<span class="chip">off</span>{/if}
           </td>
           <td>
             <span class="chip {rule.effect}"
@@ -130,6 +137,21 @@
               )}">{relativeTime(rule.created_at, now)}</time
             >
           </td>
+          {#if onEnabled}
+            <td class="on">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={rule.enabled}
+                aria-label="Rule on: {ruleName(rule)}"
+                onchange={(e) => {
+                  const next = e.currentTarget.checked;
+                  e.currentTarget.checked = rule.enabled;
+                  onEnabled(rule, next);
+                }}
+              />
+            </td>
+          {/if}
           {#if onExpiry && onDelete}
             <td class="actions">
               <button
@@ -195,6 +217,9 @@
     overflow-wrap: anywhere;
   }
   .muted {
+    color: var(--color-text-muted);
+  }
+  tr.off td:not(.actions):not(.on) {
     color: var(--color-text-muted);
   }
   tr.expired td:not(.actions) {

@@ -284,7 +284,10 @@ fn the_password_file_is_owner_only_and_replaced_whole() {
     write_password(&path, &first).unwrap();
     write_password(&path, &second).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
-    assert!(!dir.path().join("run/editor-password.partial").exists());
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("run")).unwrap().count(),
+        1
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -888,4 +891,17 @@ async fn a_build_rolled_back_after_a_bad_start_is_told_and_one_that_stays_is_not
             "the newer build exited before it started, so the previous one runs again"
         )))
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_password_file_that_was_wider_is_owner_only_after_the_write() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("editor-password");
+    std::fs::write(&path, "old").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    write_password(&path, &puddle_types::fixture::password("new")).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
 }

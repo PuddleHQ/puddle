@@ -34,7 +34,7 @@ fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
 `#[cfg(any(test, feature = "testing"))]` item or a file module so declared; or in the test-only
-crates puddle-e2e, puddle-vm-tests and puddle-test-kit), else `prod`. Rows: kind, context, file:line, detail.
+crates puddle-e2e, puddle-vm-tests, puddle-test-kit and puddle-proxy-test-support), else `prod`. Rows: kind, context, file:line, detail.
 
 It is a lexer-free scanner (strings and comments are blanked by a small state machine), so it
 can miss or misplace a hit in macro-generated or very unusual code: a count is a safety net, the
@@ -53,7 +53,8 @@ from collections import Counter
 
 SKIP_DIRS = {"target", "node_modules", ".git", ".svelte-kit", "build", "corpus", "dist", "test-results",
              "playwright-report", ".scratch", "coverage"}  # coverage: vitest's lcov-report (ui/coverage, gitignored) ships istanbul's own eslint-disable lines
-TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/")
+TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/",
+              "crates/puddle-proxy-test-support/")
 TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(test\b[^\]]*|any\([^\]]*feature\s*=\s*\"testing\"[^\]]*|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
 TEXT_EXT = {".rs", ".ts", ".js", ".svelte", ".sh", ".ps1", ".py", ".toml", ".yml", ".yaml", ".mjs", ".cjs"}
@@ -546,7 +547,7 @@ def crate_root_rows(texts, stripped, add):
 # The shared test kit (crates/puddle-test-kit) is a dev-dependency only: a product crate that lists it under
 # [dependencies] or [build-dependencies] (also per target, or renamed) would ship test helpers. The test-only
 # crates (TEST_CRATES) may list it as a normal dependency, since they are not product code.
-TEST_KIT = "puddle-test-kit"
+TEST_KIT = ("puddle-test-kit", "puddle-proxy-test-support")
 
 
 # Bans in the standards' own words (docs/adr/0002 "never `#[serde(untagged)]`", docs/STANDARDS.md section 5 "error messages
@@ -600,10 +601,11 @@ def kit_dependency_rows(texts, add):
         for table in tables:
             for kind in ("dependencies", "build-dependencies"):
                 for name, spec in table.get(kind, {}).items():
-                    if TEST_KIT in (name, spec.get("package") if isinstance(spec, dict) else None):
+                    kit = next((k for k in TEST_KIT if k in (name, spec.get("package") if isinstance(spec, dict) else None)), None)
+                    if kit:
                         at = next((i for i, line in enumerate(lines) if re.match(rf"\s*{re.escape(name)}\b", line)), 0)
                         add("noreason", "config", f, at,
-                            f"{TEST_KIT} in [{kind}]: the shared test kit is a dev-dependency only; move it to [dev-dependencies] | {lines[at]}")
+                            f"{kit} in [{kind}]: a shared test kit is a dev-dependency only; move it to [dev-dependencies] | {lines[at]}")
 
 
 # Flake-prone test shapes (counted; failing once the rule's file says so). Each rule has two kinds: `flake-<id>` for every

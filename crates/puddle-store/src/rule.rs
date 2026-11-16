@@ -145,6 +145,9 @@ pub struct Rule {
     pub created_by: Actor,
     /// The pending row it was approved or denied from (R-15).
     pub source_pending_id: Option<puddle_types::PendingId>,
+    /// Whether the rule takes part in decisions. A rule that is off never matches and keeps
+    /// everything else it has (R-65).
+    pub enabled: bool,
 }
 
 impl Rule {

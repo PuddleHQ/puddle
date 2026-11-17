@@ -257,3 +257,30 @@ fn every_never_decrypt_name_of_a_user_is_listed_with_its_workspace() {
     );
     assert_eq!(named(ann), [":g.example", "anns:a.example"]);
 }
+
+#[test]
+fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
+    let (store, seen) = store();
+    assert!(store.add_never_decrypt(&ws("a"), "x.example", 2).unwrap());
+    assert!(store.add_never_decrypt(&ws("a"), "x.example", 2).unwrap());
+    assert!(store.add_never_decrypt(&ws("a"), "y.example", 2).unwrap());
+    assert!(!store.add_never_decrypt(&ws("a"), "z.example", 2).unwrap());
+    assert!(
+        store.add_never_decrypt(&ws("a"), "y.example", 2).unwrap(),
+        "a name already held needs no room"
+    );
+    assert_eq!(
+        store
+            .workspace_interception(&ws("a"))
+            .unwrap()
+            .never_decrypt,
+        strings(&["x.example", "y.example"])
+    );
+    assert!(store.add_global_never_decrypt("g.example", 1).unwrap());
+    assert!(!store.add_global_never_decrypt("h.example", 1).unwrap());
+    assert_eq!(
+        store.global_never_decrypt().unwrap(),
+        strings(&["g.example"])
+    );
+    assert!(changes(&seen) > 0);
+}

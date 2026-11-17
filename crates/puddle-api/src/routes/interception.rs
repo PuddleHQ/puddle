@@ -378,25 +378,28 @@ pub(crate) async fn make_permanent(
             "{host:?} is not on the learned list of {name}"
         )));
     }
-    blocking({
+    let stored = blocking({
         let (state, name, learned) = (state.clone(), name.clone(), learned.clone());
         move || {
-            match body.scope {
+            // One store transaction per add, so overlapping calls never drop each other's host.
+            let stored = pattern(&learned)?;
+            Ok(match body.scope {
                 PermanentScope::Workspace => {
-                    let mut names = state.store.workspace_interception(&name)?.never_decrypt;
-                    names.push(learned);
-                    state.store.set_never_decrypt(&name, &patterns(&names)?)?;
+                    state.store.add_never_decrypt(&name, &stored, MAX_NAMES)?
                 }
                 PermanentScope::Global => {
-                    let mut names = state.store.global_never_decrypt()?;
-                    names.push(learned);
-                    state.store.set_global_never_decrypt(&patterns(&names)?)?;
+                    state.store.add_global_never_decrypt(&stored, MAX_NAMES)?
                 }
-            }
-            Ok(())
+            })
         }
     })
     .await?;
+    if !stored {
+        return Err(ApiError::invalid(format!(
+            "at most {MAX_NAMES} names ({} given)",
+            MAX_NAMES + 1
+        )));
+    }
     state.learned.discard(&name, &learned);
     Ok(StatusCode::NO_CONTENT)
 }

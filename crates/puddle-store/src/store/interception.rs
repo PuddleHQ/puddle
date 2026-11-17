@@ -318,6 +318,67 @@ impl Store {
         })
     }
 
+    /// Adds one name to `workspace`'s own never-decrypt names in one transaction, so adds that
+    /// overlap with each other or with a read never drop a name. `Ok(false)` when the list
+    /// already holds `max` other names; a name already on the list is `Ok(true)`.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn add_never_decrypt(
+        &self,
+        workspace: &WorkspaceId,
+        pattern: &str,
+        max: usize,
+    ) -> Result<bool, StoreError> {
+        self.change(|tx, _now, fx| {
+            let held: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM never_decrypt WHERE workspace_id = ?1",
+                [workspace.as_str()],
+                |r| r.get(0),
+            )?;
+            let added = tx.execute(
+                "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern)
+                 SELECT ?1, ?2 WHERE ?3 > ?4",
+                params![workspace.as_str(), pattern, max_names(max), held],
+            )?;
+            if added == 1 {
+                changed(fx, workspace);
+            }
+            let present: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM never_decrypt WHERE workspace_id = ?1 AND pattern = ?2)",
+                params![workspace.as_str(), pattern],
+                |r| r.get(0),
+            )?;
+            Ok(present)
+        })
+    }
+
+    /// Adds one name to the names no workspace decrypts, as [`Self::add_never_decrypt`] does for
+    /// one workspace, and tells every workspace when the list grew.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn add_global_never_decrypt(&self, pattern: &str, max: usize) -> Result<bool, StoreError> {
+        self.change(|tx, _now, fx| {
+            let held: i64 = tx.query_row("SELECT COUNT(*) FROM never_decrypt_global", [], |r| {
+                r.get(0)
+            })?;
+            let added = tx.execute(
+                "INSERT OR IGNORE INTO never_decrypt_global (pattern) SELECT ?1 WHERE ?2 > ?3",
+                params![pattern, max_names(max), held],
+            )?;
+            if added == 1 {
+                changed_everywhere(tx, fx)?;
+            }
+            let present: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM never_decrypt_global WHERE pattern = ?1)",
+                [pattern],
+                |r| r.get(0),
+            )?;
+            Ok(present)
+        })
+    }
+
     /// Replaces the names no workspace decrypts with `patterns`, and tells every workspace.
     ///
     /// # Errors
@@ -335,6 +396,11 @@ impl Store {
             Ok(())
         })
     }
+}
+
+/// A list limit as SQLite holds integers.
+fn max_names(max: usize) -> i64 {
+    i64::try_from(max).unwrap_or(i64::MAX)
 }
 
 /// Removes what a deleted workspace held. The workspace's own change event covers it.

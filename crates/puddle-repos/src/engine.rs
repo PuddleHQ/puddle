@@ -173,6 +173,16 @@ impl Slot {
     }
 }
 
+/// A list being read in the background. Dropping it says the read is over, also when its task
+/// panicked or was dropped, so the list is renewed again next time.
+struct Renewing(Arc<Slot>);
+
+impl Drop for Renewing {
+    fn drop(&mut self) {
+        self.0.entry().revalidating = false;
+    }
+}
+
 /// Which API a host is.
 enum Kind {
     GitHub(github::Endpoint),
@@ -467,10 +477,12 @@ impl Repos {
             }
             entry.revalidating = true;
         }
-        let (inner, slot) = (Arc::clone(&self.inner), Arc::clone(slot));
+        let (inner, renewing) = (Arc::clone(&self.inner), Renewing(Arc::clone(slot)));
         tokio::spawn(async move {
-            inner.refresh(&slot, Freshness::Cached, Announce::Yes).await;
-            slot.entry().revalidating = false;
+            inner
+                .refresh(&renewing.0, Freshness::Cached, Announce::Yes)
+                .await;
+            drop(renewing);
         });
         true
     }

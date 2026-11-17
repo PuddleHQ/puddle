@@ -59,10 +59,12 @@ fn an_existing_open_install_is_fixed_and_its_data_is_kept() {
     assert!(!is_owner_only(&paths.store()));
     let (dispatch, logs) = crate::test_logs::capture();
     tracing::dispatcher::with_default(&dispatch, || make_owner_only(&paths)).unwrap();
-    // One line names what was changed.
+    // One line names what was changed: the folder on both systems. On Windows the folder's new
+    // list is inherited by the files inside, so they are no longer exposed to be named after it.
     let text = logs.text();
     assert!(
-        text.contains("made Puddle's data folder owner-only") && text.contains("puddle.db"),
+        text.contains("made Puddle's data folder owner-only")
+            && text.contains(&data.display().to_string()),
         "{text}"
     );
     for name in ["puddle.db", "puddle.db-wal", "puddle.db-shm"] {

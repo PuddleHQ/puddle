@@ -60,6 +60,8 @@ export class IdentitiesStore {
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
   readonly #pollMs: number;
+  /** Counts changes made through this store, which a read that started earlier must not undo. */
+  #writes = 0;
   readonly #readable = new Set<(description: string) => void>();
   /** Lines naming the sources a workspace could not read (`credential_sign_in_needed`), until they read. */
   signedOutLines = $state.raw<ReadonlySet<string>>(new Set());
@@ -72,8 +74,11 @@ export class IdentitiesStore {
 
   /** Reads the identities and the switch defaults; never throws. */
   async refresh(): Promise<void> {
+    const writes = this.#writes;
     try {
       const { data } = await this.#api.GET("/api/identities");
+      // A change made here while this read was out is newer than the answer: read once more.
+      if (data && writes !== this.#writes) return this.refresh();
       if (data) {
         this.identities = data.identities;
         this.status = "ready";
@@ -173,6 +178,7 @@ export class IdentitiesStore {
 
   /** Puts an identity in the list: in place when a refresh already listed it, else last. */
   #put(identity: Identity): void {
+    this.#writes += 1;
     this.identities = this.identities.some((i) => i.id === identity.id)
       ? this.identities.map((i) => (i.id === identity.id ? identity : i))
       : [...this.identities, identity];
@@ -213,6 +219,7 @@ export class IdentitiesStore {
           message: this.#refused(error, "Puddle refused the change"),
         };
       }
+      this.#writes += 1;
       this.identities = this.identities.map((i) => (i.id === id ? data : i));
       return { ok: true, value: data };
     } catch {
@@ -232,6 +239,7 @@ export class IdentitiesStore {
       if (!data && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't delete that identity." };
       }
+      this.#writes += 1;
       this.identities = this.identities.filter((i) => i.id !== id);
       return { ok: true, value: data?.detached_from ?? [] };
     } catch {
@@ -251,6 +259,7 @@ export class IdentitiesStore {
           message: this.#refused(error, "Puddle couldn't change the default"),
         };
       }
+      this.#writes += 1;
       await this.refresh();
       return { ok: true };
     } catch {
@@ -270,6 +279,7 @@ export class IdentitiesStore {
           message: this.#refused(error, "Puddle couldn't change the order"),
         };
       }
+      this.#writes += 1;
       this.identities = data.identities;
       return { ok: true };
     } catch {
@@ -407,7 +417,11 @@ export class IdentitiesStore {
     }
   }
 
-  /** Removes a pasted token; never throws, since a token left behind is only an unused entry. */
+  /**
+   * Removes a pasted token that never reached an identity (a cancelled dialog, a replaced
+   * credential); never throws, since a token left behind is only an unused entry. Deleting an
+   * identity does not call this: the host removes the tokens no other identity or secret reads.
+   */
   async forgetToken(source: Source): Promise<void> {
     if (source.kind !== "stored") return;
     try {
@@ -415,7 +429,7 @@ export class IdentitiesStore {
         params: { path: { id: source.id } },
       });
     } catch {
-      // The entry stays in the credential store, unreferenced; the next removal tries again.
+      // The entry stays in the credential store, unreferenced; the host's sweep at the next start removes it.
     }
   }
 

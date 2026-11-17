@@ -154,6 +154,34 @@ describe("changing identities", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("does not let a read that started before a delete bring the identity back", async () => {
+    api.identities = [identity(1), identity(2)];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let held = false;
+    const slow = {
+      GET: async (path: string, init?: unknown) => {
+        const answer = await (api.GET as never as (...a: unknown[]) => unknown)(
+          path,
+          init,
+        );
+        if (path === "/api/identities" && !held) {
+          held = true;
+          await gate;
+        }
+        return answer;
+      },
+      DELETE: api.DELETE,
+    };
+    const store = new IdentitiesStore({ api: slow as never, source });
+    const reading = store.refresh();
+    await vi.waitFor(() => expect(held).toBe(true));
+    expect(await store.remove(1)).toEqual({ ok: true, value: [] });
+    release();
+    await reading;
+    expect(store.identities.map((i) => i.id)).toEqual([2]);
+  });
+
   it("replaces an identity", async () => {
     api.identities = [identity(1), identity(2)];
     const store = make();

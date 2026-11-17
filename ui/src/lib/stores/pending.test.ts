@@ -428,6 +428,44 @@ describe("decide", () => {
     expect(store.decided).toHaveLength(1);
   });
 
+  it("does not bring back a request that was decided while a read was in flight", async () => {
+    const { store, inbox, source } = await loaded();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let held = false;
+    const slow = new Proxy(inbox, {
+      get(target, key) {
+        if (key !== "GET") return Reflect.get(target, key) as unknown;
+        return async (path: string, init?: unknown) => {
+          const answer = await (
+            target.GET as unknown as (...a: unknown[]) => Promise<unknown>
+          )(path, init);
+          if (!held) {
+            held = true;
+            await gate;
+          }
+          return answer;
+        };
+      },
+    });
+    const again = new PendingStore({
+      api: slow as never,
+      source,
+      now: () => 42,
+    });
+    const reading = again.refresh();
+    await vi.waitFor(() => expect(held).toBe(true));
+    const result = await again.decide(
+      rowOf(store, 1),
+      narrowest("allow"),
+      false,
+    );
+    expect(result.ok).toBe(true);
+    release();
+    await reading;
+    expect(again.rows.map((r) => r.request.id)).toEqual([2, 3]);
+  });
+
   it("closes the other rows the new rule decides (also_closed), for a suffix and a global rule", async () => {
     const { store } = await loaded();
     const result = await store.decide(

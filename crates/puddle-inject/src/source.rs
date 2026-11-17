@@ -47,12 +47,15 @@ impl StoreSettings {
 
 impl GitSettings for StoreSettings {
     fn current(&self) -> BoxFuture<'_, Result<WorkspaceGit, SettingsError>> {
-        // One small read of a local database, as the proxy's rule check is.
-        let read = self
-            .store
-            .workspace_git(&self.workspace)
-            .map_err(|err| SettingsError::new(err.to_string()));
-        Box::pin(std::future::ready(read))
+        let (store, workspace) = (Arc::clone(&self.store), self.workspace.clone());
+        Box::pin(async move {
+            // The store is SQLite behind one write connection, which a long write or a backup can
+            // hold for seconds: read it off the async threads, when the answer is awaited.
+            tokio::task::spawn_blocking(move || store.workspace_git(&workspace))
+                .await
+                .map_err(|err| SettingsError::new(err.to_string()))?
+                .map_err(|err| SettingsError::new(err.to_string()))
+        })
     }
 }
 

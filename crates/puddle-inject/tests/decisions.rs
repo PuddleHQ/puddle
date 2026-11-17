@@ -1244,6 +1244,20 @@ impl Fetch for OneToken {
     }
 }
 
+/// The store's one write connection can be held for seconds (a long write, a backup), so asking
+/// for the settings must not read the store on the spot, on the proxy's async thread: the read
+/// runs when the answer is awaited, on a blocking thread.
+#[tokio::test]
+async fn the_store_settings_are_read_when_awaited_not_when_asked_for() {
+    use puddle_inject::GitSettings as _;
+    let w = World::new();
+    let _work = w.identity("Work", "github.com", &["acme"], false, "unused");
+    let settings = StoreSettings::new(Arc::clone(&w.store), w.workspace.clone());
+    let asked = settings.current();
+    puddle_store::testing::break_database(&w.store, "ALTER TABLE workspace_repos RENAME TO gone");
+    assert!(asked.await.is_err(), "read before it was awaited");
+}
+
 #[tokio::test]
 async fn the_secrets_cache_is_a_credential_source_that_reads_once_and_forgets_on_request() {
     let w = World::new();

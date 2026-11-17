@@ -2,6 +2,7 @@
 //! An in-memory cache with expiry, single flight and a stale grace. Nothing is written to disk.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -108,10 +109,27 @@ impl Held {
     }
 }
 
-type Slot = Arc<tokio::sync::Mutex<Option<Held>>>;
+/// One source's place in the cache. The lock is held for the whole of a read, so requests that
+/// arrive meanwhile queue on it; `reads` counts the reads that ended, so a request that queued
+/// can tell that one ended while it waited and take its outcome instead of reading again.
+#[derive(Default)]
+struct SlotCell {
+    state: tokio::sync::Mutex<SlotState>,
+    reads: AtomicU64,
+}
 
-/// Caches what a [`Fetch`] returns. One lookup per source at a time (a burst of requests is one
-/// spawn); a refresh that fails keeps the old value until its grace ends, then fails.
+#[derive(Default)]
+struct SlotState {
+    held: Option<Held>,
+    /// How the last read failed, if it did; only requests that waited for that read use it.
+    failed: Option<SourceError>,
+}
+
+type Slot = Arc<SlotCell>;
+
+/// Caches what a [`Fetch`] returns. One lookup per source at a time: a burst of requests is one
+/// spawn, whether it succeeds or fails; a refresh that fails keeps the old value until its grace
+/// ends, then fails. A failure is never kept for later requests.
 pub struct SecretCache<F> {
     fetcher: F,
     ttls: Ttls,
@@ -190,14 +208,14 @@ impl<F: Fetch> SecretCache<F> {
         let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
         let mut dropped = 0;
         slots.retain(|_, slot| {
-            let Ok(mut held) = slot.try_lock() else {
+            let Ok(mut state) = slot.state.try_lock() else {
                 return true;
             };
-            if held.as_ref().is_some_and(|h| h.gone(now)) {
-                *held = None;
+            if state.held.as_ref().is_some_and(|h| h.gone(now)) {
+                state.held = None;
                 dropped += 1;
             }
-            held.is_some() || Arc::strong_count(slot) > 1
+            state.held.is_some() || Arc::strong_count(slot) > 1
         });
         dropped
     }
@@ -220,7 +238,14 @@ impl<F: Fetch> SecretCache<F> {
             let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
             Arc::clone(slots.entry(spec.clone()).or_default())
         };
-        let mut held = slot.lock().await;
+        let reads_before = slot.reads.load(Ordering::Acquire);
+        let mut state = slot.state.lock().await;
+        // A read that ended while this request waited, and failed, is this request's answer too.
+        let shared_failure = state
+            .failed
+            .clone()
+            .filter(|_| slot.reads.load(Ordering::Acquire) != reads_before);
+        let SlotState { held, failed } = &mut *state;
         let now = Instant::now();
         if held
             .as_ref()
@@ -234,11 +259,20 @@ impl<F: Fetch> SecretCache<F> {
             h.idle_at = h.idle.map(|d| now + d);
             return Ok(h.credential.clone());
         }
-        match self.fetcher.fetch(spec).await {
+        let read_here = shared_failure.is_none();
+        let outcome = if let Some(err) = shared_failure {
+            Err(err)
+        } else {
+            let outcome = self.fetcher.fetch(spec).await;
+            *failed = outcome.as_ref().err().cloned();
+            slot.reads.fetch_add(1, Ordering::Release);
+            if let Some(log) = &self.log {
+                log.record(spec, by, outcome.as_ref().err().cloned());
+            }
+            outcome
+        };
+        match outcome {
             Ok(fetched) => {
-                if let Some(log) = &self.log {
-                    log.record(spec, by, None);
-                }
                 let ttl = self.ttls.for_spec(spec);
                 let mut refresh_at = ttl.fresh.map(|d| now + d);
                 let mut dead_at = refresh_at.map(|at| at + ttl.grace);
@@ -259,9 +293,6 @@ impl<F: Fetch> SecretCache<F> {
                 Ok(credential)
             }
             Err(err) => {
-                if let Some(log) = &self.log {
-                    log.record(spec, by, Some(err.clone()));
-                }
                 if let Some(h) = held.as_ref()
                     && h.dead_at.is_none_or(|at| now < at)
                 {
@@ -269,7 +300,8 @@ impl<F: Fetch> SecretCache<F> {
                     return Ok(h.credential.clone());
                 }
                 *held = None;
-                if err.needs_sign_in() {
+                // the request that read sends the one notice; those that waited for it send none
+                if read_here && err.needs_sign_in() {
                     // no listener means nobody to prompt; the error below still reaches the caller
                     let _ = self.events.send(SignInNeeded {
                         source: spec.clone(),

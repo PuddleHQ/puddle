@@ -48,7 +48,7 @@ const UNCHOOSABLE: &str = "Puddle could not choose a credential for this request
 /// meet it (a Git client retries).
 const NOTICE_EVERY: Duration = Duration::from_secs(10);
 
-/// Most notices remembered.
+/// Most notices remembered, per kind.
 const MAX_NOTICES: usize = 256;
 
 /// After the server answers a request that no identity covers with `401`, the workspace's own
@@ -62,7 +62,13 @@ pub struct GitInjector {
     settings: Arc<dyn GitSettings>,
     credentials: Arc<dyn CredentialSource>,
     events: Arc<dyn EventSink>,
-    notices: Arc<Notices>,
+    /// Refused pushes and pulls, by repository: the guest names those at will, so they have a
+    /// table of their own, and a flood of them cannot silence the other notices.
+    denied: Arc<Notices>,
+    /// "No identity covers it", by host.
+    no_identity: Arc<Notices>,
+    /// "Sign in again", by source: one of the user's own, never a name the guest picks.
+    sign_in: Arc<Notices>,
     /// When a request of the workspace's own carrying an `Authorization` last went to each owner.
     authed: Arc<Notices>,
 }
@@ -90,7 +96,9 @@ impl GitInjector {
             settings,
             credentials,
             events,
-            notices: Arc::new(Notices::default()),
+            denied: Arc::new(Notices::default()),
+            no_identity: Arc::new(Notices::default()),
+            sign_in: Arc::new(Notices::default()),
             authed: Arc::new(Notices::default()),
         }
     }
@@ -136,7 +144,7 @@ impl GitInjector {
             return InjectDecision::Refuse(refusal);
         }
         if request.header("authorization").is_some() {
-            self.authed.mark(owner_key(&path));
+            self.authed.mark(&owner_key(&path));
             return InjectDecision::PassThroughOwnCredential;
         }
         match covering(&git, &path) {
@@ -209,7 +217,7 @@ impl GitInjector {
         let what = path.describe();
         let message = match &repo {
             Some(repo) => {
-                if self.notices.first(format!("{code}:{repo}")) {
+                if self.denied.first(format!("{code}:{repo}")) {
                     self.events.emit(Event::GitAccessDenied {
                         workspace: self.workspace.clone(),
                         host: repo.host.to_string(),
@@ -293,8 +301,10 @@ impl GitInjector {
         credentialed(value, binding_id, &identity.label, &named, rejected)
     }
 
-    /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its secret (not signed in, tool missing) goes
-    /// out with no credential at all, so a public repository still answers. A private one answers
+    /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its
+    /// secret, for any reason the source gives (not signed in, timed out, tool missing, a broken
+    /// or refused source, an unreadable store), goes out with no credential at all, so a public
+    /// repository still answers: nothing Puddle holds is sent, so no reason needs a refusal. A private one answers
     /// `401`, which becomes the refusal a missing credential would have been, never the
     /// server's `401` (the workspace's tool would ask for a password that does not exist).
     /// The notice was raised by the cache the secret is read through.
@@ -325,7 +335,7 @@ impl GitInjector {
     /// owner. The server's answer reaches the workspace as it is.
     fn unanswered(&self, path: &GitPath) -> Unauthorized {
         let events = Arc::clone(&self.events);
-        let notices = Arc::clone(&self.notices);
+        let notices = Arc::clone(&self.no_identity);
         let authed = Arc::clone(&self.authed);
         let workspace = self.workspace.clone();
         let (host, owner, repo) = (path.host.clone(), path.owner.clone(), path.repo.clone());
@@ -349,8 +359,7 @@ impl GitInjector {
             );
             runtime.spawn(async move {
                 tokio::time::sleep(NO_IDENTITY_GRACE).await;
-                if !authed.marked_since(&key, asked) && notices.first(format!("no_identity:{host}"))
-                {
+                if !authed.marked_since(&key, asked) && notices.first(host.clone()) {
                     events.emit(Event::GitNoIdentity {
                         workspace,
                         host,
@@ -366,7 +375,7 @@ impl GitInjector {
     fn rejected(&self, identity: &Identity, source: &SourceSpec, path: &GitPath) -> Unauthorized {
         let credentials = Arc::clone(&self.credentials);
         let events = Arc::clone(&self.events);
-        let notices = Arc::clone(&self.notices);
+        let notices = Arc::clone(&self.sign_in);
         let (source, label) = (source.clone(), identity.label.clone());
         let (host, named) = (
             path.credential_host.clone(),
@@ -375,7 +384,7 @@ impl GitInjector {
         Unauthorized::new(move || {
             // The user may have signed in again since the token was read.
             credentials.forget(&source);
-            if notices.first(format!("sign_in:{}", source.describe())) {
+            if notices.first(source.describe()) {
                 events.emit(Event::CredentialSignInNeeded {
                     host: host.clone(),
                     source: source.describe(),
@@ -443,17 +452,59 @@ fn refuse(status: u16, code: ReasonCode, message: impl Into<String>) -> InjectDe
 
 /// What an LFS batch request asks for: a download is a read, every other `operation` (and a body
 /// that cannot be read) is a write.
+///
+/// The body is read as the strictest server would and the loosest: Go's `encoding/json` (Gitea
+/// up to 1.21 at least) matches a key to a field ignoring case and lets a later key win, so
+/// `{"operation":"download","Operation":"upload"}` is an upload there. A read is a body whose top
+/// level has exactly one key that is `operation` in any case, spelled `operation`, with the value
+/// `download`.
 fn batch_access(body: Option<&[u8]>) -> GitAccess {
-    let operation = body
-        .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
-        .and_then(|json| {
-            json.get("operation")
-                .and_then(|o| o.as_str().map(str::to_owned))
-        });
+    let operation = body.and_then(|body| {
+        serde::Deserializer::deserialize_map(
+            &mut serde_json::Deserializer::from_slice(body),
+            OnlyOperation,
+        )
+        .ok()
+        .flatten()
+    });
     if operation.as_deref() == Some("download") {
         GitAccess::Pull
     } else {
         GitAccess::Push
+    }
+}
+
+/// Reads a JSON object's `operation`: `None` unless exactly one key is `operation` ignoring case
+/// (Unicode lower case, so a sign that folds to an ASCII letter counts too), that key is spelled
+/// `operation`, and its value is a string.
+struct OnlyOperation;
+
+impl<'de> serde::de::Visitor<'de> for OnlyOperation {
+    type Value = Option<String>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an LFS batch object")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let (mut seen, mut operation) = (0_usize, None);
+        while let Some(key) = map.next_key::<String>()? {
+            if key
+                .chars()
+                .flat_map(char::to_lowercase)
+                .eq("operation".chars())
+            {
+                seen += 1;
+                let value = map.next_value::<serde_json::Value>()?;
+                // spelled otherwise, a case-sensitive server finds no `operation` at all
+                operation = (key == "operation")
+                    .then(|| value.as_str().map(str::to_owned))
+                    .flatten();
+            } else {
+                map.next_value::<serde::de::IgnoredAny>()?;
+            }
+        }
+        Ok(if seen == 1 { operation } else { None })
     }
 }
 
@@ -480,15 +531,23 @@ struct Notices {
 }
 
 impl Notices {
-    /// Remembers that `key` happened now.
-    fn mark(&self, key: String) {
+    /// Remembers that `key` happened now. Past [`MAX_NOTICES`] keys the stale ones go, and if all
+    /// are recent the oldest other key makes room: the newest is never the one forgotten.
+    fn mark(&self, key: &str) {
         let now = Instant::now();
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        if last.len() >= MAX_NOTICES {
+        last.insert(key.to_owned(), now);
+        if last.len() > MAX_NOTICES {
             last.retain(|_, at| now.duration_since(*at) < NOTICE_EVERY.max(NO_IDENTITY_GRACE));
         }
-        if last.len() < MAX_NOTICES {
-            last.insert(key, now);
+        if last.len() > MAX_NOTICES
+            && let Some(oldest) = last
+                .iter()
+                .filter(|(other, _)| other.as_str() != key)
+                .min_by_key(|(_, at)| **at)
+                .map(|(other, _)| other.clone())
+        {
+            last.remove(&oldest);
         }
     }
 

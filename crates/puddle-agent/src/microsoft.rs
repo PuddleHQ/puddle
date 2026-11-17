@@ -46,6 +46,12 @@ pub const UPDATE_SERVICE: &str = "https://update.code.visualstudio.com";
 
 /// Written into a build's folder after everything else: a folder without it is not a build.
 const MARKER: &str = ".puddle-installed";
+
+/// The most bytes the server tarball may grow to while it downloads (the real ones are a few
+/// hundred MB): the answer of a proxy or mirror must not fill the volume before the hash check.
+const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
+/// The most bytes an unpacked server may take together (the real ones are under 1 GB).
+const MAX_UNPACKED: u64 = 4 * 1024 * 1024 * 1024;
 /// The file in the builds folder that names the build to start.
 const CURRENT: &str = "current";
 /// Names the build that ran before the current one and is kept until the current one is confirmed.
@@ -483,7 +489,7 @@ async fn fetch_and_unpack(
     staging: &Path,
 ) -> Result<(), InstallError> {
     fetch
-        .file(url, tarball)
+        .file(url, tarball, MAX_DOWNLOAD)
         .await
         .map_err(|e| InstallError::Download(e.to_string()))?;
     let (tar, out) = (tarball.to_owned(), staging.to_owned());
@@ -495,7 +501,7 @@ async fn fetch_and_unpack(
         }
         // Staging left by a dead attempt goes; usually there is none.
         let _ = std::fs::remove_dir_all(&out);
-        unpack(&tar, &out)?;
+        unpack(&tar, &out, MAX_UNPACKED)?;
         if !out.join(PROGRAM).is_file() {
             return Err(InstallError::Archive(format!("no {PROGRAM}")));
         }
@@ -547,14 +553,16 @@ fn below_top(path: &Path) -> Result<Option<PathBuf>, InstallError> {
 
 /// Unpacks the server tarball at `tarball` into `dest`, without its top folder. Only files and
 /// folders are unpacked (Microsoft's tarball has no links; one in it is an error, since a link is
-/// how a later entry could write outside `dest`).
+/// how a later entry could write outside `dest`). The files together may not exceed `max_total`
+/// bytes: a small tarball can expand to fill the volume.
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "tar's EntryType has a hidden catch-all variant, so the kinds cannot be listed; every kind not unpacked is an error"
 )]
-fn unpack(tarball: &Path, dest: &Path) -> Result<(), InstallError> {
+fn unpack(tarball: &Path, dest: &Path, max_total: u64) -> Result<(), InstallError> {
     let mut archive = tar::Archive::new(GzDecoder::new(std::fs::File::open(tarball)?));
     std::fs::create_dir_all(dest)?;
+    let mut total = 0_u64;
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
@@ -567,7 +575,14 @@ fn unpack(tarball: &Path, dest: &Path) -> Result<(), InstallError> {
             EntryType::Regular | EntryType::Continuous => {
                 std::fs::create_dir_all(target.parent().unwrap_or(dest))?;
                 let mut file = std::fs::File::create(&target)?;
-                io::copy(&mut entry, &mut file)?;
+                // One byte past what is left tells a total over the limit from one at it.
+                let room = max_total.saturating_sub(total);
+                total += io::copy(&mut io::Read::take(&mut entry, room + 1), &mut file)?;
+                if total > max_total {
+                    return Err(InstallError::Archive(format!(
+                        "more than {max_total} bytes once unpacked"
+                    )));
+                }
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;

@@ -502,7 +502,7 @@ impl Fetch for Arc<WrongHash> {
         })
     }
 
-    async fn file(&self, _url: &str, dest: &Path) -> io::Result<()> {
+    async fn file(&self, _url: &str, dest: &Path, _max_bytes: u64) -> io::Result<()> {
         tokio::task::yield_now().await; // a download is not instant
         self.downloads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -742,7 +742,7 @@ impl Fetch for Offline {
         Err(io::Error::other("no route to host"))
     }
 
-    async fn file(&self, _url: &str, _dest: &Path) -> io::Result<()> {
+    async fn file(&self, _url: &str, _dest: &Path, _max_bytes: u64) -> io::Result<()> {
         tokio::task::yield_now().await;
         Err(io::Error::other("no route to host"))
     }

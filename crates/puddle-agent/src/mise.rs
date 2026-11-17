@@ -45,6 +45,8 @@ const MARKER: &str = "bin/.puddle-mise";
 /// The most a binary may unpack to (the real one is about 150 MB): a tarball that expands further
 /// is refused instead of filling the volume.
 const MAX_BINARY: u64 = 512 * 1024 * 1024;
+/// The most bytes a download of the mise tarball may grow to (the real one is about 50 MB).
+const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
 
 /// What the host sends: the folder (`<volume>/.puddle/mise`) the binary goes below.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,13 +267,16 @@ async fn download_and_unpack(
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     }
-    fetch.file(&pin.url(), tarball).await.map_err(|e| {
-        if e.kind() == io::ErrorKind::NotFound {
-            MiseError::NoDownloader
-        } else {
-            MiseError::Download(e.to_string())
-        }
-    })?;
+    fetch
+        .file(&pin.url(), tarball, MAX_DOWNLOAD)
+        .await
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                MiseError::NoDownloader
+            } else {
+                MiseError::Download(e.to_string())
+            }
+        })?;
     let (tar, dest, pin) = (tarball.to_owned(), dir.to_owned(), pin.clone());
     tokio::task::spawn_blocking(move || {
         let actual = sha256_of(&tar)?;

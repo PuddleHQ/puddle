@@ -108,7 +108,8 @@ impl ProxyPasswords {
         Ok(count)
     }
 
-    /// Stores `user` and `password` for `proxy`, replacing an earlier sign-in. Blocking.
+    /// Stores `user` and `password` for `proxy`, replacing an earlier sign-in. The stored list is
+    /// read again first, so a sign-in this run never loaded stays listed. Blocking.
     ///
     /// # Errors
     /// [`ProxyPasswordError::BadUser`] or [`ProxyPasswordError::BadPassword`] for a value Basic
@@ -127,7 +128,7 @@ impl ProxyPasswords {
             return Err(ProxyPasswordError::BadPassword);
         }
         let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut names: Vec<ProxyAddr> = self.entries().keys().cloned().collect();
+        let mut names = self.listed()?;
         if !names.contains(proxy) {
             names.push(proxy.clone());
         }
@@ -136,6 +137,7 @@ impl ProxyPasswords {
         self.vault.set(&self.entry_id(proxy)?, &value)?;
         self.entries()
             .insert(proxy.clone(), Credentials::new(user, password));
+        self.read_missing(&names);
         Ok(())
     }
 
@@ -146,15 +148,28 @@ impl ProxyPasswords {
     pub fn remove(&self, proxy: &ProxyAddr) -> Result<(), ProxyPasswordError> {
         let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
         self.vault.delete(&self.entry_id(proxy)?)?;
-        let names: Vec<ProxyAddr> = self
-            .entries()
-            .keys()
-            .filter(|p| *p != proxy)
-            .cloned()
-            .collect();
+        let mut names = self.listed()?;
+        names.retain(|p| p != proxy);
         self.write_list(&names)?;
         self.entries().remove(proxy);
+        self.read_missing(&names);
         Ok(())
+    }
+
+    /// Reads the sign-ins of `listed` that are not in memory: a load that failed (a locked store
+    /// at start) left them out, and a change that went through shows the store answers now. One
+    /// that still cannot be read stays listed for a later load.
+    fn read_missing(&self, listed: &[ProxyAddr]) {
+        for proxy in listed {
+            if self.entries().contains_key(proxy) {
+                continue;
+            }
+            if let Ok(Some(secret)) = self.entry_id(proxy).and_then(|id| self.vault.get(&id))
+                && let Some(credentials) = decode(&secret)
+            {
+                self.entries().insert(proxy.clone(), credentials);
+            }
+        }
     }
 
     /// The proxies that have a sign-in and the user name of each, never a password.

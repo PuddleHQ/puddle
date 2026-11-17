@@ -241,18 +241,15 @@ impl TokenBody {
             return false;
         }
         match &mut self.parsed {
-            Parsed::Json(map) => map
-                .get_mut(name)
-                .map(|slot| *slot = Value::String(value.to_owned()))
-                .is_some(),
+            Parsed::Json(map) => map.get_mut(name).map(|slot| replace(slot, value)).is_some(),
             Parsed::Form(pairs) => pairs
                 .iter_mut()
                 .find(|pair| pair.key == name)
                 .map(|pair| {
-                    let encode = |text: &str| -> String {
-                        url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
-                    };
-                    pair.raw = format!("{}={}", encode(&pair.key), encode(value));
+                    let raw = form_field(&pair.key, value);
+                    pair.raw.zeroize();
+                    pair.raw = raw;
+                    pair.value.zeroize();
                     value.clone_into(&mut pair.value);
                 })
                 .is_some(),
@@ -294,7 +291,7 @@ impl TokenBody {
                 if !slot.is_string() {
                     return false;
                 }
-                *slot = Value::String(value.to_owned());
+                replace(slot, value);
                 true
             }
             Parsed::Form(_) => self.set_text(path, value),
@@ -342,6 +339,26 @@ fn split_path(path: &str) -> Option<(&str, Vec<&str>)> {
     }
     let last = steps.pop()?;
     Some((last, steps))
+}
+
+/// Puts the text `value` in `slot`, wiping the text it held: that can be a token.
+fn replace(slot: &mut Value, value: &str) {
+    wipe(slot);
+    *slot = Value::String(value.to_owned());
+}
+
+/// The form field `key=value`, both encoded, written into a buffer of its final size, so no
+/// copy of `value` is left behind in a buffer that grew.
+fn form_field(key: &str, value: &str) -> String {
+    fn serialize(text: &str) -> url::form_urlencoded::ByteSerialize<'_> {
+        url::form_urlencoded::byte_serialize(text.as_bytes())
+    }
+    let size = |text: &str| serialize(text).map(str::len).sum::<usize>();
+    let mut raw = String::with_capacity(size(key) + 1 + size(value));
+    raw.extend(serialize(key));
+    raw.push('=');
+    raw.extend(serialize(value));
+    raw
 }
 
 /// Wipes every text in `value`: a body can hold a token.

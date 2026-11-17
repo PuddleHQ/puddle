@@ -156,7 +156,7 @@ impl<'a> Req<'a> {
     }
 }
 
-fn head(method: &str, path: &str, req: &Req<'_>, body: Option<&Value>) -> String {
+pub(super) fn head(method: &str, path: &str, req: &Req<'_>, body: Option<&Value>) -> String {
     let mut text = format!(
         "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
         req.host.unwrap_or(HOST)

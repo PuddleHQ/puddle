@@ -158,8 +158,11 @@ impl Leg<'_> {
         let handler = &self.cx.handler;
         let proxy = &handler.proxy;
         let https = EgressRequest::new(handler.workspace.clone(), self.host.clone(), 443);
-        let (admitted, _) = admit(proxy, &https).await;
-        let admitted = admitted.map_err(|refusal| GitSshFailure::new(refusal.message))?;
+        let (admitted, event) = admit(proxy, &https).await;
+        let admitted = admitted.map_err(|refusal| {
+            self.cx.leg_refused(event);
+            GitSshFailure::new(refusal.message)
+        })?;
         let (termination, mode, tls) = proxy.terminating(&https, false).ok_or_else(|| {
             GitSshFailure::new(format!(
                 "Puddle does not decrypt {} for this workspace, so it cannot carry Git over SSH there",

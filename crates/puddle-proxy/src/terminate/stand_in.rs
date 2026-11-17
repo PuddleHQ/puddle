@@ -647,9 +647,14 @@ fn swap_value(
     let decoded = Zeroizing::new(LENIENT_BASE64.decode(token).ok()?);
     let new = swap_bytes(&decoded, entries, report, real)?;
     let scheme = value.get(..5)?;
-    let mut out = Zeroizing::new(scheme.to_vec());
+    // Encoded straight into a buffer of its final size, which is wiped: the credentials are real.
+    let start = scheme.len() + 1;
+    let size = start + base64::encoded_len(new.len(), true)?;
+    let mut out = Zeroizing::new(Vec::with_capacity(size));
+    out.extend_from_slice(scheme);
     out.push(b' ');
-    out.extend_from_slice(STANDARD.encode(&*new).as_bytes());
+    out.resize(size, 0);
+    STANDARD.encode_slice(&*new, out.get_mut(start..)?).ok()?;
     HeaderValue::from_bytes(&out).ok()
 }
 

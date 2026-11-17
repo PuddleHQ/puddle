@@ -31,32 +31,38 @@ ok    Credential store    the operating system's credential store: a test write 
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on (the hypervisor uses it)"
+      "summary": "on (the hypervisor uses it)",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
       "status": "ok",
-      "summary": "/dev/kvm is usable"
+      "summary": "/dev/kvm is usable",
+      "impact": "Lets Puddle start workspaces as virtual machines, walled off from this computer and from each other."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)",
+      "impact": "Puddle's runtime may run here: no security software or policy stops it."
     },
     {
       "id": "test_boot",
       "status": "ok",
-      "summary": "a test VM booted and ran a program in 1.1 s"
+      "summary": "a test VM booted and ran a program in 1.1 s",
+      "impact": "Shows that a workspace can start here: a test machine booted and ran a program."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "data_path",
@@ -64,27 +70,33 @@ ok    Credential store    the operating system's credential store: a test write 
       "summary": "/data is writable by everyone and not sticky, so msb will not open Puddle's data below it",
       "finding": "data_path_writable",
       "fix": "msb opens its catalog only below folders where other accounts cannot rename entries, so every sandbox start fails until the write permission is gone. A user created with a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:\n  chmod go-w /data",
-      "detail": "/data mode 0757"
+      "detail": "/data mode 0757",
+      "impact": "Puddle can't start any workspace: other accounts can change a folder above its data.",
+      "remedy": "Take the write permission for others off that folder with `chmod go-w`."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     }
   ],
   "elapsed_ms": 1234

@@ -191,6 +191,8 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
     finding: "kvm_missing",
     fix: "Turn on virtualization in your UEFI setup.",
     detail: "No such file or directory (os error 2)",
+    impact: "Puddle can't start any workspace: KVM isn't available.",
+    remedy: "Load KVM for your CPU.",
   };
   await backend.control.step({ do: "doctor", ...broken });
 
@@ -199,8 +201,17 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
   await expect(
     page.getByText("1 problem to fix before Puddle can run workspaces."),
   ).toBeVisible();
+  // The row explains itself behind closed toggles; the long fix is under More details.
+  const row = page
+    .getByRole("list", { name: "Checks" })
+    .getByRole("listitem")
+    .filter({ hasText: "Hypervisor" });
+  await expect(row.getByText("Load KVM for your CPU.")).toBeHidden();
+  await row.getByText("Remediation").click();
+  await expect(row.getByText("Load KVM for your CPU.")).toBeVisible();
+  await row.getByText("More details").click();
   await expect(
-    page.getByText("Turn on virtualization in your UEFI setup."),
+    row.getByText("Turn on virtualization in your UEFI setup."),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Continue" })).toHaveCount(0);
 
@@ -412,12 +423,16 @@ test("the blocked system check and the form dialog pass the accessibility scan",
     finding: "kvm_missing",
     fix: "Turn on virtualization in your UEFI setup.",
     detail: "No such file or directory (os error 2)",
+    impact: "Puddle can't start any workspace: KVM isn't available.",
+    remedy: "Load KVM for your CPU.",
   };
   await backend.control.step({ do: "doctor", ...healthy });
   await page.goto("/welcome/check");
   await page.getByRole("button", { name: "Start system check" }).click();
   await expect(page.getByText(/1 problem to fix/)).toBeVisible();
-  await page.getByText("Technical details").click();
+  for (const label of ["Impact", "Remediation", "More details"]) {
+    await page.getByText(label, { exact: true }).first().click();
+  }
   await expectNoAxeViolations(page);
 
   await page.goto("/welcome/workspace");

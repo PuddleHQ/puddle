@@ -16,6 +16,7 @@ use crate::facts::{
 };
 use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth, Unseal};
 
+use crate::explain::explain;
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
 /// The exit code of the probe program the test VM runs.
@@ -166,6 +167,9 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
     }
+    for check in &mut checks {
+        explain(os, check);
+    }
 
     Report {
         schema_version: SCHEMA_VERSION,
@@ -201,11 +205,14 @@ fn virtualization(os: Os, hv: &HypervisorFacts) -> Check {
                 "this {} runs in a virtual machine ({vendor}); see Hypervisor",
                 os_word(os)
             ),
-        ),
+        )
+        .finding(Finding::RunsInVirtualMachine),
         (Some(false), None) => Check::new(id, Status::Fail, "off in the firmware (UEFI/BIOS)")
             .finding(Finding::FirmwareVirtualizationOff)
             .fix(FIRMWARE_FIX),
-        (None, None) => Check::new(id, Status::Info, "unknown"),
+        (None, None) => {
+            Check::new(id, Status::Info, "unknown").finding(Finding::VirtualizationUnknown)
+        }
     }
 }
 
@@ -358,7 +365,9 @@ fn code_integrity_state(ci: CodeIntegrity) -> Check {
     if ci.test_signing {
         summary.push_str("; test signing on");
     }
-    let check = Check::new(CheckId::CodeIntegrity, Status::Info, summary);
+    // A state, not a finding: when a policy blocks the runtime, "Runtime starts" says so and
+    // names the rule.
+    let check = Check::new(CheckId::CodeIntegrity, Status::Ok, summary);
     if ci.user_mode_enforced {
         check.fix(
             "An App Control (WDAC) policy decides which programs may run. If it blocks Puddle's runtime, \
@@ -1303,6 +1312,7 @@ fn az_cli(facts: &AzCliFacts) -> Check {
             Status::Warn,
             format!("found, but its version could not be read: {detail}"),
         )
+        .finding(Finding::AzCliUnreadable)
         .fix("Azure DevOps sources need a working `az`; reinstall the Azure CLI if `az --version` fails."),
     }
 }
@@ -1332,7 +1342,7 @@ fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
                     format!("Puddle's file vault, {}", key_words(tag)),
                 );
                 if tag == KeySourceTag::KeyFile {
-                    check.fix(
+                    check.finding(Finding::CredentialStoreKeyFile).fix(
                         "The key is a file in your config folder, so a copy of that folder opens the vault. systemd 256 or later seals the key to this machine instead.",
                     )
                 } else {
@@ -1342,7 +1352,7 @@ fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
             VaultFacts::Sealed { tag, key, tpm } => sealed_vault_key(tag, key, tpm),
             VaultFacts::NoVaultYet => Check::new(
                 id,
-                Status::Info,
+                Status::Ok,
                 "Puddle's file vault: no vault file yet; Puddle makes it at the next start",
             ),
             VaultFacts::Unreadable => Check::new(

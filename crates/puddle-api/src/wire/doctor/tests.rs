@@ -23,6 +23,8 @@ fn check(id: CheckId, status: Status) -> Check {
         finding: None,
         fix: None,
         detail: None,
+        impact: "i".into(),
+        remedy: None,
     }
 }
 
@@ -31,6 +33,7 @@ fn a_report_keeps_its_fields_and_adds_titles_and_nulls() {
     let mut failed = check(CheckId::TestBoot, Status::Fail);
     failed.finding = Some(Finding::BootFailed);
     failed.fix = Some("do this".into());
+    failed.remedy = Some("try that".into());
     let wire = DoctorReport::from(&report(vec![check(CheckId::Runtime, Status::Ok), failed]));
     assert_eq!(wire.schema_version, 1);
     assert_eq!(wire.puddle_version, "1.2.3");
@@ -47,6 +50,8 @@ fn a_report_keeps_its_fields_and_adds_titles_and_nulls() {
     assert_eq!(bad.id, "test_boot");
     assert_eq!(bad.finding.as_deref(), Some("boot_failed"));
     assert_eq!(bad.fix.as_deref(), Some("do this"));
+    assert_eq!((bad.impact.as_str(), bad.remedy.as_deref()), ("i", Some("try that")));
+    assert_eq!((ok.impact.as_str(), ok.remedy.as_deref()), ("i", None));
     assert_eq!(wire.failures().count(), 1);
 }
 

@@ -39,6 +39,7 @@
 
 pub mod boot;
 mod diagnose;
+mod explain;
 mod facts;
 mod launch;
 mod report;

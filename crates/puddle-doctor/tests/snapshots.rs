@@ -237,7 +237,41 @@ impl Probe for Fake {
 fn run(fake: &Fake, options: &Options) -> Report {
     let mut report = diagnose(fake, options, "0.1.0");
     report.elapsed_ms = 1234;
+    assert_explained(&report);
     report
+}
+
+/// The most characters an impact or a remedy may have: a short line, read at a glance.
+const SHORT: usize = 170;
+
+/// Every check says what it means for the person (for an ok check: what it protects or makes
+/// possible), and every check that is not ok also says what to do; each is at most two short
+/// sentences.
+fn assert_explained(report: &Report) {
+    for c in &report.checks {
+        let name = c.id.title();
+        assert_short(name, "impact", &c.impact);
+        if !matches!(c.status, Status::Ok | Status::Skipped) {
+            assert!(c.finding.is_some(), "{name} is {:?} without a finding", c.status);
+        }
+        match (c.status, &c.remedy) {
+            (Status::Ok, None) => {}
+            (Status::Ok, Some(remedy)) => panic!("{name} is ok but has a remedy: {remedy}"),
+            (_, Some(remedy)) => assert_short(name, "remedy", remedy),
+            (status, None) => panic!("{name} is {status:?} and says nothing to do"),
+        }
+    }
+}
+
+fn assert_short(name: &str, part: &str, text: &str) {
+    assert!(!text.trim().is_empty(), "{name}: empty {part}");
+    assert!(
+        text.chars().count() <= SHORT,
+        "{name}: {part} longer than {SHORT} characters: {text}"
+    );
+    assert!(text.ends_with('.'), "{name}: {part} is not a sentence: {text}");
+    let sentences = text.matches(". ").count() + text.matches("? ").count() + 1;
+    assert!(sentences <= 2, "{name}: {part} has {sentences} sentences: {text}");
 }
 
 /// Compares (or with `PUDDLE_UPDATE_SNAPSHOTS=1`, writes) `tests/snapshots/<name>.snap`.
@@ -2022,7 +2056,8 @@ fn a_file_vault_names_its_key_source_and_only_a_key_file_is_more_than_ok() {
         );
         let check = r.check(CheckId::CredentialStore).unwrap();
         assert_eq!(check.status, status, "{tag:?}");
-        assert_eq!(check.finding, None);
+        let finding = (tag == KeySourceTag::KeyFile).then_some(Finding::CredentialStoreKeyFile);
+        assert_eq!(check.finding, finding);
         assert_eq!(check.summary, format!("Puddle's file vault, {words}"));
     }
 }
@@ -2036,7 +2071,7 @@ fn a_file_vault_with_its_key_in_a_file_says_what_that_means_for_a_copy_of_the_co
         "credential_store_file_vault_key_file",
         &fake,
         CheckId::CredentialStore,
-        None,
+        Some(Finding::CredentialStoreKeyFile),
     );
     let fix = r
         .check(CheckId::CredentialStore)
@@ -2158,14 +2193,15 @@ fn a_sealed_key_that_opens_is_ok_whatever_the_tpm_says_when_there_is_nothing_to_
 }
 
 #[test]
-fn a_file_vault_not_made_yet_is_info() {
+fn a_file_vault_not_made_yet_is_ok() {
     let r = run(
         &with_store(CredentialStoreFacts::File(VaultFacts::NoVaultYet)),
         &Options::default(),
     );
+    // Nothing to do: Puddle makes the vault at its next start.
     assert_eq!(
         r.check(CheckId::CredentialStore).unwrap().status,
-        Status::Info
+        Status::Ok
     );
 }
 

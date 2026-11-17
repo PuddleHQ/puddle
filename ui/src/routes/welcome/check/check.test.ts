@@ -50,6 +50,16 @@ afterEach(cleanup);
 const runs = () => api.calls.filter((c) => c === "GET /api/doctor").length;
 const link = (name: string) => screen.queryByRole("link", { name });
 
+/** Opens a row's closed toggle by its label and finds `text` inside it. */
+async function opens(row: HTMLElement, label: string, text: string | RegExp) {
+  const summary = within(row).getByText(label, { selector: "summary" });
+  const toggle = summary.closest("details")!;
+  expect(toggle.open).toBe(false);
+  await fireEvent.click(summary);
+  expect(toggle.open).toBe(true);
+  expect(within(toggle).getByText(text)).toBeInTheDocument();
+}
+
 /** Opens the step and presses its start button, as a person does. */
 async function start() {
   render(Page);
@@ -112,21 +122,62 @@ describe("system check step", () => {
     expect(link("Leave setup for now")).toBeNull();
   });
 
-  it("shows a warning's note without blocking", async () => {
+  it("shows a warning's impact and remediation without blocking", async () => {
     const report = healthyReport();
     report.checks[0] = {
       ...report.checks[0]!,
       status: "warn",
       summary: "a client is installed",
-      fix: "Nothing to do.",
+      finding: "gsa_installed",
+      impact: "Company sites may not work from a workspace.",
+      remedy: "Ask your IT team for another way in.",
+      fix: "The long story, with every command.",
     };
     api.report = report;
     await start();
     await screen.findByText(/No problems found; 1 warning to know about/);
-    expect(screen.getByText("Note:")).toBeInTheDocument();
-    expect(screen.getByText("Nothing to do.")).toBeInTheDocument();
     expect(screen.getByText("Warning:")).toBeInTheDocument();
+    const row = screen.getAllByRole("listitem")[0]!;
+    await opens(row, "Impact", "Company sites may not work from a workspace.");
+    await opens(row, "Remediation", "Ask your IT team for another way in.");
+    await opens(row, "More details", "The long story, with every command.");
     expect(link("Continue")).toBeInTheDocument();
+  });
+
+  it("explains every row behind toggles that start closed: impact and remediation for a problem, why it matters for a pass", async () => {
+    api.report = brokenReport();
+    await start();
+    const list = await screen.findByRole("list", { name: "Checks" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const toggles = row.querySelectorAll("details");
+      expect(toggles.length).toBeGreaterThan(0);
+      for (const toggle of toggles) expect(toggle.open).toBe(false);
+      for (const text of within(row).queryAllByText(/./, {
+        selector: "details > :not(summary)",
+      })) {
+        expect(text.textContent?.trim()).not.toBe("");
+      }
+    }
+    // A pass says what it protects or makes possible, and has nothing to fix.
+    await opens(
+      rows[0]!,
+      "Why it matters",
+      "CPU virtualization lets Puddle run workspaces.",
+    );
+    expect(within(rows[0]!).queryByText("Remediation")).toBeNull();
+    // A problem says what it costs and what to do.
+    await opens(
+      rows[1]!,
+      "Impact",
+      "Puddle can't start any workspace: KVM isn't available.",
+    );
+    await opens(rows[1]!, "Remediation", "Load KVM for your CPU.");
+    expect(within(rows[1]!).queryByText("Why it matters")).toBeNull();
+    // A check that did not run says what that leaves open.
+    await opens(rows[2]!, "Impact", /can't tell yet/);
+    await opens(rows[2]!, "Remediation", /check again/);
   });
 
   it("blocks on a failed check: shows the fix and the evidence, offers no Continue", async () => {
@@ -135,10 +186,12 @@ describe("system check step", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "1 problem to fix before Puddle can run workspaces.",
     );
-    expect(screen.getByText("Fix:")).toBeInTheDocument();
-    expect(
-      screen.getByText("Turn on virtualization in your UEFI setup."),
-    ).toBeInTheDocument();
+    const row = screen.getAllByRole("listitem")[1]!;
+    await opens(
+      row,
+      "More details",
+      "Turn on virtualization in your UEFI setup.",
+    );
     expect(screen.getByText("Problem:")).toBeInTheDocument();
     expect(screen.getByText("Not checked:")).toBeInTheDocument();
     const details = screen.getByLabelText("Technical details of Hypervisor");

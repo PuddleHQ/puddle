@@ -78,7 +78,7 @@ fn an_azure_cli_whose_version_cannot_be_read_only_warns() {
         detail: "exited with Some(1)".into(),
     });
     assert_eq!(check.status, Status::Warn);
-    assert_eq!(check.finding, None);
+    assert_eq!(check.finding, Some(Finding::AzCliUnreadable));
     assert!(check.summary.contains("exited with Some(1)"));
     assert!(check.fix.is_some());
 }

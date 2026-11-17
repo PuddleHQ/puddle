@@ -6,7 +6,7 @@ FAIL  CPU virtualization    off in the firmware (UEFI/BIOS)
 FAIL  Hypervisor            Windows Hypervisor Platform is on, but the hypervisor can't run: CPU virtualization is off
       fix:  Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
             Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
-info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot             not checked: no usable hypervisor
@@ -32,64 +32,79 @@ ok    Global Secure Access  client not installed
       "status": "fail",
       "summary": "off in the firmware (UEFI/BIOS)",
       "finding": "firmware_virtualization_off",
-      "fix": "Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: \"Intel Virtualization Technology\" / VT-x; AMD: \"SVM Mode\"), save, and start the PC again."
+      "fix": "Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: \"Intel Virtualization Technology\" / VT-x; AMD: \"SVM Mode\"), save, and start the PC again.",
+      "impact": "Puddle can't start any workspace: the CPU's virtualization feature is turned off.",
+      "remedy": "Turn on CPU virtualization in the PC's UEFI/BIOS setup, then start the PC again."
     },
     {
       "id": "hypervisor",
       "status": "fail",
       "summary": "Windows Hypervisor Platform is on, but the hypervisor can't run: CPU virtualization is off",
       "finding": "firmware_virtualization_off",
-      "fix": "Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: \"Intel Virtualization Technology\" / VT-x; AMD: \"SVM Mode\"), save, and start the PC again."
+      "fix": "Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: \"Intel Virtualization Technology\" / VT-x; AMD: \"SVM Mode\"), save, and start the PC again.",
+      "impact": "Puddle can't start any workspace: the CPU's virtualization feature is turned off.",
+      "remedy": "Turn on CPU virtualization in the PC's UEFI/BIOS setup, then start the PC again."
     },
     {
       "id": "code_integrity",
-      "status": "info",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+      "status": "ok",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)",
+      "impact": "Puddle's runtime may run here: no security software or policy stops it."
     },
     {
       "id": "test_boot",
       "status": "skipped",
-      "summary": "not checked: no usable hypervisor"
+      "summary": "not checked: no usable hypervisor",
+      "impact": "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
       "id": "global_secure_access",
       "status": "ok",
-      "summary": "client not installed"
+      "summary": "client not installed",
+      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
     }
   ],
   "elapsed_ms": 1234

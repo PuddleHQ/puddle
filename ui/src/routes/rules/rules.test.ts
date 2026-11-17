@@ -926,6 +926,39 @@ describe("rule sets and System managed (rules spec §7)", () => {
     );
     await waitFor(() => expect(api.calls).toContain("DELETE /api/rules/{id}"));
   });
+
+  it("moves a rule into a set by editing it, and the set shows it afterwards", async () => {
+    await withSets();
+    const readsBefore = setsApi.calls.length;
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Edit rule: allow mine.example for every workspace",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Edit rule" });
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Save rule" }),
+    );
+    // The rule was already for every workspace and so is the set: nothing to ask.
+    await waitFor(() =>
+      expect(api.bodies.at(-1)).toMatchObject({
+        pattern: "mine.example",
+        scope: { type: "set", set: 4 },
+      }),
+    );
+    expect(api.calls).toContain("PUT /api/rules/{id}");
+    await waitFor(() =>
+      expect(setsApi.calls.length).toBeGreaterThan(readsBefore),
+    );
+    await waitFor(() =>
+      expect(toasts.items.at(-1)?.message).toBe(
+        "Saved: allow mine.example in a rule set.",
+      ),
+    );
+  });
 });
 
 describe("method and path rules", () => {

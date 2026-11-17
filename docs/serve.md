@@ -444,7 +444,7 @@ writes `secrets/store.json` and deletes the values from the old store. A value t
 changes stops the move: the copies are removed and the old store stays in charge. If the command stops half
 way (a crash, a power cut), run it again: before the record is written it copies again, after it removes what
 the old store still holds, and the store in use keeps its values. Moving to the file vault needs a place for
-its key (Linux only for now); the keyring may ask you to unlock it, and the command waits for that.
+its key (Linux only for now); a locked keyring may ask you to unlock it. The command waits up to 20 seconds for each store, then stops with a message and changes nothing; unlock the keyring and run it again.
 
 `reset` never deletes. The old vault becomes `vault.unreadable-<time>` in the `secrets` folder, and
 `vault-key.cred` and `vault.key` in your config folder become `<name>.unreadable-<time>`; a key the service

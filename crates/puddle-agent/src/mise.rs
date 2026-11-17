@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The pinned mise in the guest: downloaded, checked against the SHA-256 in `ci/mise.sha256`,
 //! unpacked on the workspace volume. The host starts it as `puddle-agent mise-fetch <dir>` after a
 //! start has settled; this module never decides whether mise is wanted.

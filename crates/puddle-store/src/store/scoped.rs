@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The store as one user sees it.
 
 use puddle_types::{Decision, Host, WorkspaceId};

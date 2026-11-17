@@ -458,6 +458,41 @@ describe("the overview", () => {
     expect(screen.queryByText("workspace override")).toBeNull();
   });
 
+  it("ignores a memory-source answer that a newer read has overtaken", async () => {
+    await workspaces.refresh();
+    api.overrides["w-demo"] = {
+      ...(await settingsOf("w-demo")),
+      memory: 4096,
+    };
+    await load();
+    const real = api.GET;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let held = false;
+    api.GET = (async (...args: Parameters<typeof real>) => {
+      const answer = await real(...args);
+      if (args[0] === "/api/settings/workspaces/{workspace}" && !held) {
+        held = true;
+        await gate;
+      }
+      return answer;
+    }) as typeof real;
+    render(Overview);
+    await vi.waitFor(() => expect(held).toBe(true));
+    api.overrides["w-demo"] = {
+      ...(await settingsOf("w-demo")),
+      memory: null,
+    };
+    workspaces.list = workspaces.list.map((w) =>
+      w.id === "w-demo" ? { ...w, memory_mib: 1234 } : w,
+    );
+    await screen.findByText("global default");
+    release();
+    await new Promise((done) => setTimeout(done, 0));
+    expect(screen.queryByText("workspace override")).toBeNull();
+    expect(screen.getByText("global default")).toBeInTheDocument();
+  });
+
   it("shows an out-of-memory notice that can be dismissed", async () => {
     await load();
     render(Overview);

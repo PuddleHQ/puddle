@@ -82,16 +82,24 @@
   $effect(() => {
     if (!wid) return;
     void memoryMib; // read again when the figure changes
+    // An answer for another workspace, or one the figure has moved on from, is not shown.
+    let current = true;
+    memorySource = null;
     void (async () => {
+      let source: "workspace" | "global" | "default" | null = null;
       try {
         const { data } = await api.GET("/api/settings/workspaces/{workspace}", {
           params: { path: { workspace: wid } },
         });
-        memorySource = data?.effective.memory.source ?? null;
+        source = data?.effective.memory.source ?? null;
       } catch {
-        memorySource = null;
+        // Unreadable settings: no source is shown.
       }
+      if (current) memorySource = source;
     })();
+    return () => {
+      current = false;
+    };
   });
 
   const waiting = $derived(

@@ -42,6 +42,7 @@
     setUi,
     type Draft,
     type LayerKey,
+    remaining,
   } from "#lib/settings/draft.ts";
   import type { AppIconChoice } from "#lib/settings/app-icon.ts";
   import {
@@ -227,11 +228,13 @@
     saving = true;
     saved = null;
     problem = null;
-    const names = restartNames(draft);
-    const result = await store.save(savePatch(view, draft));
+    const sent = draft;
+    const names = restartNames(sent);
+    const result = await store.save(savePatch(view, sent));
     saving = false;
     if (result.ok) {
-      draft = EMPTY_DRAFT;
+      // The inputs stay live during the save: keep what was typed meanwhile.
+      draft = remaining(sent, draft);
       saved =
         names.length > 0
           ? `Settings saved. ${names.join(" and ")} apply when a workspace next starts.`

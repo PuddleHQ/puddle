@@ -35,6 +35,34 @@ describe("reading", () => {
     expect(store.status).toBe("ready");
     expect(store.rules.map((r) => r.id)).toEqual([1, 2]);
   });
+  it("does not bring back a rule deleted while a read was in flight", async () => {
+    api.rules = [rule(1), rule(2)];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let held = false;
+    const slow = new Proxy(api, {
+      get(target, key) {
+        if (key !== "GET") return Reflect.get(target, key) as unknown;
+        return async (path: string, init?: unknown) => {
+          const answer = await (
+            target.GET as unknown as (...a: unknown[]) => Promise<unknown>
+          )(path, init);
+          if (!held) {
+            held = true;
+            await gate;
+          }
+          return answer;
+        };
+      },
+    });
+    const store = new RulesStore({ api: slow as never, source });
+    const reading = store.refresh();
+    await vi.waitFor(() => expect(held).toBe(true));
+    expect(await store.remove(1)).toEqual({ ok: true });
+    release();
+    await reading;
+    await vi.waitFor(() => expect(store.rules.map((r) => r.id)).toEqual([2]));
+  });
   it("fails the first read quietly, and keeps what it has after a later failure", async () => {
     api.down = true;
     const store = make();

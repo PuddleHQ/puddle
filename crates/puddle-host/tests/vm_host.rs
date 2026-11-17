@@ -4820,7 +4820,8 @@ async fn phase_shi_mount_tampering_put_right(s: &mut ShellInitStory) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_stays_root_only() {
+async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_is_the_session_users_alone()
+ {
     let dev_cert = std::sync::Arc::new(TestDevCert::new());
     dev_cert.give();
     let mut options = options_without_injection();
@@ -4849,7 +4850,8 @@ async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_st
         .await;
     assert_eq!(end["step"], "done", "{end}");
 
-    // The real boot hook put the files in place: the key is root's alone, the certificate is in
+    // The real boot hook put the files in place: the key is the session user's alone (its tools
+    // read it through DEV_KEY_PEM; another user cannot), the certificate is in
     // the system store (a self-signed certificate verifies against a bundle that holds it), in
     // Node's extra roots and in the profile's variables.
     let out = guest(
@@ -4857,6 +4859,8 @@ async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_st
         &sandbox,
         "set -e
 stat -c 'key %a %U' /etc/puddle/dev-cert/localhost.key
+runuser -u agent -- sh -c '. /etc/profile.d/01-puddle-env.sh; test -r \"$DEV_KEY_PEM\" && echo agent-reads-key' || echo agent-cannot-read
+runuser -u nobody -- test -r /etc/puddle/dev-cert/localhost.key || echo others-cannot
 stat -c 'crt %a' /etc/puddle/dev-cert/localhost.crt
 cmp /etc/puddle/dev-cert/localhost.crt /usr/local/share/ca-certificates/puddle-dev/localhost.crt && echo same-in-store
 grep -c -F \"$(sed -n 2p /etc/puddle/dev-cert/localhost.crt)\" /etc/ssl/certs/ca-certificates.crt | sed 's/^/in-bundle /'
@@ -4867,7 +4871,9 @@ if command -v openssl >/dev/null; then openssl verify -CAfile /etc/ssl/certs/ca-
     .await;
     eprintln!("{out}");
     for line in [
-        "key 600 root",
+        "key 600 agent",
+        "agent-reads-key",
+        "others-cannot",
         "crt 644",
         "same-in-store",
         "in-bundle 1",

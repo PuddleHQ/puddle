@@ -11,7 +11,8 @@
 //! - File mounts are read-only (`tee` reports `Read-only file system`).
 //! - Root disk and owned disks survive stop/start and die with `remove`; named volumes survive
 //!   `remove` and reattach with a plain `named()` mount.
-//! - A second attach of a volume held by a running sandbox is refused naming the holder, and
+//! - A second attach of a volume held by a sandbox that is not down (starting, running, draining
+//!   or paused) is refused naming the holder, and
 //!   leaves the refused sandbox behind as a `Stopped` record.
 //! - A create that fails leaves no stale directory ([`FakeRuntime::add_stale_dir`] plants one, as
 //!   a crash would).
@@ -25,7 +26,8 @@
 //!
 //! Test controls: [`FakeRuntime::inject`] makes the next matching call(s) fail
 //! ([`Fault`]), [`FakeRuntime::calls`] returns every call in order, [`FakeRuntime::on_exec`]
-//! adds command handlers, [`FakeRuntime::crash`] kills a VM, [`FakeRuntime::add_image`] adds
+//! adds command handlers, [`FakeRuntime::crash`] kills a VM, [`FakeRuntime::set_status`] holds
+//! one mid-boot, mid-stop or paused, [`FakeRuntime::add_image`] adds
 //! pullable images, [`FakeRuntime::wait_in_every_call`] makes every call wait once.
 //!
 //! ```
@@ -321,8 +323,7 @@ impl State {
         self.sandboxes
             .iter()
             .find(|(_, r)| {
-                r.status == WorkspaceStatus::Running
-                    && r.spec.volumes.iter().any(|m| m.volume.as_str() == volume)
+                !r.status.is_down() && r.spec.volumes.iter().any(|m| m.volume.as_str() == volume)
             })
             .map(|(name, _)| name.clone())
     }
@@ -336,7 +337,7 @@ impl State {
         }
     }
 
-    /// The holder check every boot runs: a volume attached to another running sandbox.
+    /// The holder check every boot runs: a volume attached to another sandbox that is not down.
     fn check_holders(&self, spec: &SandboxSpec) -> Result<(), ComputeError> {
         for m in &spec.volumes {
             if let Some(holder) = self.holder_of(m.volume.as_str())
@@ -532,6 +533,22 @@ impl FakeRuntime {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Holds an existing sandbox in `status`, for the states the fake never enters by itself: a
+    /// VM that is still booting (`Starting`), stopping (`Draining`) or `Paused`. The VM keeps its
+    /// volumes, so it holds them like a running one; exec and `get` refuse until it runs again
+    /// ([`FakeRuntime::outlive_owner`]). Returns whether the sandbox exists.
+    #[must_use = "false means there is no such sandbox"]
+    pub fn set_status(&self, name: &SandboxName, status: WorkspaceStatus) -> bool {
+        let mut state = self.lock();
+        match state.sandboxes.get_mut(name.as_str()) {
+            Some(r) => {
+                r.status = status;
+                true
+            }
+            None => false,
         }
     }
 

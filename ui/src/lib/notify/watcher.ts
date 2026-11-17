@@ -35,7 +35,7 @@ const RUNNING: readonly Status[] = ["starting", "running", "paused"];
 const NETWORK_KEY = "network";
 const stopKey = (name: string) => `stop:${name}`;
 const oomKey = (name: string) => `oom:${name}`;
-const diskKey = (name: string, disk: string) => `disk:${name}:${disk}`;
+const diskKey = (id: string, disk: string) => `disk:${id}:${disk}`;
 const sshKey = (name: string) => `ssh:${name}`;
 
 export interface WatcherDeps {
@@ -92,16 +92,23 @@ export class NoticeWatcher {
     );
   }
 
-  /** Reads the statuses the events will be compared with; never throws. */
-  async seed(): Promise<void> {
+  /**
+   * Reads the statuses the events will be compared with; never throws. After a resync
+   * (`current`) the list is the truth: the events it missed are not coming, so its statuses
+   * replace the remembered ones.
+   */
+  async seed(current = false): Promise<void> {
     void this.#problems.refresh();
     void this.#interceptionChoice.refresh();
     try {
       const { data } = await this.#api.GET("/api/workspaces");
       if (!data) return;
       for (const w of data.workspaces) {
-        // An event that already told us more recent news wins over the list.
-        if (!this.#status.has(w.id)) this.#status.set(w.id, w.status);
+        // An event that already told us more recent news wins over the list, unless events were missed.
+        if (current || !this.#status.has(w.id))
+          this.#status.set(w.id, w.status);
+        // A workspace that is up has no stop under way, whatever an abandoned one left behind.
+        if (current && RUNNING.includes(w.status)) this.#expected.delete(w.id);
       }
     } catch {
       // Without a list, the events alone still work for workspaces they name.
@@ -142,7 +149,7 @@ export class NoticeWatcher {
         return;
       case "disk_nearly_full":
         this.#notifier.notify({
-          key: diskKey(name, event.disk),
+          key: diskKey(id, event.disk),
           tone: "warning",
           title: `${name}: the ${event.disk === "root" ? "root disk" : "volume"} is ${event.percent} % full.`,
           detail:
@@ -150,7 +157,7 @@ export class NoticeWatcher {
               ? "Free space in the workspace, or reset the root disk from the workspace page: packages reinstall on the next start and the volume is untouched."
               : "Delete what you no longer need in the workspace; the volume cannot grow.",
           link: {
-            href: `/workspaces/${encodeURIComponent(name)}`,
+            href: `/workspaces/${encodeURIComponent(id)}`,
             label: "Open workspace",
           },
         });
@@ -280,7 +287,7 @@ export class NoticeWatcher {
     void this.seed();
     const unsubscribe = this.#source?.subscribe({
       event: (e) => this.handle(e),
-      resync: () => void this.seed(),
+      resync: () => void this.seed(true),
     });
     const stopCredentials = this.#credentials.start();
     return () => {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The install of a workspace's managed tools: `puddle-agent mise-install <workspace-dir>`. The
 //! host runs it as the session user after [`crate::mise`] put the pinned mise on the volume, and
 //! again after a clone or when the user allowed a host the install waited on.
@@ -122,7 +122,9 @@ impl SystemMise {
             .current_dir(folder)
             // Plain lines: the host quotes the last one.
             .env("NO_COLOR", "1")
-            .env("MISE_COLOR", "0");
+            .env("MISE_COLOR", "0")
+            // Nothing in a repository's config runs (no `exec()` templates, no hooks).
+            .env("MISE_SAFE", "1");
         command
     }
 }
@@ -146,7 +148,6 @@ impl Mise for SystemMise {
         let output = self
             .command(folder)
             .args(["install", "--yes"])
-            .env("MISE_SAFE", "1")
             .output()
             .map_err(|e| MiseFailed(format!("could not run mise: {e}")))?;
         if output.status.success() {

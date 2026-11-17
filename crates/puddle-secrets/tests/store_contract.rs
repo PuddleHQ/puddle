@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One set of cases every secret store must pass, run on the store in memory, on the file vault, and
 //! on the operating system's credential store where the computer has one that works (Credential
 //! Manager on Windows, a Secret Service on Linux). A computer without one skips that run and says
@@ -144,7 +144,10 @@ fn os_store() -> Option<Backend> {
     let sweep = KeyringStore::named(&service);
     Some(Backend {
         name: "operating system store",
-        large: 63_000,
+        // Nine entries of the Windows store: Credential Manager holds about 450 KB for all of a
+        // user's programs together and refuses writes past that, so a test takes little of it. The
+        // most pieces a value may have is the chunking unit tests' to check.
+        large: 8192,
         open: Box::new(move || {
             Box::new(IndexedStore::new(ChunkedStore::new(KeyringStore::named(
                 &service,

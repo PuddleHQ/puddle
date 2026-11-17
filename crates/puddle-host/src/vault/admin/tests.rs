@@ -333,6 +333,31 @@ fn a_store_that_waits_for_an_unlock_is_given_the_wait_and_then_named() {
     assert_eq!(status.state, StoreState::Readable { found: 0 });
 }
 
+// Linux only: the move needs a file vault to move into, and only Linux has a key source for one.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_locked_keyring_stops_migrate_with_a_message_instead_of_waiting_for_ever() {
+    let rig = Rig::new();
+    let (release, waiting) = mpsc::channel();
+    let mut setup = rig.setup();
+    setup.os_store = Some(Arc::new(Blocked(std::sync::Mutex::new(waiting))));
+    // The keyring is never unlocked while migrate runs: only a wait limit lets it return.
+    let err = migrate_within(
+        &rig.paths(),
+        &setup,
+        StoreKind::File,
+        Duration::from_millis(50),
+    )
+    .unwrap_err();
+    let VaultAdminError::StoreWait { store, seconds } = &err else {
+        panic!("{err}");
+    };
+    assert_eq!((*store, *seconds), (StoreKind::Os, 0));
+    assert!(err.to_string().contains("unlock"), "{err}");
+    assert!(rig.recorded().is_none(), "no record was written");
+    drop(release);
+}
+
 /// A file vault the way a headless first start makes it, with `CANARY` under `env-named`.
 #[cfg(target_os = "linux")]
 fn start_a_file_vault(rig: &Rig) {

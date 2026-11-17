@@ -7364,7 +7364,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Replaces the global settings listed in the body; `null` falls back to Puddle's default.\nConsents are changed through `/api/consents`.",
+        "summary": "Replaces the global settings listed in the body; `null` falls back to Puddle's default.\nWith the `revision` of the read the save was made from, a save over settings that changed\nsince is refused. Consents are changed through `/api/consents`.",
         "operationId": "put_global",
         "requestBody": {
           "content": {
@@ -7408,7 +7408,7 @@
             }
           },
           "409": {
-            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), damaged (settings_unreadable), or changed since the read named by `revision` (settings_changed)",
             "content": {
               "application/json": {
                 "schema": {
@@ -7831,7 +7831,7 @@
             }
           },
           "403": {
-            "description": "forbidden origin",
+            "description": "forbidden origin, or a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8302,7 +8302,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(in a window Puddle opens).",
+        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(in a window Puddle opens). Only for a client on the host computer itself: whatever Puddle\nopens appears on the host's screen, and its ssh link works only there.",
         "operationId": "attach_workspace",
         "parameters": [
           {
@@ -13748,18 +13748,18 @@
               "string",
               "null"
             ],
-            "description": "Why nothing was opened, when that is not an error (for example VS Code is not\ninstalled)."
+            "description": "Why nothing was opened, when that is not an error (for example VS Code is not\ninstalled, or the client is not on the host computer)."
           },
           "open_uri": {
             "type": [
               "string",
               "null"
             ],
-            "description": "A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,\nfor a client on another machine than the host (a browser on a device that reached\n`puddle serve`). Present for a desktop attach, whether or not the host opened a window\nitself; `null` for a browser attach."
+            "description": "A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,\nthrough the ssh entry Puddle wrote on the host. Present for a desktop attach from the host\ncomputer, whether or not a window opened; `null` for a browser attach and for a client on\nanother computer, where that ssh entry does not exist."
           },
           "opened": {
             "type": "boolean",
-            "description": "Whether Puddle opened an editor itself (desktop mode, when it worked)."
+            "description": "Whether Puddle opened an editor itself. Never for a browser signed in from another\ncomputer: an editor would open on the host's screen, not on the asker's."
           }
         }
       },
@@ -16676,6 +16676,7 @@
           "identity_collision",
           "newer_settings",
           "settings_unreadable",
+          "settings_changed",
           "rate_limited",
           "unavailable",
           "internal"
@@ -18028,6 +18029,13 @@
             "$ref": "#/components/schemas/Limits",
             "description": "The limits; omitted or `null` falls back to the computer's cores."
           },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `revision` of the settings this save was made from. When it no longer matches, nothing\nis written and the answer is 409 `settings_changed`. Omit it to replace whatever is stored."
+          },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
             "description": "The tool switches."
@@ -18059,7 +18067,8 @@
           "limits",
           "effective_limits",
           "effective",
-          "unknown_fields"
+          "unknown_fields",
+          "revision"
         ],
         "properties": {
           "effective": {
@@ -18077,6 +18086,10 @@
           "mise_available": {
             "type": "boolean",
             "description": "Whether this build has the managed mise layer at all. When false (the v0.1 build)\nthe window shows no mise setting and the layer is off whatever `tools.mise` holds."
+          },
+          "revision": {
+            "type": "string",
+            "description": "Names the values above that a save replaces. Send it back as `revision` in the save: if\nanother client changed them in between, the save is refused (409 `settings_changed`)."
           },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",

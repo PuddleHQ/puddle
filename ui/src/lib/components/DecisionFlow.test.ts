@@ -78,6 +78,7 @@ function settingsWith(confirm: boolean | null) {
     effective: {} as never,
     ui: fake.ui,
     unknown_fields: [],
+    revision: fake.revision(),
     vscode_server: fake.vscode,
     tools: fake.tools,
     mise_available: true,

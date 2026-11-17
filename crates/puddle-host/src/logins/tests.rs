@@ -105,11 +105,12 @@ async fn deleting_a_workspace_logs_the_tokens_a_refusing_credential_store_kept_a
  {
     let store = Arc::new(MemoryStore::new());
     let keeper = LoginKeeper::new(store.clone(), Arc::new(Events::default()));
-    let quiet = logged(keeper.delete_workspace(&workspace("alpha"))).await;
+    let quiet = logged(async { assert!(keeper.delete_workspace(&workspace("alpha")).await) }).await;
     assert_eq!(quiet, "");
 
     store.break_it();
-    let warned = logged(keeper.delete_workspace(&workspace("alpha"))).await;
+    let warned =
+        logged(async { assert!(!keeper.delete_workspace(&workspace("alpha")).await) }).await;
     assert!(warned.contains("WARN"), "{warned}");
     assert!(warned.contains("workspace=alpha"), "{warned}");
     assert!(warned.contains("could not be removed"), "{warned}");

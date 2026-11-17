@@ -294,6 +294,130 @@ impl H2Server {
     }
 }
 
+/// An HTTP/2 server that starts a graceful shutdown (GOAWAY with `NO_ERROR`) on its first
+/// connection while the first stream on it stays open, as a server restart, a gRPC
+/// max-connection-age or a draining load balancer does. With `answer_later`, every request on a
+/// later connection is answered `200` with the body `fresh`; without it a later connection is
+/// closed before its TLS handshake (the server went away for good).
+pub(crate) struct DrainingServer {
+    pub(crate) addr: SocketAddr,
+    /// TCP connections accepted.
+    pub(crate) accepted: Arc<AtomicUsize>,
+    /// Resolves once the client has read the GOAWAY: the server pings after it and the client's
+    /// answer to that ping comes after it in the same ordered frame stream.
+    pub(crate) goaway_read: Option<tokio::sync::oneshot::Receiver<()>>,
+    tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+}
+
+impl Drop for DrainingServer {
+    fn drop(&mut self) {
+        for task in self
+            .tasks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
+            task.abort();
+        }
+    }
+}
+
+impl DrainingServer {
+    pub(crate) async fn start(pki: &Pki, name: &str, answer_later: bool) -> Self {
+        let mut config = Arc::into_inner(pki.server_config(name, super::Flaw::None))
+            .expect("one owner of a fresh config");
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let tasks: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::default();
+        let (read_tx, read_rx) = tokio::sync::oneshot::channel();
+        let accept_loop = {
+            let accepted = Arc::clone(&accepted);
+            let tasks = Arc::clone(&tasks);
+            let mut read_tx = Some(read_tx);
+            tokio::spawn(async move {
+                while let Ok((tcp, _)) = listener.accept().await {
+                    let first = accepted.fetch_add(1, Ordering::SeqCst) == 0;
+                    let acceptor = acceptor.clone();
+                    let goaway_read = if first { read_tx.take() } else { None };
+                    if !first && !answer_later {
+                        drop(tcp);
+                        continue;
+                    }
+                    let handle = tokio::spawn(async move {
+                        let Ok(tls) = acceptor.accept(tcp).await else {
+                            return;
+                        };
+                        let Ok(mut conn) = h2::server::handshake(tls).await else {
+                            return;
+                        };
+                        match goaway_read {
+                            Some(goaway_read) => drain_after_first(&mut conn, goaway_read).await,
+                            None => {
+                                while let Some(Ok((_, mut respond))) = conn.accept().await {
+                                    let mut body =
+                                        respond.send_response(Response::new(()), false).unwrap();
+                                    let _ = body.send_data(Bytes::from_static(b"fresh"), true);
+                                }
+                            }
+                        }
+                    });
+                    tasks
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(handle);
+                }
+            })
+        };
+        tasks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(accept_loop);
+        Self {
+            addr,
+            accepted,
+            goaway_read: Some(read_rx),
+            tasks,
+        }
+    }
+}
+
+/// Answers the first stream with a head and one data frame and keeps it open, then sends GOAWAY
+/// and reports once the client has read it. A stream that comes after the GOAWAY is refused by
+/// the client itself, so it never reaches this connection.
+async fn drain_after_first<IO>(
+    conn: &mut h2::server::Connection<IO, Bytes>,
+    goaway_read: tokio::sync::oneshot::Sender<()>,
+) where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut ping_pong = conn.ping_pong().expect("the ping handle is taken once");
+    let Some(Ok((_, mut respond))) = conn.accept().await else {
+        return;
+    };
+    let mut open = respond.send_response(Response::new(()), false).unwrap();
+    open.send_data(Bytes::from_static(b"watching"), false)
+        .unwrap();
+    conn.graceful_shutdown();
+    let mut goaway_read = Some(goaway_read);
+    let mut pinged = std::pin::pin!(ping_pong.ping(h2::Ping::opaque()));
+    loop {
+        tokio::select! {
+            pong = &mut pinged, if goaway_read.is_some() => {
+                pong.unwrap();
+                let _ = goaway_read.take().map(|tx| tx.send(()));
+            }
+            next = conn.accept() => match next {
+                Some(Ok((_, mut refused))) => refused.send_reset(h2::Reason::REFUSED_STREAM),
+                Some(Err(_)) | None => break,
+            },
+        }
+    }
+    drop(open);
+}
+
 // ---------------------------------------------------------------------------------------------
 // The guest's side.
 

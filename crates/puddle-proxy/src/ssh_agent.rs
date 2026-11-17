@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use puddle_ssh_agent::filter::{AllowedKeys, Context, Disapproval, Filter, Outcome};
+use puddle_ssh_agent::filter::{AllowedKeys, Context, Disapproval, Filter, Outcome, PinFailure};
 use puddle_ssh_agent::kex::{KexObserver, SeenExchange};
 use puddle_ssh_agent::wire::MAX_MESSAGE;
 use puddle_ssh_agent::{AgentEndpoint, AgentError, Identity};
@@ -47,9 +47,21 @@ pub trait HostAgent: Send + Sync {
     fn sign(&self, key: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>, AgentError>;
 }
 
-/// What Puddle does around the filter: the first-use question and the audit record of
-/// each outcome. Both run on a blocking thread.
+/// What Puddle does around the filter: the host key kept per host, the first-use question and the
+/// audit record of each outcome. All run on a blocking thread.
 pub trait AgentGate: Send + Sync {
+    /// Keeps `host_key` (a SHA-256 fingerprint) as `host`'s in `workspace` when it has none yet,
+    /// else checks that it is the one kept.
+    ///
+    /// # Errors
+    ///
+    /// The host has another host key, or it could not be checked.
+    fn pin_host_key(
+        &self,
+        workspace: &WorkspaceId,
+        host: &str,
+        host_key: &str,
+    ) -> Result<(), PinFailure>;
     /// Whether the user lets `workspace` sign for `key` at `host`. It may wait for the user's
     /// answer; the guest's `ssh` waits with it.
     ///
@@ -62,13 +74,18 @@ pub trait AgentGate: Send + Sync {
     fn record(&self, workspace: &WorkspaceId, host: Option<&str>, outcome: &Outcome);
 }
 
-/// A gate that says yes to every question and records nothing, for tests of what lies behind it.
+/// A gate that says yes to every question, keeps no host key and records nothing, for tests of
+/// what lies behind it.
 #[cfg(feature = "testing")]
 #[derive(Debug, Clone, Copy)]
 pub struct ApproveEverything;
 
 #[cfg(feature = "testing")]
 impl AgentGate for ApproveEverything {
+    fn pin_host_key(&self, _: &WorkspaceId, _: &str, _: &str) -> Result<(), PinFailure> {
+        Ok(())
+    }
+
     fn approve(&self, _: &WorkspaceId, _: &str, _: &[u8]) -> Result<(), Disapproval> {
         Ok(())
     }
@@ -250,6 +267,12 @@ impl Context for StreamContext {
 
     fn list(&self) -> Result<Vec<Identity>, AgentError> {
         self.agents.agent.list()
+    }
+
+    fn pin(&self, host: &str, host_key: &str) -> Result<(), PinFailure> {
+        self.agents
+            .gate
+            .pin_host_key(&self.workspace, host, host_key)
     }
 
     fn approve(&self, host: &str, key: &[u8]) -> Result<(), Disapproval> {

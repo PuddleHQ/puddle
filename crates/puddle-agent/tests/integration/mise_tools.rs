@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: `puddle-agent mise-tools` as the host runs it. The workspace's mise is a
 //! script that appends a line to `config.toml` for `config set` and removes it for `unuse`, so the
 //! subcommand's output, exit codes and edits come from the real binary without a network.

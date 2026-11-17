@@ -39,13 +39,18 @@ export class AdminStore {
     this.#api = api;
   }
 
-  /** Finds out whether the screen exists for this viewer; the server answers 404 when it does not. */
+  /** Finds out whether the screen exists for this viewer; the server answers 404 (403 for a visitor) when it does not. */
   async probe(): Promise<void> {
     try {
       const { response } = await this.#api.GET("/api/admin/stats");
-      this.available = response.ok;
+      // Only the server saying "no such screen for you" hides it; a 5xx, an expired token or a
+      // dropped connection leaves what was known.
+      if (response.ok) this.available = true;
+      else if (response.status === 403 || response.status === 404) {
+        this.available = false;
+      }
     } catch {
-      this.available = false;
+      // Not answering says nothing about the screen.
     }
   }
 

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # cargo-about: third-party notices for Puddle's own dependency tree (`cargo xtask notices`).
 # `accepted` mirrors deny.toml's licence allow list: cargo-deny decides what may be used, this
 # only says which licence of an `OR` expression to attribute. Our own crates are publish = false.

@@ -137,28 +137,47 @@ pub(super) fn close_decided_rows(
     fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingId>, StoreError> {
     let set = super::sets::load_index(tx)?;
-    let mut stmt = tx.prepare(&format!(
-        "SELECT {PENDING_COLUMNS} FROM pending
-         WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
-    ))?;
-    let workspace = rule.scope.workspace().map(WorkspaceId::as_str);
-    let open = stmt
-        .query_map([workspace], raw_pending)?
-        .map(|raw| pending_from_raw(&raw?))
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(stmt);
     let mut closed = Vec::new();
-    for row in open {
+    for (row, suffix_allows) in open_rows(tx, rule.scope.workspace())? {
         if Some(row.id) == except || !rule.pattern.matches(&row.host) {
             continue;
         }
-        let winner = set.decide(&row.workspace, &row.host, now, SuffixAllows::Count);
+        let winner = set.decide(&row.workspace, &row.host, now, suffix_allows);
         if winner.is_some_and(|w| w.rule_id() == Some(rule.id)) {
             decide_row(tx, &row, rule, actor, now, fx)?;
             closed.push(row.id);
         }
     }
     Ok(closed)
+}
+
+/// The open rows of `workspace` (of every workspace for `None`), each with the kind of allow it
+/// needs: a row the proxy asked for after resolving a local address counts only exact allows
+/// (R-14), the same as the request it stands for.
+pub(super) fn open_rows(
+    tx: &Transaction<'_>,
+    workspace: Option<&WorkspaceId>,
+) -> Result<Vec<(PendingRow, SuffixAllows)>, StoreError> {
+    let mut stmt = tx.prepare(&format!(
+        "SELECT {PENDING_COLUMNS}, exact_only FROM pending
+         WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
+    ))?;
+    let open = stmt
+        .query_map([workspace.map(WorkspaceId::as_str)], |row| {
+            let exact_only: bool = row.get(PENDING_COLUMN_COUNT)?;
+            Ok((raw_pending(row)?, exact_only))
+        })?
+        .map(|found| {
+            let (raw, exact_only) = found?;
+            let suffix_allows = if exact_only {
+                SuffixAllows::Ignore
+            } else {
+                SuffixAllows::Count
+            };
+            Ok((pending_from_raw(&raw)?, suffix_allows))
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    Ok(open)
 }
 
 /// Expires open rows matching `filter` (which binds `?2` to `value`) and records each.
@@ -316,6 +335,8 @@ pub(super) fn load_rule(conn: &Connection, id: RuleId) -> Result<Rule, StoreErro
 
 pub(super) const PENDING_COLUMNS: &str = "id, workspace_id, host, port, first_seen, last_seen, attempts, \
                                state, decided_at, decided_by, rule_id, rule_set";
+/// How many columns [`PENDING_COLUMNS`] names.
+const PENDING_COLUMN_COUNT: usize = 12;
 
 /// A `pending` row as SQLite holds it, before validation.
 pub(super) struct RawPending {

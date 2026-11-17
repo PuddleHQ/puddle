@@ -54,6 +54,31 @@ describe("reading the list", () => {
     expect(store.byId("w-nope")).toBeUndefined();
   });
 
+  it("does not let a read that began before a rename put the old name back", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let held = false;
+    const realGet = api.GET;
+    api.GET = (async (...args: Parameters<typeof realGet>) => {
+      const answer = await realGet(...args);
+      if (args[0] === "/api/workspaces" && !held) {
+        held = true;
+        await gate;
+      }
+      return answer;
+    }) as typeof realGet;
+    const reading = store.refresh();
+    await vi.waitFor(() => expect(held).toBe(true));
+    expect(await store.rename("w-b-site", "Renamed")).toMatchObject({
+      ok: true,
+    });
+    release();
+    await reading;
+    await vi.waitFor(() =>
+      expect(store.byId("w-b-site")?.name).toBe("Renamed"),
+    );
+  });
+
   it("fails quietly while it has never worked, and keeps what it has after", async () => {
     api.down = true;
     await store.refresh();
@@ -637,6 +662,13 @@ describe("ids and names", () => {
     expect(api.calls).toContain("PUT /api/settings/workspaces/{workspace}");
     expect(api.overrides["w-b-site"]?.direct_ssh).toBe(true);
     expect(store.byId("w-b-site")?.direct_ssh).toBe(true);
+  });
+
+  it("keeps a workspace's tool switches when direct SSH is toggled", async () => {
+    await store.refresh();
+    api.tools["w-b-site"] = { mise: false, repo_code: true };
+    await store.setDirectSsh("w-b-site", true);
+    expect(api.tools["w-b-site"]).toEqual({ mise: false, repo_code: true });
   });
 });
 

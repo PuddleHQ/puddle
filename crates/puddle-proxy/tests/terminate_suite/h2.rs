@@ -752,3 +752,56 @@ async fn an_h2_answer_with_a_large_header_list_reaches_the_guest() {
     assert_eq!(got.header("set-cookie").map(str::len), Some(4096));
     client.close().await;
 }
+
+#[tokio::test]
+async fn a_server_that_says_goaway_while_a_stream_is_open_is_replaced_for_the_next_stream() {
+    let pki = Pki::new();
+    let mut server =
+        terminate_support::h2_rig::DrainingServer::start(&pki, "bound.test", true).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let mut sender = client.sender.clone();
+    let request = http::Request::builder()
+        .uri("https://bound.test/watch")
+        .body(full(bytes::Bytes::new()))
+        .unwrap();
+    let watch = sender.send_request(request).await.unwrap();
+    assert_eq!(watch.status(), 200);
+    let mut watch = watch.into_body();
+    let first = watch.frame().await.unwrap().unwrap().into_data().unwrap();
+    assert_eq!(&first[..], b"watching");
+    server.goaway_read.take().unwrap().await.unwrap();
+    // The server never took this request up, so the proxy sends it on a new connection, as a
+    // client talking to the server directly does.
+    let next = client.get("bound.test", "/next").await;
+    assert_eq!((next.status, next.text().as_str()), (200, "fresh"));
+    assert_eq!(server.accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_server_that_says_goaway_and_takes_no_new_connection_gives_the_next_stream_a_bad_gateway()
+{
+    let pki = Pki::new();
+    let mut server =
+        terminate_support::h2_rig::DrainingServer::start(&pki, "bound.test", false).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let mut sender = client.sender.clone();
+    let request = http::Request::builder()
+        .uri("https://bound.test/watch")
+        .body(full(bytes::Bytes::new()))
+        .unwrap();
+    let watch = sender.send_request(request).await.unwrap();
+    assert_eq!(watch.status(), 200);
+    server.goaway_read.take().unwrap().await.unwrap();
+    let next = client.get("bound.test", "/next").await;
+    assert_eq!(next.status, 502, "{}", next.text());
+    assert_eq!(server.accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+    drop(watch);
+}

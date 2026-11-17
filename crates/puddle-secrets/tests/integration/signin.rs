@@ -66,6 +66,23 @@ async fn ask_until_it_starts_again(signin: &SignIns, spec: &SourceSpec, log: &Pa
 }
 
 #[tokio::test]
+async fn gh_sign_in_reads_the_code_from_the_clipboard_wording_too() {
+    // What gh 2.104.0 prints on Windows, where it copies the code to the clipboard.
+    let fakes = Fakes::new();
+    let gh = fakes.install(
+        "gh",
+        "[auth login]\nstderr=\\n! One-time code (ABCD-1234) copied to clipboard\\nOpen this URL to continue in your web browser: https://github.com/login/device\\n\nsleep_ms=3000\n",
+    );
+    let signin = SignIns::new(ToolPaths::new(Some(gh), None));
+    let start = signin.begin(&gh_spec()).await.unwrap();
+    assert_eq!(start.code.as_deref(), Some("ABCD-1234"));
+    assert_eq!(
+        start.url.as_deref(),
+        Some("https://github.com/login/device")
+    );
+}
+
+#[tokio::test]
 async fn gh_sign_in_hands_back_the_code_and_address_and_runs_nothing_else() {
     let fakes = Fakes::new();
     let gh = fakes.install(

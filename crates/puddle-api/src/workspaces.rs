@@ -32,6 +32,7 @@ pub use launch::{
     BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
     Launcher, OpenTarget,
 };
+pub(crate) use repositories::shown;
 pub use repositories::{
     CheckoutProblem, EntryProblem, LocalCheckoutError, LocalSource, MAX_REPO_URL_LEN,
     MAX_REPOSITORIES, NewRepository, NoFreeEntryId, RepoUrl, RepoUrlError, Repository,

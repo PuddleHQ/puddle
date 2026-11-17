@@ -520,7 +520,8 @@ fn the_development_certificate_reaches_the_guest_and_net_is_set_up_once_per_cert
             "{stdout}"
         );
 
-        // Files: the certificate is public, the key is root's alone, the system store has it.
+        // Files: the certificate is public, the key is the session user's alone (root here), the
+        // system store has it.
         let cert = g.read("/etc/puddle/dev-cert/localhost.crt");
         assert_eq!(
             cert,
@@ -652,6 +653,35 @@ fn net_gets_the_certificate_in_the_session_users_home_and_again_when_the_user_ch
     let log = dotnet_log(&g);
     assert_eq!(log.len(), 6, "{log:?}");
     assert!(log[3].contains("HOME=/root "), "{log:?}");
+}
+
+/// `DEV_KEY_PEM` is for the session user's own tools, so the key is that user's (still `0600`),
+/// with or without .NET in the image; under root it stays root's.
+#[test]
+fn the_development_key_is_given_to_the_session_user() {
+    let dev = dev_cert();
+    let key = "/etc/puddle/dev-cert/localhost.key";
+    let g = Guest::new(&shells()[0], "", true);
+    g.write("/etc/passwd", "root:x:0:0:root:/root:/bin/sh\n");
+    g.write("/etc/group", "root:x:0:\n");
+    let t = with_dev(&dev).for_user(SessionUser::Agent);
+    let out = g.boot_as(&t, t.guest_files(), SessionUser::Agent);
+    assert!(out.status.success(), "{}", show(&out));
+    let owned = g.read("/owned");
+    assert!(
+        owned.lines().any(|l| l == format!("1000:1000 {key}")),
+        "{owned}"
+    );
+    assert_eq!(
+        std::fs::metadata(g.p(key)).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    let g = Guest::new(&shells()[0], "", true);
+    let t = with_dev(&dev);
+    let out = g.boot_as(&t, t.guest_files(), SessionUser::Root);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(!g.p("/owned").exists() || !g.read("/owned").contains(key));
 }
 
 #[test]

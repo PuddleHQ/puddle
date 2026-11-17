@@ -6494,6 +6494,7 @@ dependencies = [
  "puddle-secrets",
  "puddle-store",
  "puddle-types",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",

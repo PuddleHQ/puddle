@@ -274,12 +274,14 @@ impl SignIns {
             // the caller may have stopped waiting; the answer is then not needed
             let _ = tell.send(outcome);
             if let (true, Ok(answer)) = (signed_in, &answer) {
-                // telling git to store the answer is best effort; the sign-in itself already succeeded
+                // telling git to store the answer is best effort; the sign-in itself already succeeded.
+                // `useHttpPath` as for the fill: without it Git drops `path` before the helper
+                // sees it, and the helper keeps a host-wide entry the path-scoped fill never finds.
                 let _ = run_with(
                     Prompts::Never,
                     Tool::Git,
                     &program,
-                    &["credential", "approve"],
+                    &["-c", "credential.useHttpPath=true", "credential", "approve"],
                     Some(&answer.stdout),
                     Duration::from_secs(10),
                 )

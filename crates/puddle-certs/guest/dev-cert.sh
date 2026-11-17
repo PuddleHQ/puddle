@@ -14,8 +14,9 @@
 # same home.
 # POSIX sh. PUDDLE_ROOT relocates the paths for the unit tests only (boot.sh passes it on empty).
 # boot.sh sets PUDDLE_SESSION_HOME and PUDDLE_SESSION_OWNER (<uid>:<gid>) to the session user's:
-# .NET keeps the certificate in that home, so the import goes there and its files are given to the
-# user, as Kestrel run by that user reads them (root's home and owner when not set).
+# the key is given to that user, and .NET keeps the certificate in that home, so the import goes
+# there and its files are given to the user, as Kestrel run by that user reads them (root's home
+# and owner when not set).
 set -u
 
 ROOT=${PUDDLE_ROOT:-}
@@ -28,6 +29,17 @@ STAMP=$DIR/.dotnet-imported
     echo "dev-cert: the certificate or its key is missing under /etc/puddle/dev-cert" >&2
     exit 1
 }
+
+# The key is for the session user's own tools (DEV_KEY_PEM: Vite, Angular, Next.js): boot.sh writes
+# it as root with mode 0600, so it is given to the session user here, still 0600, at every boot.
+owner=${PUDDLE_SESSION_OWNER:-0:0}
+if [ "$owner" != 0:0 ]; then
+    if [ -n "$ROOT" ]; then
+        printf '%s %s\n' "$owner" /etc/puddle/dev-cert/localhost.key >>"$ROOT/owned"
+    elif ! chown -h "$owner" "$KEY"; then
+        echo "certificate in place, but its key could not be given to the session user"
+    fi
+fi
 
 if ! command -v dotnet >/dev/null 2>&1; then
     rm -f "$STAMP"
@@ -46,7 +58,6 @@ else
     have=$(cksum "$CRT" | cut -d ' ' -f 1,2 | tr ' ' -)
 fi
 home=${PUDDLE_SESSION_HOME:-/root}
-owner=${PUDDLE_SESSION_OWNER:-0:0}
 have="$have $home"
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$have" ]; then
     echo "certificate unchanged; .NET already has it"

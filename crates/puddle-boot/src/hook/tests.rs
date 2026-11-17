@@ -175,16 +175,13 @@ fn hook_settings() {
 
 #[test]
 fn hostile_left_files_name_only_merged_files_once_with_a_cut_clean_reason() {
+    use std::fmt::Write as _;
     let docker = "/root/.docker/config.json";
     let long = format!("bad\x1b[2J\rfaked{}", "x".repeat(10 * 1024));
     let mut stdout = String::new();
     for i in 0..1000 {
-        stdout.push_str(&format!(
-            "puddle-boot: /tmp/forged-{i} left as it is: {long}\n"
-        ));
-        stdout.push_str(&format!(
-            "puddle-boot: {docker} left as it is: {i} {long}\n"
-        ));
+        let _ = writeln!(stdout, "puddle-boot: /tmp/forged-{i} left as it is: {long}");
+        let _ = writeln!(stdout, "puddle-boot: {docker} left as it is: {i} {long}");
     }
     let report = BootReport {
         stdout,

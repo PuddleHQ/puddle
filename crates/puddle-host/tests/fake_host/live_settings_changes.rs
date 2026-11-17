@@ -338,6 +338,8 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
 /// merges can get a notice, each once, with the reason cut and its control characters replaced.
 #[tokio::test(flavor = "multi_thread")]
 async fn hostile_a_flood_of_left_files_is_at_most_one_cleaned_notice_per_merged_file() {
+    use std::fmt::Write as _;
+
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
@@ -348,12 +350,11 @@ async fn hostile_a_flood_of_left_files_is_at_most_one_cleaned_notice_per_merged_
     let long = format!("bad\x1b[2J\rfaked{}", "x".repeat(10 * 1024));
     let mut says = String::new();
     for i in 0..1000 {
-        says.push_str(&format!(
-            "puddle-boot: /tmp/forged-{i} left as it is: {long}\n"
-        ));
-        says.push_str(&format!(
-            "puddle-boot: /etc/ssh/ssh_config left as it is: {i} {long}\n"
-        ));
+        let _ = writeln!(says, "puddle-boot: /tmp/forged-{i} left as it is: {long}");
+        let _ = writeln!(
+            says,
+            "puddle-boot: /etc/ssh/ssh_config left as it is: {i} {long}"
+        );
     }
     *rig.guest.boot_says.lock().unwrap() = says;
     api.post("/api/workspaces/acme/start", "").await;

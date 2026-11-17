@@ -51,6 +51,8 @@ impl GitHub {
     fn curl(&self) -> Command {
         let mut cmd = Command::new(&self.curl);
         cmd.args(["--fail", "--silent", "--show-error", "--location"]);
+        // A stalled connection must end the task, not hold the CI job until its own limit.
+        cmd.args(["--connect-timeout", "30", "--max-time", "900"]);
         if self.https_only {
             cmd.args(["--proto", "=https", "--proto-redir", "=https"]);
         }

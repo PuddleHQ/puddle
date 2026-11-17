@@ -107,16 +107,14 @@ pub const STARTUP_ERROR_FILE: &str = "startup-error.txt";
 pub fn write_startup_error(dir: &Path, reason: &str) -> io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
     let path = dir.join(STARTUP_ERROR_FILE);
-    fs::write(
-        &path,
-        format!(
-            "Puddle did not start. This file stays on this computer; nothing was sent anywhere.\n\n\
-             version:  {}\nplatform: {} {}\nreason:   {reason}\n",
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-        ),
-    )?;
+    let text = format!(
+        "Puddle did not start. This file stays on this computer; nothing was sent anywhere.\n\n\
+         version:  {}\nplatform: {} {}\nreason:   {reason}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    fs::write(&path, text)?;
     Ok(path)
 }
 

@@ -27,6 +27,7 @@ mod private_access;
 mod proxy_agent_store;
 mod squid_upstream;
 mod stall_meter;
+mod standing_lab;
 mod stub_dns;
 mod ui_cpu_limits;
 mod ui_fixture;

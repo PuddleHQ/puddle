@@ -6,7 +6,7 @@ use puddle_types::{Decision, Host, WorkspaceId};
 use super::{NewRequestRule, RequestRule, Store};
 use crate::error::StoreError;
 use crate::pattern::Pattern;
-use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
+use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
 use crate::users::UserId;
 
 impl Store {
@@ -56,7 +56,20 @@ impl UserStore<'_> {
     /// [`StoreError::UnknownWorkspace`] or [`StoreError::UnknownRuleSet`] for another user's
     /// workspace or set, or a database error.
     pub fn add_rule(&self, new: &NewRule) -> Result<Rule, StoreError> {
-        self.store.add_rule_by(self.user, new)
+        self.store.add_rule_by(self.user, new, None)
+    }
+
+    /// [`UserStore::add_rule`] with the precedence the rule takes (R-59). A rule made without
+    /// one takes the default of the set it goes into, else 5.
+    ///
+    /// # Errors
+    /// The same as [`UserStore::add_rule`].
+    pub fn add_rule_with_precedence(
+        &self,
+        new: &NewRule,
+        precedence: Precedence,
+    ) -> Result<Rule, StoreError> {
+        self.store.add_rule_by(self.user, new, Some(precedence))
     }
 
     /// Makes a rule on method and path of this user: global for their workspaces, or for one of

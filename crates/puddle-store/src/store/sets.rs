@@ -9,7 +9,7 @@ use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, Work
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
-    AllUsers, PENDING_COLUMNS, Store, append, append_for, decide_row_by, load_rules, lock,
+    AllUsers, PENDING_COLUMNS, Store, append, append_for, corrupt, decide_row_by, load_rules, lock,
     pending_from_raw, raw_pending, sql_ts, stored_ts, users,
 };
 use crate::audit::{
@@ -19,7 +19,7 @@ use crate::catalogue::{self, BUILT_IN_SETS, SystemReason};
 use crate::engine::{RuleIndex, SetEntry, Switches, default_on};
 use crate::error::StoreError;
 use crate::pattern::Pattern;
-use crate::rule::{Actor, Effect, Rule, Scope};
+use crate::rule::{Actor, Effect, Precedence, Rule, Scope};
 use crate::users::UserId;
 
 /// The longest rule set name, in characters.
@@ -51,6 +51,9 @@ pub struct RuleSetInfo {
     pub changed_at: Option<u64>,
     /// Sets the user made: when.
     pub created_at: Option<u64>,
+    /// What a new rule in the set takes when none is named; `None` means 5 (R-59). Built-in sets
+    /// have none: their entries sit at 0.
+    pub default_precedence: Option<Precedence>,
 }
 
 impl RuleSetInfo {
@@ -87,6 +90,8 @@ pub struct RuleSetEntryInfo {
     pub rule_id: Option<RuleId>,
     /// Epoch ms after which the entry no longer counts.
     pub expires_at: Option<u64>,
+    /// How it ranks: 1 to 9 for an entry of the user's set, 0 for a built-in entry (R-59).
+    pub precedence: u8,
 }
 
 /// One host Puddle allows because of the user's setup (R-40, R-41).
@@ -302,7 +307,7 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
             Some((rowid, stored)) => {
                 // Reading damage as "no entries" would audit every pattern of the set as added.
                 let before: BTreeSet<String> = serde_json::from_str(&stored).map_err(|e| {
-                    super::corrupt(
+                    corrupt(
                         "builtin_sets_seen",
                         rowid,
                         format!("entries of {}: {e}", set.slug),
@@ -337,8 +342,8 @@ pub(super) fn require_user_set(
     id: i64,
 ) -> Result<RuleSetWire, StoreError> {
     conn.query_row(
-        "SELECT id, name, description, created_at, created_by, fill FROM rule_sets
-         WHERE id = ?1 AND user_id = ?2",
+        "SELECT id, name, description, created_at, created_by, fill, default_precedence
+         FROM rule_sets WHERE id = ?1 AND user_id = ?2",
         params![id, user.get()],
         |row| {
             Ok((
@@ -348,21 +353,33 @@ pub(super) fn require_user_set(
                 row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
             ))
         },
     )
     .optional()?
     .ok_or_else(|| StoreError::UnknownRuleSet(RuleSetId::User(id).to_string()))
-    .and_then(|(id, name, description, created_at, created_by, fill)| {
-        Ok(RuleSetWire {
-            id,
-            name,
-            description,
-            created_at: stored_ts("rule_sets", id, created_at)?,
-            created_by,
-            fill: stored_fill(id, fill.as_deref()),
-        })
-    })
+    .and_then(
+        |(id, name, description, created_at, created_by, fill, default)| {
+            let created_by = Actor::parse(&created_by)
+                .ok_or_else(|| corrupt("rule_sets", id, format!("unknown actor {created_by:?}")))?;
+            Ok(RuleSetWire {
+                id,
+                name,
+                description,
+                created_at: stored_ts("rule_sets", id, created_at)?,
+                created_by: created_by.into(),
+                fill: stored_fill(id, fill.as_deref()),
+                default_precedence: default
+                    .map(|value| {
+                        Precedence::from_stored(value)
+                            .map(Precedence::get)
+                            .map_err(|_| corrupt("rule_sets", id, "default_precedence"))
+                    })
+                    .transpose()?,
+            })
+        },
+    )
 }
 
 /// The fill a row holds. A value this Puddle can't read (hand-edited, say) is a missing choice,
@@ -524,10 +541,12 @@ impl Store {
                             .is_ok_and(|p| index.entry_off(user, id, &p)),
                         rule_id: None,
                         expires_at: None,
+                        precedence: Precedence::BUILT_IN,
                     })
                     .collect(),
                 changed_at,
                 created_at: None,
+                default_precedence: None,
             });
         }
         let mut stmt = conn.prepare(
@@ -631,6 +650,44 @@ impl Store {
                 "UPDATE rule_sets SET name = ?2, description = ?3, fill = coalesce(?4, fill)
                  WHERE id = ?1",
                 params![id, name, description, fill.map(Fill::to_json)],
+            )?;
+            let record = AuditRecord::RuleSetUpdated {
+                ts: now,
+                before,
+                rule_set: require_user_set(tx, user, id)?,
+                actor: actor_str(actor),
+            };
+            append_for(tx, &record, user)?;
+            fx.push(Event::RulesChanged {});
+            Ok(())
+        })?;
+        self.rule_set(user, RuleSetId::User(id))
+    }
+
+    /// Sets the precedence a new rule in a set `user` made takes when none is named, or clears
+    /// it (`None`: 5). Rules already in the set keep theirs (R-59). Writes a `rule_set_updated`
+    /// record, none when nothing changes.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRuleSet`], [`StoreError::SystemActor`], or a database error.
+    pub fn set_rule_set_default_precedence(
+        &self,
+        user: UserId,
+        id: i64,
+        precedence: Option<Precedence>,
+        actor: Actor,
+    ) -> Result<RuleSetInfo, StoreError> {
+        if actor == Actor::System {
+            return Err(StoreError::SystemActor);
+        }
+        self.change(|tx, now, fx| {
+            let before = require_user_set(tx, user, id)?;
+            if before.default_precedence == precedence.map(Precedence::get) {
+                return Ok(());
+            }
+            tx.execute(
+                "UPDATE rule_sets SET default_precedence = ?2 WHERE id = ?1",
+                params![id, precedence.map(Precedence::get)],
             )?;
             let record = AuditRecord::RuleSetUpdated {
                 ts: now,
@@ -991,9 +1048,11 @@ fn user_set_info(
                 enabled: rule.enabled,
                 rule_id: Some(rule.id),
                 expires_at: rule.expires_at,
+                precedence: rule.precedence.get(),
             })
             .collect(),
         changed_at: None,
         created_at: Some(wire.created_at),
+        default_precedence: wire.default_precedence.map(Precedence::new).transpose()?,
     })
 }

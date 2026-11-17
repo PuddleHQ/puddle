@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicUsize;
 
 use puddle_test_kit::eventually_blocking;
 use puddle_types::{DiskKind, EventSink, PendingEnd, PendingSummary, WorkspaceId, WorkspaceStatus};
-use serde_json::json;
+use serde_json::{Value, json};
 use tauri::test::{MockRuntime, mock_builder};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -111,18 +111,32 @@ fn workspace() -> WorkspaceId {
     WorkspaceId::new("demo").unwrap()
 }
 
+fn summary(id: i64) -> PendingSummary {
+    PendingSummary {
+        id,
+        workspace: workspace(),
+        host: "api.example.org".to_owned(),
+        registrable_domain: "example.org".to_owned(),
+        port: 443,
+        first_seen: 1,
+        last_seen: 1,
+        attempts: 1,
+    }
+}
+
+/// A request that opened (it moves the badge; the service says separately who is told).
 fn opened(id: i64) -> Event {
     Event::PendingOpened {
-        request: PendingSummary {
-            id,
-            workspace: workspace(),
-            host: "api.example.org".to_owned(),
-            registrable_domain: "example.org".to_owned(),
-            port: 443,
-            first_seen: 1,
-            last_seen: 1,
-            attempts: 1,
-        },
+        request: summary(id),
+    }
+}
+
+/// The service's word that the app is the one picked to announce the request.
+fn announced(id: i64) -> Event {
+    Event::PendingNotify {
+        request: summary(id),
+        clients: Vec::new(),
+        desktop: true,
     }
 }
 
@@ -157,7 +171,7 @@ fn the_badge_starts_at_the_requests_already_waiting_and_follows_the_events() {
 #[test]
 fn a_new_request_notifies_and_the_sound_switch_decides_the_sound() {
     let rig = rig(TrayState::Shown);
-    emit_until(&rig, opened(901), |r| !r.notices().is_empty());
+    emit_until(&rig, announced(901), |r| !r.notices().is_empty());
     let (notice, sound) = rig.recorded.notices().remove(0);
     assert_eq!(notice.request, Some(901));
     assert!(notice.title.contains("demo"), "{}", notice.title);
@@ -176,7 +190,7 @@ fn each_switch_in_settings_silences_its_own_notices_and_a_front_window_silences_
         &rig,
         &json!({"notifications": false, "notify_oom": false, "notify_disk_full": false, "notify_unexpected_stop": false}),
     );
-    settled_after_quiet(&rig, opened(902));
+    settled_after_quiet(&rig, announced(902));
     settled_after_quiet(&rig, Event::oom_kill(workspace(), 3, "node"));
     settled_after_quiet(
         &rig,
@@ -198,10 +212,10 @@ fn each_switch_in_settings_silences_its_own_notices_and_a_front_window_silences_
     // Back on, but the window is in front: nothing shows; with the choice off, it does.
     save(&rig, &json!({}));
     rig.recorded.in_front.store(true, Ordering::SeqCst);
-    settled_after_quiet(&rig, opened(903));
+    settled_after_quiet(&rig, announced(903));
     assert_eq!(rig.recorded.notices(), []);
     save(&rig, &json!({"notify_only_unfocused": false}));
-    emit_until(&rig, opened(904), |r| !r.notices().is_empty());
+    emit_until(&rig, announced(904), |r| !r.notices().is_empty());
 }
 
 #[test]
@@ -225,9 +239,16 @@ fn low_free_space_notifies_by_its_own_switch() {
         free_mib: 40_960,
     });
     save(&rig, &json!({}));
-    emit_until(&rig, low(), |r| !r.notices().is_empty());
-    let (notice, _) = rig.recorded.notices().remove(0);
-    assert_eq!(notice.title, "Disk space is running low");
+    // An "asking for access" notice for the request the rig seeds can arrive after the switch went
+    // on (it failed here once, "demo is asking for access" first), so pick the low-disk notice by
+    // its title instead of taking whatever came first.
+    let disk_notice = |r: &Recorded| {
+        r.notices()
+            .into_iter()
+            .find(|(notice, _)| notice.title == "Disk space is running low")
+    };
+    emit_until(&rig, low(), |r| disk_notice(r).is_some());
+    let (notice, _) = disk_notice(&rig.recorded).unwrap();
     assert!(notice.body.starts_with("12 GB are left"), "{}", notice.body);
 }
 
@@ -387,8 +408,8 @@ fn requests_held_in_a_window_become_one_summary_when_it_ends() {
         Notifier::with_window(Duration::from_millis(200)),
         Duration::from_secs(60),
     );
-    hub.emit(opened(910));
-    hub.emit(opened(911));
+    hub.emit(announced(910));
+    hub.emit(announced(911));
     eventually_blocking("the summary", Duration::from_secs(5), || {
         rig.recorded.notices().len() == 2
     });
@@ -409,7 +430,7 @@ fn a_notice_names_the_workspace_by_the_label_the_backend_finds() {
         Duration::from_secs(60),
         Arc::new(|_| Box::pin(async { Some("Demo project".to_owned()) })),
     );
-    hub.emit(opened(920));
+    hub.emit(announced(920));
     eventually_blocking("the notice", Duration::from_secs(5), || {
         !rig.recorded.notices().is_empty()
     });
@@ -497,7 +518,7 @@ fn settings_that_cannot_be_read_leave_the_window_preferences_as_they_were() {
     save(&rig, &json!({"sound": true}));
     let hub = Arc::new(puddle_api::EventHub::default());
     start_loop(&rig, &hub, Notifier::default(), Duration::from_secs(60));
-    hub.emit(opened(920));
+    hub.emit(announced(920));
     eventually_blocking("the first notice", Duration::from_secs(5), || {
         rig.recorded.notices().len() == 1
     });
@@ -682,4 +703,78 @@ fn only_a_click_on_the_notification_itself_opens_anything() {
     let base = Url::parse("http://127.0.0.1:4000/").unwrap();
     on_tap(app, &base, &performed("tap", Some(7)));
     on_tap(app, &base, &performed("dismiss", None));
+}
+
+/// Sends one presence report to the fixture's API, as the app's own page does.
+fn report_presence(rig: &Rig, body: &Value) {
+    use std::io::{Read, Write};
+    let url = rig.backend.url();
+    let port = url.port().unwrap();
+    let mut tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let body = body.to_string();
+    write!(
+        tcp,
+        "POST /api/presence HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        rig.backend.token(),
+        body.len()
+    )
+    .unwrap();
+    let mut reply = String::new();
+    tcp.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 204"), "{reply}");
+}
+
+/// Waits until the service has said who is told about request `id`, and returns what it said.
+fn service_picked(events: &mut Receiver<Event>, id: i64) -> (Vec<String>, bool) {
+    tauri::async_runtime::block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(Event::PendingNotify {
+                    request,
+                    clients,
+                    desktop,
+                }) = events.recv().await
+                    && request.id == id
+                {
+                    return (clients, desktop);
+                }
+            }
+        })
+        .await
+        .unwrap()
+    })
+}
+
+#[test]
+fn the_service_announces_a_request_to_the_app_unless_a_tab_in_use_was_picked_instead() {
+    let rig = rig(TrayState::Shown);
+    let mut events = rig.backend.events().subscribe();
+    // Nobody has reported: the app is told, as it was before clients reported.
+    emit_until(&rig, opened(940), |r| !r.notices().is_empty());
+    assert_eq!(service_picked(&mut events, 940), (Vec::new(), true));
+    assert_eq!(rig.recorded.notices()[0].0.request, Some(940));
+
+    // A browser tab in use is picked: the app stays quiet, though its own switch is on.
+    report_presence(
+        &rig,
+        &json!({"client": "tab-1", "kind": "browser", "visible": true, "idle_ms": 1000, "notify": true}),
+    );
+    rig.backend.events().emit(opened(941));
+    assert_eq!(
+        service_picked(&mut events, 941),
+        (vec!["tab-1".to_owned()], false)
+    );
+    // The badge moves for the probe only after the loop handled everything sent before it.
+    let before = rig.recorded.badges().len();
+    rig.backend.events().emit(opened(942));
+    eventually_blocking(
+        "the loop got past the events",
+        Duration::from_secs(5),
+        || rig.recorded.badges().len() > before,
+    );
+    assert_eq!(
+        rig.recorded.notices().len(),
+        1,
+        "one notice: the first request's"
+    );
 }

@@ -15,8 +15,8 @@ use puddle_store::testing::{all_users, own};
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, Author, Coverage, CredentialBinding, EnvDraft, EnvName,
     EnvScope, IdentityDraft, Limits, ManualClock, NewRequestRule, NewRule, Owner, Pattern,
-    PatternChoice, Resolution, Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason,
-    UserId, UserName,
+    PatternChoice, Precedence, Resolution, Scope, ScopeChoice, Store, StoreError, SystemPlan,
+    SystemReason, UserId, UserName,
 };
 use puddle_types::{
     CollectingSink, Decision, EgressRequest, Event, Host, Methods, PathPattern, PendingOutcome,
@@ -298,6 +298,7 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
         methods: Methods::parse(["DELETE"]).unwrap(),
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
+        precedence: Precedence::DEFAULT,
     };
     let owners = store
         .as_user(UserId::OWNER)
@@ -554,6 +555,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
         methods: Methods::parse(["DELETE"]).unwrap(),
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
+        precedence: Precedence::DEFAULT,
     };
     let owners_rule = store
         .as_user(UserId::OWNER)
@@ -721,6 +723,7 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
                 methods: Methods::parse(["DELETE"]).unwrap(),
                 path: PathPattern::parse("/x").unwrap(),
                 created_by: Actor::Api,
+                precedence: Precedence::DEFAULT,
             })
             .map(drop),
     );
@@ -890,6 +893,7 @@ fn every_write_as_a_second_user_leaves_no_row_of_the_owner() {
             methods: Methods::parse(["GET"]).unwrap(),
             path: PathPattern::parse("/*").unwrap(),
             created_by: Actor::Api,
+            precedence: Precedence::DEFAULT,
         })
         .unwrap();
     }

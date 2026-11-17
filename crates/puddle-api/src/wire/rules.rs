@@ -287,6 +287,9 @@ pub struct Rule {
     pub source_pending_id: Option<i64>,
     /// Whether the rule takes part in decisions. A rule that is off is kept and never matches.
     pub enabled: bool,
+    /// How the rule ranks against the others that match, 1 to 9: the highest precedence decides,
+    /// even over a more specific rule.
+    pub precedence: u8,
 }
 
 impl Rule {
@@ -302,6 +305,7 @@ impl Rule {
             created_by,
             source_pending_id,
             enabled,
+            precedence,
         } = rule;
         Ok(Self {
             id: id.0,
@@ -317,6 +321,7 @@ impl Rule {
             created_by: Actor::from_store(created_by)?,
             source_pending_id: source_pending_id.map(|p| p.0),
             enabled,
+            precedence: precedence.get(),
         })
     }
 }
@@ -436,26 +441,45 @@ pub struct NewRuleRequest {
     /// Epoch ms from which the rule no longer matches; left out or `null` is permanent.
     #[serde(default)]
     pub expires_at: Option<u64>,
+    /// 1 to 9, higher wins. Left out: the default of the group the rule goes into, else 5.
+    #[serde(default)]
+    pub precedence: Option<u8>,
+}
+
+/// A precedence a client sent, checked: 1 to 9.
+pub(crate) fn checked_precedence(value: Option<u8>) -> Result<Option<store::Precedence>, ApiError> {
+    value
+        .map(|value| {
+            store::Precedence::new(value)
+                .map_err(|err| ApiError::invalid(format!("precedence: {err}")))
+        })
+        .transpose()
 }
 
 impl NewRuleRequest {
-    pub(crate) fn into_new_rule(self) -> Result<store::NewRule, ApiError> {
+    /// The rule and the precedence the client named, if it named one.
+    pub(crate) fn into_new_rule(
+        self,
+    ) -> Result<(store::NewRule, Option<store::Precedence>), ApiError> {
         let Self {
             scope,
             pattern,
             effect,
             expires_at,
+            precedence,
         } = self;
+        let precedence = checked_precedence(precedence)?;
         let (suffix, base) = normalise_pattern("pattern", &pattern)?;
         let text = if suffix { format!(".{base}") } else { base };
-        Ok(store::NewRule {
+        let new = store::NewRule {
             scope: scope.into(),
             pattern: store::Pattern::parse(&text)
                 .map_err(|err| ApiError::invalid(format!("pattern: {err}")))?,
             effect: effect.into(),
             expires_at,
             created_by: store::Actor::Api,
-        })
+        };
+        Ok((new, precedence))
     }
 }
 

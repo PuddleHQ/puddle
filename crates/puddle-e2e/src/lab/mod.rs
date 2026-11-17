@@ -12,6 +12,10 @@
 //! | [`WebHost`] | a public website the test only needs to reach, over plain HTTP and TLS | nothing |
 //! | [`PrivateAccess`] | a private-access client's adapter, DNS answers and tunnel to an intranet site | nothing |
 //!
+//! [`standing`] starts the proxy fixtures ([`Squid`], [`Interceptor`], [`NtlmProxy`], [`PacServer`]) as the
+//! `puddle-lab` program for a person or script that drives the app by hand; the tests and the program share
+//! this code.
+//!
 //! A fixture a test cannot start because its program is missing makes `start` return `None` and
 //! print why; when the matching `PUDDLE_REQUIRE_*` variable is set (CI sets it) a missing program
 //! is a failure instead. Every fixture has a per-run [`Prefix`] in its directory, process and
@@ -38,6 +42,7 @@ mod private_access;
 mod procs;
 #[cfg(unix)]
 mod squid;
+pub mod standing;
 mod web_host;
 
 use std::fs::{File, TryLockError};

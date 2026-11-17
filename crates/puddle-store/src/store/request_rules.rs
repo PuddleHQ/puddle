@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules on the method and path of a request (`docs/spec/rules.md` R-49..R-55). They only ever
-//! refuse, so they live apart from the rules on hosts: their own table, their own numbering,
-//! and no precedence to resolve.
+//! refuse, so they live apart from the rules on hosts: their own table and their own numbering.
+//! They carry a precedence like every rule (R-59), which the proxy weighs against the host
+//! rule that allowed the request (R-60).
 
 use puddle_types::{Event, Methods, PathPattern, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -11,7 +12,7 @@ use crate::audit::{
     AuditRecord, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason, RuleSwitchKind, actor_str,
 };
 use crate::error::StoreError;
-use crate::rule::Actor;
+use crate::rule::{Actor, Precedence};
 use crate::users::UserId;
 
 /// Most rules one scope (global, or one workspace) may hold.
@@ -38,6 +39,8 @@ pub struct RequestRule {
     pub created_by: Actor,
     /// Whether the rule refuses anything. A rule that is off is kept and checks nothing (R-65).
     pub enabled: bool,
+    /// How it ranks against the host rule that allowed the request (R-59, R-60).
+    pub precedence: Precedence,
 }
 
 impl RequestRule {
@@ -54,7 +57,8 @@ impl RequestRule {
             methods: self.methods.names().to_vec(),
             path: self.path.to_string(),
             created_at: self.created_at,
-            created_by: actor_str(self.created_by),
+            created_by: self.created_by.into(),
+            precedence: self.precedence.get(),
         }
     }
 }
@@ -73,10 +77,12 @@ pub struct NewRequestRule {
     pub path: PathPattern,
     /// Who makes it. `system` is refused.
     pub created_by: Actor,
+    /// How it ranks (R-59).
+    pub precedence: Precedence,
 }
 
-const COLUMNS: &str =
-    "id, workspace_id, host, methods, path, created_at, created_by, user_id, enabled";
+const COLUMNS: &str = "id, workspace_id, host, methods, path, created_at, created_by, user_id, enabled, \
+     precedence";
 
 fn corrupt(id: i64, reason: String) -> StoreError {
     StoreError::Corrupt {
@@ -96,6 +102,7 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
     let created_by: String = row.get(6)?;
     let user: i64 = row.get(7)?;
     let enabled: i64 = row.get(8)?;
+    let precedence: i64 = row.get(9)?;
     Ok((|| {
         Ok(RequestRule {
             id,
@@ -112,6 +119,8 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
             created_by: Actor::parse(&created_by)
                 .ok_or_else(|| corrupt(id, format!("unknown actor {created_by:?}")))?,
             enabled: enabled != 0,
+            precedence: Precedence::from_stored(precedence)
+                .map_err(|_| corrupt(id, "precedence out of range".into()))?,
         })
     })())
 }
@@ -273,8 +282,9 @@ impl Store {
             let now_i = i64::try_from(now).unwrap_or(i64::MAX);
             tx.execute(
                 "INSERT INTO request_rules
-                     (scope, workspace_id, host, methods, path, created_at, created_by, user_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                     (scope, workspace_id, host, methods, path, created_at, created_by, user_id,
+                      precedence)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     if scope.is_some() {
                         "workspace"
@@ -288,6 +298,7 @@ impl Store {
                     now_i,
                     new.created_by.as_str(),
                     user.get(),
+                    new.precedence.get(),
                 ],
             )?;
             let rule = load(tx, tx.last_insert_rowid())?;

@@ -23,10 +23,12 @@ export function builtIn(slug: string, over: Partial<RuleSet> = {}): RuleSet {
         enabled: true,
         rule_id: null,
         expires_at: null,
+        precedence: 0,
       },
     ],
     changed_at: null,
     created_at: null,
+    default_precedence: null,
     ...over,
   };
 }
@@ -44,6 +46,7 @@ export function mine(id: number, over: Partial<RuleSet> = {}): RuleSet {
     entries: [],
     changed_at: null,
     created_at: 1_000,
+    default_precedence: null,
     ...over,
   };
 }

@@ -442,3 +442,6 @@ fn prepare_request(request: &mut Request<Incoming>, upgrade: bool, editor: Optio
         *request.uri_mut() = uri;
     }
 }
+
+#[cfg(test)]
+mod tests;

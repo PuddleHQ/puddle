@@ -657,6 +657,13 @@ async fn warn_while_unclaimed(sign_in: &Arc<SignIn>) {
     }
 }
 
+/// What runs beside the routes: the picker of who is told about a new request, and the system
+/// managed rules, which follow the stored setup from the first request on (rules spec R-41).
+async fn start_background(state: &AppState) {
+    crate::presence::start(state);
+    crate::system_managed::refresh(state).await;
+}
+
 impl ApiServer {
     /// Binds `127.0.0.1:<config.port>` and builds the routes.
     ///
@@ -700,6 +707,7 @@ impl ApiServer {
             store: services.store,
             settings: services.settings,
             events: services.events,
+            presence: Arc::new(crate::presence::Presence::default()),
             problems: services.problems,
             clock: services.clock,
             workspaces: services.workspaces,
@@ -721,8 +729,7 @@ impl ApiServer {
             ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
-        // System managed follows the stored setup from the first request on (rules spec R-41).
-        crate::system_managed::refresh(&state).await;
+        start_background(&state).await;
         let editor = editor_for(&config, &state);
         let ui = config
             .ui

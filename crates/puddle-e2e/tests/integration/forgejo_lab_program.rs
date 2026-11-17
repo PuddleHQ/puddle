@@ -58,13 +58,7 @@ fn the_program_serves_ssh_and_its_info_file_lets_git_clone_with_the_key_and_chec
     let dir = tempfile::tempdir().unwrap();
     let info_file = dir.path().join("info.json");
     let stop = dir.path().join("stop");
-    // flake-ok: the port is only picked here; the program binds it once, and a clash fails the
-    // test with Forgejo's own bind error in the program's output.
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let port = puddle_test_kit::quiet_port();
     let child = Command::new(env!("CARGO_BIN_EXE_puddle-lab-forgejo"))
         .args(["--name", "git.lab.test", "--port", &port.to_string()])
         .arg("--info")

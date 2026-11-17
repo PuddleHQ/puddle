@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::pattern::Pattern;
-use crate::pending::PendingRow;
+use crate::pending::{PendingRow, PendingState};
 use crate::rule::{Actor, Effect, Rule, Scope};
 
 /// Longest audit line, in bytes (R-26).
@@ -255,6 +255,36 @@ impl From<&Scope> for RuleWireScope {
     }
 }
 
+/// Who made a change, as the audit shows it. Its own enum, not the store `Actor`: that one is
+/// `non_exhaustive`, so a reader outside this crate could not match it without a fallback, and
+/// the conversion here is checked by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorWire {
+    /// The `puddle` command line.
+    Cli,
+    /// The desktop UI.
+    Ui,
+    /// The HTTP API.
+    Api,
+    /// Puddle itself.
+    System,
+    /// A workspace create, or adding a repository.
+    WorkspaceCreate,
+}
+
+impl From<Actor> for ActorWire {
+    fn from(actor: Actor) -> Self {
+        match actor {
+            Actor::Cli => Self::Cli,
+            Actor::Ui => Self::Ui,
+            Actor::Api => Self::Api,
+            Actor::System => Self::System,
+            Actor::WorkspaceCreate => Self::WorkspaceCreate,
+        }
+    }
+}
+
 /// How a rule's pattern in the audit matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -299,10 +329,17 @@ pub struct RuleWire {
     pub expires_at: Option<u64>,
     /// Epoch ms.
     pub created_at: u64,
-    /// `cli`, `ui` or `api`.
-    pub created_by: String,
+    /// Who made it.
+    pub created_by: ActorWire,
     /// The pending row it came from.
     pub source_pending_id: Option<i64>,
+    /// How it ranks, 1 to 9 (R-59). Records written before precedence existed read as 5.
+    #[serde(default = "default_precedence")]
+    pub precedence: u8,
+}
+
+fn default_precedence() -> u8 {
+    crate::rule::Precedence::DEFAULT.get()
 }
 
 impl From<&Rule> for RuleWire {
@@ -320,8 +357,9 @@ impl From<&Rule> for RuleWire {
             effect: rule.effect,
             expires_at: rule.expires_at,
             created_at: rule.created_at,
-            created_by: rule.created_by.as_str().to_owned(),
+            created_by: rule.created_by.into(),
             source_pending_id: rule.source_pending_id.map(|id| id.0),
+            precedence: rule.precedence.get(),
         }
     }
 }
@@ -344,12 +382,12 @@ pub struct PendingWire {
     pub last_seen: u64,
     /// Requests the row stands for.
     pub attempts: u64,
-    /// `requested`, `allowed`, `denied` or `expired`.
-    pub state: String,
+    /// Where it is in its life.
+    pub state: PendingState,
     /// Epoch ms.
     pub decided_at: Option<u64>,
-    /// `cli`, `ui`, `api` or `system`.
-    pub decided_by: Option<String>,
+    /// Who decided it.
+    pub decided_by: Option<ActorWire>,
     /// The deciding rule.
     pub rule_id: Option<i64>,
     /// The rule set whose entry decided it. Absent in records written before rule sets existed.
@@ -367,9 +405,9 @@ impl From<&PendingRow> for PendingWire {
             first_seen: row.first_seen,
             last_seen: row.last_seen,
             attempts: row.attempts,
-            state: row.state.as_str().to_owned(),
+            state: row.state,
             decided_at: row.decided_at,
-            decided_by: row.decided_by.map(|a| a.as_str().to_owned()),
+            decided_by: row.decided_by.map(ActorWire::from),
             rule_id: row.rule_id.map(|id| id.0),
             rule_set: row.rule_set.clone(),
         }
@@ -430,8 +468,11 @@ pub struct RequestRuleWire {
     pub path: String,
     /// Epoch ms.
     pub created_at: u64,
-    /// `cli`, `ui` or `api`.
-    pub created_by: String,
+    /// Who made it.
+    pub created_by: ActorWire,
+    /// How it ranks, 1 to 9 (R-59). Records written before precedence existed read as 5.
+    #[serde(default = "default_precedence")]
+    pub precedence: u8,
 }
 
 /// A rule set the user made, as it appears in the audit.
@@ -445,12 +486,15 @@ pub struct RuleSetWire {
     pub description: String,
     /// Epoch ms.
     pub created_at: u64,
-    /// `cli`, `ui` or `api`.
-    pub created_by: String,
+    /// Who made it.
+    pub created_by: ActorWire,
     /// The colour the user chose; `None` when the set has the default of its number (and in
     /// records written before sets had a colour).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<puddle_types::Fill>,
+    /// The precedence a new rule in the set takes when none is named (R-59); `None` means 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_precedence: Option<u8>,
 }
 
 /// What a `workspace_op` record is about.
@@ -513,7 +557,7 @@ pub enum WorkspaceOpOutcome {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuditRecord {
     /// A connection the proxy handled (written by the proxy).
-    Connection(ConnectionRecord),
+    Connection(Box<ConnectionRecord>),
     /// A new pending row.
     PendingCreated {
         /// Epoch ms.
@@ -768,6 +812,13 @@ impl AuditOutcome {
 }
 
 impl AuditRecord {
+    /// A connection the proxy handled. The record is boxed so a pending or rule record, which
+    /// is far smaller, does not pay for it.
+    #[must_use]
+    pub fn connection(record: ConnectionRecord) -> Self {
+        Self::Connection(Box::new(record))
+    }
+
     /// Every `type` tag, in declaration order.
     pub const KINDS: [&'static str; 20] = [
         "connection",

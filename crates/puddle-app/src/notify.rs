@@ -3,6 +3,10 @@
 //! requests from one workspace is folded into one. Every choice follows a Settings switch
 //! ([`UiPrefs`]); nothing here can approve anything, a notification only opens the inbox.
 //!
+//! A new request is announced from the service's [`Event::PendingNotify`], not from the request
+//! itself: the service picks one place to tell the person from what every open window, tab and
+//! the app reported, so the app tells its user only when it was picked.
+//!
 //! [`Notifier`] is pure: it is told the time, the preferences and whether the window is in front,
 //! and returns the notices to show. [`show`] hands one to the operating system.
 
@@ -63,7 +67,9 @@ pub fn clean(text: &str) -> String {
 #[must_use]
 pub fn workspace_of(event: &Event) -> Option<&WorkspaceId> {
     match event {
-        Event::PendingOpened { request } => Some(&request.workspace),
+        Event::PendingOpened { request } | Event::PendingNotify { request, .. } => {
+            Some(&request.workspace)
+        }
         Event::OomKill { workspace, .. }
         | Event::DiskNearlyFull { workspace, .. }
         | Event::StatusChanged { workspace, .. } => Some(workspace),
@@ -170,9 +176,13 @@ impl Notifier {
         event: &Event,
     ) -> Vec<Notice> {
         match event {
-            Event::PendingOpened { request } => {
+            // A request that opened says nothing here (the wildcard below): its notice waits for
+            // the service's pick.
+            Event::PendingNotify {
+                request, desktop, ..
+            } => {
                 let mut notices = self.flush_ended(now, prefs, in_front);
-                if allowed(prefs, Kind::Requests, in_front) {
+                if *desktop && allowed(prefs, Kind::Requests, in_front) {
                     notices.extend(self.offer(now, request));
                 }
                 notices

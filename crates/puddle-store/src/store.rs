@@ -30,7 +30,7 @@ use crate::pattern::{Pattern, registrable_domain};
 use crate::pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
-use crate::rule::{Actor, NewRule, Rule, Scope};
+use crate::rule::{Actor, NewRule, Precedence, Rule, Scope};
 use crate::schema;
 use crate::users::UserId;
 
@@ -251,11 +251,16 @@ struct Flushed(Option<WorkspaceId>, u64, u64);
 
 /// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
-    conn: Arc<Mutex<Connection>>,
     /// A second, read-only connection to the same file for the audit list and search, so a long
     /// scan never holds the writer's lock (WAL readers don't block the writer). `None` for an
     /// in-memory store, whose database exists only in `conn`.
+    ///
+    /// Declared before `conn` on purpose: fields drop in order, and SQLite deletes the write-ahead
+    /// log only when the last connection closes and that connection can write. The reader that
+    /// has read anything keeps the file open, so if the writer closed first the read-only reader
+    /// would close last and leave `puddle.db-wal` behind.
     audit_reader: Option<Mutex<Connection>>,
+    conn: Arc<Mutex<Connection>>,
     /// Whether [`Store::take_account_secrets`] has handed the sign-in secrets out.
     secrets_taken: AtomicBool,
     /// Whether [`Store::take_all_users`] has handed the reach across every user out.
@@ -602,7 +607,12 @@ impl Store {
     /// [`StoreError::SystemActor`], [`StoreError::ExpiryNotInFuture`],
     /// [`StoreError::UnknownWorkspace`] or [`StoreError::UnknownRuleSet`] for another user's
     /// workspace or set, or a database error.
-    fn add_rule_by(&self, user: UserId, new: &NewRule) -> Result<Rule, StoreError> {
+    fn add_rule_by(
+        &self,
+        user: UserId,
+        new: &NewRule,
+        precedence: Option<Precedence>,
+    ) -> Result<Rule, StoreError> {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
@@ -610,7 +620,7 @@ impl Store {
             if new.expires_at.is_some_and(|at| at <= now) {
                 return Err(StoreError::ExpiryNotInFuture);
             }
-            let rule = insert_rule(tx, user, new, now, None)?;
+            let rule = insert_rule(tx, user, new, now, None, precedence)?;
             // A pending row's `decided_by` takes the people's actors and `system`, so a rule
             // made by a workspace create closes the rows it decides as Puddle itself.
             let decider = match new.created_by {
@@ -803,7 +813,7 @@ impl Store {
             };
             // The rule is the user's whose workspace asked, global or not.
             let user = users::owner_in(tx, &row.workspace)?;
-            let rule = insert_rule(tx, user, &new, now, Some(id))?;
+            let rule = insert_rule(tx, user, &new, now, Some(id), None)?;
             decide_row(tx, &row, &rule, actor, now, fx)?;
             let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now, fx)?;
             fx.push(Event::RulesChanged {});

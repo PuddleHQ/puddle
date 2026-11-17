@@ -532,6 +532,9 @@ fn on_second_start<R: Runtime>(app: &AppHandle<R>, args: &[String]) {
 /// Calls `bring_forward` unless `args` carry the sign-in entry's flag. A seam of its own because
 /// the mock window system keeps no focus state a test could read back.
 fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
+    // The second process ends silently inside the single-instance plugin, so this line in the
+    // running app is the only trace that a start was handed over.
+    tracing::info!("another start handed over to this running app");
     if !autostart::started_at_login(args) {
         bring_forward();
     }

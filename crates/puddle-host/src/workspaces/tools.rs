@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
+use puddle_compute::{ComputeError, ExecOutput, Runtime};
 use puddle_settings::MiseMode;
 use puddle_store::UserId;
 use puddle_types::{Decision, Host, Problem, RuleId, WorkspaceId};
@@ -19,6 +19,7 @@ use puddle_workspace::{PUDDLE_DIR, WORKSPACES_ROOT};
 
 use super::{HostWorkspaces, problem_key};
 
+mod edit;
 mod install;
 
 /// The host the download comes from: the one an own deny rule would block it on.
@@ -39,9 +40,40 @@ pub(super) fn tools_key(name: &WorkspaceId) -> String {
 pub(super) struct ToolRuns {
     locks: Mutex<BTreeMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
     waiting: Mutex<BTreeMap<WorkspaceId, BTreeSet<i64>>>,
+    /// The last listing of each workspace's tools in this run, for a stopped workspace to show.
+    listed: Mutex<BTreeMap<WorkspaceId, edit::Listed>>,
+    /// The registry the pinned mise lists, once the first call has read it.
+    registry: Mutex<Option<Vec<puddle_api::wire::RegistryTool>>>,
 }
 
 impl ToolRuns {
+    fn listed(&self, name: &WorkspaceId) -> Option<edit::Listed> {
+        let listed = self.listed.lock().unwrap_or_else(PoisonError::into_inner);
+        listed.get(name).cloned()
+    }
+
+    fn keep_listed(&self, name: &WorkspaceId, listing: edit::Listed) {
+        let mut listed = self.listed.lock().unwrap_or_else(PoisonError::into_inner);
+        listed.insert(name.clone(), listing);
+    }
+
+    /// An edit changed the file: the last listing no longer shows what is there.
+    fn forget_listed(&self, name: &WorkspaceId) {
+        let mut listed = self.listed.lock().unwrap_or_else(PoisonError::into_inner);
+        listed.remove(name);
+    }
+
+    fn registry(&self) -> Option<Vec<puddle_api::wire::RegistryTool>> {
+        self.registry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn keep_registry(&self, tools: Vec<puddle_api::wire::RegistryTool>) {
+        *self.registry.lock().unwrap_or_else(PoisonError::into_inner) = Some(tools);
+    }
+
     /// The lock of `name`'s runs. Locks no run holds or waits for are dropped on the way, so a
     /// deleted workspace leaves none behind.
     fn lock_of(&self, name: &WorkspaceId) -> Arc<tokio::sync::Mutex<()>> {
@@ -144,22 +176,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Runs `puddle-agent mise-fetch` in the guest as the session user. `None` when the workspace
     /// is not running, at the start or when the command ended.
     async fn run_mise_fetch(&self, name: &WorkspaceId) -> Option<Result<ExecOutput, ComputeError>> {
-        let inner = &self.inner;
-        let gated = inner.live.lock().await.get(name)?.gated.clone()?;
         let dir = format!("{WORKSPACES_ROOT}/{name}/{PUDDLE_DIR}/mise");
-        let user = self.booted_user(name).await;
-        let request = ExecRequest::new(puddle_boot::AGENT_GUEST, ["mise-fetch".to_owned(), dir])
-            .as_user(user.name())
-            .with_timeout(FETCH_TIMEOUT);
-        let outcome = gated.ungated().exec(request).await;
-        // A stop keeps the entry but takes its sandbox away.
-        let running = inner
-            .live
-            .lock()
+        self.exec_agent(name, vec!["mise-fetch".to_owned(), dir], FETCH_TIMEOUT)
             .await
-            .get(name)
-            .is_some_and(|l| l.gated.is_some());
-        running.then_some(outcome)
     }
 
     /// The problem for a failed fetch: what failed, that the workspace works without tools, and,

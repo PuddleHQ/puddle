@@ -140,6 +140,19 @@ pub enum Event {
         /// The request, as `GET /api/pending` shows it.
         request: PendingSummary,
     },
+    /// Who is to be told about a new open pending request, picked by the server from what the
+    /// clients reported of themselves (`POST /api/presence`) so that nobody is told twice.
+    /// Sent right after the [`Event::PendingOpened`] of the same request.
+    PendingNotify {
+        /// The request, as in [`Event::PendingOpened`].
+        request: PendingSummary,
+        /// The picked browser tabs, by the id each reported. A tab raises its notification only
+        /// when its own id is listed.
+        clients: Vec<String>,
+        /// Whether the desktop app's own notification is picked: also true when no client has
+        /// reported, so the app tells its user as it did before clients reported.
+        desktop: bool,
+    },
     /// An open pending request was seen again.
     PendingUpdated {
         /// The workspace.
@@ -701,7 +714,9 @@ impl Event {
             | Self::WorkspacePortsChanged { workspace }
             | Self::WorkspacePortForwardFailed { workspace, .. }
             | Self::PassThroughLearned { workspace, .. } => Some(workspace),
-            Self::PendingOpened { request } => Some(&request.workspace),
+            Self::PendingOpened { request } | Self::PendingNotify { request, .. } => {
+                Some(&request.workspace)
+            }
             Self::RulesChanged {}
             | Self::RequestRulesChanged {}
             | Self::IdentitiesChanged {}

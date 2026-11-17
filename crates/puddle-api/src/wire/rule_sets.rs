@@ -121,6 +121,8 @@ pub struct RuleSetEntry {
     /// Epoch ms from which the entry no longer counts; `null` is permanent.
     #[schema(required = true)]
     pub expires_at: Option<u64>,
+    /// How the entry ranks, 1 to 9; a built-in entry is fixed at 0, below every rule of yours.
+    pub precedence: u8,
 }
 
 /// A rule set: where it is on, and its entries.
@@ -152,6 +154,10 @@ pub struct RuleSetView {
     /// Your sets: epoch ms it was made.
     #[schema(required = true)]
     pub created_at: Option<u64>,
+    /// Your sets: the precedence a new rule in the set takes when none is named, 1 to 9; `null`
+    /// means 5. Changing it changes no rule already in the set.
+    #[schema(required = true)]
+    pub default_precedence: Option<u8>,
 }
 
 impl RuleSetView {
@@ -167,6 +173,7 @@ impl RuleSetView {
             entries,
             changed_at,
             created_at,
+            default_precedence,
         } = info;
         Self {
             kind: match id {
@@ -186,6 +193,7 @@ impl RuleSetView {
             entries: entries.into_iter().map(RuleSetEntry::from_store).collect(),
             changed_at,
             created_at,
+            default_precedence: default_precedence.map(store::Precedence::get),
         }
     }
 }
@@ -199,6 +207,7 @@ impl RuleSetEntry {
             enabled,
             rule_id,
             expires_at,
+            precedence,
         } = entry;
         Self {
             pattern_kind: if pattern.starts_with('.') || pattern.starts_with("*.") {
@@ -212,6 +221,7 @@ impl RuleSetEntry {
             enabled,
             rule_id: rule_id.map(|id| id.0),
             expires_at,
+            precedence,
         }
     }
 }
@@ -238,6 +248,9 @@ pub struct NewRuleSetRequest {
     /// The colour; left out for the default of the set's number.
     #[serde(default)]
     pub fill: Option<Fill>,
+    /// 1 to 9: what a new rule in the set takes when none is named; left out for 5.
+    #[serde(default)]
+    pub default_precedence: Option<u8>,
 }
 
 /// A rule set's new name, description and colour.
@@ -252,6 +265,10 @@ pub struct RuleSetUpdateRequest {
     /// The new colour; left out keeps the one the set has.
     #[serde(default)]
     pub fill: Option<Fill>,
+    /// 1 to 9: what a new rule in the set takes when none is named; left out keeps the one the
+    /// set has. Rules already in the set keep theirs.
+    #[serde(default)]
+    pub default_precedence: Option<u8>,
 }
 
 /// Switch a set on or off, for every workspace or for one.

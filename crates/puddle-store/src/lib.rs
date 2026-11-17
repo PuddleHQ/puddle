@@ -35,10 +35,10 @@ mod workspace_git;
 pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
 pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
-    AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
-    PendingExpiryReason, PendingWire, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason,
-    RuleSetWire, RuleSwitchKind, RuleWire, RuleWirePatternKind, RuleWireScope, WorkspaceOpKind,
-    WorkspaceOpOutcome,
+    ActorWire, AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES,
+    MAX_LINE_BYTES, PendingExpiryReason, PendingWire, RequestRuleWire, RequestRuleWireScope,
+    RuleDeleteReason, RuleSetWire, RuleSwitchKind, RuleWire, RuleWirePatternKind, RuleWireScope,
+    WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use backup::{BackupInfo, backup_database};
 pub use catalogue::{
@@ -62,7 +62,7 @@ pub use pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
 pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
-pub use rule::{Actor, Effect, NewRule, Rule, Scope};
+pub use rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use ssh_address::{SshAddressError, looks_like_ssh, ssh_address_as_https};

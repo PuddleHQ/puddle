@@ -87,7 +87,8 @@ impl Store {
         Ok(devices)
     }
 
-    /// Who `device` signs in as, if it is neither revoked nor expired.
+    /// Who `device` signs in as, if it is neither revoked nor expired and its user is not being
+    /// deleted.
     ///
     /// # Errors
     /// A database error, or a stored row that does not parse.
@@ -97,7 +98,8 @@ impl Store {
         let found: Option<(i64, String)> = conn
             .query_row(
                 "SELECT d.user_id, u.role FROM devices d JOIN users u ON u.id = d.user_id
-                 WHERE d.id = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2",
+                 WHERE d.id = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2
+                   AND u.deleting_at IS NULL",
                 params![device.get(), now],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )

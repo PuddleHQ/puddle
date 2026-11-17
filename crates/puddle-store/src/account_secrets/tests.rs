@@ -217,3 +217,29 @@ fn a_failing_database_is_an_error_for_the_owner_steps() {
     let name = UserName::new("Tijs").unwrap();
     assert!(secrets.create_owner(&name, "$argon2id$x").is_err());
 }
+
+#[test]
+fn a_user_being_deleted_signs_in_by_no_route() {
+    let (store, secrets, _) = setup();
+    let ann = store
+        .admin_add_user(UserId::OWNER, &UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    secrets.set_password_hash(ann, "$argon2id$ann").unwrap();
+    let device = store.add_device(ann, "phone", 50_000).unwrap().id;
+    secrets.put_session(device, &[3; 32]).unwrap();
+    secrets.put_invite(ann, &[4; 32], 50_000).unwrap();
+    assert!(secrets.session_for(&[3; 32]).unwrap().is_some());
+    assert!(store.device_session(device).unwrap().is_some());
+    // Only the first step of a delete: the caller's lock-out steps never ran.
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert_eq!(secrets.session_for(&[3; 32]).unwrap(), None);
+    assert_eq!(store.device_session(device).unwrap(), None);
+    assert!(!secrets.check_password(ann, |_| true).unwrap());
+    assert_eq!(secrets.redeem_invite(&[4; 32]).unwrap(), None);
+    // The owner, never deleted, still signs in.
+    secrets
+        .set_password_hash(UserId::OWNER, "$argon2id$o")
+        .unwrap();
+    assert!(secrets.check_password(UserId::OWNER, |_| true).unwrap());
+}

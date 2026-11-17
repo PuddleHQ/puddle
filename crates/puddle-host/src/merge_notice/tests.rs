@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use puddle_boot::{MACHINE_SETTINGS_GUEST, machine_settings_path};
+use puddle_types::SessionUser;
+
 use super::*;
 
 fn workspace() -> WorkspaceId {
@@ -8,7 +11,7 @@ fn workspace() -> WorkspaceId {
 #[test]
 fn no_left_file_is_no_notice() {
     assert_eq!(
-        merge_notices(&workspace(), "Acme shop", &[]),
+        merge_notices(&workspace(), "Acme shop", &[] as &[(&str, &str)]),
         Vec::<Problem>::new()
     );
 }
@@ -38,16 +41,19 @@ fn docker_config_says_pulls_fail() {
 }
 
 #[test]
-fn machine_settings_say_what_the_editor_loses() {
-    let left = [(MACHINE_SETTINGS_GUEST, "the file is not valid JSON")];
-    let [problem] = merge_notices(&workspace(), "Acme shop", &left)
-        .try_into()
-        .unwrap();
-    assert!(
-        problem.detail.contains("port forwarding"),
-        "{}",
-        problem.detail
-    );
+fn machine_settings_say_what_the_editor_loses_for_every_session_user() {
+    for user in [SessionUser::Root, SessionUser::Agent] {
+        let path = machine_settings_path(user);
+        let left = [(path.as_str(), "the file is not valid JSON")];
+        let [problem] = merge_notices(&workspace(), "Acme shop", &left)
+            .try_into()
+            .unwrap();
+        assert!(
+            problem.detail.contains("port forwarding"),
+            "{user:?}: {}",
+            problem.detail
+        );
+    }
 }
 
 #[test]

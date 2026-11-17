@@ -160,7 +160,9 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   only to company-network or private addresses (reason `pki_distribution_point`). The URLs are read
   from the synced roots at start; the exception covers that exact host, port and path (a request
   path below the URL counts as a directory, for an OCSP `GET`), never another method, host, port or
-  path, and never loopback, link-local, metadata or a public address. (2) SSH to
+  path, and never loopback, link-local, metadata or a public address. A deny rule for the host,
+  or an IP deny for an address it resolves to (R-27), still wins: the request is decided like any
+  other. (2) SSH to
   `ssh.dev.azure.com` port 22 stays refused (`ssh_unsupported`); when the host's own probe of
   that port fails, the refusal says the company network blocks it and that HTTPS remotes work with
   Puddle's credentials, instead of only pointing at HTTPS.

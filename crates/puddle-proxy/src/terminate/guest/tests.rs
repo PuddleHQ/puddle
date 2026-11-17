@@ -43,6 +43,55 @@ async fn a_read_error_before_a_whole_record_is_an_error_not_a_pass_through() {
     assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_hello_dripped_a_byte_at_a_time_times_out_once_for_the_whole_record() {
+    let hello = test_client_hello("free.test", &[]);
+    let (mut writer, mut reader) = tokio::io::duplex(64 * 1024);
+    let drip = tokio::spawn(async move {
+        for byte in hello {
+            if tokio::io::AsyncWriteExt::write_all(&mut writer, &[byte])
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
+    let started = tokio::time::Instant::now();
+    let err = capture_first_record(
+        &mut reader,
+        Vec::new(),
+        Duration::from_secs(3),
+        Duration::from_secs(60),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(started.elapsed(), Duration::from_secs(60));
+    drip.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_few_bytes_that_never_make_a_record_header_are_passed_on_at_the_deadline() {
+    let (mut writer, mut reader) = tokio::io::duplex(64);
+    tokio::io::AsyncWriteExt::write_all(&mut writer, b"\x16\x03")
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    let read = capture_first_record(
+        &mut reader,
+        Vec::new(),
+        Duration::from_secs(3),
+        Duration::from_secs(60),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read, FirstBytes::Other(b"\x16\x03".to_vec()));
+    assert_eq!(started.elapsed(), Duration::from_secs(60));
+    drop(writer);
+}
+
 #[tokio::test]
 async fn a_client_hello_is_captured_whole_and_read_without_a_connection() {
     let hello = test_client_hello("free.test", &[b"h2", b"http/1.1"]);
@@ -73,7 +122,6 @@ async fn bytes_read_before_the_capture_count_as_the_start_of_the_record() {
 
 #[tokio::test]
 async fn anything_that_is_not_one_whole_client_hello_is_other_and_keeps_its_bytes() {
-    let hello = test_client_hello("free.test", &[]);
     let cases: Vec<Vec<u8>> = vec![
         b"GET / HTTP/1.1
 
@@ -87,12 +135,25 @@ async fn anything_that_is_not_one_whole_client_hello_is_other_and_keeps_its_byte
         vec![0x17, 3, 3, 0, 1, 0],
         vec![0x16, 3, 3, 0, 0],
         vec![0x16, 3, 3, 0x7f, 0xff],
-        // A record cut short.
-        hello[..hello.len() - 1].to_vec(),
     ];
     for bytes in cases {
         assert_eq!(capture(bytes.clone(), &[]).await, FirstBytes::Other(bytes));
     }
+}
+
+#[tokio::test]
+async fn a_hello_record_cut_short_is_a_stalled_handshake_not_a_pass_through() {
+    let hello = test_client_hello("free.test", &[]);
+    let (mut a, mut b) = tokio::io::duplex(64 * 1024);
+    tokio::io::AsyncWriteExt::write_all(&mut a, &hello[..hello.len() - 1])
+        .await
+        .unwrap();
+    let wait = Duration::from_millis(200);
+    let err = capture_first_record(&mut b, Vec::new(), wait, wait)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    drop(a);
 }
 
 #[test]

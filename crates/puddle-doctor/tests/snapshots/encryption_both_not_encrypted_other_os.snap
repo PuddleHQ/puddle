@@ -9,10 +9,9 @@ ok    Disk space          120 GB free on the drive that holds Puddle's data (/ho
 warn  Disk encryption     data drive NOT encrypted; swap /dev/dm-1 NOT encrypted
       note: The drive and the swap are not encrypted. Puddle keeps secrets in memory while it
             runs (the real values behind the stand-ins a workspace holds), and memory can be
-            paged out to swap or written to disk in a crash dump. On a drive that is not
-            encrypted, anyone who gets the disk (a lost or stolen computer, a disk taken out)
-            can read those pages and the data folder; on an encrypted one they cannot. Encrypt
-            the drive and the swap with the tools your OS provides.
+            paged out to swap or written to disk in a crash dump. Anyone who gets this disk (a
+            lost or stolen computer, a disk taken out) can read those pages and the data folder.
+            Encrypt the drive and the swap with the tools your OS provides.
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0
 ok    Credential store    the operating system's credential store: a test write and delete worked
@@ -68,7 +67,7 @@ No problems found; 1 warning to know about. (1.2 s)
       "status": "warn",
       "summary": "data drive NOT encrypted; swap /dev/dm-1 NOT encrypted",
       "finding": "disk_not_encrypted",
-      "fix": "The drive and the swap are not encrypted. Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk (a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot. Encrypt the drive and the swap with the tools your OS provides.",
+      "fix": "The drive and the swap are not encrypted. Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), and memory can be paged out to swap or written to disk in a crash dump. Anyone who gets this disk (a lost or stolen computer, a disk taken out) can read those pages and the data folder. Encrypt the drive and the swap with the tools your OS provides.",
       "impact": "Anyone who gets this disk, from a lost laptop for example, can read Puddle's data and secrets.",
       "remedy": "Encrypt the drive with your system's tools."
     },

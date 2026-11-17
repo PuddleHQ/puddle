@@ -10,13 +10,12 @@ ok    Disk space            120 GB free on the drive that holds Puddle's data (/
 warn  Disk encryption       data drive encrypted (x); swap /dev/dm-1 NOT encrypted
       note: The swap is not encrypted. Puddle keeps secrets in memory while it runs (the real
             values behind the stand-ins a workspace holds), and memory can be paged out to swap
-            or written to disk in a crash dump. On a drive that is not encrypted, anyone who
-            gets the disk (a lost or stolen computer, a disk taken out) can read those pages and
-            the data folder; on an encrypted one they cannot. Turn on BitLocker or Device
-            encryption for the drive (Settings, Privacy & security, Device encryption; Pro
-            editions: Control Panel, BitLocker Drive Encryption). A page file on a drive you
-            leave unencrypted is encrypted by `fsutil behavior set encryptpagingfile 1` (run as
-            administrator, then restart).
+            or written to disk in a crash dump. Anyone who gets this disk (a lost or stolen
+            computer, a disk taken out) can read those pages and the data folder. Turn on
+            BitLocker or Device encryption for the drive (Settings, Privacy & security, Device
+            encryption; Pro editions: Control Panel, BitLocker Drive Encryption). To encrypt the
+            page file as well, run `fsutil behavior set encryptpagingfile 1` as administrator,
+            then restart.
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
 ok    Azure CLI (az)        version 2.64.0
 ok    Credential store      the operating system's credential store: a test write and delete worked
@@ -79,7 +78,7 @@ No problems found; 1 warning to know about. (1.2 s)
       "status": "warn",
       "summary": "data drive encrypted (x); swap /dev/dm-1 NOT encrypted",
       "finding": "swap_not_encrypted",
-      "fix": "The swap is not encrypted. Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk (a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot. Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: Control Panel, BitLocker Drive Encryption). A page file on a drive you leave unencrypted is encrypted by `fsutil behavior set encryptpagingfile 1` (run as administrator, then restart).",
+      "fix": "The swap is not encrypted. Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), and memory can be paged out to swap or written to disk in a crash dump. Anyone who gets this disk (a lost or stolen computer, a disk taken out) can read those pages and the data folder. Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: Control Panel, BitLocker Drive Encryption). To encrypt the page file as well, run `fsutil behavior set encryptpagingfile 1` as administrator, then restart.",
       "impact": "Secrets Puddle holds in memory can be written to swap, where anyone who gets the disk can read them.",
       "remedy": "Run `fsutil behavior set encryptpagingfile 1` as administrator, then restart."
     },

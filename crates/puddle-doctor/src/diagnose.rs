@@ -167,6 +167,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
     }
+    leave_out_moot(&mut checks);
     for check in &mut checks {
         explain(os, check);
     }
@@ -180,6 +181,24 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
         checks,
         elapsed_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
     }
+}
+
+/// Leaves out the lines that only matter when a later check fails, once that check passed: a job
+/// object that might stop the test boot, and an unreadable code integrity state that might stop
+/// the runtime. Shown anyway, they say "nothing to do" to a person who can do nothing.
+fn leave_out_moot(checks: &mut Vec<Check>) {
+    let passed = |id: CheckId, checks: &[Check]| {
+        checks
+            .iter()
+            .any(|c| c.id == id && c.status == Status::Ok)
+    };
+    let booted = passed(CheckId::TestBoot, checks);
+    let launched = passed(CheckId::Launch, checks);
+    checks.retain(|c| match c.id {
+        CheckId::JobObject => !booted,
+        CheckId::CodeIntegrity if c.status != Status::Ok => !launched,
+        _ => true,
+    });
 }
 
 fn skipped(id: CheckId, why: &str) -> Check {
@@ -489,8 +508,8 @@ The line is the setting \"Warn when free space is under\" in Settings."
 // ---- disk encryption ----
 
 const ENCRYPTION_WHY: &str = "Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), \
-and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk \
-(a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot.";
+and memory can be paged out to swap or written to disk in a crash dump. Anyone who gets this disk (a lost or stolen computer, a disk \
+taken out) can read those pages and the data folder.";
 
 /// What is not encrypted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,8 +523,8 @@ fn encryption_fix(os: Os, bad: Unencrypted) -> String {
     let how = match os {
         Os::Windows => {
             "Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: \
-Control Panel, BitLocker Drive Encryption). A page file on a drive you leave unencrypted is encrypted by \
-`fsutil behavior set encryptpagingfile 1` (run as administrator, then restart)."
+Control Panel, BitLocker Drive Encryption). To encrypt the page file as well, run \
+`fsutil behavior set encryptpagingfile 1` as administrator, then restart."
         }
         Os::MacOs => {
             "Turn on FileVault (System Settings, Privacy & Security, FileVault). macOS encrypts its swap by default."
@@ -1295,13 +1314,14 @@ affected."
 
 // ---- Azure CLI ----
 
-/// Warn only: the Azure CLI is optional, needed for the Azure DevOps sources and nothing else.
+/// Never a failure: the Azure CLI is optional, needed for the Azure DevOps sources and nothing
+/// else, so its absence is only info.
 fn az_cli(facts: &AzCliFacts) -> Check {
     let id = CheckId::AzCli;
     match facts {
         AzCliFacts::NotFound => Check::new(
             id,
-            Status::Warn,
+            Status::Info,
             "not found; needed only for Azure DevOps through `az`",
         )
         .finding(Finding::AzCliMissing)

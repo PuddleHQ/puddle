@@ -9,13 +9,13 @@ ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
-warn  Azure CLI (az)        not found; needed only for Azure DevOps through `az`
+info  Azure CLI (az)        not found; needed only for Azure DevOps through `az`
       note: Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az
             login --tenant <tenant>` in a terminal.
 ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed
 
-No problems found; 1 warning to know about. (1.2 s)
+No problems found. (1.2 s)
 
 ---
 {
@@ -81,7 +81,7 @@ No problems found; 1 warning to know about. (1.2 s)
     },
     {
       "id": "az_cli",
-      "status": "warn",
+      "status": "info",
       "summary": "not found; needed only for Azure DevOps through `az`",
       "finding": "az_cli_missing",
       "fix": "Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az login --tenant <tenant>` in a terminal.",

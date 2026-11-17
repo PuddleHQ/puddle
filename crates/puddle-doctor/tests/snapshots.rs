@@ -788,9 +788,15 @@ fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
 }
 
 #[test]
-fn windows_job_unreadable_is_said_not_dropped() {
+fn windows_job_unreadable_is_said_while_the_test_boot_has_not_passed() {
     let fake = Fake {
         job: Some(JobFacts::query_failed("QueryInformationJobObject", 87)),
+        boot: BootFacts::Ran {
+            outcome: ProcessOutcome::TimedOut {
+                after: Duration::from_secs(25),
+            },
+            kept_logs: None,
+        },
         ..windows()
     };
     let r = check(
@@ -800,6 +806,38 @@ fn windows_job_unreadable_is_said_not_dropped() {
         Some(Finding::JobUnreadable),
     );
     assert_eq!(r.check(CheckId::JobObject).unwrap().status, Status::Info);
+}
+
+/// A job object only matters when it stops the test boot: once a test VM booted, the line has
+/// nothing left to say, so it is left out.
+#[test]
+fn a_job_object_line_is_left_out_once_the_test_boot_passed() {
+    for job in [
+        JobFacts::query_failed("QueryInformationJobObject", 87),
+        JobFacts::Read {
+            breakaway_allowed: false,
+        },
+    ] {
+        let fake = Fake {
+            job: Some(job),
+            ..windows()
+        };
+        let r = run(&fake, &Options::default());
+        assert_eq!(r.check(CheckId::TestBoot).unwrap().status, Status::Ok);
+        assert!(r.check(CheckId::JobObject).is_none(), "{:?}", r.checks);
+    }
+}
+
+/// An unreadable code integrity state only matters when the runtime does not start.
+#[test]
+fn an_unreadable_code_integrity_line_is_left_out_once_the_runtime_started() {
+    let fake = Fake {
+        ci: Some(CodeIntegrityFacts::query_failed(status(0xC000_0022))),
+        ..windows()
+    };
+    let r = run(&fake, &Options::default());
+    assert_eq!(r.check(CheckId::Launch).unwrap().status, Status::Ok);
+    assert!(r.check(CheckId::CodeIntegrity).is_none(), "{:?}", r.checks);
 }
 
 #[test]
@@ -880,9 +918,12 @@ fn windows_gsa_installed_warns_and_explains() {
 }
 
 #[test]
-fn windows_unreadable_code_integrity_is_an_info_check_not_a_missing_one() {
+fn windows_unreadable_code_integrity_is_an_info_check_while_the_runtime_does_not_start() {
     let fake = Fake {
         ci: Some(CodeIntegrityFacts::query_failed(status(0xC000_0022))),
+        launch: ProcessOutcome::TimedOut {
+            after: Duration::from_secs(10),
+        },
         ..windows()
     };
     let r = check(
@@ -898,7 +939,6 @@ fn windows_unreadable_code_integrity_is_an_info_check_not_a_missing_one() {
         ci.detail.as_deref().unwrap().contains("0xC0000022"),
         "{ci:?}"
     );
-    assert!(r.ok);
 }
 
 #[test]
@@ -1941,7 +1981,7 @@ fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
 }
 
 #[test]
-fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
+fn a_missing_azure_cli_is_info_and_the_report_stays_ok() {
     let fake = Fake {
         az: AzCliFacts::NotFound,
         ..windows()
@@ -1953,7 +1993,8 @@ fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
         Some(Finding::AzCliMissing),
     );
     assert!(r.ok, "the Azure CLI never fails the report");
-    assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Warn);
+    // Optional: most people never use Azure DevOps, so its absence is no warning.
+    assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Info);
 }
 
 #[test]

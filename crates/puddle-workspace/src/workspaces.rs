@@ -987,14 +987,30 @@ impl Workspaces {
         let name = maintenance_name(id)?;
         self.borrow(id, &name)?;
         let volume = id.volume_name();
-        let existed = match rt.volume(&volume).await {
-            Ok(found) => found.is_some(),
+        let existing = match rt.volume(&volume).await {
+            Ok(found) => found,
             Err(e) => {
                 self.registry.give_back(id);
                 return Err(WorkspaceError::runtime("look up the volume", id, e));
             }
         };
-        let result = self.run_import(rt, id, &name, image, size, imports).await;
+        let existed = existing.is_some();
+        // The size is for a volume the import makes; one that exists keeps its own.
+        let mount = match &existing {
+            Some(info) => {
+                if info.size != size {
+                    info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
+                }
+                mount_for(id, &volume, info)
+            }
+            None => Layout::new(id).map(|layout| {
+                VolumeMount::named(volume.clone(), layout.mount().clone()).ensure_size(size)
+            }),
+        };
+        let result = match mount {
+            Ok(mount) => self.run_import(rt, id, &name, image, mount, imports).await,
+            Err(e) => Err(e),
+        };
         self.registry.give_back(id);
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = !existed && matches!(rt.volume(&volume).await, Ok(Some(_)));
@@ -1024,7 +1040,7 @@ impl Workspaces {
         id: &WorkspaceId,
         name: &SandboxName,
         image: &ImageRef,
-        size: DiskSize,
+        mount: VolumeMount,
         imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
         clear_leftover(rt, id, name).await?;
@@ -1032,9 +1048,7 @@ impl Workspaces {
         let mut spec = SandboxSpec::new(name.clone(), image.clone())
             .with_memory(self.config.maintenance_memory)
             .with_cpus(1)
-            .with_volume(
-                VolumeMount::named(id.volume_name(), layout.mount().clone()).ensure_size(size),
-            );
+            .with_volume(mount);
         for (n, import) in imports.iter().enumerate() {
             spec = spec.with_file_mount(FileMount::checkout(&import.git_dir, import_mount(n)?));
         }

@@ -84,8 +84,12 @@
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
 
-        <Icon Id="ProductIcon" SourceFile="{{icon_path}}"/>
-        <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+        <!-- The Id ends in ".ico" on purpose: Windows Installer writes the icon to a file of that name and
+             takes the type from the extension, and a shortcut whose icon file has none shows a generic icon.
+             the template value icon_path is icons/icon.ico (the duck at 16 to 256 px), also the program's own icon.
+             ci/msi-install-test.ps1 checks the Icon table and the shown icons. -->
+        <Icon Id="ProductIcon.ico" SourceFile="{{icon_path}}"/>
+        <Property Id="ARPPRODUCTICON" Value="ProductIcon.ico" />
         <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
         <SetProperty Id="ARPNOMODIFY" Value="1" After="InstallValidate" Sequence="execute"/>
         {{#if homepage}}
@@ -164,7 +168,7 @@
                     Name="{{product_name}}"
                     Description="Runs {{product_name}}"
                     Target="[!Path]"
-                    Icon="ProductIcon"
+                    Icon="ProductIcon.ico"
                     WorkingDirectory="INSTALLDIR">
                     <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
                 </Shortcut>

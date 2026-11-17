@@ -10,6 +10,13 @@ export function actorLabel(actor: string): string {
   return actor === "workspace_create" ? "the create" : actor;
 }
 
+/**
+ * Whether the Add rule dialog offers the precedence field. The v0.1 build hides it (the code and
+ * the API stay); build with `VITE_PUDDLE_PRECEDENCE_FIELD=1` to show it.
+ */
+export const PRECEDENCE_FIELD_SHOWN: boolean =
+  import.meta.env["VITE_PUDDLE_PRECEDENCE_FIELD"] === "1";
+
 /** The precedences a rule can have, lowest to highest (built-in entries sit at 0, below them). */
 export const PRECEDENCES = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 

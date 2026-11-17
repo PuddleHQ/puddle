@@ -10,7 +10,31 @@ fn m(name: &str, status: WorkspaceStatus, volumes: &[&str]) -> Mounter {
 }
 
 #[test]
-fn only_running_sandboxes_hold_volumes() {
+fn every_sandbox_that_is_not_down_holds_its_volumes() {
+    let live = [
+        WorkspaceStatus::Starting,
+        WorkspaceStatus::Running,
+        WorkspaceStatus::Draining,
+        WorkspaceStatus::Paused,
+    ];
+    for status in live {
+        let h = holders(&[m("box", status, &["ws-a"])]);
+        assert_eq!(h.get("ws-a").map(String::as_str), Some("box"), "{status}");
+    }
+    let down = [
+        WorkspaceStatus::Created,
+        WorkspaceStatus::Stopped,
+        WorkspaceStatus::Crashed,
+        WorkspaceStatus::VolumeMissing,
+    ];
+    for status in down {
+        let h = holders(&[m("box", status, &["ws-a"])]);
+        assert_eq!(h.get("ws-a"), None, "{status}");
+    }
+}
+
+#[test]
+fn a_down_sandbox_does_not_hide_the_live_holder() {
     let h = holders(&[
         m("stopped", WorkspaceStatus::Stopped, &["ws-a"]),
         m("crashed", WorkspaceStatus::Crashed, &["ws-b"]),

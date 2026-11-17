@@ -177,7 +177,7 @@ async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
         (
             "encrypt fails but printed something",
             "[--version]\nstdout=systemd 257 (257.13)\\n\n\
-             [encrypt]\nexit=1\necho_stdin=1\n\
+             [encrypt]\nexit=1\nstderr=Failed to determine local credential host secret: Permission denied\\n\necho_stdin=1\n\
              [decrypt]\necho_stdin=1\n"
                 .to_owned(),
         ),
@@ -263,6 +263,45 @@ async fn a_seal_that_cannot_be_read_back_in_time_fails_instead_of_falling_back()
         .unwrap_err();
     assert_eq!(err, KeyError::SealTimedOut);
     assert!(!setup.sealed().exists() && !setup.key_file().exists());
+}
+
+#[tokio::test]
+async fn a_seal_that_fails_without_a_refusal_fails_the_start_instead_of_falling_back() {
+    // The service closes the connection without a reply (seen under heavy load): the client exits
+    // non-zero with a text that is no refusal, or with no text at all. That is a tool that failed,
+    // not one that cannot seal, so no key is made and the next start tries again.
+    let cases = [
+        (
+            "encrypt: connection closed, with a text",
+            "[--version]\nstdout=systemd 257 (257.13)\\n\n\
+             [encrypt]\nexit=1\nstderr=Failed to encrypt: Connection reset by peer\\n\n",
+        ),
+        (
+            "encrypt: connection closed, no text",
+            "[--version]\nstdout=systemd 257 (257.13)\\n\n[encrypt]\nexit=1\n",
+        ),
+        (
+            "read-back: connection closed",
+            "[--version]\nstdout=systemd 257 (257.13)\\n\n\
+             [encrypt]\nstdout=c2VhbGVk\n\
+             [decrypt]\nexit=1\nstderr=Connection reset by peer\\n\n",
+        ),
+    ];
+    for (name, behaviour) in cases {
+        let setup = Setup::new();
+        let (keys, _) = setup.keys(behaviour);
+        let err = keys.find_or_make().await.unwrap_err();
+        assert_eq!(err, KeyError::SealFailed, "{name}");
+        assert!(!setup.sealed().exists(), "{name}: a sealed file was left");
+        assert!(
+            !setup.key_file().exists(),
+            "{name}: a weaker key file was made"
+        );
+        // The next start, with a healthy service, seals.
+        let (keys, _) = setup.keys(HEALTHY);
+        let found = keys.find_or_make().await.unwrap();
+        assert_eq!(found.source, KeySource::SystemdSealed, "{name}");
+    }
 }
 
 #[tokio::test]

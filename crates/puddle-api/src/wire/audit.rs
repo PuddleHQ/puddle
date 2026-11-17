@@ -633,7 +633,7 @@ pub enum AuditType {
     SystemManagedChanged,
     /// A workspace operation, or a change to identities or repository lists.
     WorkspaceOp,
-    /// The audit trimmed to its size cap.
+    /// Records older than the retention period deleted from the audit.
     AuditTrimmed,
 }
 

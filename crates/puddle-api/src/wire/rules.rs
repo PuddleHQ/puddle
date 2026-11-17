@@ -525,7 +525,9 @@ pub struct RuleEnabledRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuleExpiryRequest {
-    /// Epoch ms in the future, or `null` to make the rule permanent.
+    /// Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body
+    /// never makes a rule permanent.
+    #[serde(deserialize_with = "Option::deserialize")]
     #[schema(required = true)]
     pub expires_at: Option<u64>,
 }

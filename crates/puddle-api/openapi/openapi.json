@@ -14867,7 +14867,7 @@
           },
           {
             "type": "object",
-            "description": "The oldest records were deleted to keep the audit under its size cap.",
+            "description": "Records older than the audit's retention period were deleted.",
             "required": [
               "ts",
               "deleted_records",
@@ -18619,7 +18619,7 @@
       },
       "InviteRequest": {
         "type": "object",
-        "description": "Uses an invite link (made by the server's command line) to set a password.",
+        "description": "Uses an invite link (made by the server's command line or an admin) to set a password.",
         "required": [
           "secret",
           "password"
@@ -19094,7 +19094,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/WorkspaceId",
-                "description": "The workspace the rule applies to; `null` for every workspace."
+                "description": "The workspace the rule applies to; `null` for every workspace. Required, so a body that\nleaves it out never makes a rule for every workspace."
               },
               {
                 "type": "null"
@@ -20937,7 +20937,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Epoch ms in the future, or `null` to make the rule permanent.",
+            "description": "Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body\nnever makes a rule permanent.",
             "minimum": 0
           }
         },
@@ -21160,7 +21160,7 @@
               "boolean",
               "null"
             ],
-            "description": "On or off; `null` removes the switch, so the next level decides (the global switch, then\nthe set's default)."
+            "description": "On or off; `null` removes the switch, so the next level decides (the global switch, then\nthe set's default). Required, so an empty body never removes a switch."
           },
           "workspace": {
             "oneOf": [
@@ -21517,8 +21517,8 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest vCPUs (at least 1, at most the global maximum); applies at the next start.",
-            "maximum": 32,
+            "description": "Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs\nunless set); applies at the next start.",
+            "maximum": 255,
             "minimum": 1
           },
           "direct_ssh": {

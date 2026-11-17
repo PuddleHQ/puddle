@@ -19,7 +19,10 @@ use crate::store::{SecretStore, StoreError};
 /// 2560-byte limit.
 pub const CHUNK_UNITS: usize = 1000;
 
-/// The most pieces one value has. A value of 8192 characters needs at most 17.
+/// The most pieces one value has. A value of 8192 characters needs 9 pieces when each character is
+/// one UTF-16 code unit and at most 17 when each is two (pieces are cut by code units). The cap
+/// lets one value take about 128 KB of the per-user store (about 450 KB on Windows); it stays,
+/// because a lower one would make values already stored above it unreadable.
 const MAX_PIECES: usize = 64;
 
 /// What a head starts with. A value that starts the same way is stored in pieces too, so a head is

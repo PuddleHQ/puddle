@@ -48,7 +48,7 @@ pub struct PasswordSignInRequest {
     pub device_name: Option<String>,
 }
 
-/// Uses an invite link (made by the server's command line) to set a password.
+/// Uses an invite link (made by the server's command line or an admin) to set a password.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InviteRequest {

@@ -752,7 +752,7 @@ pub enum AuditRecord {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
-    /// Oldest records deleted to keep the audit under its cap (R-26).
+    /// Records older than the retention period deleted (R-26).
     AuditTrimmed {
         /// Epoch ms.
         ts: u64,

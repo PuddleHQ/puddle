@@ -224,8 +224,13 @@ fn deleting_a_workspace_deletes_its_settings_and_keeps_the_global_list() {
 }
 
 #[test]
-fn every_never_decrypt_name_is_listed_with_its_workspace() {
+fn every_never_decrypt_name_of_a_user_is_listed_with_its_workspace() {
     let (store, _) = store();
+    let ann = store
+        .add_user(&crate::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    store.set_workspace_owner(&ws("anns"), ann).unwrap();
     store
         .set_global_never_decrypt(&strings(&["g.example"]))
         .unwrap();
@@ -235,14 +240,20 @@ fn every_never_decrypt_name_is_listed_with_its_workspace() {
     store
         .set_never_decrypt(&ws("other"), &strings(&["o.example"]))
         .unwrap();
-    let named: Vec<String> = store
-        .never_decrypt_names()
-        .unwrap()
-        .into_iter()
-        .map(|(w, p)| format!("{}:{p}", w.unwrap_or_default()))
-        .collect();
+    store
+        .set_never_decrypt(&ws("anns"), &strings(&["a.example"]))
+        .unwrap();
+    let named = |user| -> Vec<String> {
+        store
+            .never_decrypt_names(user)
+            .unwrap()
+            .into_iter()
+            .map(|(w, p)| format!("{}:{p}", w.unwrap_or_default()))
+            .collect()
+    };
     assert_eq!(
-        named,
+        named(UserId::OWNER),
         [":g.example", "other:o.example", "shop:*.bank.example"]
     );
+    assert_eq!(named(ann), [":g.example", "anns:a.example"]);
 }

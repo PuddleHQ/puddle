@@ -98,3 +98,30 @@ fn an_unavailable_store_is_an_error_and_a_damaged_entry_is_another() {
         Err(VaultError::Unavailable)
     );
 }
+
+#[test]
+fn every_entry_a_workspace_writes_is_named_as_its_saved_login_and_no_other_workspaces() {
+    let store = Arc::new(MemoryStore::new());
+    let alpha = vault(&store, "alpha");
+    for profile in crate::builtin() {
+        for (slot, _) in profile.slots() {
+            alpha.write(profile, slot, "stand-in", "real").unwrap();
+        }
+    }
+    let written = store.ids();
+    let mut listed: Vec<String> = saved_login_ids(&workspace("alpha"), crate::builtin())
+        .iter()
+        .map(|id| id.as_str().to_owned())
+        .collect();
+    listed.sort();
+    assert_eq!(listed, written);
+    for id in &written {
+        let id = StoredId::new(id.as_str()).unwrap();
+        assert!(is_saved_login_of(&id, &workspace("alpha")), "{id:?}");
+        assert!(!is_saved_login_of(&id, &workspace("beta")), "{id:?}");
+    }
+    for other in ["tok-alpha", "login-", "proxy-list", "env-login-x"] {
+        let id = StoredId::new(other).unwrap();
+        assert!(!is_saved_login_of(&id, &workspace("alpha")), "{other}");
+    }
+}

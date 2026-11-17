@@ -937,6 +937,31 @@ impl Launcher for DesktopOnly {
     }
 }
 
+/// The rig's memory store under a store that wraps it by value, such as the index.
+struct SharedSecrets(Arc<MemoryStore>);
+
+impl puddle_secrets::SecretStore for SharedSecrets {
+    fn get(
+        &self,
+        id: &puddle_secrets::StoredId,
+    ) -> Result<Option<puddle_secrets::Secret>, puddle_secrets::StoreError> {
+        self.0.get(id)
+    }
+    fn set(
+        &self,
+        id: &puddle_secrets::StoredId,
+        secret: &puddle_secrets::Secret,
+    ) -> Result<(), puddle_secrets::StoreError> {
+        self.0.set(id, secret)
+    }
+    fn delete(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {
+        self.0.delete(id)
+    }
+    fn keep_local(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {
+        self.0.keep_local(id)
+    }
+}
+
 struct Rig {
     dev_cert: Arc<TestDevCert>,
     dir: tempfile::TempDir,
@@ -963,6 +988,10 @@ struct Rig {
     file_vault: AtomicBool,
     /// With `file_vault`: leaves the headless flag off, as a restart of a recorded install does.
     without_headless_flag: AtomicBool,
+    /// Keeps `secrets` behind the index the shipped host keeps, a new one for each start as a new
+    /// process would have: the start-up clean-up then removes what nothing names, as it does on a
+    /// real machine.
+    indexed: AtomicBool,
     /// The drive the host reads its free space from, when a test sets one; else a fixed figure.
     free_space: Mutex<Option<Arc<dyn puddle_host::Space>>>,
 }
@@ -995,6 +1024,7 @@ impl Rig {
             mise_on: AtomicBool::new(false),
             file_vault: AtomicBool::new(false),
             without_headless_flag: AtomicBool::new(false),
+            indexed: AtomicBool::new(false),
             free_space: Mutex::new(None),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
@@ -1056,7 +1086,13 @@ impl Rig {
         } else {
             self.launcher.clone()
         };
-        options.secret_store = Some(self.secrets.clone());
+        options.secret_store = Some(if self.indexed.load(Ordering::SeqCst) {
+            Arc::new(puddle_secrets::IndexedStore::new(SharedSecrets(
+                self.secrets.clone(),
+            )))
+        } else {
+            self.secrets.clone()
+        });
         if self.file_vault.load(Ordering::SeqCst) {
             options.secret_store = None;
             options.secret_setup.headless = !self.without_headless_flag.load(Ordering::SeqCst);

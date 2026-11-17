@@ -44,3 +44,4 @@ pub use profile::{
     Scope, Slot, StandInKind, builtin, path_matches,
 };
 pub use shape::{ShapeError, stand_in_for};
+pub use vault::{is_saved_login_of, saved_login_ids};

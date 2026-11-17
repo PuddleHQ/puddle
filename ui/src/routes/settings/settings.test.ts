@@ -434,6 +434,21 @@ describe("explicit Save", () => {
     expect(api.ui.sound).toBeNull();
   });
 
+  it("keeps the edit when another client changed the settings, shows theirs, and saves the edit on top", async () => {
+    await open();
+    api.ui = { ...api.ui, badge: false };
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "changed somewhere else",
+    );
+    expect(screen.getByLabelText("Sound")).toBeChecked();
+    expect(api.ui.sound).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.ui.sound).toBe(true));
+    expect(api.ui.badge).toBe(false);
+  });
+
   it("blocks leaving with unsaved edits, and lets go once they are saved", async () => {
     await open();
     const leave = () => {

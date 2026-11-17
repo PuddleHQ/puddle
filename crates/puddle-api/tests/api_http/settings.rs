@@ -804,3 +804,51 @@ async fn a_cpu_count_above_the_global_maximum_is_refused_where_it_is_set() {
     );
     api.running.shutdown().await;
 }
+
+/// A save made from a stale read (another client changed a section since) is refused and writes
+/// nothing; one made from the current read, or one without a revision, goes through.
+#[tokio::test]
+async fn a_global_save_from_a_stale_read_is_refused_with_a_conflict() {
+    let api = start().await;
+    let first = api.get("/api/settings").await.json();
+    let stale = first["revision"].as_str().unwrap().to_owned();
+
+    // Another client turns the mise switch off.
+    let other = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"revision": stale, "tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(other.status, 200, "{}", other.body);
+    let fresh = other.json()["revision"].as_str().unwrap().to_owned();
+    assert_ne!(fresh, stale);
+    assert_eq!(api.get("/api/settings").await.json()["revision"], fresh);
+
+    // The first client still holds the old read and saves an unrelated field.
+    let before = api.settings.load_global().unwrap();
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"revision": stale, "ui": {"theme": "dark"}})),
+        )
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(reply.json()["error"], "settings_changed");
+    assert_eq!(api.settings.load_global().unwrap(), before);
+
+    // Saving from the current read works, and a save without a revision still replaces.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"revision": fresh, "tools": {"mise": false}, "ui": {"theme": "dark"}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let reply = api.send("PUT", "/api/settings", Some(&json!({}))).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    api.running.shutdown().await;
+}

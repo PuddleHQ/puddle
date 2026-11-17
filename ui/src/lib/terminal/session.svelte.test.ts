@@ -295,6 +295,34 @@ describe("the end", () => {
     expect(session.state).toBe("connecting");
   });
 
+  it("does not carry bytes drawn for the old socket into the acknowledgements of the restarted one", async () => {
+    const { session, screen, sockets } = await live();
+    sockets[0]?.receive(bytes(1, 2, 3));
+    sockets[0]?.receive('{"type":"ended","reason":"exited","status":0}');
+    await session.restart();
+    const next = sockets[1] as FakeSocket;
+    next.open();
+    // The old write finishes after the restart: it is not the new socket's.
+    (screen.written[0] as { done: () => void }).done();
+    next.receive(bytes(9));
+    (screen.written[1] as { done: () => void }).done();
+    vi.advanceTimersByTime(25);
+    expect(next.controls()).toEqual([{ type: "ack", bytes: 1 }]);
+  });
+
+  it("starts the new socket's count from zero when bytes were drawn but not yet acknowledged", async () => {
+    const { session, screen, sockets } = await live();
+    sockets[0]?.receive(bytes(1, 2, 3));
+    (screen.written[0] as { done: () => void }).done();
+    await session.restart();
+    const next = sockets[1] as FakeSocket;
+    next.open();
+    next.receive(bytes(9));
+    (screen.written[1] as { done: () => void }).done();
+    vi.advanceTimersByTime(25);
+    expect(next.controls()).toEqual([{ type: "ack", bytes: 1 }]);
+  });
+
   it("closing a sub-tab closes the socket and the emulator", async () => {
     const { session, screen, socket } = await live();
     session.close();

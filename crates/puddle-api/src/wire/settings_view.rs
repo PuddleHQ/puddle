@@ -863,6 +863,9 @@ pub struct GlobalSettingsView {
     /// Fields in the stored document this Puddle doesn't know (written by a newer one); they
     /// are kept.
     pub unknown_fields: Vec<String>,
+    /// Names the values above that a save replaces. Send it back as `revision` in the save: if
+    /// another client changed them in between, the save is refused (409 `settings_changed`).
+    pub revision: String,
 }
 
 /// New global settings. Replaces every value listed here; unknown stored fields are kept.
@@ -884,6 +887,10 @@ pub struct GlobalSettingsRequest {
     /// The limits; omitted or `null` falls back to the computer's cores.
     #[serde(default)]
     pub limits: Limits,
+    /// The `revision` of the settings this save was made from. When it no longer matches, nothing
+    /// is written and the answer is 409 `settings_changed`. Omit it to replace whatever is stored.
+    #[serde(default)]
+    pub revision: Option<String>,
 }
 
 /// Upper bounds on what a workspace may be given (global only).
@@ -931,6 +938,7 @@ impl GlobalSettingsRequest {
             ui,
             tools: GlobalTools { mise },
             limits: Limits { max_cpus },
+            revision: _,
         } = self;
         global.tools.mise = mise;
         global.limits.max_cpus = max_cpus
@@ -945,11 +953,48 @@ impl GlobalSettingsRequest {
     }
 }
 
+/// Names the sections of the global settings a save replaces, so a save made from a stale read is
+/// caught. Consents have their own route and are not part of it.
+fn revision_of(global: &settings::GlobalSettings) -> String {
+    use base64::Engine as _;
+    use sha2::{Digest as _, Sha256};
+    let covered = (
+        SettingsLayer::from(&global.workspace_defaults),
+        VsCodeServer {
+            server: global.vscode_server.server.map(Into::into),
+            telemetry: global.vscode_server.telemetry,
+            auto_update: global.vscode_server.auto_update,
+        },
+        UiPrefs::from(&global.ui),
+        GlobalTools {
+            mise: global.tools.mise,
+        },
+        Limits {
+            max_cpus: global.limits.max_cpus.map(CpuCount::get),
+        },
+    );
+    // Plain fields in a fixed order: the same settings always give the same bytes.
+    let bytes = serde_json::to_vec(&covered).unwrap_or_default();
+    let digest = Sha256::digest(bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+
+impl GlobalSettingsRequest {
+    /// Whether the save was made from the settings now stored; a save without a revision always
+    /// was.
+    pub(crate) fn matches(&self, global: &settings::GlobalSettings) -> bool {
+        self.revision
+            .as_deref()
+            .is_none_or(|revision| revision == revision_of(global))
+    }
+}
+
 impl GlobalSettingsView {
     pub(crate) fn new(loaded: &settings::Loaded<settings::GlobalSettings>) -> Self {
         let global = &loaded.settings;
         let host_cores = settings::host_cpu_count();
         Self {
+            revision: revision_of(global),
             workspace_defaults: (&global.workspace_defaults).into(),
             vscode_server: VsCodeServer {
                 server: global.vscode_server.server.map(Into::into),

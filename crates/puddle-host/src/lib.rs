@@ -64,6 +64,8 @@ mod ssh_config;
 mod ssh_login;
 mod ssh_target;
 mod terminals;
+#[cfg(test)]
+mod test_logs;
 mod vault;
 pub use vault::{
     MigrateOutcome, ResetOutcome, SecretSetup, StoreState, VaultAdminError, VaultStatus,

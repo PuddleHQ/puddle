@@ -141,7 +141,7 @@ impl AccountSecrets {
     }
 
     /// Whether `user` has a password and `verify` accepts its stored hash. The hash goes to
-    /// `verify` and nowhere else.
+    /// `verify` and nowhere else. A user being deleted has none.
     ///
     /// # Errors
     /// A database error.
@@ -166,7 +166,8 @@ impl AccountSecrets {
     ) -> Result<Option<CheckedPassword>, StoreError> {
         let hash: Option<String> = lock(&self.conn)
             .query_row(
-                "SELECT hash FROM account_passwords WHERE user_id = ?1",
+                "SELECT p.hash FROM account_passwords p JOIN users u ON u.id = p.user_id
+                 WHERE p.user_id = ?1 AND u.deleting_at IS NULL",
                 [user.get()],
                 |r| r.get(0),
             )
@@ -261,7 +262,7 @@ impl AccountSecrets {
     }
 
     /// The device a refresh token's `digest` belongs to, while that device is neither revoked
-    /// nor expired.
+    /// nor expired and its user is not being deleted.
     ///
     /// # Errors
     /// A database error, or a stored row that does not parse.
@@ -357,26 +358,28 @@ impl AccountSecrets {
         Ok(found.map(UserId::from_stored))
     }
 
-    /// Uses up the invite `digest`: the user it was for, if it exists and has not expired. An
-    /// invite works once; an expired one is removed and answers `None`.
+    /// Uses up the invite `digest`: the user it was for, if it exists, has not expired and its
+    /// user is not being deleted. An invite works once; one that does not work is removed and
+    /// answers `None`.
     ///
     /// # Errors
     /// A database error.
     pub fn redeem_invite(&self, digest: &[u8]) -> Result<Option<UserId>, StoreError> {
         let now = sql_ts(self.clock.now_ms());
         let conn = lock(&self.conn);
-        let found: Option<(i64, i64)> = conn
+        let found: Option<(i64, i64, bool)> = conn
             .query_row(
                 "DELETE FROM account_invites WHERE digest = ?1
-                   AND user_id IN (SELECT id FROM users WHERE deleting_at IS NULL)
-                 RETURNING user_id, expires_at",
+                 RETURNING user_id, expires_at,
+                     (SELECT count(*) > 0 FROM users u
+                      WHERE u.id = account_invites.user_id AND u.deleting_at IS NULL)",
                 [digest],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
         Ok(found
-            .filter(|&(_, expires_at)| expires_at > now)
-            .map(|(user, _)| UserId::from_stored(user)))
+            .filter(|&(_, expires_at, active)| active && expires_at > now)
+            .map(|(user, _, _)| UserId::from_stored(user)))
     }
 }
 

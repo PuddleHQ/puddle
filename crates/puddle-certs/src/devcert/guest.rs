@@ -84,7 +84,8 @@ impl GuestDevCert {
 
     /// The boot files, in a fixed order (the same material gives byte-identical files):
     /// the system-store copy, the certificate and the key under [`DEV_CERT_DIR`] (the key
-    /// mode `0600`, so its bytes never print), then the step script (`0755`).
+    /// mode `0600`, so its bytes never print; the step gives it to the session user, whose tools
+    /// read it), then the step script (`0755`).
     pub(crate) fn guest_files(&self) -> Vec<GuestFile> {
         let file = |path: GuestPath, contents: Vec<u8>, mode: FileMode| {
             GuestFile::new(path, contents).with_mode(mode)

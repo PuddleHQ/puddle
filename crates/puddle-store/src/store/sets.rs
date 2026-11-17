@@ -5,12 +5,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
+use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
+use super::rows::open_rows;
 use super::{
-    AllUsers, PENDING_COLUMNS, Store, append, append_for, corrupt, decide_row_by, load_rules, lock,
-    pending_from_raw, raw_pending, sql_ts, stored_ts, users,
+    AllUsers, Store, append, append_for, corrupt, decide_row_by, load_rules, lock, sql_ts,
+    stored_ts, users,
 };
 use crate::audit::{
     AuditRecord, RuleDeleteReason, RuleSetWire, RuleSwitchKind, RuleWire, actor_str,
@@ -475,21 +476,12 @@ fn close_rows_now_decided(
     now: u64,
     fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingId>, StoreError> {
-    let mut stmt = tx.prepare(&format!(
-        "SELECT {PENDING_COLUMNS} FROM pending
-         WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
-    ))?;
-    let open = stmt
-        .query_map([workspace.map(WorkspaceId::as_str)], raw_pending)?
-        .map(|raw| pending_from_raw(&raw?))
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(stmt);
     let mut closed = Vec::new();
-    for row in &open {
+    for (row, suffix_allows) in &open_rows(tx, workspace)? {
         if user.is_some_and(|user| index.owner_of(&row.workspace) != Some(user)) {
             continue;
         }
-        let Some(hit) = index.decide(&row.workspace, &row.host, now, SuffixAllows::Count) else {
+        let Some(hit) = index.decide(&row.workspace, &row.host, now, *suffix_allows) else {
             continue;
         };
         decide_row_by(tx, row, hit, actor, now, fx)?;

@@ -58,6 +58,8 @@
   let pull = $state(true);
   let push = $state(true);
   let touched = $state(false);
+  /** The address field was left: its refusal shows before Clone is pressed. */
+  let urlLeft = $state(false);
   let refusal = $state<string | null>(null);
   let busy = $state(false);
 
@@ -71,6 +73,7 @@
       pull = true;
       push = true;
       touched = false;
+      urlLeft = false;
       refusal = null;
       void identities.ensureLoaded();
     }
@@ -115,7 +118,9 @@
       return `${target} already exists in the workspace. Puddle never clones into a folder that holds anything: use another directory, or use "Manage this" on the checkout that is there.`;
     return null;
   });
-  const shownUrl = $derived(touched ? urlProblem : null);
+  const shownUrl = $derived(
+    touched || (urlLeft && url.trim() !== "") ? urlProblem : null,
+  );
   const shownDirectory = $derived(touched ? directoryError : null);
 
   function picked(repo: { url: string }, by: number | null) {
@@ -173,6 +178,7 @@
           identity = null;
           refusal = null;
         }}
+        onblur={() => (urlLeft = true)}
         aria-invalid={shownUrl ? "true" : undefined}
         aria-describedby={shownUrl ? `${id}-url-error` : `${id}-url-hint`}
       />

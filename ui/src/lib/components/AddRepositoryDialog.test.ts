@@ -109,6 +109,18 @@ describe("the Add repository dialog", () => {
     });
   });
 
+  it("refuses an address with credentials when the field is left, before Clone", async () => {
+    const onSubmit = open();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "user:pw@github.com/acme/web");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await fireEvent.blur(field("Git repository (HTTPS)"));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("sends a typed directory, a chosen identity and cleared boxes", async () => {
     const onSubmit = open();
     await screen.findByRole("dialog");

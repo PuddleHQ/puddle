@@ -535,6 +535,41 @@ describe("CreateWorkspaceDialog", () => {
       expect(screen.queryByText(/^Will clone/)).toBeNull();
     });
 
+    it("refuses an address with credentials when the field is left, before Create", async () => {
+      const { create } = mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "https://user:pw@github.com/x/y");
+      // Not while the address is still being typed.
+      expect(screen.queryByRole("alert")).toBeNull();
+      await fireEvent.blur(repo());
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+      );
+      expect(repo()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.queryByText(/^Will clone/)).toBeNull();
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a bad address once the typing stops, without leaving the field", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "user:pw@github.com/x/y");
+      expect(screen.queryByRole("alert")).toBeNull();
+      await vi.waitFor(
+        () =>
+          expect(screen.getByRole("alert")).toHaveTextContent(
+            "Remove the user name and password from the URL",
+          ),
+        { timeout: 3000 },
+      );
+      // Typing again takes the message away until the typing stops again.
+      await type("Git repository (HTTPS)", "sharkdp/fd");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(
+        screen.getByText("Will clone https://github.com/sharkdp/fd"),
+      ).toBeInTheDocument();
+    });
+
     it("does not nag about an empty field until Create", async () => {
       mount();
       await screen.findByRole("dialog");
@@ -545,6 +580,28 @@ describe("CreateWorkspaceDialog", () => {
         "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
       );
     });
+
+    it.each([
+      [
+        "fd",
+        "Give owner/repo for a GitHub repository, or the repository's full address.",
+      ],
+      ["http://github.com/x/y", "Use an https:// URL."],
+      ["../fd", "The address can't have . or .. as a name in its path."],
+      [
+        "github.com./acme/web",
+        "Leave out the dot at the end of the host name.",
+      ],
+    ])(
+      "puts the refusal of %j at the field when it is left",
+      async (typed, message) => {
+        mount();
+        await screen.findByRole("dialog");
+        await type("Git repository (HTTPS)", typed);
+        await fireEvent.blur(repo());
+        expect(screen.getByRole("alert")).toHaveTextContent(message);
+      },
+    );
   });
 
   it("checks the memory field too", async () => {

@@ -135,10 +135,33 @@
     return "url" in resolved ? resolved.url : row.url.trim();
   }
 
+  // An address is checked once the typing stops or the field is left, not at every key.
+  const SETTLE_MS = 700;
+  /** What each row's address field held when it last settled, by row key. */
+  let settled = $state<Record<number, string>>({});
+  // One timer: only the field being typed in is waiting, and leaving it settles it at once.
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  function settle(row: RowDraft) {
+    clearTimeout(settleTimer);
+    settled = { ...settled, [row.key]: row.url };
+  }
+  function settleLater(row: RowDraft) {
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => settle(row), SETTLE_MS);
+  }
+  /** The refusal of a settled, non-empty address; an empty one waits for Create. */
+  function settledProblem(row: RowDraft): string | undefined {
+    if (settled[row.key] !== row.url || row.url.trim() === "") return undefined;
+    const resolved = resolveRepoAddress(row.url);
+    return "message" in resolved ? resolved.message : undefined;
+  }
+
   // What two rows share is flagged as you type, before any submit.
   const live = $derived(clashes(rows));
   const problem = (row: RowDraft, field: keyof RowProblems) =>
-    rowErrors[row.key]?.[field] ?? live.get(row.key)?.[field];
+    rowErrors[row.key]?.[field] ??
+    (field === "url" ? settledProblem(row) : undefined) ??
+    live.get(row.key)?.[field];
 
   /** "Will clone ..." when the field means another address than the one typed. */
   function willClone(row: RowDraft): string | null {
@@ -215,6 +238,8 @@
     moreOpen = false;
     errors = {};
     rowErrors = {};
+    clearTimeout(settleTimer);
+    settled = {};
     working = false;
     taken = null;
   }
@@ -519,7 +544,9 @@
               row.listedBy = null;
               row.identity = null;
               rowErrors = { ...rowErrors, [row.key]: {} };
+              settleLater(row);
             }}
+            onblur={() => settle(row)}
             aria-invalid={urlError ? "true" : undefined}
             aria-describedby={urlError
               ? rowId(row, "url-error")

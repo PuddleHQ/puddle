@@ -713,7 +713,8 @@ pub(crate) async fn delete_workspace(
 }
 
 /// Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-/// (in a window Puddle opens).
+/// (in a window Puddle opens). Only for a client on the host computer itself: whatever Puddle
+/// opens appears on the host's screen, and its ssh link works only there.
 #[utoipa::path(
     post,
     path = "/api/workspaces/{id}/attach",
@@ -728,10 +729,26 @@ pub(crate) async fn delete_workspace(
 )]
 pub(crate) async fn attach_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AttachRequest>,
 ) -> Result<Json<AttachResponse>, ApiError> {
     let id = workspace_id(&id)?;
+    if let authz::Via::Device(_) = principal.via {
+        // A signed-in browser is on another computer. An editor opened here would be on the
+        // host's screen, connected to the workspace, for whoever sits there; a desktop one would
+        // also let the workspace run commands on the host. So nothing opens and no link is sent.
+        state.workspaces.get(&id).await?;
+        return Ok(Json(AttachResponse {
+            opened: false,
+            message: Some(
+                "the editor opens only on the computer Puddle runs on, not for a browser on \
+                 another computer; open it from Puddle's desktop app or command line there"
+                    .to_owned(),
+            ),
+            open_uri: None,
+        }));
+    }
     let mode = crate::AttachMode::from(body.mode);
     if mode == crate::AttachMode::Desktop {
         // Desktop editors connect over SSH, which Puddle only opens when the user allowed it.

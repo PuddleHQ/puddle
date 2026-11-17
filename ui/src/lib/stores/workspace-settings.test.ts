@@ -102,6 +102,34 @@ describe("saving", () => {
     expect(settings.effective?.memory.source).toBe("global");
   });
 
+  it("keeps both of two quick changes, the second sent on top of the first's answer", async () => {
+    await settings.load("demo");
+    const real = api.PUT;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let first = true;
+    api.PUT = async (...args: Parameters<typeof real>) => {
+      const answer = await real(...args);
+      if (first) {
+        first = false;
+        await gate;
+      }
+      return answer;
+    };
+    const one = settings.change({ memory: 4096 });
+    const two = settings.change({ zoom_hotkeys: false });
+    release();
+    await Promise.all([one, two]);
+    expect(api.overrides["demo"]).toMatchObject({
+      memory: 4096,
+      zoom_hotkeys: false,
+    });
+    expect(settings.overrides).toMatchObject({
+      memory: 4096,
+      zoom_hotkeys: false,
+    });
+  });
+
   it("keeps what it had when the service refuses, and says why", async () => {
     await settings.load("demo");
     api.refuse.set("PUT /api/settings/workspaces/{workspace}", {

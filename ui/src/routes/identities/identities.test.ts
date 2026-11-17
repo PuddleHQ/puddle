@@ -314,6 +314,27 @@ describe("the identities list", () => {
     );
   });
 
+  it("leaves a pasted token another identity still reads", async () => {
+    const shared = credential({
+      source: { kind: "stored", id: "tok-1", host: "github.com", org: null },
+    });
+    api.tokens = ["tok-1"];
+    api.identities[0] = { ...api.identities[0]!, credentials: [shared] };
+    api.identities[1] = { ...api.identities[1]!, credentials: [shared] };
+    render(Page);
+    await screen.findByText("Work");
+    await fireEvent.click(
+      within(row("Work")).getByRole("button", { name: "Delete Work" }),
+    );
+    await fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete Work",
+      }),
+    );
+    await waitFor(() => expect(lastToast()).toMatch(/^Deleted Work/));
+    expect(api.tokens).toEqual(["tok-1"]);
+  });
+
   it("waits for the confirm dialog to finish closing before it moves focus", async () => {
     render(Page);
     await screen.findByText("Work");

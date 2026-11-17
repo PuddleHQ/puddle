@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Tools card's calls: what the workspace's mise files ask for, edits of the root `mise.toml`,
 //! the registry and a tool's versions, all through `puddle-agent mise-tools` in the guest as the
 //! session user (the guest side is `puddle_agent::mise_tools`).

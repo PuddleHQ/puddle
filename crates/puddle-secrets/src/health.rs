@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Whether the credential store takes a write, and what to tell the user when it does not.
 //!
 //! [`keyring_available`] only asks whether the store's service answers. A locked Secret Service

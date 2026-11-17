@@ -54,13 +54,16 @@ APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" "$her
 [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ] || fail "--canonical: Canonical is not first"
 
 # apt-retry.sh: a command that finishes, one that stalls then works, one that always fails
-export APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_RETRY_NO_REPAIR=1 APT_FIRST_TRY_S=2 APT_RETRY_S=5
+# Time limits depend on what a case proves. A case that must NOT time out gets bounds far above any spawn time
+# (a host under load can take many seconds to start bash); a case that needs a timeout uses a stub that runs
+# far longer than its bound, so the host cannot change the outcome. The tries that must succeed get a long bound.
+export APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_RETRY_NO_REPAIR=1 APT_FIRST_TRY_S=60 APT_RETRY_S=60
 # The stall cases hold no lock; the real dpkg locks would make apt-retry scan /proc for holders (slow on a busy
 # host, which broke the 15 s bound below) and stop a real apt-get that happens to run there.
 export APT_LOCKS="$tmp/no-such-lock"
-# The passing command gets a generous bound: with the 2 s of the stall cases below, a busy host that is
-# slow to start even `true` would count as a stall and the run would be retried.
-APT_FIRST_TRY_S=60 "$here/apt-retry.sh" true >"$tmp/out" 2>&1 || fail "retry: a passing command failed"
+# The passing command gets a generous bound: a busy host that is slow to start even `true` must not count as a
+# stall and get the run retried.
+"$here/apt-retry.sh" true >"$tmp/out" 2>&1 || fail "retry: a passing command failed"
 ! grep -q retrying "$tmp/out" || fail "retry: a passing command was retried"
 printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
 # The stubs tell the first try from the retry by the mirror list (Canonical first after the stop), not by a
@@ -71,12 +74,10 @@ if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ]; then exit 0; f
 sleep 120
 S
 chmod +x "$tmp/stall.sh"
-start=$SECONDS
-"$here/apt-retry.sh" "$tmp/stall.sh" >"$tmp/out" 2>&1 || fail "retry: a stall was not recovered"
+APT_FIRST_TRY_S=2 "$here/apt-retry.sh" "$tmp/stall.sh" >"$tmp/out" 2>&1 || fail "retry: a stall was not recovered"
 grep -q "status 124" "$tmp/out" || fail "retry: the warning does not name the timeout (status 124)"
-# A cut-off try ends after the 2 s bound; an uncut one would run the stub's 120 s. The bound sits far from both so a
-# host at load 90, where each spawn takes seconds, does not fail the check.
-[ $((SECONDS - start)) -lt 60 ] || fail "retry: the stalled try was not cut off"
+# Status 124 above proves the try was cut off: an uncut one would end after the stub's 120 s with status 0 and no
+# warning. No wall-clock bound here, so the host speed cannot change the result.
 [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ] || fail "retry: Canonical is not first after a stall"
 
 # A command that fails both times: its own status comes back, with an error that names it
@@ -88,7 +89,7 @@ chmod +x "$tmp/fail7.sh"
 rc=0
 "$here/apt-retry.sh" "$tmp/fail7.sh" >"$tmp/out" 2>&1 || rc=$?
 [ "$rc" = 7 ] || fail "retry: the second status was not passed on (got $rc)"
-grep -q "^::error::apt-retry: '$tmp/fail7.sh' failed again (status 7) on archive.ubuntu.com after 5s$" "$tmp/out" ||
+grep -q "^::error::apt-retry: '$tmp/fail7.sh' failed again (status 7) on archive.ubuntu.com after 60s$" "$tmp/out" ||
     fail "retry: no error after the second failure"
 # The second try that times out names status 124
 cat >"$tmp/hang.sh" <<'S'
@@ -97,7 +98,7 @@ sleep 30
 S
 chmod +x "$tmp/hang.sh"
 rc=0
-"$here/apt-retry.sh" "$tmp/hang.sh" >"$tmp/out" 2>&1 || rc=$?
+APT_FIRST_TRY_S=2 APT_RETRY_S=5 "$here/apt-retry.sh" "$tmp/hang.sh" >"$tmp/out" 2>&1 || rc=$?
 [ "$rc" = 124 ] || fail "retry: a second timeout did not give status 124 (got $rc)"
 grep -q "failed again (status 124)" "$tmp/out" || fail "retry: no error after the second timeout"
 
@@ -131,7 +132,7 @@ setsid flock "$tmp/lock-frontend" sleep 60 &
 holder=$!
 for _ in $(seq 200); do flock -n "$tmp/lock-frontend" true || break; sleep 0.05; done
 flock -n "$tmp/lock-frontend" true && fail "retry: the lock holder did not start"
-APT_LOCKS="$tmp/lock-frontend" "$here/apt-retry.sh" "$tmp/lockhold.sh" >"$tmp/out" 2>&1 ||
+APT_FIRST_TRY_S=2 APT_LOCKS="$tmp/lock-frontend" "$here/apt-retry.sh" "$tmp/lockhold.sh" >"$tmp/out" 2>&1 ||
     fail "retry: the retry failed on a lock the stopped try left behind: $(tail -3 "$tmp/out" | tr '\n' '|')"
 grep -q "still holds an apt lock" "$tmp/out" || fail "retry: the lock holder was not named"
 flock -n "$tmp/lock-frontend" true || fail "retry: the lock is still held"

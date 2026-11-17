@@ -132,6 +132,8 @@ struct SshRig {
     git: GitRig,
     upstream: Arc<Recording>,
     key: GitSshHostKey,
+    /// How the server ended the last connection a client of this rig made (see `Trusting`).
+    ended: Arc<Mutex<Option<bool>>>,
 }
 
 impl SshRig {
@@ -217,6 +219,7 @@ impl SshRig {
             },
             upstream,
             key,
+            ended: Arc::default(),
         }
     }
 
@@ -285,6 +288,7 @@ impl SshRig {
         let seen = Arc::new(Mutex::new(None));
         let handler = Trusting {
             seen: Arc::clone(&seen),
+            ended: Arc::clone(&self.ended),
         };
         let handle = client::connect_stream(Arc::new(config), reader, handler)
             .await
@@ -305,6 +309,9 @@ impl SshRig {
 /// A client that takes the server's key (and checks it is the one Puddle serves).
 struct Trusting {
     seen: Arc<Mutex<Option<String>>>,
+    /// How the server ended the connection: `Some(true)` when its SSH disconnect message arrived,
+    /// `Some(false)` when the stream was cut without one.
+    ended: Arc<Mutex<Option<bool>>>,
 }
 
 #[expect(
@@ -322,6 +329,17 @@ impl client::Handler for Trusting {
             *self.seen.lock().unwrap() = Some(key.to_openssh().unwrap());
         }
         Ok(true)
+    }
+
+    async fn disconnected(
+        &mut self,
+        reason: client::DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        *self.ended.lock().unwrap() = Some(matches!(
+            reason,
+            client::DisconnectReason::ReceivedDisconnect(_)
+        ));
+        Ok(())
     }
 }
 
@@ -917,6 +935,27 @@ async fn a_connection_with_no_open_channel_is_closed_after_the_idle_limit() {
 }
 
 #[tokio::test]
+async fn an_idle_close_cuts_the_stream_without_an_ssh_disconnect_message() {
+    let limits = GitSshLimits {
+        idle: Duration::from_millis(300),
+        ..GitSshLimits::default()
+    };
+    let t = SshRig::with(Recording::default(), limits).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    puddle_test_kit::eventually(
+        "the client learns how the connection ended",
+        Duration::from_secs(5),
+        || t.ended.lock().unwrap().is_some(),
+    )
+    .await;
+    // The cut is the close; a disconnect message sent as well would arrive after it and never reach
+    // the client.
+    assert_eq!(*t.ended.lock().unwrap(), Some(false), "the stream was cut");
+}
+
+#[tokio::test]
 async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capped() {
     let limits = GitSshLimits {
         idle: Duration::from_millis(200),
@@ -1054,6 +1093,7 @@ async fn a_libssh2_client_is_asked_for_a_key_because_it_fails_a_login_with_none(
     };
     let handler = Trusting {
         seen: Arc::new(Mutex::new(None)),
+        ended: Arc::new(Mutex::new(None)),
     };
     let skipping = SkipWrites {
         inner: reader,
@@ -1618,6 +1658,7 @@ async fn a_workspace_with_keys_of_its_own_start_is_served_with_them_and_not_the_
         },
         upstream,
         key: keys.keys()[0].clone(),
+        ended: Arc::default(),
     };
     let mut guest = t.git.rig.guest();
     let (mut handle, shown) = t

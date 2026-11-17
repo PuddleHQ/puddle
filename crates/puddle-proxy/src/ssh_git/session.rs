@@ -303,9 +303,8 @@ async fn watch_connection<S>(
             return;
         }
     };
-    // A russh session runs in a task of its own that outlives its handle: end it however this
-    // function does.
-    let _disconnect = Disconnect(started.handle());
+    // The session runs in a task of its own that outlives its handle: `_cut` ends it, by cutting
+    // the stream, however this function ends.
     let mut running = pin!(started);
     loop {
         let phase = *watching.borrow_and_update();
@@ -329,26 +328,6 @@ async fn watch_connection<S>(
             }
         }
     }
-}
-
-/// Disconnects a session when dropped, so a limit or a cancelled connection ends it.
-struct Disconnect(russh::server::Handle);
-
-impl Drop for Disconnect {
-    fn drop(&mut self) {
-        tokio::spawn(disconnect(self.0.clone()));
-    }
-}
-
-async fn disconnect(handle: russh::server::Handle) {
-    // the guest may have disconnected first; the session is over either way
-    let _ = handle
-        .disconnect(
-            russh::Disconnect::ByApplication,
-            "closed by Puddle".to_owned(),
-            String::new(),
-        )
-        .await;
 }
 
 /// A session channel the client opened and has not used yet.

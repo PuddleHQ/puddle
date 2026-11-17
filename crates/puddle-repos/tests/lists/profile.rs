@@ -54,6 +54,52 @@ async fn a_github_account_gives_its_name_a_private_address_and_its_organisations
 }
 
 #[tokio::test]
+async fn a_server_that_answers_an_account_github_would_not_allow_gets_no_author_from_it() {
+    let source = gh("ghe.example.org", "me");
+    for (user, name, email) in [
+        // Control characters in the name are dropped; what is left is the name.
+        (
+            r#"{"login":"me","id":7,"name":"Me\nX-Injected: yes\u001b[2J"}"#,
+            Some("MeX-Injected: yes[2J"),
+            Some("7+me@users.noreply.ghe.example.org"),
+        ),
+        // A name of control characters only falls back to the login.
+        (
+            r#"{"login":"me","id":7,"name":"\r\n\t"}"#,
+            Some("me"),
+            Some("7+me@users.noreply.ghe.example.org"),
+        ),
+        // A login GitHub would refuse gives no author at all.
+        (r#"{"login":"me\n@evil","id":7,"name":"Me"}"#, None, None),
+        (
+            r#"{"login":"me@evil.example>","id":7,"name":"Me"}"#,
+            None,
+            None,
+        ),
+    ] {
+        let rig = Rig::new();
+        rig.tokens.set(&source, CANARY);
+        rig.api
+            .reply("ghe.example.org", "/api/v3/user", ApiReply::new(200, user));
+        rig.api.reply(
+            "ghe.example.org",
+            "/api/v3/user/orgs?per_page=100",
+            ApiReply::new(200, "[]"),
+        );
+
+        let read = rig.repos.profile(&source).await;
+
+        assert_eq!(read.profile.name.as_deref(), name, "{user}");
+        assert_eq!(read.profile.email.as_deref(), email, "{user}");
+        if name.is_none() {
+            let problem = read.problem.expect("a refused account says why");
+            assert_eq!(problem.kind, ProblemKind::BadAnswer, "{user}");
+            assert_eq!(read.profile.account, None);
+        }
+    }
+}
+
+#[tokio::test]
 async fn an_account_with_no_name_uses_its_login_and_an_enterprise_host_has_its_own_address() {
     let rig = Rig::new();
     let source = gh("ghe.example.org:8443", "me");

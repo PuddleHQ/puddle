@@ -562,6 +562,27 @@ async fn an_encoded_body_is_read_decoded_and_passes_as_it_came() {
 }
 
 #[tokio::test]
+async fn a_coding_on_a_second_content_encoding_line_is_decoded_too() {
+    let made = token(TokenKind::AzureDevops, "two-lines");
+    // Padding makes the body compress, so the token is not stored as it is in the gzip bytes.
+    let plain = format!(r#"{{"token":"{made}","pad":"{}"}}"#, "x".repeat(4096));
+    let packed = gzip(plain.as_bytes());
+    assert!(!packed.windows(made.len()).any(|run| run == made.as_bytes()));
+    for first in ["identity", ""] {
+        let rig = rig(true);
+        let response = answer(
+            Some("application/json"),
+            Some(first),
+            &[("content-encoding", "gzip")],
+            packed.clone(),
+        );
+        let (_, got) = passed(scan_answer(&rig.stand_ins, response, false, &rig.report)).await;
+        assert_eq!(got, packed);
+        assert_eq!(rig.report.kinds(), ["azure_devops_token"], "{first:?}");
+    }
+}
+
+#[tokio::test]
 async fn a_body_that_cannot_be_decoded_is_passed_and_what_decoded_is_still_read() {
     let rig = rig(true);
     let response = answer(None, Some("gzip"), &[], b"not gzip at all".to_vec());

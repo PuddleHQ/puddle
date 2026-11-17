@@ -15,6 +15,7 @@ aes-gcm = { workspace = true }
 getrandom = { workspace = true }
 keyring-core = { workspace = true }
 puddle-fs = { workspace = true }
+puddle-process = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

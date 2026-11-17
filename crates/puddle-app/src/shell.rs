@@ -361,6 +361,7 @@ fn open_in_order<R: Runtime>(
             Ok(())
         }
         Err(err) => {
+            // The start already failed and that error is returned; the shutdown report is not needed.
             let _ = tauri::async_runtime::block_on(backend.shutdown());
             Err(err)
         }

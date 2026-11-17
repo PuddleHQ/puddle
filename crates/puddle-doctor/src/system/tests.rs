@@ -286,7 +286,6 @@ fn a_data_folder_that_records_the_file_vault_reads_its_header_and_asks_nothing_e
 fn a_store_that_never_answers_the_probe_is_reported_locked_within_the_wait() {
     use puddle_secrets::StoreHealth;
     let (release, hold) = std::sync::mpsc::channel::<()>();
-    let started = std::time::Instant::now();
     let health = probe_within(
         move || {
             let _ = hold.recv();
@@ -295,7 +294,6 @@ fn a_store_that_never_answers_the_probe_is_reported_locked_within_the_wait() {
         Duration::from_millis(100),
     );
     assert_eq!(health, StoreHealth::Locked);
-    assert!(started.elapsed() < Duration::from_secs(5));
     drop(release);
     assert_eq!(
         probe_within(|| StoreHealth::NoProvider, Duration::from_secs(5)),

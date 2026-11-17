@@ -957,7 +957,6 @@ impl GlobalSettingsRequest {
 /// caught. Consents have their own route and are not part of it.
 fn revision_of(global: &settings::GlobalSettings) -> String {
     use sha2::{Digest as _, Sha256};
-    use std::fmt::Write as _;
     let covered = (
         SettingsLayer::from(&global.workspace_defaults),
         VsCodeServer {
@@ -978,10 +977,8 @@ fn revision_of(global: &settings::GlobalSettings) -> String {
     Sha256::digest(bytes)
         .iter()
         .take(12)
-        .fold(String::new(), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl GlobalSettingsRequest {

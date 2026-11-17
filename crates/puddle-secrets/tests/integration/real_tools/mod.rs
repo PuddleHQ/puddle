@@ -364,7 +364,18 @@ async fn the_real_gh_and_git_credential_manager_are_found_read_and_signed_in_wit
         host: host.clone(),
         account: AccountName::new("newuser").unwrap(),
     };
-    let start = sign_ins.begin(&new).await.unwrap();
+    let start = match sign_ins.begin(&new).await {
+        Ok(start) => start,
+        Err(err) => {
+            // Show what gh itself prints, so a change in its wording is read off the log.
+            standin.approve("diag");
+            let said = tool("gh", &["auth", "login", "--hostname", HOST, "--web"], "").await;
+            panic!(
+                "sign-in did not start: {err:?}; gh prints stdout {:?} stderr {:?}",
+                said.stdout, said.stderr
+            );
+        }
+    };
     assert_eq!(start.code.as_deref(), Some(USER_CODE));
     assert_eq!(start.url, Some(format!("https://{HOST}/login/device")));
     standin.approve("newuser");

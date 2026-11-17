@@ -20,10 +20,11 @@ use puddle_front::{
     Editor, FileHalves, Flavour, Front, Guests, Io, ServerHalves, Target, Unreachable,
 };
 use puddle_netpolicy::{EndpointKind, PuddleEndpoints};
-use puddle_test_kit::eventually;
+use puddle_test_kit::{capture_logs, eventually};
 use puddle_types::WorkspaceId;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_test::io::Builder;
 
 /// What the fake editor server was asked.
 #[derive(Default)]
@@ -979,4 +980,136 @@ async fn the_front_and_its_targets_print_without_leaking_what_they_hold() {
     );
     let a = WorkspaceId::new("a").unwrap();
     assert_eq!(rig.front.windows().connected(&a), 0);
+}
+
+/// An editor whose connection answers one request and then resets: the stream is scripted with
+/// the request the front must send (`request`), the answer, and the reset.
+struct Cut {
+    request: String,
+}
+
+impl Editor for Cut {
+    fn connect(&self) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        Box::pin(async {
+            let gone = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+            Ok(Box::new(
+                Builder::new()
+                    .write(self.request.as_bytes())
+                    .read(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                    .read_error(gone)
+                    .build(),
+            ) as Io)
+        })
+    }
+
+    fn connect_port(
+        &self,
+        _port: u16,
+    ) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        self.connect()
+    }
+
+    fn password(&self) -> puddle_front::editor::BoxFuture<'_, Result<String, Unreachable>> {
+        Box::pin(async { Ok(String::new()) })
+    }
+}
+
+/// An editor whose stream fails at the first write.
+struct Refuses;
+
+impl Editor for Refuses {
+    fn connect(&self) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        Box::pin(async {
+            let gone = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+            Ok(Box::new(Builder::new().write_error(gone).build()) as Io)
+        })
+    }
+
+    fn connect_port(
+        &self,
+        _port: u16,
+    ) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        self.connect()
+    }
+
+    fn password(&self) -> puddle_front::editor::BoxFuture<'_, Result<String, Unreachable>> {
+        Box::pin(async { Ok(String::new()) })
+    }
+}
+
+fn start_editor(rig: &Rig, name: &str, editor: impl Editor + 'static) {
+    rig.running.0.lock().unwrap().insert(
+        name.to_owned(),
+        Target {
+            editor: Arc::new(editor),
+            flavour: Flavour::CodeServer,
+        },
+    );
+}
+
+#[tokio::test]
+async fn an_editor_that_resets_after_its_answer_still_gets_the_answer_through_and_the_end_is_logged()
+ {
+    let (log, _guard) = capture_logs();
+    let rig = rig().await;
+    let h = host(&rig, "a");
+    start_editor(
+        &rig,
+        "a",
+        Cut {
+            request: format!("GET / HTTP/1.1\r\nhost: {h}\r\n\r\n"),
+        },
+    );
+    let answer = ask(&rig.front, &get(&rig, &h, "/", "")).await;
+    assert_eq!((answer.status, answer.text().as_str()), (200, "ok"));
+    eventually(
+        "the front logged the editor connection's end",
+        Duration::from_secs(5),
+        || {
+            log.text()
+                .contains("an editor connection ended with an error")
+                .then_some(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_editor_stream_that_fails_at_the_first_write_is_a_502_that_says_it_did_not_answer() {
+    let rig = rig().await;
+    start_editor(&rig, "a", Refuses);
+    let h = host(&rig, "a");
+    let answer = ask(&rig.front, &get(&rig, &h, "/", "")).await;
+    assert_eq!(answer.status, 502);
+    assert!(
+        answer.text().contains("it did not answer"),
+        "{}",
+        answer.text()
+    );
+}
+#[tokio::test]
+async fn a_client_that_sends_bytes_that_are_not_http_is_answered_and_its_connection_logged() {
+    let (log, _guard) = capture_logs();
+    let rig = rig().await;
+    let mut stream = TcpStream::connect(rig.front.local_addr()).await.unwrap();
+    stream.write_all(b"\x01\x02\x03\r\n\r\n").await.unwrap();
+    let mut raw = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut raw))
+        .await
+        .expect("the front did not close the connection")
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&raw).starts_with("HTTP/1.1 400"),
+        "{raw:?}"
+    );
+    eventually(
+        "the front logged the connection's end",
+        Duration::from_secs(5),
+        || {
+            log.text()
+                .contains("a front connection ended with an error")
+                .then_some(())
+        },
+    )
+    .await;
 }

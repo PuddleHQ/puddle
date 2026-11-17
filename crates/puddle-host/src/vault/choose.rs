@@ -269,6 +269,10 @@ fn key_failure(err: &KeyError) -> OpenFailure {
             "Puddle cannot make its file vault's key: systemd-creds is too slow right now",
             "`systemd-creds` did not answer in time, three times in a row, so Puddle made no key and no vault (it will not fall back to a weaker key file because the computer was busy). Nothing was changed: wait until the computer is idle and restart Puddle. If it keeps failing, check that `systemd-creds` runs by hand and that systemd's credential service is not stuck.".to_owned(),
         ),
+        KeyError::SealFailed => (
+            "Puddle cannot make its file vault's key: systemd-creds failed",
+            "`systemd-creds` ran and failed without saying why (its credential service may have closed the connection), so Puddle made no key and no vault (it will not fall back to a weaker key file because the tool failed). Nothing was changed: restart Puddle. If it keeps failing, check that `systemd-creds --user encrypt - -` runs by hand and that systemd's credential service is running.".to_owned(),
+        ),
         KeyError::Sealed(why) => (
             "Puddle cannot open its file vault: its sealed key does not open",
             format!(

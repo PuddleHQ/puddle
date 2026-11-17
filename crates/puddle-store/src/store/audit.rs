@@ -47,11 +47,11 @@ impl Store {
             if let Some((ts, count)) = summary {
                 let record =
                     ConnectionRecord::suppressed_summary(ts, event.workspace.as_ref(), count);
-                append(&tx, &AuditRecord::Connection(record))?;
+                append(&tx, &AuditRecord::connection(record))?;
             }
             if admitted {
                 let record = ConnectionRecord::from_event(now, event);
-                append(&tx, &AuditRecord::Connection(record))?;
+                append(&tx, &AuditRecord::connection(record))?;
             }
             self.commit(tx, head, Vec::new())
         })();
@@ -264,7 +264,7 @@ impl Store {
             let ts = stored_ts("audit", 0, newest)?;
             append(
                 &tx,
-                &AuditRecord::Connection(ConnectionRecord::merged_summary(ts, &name, deleted)),
+                &AuditRecord::connection(ConnectionRecord::merged_summary(ts, &name, deleted)),
             )?;
             merged += deleted;
         }
@@ -288,14 +288,14 @@ impl Store {
         for (workspace, state) in lock(&self.workspaces).iter_mut() {
             if let Some((ts, count)) = state.connections.roll(now) {
                 let record = ConnectionRecord::suppressed_summary(ts, Some(workspace), count);
-                records.push(AuditRecord::Connection(record));
+                records.push(AuditRecord::connection(record));
                 taken.push(Flushed(Some(workspace.clone()), ts, count));
             }
         }
         let rolled = lock(&self.puddle_connections).roll(now);
         if let Some((ts, count)) = rolled {
             let record = ConnectionRecord::suppressed_summary(ts, None, count);
-            records.push(AuditRecord::Connection(record));
+            records.push(AuditRecord::connection(record));
             taken.push(Flushed(None, ts, count));
         }
         if records.is_empty() {

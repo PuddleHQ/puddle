@@ -16,7 +16,7 @@
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
   import { TabNotifier } from "#lib/notify/tab-notifier.ts";
   import { tabNotifications } from "#lib/notify/tab-switch.svelte.ts";
-  import { clientId } from "#lib/presence/client-id.ts";
+  import { clientId, keepClientId } from "#lib/presence/client-id.ts";
   import { PresenceReporter } from "#lib/presence/reporter.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -68,7 +68,11 @@
   // public name signs in first.
   onMount(() => {
     void session.start();
-    return () => session.stop();
+    const stopMark = keepClientId(tabId);
+    return () => {
+      session.stop();
+      stopMark();
+    };
   });
 
   // The screens' own reads start once the page may make them, and stop when it is signed out.
@@ -92,7 +96,11 @@
         watcher.start(),
         build.start(),
         reporter.start(),
-        live.subscribe({ event: (e) => void tabNotifier?.handle(e) }),
+        live.subscribe({
+          event: (e) => void tabNotifier?.handle(e),
+          // The service may have restarted or the connection come back: look again for the screen.
+          resync: () => void admin.probe(),
+        }),
       ];
       return () => stops.forEach((stop) => stop());
     });

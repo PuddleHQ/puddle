@@ -51,7 +51,13 @@ while IFS=$'\t' read -r n sha id state; do
     gh api graphql -F id="$id" -F sha="$sha" -f query="$enqueue" >/dev/null || echo "merge-queue-sweep: PR #$n: enqueuePullRequest failed" >&2
     if queued "$id"; then echo "merge-queue-sweep: PR #$n is in the queue"; continue; fi
     echo "merge-queue-sweep: PR #$n: still outside the queue; re-arming auto-merge"
-    gh pr merge "$n" -R "$repo" --disable-auto && gh pr merge "$n" -R "$repo" --auto --squash --match-head-commit "$sha"
+    arm() { gh pr merge "$n" -R "$repo" --auto --squash --match-head-commit "$sha"; }
+    if gh pr merge "$n" -R "$repo" --disable-auto && ! arm && ! arm; then
+        # Disarmed and not re-armed: the next sweep selects armed PRs only, so say it here.
+        echo "merge-queue-sweep: PR #$n: auto-merge was switched off and could not be switched on again; arm it by hand" >&2
+        rc=1
+        continue
+    fi
     if queued "$id"; then echo "merge-queue-sweep: PR #$n is in the queue"; continue; fi
     echo "merge-queue-sweep: PR #$n could not be queued" >&2
     rc=1

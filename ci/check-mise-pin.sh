@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Checks ci/mise.sha256 against what mise publishes: for every pinned line, the release's
 # SHASUMS256.txt on mise's own site and on GitHub must list the same SHA-256 for the asset. Exits 1
 # naming each line that differs or is missing; a failed download is retried (ci/fetch-retry.sh).

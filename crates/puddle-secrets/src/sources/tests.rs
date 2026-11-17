@@ -151,6 +151,22 @@ fn guid_needs_five_hex_parts_of_the_right_lengths() {
     }
 }
 
+// The answer of `az account get-access-token --tenant <t>` as azure-cli 2.93.0 builds it
+// (`profile/custom.py` `get_access_token`, `_profile.py` `get_raw_token`; pinned and re-read nightly by
+// `ci/check-az-contract.sh`): exactly tokenType, accessToken, expires_on (epoch int), expiresOn (local time),
+// and tenant, which is the `--tenant` value as typed, never resolved; no `subscription` key when a tenant is given.
+#[test]
+fn az_answer_with_tenant_has_the_keys_azure_cli_2_93_builds() {
+    for asked in [GUID, "contoso.example", "CONTOSO.example"] {
+        let json = format!(
+            r#"{{"accessToken":"CANARY-az","expiresOn":"2026-11-16 21:00:00.000000","expires_on":1003600,"tenant":"{asked}","tokenType":"Bearer"}}"#
+        );
+        let got = parse_az_token(json.as_bytes(), &tenant(asked), 1_000_000).unwrap();
+        assert_eq!(got.credential.secret.expose(), "CANARY-az");
+        assert_eq!(got.valid_for, Some(Duration::from_secs(3600)));
+    }
+}
+
 #[test]
 fn az_answer_for_another_tenant_or_unreadable_is_refused() {
     let other = r#"{"accessToken":"a","expires_on":9999999999,"tenant":"11111111-2222-3333-4444-555555555555"}"#;

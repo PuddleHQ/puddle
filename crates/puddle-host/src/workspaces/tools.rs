@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The managed tools layer after a start: Puddle downloads the pinned mise onto the volume
 //! (`puddle-agent mise-fetch`), then installs the tools the workspace's mise files ask for
 //! ([`install`]), in the background. The start never waits for either and never fails because of

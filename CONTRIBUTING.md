@@ -92,4 +92,6 @@ first line (after a shebang, if any):
 Package manifests carry the same identifier (`license = "AGPL-3.0-or-later"` in `Cargo.toml`,
 `"license": "AGPL-3.0-or-later"` in `package.json`). Files that come from elsewhere keep their own
 identifier and copyright line (see "Work you did not write"). Generated files and lock files need
-no header.
+no header. `scripts/check-spdx.sh` checks that the identifier is the licence of the file's crate (from
+`cargo metadata`), or the workspace licence outside every crate; `vendor/` and `ci/msb-repros/` keep
+their own.

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import {
     authorDiffers,
@@ -51,18 +51,24 @@
   /** Tokens pasted since the dialog opened, by the line that names them. */
   let pasted = $state.raw<Source[]>([]);
 
+  // Start fresh each time the dialog opens, not each time the live row is replaced: a refresh of
+  // the identity list while the user types must not wipe the form.
+  let wasOpen = false;
   $effect(() => {
-    if (open) {
-      label = identity?.label ?? "";
-      name = identity?.author.name ?? "";
-      email = identity?.author.email ?? "";
-      credentials = identity?.credentials ?? [];
-      adding = false;
-      offered = null;
-      problem = null;
-      pasted = [];
-      saved = false;
+    if (open && !wasOpen) {
+      untrack(() => {
+        label = identity?.label ?? "";
+        name = identity?.author.name ?? "";
+        email = identity?.author.email ?? "";
+        credentials = identity?.credentials ?? [];
+        adding = false;
+        offered = null;
+        problem = null;
+        pasted = [];
+        saved = false;
+      });
     }
+    wasOpen = open;
   });
 
   // A dialog closed any other way than Save takes back the tokens it kept.
@@ -119,15 +125,22 @@
         author: { name: name.trim(), email: email.trim() },
         credentials,
       };
+      // Closing while the request runs must not take back the tokens it saves.
+      saved = true;
       const result =
         mode === "edit" && identity
           ? await store.update(identity.id, request)
           : await store.create(request);
       if (!result.ok) {
+        saved = false;
         problem = { field: "form", message: result.message };
+        if (!open) {
+          const leftover = pasted;
+          pasted = [];
+          for (const source of leftover) void store.forgetToken(source);
+        }
         return;
       }
-      saved = true;
       // Tokens of credentials this edit took away are no longer referenced.
       const kept = new Set(credentials.map((c) => describeSource(c.source)));
       for (const old of identity?.credentials ?? []) {

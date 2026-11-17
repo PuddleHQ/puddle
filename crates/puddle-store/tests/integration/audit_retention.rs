@@ -296,7 +296,7 @@ fn the_file_gives_the_space_of_pruned_records_back_in_steps() {
 }
 
 #[test]
-fn an_older_file_that_was_not_incremental_is_rebuilt_once_when_it_has_space_to_give() {
+fn an_older_file_that_was_not_incremental_is_rebuilt_on_the_open_after_it_has_space_to_give() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");
     let clock = Arc::new(ManualClock::new(T0));
@@ -312,9 +312,20 @@ fn an_older_file_that_was_not_incremental_is_rebuilt_once_when_it_has_space_to_g
     assert_eq!(store.shrink_audit_file().unwrap(), 0, "nothing free yet");
     assert_eq!(auto_vacuum(&path), 0, "no space to give, so no rebuild");
     fill_and_prune(&store, &clock, "old");
-    assert!(store.shrink_audit_file().unwrap() > 0);
+    // The sweeper never rebuilds the whole file: decisions would wait on it.
+    assert_eq!(store.shrink_audit_file().unwrap(), 0);
+    assert_eq!(auto_vacuum(&path), 0);
+    let full = store.audit_stats().unwrap();
+    drop(store);
+    // The next open does, before anything is served, and the file frees in steps after that.
+    let store = Store::open(&path, clock.clone(), roomy()).unwrap();
     assert_eq!(auto_vacuum(&path), 2);
+    let after = store.audit_stats().unwrap();
+    assert_eq!(after.free_bytes, 0);
+    assert!(after.file_bytes < full.file_bytes, "{after:?} {full:?}");
     assert!(mentions(&store, "old-kept.example") > 0);
+    fill_and_prune(&store, &clock, "again");
+    assert!(store.shrink_audit_file().unwrap() > 0);
 }
 
 #[test]

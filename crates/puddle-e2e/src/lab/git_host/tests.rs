@@ -115,3 +115,59 @@ async fn a_tunnel_to_a_reserved_name_the_proxy_does_not_hold_is_refused_at_once(
     .unwrap();
     assert!(answer.starts_with("HTTP/1.1 502"), "{answer}");
 }
+
+/// Opens a tunnel through `proxy` to `name` and returns the proxy's first answer line.
+async fn first_answer(proxy: &NameProxy, name: &str) -> (TcpStream, String) {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+    let mut client = TcpStream::connect(("127.0.0.1", proxy.port()))
+        .await
+        .unwrap();
+    client
+        .write_all(format!("CONNECT {name} HTTP/1.1\r\nHost: {name}\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut reader = tokio::io::BufReader::new(&mut client);
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        reader.read_line(&mut line),
+    )
+    .await
+    .expect("the proxy answered")
+    .unwrap();
+    (client, line)
+}
+
+#[tokio::test]
+async fn an_outage_cuts_open_tunnels_refuses_new_ones_and_ends_on_restore() {
+    use tokio::io::AsyncReadExt as _;
+    let echo = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let held: SocketAddr = echo.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = echo.accept().await.unwrap();
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    let proxy = NameProxy::start(&[("held.test:80", held)]).await;
+    let (mut open, line) = first_answer(&proxy, "held.test:80").await;
+    assert!(line.starts_with("HTTP/1.1 200"), "{line}");
+
+    proxy.set_outage(true);
+    let (_, refused) = first_answer(&proxy, "held.test:80").await;
+    assert!(refused.starts_with("HTTP/1.1 502"), "{refused}");
+    let mut rest = Vec::new();
+    let ended = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        open.read_to_end(&mut rest),
+    )
+    .await;
+    assert!(ended.is_ok(), "the open tunnel was not cut");
+
+    proxy.set_outage(false);
+    let (_, again) = first_answer(&proxy, "held.test:80").await;
+    assert!(again.starts_with("HTTP/1.1 200"), "{again}");
+}

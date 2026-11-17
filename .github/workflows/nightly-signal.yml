@@ -29,6 +29,7 @@ on:
       - real-tools
       - lab-forgejo
       - freshness
+      - company-network-windows
     types: [completed]
 
 permissions:

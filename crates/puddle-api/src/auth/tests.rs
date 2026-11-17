@@ -323,3 +323,27 @@ fn the_new_refusals_have_their_own_log_reason_and_answer() {
     let error = ApiError::from(Refusal::CredentialHost);
     assert_eq!(error.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[test]
+fn a_guard_clone_still_takes_its_own_remote_settings() {
+    let (base, token) = guard();
+    let keeper = base.clone();
+    let remote = RemoteServing::new(
+        vec![crate::remote::PublicHost::parse("puddle.example.org").unwrap()],
+        None,
+    )
+    .unwrap();
+    let remote_guard = base.remote(&remote, Listener::Loopback);
+    let auth = format!("Bearer {}", token.expose());
+    let uri = Uri::from_static("/api/health");
+    let public = headers(&[("host", "puddle.example.org"), ("authorization", &auth)]);
+    assert_eq!(
+        remote_guard.check(&uri, &public),
+        Err(Refusal::CredentialHost)
+    );
+    assert_eq!(
+        keeper.check(&uri, &public),
+        Err(Refusal::Host),
+        "the clone is unchanged"
+    );
+}

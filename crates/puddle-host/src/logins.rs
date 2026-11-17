@@ -106,7 +106,8 @@ impl LoginKeeper {
 
     /// Deletes every token kept for a deleted `workspace`. The workspace is gone either way: a
     /// token that stays behind is unreachable (nothing names it any more) and is only logged.
-    pub(crate) async fn delete_workspace(&self, workspace: &WorkspaceId) {
+    /// Returns whether every token is gone.
+    pub(crate) async fn delete_workspace(&self, workspace: &WorkspaceId) -> bool {
         let (store, name) = (Arc::clone(&self.store), workspace.clone());
         let failed =
             tokio::task::spawn_blocking(move || Logins::delete_workspace(&store, &name, builtin()))
@@ -116,6 +117,7 @@ impl LoginKeeper {
         if failed > 0 {
             tracing::warn!(%workspace, failed, "a deleted workspace's saved logins could not be removed from the credential store");
         }
+        failed == 0
     }
 }
 

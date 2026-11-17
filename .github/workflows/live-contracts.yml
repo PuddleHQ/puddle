@@ -6,6 +6,7 @@
 #   login-tools   the real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing in a real microVM,
 #                 and which hosts each one calls (crates/puddle-host/tests/vm_radar_logins.rs): a host outside
 #                 the login profile is a login capture would stop seeing;
+#   az-cli        the pinned azure-cli's source and its real not-signed-in error, with no account (ci/check-az-contract.sh);
 #   mise-pin      ci/mise.sha256 against the SHASUMS256.txt that mise's site and GitHub publish for the release.
 # Nightly on develop and by hand (`gh workflow run live-contracts.yml`; a branch's copy only once the file is on develop), never on a
 # pull request: a third party's outage must not stop a merge. A red run opens "Nightly red: live-contracts"
@@ -46,6 +47,21 @@ jobs:
           tool: cargo-nextest@0.9.146
       - name: live_azure, ignored tests only
         run: cargo nextest run --locked -p puddle-repos --test live_azure --run-ignored only --no-capture
+
+  az-cli:
+    name: az account get-access-token without a sign-in
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: azure-cli at the pinned version (ci/az-cli.pin)
+        run: |
+          version=$(awk '$1 == "version" { print $2 }' ci/az-cli.pin)
+          python3 -m venv "$RUNNER_TEMP/az"
+          "$RUNNER_TEMP/az/bin/pip" install --quiet "azure-cli==$version"
+          echo "$RUNNER_TEMP/az/bin" >> "$GITHUB_PATH"
+      - name: source facts and the not-signed-in error
+        run: ci/check-az-contract.sh
 
   mise-pin:
     name: the pinned mise matches its release

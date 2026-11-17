@@ -170,9 +170,21 @@ export class FakeSettings {
     } as const;
   }
 
+  /** Names the five saved sections, as the API's revision does: any change to them is a new one. */
+  revision(): string {
+    return JSON.stringify([
+      this.layer,
+      this.vscode,
+      this.ui,
+      this.tools,
+      this.limits,
+    ]);
+  }
+
   private view(): S["GlobalSettingsView"] {
     const l = this.layer;
     return {
+      revision: this.revision(),
       workspace_defaults: l,
       vscode_server: this.vscode,
       ui: this.ui,
@@ -337,6 +349,14 @@ export class FakeSettings {
       return this.reply(200, this.consents());
     }
     const b = init.body as Body;
+    if (b.revision != null && b.revision !== this.revision()) {
+      return this.reply(
+        409,
+        undefined,
+        "settings_changed",
+        "The settings changed in the meantime.",
+      );
+    }
     if (b.ui?.app_icon === "custom" && this.customIcon === null) {
       return this.reply(
         422,

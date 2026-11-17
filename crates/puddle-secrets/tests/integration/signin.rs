@@ -225,13 +225,14 @@ async fn git_sign_in_lets_the_helper_open_its_window_then_keeps_the_answer() {
     // (its ENV, the only one with `never`) says the whole record is there.
     let log = wait_for(&git, "GCM_INTERACTIVE=never").await;
     // The fill may open a window; the approve may not, and it carries the answer.
-    let fill = log.split("ARGS credential approve").next().unwrap();
+    let approve_args = "ARGS -c credential.useHttpPath=true credential approve";
+    let fill = log.split(approve_args).next().unwrap();
     assert!(
         fill.contains("credential.useHttpPath=true credential fill"),
         "{log}"
     );
     assert!(fill.contains("GCM_INTERACTIVE=true"), "{log}");
-    let approve = log.split("ARGS credential approve").nth(1).unwrap();
+    let approve = log.split(approve_args).nth(1).unwrap();
     assert!(approve.contains("GCM_INTERACTIVE=never"), "{log}");
     assert!(approve.contains(&format!("password={CANARY}")), "{log}");
 }
@@ -331,6 +332,64 @@ async fn git_that_is_still_running_after_the_early_wait_is_taken_to_wait_on_the_
         SignInStart::default()
     );
     assert_eq!(Fakes::log(&git).matches("credential fill").count(), 1);
-    let log = wait_for(&git, "ARGS credential approve").await;
-    assert!(log.contains("ARGS credential approve"), "{log}");
+    let log = wait_for(&git, "credential approve").await;
+    assert!(log.contains("credential approve"), "{log}");
+}
+
+/// The real `git` on the path (`git.exe` on Windows).
+fn real_git() -> std::path::PathBuf {
+    let name = if cfg!(windows) { "git.exe" } else { "git" };
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+        .expect("git on the path")
+}
+
+/// Git drops `path` from an HTTP credential unless `credential.useHttpPath` is on, before any
+/// helper sees it. The approve after a sign-in must keep it, as the `fill` did: else the helper
+/// stores a host-wide entry (over the user's own one for that host and name) that Puddle's own
+/// path-scoped `fill` never finds. Real Git with its `store` helper, in a scratch configuration.
+#[tokio::test]
+async fn git_sign_in_keeps_the_answer_for_the_path_it_signed_in_to() {
+    let fakes = Fakes::new();
+    let scratch = tempfile::tempdir().unwrap();
+    let store = scratch.path().join("credentials");
+    let mine = "https://me:the-users-own@dev.azure.com\n";
+    std::fs::write(&store, mine).unwrap();
+    let global = scratch.path().join("gitconfig");
+    std::fs::write(&global, "").unwrap();
+    // Git runs a helper through a shell, which reads backslashes as escapes.
+    let store_arg = store.display().to_string().replace('\\', "/");
+    let git = fakes.install(
+        "git",
+        &format!(
+            "[credential fill]\nstdout=protocol=https\\nhost=dev.azure.com\\npath=acme\\nusername=me\\npassword={CANARY}\\n\n\
+             [credential approve]\nrun={}\nenv=GIT_CONFIG_NOSYSTEM=1\nenv=GIT_CONFIG_GLOBAL={}\n\
+             env=GIT_CONFIG_COUNT=1\nenv=GIT_CONFIG_KEY_0=credential.helper\nenv=GIT_CONFIG_VALUE_0=store --file={store_arg}\n",
+            real_git().display(),
+            global.display(),
+        ),
+    );
+    let signin = SignIns::new(ToolPaths::new(None, Some(git.clone())));
+    signin.begin(&git_spec()).await.unwrap();
+    wait_for(&git, "credential approve").await;
+    let stored = eventually(
+        "the helper to store the sign-in",
+        Duration::from_secs(10),
+        || {
+            let text = std::fs::read_to_string(&store).unwrap();
+            if text.contains(CANARY) {
+                Ok(text)
+            } else {
+                Err(text)
+            }
+        },
+    )
+    .await;
+    let lines: Vec<&str> = stored.lines().collect();
+    assert!(
+        lines.contains(&format!("https://me:{CANARY}@dev.azure.com/acme").as_str()),
+        "{stored}"
+    );
+    assert!(lines.contains(&mine.trim_end()), "{stored}");
 }

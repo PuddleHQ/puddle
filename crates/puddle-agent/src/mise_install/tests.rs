@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -195,7 +195,7 @@ fn the_system_mise_reads_the_missing_tools_and_quotes_its_last_error_line() {
     // A stand-in for mise: `ls` prints one missing tool, `install` fails with an error line.
     puddle_test_kit::write_executable(
         &fake,
-        "#!/bin/sh\ncase \"$1\" in\n  ls) echo '{\"node\":[{\"version\":\"22.11.0\"}]}' ;;\n  install) [ \"$MISE_SAFE\" = 1 ] || exit 9; echo 'mise ERROR no route to nodejs.org' >&2; echo >&2; exit 1 ;;\nesac\n",
+        "#!/bin/sh\ncase \"$1\" in\n  ls) [ \"$MISE_SAFE\" = 1 ] || exit 9; echo '{\"node\":[{\"version\":\"22.11.0\"}]}' ;;\n  install) [ \"$MISE_SAFE\" = 1 ] || exit 9; echo 'mise ERROR no route to nodejs.org' >&2; echo >&2; exit 1 ;;\nesac\n",
     );
     let mise = SystemMise::new(fake);
     assert_eq!(mise.missing(dir.path()).unwrap(), set(&["node@22.11.0"]));

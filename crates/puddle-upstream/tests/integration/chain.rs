@@ -187,6 +187,33 @@ async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
 }
 
 #[tokio::test]
+async fn the_remembered_basic_header_never_shows_in_debug_output() {
+    let secret = fixture::password("secret");
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "alice".into(),
+        password: secret.clone(),
+    })
+    .await;
+    proxy.resolve_name("a.test", echo.addr);
+    let chain = chain(vec![via(&proxy)], basic("alice", &secret));
+    let dest = https("a.test");
+    let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
+    let mut connected = chain.connect(&request).await.unwrap();
+    round_trip(&mut connected.stream, b"one").await;
+    let header = proxy.seen()[1].proxy_authorization.clone().unwrap();
+    let encoded = header.strip_prefix("Basic ").unwrap();
+
+    let printed = format!("{chain:?}");
+    assert!(
+        printed.contains("Required"),
+        "the memo is printed: {printed}"
+    );
+    assert!(!printed.contains(encoded), "{printed}");
+    assert!(!printed.contains(&secret), "{printed}");
+}
+
+#[tokio::test]
 async fn forgetting_the_remembered_basic_headers_makes_the_next_connection_ask_again() {
     let secret = fixture::password("secret");
     let echo = start_echo().await;
@@ -320,6 +347,70 @@ async fn a_three_leg_exchange_stays_on_one_connection() {
     assert!(
         seen.iter().all(|s| s.conn == 1),
         "one connection throughout"
+    );
+}
+
+/// An NTLM client that signs in before it is asked (as one that has learned the proxy wants NTLM
+/// does). Like Windows SSPI, a session that has sent no first token refuses a challenge.
+#[derive(Debug)]
+struct PreemptiveNtlm;
+
+#[derive(Debug, Default)]
+struct PreemptiveNtlmSession {
+    sent_first: bool,
+}
+
+impl AuthSession for PreemptiveNtlmSession {
+    fn step(&mut self, challenge: Option<&str>) -> Result<AuthStep, AuthError> {
+        match challenge.map(str::trim) {
+            None | Some("NTLM") => {
+                self.sent_first = true;
+                Ok(AuthStep::Authorization("NTLM T1".into()))
+            }
+            Some("NTLM CHALLENGE") if self.sent_first => {
+                Ok(AuthStep::Authorization("NTLM T3".into()))
+            }
+            other => Err(AuthError::Failed(format!(
+                "InitializeSecurityContext 0x80090302 for {other:?}"
+            ))),
+        }
+    }
+}
+
+impl ProxyAuth for PreemptiveNtlm {
+    fn begin(
+        &self,
+        _proxy: &ProxyAddr,
+        offered: &[&str],
+    ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
+        Ok(
+            (offered.is_empty() || offered.iter().any(|s| s.eq_ignore_ascii_case("ntlm")))
+                .then(|| Box::new(PreemptiveNtlmSession::default()) as Box<dyn AuthSession>),
+        )
+    }
+}
+
+#[tokio::test]
+async fn a_preemptive_ntlm_token_is_answered_on_the_same_session_when_the_proxy_challenges_it() {
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Ntlm).await;
+    proxy.resolve_name("ntlm.test", echo.addr);
+    let chain = chain(vec![via(&proxy)], Arc::new(PreemptiveNtlm));
+    let dest = https("ntlm.test");
+    let mut connected = chain
+        .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
+        .await
+        .unwrap();
+    round_trip(&mut connected.stream, b"signed in").await;
+    let auth: Vec<_> = proxy
+        .seen()
+        .iter()
+        .map(|s| s.proxy_authorization.clone())
+        .collect();
+    assert_eq!(
+        auth,
+        [Some("NTLM T1".to_owned()), Some("NTLM T3".to_owned())],
+        "the first request carries the token, the second answers the challenge"
     );
 }
 

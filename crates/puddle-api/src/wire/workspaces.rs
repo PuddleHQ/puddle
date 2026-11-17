@@ -582,16 +582,17 @@ pub struct AttachRequest {
 /// What an attach did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AttachResponse {
-    /// Whether Puddle opened an editor itself (desktop mode, when it worked).
+    /// Whether Puddle opened an editor itself. Never for a browser signed in from another
+    /// computer: an editor would open on the host's screen, not on the asker's.
     pub opened: bool,
     /// Why nothing was opened, when that is not an error (for example VS Code is not
-    /// installed).
+    /// installed, or the client is not on the host computer).
     #[schema(required = true)]
     pub message: Option<String>,
     /// A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
-    /// for a client on another machine than the host (a browser on a device that reached
-    /// `puddle serve`). Present for a desktop attach, whether or not the host opened a window
-    /// itself; `null` for a browser attach.
+    /// through the ssh entry Puddle wrote on the host. Present for a desktop attach from the host
+    /// computer, whether or not a window opened; `null` for a browser attach and for a client on
+    /// another computer, where that ssh entry does not exist.
     #[schema(required = true)]
     pub open_uri: Option<String>,
 }

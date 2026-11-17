@@ -72,7 +72,7 @@ pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use scoped::UserStore;
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
-pub use ssh_agent::{MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
+pub use ssh_agent::{HostKeyPin, MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
 pub use ssh_agent_asks::{
     MAX_OPEN_SSH_AGENT_ASKS, SshAgentAnswer, SshAgentAsk, SshAgentAskStart, SshAgentAskState,
 };
@@ -235,6 +235,21 @@ impl Store {
             ))
             .unwrap();
     }
+
+    /// Makes every `PRAGMA name` statement fail to prepare.
+    pub(crate) fn refuse_pragma(&self, name: &'static str) {
+        use rusqlite::hooks::{AuthAction, Authorization};
+        lock(&self.conn)
+            .authorizer(Some(
+                move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
+                    AuthAction::Pragma { pragma_name, .. } if pragma_name == name => {
+                        Authorization::Deny
+                    }
+                    _ => Authorization::Allow,
+                },
+            ))
+            .unwrap();
+    }
 }
 
 #[cfg(feature = "testing")]
@@ -329,7 +344,7 @@ impl Store {
         let conn = Connection::open(path)?;
         // A new file frees its pages in small steps (`Store::shrink_audit_file`); the mode cannot
         // be changed on a file that has tables without rebuilding it, so an older file is rebuilt
-        // once, when it first has space to give back.
+        // once, here, when it first has space to give back.
         let pages: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
         if pages == 0 {
             conn.pragma_update(None, "auto_vacuum", 2)?;
@@ -337,6 +352,8 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "synchronous", "normal")?;
         let mut store = Self::init(conn, clock, limits)?;
+        // Before anything is served, so no decision waits on the rebuild.
+        audit_retention::rebuild_older_file_on_open(&lock(&store.conn));
         // After `init`: the file is migrated and in WAL mode by now.
         let reader = Connection::open_with_flags(path, READ_ONLY)?;
         reader.busy_timeout(Duration::from_secs(5))?;
@@ -459,7 +476,7 @@ impl Store {
         let tx = write_tx(conn)?;
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
-        let outcome = self.record_pending(&tx, request, now, &mut fx)?;
+        let outcome = self.record_pending(&tx, request, now, suffix_allows, &mut fx)?;
         self.commit(tx, head, fx)?;
         Ok(Decision::Pending(outcome))
     }
@@ -484,14 +501,19 @@ impl Store {
             .map(Hit::decision))
     }
 
+    /// Opens a row for `request`, or counts another try of its open row. A row asked for with
+    /// [`SuffixAllows::Ignore`] needs an exact allow from then on (R-14), so the rule and set
+    /// changes that close waiting rows never close it with a suffix allow.
     fn record_pending(
         &self,
         tx: &Transaction<'_>,
         request: &EgressRequest,
         now: u64,
+        suffix_allows: SuffixAllows,
         fx: &mut Vec<Event>,
     ) -> Result<PendingOutcome, StoreError> {
         let (workspace, host) = (request.workspace.as_str(), request.host.to_string());
+        let exact_only = suffix_allows == SuffixAllows::Ignore;
         let existing: Option<i64> = tx
             .query_row(
                 "SELECT id FROM pending
@@ -502,9 +524,10 @@ impl Store {
             .optional()?;
         if let Some(id) = existing {
             let (attempts, last_seen): (i64, i64) = tx.query_row(
-                "UPDATE pending SET last_seen = max(last_seen, ?1), attempts = attempts + 1
+                "UPDATE pending SET last_seen = max(last_seen, ?1), attempts = attempts + 1,
+                                    exact_only = max(exact_only, ?3)
                  WHERE id = ?2 RETURNING attempts, last_seen",
-                params![sql_ts(now), id],
+                params![sql_ts(now), id, exact_only],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             fx.push(Event::PendingUpdated {
@@ -529,9 +552,9 @@ impl Store {
             return Ok(PendingOutcome::Unlisted);
         }
         tx.execute(
-            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![workspace, host, request.port, sql_ts(now)],
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, exact_only)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            params![workspace, host, request.port, sql_ts(now), exact_only],
         )?;
         let id = PendingId(tx.last_insert_rowid());
         let row = load_pending(tx, id)?;

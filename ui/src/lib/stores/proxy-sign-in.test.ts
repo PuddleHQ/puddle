@@ -159,13 +159,13 @@ describe("ProxySignInStore", () => {
     });
   });
 
-  it("ignores a failed read that a newer call has overtaken", async () => {
+  it("settles on failed when a read and a save both fail", async () => {
     const { stub, store } = make();
     stub.down = true;
     const first = store.load();
-    await store.save("p:1", "x", "y").catch(() => undefined);
+    await store.save("p:1", "x", "y");
     await first;
-    expect(store.status).toBe("loading");
+    expect(store.status).toBe("failed");
   });
 
   it("ignores a read that a newer call has overtaken", async () => {
@@ -174,6 +174,56 @@ describe("ProxySignInStore", () => {
     await store.save("p:1", "x", "y");
     await first;
     expect(store.signIns).toEqual([{ proxy: "p:1", user: "x" }]);
+    expect(store.status).toBe("ready");
     void stub;
+  });
+
+  /** A store whose first list read waits for `release`, so a save can finish while it is out. */
+  const held = () => {
+    const { stub, store } = make();
+    let release: (fail: boolean) => void = () => undefined;
+    const gate = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const plain = stub.GET.bind(stub);
+    let first = true;
+    stub.GET = async (path: string) => {
+      if (first && path === "/api/proxy-sign-ins") {
+        first = false;
+        if (await gate) throw new TypeError("fetch failed");
+      }
+      return plain(path);
+    };
+    return { store, release };
+  };
+
+  it("keeps the list a save returned when an older read answers late", async () => {
+    const { store, release } = held();
+    const read = store.load();
+    await store.save("p:1", "x", "y");
+    release(false);
+    await read;
+    expect(store.signIns).toEqual([{ proxy: "p:1", user: "x" }]);
+    expect(store.status).toBe("ready");
+  });
+
+  it("does not mark the store failed when an older read throws after a save", async () => {
+    const { store, release } = held();
+    const read = store.load();
+    await store.save("p:1", "x", "y");
+    release(true);
+    await read;
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
+  });
+
+  it("keeps the answer of the newest read when an older one answers late", async () => {
+    const { store, release } = held();
+    const older = store.load();
+    await store.load();
+    store.signIns = [{ proxy: "newer:1", user: "n" }];
+    release(false);
+    await older;
+    expect(store.signIns).toEqual([{ proxy: "newer:1", user: "n" }]);
   });
 });

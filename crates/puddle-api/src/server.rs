@@ -24,7 +24,7 @@ use puddle_secrets::SecretStore;
 use puddle_store::{AccountSecrets, Clock, Store};
 use puddle_types::Problems;
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
@@ -828,6 +828,8 @@ impl ApiServer {
             ..
         } = self;
         let shutdown = stop.subscribe();
+        // One budget for both listeners, so a second listener does not double the cap.
+        let open = Arc::new(Semaphore::new(max_connections));
         let mut tasks = vec![
             tokio::spawn(serve(
                 listener,
@@ -836,7 +838,7 @@ impl ApiServer {
                     router,
                     editor: editor.clone(),
                 },
-                max_connections,
+                open.clone(),
                 shutdown.clone(),
             )),
             picker,
@@ -873,7 +875,7 @@ impl ApiServer {
                     listener,
                     admission,
                     Dispatch { router, editor },
-                    max_connections,
+                    open,
                     shutdown,
                 )));
             }
@@ -994,12 +996,12 @@ async fn serve(
     listener: TcpListener,
     admission: Admission,
     dispatch: Dispatch,
-    max_connections: usize,
+    open: Arc<Semaphore>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut connections = JoinSet::new();
     loop {
-        // Reap finished connections so the cap counts open ones only.
+        // Reap finished connections so the set does not grow without bound.
         while connections.try_join_next().is_some() {}
         let accepted = tokio::select! {
             _ = shutdown.wait_for(|stop| *stop) => break,
@@ -1014,16 +1016,24 @@ async fn serve(
             }
         };
         // Before any bytes are read, and for the network listener before the TLS handshake.
-        if !admission.admits(peer.ip()) || connections.len() >= max_connections {
-            tracing::warn!(open = connections.len(), "api connection refused");
+        if !admission.admits(peer.ip()) {
+            tracing::warn!(%peer, "api connection refused: peer not admitted");
             drop(stream);
             continue;
         }
+        let Ok(permit) = open.clone().try_acquire_owned() else {
+            tracing::warn!(%peer, "api connection refused: too many open");
+            drop(stream);
+            continue;
+        };
         let dispatch = dispatch.clone();
         let stop = shutdown.clone();
         match &admission {
             Admission::Loopback => {
-                connections.spawn(serve_connection(stream, dispatch, stop));
+                connections.spawn(async move {
+                    serve_connection(stream, dispatch, stop).await;
+                    drop(permit);
+                });
             }
             Admission::Proxies { tls, .. } => {
                 let tls = tls.clone();
@@ -1035,6 +1045,7 @@ async fn serve(
                         }
                         Err(_) => tracing::debug!("api TLS handshake timed out"),
                     }
+                    drop(permit);
                 });
             }
         }

@@ -117,6 +117,9 @@ export class TerminalSession {
     this.end = null;
     this.refused = false;
     this.output = false;
+    // Bytes drawn for an earlier socket are not this one's to acknowledge.
+    this.#drawn = 0;
+    this.#timers();
     let ticket: { terminal: number; ticket: string } | undefined;
     let why = SERVICE_DOWN;
     try {
@@ -150,7 +153,7 @@ export class TerminalSession {
       this.#flush(socket);
     };
     socket.onmessage = (event) => {
-      if (run === this.#run) this.#received(event.data);
+      if (run === this.#run) this.#received(event.data, run);
     };
     const broke = () => {
       if (run === this.#run && this.state !== "ended") this.#finish(BROKE);
@@ -195,7 +198,7 @@ export class TerminalSession {
     this.#ackTimer = null;
   }
 
-  #received(data: unknown): void {
+  #received(data: unknown, run: number): void {
     if (typeof data === "string") {
       const ended = parseEnded(data);
       if (ended) this.#finish(endLine(ended));
@@ -204,7 +207,10 @@ export class TerminalSession {
     if (!(data instanceof ArrayBuffer)) return;
     const bytes = new Uint8Array(data);
     this.output = true;
-    this.screen.write(bytes, () => this.#acknowledge(bytes.length));
+    this.screen.write(bytes, () => {
+      // A write finishing after a restart belongs to the old socket.
+      if (run === this.#run) this.#acknowledge(bytes.length);
+    });
   }
 
   #acknowledge(bytes: number): void {

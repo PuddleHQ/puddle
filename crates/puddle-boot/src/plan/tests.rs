@@ -567,6 +567,11 @@ fn merged_files_render_their_spec_and_are_counted() {
         .build()
         .unwrap();
     assert!(plan.has_merged_files());
+    assert!(plan.merged_paths().contains(&"/root/c.json".to_owned()));
+    assert!(
+        plan.merged_paths()
+            .contains(&MACHINE_SETTINGS_GUEST.to_owned())
+    );
     assert_eq!(plan.merge_tool().as_str(), AGENT_GUEST);
     let r = String::from_utf8(plan.render()).unwrap();
     assert!(

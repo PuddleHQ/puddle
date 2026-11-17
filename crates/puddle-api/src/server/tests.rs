@@ -61,3 +61,49 @@ async fn the_unclaimed_warning_is_left_out_once_the_owner_exists() {
     assert!(!sign_in.status().await.unwrap().setup_open);
     warn_while_unclaimed(&sign_in).await;
 }
+
+#[tokio::test]
+async fn two_listeners_share_one_connection_budget() {
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpStream;
+
+    let first = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let second = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let (first_addr, second_addr) = (first.local_addr().unwrap(), second.local_addr().unwrap());
+    let open = Arc::new(Semaphore::new(1));
+    let (stop, shutdown) = watch::channel(false);
+    let tasks = [first, second].map(|listener| {
+        tokio::spawn(serve(
+            listener,
+            Admission::Loopback,
+            Dispatch {
+                router: Router::new(),
+                editor: None,
+            },
+            open.clone(),
+            shutdown.clone(),
+        ))
+    });
+
+    // A silent client holds the only slot (the header read timeout is far off).
+    let holder = TcpStream::connect(first_addr).await.unwrap();
+    puddle_test_kit::eventually(
+        "the silent client holds the slot",
+        Duration::from_secs(5),
+        || open.available_permits() == 0,
+    )
+    .await;
+    // The other listener refuses: its stream is closed without a byte.
+    let mut refused = TcpStream::connect(second_addr).await.unwrap();
+    let mut byte = [0_u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(5), refused.read(&mut byte))
+        .await
+        .expect("a refused connection is closed at once");
+    assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
+
+    drop(holder);
+    stop.send(true).unwrap();
+    for task in tasks {
+        task.await.unwrap();
+    }
+}

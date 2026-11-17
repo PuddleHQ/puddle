@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle secrets migrate` over the operating system's credential store and the file vault, in
 //! both directions, with values of the sizes and kinds the keyring has trouble with. A computer
 //! without a credential store that works skips the run and says so, unless
@@ -59,6 +59,21 @@ fn keyring_works(service: &str) -> bool {
     works
 }
 
+/// What the test wrote under its own service name, long values' pieces included, removed when the
+/// test ends or panics: a failed run must not leave entries in the user's credential store.
+struct Cleanup {
+    store: ChunkedStore<KeyringStore>,
+    ids: Vec<StoredId>,
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        for id in &self.ids {
+            let _ = self.store.delete(id);
+        }
+    }
+}
+
 #[test]
 fn values_move_to_the_file_vault_and_back_over_the_real_keyring() {
     let service = format!("puddle-migrate-{}", random_hex());
@@ -67,11 +82,17 @@ fn values_move_to_the_file_vault_and_back_over_the_real_keyring() {
     }
     let names = ["case-long", "case-unicode", "case-plain"];
     let ids: Vec<StoredId> = names.iter().map(|n| id(n)).collect();
+    // Long enough for nine entries of the Windows store, and no longer: Credential Manager holds
+    // about 450 KB for all of a user's programs together and refuses writes past that.
     let values = [
-        long_value(60_000),
+        long_value(8192),
         "pa\u{df}w\u{f6}rd \u{1f986} \u{65e5}\u{672c}\u{8a9e}".to_owned(),
         "plain".to_owned(),
     ];
+    let _cleanup = Cleanup {
+        store: ChunkedStore::new(KeyringStore::named(&service)),
+        ids: ids.iter().cloned().chain([id("puddle-index")]).collect(),
+    };
     let dir = tempfile::tempdir().unwrap();
     let os = os_store(&service);
     let vault = IndexedStore::new(
@@ -109,9 +130,4 @@ fn values_move_to_the_file_vault_and_back_over_the_real_keyring() {
         assert_eq!(os.get(id).unwrap().unwrap().expose(), value);
         assert!(vault.get(id).unwrap().is_none());
     }
-
-    for id in &ids {
-        os.delete(id).unwrap();
-    }
-    let _ = ChunkedStore::new(KeyringStore::named(&service)).delete(&id("puddle-index"));
 }

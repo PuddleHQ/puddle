@@ -957,6 +957,10 @@ fn a_request_is_matched_to_its_token_endpoint_in_any_spelling() {
     assert!(token_endpoint_of("platform.claude.com", "GET", "/v1/oauth/token").is_none());
     assert!(token_endpoint_of("api.anthropic.com", "POST", "/v1/oauth/token").is_none());
     assert!(token_endpoint_of("platform.claude.com", "POST", "/v1/oauth").is_none());
+    // A server that drops `;parameters` from each segment reads this as the token endpoint.
+    let (profile, _) =
+        token_endpoint_of("platform.claude.com", "POST", "/v1;x=1/oauth/token").unwrap();
+    assert_eq!(profile.id, "claude");
 }
 
 #[test]
@@ -970,7 +974,9 @@ fn canonical_paths_collapse_every_spelling_to_one() {
     assert_eq!(canonical_path("/a%2fb"), "/a/b");
     assert_eq!(canonical_path("/a%zz"), "/a%zz");
     assert_eq!(canonical_path("/a%"), "/a%");
-    assert_eq!(canonical_path("/a;x/b?q#f"), "/a");
+    assert_eq!(canonical_path("/a;x/b?q#f"), "/a/b");
+    assert_eq!(canonical_path("/a;x=1;y/b;z/c;"), "/a/b/c");
+    assert_eq!(canonical_path("/a/b/..;x/c"), "/a/c");
     assert_eq!(canonical_path("/../../a"), "/a");
     assert_eq!(canonical_path("/%ff"), "/\u{fffd}");
 }

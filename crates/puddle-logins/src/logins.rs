@@ -174,11 +174,12 @@ impl fmt::Debug for Logins {
     }
 }
 
-/// A path as a server may read it: percent-decoded, lower case, without parameters, empty and
-/// `.` segments, and with `..` applied. The token endpoint is recognised by this spelling, so a
-/// request that names it another way is still read.
+/// A path as a server may read it: percent-decoded, lower case, without the query, without the
+/// `;parameters` of each segment, without empty and `.` segments, and with `..` applied. The
+/// token endpoint is recognised by this spelling, so a request that names it another way is
+/// still read.
 pub(crate) fn canonical_path(path: &str) -> String {
-    let path = path.split(['?', '#', ';']).next().unwrap_or_default();
+    let path = path.split(['?', '#']).next().unwrap_or_default();
     let mut decoded = Vec::with_capacity(path.len());
     let bytes = path.as_bytes();
     let mut at = 0;
@@ -195,7 +196,7 @@ pub(crate) fn canonical_path(path: &str) -> String {
     let decoded = String::from_utf8_lossy(&decoded).to_ascii_lowercase();
     let mut segments: Vec<&str> = Vec::new();
     for segment in decoded.split(['/', '\\']) {
-        match segment {
+        match segment.split(';').next().unwrap_or_default() {
             "" | "." => {}
             ".." => {
                 segments.pop();

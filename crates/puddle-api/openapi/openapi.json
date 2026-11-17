@@ -13868,11 +13868,15 @@
             "minimum": 0
           },
           "decided_by": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`cli`, `ui`, `api` or `system`."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Actor",
+                "description": "Who decided it."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "first_seen": {
             "type": "integer",
@@ -13917,8 +13921,8 @@
             "description": "The rule set whose entry decided it."
           },
           "state": {
-            "type": "string",
-            "description": "`requested`, `allowed`, `denied` or `expired`."
+            "$ref": "#/components/schemas/PendingState",
+            "description": "Where it is in its life."
           },
           "workspace_id": {
             "type": "string",
@@ -14925,8 +14929,8 @@
             "minimum": 0
           },
           "created_by": {
-            "type": "string",
-            "description": "`cli`, `ui` or `api`."
+            "$ref": "#/components/schemas/Actor",
+            "description": "Who made it."
           },
           "host": {
             "type": "string",
@@ -15016,8 +15020,8 @@
             "minimum": 0
           },
           "created_by": {
-            "type": "string",
-            "description": "`cli`, `ui` or `api`."
+            "$ref": "#/components/schemas/Actor",
+            "description": "Who made it."
           },
           "effect": {
             "$ref": "#/components/schemas/Effect",
@@ -15109,8 +15113,8 @@
             "minimum": 0
           },
           "created_by": {
-            "type": "string",
-            "description": "`cli`, `ui` or `api`."
+            "$ref": "#/components/schemas/Actor",
+            "description": "Who made it."
           },
           "default_precedence": {
             "type": [

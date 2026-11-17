@@ -500,6 +500,15 @@ fn pending_rows_always_carry_every_field() {
         );
     }
     for (actor, text) in [
+        (store::ActorWire::Cli, "cli"),
+        (store::ActorWire::Ui, "ui"),
+        (store::ActorWire::Api, "api"),
+        (store::ActorWire::System, "system"),
+        (store::ActorWire::WorkspaceCreate, "workspace_create"),
+    ] {
+        assert_eq!(serde_json::to_value(Actor::from(actor)).unwrap(), text);
+    }
+    for (actor, text) in [
         (store::Actor::Cli, "cli"),
         (store::Actor::Api, "api"),
         (store::Actor::System, "system"),

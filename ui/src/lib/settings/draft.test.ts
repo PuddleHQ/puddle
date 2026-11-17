@@ -7,6 +7,7 @@ import {
 import {
   EMPTY_DRAFT,
   isDirty,
+  remaining,
   restartNames,
   savePatch,
   setLayer,
@@ -92,5 +93,28 @@ describe("the change a save sends", () => {
 
   it("leaves the toggles out when none changed", () => {
     expect(savePatch(view(), EMPTY_DRAFT).layer).toEqual({});
+  });
+});
+
+describe("what is left of a draft after a save", () => {
+  it("keeps an edit made while the save ran and drops what was sent", () => {
+    const sent = setUi(
+      setLayer(EMPTY_DRAFT, "memory", 4096, 8192),
+      "sound",
+      true,
+      false,
+    );
+    const now = setLimits(setLayer(sent, "cpus", 2, 4), "max_cpus", 3, null);
+    const left = remaining(sent, now);
+    expect(left.layer).toEqual({ cpus: 2 });
+    expect(left.ui).toEqual({});
+    expect(left.limits).toEqual({ max_cpus: 3 });
+    expect(isDirty(remaining(sent, sent))).toBe(false);
+  });
+
+  it("keeps a key that was changed again to another value", () => {
+    const sent = setLayer(EMPTY_DRAFT, "memory", 4096, 8192);
+    const now = setLayer(sent, "memory", 2048, 8192);
+    expect(remaining(sent, now).layer).toEqual({ memory: 2048 });
   });
 });

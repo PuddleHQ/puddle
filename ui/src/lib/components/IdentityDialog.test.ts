@@ -210,6 +210,54 @@ describe("a token pasted into the dialog", () => {
   });
 });
 
+describe("closing while a save is running", () => {
+  async function pasteAndSave() {
+    mount({ mode: "create" });
+    await type("Identity name", "Home");
+    await fireEvent.input(screen.getByLabelText("Author name"), {
+      target: { value: "A" },
+    });
+    await fireEvent.input(screen.getByLabelText("Author email"), {
+      target: { value: "a@b.example" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Add a credential" }),
+    );
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    await type("Token", "ghp_x");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Add credential" }),
+    );
+    await screen.findByRole("button", { name: /^Remove Pasted token/ });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    const real = store.create.bind(store);
+    vi.spyOn(store, "create").mockImplementation(async (request) => {
+      await gate;
+      return real(request);
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Add identity" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    return release;
+  }
+
+  it("does not take back the tokens the saved identity points at", async () => {
+    const release = await pasteAndSave();
+    release();
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(api.tokens).toHaveLength(1);
+  });
+
+  it("takes the tokens back when that save then fails", async () => {
+    const release = await pasteAndSave();
+    api.refuse = { status: 422, message: "no" };
+    release();
+    await waitFor(() => expect(api.tokens).toHaveLength(0));
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
 describe("editing an identity", () => {
   const existing = () =>
     identity(5, {
@@ -272,6 +320,20 @@ describe("editing an identity", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await Promise.resolve();
     expect(api.tokens).toEqual(["tok-old"]);
+  });
+
+  it("keeps what was typed when the store hands over a fresh copy of the identity", async () => {
+    api.identities = [existing()];
+    await store.refresh();
+    const view = mount({
+      mode: "edit",
+      identity: store.identities[0] as never,
+    });
+    await type("Identity name", "Typed");
+    await view.rerender({
+      identity: JSON.parse(JSON.stringify(store.identities[0])) as never,
+    });
+    expect(screen.getByLabelText("Identity name")).toHaveValue("Typed");
   });
 
   it("lets the same name stand for itself", async () => {

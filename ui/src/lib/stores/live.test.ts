@@ -202,6 +202,56 @@ describe("LiveState.subscribe", () => {
     }
   });
 
+  it("keeps the stream going when a listener throws", async () => {
+    vi.useFakeTimers();
+    try {
+      let options: EventStreamOptions | undefined;
+      let push: (event: unknown) => void = () => undefined;
+      const live = new LiveState({
+        api: fakeApi(() => ok(0)),
+        pollMs: 60_000,
+        events: (o) => {
+          options = o;
+          return (async function* () {
+            const queue: unknown[] = [];
+            push = (e) => queue.push(e);
+            while (!o.signal.aborted) {
+              const next = queue.shift();
+              if (next !== undefined) yield next as never;
+              else await new Promise((r) => setTimeout(r, 10));
+            }
+          })();
+        },
+      });
+      const seen: unknown[] = [];
+      let resynced = 0;
+      live.subscribe({
+        event: () => {
+          throw new Error("a screen broke");
+        },
+        resync: () => {
+          throw new Error("a screen broke");
+        },
+      });
+      live.subscribe({
+        event: (e) => seen.push(e),
+        resync: () => (resynced += 1),
+      });
+      const stop = live.start();
+      await vi.advanceTimersByTimeAsync(0);
+      push({ type: "first" });
+      await vi.advanceTimersByTimeAsync(20);
+      push({ type: "second" });
+      await vi.advanceTimersByTimeAsync(20);
+      options?.onResync?.("lagged");
+      expect(seen).toEqual([{ type: "first" }, { type: "second" }]);
+      expect(resynced).toBe(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lets a screen that knows the count tell the badge at once", () => {
     const live = new LiveState({ api: fakeApi(() => ok(0)) });
     live.setPending(7);

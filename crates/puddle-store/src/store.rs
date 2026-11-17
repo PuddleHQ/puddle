@@ -73,7 +73,7 @@ pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use scoped::UserStore;
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
-pub use ssh_agent::{MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
+pub use ssh_agent::{HostKeyPin, MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
 pub use ssh_agent_asks::{
     MAX_OPEN_SSH_AGENT_ASKS, SshAgentAnswer, SshAgentAsk, SshAgentAskStart, SshAgentAskState,
 };

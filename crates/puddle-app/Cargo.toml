@@ -63,6 +63,9 @@ url = { workspace = true }
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Globalization", "Win32_System_Com"] }
 windows-sys = { workspace = true, features = ["Win32_UI_Input_KeyboardAndMouse"] }
+# Already in the tree through the dialog plugin (same features): main.rs shows a start-up failure in a
+# message box, because a release build has no console.
+rfd = { version = "0.17", default-features = false, features = ["common-controls-v6"] }
 # Already in the tree through embed-resource's build script: the start-at-sign-in entry in the
 # current user's Run key.
 winreg = "0.56"

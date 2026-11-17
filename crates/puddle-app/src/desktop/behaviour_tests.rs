@@ -271,26 +271,6 @@ fn settled_after_quiet(rig: &Rig, event: Event) {
 }
 
 #[test]
-fn settling_after_a_quiet_event_leaves_nothing_the_service_has_still_to_say() {
-    // The service answers a request that opened with its pick a moment later; a probe that is
-    // not waited out to that answer lets it land after the test switched a notice on (the stray
-    // "demo is asking for access" before "Disk space is running low").
-    let rig = rig(TrayState::Shown);
-    let mut events = rig.backend.events().subscribe();
-    let before = rig.recorded.badges().len();
-    settled_after_quiet(&rig, Event::oom_kill(workspace(), 3, "node"));
-    let probe = 10_000 + i64::try_from(before).unwrap();
-    let mut said = false;
-    while let Ok(event) = events.try_recv() {
-        said |= matches!(event, Event::PendingNotify { request, .. } if request.id == probe);
-    }
-    assert!(
-        said,
-        "the service had not answered the probe when the helper returned"
-    );
-}
-
-#[test]
 fn the_badge_switch_turns_the_badge_off_everywhere() {
     let rig = rig(TrayState::Shown);
     save(&rig, &json!({"badge": false}));

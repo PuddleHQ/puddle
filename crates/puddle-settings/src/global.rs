@@ -303,7 +303,7 @@ pub struct UiPrefs {
     /// Ask for confirmation before a decision creates a rule for every workspace; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm_global_rules: Option<bool>,
-    /// The single-key shortcuts of the inbox (A, D, J, K); default off.
+    /// The single-key shortcuts of the inbox (A, D, J, K); default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbox_shortcuts: Option<bool>,
     /// Start Puddle when the user signs in to the computer; default off.
@@ -350,7 +350,7 @@ impl UiPrefs {
     /// Puddle's default for [`UiPrefs::confirm_global_rules`].
     pub const DEFAULT_CONFIRM_GLOBAL_RULES: bool = true;
     /// Puddle's default for [`UiPrefs::inbox_shortcuts`].
-    pub const DEFAULT_INBOX_SHORTCUTS: bool = false;
+    pub const DEFAULT_INBOX_SHORTCUTS: bool = true;
     /// Puddle's default for [`UiPrefs::start_at_login`].
     pub const DEFAULT_START_AT_LOGIN: bool = false;
     /// Puddle's default for [`UiPrefs::notify_low_disk_space`].

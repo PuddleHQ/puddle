@@ -513,14 +513,7 @@ test.describe("a name that looks like another", () => {
 });
 
 test.describe("keyboard only", () => {
-  // The single keys are a Settings switch, off by default: these tests turn it on first.
-  test.beforeEach(async ({ request, backend }) => {
-    const reply = await request.put("/api/settings", {
-      headers: auth(backend),
-      data: { ui: { inbox_shortcuts: true } },
-    });
-    expect(reply.ok()).toBe(true);
-  });
+  // The single keys are a Settings switch, on by default: nothing is switched on first.
 
   /** J or K until the row for `host` is the current one. */
   async function moveTo(page: Page, host: string): Promise<void> {
@@ -690,6 +683,7 @@ test.describe("accessibility", () => {
   // The states are scanned at most two to a test: a scan costs seconds on a loaded host.
   const stops = axeStops([
     ["list", "options"],
+    ["shortcuts"],
     ["confirm", "toast and decided list"],
     ["empty"],
   ]);
@@ -709,6 +703,13 @@ test.describe("accessibility", () => {
         const row = rowFor(page, "a.axe.example.com");
         await expect(row).toBeVisible();
         await scan(page, "list");
+
+        await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
+        const keys = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+        await expect(keys).toBeVisible();
+        await scan(page, "shortcuts");
+        await page.keyboard.press("Escape");
+        await expect(keys).toHaveCount(0);
 
         const dialog = await openOptions(row, page);
         await dialog.getByRole("radio", { name: /^Every workspace/ }).check();
@@ -769,7 +770,10 @@ test.describe("accessibility", () => {
     const row = rowFor(page, "registry.example.org");
     await expect(row).toBeVisible();
     await expect(row.getByRole("button")).toHaveCount(3);
-    const buttons = await row.getByRole("button").all();
+    const buttons = [
+      ...(await row.getByRole("button").all()),
+      page.getByRole("button", { name: "Keyboard shortcuts" }),
+    ];
     for (const button of buttons) {
       const box = await button.boundingBox();
       expect(box?.width ?? 0).toBeGreaterThanOrEqual(24);

@@ -22754,7 +22754,7 @@
               "boolean",
               "null"
             ],
-            "description": "The inbox's single-key shortcuts A, D, J and K (default off)."
+            "description": "The inbox's single-key shortcuts A, D, J and K (default on)."
           },
           "minimize_to_tray": {
             "type": [

@@ -81,6 +81,7 @@ import {
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
 import { sshAgentAsks } from "#lib/stores/ssh-agent-asks.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { INBOX_SHORTCUTS } from "#lib/decision/inbox-shortcuts.ts";
 import InboxPage from "./+page.svelte";
 
 const { inbox, setsApi, source, request, mine, agentApi, ask } = h;
@@ -246,13 +247,33 @@ describe("the inbox page", () => {
     expect(sub).not.toHaveTextContent(/workspace waits/);
   });
 
-  it("lists the shortcuts in words when they are on", async () => {
-    shortcuts(true);
+  it("has no keyboard panel under the heading; a button beside it lists the shortcuts, Ctrl+click among them", async () => {
     seed();
     await ready();
-    expect(screen.getByText(/allow ·/)).toHaveTextContent(
-      "A allow · D deny · J/K move · Enter more choices",
+    expect(document.querySelector(".head")).not.toHaveTextContent(
+      /Tab to a request|more choices|Turn on the A, D, J and K keys/,
     );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Keyboard shortcuts" }),
+    );
+    const list = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+      hidden: true,
+    });
+    const lines = [...list.querySelectorAll("[data-shortcut]")].map(
+      (line) => line.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    );
+    expect(lines).toEqual(
+      INBOX_SHORTCUTS.map((s) => `${s.keys.join("+")} ${s.does}`),
+    );
+    expect(lines).toContain(
+      "Ctrl+click On Allow or Deny: allow or deny for all workspaces",
+    );
+    expect(
+      within(list).getByRole("link", {
+        name: "Turn the single keys off in Settings",
+      }),
+    ).toHaveAttribute("href", "/settings#s-inbox");
   });
 
   it("never holds a workspace's requests back: a long list has no held-back line (R-44)", async () => {
@@ -678,25 +699,53 @@ function shortcuts(on: boolean | null) {
   };
 }
 
-describe("the keys while the setting is off", () => {
-  it("leave A, D, J and K alone, whether the switch is unset or off, and say where to turn them on", async () => {
-    for (const setting of [null, false]) {
+describe("the keys by default", () => {
+  it("work without turning anything on, before the settings are read and with the switch unset", async () => {
+    for (const setting of ["not read", null] as const) {
       cleanup();
       reset();
-      shortcuts(setting);
+      if (setting !== "not read") shortcuts(setting);
       seed();
       await ready();
-      await press("a");
-      await press("d");
       await press("j");
-      await press("k");
-      expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
-      expect(rowOf("a.example.com")).not.toHaveFocus();
-      expect(
-        screen.getByRole("link", { name: /Turn on the A, D, J and K keys/ }),
-      ).toHaveAttribute("href", "/settings#s-inbox");
-      expect(screen.queryByText("allow")).toBeNull();
+      expect(rowOf("b.example.com")).toHaveFocus();
+      await press("d");
+      await vi.waitFor(() =>
+        expect(inbox.rules.at(-1)).toMatchObject({
+          effect: "deny",
+          pattern: "b.example.com",
+        }),
+      );
     }
+  });
+});
+
+describe("the keys while the setting is off", () => {
+  it("leave A, D, J and K alone, and the shortcuts list says where to turn them on", async () => {
+    shortcuts(false);
+    seed();
+    await ready();
+    await press("a");
+    await press("d");
+    await press("j");
+    await press("k");
+    expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+    expect(rowOf("a.example.com")).not.toHaveFocus();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Keyboard shortcuts" }),
+    );
+    const list = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+      hidden: true,
+    });
+    expect(
+      [...list.querySelectorAll("[data-shortcut]")].map(
+        (line) => (line as HTMLElement).dataset["shortcut"],
+      ),
+    ).toEqual(INBOX_SHORTCUTS.filter((s) => !s.singleKey).map((s) => s.id));
+    expect(
+      within(list).getByRole("link", { name: "Turn them on in Settings" }),
+    ).toHaveAttribute("href", "/settings#s-inbox");
   });
 
   it("keep Enter opening the options of the current row", async () => {

@@ -4,6 +4,9 @@
 # another licence): matching headers pass; a missing header, a GPL header in an AGPL crate, an AGPL
 # header in the other crate, a wrong header outside every crate and a CRLF file each behave right.
 set -eu
+# check.sh runs under hooks that export GIT_DIR and friends; a leaked one would point `git init` at the real repository.
+# shellcheck disable=SC1091 # the helper sits beside this script
+. "$(dirname "$0")/git-clean-env.sh"
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/check-spdx-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT

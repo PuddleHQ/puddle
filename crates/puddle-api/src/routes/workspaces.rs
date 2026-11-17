@@ -731,7 +731,7 @@ pub(crate) async fn attach_workspace(
             opened: false,
             message: Some(
                 "the editor opens only on the computer Puddle runs on, not for a browser on \
-                 another computer"
+                 another computer; open it from Puddle's desktop app or command line there"
                     .to_owned(),
             ),
             open_uri: None,

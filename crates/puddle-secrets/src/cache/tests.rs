@@ -326,7 +326,7 @@ async fn a_value_being_read_right_now_is_left_alone_by_the_sweep() {
     cache.get(&stored()).await.unwrap();
     tokio::time::advance(40 * MIN).await;
     let slot = Arc::clone(cache.slots.lock().unwrap().get(&stored()).unwrap());
-    let reading = slot.lock().await;
+    let reading = slot.state.lock().await;
     assert_eq!(cache.evict_expired(), 0, "a slot in use is skipped");
     drop(reading);
     assert_eq!(cache.evict_expired(), 1);
@@ -345,4 +345,62 @@ async fn the_sweep_forgets_an_emptied_slot_nobody_waits_on() {
     drop(waiting);
     assert_eq!(cache.evict_expired(), 0);
     assert!(cache.slots.lock().unwrap().is_empty(), "nobody waits: gone");
+}
+
+/// Fails every read after `delay`, counting the reads.
+struct SlowFailure {
+    delay: Duration,
+    calls: AtomicUsize,
+}
+
+impl Fetch for &SlowFailure {
+    fn fetch(&self, _: &SourceSpec) -> impl Future<Output = Result<Fetched, SourceError>> + Send {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let delay = self.delay;
+        async move {
+            tokio::time::sleep(delay).await;
+            Err(SourceError::NotSignedIn)
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_burst_during_a_failing_read_is_one_read_and_one_notice() {
+    let source = SlowFailure {
+        delay: Duration::from_secs(10),
+        calls: AtomicUsize::new(0),
+    };
+    let cache = SecretCache::new(&source);
+    let mut events = cache.subscribe();
+    let started = Instant::now();
+    let spec = gh();
+    let (a, b, c, d) = tokio::join!(
+        cache.get(&spec),
+        cache.get(&spec),
+        cache.get(&spec),
+        cache.get(&spec)
+    );
+    for result in [a, b, c, d] {
+        assert_eq!(result.unwrap_err(), SourceError::NotSignedIn);
+    }
+    assert_eq!(
+        source.calls.load(Ordering::SeqCst),
+        1,
+        "one read for the burst"
+    );
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(10),
+        "nobody waited for a read of their own"
+    );
+    // flake-ok: every notice is sent synchronously before the `get` that read returns.
+    assert_eq!(events.try_recv().unwrap().source, gh());
+    assert!(events.try_recv().is_err(), "one notice for the burst");
+
+    // A failure is not remembered: the next request reads again.
+    assert_eq!(
+        cache.get(&gh()).await.unwrap_err(),
+        SourceError::NotSignedIn
+    );
+    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
 }

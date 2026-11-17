@@ -55,7 +55,7 @@ impl AccountSecrets {
     }
 
     /// Whether `user` has a password and `verify` accepts its stored hash. The hash goes to
-    /// `verify` and nowhere else.
+    /// `verify` and nowhere else. A user being deleted has none.
     ///
     /// # Errors
     /// A database error.
@@ -66,7 +66,8 @@ impl AccountSecrets {
     ) -> Result<bool, StoreError> {
         let hash: Option<String> = lock(&self.conn)
             .query_row(
-                "SELECT hash FROM account_passwords WHERE user_id = ?1",
+                "SELECT p.hash FROM account_passwords p JOIN users u ON u.id = p.user_id
+                 WHERE p.user_id = ?1 AND u.deleting_at IS NULL",
                 [user.get()],
                 |r| r.get(0),
             )
@@ -152,7 +153,7 @@ impl AccountSecrets {
     }
 
     /// The device a refresh token's `digest` belongs to, while that device is neither revoked
-    /// nor expired.
+    /// nor expired and its user is not being deleted.
     ///
     /// # Errors
     /// A database error, or a stored row that does not parse.
@@ -162,7 +163,8 @@ impl AccountSecrets {
             .query_row(
                 "SELECT d.id, d.user_id, u.role FROM account_sessions s
                    JOIN devices d ON d.id = s.device_id JOIN users u ON u.id = d.user_id
-                 WHERE s.refresh_digest = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2",
+                 WHERE s.refresh_digest = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2
+                   AND u.deleting_at IS NULL",
                 params![digest, now],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -230,8 +232,9 @@ impl AccountSecrets {
         Ok(())
     }
 
-    /// Uses up the invite `digest`: the user it was for, if it exists and has not expired. An
-    /// invite works once; an expired one is removed and answers `None`.
+    /// Uses up the invite `digest`: the user it was for, if it exists, has not expired and its
+    /// user is not being deleted. An invite works once; one that does not work is removed and
+    /// answers `None`.
     ///
     /// # Errors
     /// A database error.
@@ -245,9 +248,15 @@ impl AccountSecrets {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        Ok(found
-            .filter(|&(_, expires_at)| expires_at > now)
-            .map(|(user, _)| UserId::from_stored(user)))
+        let Some((user, _)) = found.filter(|&(_, expires_at)| expires_at > now) else {
+            return Ok(None);
+        };
+        let active: bool = conn.query_row(
+            "SELECT count(*) > 0 FROM users WHERE id = ?1 AND deleting_at IS NULL",
+            [user],
+            |r| r.get(0),
+        )?;
+        Ok(active.then(|| UserId::from_stored(user)))
     }
 }
 

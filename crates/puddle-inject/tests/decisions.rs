@@ -468,6 +468,9 @@ async fn an_lfs_batch_with_a_second_operation_key_in_another_case_is_a_push() {
         br#"{"OPERATION":"upload","objects":[]}"#,
         br#"{"Operation":"download","objects":[]}"#,
         br#"{"operation":"download","oper\u0041tion":"upload","objects":[]}"#,
+        // Not an object at all.
+        br#"["operation","download"]"#,
+        br#""download""#,
     ] {
         let decision = w
             .decide_with("github.com", "POST", batch, &[], Some(body))

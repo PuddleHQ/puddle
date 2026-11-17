@@ -491,6 +491,9 @@ pub(crate) fn check<B>(
             return Err(bad("conflicting Content-Length headers"));
         }
     }
+    // `Expect: 100-continue` is accepted but never answered with a `100` on HTTP/2: hyper's
+    // HTTP/2 server cannot send an interim response. The client sends its body when its own wait
+    // runs out (curl: 1 s) and the request goes on as usual; HTTP/1.1 does get the `100`.
     for value in headers.get_all(header::EXPECT) {
         if !value.as_bytes().eq_ignore_ascii_case(b"100-continue") {
             return Err(Refusal::new(
@@ -963,7 +966,7 @@ async fn send(
     };
     let sending = async {
         match route {
-            Route::H2(sender) => Some(sender.send_request(request).await),
+            Route::H2(sender) => Some(send_h2(shared, sender, request).await),
             Route::H1(lease) => match lease.sender() {
                 Some(sender) => Some(sender.send_request(request).await),
                 None => None,
@@ -997,6 +1000,33 @@ async fn send(
                 ),
             },
         )),
+    }
+}
+
+/// Sends `request` on the upstream HTTP/2 connection. A request the connection gives back unsent
+/// (the server said GOAWAY, which the connection only acts on when the next request comes) goes
+/// once more on a new connection, as a client talking to the server directly sends it again: the
+/// server never saw it.
+async fn send_h2(
+    shared: &Shared,
+    sender: &mut hyper::client::conn::http2::SendRequest<UpBody>,
+    request: Request<UpBody>,
+) -> Result<Response<Incoming>, hyper::Error> {
+    let mut failed = match sender.try_send_request(request).await {
+        Ok(response) => return Ok(response),
+        Err(failed) => failed,
+    };
+    let Some(request) = failed.take_message() else {
+        return Err(failed.into_error());
+    };
+    tracing::debug!(host = %shared.cx.target.host, error = %failed.error(), "upstream connection closed before it took the request; connecting again");
+    match shared.connect_leg().await {
+        Ok(Usable::H2(fresh)) => {
+            *sender = fresh;
+            sender.send_request(request).await
+        }
+        // The server now speaks HTTP/1.1 (the request was built for HTTP/2), or cannot be reached.
+        Ok(Usable::Pool(_)) | Err(_) => Err(failed.into_error()),
     }
 }
 

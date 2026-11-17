@@ -42,6 +42,11 @@
       ? currentId
       : (flat[0]?.request.id ?? null),
   );
+  // The highlighted row is pinned the moment it is drawn, so a request that arrives later above it
+  // (a guest chooses when) never becomes the row A or D acts on; only the user's own move does.
+  $effect(() => {
+    if (currentId !== activeId) currentId = activeId;
+  });
   onMount(() => {
     const stop = pending.start();
     const stopSets = ruleSets.start();
@@ -119,7 +124,9 @@
   }
 
   function quick(effect: Effect) {
-    const row = request(activeId);
+    // Only the row the user sees as current, never whichever row happens to be first now.
+    if (currentId === null || currentId !== activeId) return;
+    const row = request(currentId);
     if (!row) return;
     const blocked = pending.blockedBy(row.request);
     if (effect === "allow" && blocked) {

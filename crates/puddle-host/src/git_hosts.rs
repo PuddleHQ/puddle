@@ -54,17 +54,21 @@ pub(crate) fn decrypt_set(git: &WorkspaceGit) -> TerminationSet {
 /// hosts: the names it decrypts (an enterprise server), with no wildcard.
 pub(crate) fn ssh_credential_hosts(git: &WorkspaceGit) -> TerminationSet {
     let mut set = TerminationSet::new();
-    for identity in &git.identities {
-        for credential in &identity.credentials {
-            for pattern in decrypt_patterns(credential.host.as_str()) {
-                if !pattern.contains('*') {
-                    // `insert` reports only whether the pattern was new
-                    let _ = set.insert(&pattern);
-                }
-            }
-        }
+    for pattern in ssh_credential_patterns(git) {
+        // `insert` reports only whether the pattern was new
+        let _ = set.insert(&pattern);
     }
     set
+}
+
+/// The wildcard-free decrypt patterns of `git`'s credentials: the names SSH to those hosts
+/// can be told apart by.
+fn ssh_credential_patterns(git: &WorkspaceGit) -> impl Iterator<Item = String> + '_ {
+    git.identities
+        .iter()
+        .flat_map(|identity| &identity.credentials)
+        .flat_map(|credential| decrypt_patterns(credential.host.as_str()))
+        .filter(|pattern| !pattern.contains('*'))
 }
 
 /// Every name a workspace with `git` may use for Git over SSH: the built-in Git hosts and the
@@ -73,12 +77,7 @@ pub(crate) fn ssh_credential_hosts(git: &WorkspaceGit) -> TerminationSet {
 pub(crate) fn ssh_names(git: &WorkspaceGit) -> Vec<Host> {
     let mut names = git_ssh_built_in_hosts();
     names.extend(
-        git.identities
-            .iter()
-            .flat_map(|identity| &identity.credentials)
-            .flat_map(|credential| decrypt_patterns(credential.host.as_str()))
-            .filter(|pattern| !pattern.contains('*'))
-            .filter_map(|pattern| Host::parse_normalised(&pattern).ok()),
+        ssh_credential_patterns(git).filter_map(|pattern| Host::parse_normalised(&pattern).ok()),
     );
     names.sort_by_key(ToString::to_string);
     names.dedup();

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The company-network bars on Windows (the Windows half of the corporate-network acceptance
-# battery), by hand on any branch (`gh workflow run company-network-windows.yml --ref <branch>`):
+# battery), weekly on develop (Wednesday 04:41 UTC, so a regression in the real-tool radar shows within a
+# week; nightly-signal opens the issue) and by hand on any branch (`gh workflow run company-network-windows.yml --ref <branch>`):
 # `vm_company_network_*` and `vm_radar_company_network_*` in a real microVM on WHP: the guest's
 # curl, git, npm and dotnet restore with the toggle off and on, and the intranet refused off and
 # served on. The radar half calls live package mirrors, so it never runs per pull request.
@@ -10,6 +11,8 @@
 name: company-network-windows
 
 on:
+  schedule:
+    - cron: "41 4 * * 3"
   workflow_dispatch:
 
 permissions:

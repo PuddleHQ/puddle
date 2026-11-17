@@ -1,7 +1,11 @@
 // Fixture: one line per sink the gate bans.
-export function show(el: HTMLElement, markup: string): void {
+export function show(el: HTMLElement, frame: HTMLIFrameElement, markup: string): void {
   el.innerHTML = markup;
   el.outerHTML = markup;
   el.insertAdjacentHTML("beforeend", markup);
   document.write(markup);
+  el.setHTMLUnsafe(markup);
+  document.createRange().createContextualFragment(markup);
+  new DOMParser().parseFromString(markup, "text/html");
+  frame.srcdoc = markup;
 }

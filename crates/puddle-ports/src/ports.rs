@@ -262,12 +262,9 @@ impl Ports {
         match self.inner.pins.pinned(workspace) {
             Ok(pins) => {
                 for pin in pins {
-                    match self.open(workspace, pin).await {
-                        Ok(Opened::Bound {
-                            replaced: Some(old),
-                        }) => old.forward.close().await,
-                        Ok(_) => {}
-                        Err(err) => self.fail(workspace, pin, err.to_string()),
+                    // Nothing runs yet, so no forward is moved here.
+                    if let Err(err) = self.open(workspace, pin).await {
+                        self.fail(workspace, pin, err.to_string());
                     }
                 }
             }

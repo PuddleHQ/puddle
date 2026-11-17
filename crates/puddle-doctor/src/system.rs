@@ -340,15 +340,13 @@ fn probe_within(
     wait: Duration,
 ) -> puddle_secrets::StoreHealth {
     let (send, receive) = std::sync::mpsc::channel();
-    let spawned = std::thread::Builder::new()
+    // A thread that cannot start drops `send`, which reads as no answer: locked.
+    let _ = std::thread::Builder::new()
         .name("store-probe".to_owned())
         .spawn(move || {
             // The doctor may have given up waiting; nobody listens then.
             let _ = send.send(probe());
         });
-    if spawned.is_err() {
-        return puddle_secrets::StoreHealth::Locked;
-    }
     receive
         .recv_timeout(wait)
         .unwrap_or(puddle_secrets::StoreHealth::Locked)

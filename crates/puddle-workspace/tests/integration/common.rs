@@ -172,21 +172,18 @@ pub(crate) const HOSTILE_COMMANDS: [&str; 5] = [
 /// one untracked file, `new.txt`. Each program writes its marker in the returned folder.
 #[cfg(unix)]
 pub(crate) fn hostile_checkout(root: &Path, vol: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let markers = root.join("ran");
     let bin = root.join("bin");
     std::fs::create_dir_all(&markers).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    for name in HOSTILE_COMMANDS {
-        let program = bin.join(name);
-        let marker = markers.join(name);
-        std::fs::write(
-            &program,
-            format!("#!/bin/sh\n: > '{}'\nexec cat\n", marker.display()),
+    let script = |name: &str| {
+        format!(
+            "#!/bin/sh\n: > '{}'\nexec cat\n",
+            markers.join(name).display()
         )
-        .unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    for name in HOSTILE_COMMANDS {
+        puddle_test_kit::write_executable(&bin.join(name), &script(name));
     }
     let program = |name: &str| bin.join(name).display().to_string();
     let touch_old = |file: &Path| {
@@ -245,7 +242,7 @@ pub(crate) fn hostile_checkout(root: &Path, vol: &Path) -> PathBuf {
     std::fs::write(evil.join(".git/info/attributes"), "*.p filter=info\n").unwrap();
     let hooks = root.join("hooks");
     std::fs::create_dir_all(&hooks).unwrap();
-    std::fs::copy(bin.join("index-hook"), hooks.join("post-index-change")).unwrap();
+    puddle_test_kit::write_executable(&hooks.join("post-index-change"), &script("index-hook"));
     for (key, value) in [
         ("filter.evil.clean", program("clean-filter")),
         ("filter.evil.required", "true".to_owned()),

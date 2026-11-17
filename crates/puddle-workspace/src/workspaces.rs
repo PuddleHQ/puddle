@@ -996,7 +996,7 @@ impl Workspaces {
         };
         let existed = existing.is_some();
         let result = self
-            .run_import(rt, id, &name, image, existing.as_ref(), size, imports)
+            .run_import(rt, id, image, existing.as_ref(), size, imports)
             .await;
         self.registry.give_back(id);
         // The create makes the volume; whether it got that far is read, not assumed.
@@ -1025,12 +1025,12 @@ impl Workspaces {
         &self,
         rt: &R,
         id: &WorkspaceId,
-        name: &SandboxName,
         image: &ImageRef,
         existing: Option<&VolumeInfo>,
         size: DiskSize,
         imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
+        let name = &maintenance_name(id)?;
         clear_leftover(rt, id, name).await?;
         let layout = Layout::new(id)?;
         // The size is for a volume the import makes; one that exists keeps its own.

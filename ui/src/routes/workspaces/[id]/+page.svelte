@@ -86,14 +86,16 @@
     let current = true;
     memorySource = null;
     void (async () => {
+      let source: "workspace" | "global" | "default" | null = null;
       try {
         const { data } = await api.GET("/api/settings/workspaces/{workspace}", {
           params: { path: { workspace: wid } },
         });
-        if (current) memorySource = data?.effective.memory.source ?? null;
+        source = data?.effective.memory.source ?? null;
       } catch {
-        if (current) memorySource = null;
+        // Unreadable settings: no source is shown.
       }
+      if (current) memorySource = source;
     })();
     return () => {
       current = false;

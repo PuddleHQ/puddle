@@ -14867,7 +14867,7 @@
           },
           {
             "type": "object",
-            "description": "The oldest records were deleted to keep the audit under its size cap.",
+            "description": "Records older than the audit's retention period were deleted.",
             "required": [
               "ts",
               "deleted_records",
@@ -18606,7 +18606,7 @@
       },
       "InviteRequest": {
         "type": "object",
-        "description": "Uses an invite link (made by the server's command line) to set a password.",
+        "description": "Uses an invite link (made by the server's command line or an admin) to set a password.",
         "required": [
           "secret",
           "password"
@@ -21504,8 +21504,8 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest vCPUs (at least 1, at most the global maximum); applies at the next start.",
-            "maximum": 32,
+            "description": "Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs\nunless set); applies at the next start.",
+            "maximum": 255,
             "minimum": 1
           },
           "direct_ssh": {

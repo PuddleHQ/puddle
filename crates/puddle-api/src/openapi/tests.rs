@@ -62,20 +62,53 @@ fn operation_count_counts_methods_and_not_other_path_keys() {
 fn response_schemas_require_every_property() {
     let s = spec();
     let schemas = s["components"]["schemas"].as_object().unwrap();
+    // A schema only a request body uses may leave fields out; every other one is something
+    // Puddle sends, which always has every field. Shared ones (`SettingsLayer`) are checked:
+    // required in the spec because responses always send them, tolerated when absent in a
+    // request.
+    let request_only = request_only_schemas(&s);
+    assert!(
+        request_only.contains("NewWorkspaceRequest"),
+        "{request_only:?}"
+    );
+    assert!(!request_only.contains("PendingRequest"));
+    assert!(!request_only.contains("SettingsLayer"));
     for (name, schema) in schemas {
-        if name.ends_with("Request")
-            || name == "SettingsLayer"
-            || name == "LocalToggles"
-            || name == "UiPrefs"
-        {
-            continue;
+        if !request_only.contains(name) {
+            check_required(name, schema);
         }
-        check_required(name, schema);
     }
-    // Shared by requests and responses: required in the spec (responses always send them),
-    // tolerated when absent in a request.
-    for name in ["SettingsLayer", "LocalToggles", "VsCodeServer", "UiPrefs"] {
-        check_required(name, &schemas[name]);
+}
+
+/// The schemas a request body can carry and no response can.
+fn request_only_schemas(s: &Value) -> BTreeSet<String> {
+    let responses = response_schemas_of(s, |_, _| true);
+    let mut todo = Vec::new();
+    for item in s["paths"].as_object().unwrap().values() {
+        for op in item.as_object().unwrap().values() {
+            schema_refs(&op["requestBody"], &mut todo);
+        }
+    }
+    let mut seen = BTreeSet::new();
+    while let Some(name) = todo.pop() {
+        if seen.insert(name.clone()) {
+            schema_refs(&s["components"]["schemas"][&name], &mut todo);
+        }
+    }
+    &seen - &responses
+}
+
+/// The names of the schemas `value` refers to, outermost first.
+fn schema_refs(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(r)) = map.get("$ref") {
+                out.push(r.rsplit('/').next().unwrap_or_default().to_owned());
+            }
+            map.values().for_each(|v| schema_refs(v, out));
+        }
+        Value::Array(items) => items.iter().for_each(|v| schema_refs(v, out)),
+        _ => {}
     }
 }
 
@@ -203,30 +236,18 @@ fn response_schemas(s: &Value) -> BTreeSet<String> {
 /// Every schema the responses of the operations `keep` accepts (path and lower-case method) can
 /// carry.
 fn response_schemas_of(s: &Value, keep: impl Fn(&str, &str) -> bool) -> BTreeSet<String> {
-    fn refs(value: &Value, out: &mut Vec<String>) {
-        match value {
-            Value::Object(map) => {
-                if let Some(Value::String(r)) = map.get("$ref") {
-                    out.push(r.rsplit('/').next().unwrap_or_default().to_owned());
-                }
-                map.values().for_each(|v| refs(v, out));
-            }
-            Value::Array(items) => items.iter().for_each(|v| refs(v, out)),
-            _ => {}
-        }
-    }
     let mut todo = Vec::new();
     for (path, item) in s["paths"].as_object().unwrap() {
         for (method, op) in item.as_object().unwrap() {
             if keep(path, method) {
-                refs(&op["responses"], &mut todo);
+                schema_refs(&op["responses"], &mut todo);
             }
         }
     }
     let mut seen = BTreeSet::new();
     while let Some(name) = todo.pop() {
         if seen.insert(name.clone()) {
-            refs(&s["components"]["schemas"][&name], &mut todo);
+            schema_refs(&s["components"]["schemas"][&name], &mut todo);
         }
     }
     seen

@@ -305,6 +305,8 @@ pub struct Host<R: Runtime + Clone> {
     steps: Mutex<Vec<Step>>,
     reconcile: puddle_lifecycle::ReconcileReport,
     stopped: OnceCell<HostShutdown>,
+    /// Told when a restore is confirmed.
+    restore_requested: Arc<tokio::sync::Notify>,
     // Held until the host is dropped, after shutdown has stopped the sandboxes.
     _lock: DataLock,
 }
@@ -368,6 +370,7 @@ impl<R: Runtime + Clone> Host<R> {
         // Store, settings and the event hub.
         let events = Arc::new(EventHub::default());
         let problems = Arc::new(Problems::new(events.clone()));
+        let restore_requested = Arc::new(tokio::sync::Notify::new());
         let clock = Arc::new(SystemClock);
         let State {
             store,
@@ -377,7 +380,7 @@ impl<R: Runtime + Clone> Host<R> {
             stored,
             retired,
             cleaned,
-        } = open_state(&config.paths, &events, &clock, &mut steps)?;
+        } = open_state(&config.paths, &events, &problems, &clock, &mut steps)?;
 
         let shared = Shared {
             config: &config,
@@ -389,6 +392,7 @@ impl<R: Runtime + Clone> Host<R> {
             settings: &settings,
             endpoints: &endpoints,
             roots: &roots,
+            restore_requested: &restore_requested,
         };
         let listed: Vec<WorkspaceId> = stored.iter().map(|s| s.id.clone()).collect();
         let credentials = open_credentials(&shared, listed).await?;
@@ -458,8 +462,16 @@ impl<R: Runtime + Clone> Host<R> {
             steps: Mutex::new(steps),
             reconcile: reconciled.report,
             stopped: OnceCell::new(),
+            restore_requested,
             _lock: lock,
         })
+    }
+
+    /// Resolves when the user has confirmed a restore. The restore applies at the next start, so a
+    /// process that can start itself again (or tell its user to) should shut the host down now.
+    /// A confirm that came before the call resolves it at once.
+    pub async fn restore_requested(&self) {
+        self.restore_requested.notified().await;
     }
 
     /// The API's origin, `http://127.0.0.1:<port>/`.
@@ -666,10 +678,22 @@ struct State {
 fn open_state(
     paths: &crate::HostPaths,
     events: &Arc<EventHub>,
+    problems: &Arc<Problems>,
     clock: &Arc<SystemClock>,
     steps: &mut Vec<Step>,
 ) -> Result<State, HostError> {
     crate::data_folder::make_owner_only(paths)?;
+    // A restore the user confirmed before the last stop is applied here: the host alone holds the
+    // data folder and the store is not open yet.
+    if let Some(outcome) = crate::restore::apply::apply_pending(paths)
+        && !outcome.applied
+    {
+        problems.raise(puddle_types::Problem::new(
+            "restore-failed",
+            "A restore from a backup failed and was undone",
+            outcome.message,
+        ));
+    }
     let store = Arc::new(
         Store::open(&paths.store(), clock.clone(), Limits::default())?.with_events(events.clone()),
     );
@@ -709,6 +733,8 @@ struct Shared<'a> {
     settings: &'a Arc<dyn SettingsRepo>,
     endpoints: &'a PuddleEndpoints,
     roots: &'a CorporateRoots,
+    /// Told when a restore is confirmed (see [`Host::restore_requested`]).
+    restore_requested: &'a Arc<tokio::sync::Notify>,
 }
 
 /// The way out through the company network, with what the host's screens read about it.
@@ -741,6 +767,7 @@ fn build_outbound(
         settings,
         endpoints,
         roots,
+        ..
     } = *shared;
     let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
     let reports = Arc::new(ReportDesk::new(problems.clone()));
@@ -1171,7 +1198,10 @@ fn build_services<R: Runtime + Clone>(
         repos
     })
     .with_backup(Arc::new(DataFolderBackup::new(config.paths.clone())))
-    .with_restore(Arc::new(DataFolderRestore::new(config.paths.clone())))
+    .with_restore(Arc::new(DataFolderRestore::new(
+        config.paths.clone(),
+        shared.restore_requested.clone(),
+    )))
     .with_doctor(system_doctor(
         &config.layout,
         &config.paths,

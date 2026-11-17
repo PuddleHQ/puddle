@@ -276,5 +276,397 @@ pub fn preview_merge(present: &Path, backup: &Path) -> Result<DatabasePreview, S
     })
 }
 
+/// How a restore treats what is already here (backup page, BK-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreMode {
+    /// Nothing present is changed or removed; what the backup has and this machine lacks is added.
+    Add,
+    /// Rules, identities, environment rows and the per-workspace rows become the backup's.
+    Replace,
+}
+
+/// What [`restore_database`] made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoredDatabase {
+    /// For each user of the backup, the id it has in the new database: the backup's owner is this
+    /// machine's owner, a user of the same name is that user, and any other becomes a new user
+    /// without a password. Rows of the backup that name a user follow this map.
+    pub user_map: Vec<(i64, i64)>,
+    /// This machine's owner, who owns whatever the backup's owner owned.
+    pub owner_id: i64,
+}
+
+/// Brings the database at `path` to [`SCHEMA_VERSION`] in place. A database from a newer Puddle is
+/// an error, as at start.
+///
+/// # Errors
+///
+/// [`StoreError::SchemaTooNew`] or the SQLite error of the migration (rolled back).
+pub fn migrate_database(path: &Path) -> Result<(), StoreError> {
+    let mut conn = Connection::open(path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    schema::migrate(&mut conn)?;
+    Ok(())
+}
+
+/// A table of the database and how a restore matches its rows.
+struct Table {
+    name: &'static str,
+    /// The columns that identify a row (its natural key); `NOCASE` ones compare case-insensitively.
+    key: &'static [&'static str],
+    /// Columns a restore never copies (row ids, which the new database assigns, and references to
+    /// rows that are never restored).
+    skip: &'static [&'static str],
+}
+
+const fn table(name: &'static str, key: &'static [&'static str]) -> Table {
+    Table {
+        name,
+        key,
+        skip: &["id"],
+    }
+}
+
+/// The tables a restore carries, parents before children. The audit log, pending requests,
+/// sign-in state and the data derived from what a machine saw are not here (see
+/// [`restore_database`]).
+fn tables() -> [Table; 21] {
+    [
+        table("rule_sets", &["user_id", "name NOCASE"]),
+        Table {
+            skip: &["id", "source_pending_id"],
+            ..table(
+                "rules",
+                &[
+                    "user_id",
+                    "scope",
+                    "workspace_id",
+                    "set_id",
+                    "pattern_kind",
+                    "pattern",
+                    "effect",
+                ],
+            )
+        },
+        table(
+            "request_rules",
+            &[
+                "user_id",
+                "scope",
+                "workspace_id",
+                "host",
+                "methods",
+                "path",
+            ],
+        ),
+        table(
+            "rule_set_switches",
+            &["user_id", "rule_set", "workspace_id"],
+        ),
+        table(
+            "builtin_entry_switches",
+            &["user_id", "rule_set", "pattern"],
+        ),
+        table("env_vars", &["user_id", "workspace_id", "name"]),
+        table("env_stand_ins", &["workspace_id", "env_id"]),
+        table("identities", &["user_id", "label NOCASE"]),
+        table("workspace_identities", &["workspace_id", "identity_id"]),
+        table("git_defaults", &["user_id"]),
+        table("workspace_git", &["workspace_id"]),
+        table("workspace_interception", &["workspace_id"]),
+        table("workspace_names", &["workspace_id"]),
+        table("workspace_owners", &["workspace_id"]),
+        table(
+            "workspace_repos",
+            &["workspace_id", "host", "owner", "repo"],
+        ),
+        table("shell_init", &["workspace_id"]),
+        table("pinned_ports", &["workspace_id", "guest_port"]),
+        table("never_decrypt", &["workspace_id", "pattern"]),
+        table("never_decrypt_global", &["pattern"]),
+        table("ssh_agent_hosts", &["workspace_id", "host"]),
+        table("interception_settings", &["id"]),
+    ]
+}
+
+/// The table names a Replace clears, children first.
+const CLEAR_ORDER: [&str; 21] = [
+    "workspace_identities",
+    "env_stand_ins",
+    "rules",
+    "rule_set_switches",
+    "builtin_entry_switches",
+    "request_rules",
+    "env_vars",
+    "identities",
+    "rule_sets",
+    "git_defaults",
+    "workspace_git",
+    "workspace_interception",
+    "workspace_names",
+    "workspace_owners",
+    "workspace_repos",
+    "shell_init",
+    "pinned_ports",
+    "never_decrypt",
+    "never_decrypt_global",
+    "ssh_agent_hosts",
+    "interception_settings",
+];
+
+fn columns(conn: &Connection, schema: &str, table: &str) -> Result<Vec<String>, StoreError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT name FROM pragma_table_info('{table}', '{schema}') ORDER BY cid"
+    ))?;
+    let names = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(names)
+}
+
+/// The expression for column `col` of a backup row `b`: ids of other restored rows and users go
+/// through the maps; a user id of a row that names a user the backup lacks stays missing.
+fn value_of(table: &str, col: &str) -> String {
+    match (table, col) {
+        (_, "user_id") => "(SELECT p_id FROM temp.umap WHERE b_id = b.user_id)".into(),
+        ("rules", "set_id") => "(SELECT p_id FROM temp.smap WHERE b_id = b.set_id)".into(),
+        ("env_stand_ins", "env_id") => "(SELECT p_id FROM temp.emap WHERE b_id = b.env_id)".into(),
+        ("identities", "is_default") => "CASE WHEN b.is_default = 1 AND EXISTS \
+             (SELECT 1 FROM main.identities d WHERE d.is_default = 1 \
+              AND d.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id)) \
+             THEN 0 ELSE b.is_default END"
+            .into(),
+        ("workspace_identities", "identity_id") => {
+            "(SELECT p_id FROM temp.imap WHERE b_id = b.identity_id)".into()
+        }
+        _ => format!("b.{col}"),
+    }
+}
+
+/// Copies the rows of `t` that the present side lacks (all of them after a clear).
+fn copy_rows(conn: &Connection, t: &Table) -> Result<(), StoreError> {
+    let main = columns(conn, "main", t.name)?;
+    let backup = columns(conn, "backup", t.name)?;
+    let cols: Vec<&String> = main
+        .iter()
+        .filter(|c| backup.contains(c) && !t.skip.contains(&c.as_str()))
+        .collect();
+    if cols.is_empty() {
+        return Ok(());
+    }
+    let list = cols
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let values = cols
+        .iter()
+        .map(|c| value_of(t.name, c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let same = t
+        .key
+        .iter()
+        .map(|k| {
+            let (col, nocase) = k
+                .strip_suffix(" NOCASE")
+                .map_or((*k, ""), |c| (c, " COLLATE NOCASE"));
+            format!("m.{col} IS {}{nocase}", value_of(t.name, col))
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    conn.execute(
+        &format!(
+            "INSERT OR IGNORE INTO main.{name} ({list}) SELECT {values} FROM backup.{name} b \
+             WHERE NOT EXISTS (SELECT 1 FROM main.{name} m WHERE {same})",
+            name = t.name
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+/// Builds `temp.<map>` from the rows of `t` that now exist on both sides, matched by their key.
+fn map_rows(conn: &Connection, map: &str, table: &str, key: &str) -> Result<(), StoreError> {
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS temp.{map};
+         CREATE TEMP TABLE {map} AS SELECT b.id AS b_id, m.id AS p_id \
+           FROM backup.{table} b JOIN main.{table} m ON {key};"
+    ))?;
+    Ok(())
+}
+
+/// The id mapping of the users: the owner to the owner, the same name to the same user, anyone
+/// else added as a user with no password.
+fn map_users(conn: &Connection) -> Result<(), StoreError> {
+    conn.execute_batch(
+        "INSERT INTO main.users (role, name, created_at) \
+           SELECT 'user', b.name, b.created_at FROM backup.users b \
+           WHERE b.role = 'user' AND NOT EXISTS (SELECT 1 FROM main.users m WHERE m.name = b.name COLLATE NOCASE);
+         DROP TABLE IF EXISTS temp.umap;
+         CREATE TEMP TABLE umap AS SELECT b.id AS b_id, \
+           CASE WHEN b.role = 'owner' THEN (SELECT id FROM main.users WHERE role = 'owner') \
+                ELSE (SELECT id FROM main.users m WHERE m.name = b.name COLLATE NOCASE) END AS p_id \
+           FROM backup.users b;",
+    )?;
+    Ok(())
+}
+
+/// Makes the database a restore leaves in place: a copy of the present database at `present`
+/// (migrated to this schema first) with the staged backup `backup` (already checked and migrated
+/// by [`check_staged_database`]) merged in, written to the new file `dest`.
+///
+/// What is carried: rules and request rules, rule sets and their switches, environment variables,
+/// git identities, and the per-workspace rows (git, interception, repositories, shell init, pinned
+/// ports, never-decrypt lists, SSH agent hosts, owners). People follow [`RestoredDatabase::user_map`]:
+/// this machine's users, their passwords and devices are never touched. Never carried: pending
+/// requests (they belong to connections that are gone), sign-in state, and what a machine learned
+/// by watching. The audit log is loaded only when this machine's is empty. In [`RestoreMode::Add`]
+/// a row is added only when its natural key is missing here; in [`RestoreMode::Replace`] the
+/// carried tables are cleared first.
+///
+/// Neither input is changed beyond the migration of `present`. `dest` is checked (integrity and
+/// foreign keys) before this returns.
+///
+/// # Errors
+///
+/// [`StoreError`] when a file cannot be read or written, a statement fails (the new file is
+/// removed) or the result fails its checks.
+pub fn restore_database(
+    present: &Path,
+    backup: &Path,
+    dest: &Path,
+    mode: RestoreMode,
+) -> Result<RestoredDatabase, StoreError> {
+    migrate_database(present)?;
+    {
+        let source = Connection::open_with_flags(present, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        source.busy_timeout(std::time::Duration::from_secs(5))?;
+        source.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;
+    }
+    let result = merge_into(dest, backup, mode);
+    if result.is_err() {
+        drop(std::fs::remove_file(dest));
+    }
+    result
+}
+
+fn merge_into(
+    dest: &Path,
+    backup: &Path,
+    mode: RestoreMode,
+) -> Result<RestoredDatabase, StoreError> {
+    let mut conn = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    conn.execute(
+        "ATTACH DATABASE ?1 AS backup",
+        [backup.to_string_lossy().as_ref()],
+    )?;
+    let tx = conn.transaction()?;
+    map_users(&tx)?;
+    if mode == RestoreMode::Replace {
+        for name in CLEAR_ORDER {
+            tx.execute(&format!("DELETE FROM main.{name}"), [])?;
+        }
+    }
+    let carried = tables();
+    // The maps are built after the table they map is merged and before the tables that use them.
+    for t in &carried {
+        copy_rows(&tx, t)?;
+        match t.name {
+            "rule_sets" => map_rows(
+                &tx,
+                "smap",
+                "rule_sets",
+                "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id) AND m.name = b.name COLLATE NOCASE",
+            )?,
+            "env_vars" => map_rows(
+                &tx,
+                "emap",
+                "env_vars",
+                "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id) \
+                 AND ifnull(m.workspace_id, '') = ifnull(b.workspace_id, '') AND m.name = b.name",
+            )?,
+            "identities" => map_rows(
+                &tx,
+                "imap",
+                "identities",
+                "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id) AND m.label = b.label COLLATE NOCASE",
+            )?,
+            _ => {}
+        }
+    }
+    let log_is_empty: bool =
+        tx.query_row("SELECT NOT EXISTS (SELECT 1 FROM main.audit)", [], |r| {
+            r.get(0)
+        })?;
+    if log_is_empty {
+        copy_audit(&tx)?;
+    }
+    let user_map = {
+        let mut stmt = tx.prepare("SELECT b_id, p_id FROM temp.umap ORDER BY b_id")?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<(i64, i64)>, _>>()?
+    };
+    let broken: i64 = tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| {
+        r.get(0)
+    })?;
+    if broken > 0 {
+        return Err(StoreError::Database(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
+            Some(format!(
+                "the restored data left {broken} rows without their parent row"
+            )),
+        )));
+    }
+    let owner_id: i64 =
+        tx.query_row("SELECT id FROM main.users WHERE role = 'owner'", [], |r| {
+            r.get(0)
+        })?;
+    tx.commit()?;
+    conn.execute("DETACH DATABASE backup", [])?;
+    let check: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    verdict(&check)?;
+    Ok(RestoredDatabase { user_map, owner_id })
+}
+
+fn copy_audit(conn: &Connection) -> Result<(), StoreError> {
+    let main = columns(conn, "main", "audit")?;
+    let backup = columns(conn, "backup", "audit")?;
+    let cols: Vec<&String> = main
+        .iter()
+        .filter(|c| backup.contains(c) && *c != "id")
+        .collect();
+    let list = cols
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let values = cols
+        .iter()
+        .map(|c| value_of("audit", c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(
+        &format!(
+            "INSERT INTO main.audit ({list}) SELECT {values} FROM backup.audit b ORDER BY b.id"
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+fn verdict(check: &str) -> Result<(), StoreError> {
+    if check == "ok" {
+        return Ok(());
+    }
+    Err(StoreError::Database(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(format!(
+            "the restored database failed its integrity check: {check}"
+        )),
+    )))
+}
+
 #[cfg(test)]
 mod tests;

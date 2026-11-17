@@ -381,6 +381,13 @@ fn environment_router() -> OpenApiRouter<AppState> {
         .routes(routes!(logins::forget_login))
         .routes(routes!(orphan_volumes::list_orphan_volumes))
         .routes(routes!(orphan_volumes::restore_orphan_volume))
+        .routes(routes!(restore::apply_restore))
+        .routes(routes!(
+            restore::get_restore_result,
+            restore::dismiss_restore_result
+        ))
+        .routes(routes!(restore::list_safety_copies))
+        .routes(routes!(restore::delete_safety_copy))
 }
 
 /// The routes that may take far longer than the rest (the system check boots a test machine, the

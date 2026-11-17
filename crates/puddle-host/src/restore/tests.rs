@@ -504,7 +504,7 @@ async fn the_service_stages_an_upload_and_refuses_a_bad_file_leaving_nothing() {
     let mut archive = crate::backup_archive(&there).unwrap();
     let mut bytes = Vec::new();
     Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
-    let service = DataFolderRestore::new(here.clone());
+    let service = DataFolderRestore::new(here.clone(), Arc::default());
     let pieces: Vec<io::Result<Vec<u8>>> = bytes.chunks(1000).map(|c| Ok(c.to_vec())).collect();
     let facts = service
         .preview(futures_util::stream::iter(pieces).boxed())

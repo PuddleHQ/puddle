@@ -1,0 +1,271 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The file parts of a restore: the settings documents and the workspace list, merged or replaced
+//! into a new file or folder next to the live one (BK-14, BK-15). The database is
+//! `puddle_store::restore_database`.
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use puddle_fs::private;
+use puddle_store::RestoredDatabase;
+use serde_json::{Map, Value};
+
+use super::{RestoreError, apply::ApplyMode};
+
+/// The workspace list's current format.
+const BOOK_VERSION: u64 = 4;
+
+fn io_error(what: &str, path: &Path) -> impl FnOnce(io::Error) -> RestoreError {
+    let what = format!("{what} {}", path.display());
+    move |source| RestoreError::Io { what, source }
+}
+
+fn is_temp(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("tmp"))
+}
+
+/// Copies the regular files below `from` to `to`, owner-only, leaving out temporary files and
+/// links; no folder is no files.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), RestoreError> {
+    let Ok(entries) = fs::read_dir(from) else {
+        return Ok(());
+    };
+    private::create_dir(to).map_err(io_error("cannot create", to))?;
+    for entry in entries {
+        let entry = entry.map_err(io_error("cannot read", from))?;
+        let (source, target) = (entry.path(), to.join(entry.file_name()));
+        let kind = entry
+            .file_type()
+            .map_err(io_error("cannot read", &source))?;
+        if kind.is_dir() {
+            copy_tree(&source, &target)?;
+        } else if kind.is_file() && !is_temp(&source) {
+            let body = fs::read(&source).map_err(io_error("cannot read", &source))?;
+            private::write_atomic(&target, &body).map_err(io_error("cannot write", &target))?;
+        }
+    }
+    Ok(())
+}
+
+/// Builds `new` from the present settings `here` and the backup's `there`. Add keeps every present
+/// document and setting and adds what is missing (a setting by its key in a document: a key that is
+/// set here wins); Replace takes the backup's documents.
+pub(super) fn settings(
+    mode: ApplyMode,
+    here: &Path,
+    there: &Path,
+    new: &Path,
+) -> Result<(), RestoreError> {
+    match mode {
+        ApplyMode::Replace => copy_tree(there, new),
+        ApplyMode::Add => {
+            copy_tree(here, new)?;
+            add_missing(there, Path::new(""), new)
+        }
+    }
+}
+
+fn add_missing(there: &Path, rel: &Path, new: &Path) -> Result<(), RestoreError> {
+    let Ok(entries) = fs::read_dir(there.join(rel)) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let entry = entry.map_err(io_error("cannot read", there))?;
+        let rel = rel.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .map_err(io_error("cannot read", &entry.path()))?;
+        let target = new.join(&rel);
+        if kind.is_dir() {
+            private::create_dir(&target).map_err(io_error("cannot create", &target))?;
+            add_missing(there, &rel, new)?;
+        } else if kind.is_file() && !is_temp(&entry.path()) {
+            let theirs = fs::read(entry.path()).map_err(io_error("cannot read", &entry.path()))?;
+            if let Some(parent) = target.parent() {
+                private::create_dir(parent).map_err(io_error("cannot create", parent))?;
+            }
+            match fs::read(&target) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    private::write_atomic(&target, &theirs)
+                        .map_err(io_error("cannot write", &target))?;
+                }
+                Err(e) => return Err(io_error("cannot read", &target)(e)),
+                Ok(ours) => {
+                    if let Some(merged) = merge_documents(&ours, &theirs) {
+                        private::write_atomic(&target, &merged)
+                            .map_err(io_error("cannot write", &target))?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The present document with the backup's keys it lacks added; `None` when nothing is added or
+/// either is not a JSON object.
+fn merge_documents(ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
+    let (Value::Object(mut mine), Value::Object(other)) = (
+        serde_json::from_slice::<Value>(ours).ok()?,
+        serde_json::from_slice::<Value>(theirs).ok()?,
+    ) else {
+        return None;
+    };
+    let mut added = false;
+    for (key, value) in other {
+        if key != "version" && !mine.contains_key(&key) {
+            mine.insert(key, value);
+            added = true;
+        }
+    }
+    added
+        .then(|| serde_json::to_vec_pretty(&Value::Object(mine)).ok())
+        .flatten()
+}
+
+fn read_book(path: &Path) -> Result<Option<Map<String, Value>>, String> {
+    let body = match fs::read(path) {
+        Ok(body) => body,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    match serde_json::from_slice::<Value>(&body) {
+        Ok(Value::Object(map)) => Ok(Some(map)),
+        _ => Err(format!("{} is not a workspace list", path.display())),
+    }
+}
+
+fn version_of(book: &Map<String, Value>) -> u64 {
+    book.get("version").and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn entries_of(book: &Map<String, Value>) -> Vec<Value> {
+    book.get("workspaces")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Whether the present and the backup's workspace lists can be merged: both have the current
+/// format, or one of them has no workspaces.
+pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), String> {
+    let (Some(here), Some(there)) = (read_book(here)?, read_book(there)?) else {
+        return Ok(());
+    };
+    if entries_of(&here).is_empty()
+        || entries_of(&there).is_empty()
+        || version_of(&here) == version_of(&there)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "the workspace list in the backup is in format {} and this machine's in format {}; \
+         start the Puddle that made the backup once and back up again, or restore on a machine \
+         with no workspaces",
+        version_of(&there),
+        version_of(&here)
+    ))
+}
+
+fn owner_of(entry: &Value, restored: &RestoredDatabase) -> i64 {
+    entry
+        .get("owner")
+        .and_then(Value::as_i64)
+        .and_then(|b| {
+            restored
+                .user_map
+                .iter()
+                .find(|(from, _)| *from == b)
+                .map(|&(_, to)| to)
+        })
+        .unwrap_or(restored.owner_id)
+}
+
+/// The backup's entries with their owners as this machine's users have them (a version 4 list
+/// names an owner; an older one names none and is read with the owners the database records).
+fn restored_entries(book: &Map<String, Value>, restored: &RestoredDatabase) -> Vec<Value> {
+    let current = version_of(book) == BOOK_VERSION;
+    entries_of(book)
+        .into_iter()
+        .map(|mut entry| {
+            if current && let Some(object) = entry.as_object_mut() {
+                let owner = owner_of(&Value::Object(object.clone()), restored);
+                object.insert("owner".into(), Value::from(owner));
+            }
+            entry
+        })
+        .collect()
+}
+
+fn ids_of(book: &Map<String, Value>, key: &str) -> Vec<Value> {
+    book.get(key)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn id_of(entry: &Value) -> Option<&str> {
+    entry.get("id").and_then(Value::as_str)
+}
+
+/// Writes the restored workspace list to `new`: Add keeps every present workspace and adds the
+/// backup's that are missing by id; Replace takes the backup's list. Ids retired on either side
+/// stay retired. A backup with no list leaves the present one alone (nothing is written).
+pub(super) fn book(
+    mode: ApplyMode,
+    here: &Path,
+    there: &Path,
+    new: &Path,
+    restored: &RestoredDatabase,
+) -> Result<(), RestoreError> {
+    let merge = RestoreError::Merge;
+    let Some(theirs) = read_book(there).map_err(merge)? else {
+        return Ok(());
+    };
+    let ours = read_book(here).map_err(RestoreError::Merge)?;
+    let mut out = theirs.clone();
+    let mut workspaces = restored_entries(&theirs, restored);
+    if let Some(ours) = &ours {
+        if mode == ApplyMode::Add && !entries_of(ours).is_empty() && !workspaces.is_empty() {
+            check_book_versions(here, there).map_err(RestoreError::Merge)?;
+            let mut all = entries_of(ours);
+            let present: BTreeSet<String> = all
+                .iter()
+                .filter_map(|e| id_of(e).map(str::to_owned))
+                .collect();
+            all.extend(
+                workspaces
+                    .into_iter()
+                    .filter(|e| id_of(e).is_none_or(|id| !present.contains(id))),
+            );
+            workspaces = all;
+            out.clone_from(ours);
+        }
+        // An id retired on either side is never given out again.
+        let mut retired = ids_of(ours, "retired_ids");
+        for id in ids_of(&theirs, "retired_ids") {
+            if !retired.contains(&id) {
+                retired.push(id);
+            }
+        }
+        if !retired.is_empty() {
+            out.insert("retired_ids".into(), Value::Array(retired));
+        }
+        if mode == ApplyMode::Add && out.get("cleaned_ids").is_none() {
+            // Only the present side's cleaned ids are known to be true here.
+            out.remove("cleaned_ids");
+        }
+    }
+    out.insert("workspaces".into(), Value::Array(workspaces));
+    let body = serde_json::to_vec_pretty(&Value::Object(out)).map_err(|e| RestoreError::Io {
+        what: format!("cannot write {}", new.display()),
+        source: io::Error::other(e),
+    })?;
+    private::write_atomic(new, &body).map_err(io_error("cannot write", new))
+}
+
+#[cfg(test)]
+mod tests;

@@ -8,7 +8,9 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use crate::wire::{RestorePart, RestorePartName};
+use crate::wire::{
+    RestoreApplied, RestoreMode, RestorePart, RestorePartName, RestoreResult, SafetyCopy,
+};
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 
@@ -73,6 +75,50 @@ pub trait RestoreService: Send + Sync {
         &self,
         upload: UploadStream,
     ) -> BoxFuture<'_, Result<RestoreFacts, RestoreServiceError>>;
+
+    /// Confirms the restore of the staged copy `staging_id`: makes the safety copy of the present
+    /// state first (the restore does not start when it cannot), then leaves the restore for the
+    /// next start of Puddle and asks for that start.
+    fn apply<'a>(
+        &'a self,
+        staging_id: &'a str,
+        mode: RestoreMode,
+    ) -> BoxFuture<'a, Result<RestoreApplied, RestoreServiceError>> {
+        let _ = (staging_id, mode);
+        unavailable()
+    }
+
+    /// What the last restore did; `None` when there is nothing to show.
+    fn result(&self) -> BoxFuture<'_, Result<Option<RestoreResult>, RestoreServiceError>> {
+        unavailable()
+    }
+
+    /// Forgets the last restore's result, once the user has seen it.
+    fn dismiss_result(&self) -> BoxFuture<'_, Result<(), RestoreServiceError>> {
+        unavailable()
+    }
+
+    /// The safety copies, newest first.
+    fn safety_copies(&self) -> BoxFuture<'_, Result<Vec<SafetyCopy>, RestoreServiceError>> {
+        unavailable()
+    }
+
+    /// Deletes one safety copy by its folder name; `NotStaged` when there is none by that name.
+    fn delete_safety_copy<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> BoxFuture<'a, Result<(), RestoreServiceError>> {
+        let _ = name;
+        unavailable()
+    }
+}
+
+fn unavailable<'a, T: Send + 'a>() -> BoxFuture<'a, Result<T, RestoreServiceError>> {
+    Box::pin(async {
+        Err(RestoreServiceError::Unavailable(
+            "restore is not available in this build".into(),
+        ))
+    })
 }
 
 /// The service when none is wired in: every call says so.
@@ -102,6 +148,10 @@ struct FakeState {
     facts: RestoreFacts,
     previews: usize,
     last_upload_bytes: usize,
+    applied: Vec<(String, RestoreMode)>,
+    apply_failure: Option<String>,
+    result: Option<RestoreResult>,
+    copies: Vec<SafetyCopy>,
 }
 
 /// The first bytes a body must have for [`FakeRestore`] to accept it.
@@ -139,6 +189,10 @@ impl FakeRestore {
                 },
                 previews: 0,
                 last_upload_bytes: 0,
+                applied: Vec::new(),
+                apply_failure: None,
+                result: None,
+                copies: Vec::new(),
             }),
         }
     }
@@ -149,6 +203,40 @@ impl FakeRestore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .facts = facts;
+    }
+
+    /// Makes every confirm from now on fail with `reason` (`None` makes it succeed again).
+    pub fn fail_apply_with(&self, reason: Option<&str>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .apply_failure = reason.map(str::to_owned);
+    }
+
+    /// Sets what the last restore did, as read after a restart.
+    pub fn set_result(&self, result: Option<RestoreResult>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .result = result;
+    }
+
+    /// Sets the safety copies the list shows.
+    pub fn set_safety_copies(&self, copies: Vec<SafetyCopy>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .copies = copies;
+    }
+
+    /// The confirms so far: the staging id and the mode of each.
+    #[must_use]
+    pub fn applied(&self) -> Vec<(String, RestoreMode)> {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .applied
+            .clone()
     }
 
     /// How many previews were asked for.
@@ -171,6 +259,73 @@ impl FakeRestore {
 }
 
 impl RestoreService for FakeRestore {
+    fn apply<'a>(
+        &'a self,
+        staging_id: &'a str,
+        mode: RestoreMode,
+    ) -> BoxFuture<'a, Result<RestoreApplied, RestoreServiceError>> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let answer = if state.facts.staging_id != staging_id {
+            Err(RestoreServiceError::NotStaged(
+                "this backup is no longer staged; choose the file again".into(),
+            ))
+        } else if let Some(reason) = &state.apply_failure {
+            Err(RestoreServiceError::Failed(reason.clone()))
+        } else {
+            state.applied.push((staging_id.to_owned(), mode));
+            Ok(RestoreApplied {
+                safety_copy: "20231114T221320Z".into(),
+                restart_required: true,
+            })
+        };
+        Box::pin(async move { answer })
+    }
+
+    fn result(&self) -> BoxFuture<'_, Result<Option<RestoreResult>, RestoreServiceError>> {
+        let result = self
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .result
+            .clone();
+        Box::pin(async move { Ok(result) })
+    }
+
+    fn dismiss_result(&self) -> BoxFuture<'_, Result<(), RestoreServiceError>> {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .result = None;
+        Box::pin(async { Ok(()) })
+    }
+
+    fn safety_copies(&self) -> BoxFuture<'_, Result<Vec<SafetyCopy>, RestoreServiceError>> {
+        let copies = self
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .copies
+            .clone();
+        Box::pin(async move { Ok(copies) })
+    }
+
+    fn delete_safety_copy<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> BoxFuture<'a, Result<(), RestoreServiceError>> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = state.copies.len();
+        state.copies.retain(|c| c.name != name);
+        let answer = if state.copies.len() == before {
+            Err(RestoreServiceError::NotStaged(format!(
+                "no safety copy named {name}"
+            )))
+        } else {
+            Ok(())
+        };
+        Box::pin(async move { answer })
+    }
+
     fn preview(
         &self,
         upload: UploadStream,

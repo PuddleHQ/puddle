@@ -93,3 +93,114 @@ async fn a_preview_needs_the_token_and_a_get_does_not_start_one() {
     assert_eq!(fake.previews(), 0);
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_confirm_names_the_staged_copy_and_the_mode_and_asks_for_a_restart() {
+    let fake = Arc::new(FakeRestore::new());
+    let api = start_with_restore(fake.clone()).await;
+    let staging_id = "0".repeat(32);
+    let body = serde_json::json!({"staging_id": staging_id, "mode": "replace"});
+    let reply = api.send("POST", "/api/restore/apply", Some(&body)).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["restart_required"], true);
+    assert_eq!(reply.json()["safety_copy"], "20231114T221320Z");
+    assert_eq!(
+        fake.applied(),
+        [(staging_id.clone(), puddle_api::wire::RestoreMode::Replace)]
+    );
+    // A staged copy that is gone is a 404, a mode nobody offers is a 422, and an unknown field too.
+    let gone = serde_json::json!({"staging_id": "1".repeat(32), "mode": "add"});
+    assert_eq!(
+        api.send("POST", "/api/restore/apply", Some(&gone))
+            .await
+            .status,
+        404
+    );
+    let odd = serde_json::json!({"staging_id": staging_id, "mode": "merge"});
+    assert_eq!(
+        api.send("POST", "/api/restore/apply", Some(&odd))
+            .await
+            .status,
+        422
+    );
+    let extra = serde_json::json!({"staging_id": staging_id, "mode": "add", "force": true});
+    assert_eq!(
+        api.send("POST", "/api/restore/apply", Some(&extra))
+            .await
+            .status,
+        422
+    );
+    assert_eq!(fake.applied().len(), 1);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_confirm_that_cannot_make_its_safety_copy_is_a_503_that_says_so() {
+    let fake = Arc::new(FakeRestore::new());
+    fake.fail_apply_with(Some("the safety copy could not be made: the disk is full"));
+    let api = start_with_restore(fake.clone()).await;
+    let body = serde_json::json!({"staging_id": "0".repeat(32), "mode": "add"});
+    let reply = api.send("POST", "/api/restore/apply", Some(&body)).await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("the disk is full"), "{}", reply.body);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_last_result_is_read_and_forgotten_and_safety_copies_are_listed_and_deleted() {
+    use puddle_api::wire::{RestoreMode, RestoreResult, SafetyCopy};
+    let fake = Arc::new(FakeRestore::new());
+    fake.set_result(Some(RestoreResult {
+        applied: true,
+        mode: RestoreMode::Add,
+        safety_copy: "20231114T221320Z".into(),
+        at_ms: 5,
+        message: "Restored.".into(),
+    }));
+    fake.set_safety_copies(vec![
+        SafetyCopy {
+            name: "20231114T221320Z".into(),
+            size_bytes: 4096,
+        },
+        SafetyCopy {
+            name: "20231001T000000Z".into(),
+            size_bytes: 10,
+        },
+    ]);
+    let api = start_with_restore(fake.clone()).await;
+    let result = api.get("/api/restore/result").await.json();
+    assert_eq!(result["result"]["mode"], "add");
+    assert_eq!(result["result"]["message"], "Restored.");
+    assert_eq!(
+        api.send("DELETE", "/api/restore/result", None).await.status,
+        204
+    );
+    assert_eq!(
+        api.get("/api/restore/result").await.json()["result"],
+        serde_json::Value::Null
+    );
+
+    let list = api.get("/api/safety-copies").await.json();
+    assert_eq!(list["copies"][0]["size_bytes"], 4096);
+    assert_eq!(list["copies"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        api.send("DELETE", "/api/safety-copies/20231001T000000Z", None)
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        api.send("DELETE", "/api/safety-copies/20231001T000000Z", None)
+            .await
+            .status,
+        404
+    );
+    assert_eq!(
+        api.get("/api/safety-copies").await.json()["copies"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    api.running.shutdown().await;
+}

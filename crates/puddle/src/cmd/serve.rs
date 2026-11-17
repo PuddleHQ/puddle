@@ -210,11 +210,24 @@ pub fn run(args: &ServeArgs) -> ExitCode {
                 println!("{line}");
             }
         }
-        match wait_for_shutdown().await {
-            Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
-            Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
+        let restore = tokio::select! {
+            shutdown = wait_for_shutdown() => {
+                match shutdown {
+                    Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
+                    Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
+                }
+                false
+            }
+            () = host.restore_requested() => {
+                tracing::info!("a restore was confirmed; shutting down to apply it at the next start");
+                true
+            }
+        };
+        let code = exit_after(&host.shutdown().await.sandboxes);
+        if restore {
+            println!("A restore from a backup is waiting. Start Puddle again to apply it.");
         }
-        exit_after(&host.shutdown().await.sandboxes)
+        code
     })
 }
 

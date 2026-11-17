@@ -50,6 +50,25 @@ impl HostPaths {
         self.data.join("restore-staging")
     }
 
+    /// Where a confirmed restore waits for the next start: its marker file and the staged parts.
+    #[must_use]
+    pub fn restore_pending(&self) -> PathBuf {
+        self.data.join("restore-pending")
+    }
+
+    /// The backups of the present state a restore makes before it changes anything, one folder per
+    /// restore, named by the UTC time. Kept until the user removes one.
+    #[must_use]
+    pub fn safety_copies(&self) -> PathBuf {
+        self.data.join("safety-copies")
+    }
+
+    /// What the last restore did, kept until the user has seen it.
+    #[must_use]
+    pub fn restore_result(&self) -> PathBuf {
+        self.data.join("restore-result.json")
+    }
+
     /// The workspaces whose disk the last quit could not trim, so the next start can say so.
     #[must_use]
     pub fn quit_trims(&self) -> PathBuf {

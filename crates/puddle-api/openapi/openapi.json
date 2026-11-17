@@ -6335,6 +6335,107 @@
         }
       }
     },
+    "/api/restore/apply": {
+      "post": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Confirms a restore: the staged copy `staging_id` and the mode the user chose. Makes a safety copy\nof the present state first and does not start when it cannot; then leaves the restore for the next\nstart of Puddle (which stops the workspaces the normal way) and asks for that start. Nothing\nthat exists changes until then.",
+        "operationId": "apply_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the restore waits for the next start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreApplied"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "the staged copy is gone; choose the file again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the backup cannot be merged with this machine's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the safety copy could not be made, so the restore did not start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/restore/preview": {
       "post": {
         "tags": [
@@ -6421,6 +6522,119 @@
           },
           "503": {
             "description": "the file cannot be staged on this machine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/restore/result": {
+      "get": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "What the last restore did, after the restart: whether it was applied or undone, what changed or\nwhy, and where the safety copy is. `result` is `null` when there is nothing to show.",
+        "operationId": "get_restore_result",
+        "responses": {
+          "200": {
+            "description": "the last restore's result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResultView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Forgets the last restore's result, once the user has seen it.",
+        "operationId": "dismiss_restore_result",
+        "responses": {
+          "204": {
+            "description": "forgotten"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -7366,6 +7580,142 @@
           },
           "422": {
             "description": "expiry not in the future",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/safety-copies": {
+      "get": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "The safety copies of the state each restore replaced, newest first, with their sizes. Puddle\nnever removes one; the user does, one at a time.",
+        "operationId": "list_safety_copies",
+        "responses": {
+          "200": {
+            "description": "the safety copies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyCopyList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/safety-copies/{name}": {
+      "delete": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Deletes one safety copy by its name. Restoring from it first is an ordinary restore of the file\nit holds; once it is deleted that way back is gone.",
+        "operationId": "delete_safety_copy",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the safety copy's folder name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "deleted"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no safety copy by that name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
             "content": {
               "application/json": {
                 "schema": {
@@ -20765,12 +21115,57 @@
           }
         }
       },
+      "RestoreApplied": {
+        "type": "object",
+        "description": "A restore that is confirmed and waits for the next start.",
+        "required": [
+          "safety_copy",
+          "restart_required"
+        ],
+        "properties": {
+          "restart_required": {
+            "type": "boolean",
+            "description": "Whether Puddle must be started again for the restore to apply. The desktop app restarts\nitself; `puddle serve` exits and applies the restore at its next start."
+          },
+          "safety_copy": {
+            "type": "string",
+            "description": "The safety copy of the present state, a folder name in the safety copies list."
+          }
+        }
+      },
+      "RestoreApplyRequest": {
+        "type": "object",
+        "description": "`POST /api/restore/apply`.",
+        "required": [
+          "staging_id",
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/RestoreMode",
+            "description": "The mode the user confirmed."
+          },
+          "staging_id": {
+            "type": "string",
+            "description": "The staged copy a preview named."
+          }
+        },
+        "additionalProperties": false
+      },
       "RestoreDisk": {
         "type": "string",
         "description": "Whether the disk of a restored workspace is on this machine.",
         "enum": [
           "present",
           "missing"
+        ]
+      },
+      "RestoreMode": {
+        "type": "string",
+        "description": "How a restore treats what is already on this machine.",
+        "enum": [
+          "add",
+          "replace"
         ]
       },
       "RestoreOrphanRequest": {
@@ -20921,6 +21316,61 @@
               "$ref": "#/components/schemas/RestoreWorkspace"
             },
             "description": "The workspaces the backup lists, with whether their disk is here."
+          }
+        }
+      },
+      "RestoreResult": {
+        "type": "object",
+        "description": "What the last restore did.",
+        "required": [
+          "applied",
+          "mode",
+          "safety_copy",
+          "at_ms",
+          "message"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Whether it was applied; `false` means it was undone and the old state is in use."
+          },
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it finished, in milliseconds since the Unix epoch.",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "description": "What changed, or why it was undone."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RestoreMode",
+            "description": "The mode that was asked for."
+          },
+          "safety_copy": {
+            "type": "string",
+            "description": "The safety copy's folder name."
+          }
+        }
+      },
+      "RestoreResultView": {
+        "type": "object",
+        "description": "The last restore's result, until the user has seen it.",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RestoreResult",
+                "description": "`null` when there is none to show."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -21622,6 +22072,42 @@
           "request_rule",
           "builtin_entry"
         ]
+      },
+      "SafetyCopy": {
+        "type": "object",
+        "description": "One safety copy of the state a restore replaced.",
+        "required": [
+          "name",
+          "size_bytes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The folder name, the UTC time it was made (`20261115T225500Z`)."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What it takes on disk.",
+            "minimum": 0
+          }
+        }
+      },
+      "SafetyCopyList": {
+        "type": "object",
+        "description": "The safety copies, newest first. Puddle never removes one; the user does.",
+        "required": [
+          "copies"
+        ],
+        "properties": {
+          "copies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SafetyCopy"
+            },
+            "description": "The copies."
+          }
+        }
       },
       "SandboxName": {
         "type": "string",

@@ -15,6 +15,7 @@ use puddle_fs::private;
 use puddle_store::DatabaseRefusal;
 
 use crate::HostPaths;
+use apply::ApplyMode;
 
 use crate::backup::{
     BACKUP_DATABASE, BACKUP_FORMAT, BACKUP_MANIFEST, BACKUP_SETTINGS, BACKUP_WORKSPACES, Manifest,
@@ -77,6 +78,9 @@ pub enum RestoreError {
         /// What went wrong.
         source: io::Error,
     },
+    /// The backup cannot be merged with what is here, and why.
+    #[error("{0}")]
+    Merge(String),
     /// The staged database could not be migrated.
     #[error("cannot read the backup's database: {0}")]
     Store(#[from] puddle_store::StoreError),
@@ -503,18 +507,79 @@ pub(crate) fn facts(paths: &HostPaths, staged: &Staged) -> Result<RestoreFacts, 
     })
 }
 
-/// Reads restore uploads for one data folder: [`puddle_api::RestoreService`] over [`stage_archive`]
-/// and [`facts`]. The upload is spooled to an unnamed temporary file first (its size does not set a
-/// memory bound), and the staging and the database reads run on a blocking thread.
+/// Reads and applies restores for one data folder: [`puddle_api::RestoreService`] over
+/// [`stage_archive`], [`facts`], [`apply::request`] and the safety copies. The upload is spooled to
+/// an unnamed temporary file first (its size does not set a memory bound), and the staging, the
+/// database reads and the copies run on a blocking thread.
 #[derive(Debug, Clone)]
 pub(crate) struct DataFolderRestore {
     paths: HostPaths,
+    /// Told when a restore is confirmed, so the process can stop and start again to apply it.
+    requested: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl DataFolderRestore {
-    pub(crate) fn new(paths: HostPaths) -> Self {
-        Self { paths }
+    pub(crate) fn new(paths: HostPaths, requested: std::sync::Arc<tokio::sync::Notify>) -> Self {
+        Self { paths, requested }
     }
+}
+
+/// Runs `job` on a blocking thread; a job that panics is a failed request that says so.
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, RestoreServiceError> + Send + 'static,
+) -> Result<T, RestoreServiceError> {
+    tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|e| RestoreServiceError::Failed(format!("the restore stopped: {e}")))?
+}
+
+fn mode_of(mode: puddle_api::wire::RestoreMode) -> ApplyMode {
+    match mode {
+        puddle_api::wire::RestoreMode::Add => ApplyMode::Add,
+        puddle_api::wire::RestoreMode::Replace => ApplyMode::Replace,
+    }
+}
+
+/// What the preview counted, as one sentence for the message after the restart.
+fn summarise(mode: ApplyMode, parts: &[RestorePart]) -> String {
+    let total = |f: fn(&RestorePart) -> u32| parts.iter().map(f).sum::<u32>();
+    let (add, differ, only_here) = (
+        total(|p| p.add),
+        total(|p| p.differ),
+        total(|p| p.only_here),
+    );
+    match mode {
+        ApplyMode::Add => format!(
+            "Added {add} entries that were missing; kept your version of {differ} that differ."
+        ),
+        ApplyMode::Replace => format!(
+            "Added {add}, replaced {differ} and dropped {only_here} entries that were not in the backup."
+        ),
+    }
+}
+
+/// A safety copy's name: the UTC time it was made.
+fn is_safety_name(name: &str) -> bool {
+    name.len() == 16
+        && name.bytes().enumerate().all(|(i, b)| match i {
+            8 => b == b'T',
+            15 => b == b'Z',
+            _ => b.is_ascii_digit(),
+        })
+}
+
+/// The size in bytes of the files below `dir`.
+fn size_of(dir: &Path) -> u64 {
+    fs::read_dir(dir).map_or(0, |entries| {
+        entries
+            .flatten()
+            .map(|e| match e.metadata() {
+                Ok(m) if m.is_dir() => size_of(&e.path()),
+                Ok(m) => m.len(),
+                Err(_) => 0,
+            })
+            .sum()
+    })
 }
 
 impl puddle_api::RestoreService for DataFolderRestore {
@@ -541,6 +606,162 @@ impl puddle_api::RestoreService for DataFolderRestore {
                     "the restore check stopped: {e}"
                 ))),
             }
+        })
+    }
+
+    fn apply<'a>(
+        &'a self,
+        staging_id: &'a str,
+        mode: puddle_api::wire::RestoreMode,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<puddle_api::wire::RestoreApplied, RestoreServiceError>,
+    > {
+        let paths = self.paths.clone();
+        let id = staging_id.to_owned();
+        Box::pin(async move {
+            let mode = mode_of(mode);
+            let requested = blocking(move || {
+                let dir = staging_dir(&paths.restore_staging(), &id)
+                    .filter(|d| d.is_dir())
+                    .ok_or_else(|| {
+                        RestoreServiceError::NotStaged(apply::RequestError::NotStaged.to_string())
+                    })?;
+                let manifest = fs::read(dir.join(BACKUP_MANIFEST))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<Manifest>(&b).ok());
+                let staged = Staged {
+                    id: id.clone(),
+                    dir,
+                    manifest,
+                    schema_version: puddle_store::SCHEMA_VERSION,
+                };
+                let summary = facts(&paths, &staged)
+                    .map(|f| summarise(mode, &f.parts))
+                    .unwrap_or_default();
+                apply::request(&paths, &id, mode, &summary).map_err(|e| match e {
+                    apply::RequestError::NotStaged => RestoreServiceError::NotStaged(e.to_string()),
+                    apply::RequestError::AlreadyPending | apply::RequestError::Refused(_) => {
+                        RestoreServiceError::Refused(e.to_string())
+                    }
+                    apply::RequestError::Failed(_) => RestoreServiceError::Failed(e.to_string()),
+                })
+            })
+            .await?;
+            self.requested.notify_one();
+            Ok(puddle_api::wire::RestoreApplied {
+                safety_copy: requested.safety_copy,
+                restart_required: true,
+            })
+        })
+    }
+
+    fn result(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        Result<Option<puddle_api::wire::RestoreResult>, RestoreServiceError>,
+    > {
+        let path = self.paths.restore_result();
+        Box::pin(async move {
+            blocking(move || match fs::read(&path) {
+                Ok(body) => {
+                    let outcome: apply::RestoreOutcome =
+                        serde_json::from_slice(&body).map_err(|e| {
+                            RestoreServiceError::Failed(format!(
+                                "cannot read the last restore's result: {e}"
+                            ))
+                        })?;
+                    Ok(Some(puddle_api::wire::RestoreResult {
+                        applied: outcome.applied,
+                        mode: match outcome.mode {
+                            ApplyMode::Add => puddle_api::wire::RestoreMode::Add,
+                            ApplyMode::Replace => puddle_api::wire::RestoreMode::Replace,
+                        },
+                        safety_copy: outcome.safety_copy,
+                        at_ms: outcome.at_ms,
+                        message: outcome.message,
+                    }))
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(RestoreServiceError::Failed(format!(
+                    "cannot read the last restore's result: {e}"
+                ))),
+            })
+            .await
+        })
+    }
+
+    fn dismiss_result(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<(), RestoreServiceError>> {
+        let path = self.paths.restore_result();
+        Box::pin(async move {
+            blocking(move || match fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(RestoreServiceError::Failed(format!(
+                    "cannot remove {}: {e}",
+                    path.display()
+                ))),
+            })
+            .await
+        })
+    }
+
+    fn safety_copies(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        Result<Vec<puddle_api::wire::SafetyCopy>, RestoreServiceError>,
+    > {
+        let root = self.paths.safety_copies();
+        Box::pin(async move {
+            blocking(move || {
+                let mut copies: Vec<puddle_api::wire::SafetyCopy> = match fs::read_dir(&root) {
+                    Ok(entries) => entries
+                        .flatten()
+                        .filter_map(|e| {
+                            let name = e.file_name().to_string_lossy().into_owned();
+                            (is_safety_name(&name) && e.path().is_dir()).then(|| {
+                                puddle_api::wire::SafetyCopy {
+                                    size_bytes: size_of(&e.path()),
+                                    name,
+                                }
+                            })
+                        })
+                        .collect(),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+                    Err(e) => {
+                        return Err(RestoreServiceError::Failed(format!(
+                            "cannot read {}: {e}",
+                            root.display()
+                        )));
+                    }
+                };
+                copies.sort_by(|a, b| b.name.cmp(&a.name));
+                Ok(copies)
+            })
+            .await
+        })
+    }
+
+    fn delete_safety_copy<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), RestoreServiceError>> {
+        let dir = is_safety_name(name).then(|| self.paths.safety_copies().join(name));
+        let name = name.to_owned();
+        Box::pin(async move {
+            blocking(move || match dir {
+                Some(dir) if dir.is_dir() => fs::remove_dir_all(&dir).map_err(|e| {
+                    RestoreServiceError::Failed(format!("cannot delete {}: {e}", dir.display()))
+                }),
+                _ => Err(RestoreServiceError::NotStaged(format!(
+                    "no safety copy named {name}"
+                ))),
+            })
+            .await
         })
     }
 }
@@ -572,6 +793,9 @@ async fn spool(
     io::Seek::rewind(&mut file).map_err(|e| failed("cannot read the upload back", &e))?;
     Ok(file)
 }
+
+pub(crate) mod apply;
+mod merge;
 
 #[cfg(test)]
 mod tests;

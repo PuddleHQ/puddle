@@ -109,6 +109,12 @@ pub fn backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupErro
     }
     let cwd = std::env::current_dir().map_err(io_error("cannot read the working folder", dest))?;
     refuse_inside(&cwd, paths.data(), dest)?;
+    make_backup(paths, dest)
+}
+
+/// Makes the backup in the new folder `dest` (created owner-only with its parents) without the
+/// checks of [`backup`]: for the safety copy a restore keeps inside the data folder.
+pub(crate) fn make_backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
     if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
         private::create_dir(parent).map_err(io_error("cannot create", parent))?;
     }

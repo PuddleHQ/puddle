@@ -9,6 +9,7 @@ use puddle_api::{
 use puddle_api::{PublicHost, Remote, RemoteServing};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
+use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -691,4 +692,35 @@ fn shutdown_waits_for_an_open_terminal_to_let_go_of_the_store() {
         Arc::strong_count(&store),
         "shutdown returned while a terminal's socket task still held the store"
     );
+}
+
+#[tokio::test]
+async fn a_page_that_vanishes_before_the_upgrade_frees_its_terminals_place() {
+    use tokio::io::AsyncWriteExt as _;
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let mut tickets = Vec::new();
+    for _ in 0..MAX_PER_WORKSPACE {
+        tickets.push(ticket(&api, "shop").await);
+    }
+    assert_eq!(ask(&api, "shop").await.status, 409);
+    for (terminal, ticket_text) in tickets {
+        let mut stream = tokio::net::TcpStream::connect(api.addr).await.unwrap();
+        let request = format!(
+            "GET /api/workspaces/shop/terminals/{terminal} HTTP/1.1\r\nHost: {}\r\n\
+             Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Protocol: {SUBPROTOCOL}, ticket.{ticket_text}\r\n\r\n",
+            api.addr
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        // A reset, not a close: the server's answer never reaches the page.
+        stream.set_linger(Some(Duration::ZERO)).unwrap();
+        drop(stream);
+    }
+    puddle_test_kit::eventually_async("every place was freed", STEP, || async {
+        ask(&api, "shop").await.status == 201
+    })
+    .await;
+    api.running.shutdown().await;
 }

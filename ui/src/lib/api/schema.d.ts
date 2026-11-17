@@ -4689,7 +4689,7 @@ export interface components {
             /** @description The account the invite is for. */
             user: components["schemas"]["AdminUser"];
         };
-        /** @description Uses an invite link (made by the server's command line) to set a password. */
+        /** @description Uses an invite link (made by the server's command line or an admin) to set a password. */
         InviteRequest: {
             /** @description What this browser calls itself in the device list; `null` for the default. */
             device_name?: string | null;
@@ -5787,7 +5787,8 @@ export interface components {
         RuleExpiryRequest: {
             /**
              * Format: int64
-             * @description Epoch ms in the future, or `null` to make the rule permanent.
+             * @description Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body
+             *     never makes a rule permanent.
              */
             expires_at: number | null;
         };
@@ -5881,7 +5882,7 @@ export interface components {
         RuleSetSwitchRequest: {
             /**
              * @description On or off; `null` removes the switch, so the next level decides (the global switch, then
-             *     the set's default).
+             *     the set's default). Required, so an empty body never removes a switch.
              */
             enabled: boolean | null;
             workspace?: components["schemas"]["WorkspaceId"] | null;
@@ -6040,7 +6041,8 @@ export interface components {
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
             /**
              * Format: int32
-             * @description Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
+             * @description Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs
+             *     unless set); applies at the next start.
              */
             cpus: number | null;
             /**

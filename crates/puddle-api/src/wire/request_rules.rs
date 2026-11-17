@@ -109,8 +109,9 @@ pub struct RequestRuleList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewRequestRuleRequest {
-    /// The workspace the rule applies to; `null` for every workspace.
-    #[serde(default)]
+    /// The workspace the rule applies to; `null` for every workspace. Required, so a body that
+    /// leaves it out never makes a rule for every workspace.
+    #[serde(deserialize_with = "Option::deserialize")]
     #[schema(required = true)]
     pub workspace: Option<WorkspaceId>,
     /// A host name or `*.` followed by a domain with at least two labels; no IP address.

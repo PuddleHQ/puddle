@@ -75,9 +75,12 @@ import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
+import { isWelcome } from "#lib/welcome/steps.ts";
 import Layout from "./+layout.svelte";
 import Welcome from "./+page.svelte";
 import Certificates from "./certificates/+page.svelte";
+import Check from "./check/+page.svelte";
+import Connect from "./connect/+page.svelte";
 import Interception from "./interception/+page.svelte";
 import Look from "./look/+page.svelte";
 import Workspace from "./workspace/+page.svelte";
@@ -227,9 +230,9 @@ describe("certificates step", () => {
       "Development certificate: not checked yet",
     );
     expect(items[1]).toHaveTextContent("1 company root certificate found");
-    expect(
-      screen.getByRole("link", { name: /Network health/ }),
-    ).toHaveAttribute("href", "/settings/network-health");
+    // Where the details are is named, not linked: a link would leave the flow.
+    expect(screen.getByText(/Settings › Network health/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Network health/ })).toBeNull();
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
       "href",
       "/welcome/check",
@@ -596,4 +599,40 @@ describe("first workspace step", () => {
       /newer Puddle.*may show again next time/,
     );
   });
+});
+
+describe("every step", () => {
+  // Leaving the flow half done loses it: the steps after this one keep their defaults unseen, and
+  // the flow only comes back, at its first step, the next time Puddle opens.
+  it.each([
+    ["welcome", Welcome],
+    ["check", Check],
+    ["certificates", Certificates],
+    ["connect", Connect],
+    ["interception", Interception],
+    ["look", Look],
+    ["workspace", Workspace],
+  ] as const)(
+    "the %s step links only to steps of the flow",
+    async (_, Step) => {
+      render(Step as never);
+      // Let each step load what it shows, so links that appear with its data are counted too.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const start = screen.queryByRole("button", {
+        name: "Start system check",
+      });
+      if (start) {
+        await fireEvent.click(start);
+        await screen.findByText("No problems found.");
+      }
+      const links = screen.queryAllByRole("link");
+      for (const link of links) {
+        const href = link.getAttribute("href") ?? "";
+        expect(
+          isWelcome(new URL(href, "http://127.0.0.1").pathname),
+          href,
+        ).toBe(true);
+      }
+    },
+  );
 });

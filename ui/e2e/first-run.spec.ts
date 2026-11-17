@@ -376,6 +376,33 @@ test("Settings runs the system check again on its own page and leads back", asyn
   await expect(page).toHaveURL(/\/settings$/);
 });
 
+test("no link on a first-run step leads out of the flow", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  const open = async (path: string, title: string) => {
+    await page.goto(path);
+    await expect(heading(page, title)).toBeVisible();
+    if (path === "/welcome/check") {
+      await page.getByRole("button", { name: "Start system check" }).click();
+      await expect(page.getByText("No problems found.")).toBeVisible();
+    }
+  };
+  const links = page.locator("main").getByRole("link");
+  for (const [path, title] of STEPS) {
+    await open(path, title);
+    const count = await links.count();
+    for (let i = 0; i < count; i++) {
+      await open(path, title);
+      const link = links.nth(i);
+      const name = (await link.textContent())?.trim();
+      await link.click();
+      await expect(page, `${path}: ${name}`).toHaveURL(/\/welcome(\/|$)/);
+    }
+  }
+});
+
 // One test per step: a scan costs seconds on a loaded host, and the steps together ran out of 30 s.
 for (const scheme of ["light", "dark"] as const) {
   for (const [path, title] of STEPS) {

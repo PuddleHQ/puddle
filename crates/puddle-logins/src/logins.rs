@@ -544,21 +544,6 @@ impl Logins {
             .map(|ids| ids.into_iter().collect())
     }
 
-    /// Adds `profile` to the marker when it is known. A marker that is not known stays so: the
-    /// next start with capture on asks the store and writes all of it.
-    fn mark(&self, profile: &Profile, kept: bool) {
-        if let Some(mut ids) = self.inner.marker.read() {
-            let changed = if kept {
-                ids.insert(profile.id.to_owned())
-            } else {
-                ids.remove(profile.id)
-            };
-            if changed {
-                self.inner.marker.write(&ids);
-            }
-        }
-    }
-
     /// The logins Puddle holds for this workspace (the ones registered since its start), without
     /// any value.
     #[must_use]
@@ -614,7 +599,7 @@ impl Logins {
         if failed {
             Err(ForgetError::Store)
         } else {
-            self.mark(profile, false);
+            self.inner.marker.note(profile.id, false);
             Ok(true)
         }
     }
@@ -721,7 +706,7 @@ impl Logins {
             stored = true;
         }
         if stored {
-            self.mark(profile, true);
+            self.inner.marker.note(profile.id, true);
         }
         for (field, real, stand_in, is_new) in &planned {
             let slot = (field.slot(), field.scope);

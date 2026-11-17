@@ -11,6 +11,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_types::WorkspaceId;
 
@@ -27,17 +29,26 @@ const HEADER_V1: &str = "puddle-logins-kept v1";
 /// The services a marker names, each with the time it was first noted as kept when that is known.
 pub(crate) type KeptSince = BTreeMap<String, Option<u64>>;
 
+/// Gives each write its own file to write beside the marker before it is moved over it.
+static NEXT_PART: AtomicU64 = AtomicU64::new(0);
+
 /// Where one workspace's marker lives, or nowhere.
 #[derive(Debug, Clone, Default)]
 pub struct Marker {
     path: Option<PathBuf>,
+    /// One change at a time through this marker and its clones, so a change that reads the
+    /// file, edits it and writes it back does not undo another made in between.
+    changing: Arc<Mutex<()>>,
 }
 
 impl Marker {
     /// A marker kept in the file `path` (its folder is made when the first write needs it).
     #[must_use]
     pub fn in_file(path: PathBuf) -> Self {
-        Self { path: Some(path) }
+        Self {
+            path: Some(path),
+            changing: Arc::default(),
+        }
     }
 
     /// The marker of `workspace` in the folder `dir`: one file named by a hash of the workspace's
@@ -108,6 +119,28 @@ impl Marker {
     /// the marker was known (it became kept since), and no time when it was not (when it became
     /// kept is not known).
     pub(crate) fn write(&self, kept: &BTreeSet<String>) {
+        let _one_at_a_time = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
+        self.write_now(kept);
+    }
+
+    /// Adds `id` to the services it names (`kept`) or takes it out, when the marker is known. A
+    /// marker that is not known stays so: the next start with capture on asks the store and
+    /// writes all of it.
+    pub(crate) fn note(&self, id: &str, kept: bool) {
+        let _one_at_a_time = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(mut ids) = self.read() {
+            let changed = if kept {
+                ids.insert(id.to_owned())
+            } else {
+                ids.remove(id)
+            };
+            if changed {
+                self.write_now(&ids);
+            }
+        }
+    }
+
+    fn write_now(&self, kept: &BTreeSet<String>) {
         let Some(path) = &self.path else {
             return;
         };
@@ -135,9 +168,18 @@ impl Marker {
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| {
                 // Written beside the marker and moved over it, so a start never reads half of one.
-                let part = path.with_extension("part");
-                std::fs::write(&part, text)?;
-                std::fs::rename(&part, path)
+                // The name is this write's own: a writer in another process (or with another
+                // `Marker` for the same file) never writes into the file this one moves.
+                let part = path.with_extension(format!(
+                    "{}-{}.part",
+                    std::process::id(),
+                    NEXT_PART.fetch_add(1, Ordering::Relaxed)
+                ));
+                std::fs::write(&part, text)
+                    .and_then(|()| std::fs::rename(&part, path))
+                    .inspect_err(|_| {
+                        let _ = std::fs::remove_file(&part);
+                    })
             });
         if let Err(error) = result {
             tracing::warn!(%error, "the marker of a workspace's saved logins could not be written");

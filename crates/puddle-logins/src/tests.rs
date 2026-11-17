@@ -799,6 +799,33 @@ async fn forgetting_a_login_ends_the_notice_even_when_the_entries_were_already_g
     assert_eq!(after.notices.seen(), []);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn forgetting_every_login_at_once_leaves_none_in_the_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let ids: std::collections::BTreeSet<String> =
+        builtin().iter().map(|p| p.id.to_owned()).collect();
+    for _ in 0..100 {
+        let rig = rig_marked(&store, false, marker_in(&dir));
+        marker_in(&dir).write(&ids);
+        let forgets: Vec<_> = builtin()
+            .iter()
+            .map(|profile| {
+                let logins = rig.logins.clone();
+                tokio::spawn(async move { logins.forget(profile.id).await })
+            })
+            .collect();
+        for forget in forgets {
+            assert_eq!(forget.await.unwrap(), Ok(true));
+        }
+        assert_eq!(
+            rig.logins.inner_marker_kept(),
+            Some(Vec::new()),
+            "a forget was lost"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_forget_the_store_refuses_keeps_the_marker_so_the_notice_stays() {
     let dir = tempfile::tempdir().unwrap();

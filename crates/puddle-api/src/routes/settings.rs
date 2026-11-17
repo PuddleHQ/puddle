@@ -135,7 +135,8 @@ pub(crate) async fn get_global(
 }
 
 /// Replaces the global settings listed in the body; `null` falls back to Puddle's default.
-/// Consents are changed through `/api/consents`.
+/// With the `revision` of the read the save was made from, a save over settings that changed
+/// since is refused. Consents are changed through `/api/consents`.
 #[utoipa::path(
     put,
     path = "/api/settings",
@@ -143,7 +144,7 @@ pub(crate) async fn get_global(
     request_body = GlobalSettingsRequest,
     responses(
         (status = OK, description = "the new global settings", body = GlobalSettingsView),
-        (status = CONFLICT, description = "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody),
+        (status = CONFLICT, description = "written by a newer Puddle (newer_settings), damaged (settings_unreadable), or changed since the read named by `revision` (settings_changed)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a value out of range, or Microsoft's server chosen without consent", body = ApiErrorBody)
     )
 )]
@@ -157,6 +158,9 @@ pub(crate) async fn put_global(
     let loaded = blocking(move || {
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
+        if !body.matches(&loaded.settings) {
+            return Err(ApiError::settings_changed());
+        }
         body.apply_to(&mut loaded.settings)?;
         check_cpus_within(
             loaded.settings.workspace_defaults.cpus,

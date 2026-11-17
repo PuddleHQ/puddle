@@ -452,6 +452,45 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
 
 // Git LFS: a batch request reads or writes by its body.
 
+/// Go's `encoding/json` (Gitea up to 1.21 at least, checked with 1.21.11) matches a key to a field
+/// ignoring case and lets a later key win, so a body with a second `operation` in another case is an
+/// upload there. Only a body whose one `operation` key, in any case, says `download` is a read.
+#[tokio::test]
+async fn an_lfs_batch_with_a_second_operation_key_in_another_case_is_a_push() {
+    let w = world();
+    w.switches(OnlyListed::Push);
+    let batch = "/someone/big.git/info/lfs/objects/batch";
+    for body in [
+        &br#"{"operation":"download","Operation":"upload","objects":[{"oid":"a","size":1}]}"#[..],
+        br#"{"Operation":"upload","operation":"download","objects":[]}"#,
+        br#"{"operation":"download","OPERATION":"download","objects":[]}"#,
+        br#"{"operation":"download","operation":"download","objects":[]}"#,
+        br#"{"OPERATION":"upload","objects":[]}"#,
+        br#"{"Operation":"download","objects":[]}"#,
+        br#"{"operation":"download","oper\u0041tion":"upload","objects":[]}"#,
+        // Not an object at all.
+        br#"["operation","download"]"#,
+        br#""download""#,
+    ] {
+        let decision = w
+            .decide_with("github.com", "POST", batch, &[], Some(body))
+            .await;
+        assert_eq!(
+            refusal(&decision).1,
+            "push_denied",
+            "{}",
+            String::from_utf8_lossy(body)
+        );
+    }
+    // A key that only contains the word, or sits in an object inside, changes nothing.
+    let download =
+        br#"{"operation":"download","operations":"upload","ref":{"operation":"upload"},"objects":[]}"#;
+    let ok = w
+        .decide_with("github.com", "POST", batch, &[], Some(download))
+        .await;
+    assert!(injected(&ok, &token_header("CANARY-PERSONAL")), "{ok:?}");
+}
+
 #[tokio::test]
 async fn an_lfs_batch_is_decided_by_its_operation() {
     let w = world();
@@ -1013,6 +1052,40 @@ async fn a_push_with_a_broken_source_is_a_502_without_a_sign_in_notice_and_a_rea
     assert_eq!(w.events.take(), []);
 }
 
+/// Whatever stops the source, a read goes out with nothing Puddle holds, and a push is the `502`.
+#[tokio::test]
+async fn every_kind_of_source_failure_lets_a_read_go_out_without_a_credential() {
+    for err in [
+        SourceError::NotSignedIn,
+        SourceError::Timeout(Tool::Gh),
+        SourceError::ToolMissing(Tool::Gh),
+        SourceError::CouldNotRun(Tool::Gh),
+        SourceError::WrongTenant,
+        SourceError::NoAccess,
+        SourceError::StoreUnavailable,
+        SourceError::Refused(puddle_secrets::Refusal::WrongTarget),
+        SourceError::Refused(puddle_secrets::Refusal::Malformed),
+        SourceError::Refused(puddle_secrets::Refusal::Unreadable),
+    ] {
+        let w = world();
+        let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
+        w.credentials.fail(&work.credentials[0].source, err.clone());
+        let read = w.decide("github.com", "GET", FETCH, &[]).await;
+        let InjectDecision::PassThroughNoting(unauthorized) = read else {
+            panic!("{err:?}: {read:?}");
+        };
+        // A private repository's `401` becomes a refusal that names why the source failed.
+        let refused = unauthorized.refusal().expect("replaced");
+        assert!(
+            refused.message().contains(&err.to_string()),
+            "{err:?}: {}",
+            refused.message()
+        );
+        let push = w.decide("github.com", "GET", PUSH_ADVERT, &[]).await;
+        assert_eq!(refusal(&push).1, "credential_unavailable", "{err:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_token_that_only_looks_like_an_entra_token_never_reaches_a_header_raw() {
     let w = World::new();
@@ -1206,6 +1279,20 @@ impl Fetch for OneToken {
             valid_for: None,
         }))
     }
+}
+
+/// The store's one write connection can be held for seconds (a long write, a backup), so asking
+/// for the settings must not read the store on the spot, on the proxy's async thread: the read
+/// runs when the answer is awaited, on a blocking thread.
+#[tokio::test]
+async fn the_store_settings_are_read_when_awaited_not_when_asked_for() {
+    use puddle_inject::GitSettings as _;
+    let w = World::new();
+    let _work = w.identity("Work", "github.com", &["acme"], false, "unused");
+    let settings = StoreSettings::new(Arc::clone(&w.store), w.workspace.clone());
+    let asked = settings.current();
+    puddle_store::testing::break_database(&w.store, "ALTER TABLE workspace_repos RENAME TO gone");
+    assert!(asked.await.is_err(), "read before it was awaited");
 }
 
 #[tokio::test]
@@ -1558,24 +1645,21 @@ async fn no_identity_events_after_a_full_table(wait: Duration) -> usize {
 }
 
 #[tokio::test]
-async fn a_retry_is_remembered_once_the_old_ones_are_ten_seconds_old_and_not_before() {
+async fn a_retry_is_remembered_even_while_the_table_is_full_of_recent_owners() {
     tokio::time::pause();
-    // Entries younger than ten seconds fill the table: the retry cannot be remembered.
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_secs(5)).await,
-        1
-    );
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_millis(9_999)).await,
-        1
-    );
-    // From ten seconds on they are forgotten, so the retry is.
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_secs(10)).await,
-        0
-    );
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_secs(11)).await,
-        0
-    );
+    // The oldest entry makes room, so the retry is remembered and no notice follows, however
+    // young the other entries are.
+    for wait in [
+        Duration::ZERO,
+        Duration::from_secs(5),
+        Duration::from_millis(9_999),
+        Duration::from_secs(10),
+        Duration::from_secs(11),
+    ] {
+        assert_eq!(
+            no_identity_events_after_a_full_table(wait).await,
+            0,
+            "{wait:?}"
+        );
+    }
 }

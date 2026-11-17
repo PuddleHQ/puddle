@@ -286,6 +286,36 @@ describe("NoticeWatcher", () => {
     expect(keys()).toEqual(["stop:late"]);
   });
 
+  it("takes the listed statuses as the truth after a resync, so a stop is judged against them", async () => {
+    const w = make();
+    w.start();
+    await settle();
+    // The page last heard "stopped"; the start that followed was missed with the stream.
+    source.emit(status("web", "stopped"));
+    list = { workspaces: [{ id: "web", name: "web", status: "running" }] };
+    source.resync();
+    await settle();
+    source.emit(status("web", "stopped"));
+    expect(keys()).toEqual(["stop:web"]);
+  });
+
+  it("forgets a stop that was announced but never happened once the list shows the workspace up", async () => {
+    const w = make();
+    w.start();
+    await settle();
+    source.emit({
+      type: "workspace_progress",
+      workspace: "web",
+      step: "stopping",
+      detail: null,
+    });
+    list = { workspaces: [{ id: "web", name: "web", status: "running" }] };
+    source.resync();
+    await settle();
+    source.emit(status("web", "stopped"));
+    expect(keys()).toEqual(["stop:web"]);
+  });
+
   it("works without a stream", () => {
     const w = new NoticeWatcher({
       notifier: new InAppNotifier(center),

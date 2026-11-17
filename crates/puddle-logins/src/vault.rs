@@ -165,6 +165,32 @@ pub(crate) fn slot_id(workspace: &str, profile: &str, slot: impl Into<Slot>) -> 
     StoredId::new(format!("login-{hex}-{profile}-{}", slot.into().key())).ok()
 }
 
+/// The names of every entry `profiles` may keep for `workspace`, one per slot.
+#[must_use]
+pub fn saved_login_ids(workspace: &WorkspaceId, profiles: &[Profile]) -> Vec<StoredId> {
+    let workspace = workspace.to_string();
+    profiles
+        .iter()
+        .flat_map(|profile| {
+            profile
+                .slots()
+                .into_iter()
+                .map(move |(slot, _)| (profile, slot))
+        })
+        .filter_map(|(profile, slot)| slot_id(&workspace, profile.id, slot))
+        .collect()
+}
+
+/// Whether `id` names one of `workspace`'s saved logins, of any profile and slot, also one of a
+/// slot this build no longer has.
+#[must_use]
+pub fn is_saved_login_of(id: &StoredId, workspace: &WorkspaceId) -> bool {
+    id.as_str()
+        .strip_prefix("login-")
+        .and_then(|rest| rest.strip_prefix(&workspace_hash(workspace.as_ref())))
+        .is_some_and(|rest| rest.starts_with('-'))
+}
+
 /// 16 hex characters of the hash of a workspace's name: what names its entries and its marker.
 pub(crate) fn workspace_hash(workspace: &str) -> String {
     let digest = Sha256::digest(workspace.as_bytes());

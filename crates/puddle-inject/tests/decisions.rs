@@ -1049,6 +1049,34 @@ async fn a_push_with_a_broken_source_is_a_502_without_a_sign_in_notice_and_a_rea
     assert_eq!(w.events.take(), []);
 }
 
+/// Whatever stops the source, a read goes out with nothing Puddle holds, and a push is the `502`.
+#[tokio::test]
+async fn every_kind_of_source_failure_lets_a_read_go_out_without_a_credential() {
+    for err in [
+        SourceError::NotSignedIn,
+        SourceError::Timeout(Tool::Gh),
+        SourceError::ToolMissing(Tool::Gh),
+        SourceError::CouldNotRun(Tool::Gh),
+        SourceError::WrongTenant,
+        SourceError::NoAccess,
+        SourceError::StoreUnavailable,
+        SourceError::Refused(puddle_secrets::Refusal::WrongTarget),
+        SourceError::Refused(puddle_secrets::Refusal::Malformed),
+        SourceError::Refused(puddle_secrets::Refusal::Unreadable),
+    ] {
+        let w = world();
+        let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
+        w.credentials.fail(&work.credentials[0].source, err.clone());
+        let read = w.decide("github.com", "GET", FETCH, &[]).await;
+        assert!(
+            matches!(read, InjectDecision::PassThroughNoting(_)),
+            "{err:?}: {read:?}"
+        );
+        let push = w.decide("github.com", "GET", PUSH_ADVERT, &[]).await;
+        assert_eq!(refusal(&push).1, "credential_unavailable", "{err:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_token_that_only_looks_like_an_entra_token_never_reaches_a_header_raw() {
     let w = World::new();

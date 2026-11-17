@@ -301,8 +301,10 @@ impl GitInjector {
         credentialed(value, binding_id, &identity.label, &named, rejected)
     }
 
-    /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its secret (not signed in, tool missing) goes
-    /// out with no credential at all, so a public repository still answers. A private one answers
+    /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its
+    /// secret, for any reason the source gives (not signed in, timed out, tool missing, a broken
+    /// or refused source, an unreadable store), goes out with no credential at all, so a public
+    /// repository still answers: nothing Puddle holds is sent, so no reason needs a refusal. A private one answers
     /// `401`, which becomes the refusal a missing credential would have been, never the
     /// server's `401` (the workspace's tool would ask for a password that does not exist).
     /// The notice was raised by the cache the secret is read through.

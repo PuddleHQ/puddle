@@ -995,22 +995,9 @@ impl Workspaces {
             }
         };
         let existed = existing.is_some();
-        // The size is for a volume the import makes; one that exists keeps its own.
-        let mount = match &existing {
-            Some(info) => {
-                if info.size != size {
-                    info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
-                }
-                mount_for(id, &volume, info)
-            }
-            None => Layout::new(id).map(|layout| {
-                VolumeMount::named(volume.clone(), layout.mount().clone()).ensure_size(size)
-            }),
-        };
-        let result = match mount {
-            Ok(mount) => self.run_import(rt, id, &name, image, mount, imports).await,
-            Err(e) => Err(e),
-        };
+        let result = self
+            .run_import(rt, id, &name, image, existing.as_ref(), size, imports)
+            .await;
         self.registry.give_back(id);
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = !existed && matches!(rt.volume(&volume).await, Ok(Some(_)));
@@ -1040,11 +1027,22 @@ impl Workspaces {
         id: &WorkspaceId,
         name: &SandboxName,
         image: &ImageRef,
-        mount: VolumeMount,
+        existing: Option<&VolumeInfo>,
+        size: DiskSize,
         imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
         clear_leftover(rt, id, name).await?;
         let layout = Layout::new(id)?;
+        // The size is for a volume the import makes; one that exists keeps its own.
+        let mount = match existing {
+            Some(info) => {
+                if info.size != size {
+                    info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
+                }
+                mount_for(id, &id.volume_name(), info)?
+            }
+            None => VolumeMount::named(id.volume_name(), layout.mount().clone()).ensure_size(size),
+        };
         let mut spec = SandboxSpec::new(name.clone(), image.clone())
             .with_memory(self.config.maintenance_memory)
             .with_cpus(1)

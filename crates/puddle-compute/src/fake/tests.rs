@@ -503,6 +503,7 @@ async fn a_sandbox_booting_draining_or_paused_still_holds_its_volumes() {
         };
         let _a = rt.create(mount("a")).await.unwrap();
         assert!(rt.set_status(&name("a"), status));
+        assert!(!rt.set_status(&name("nobody"), status));
         let info = rt.volume(&vol("v")).await.unwrap().unwrap();
         assert_eq!(info.holder.as_deref(), Some("a"), "{status}");
         let in_use = ComputeError::VolumeInUse {

@@ -501,6 +501,32 @@ async fn reclaim_space_trims_in_the_running_holder() {
 }
 
 #[tokio::test]
+async fn a_holder_that_cannot_be_reached_is_a_runtime_error() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let _sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    rt.inject(
+        Op::Get,
+        Fault::once(ComputeError::Runtime {
+            op: "get",
+            message: "injected".into(),
+        }),
+    );
+    let err = w.reclaim_space(&rt, &id).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            WorkspaceError::Runtime {
+                op: "connect to the holder",
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
 async fn reclaim_space_of_a_stopped_workspace_uses_a_short_lived_sandbox() {
     let rt = FakeRuntime::new();
     stub_fstrim(&rt, 0);

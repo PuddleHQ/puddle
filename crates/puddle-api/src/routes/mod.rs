@@ -65,6 +65,7 @@ mod ssh_agent;
 mod start_folder;
 mod terminals;
 mod tools;
+mod ui_errors;
 mod workspaces;
 
 /// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
@@ -99,6 +100,8 @@ pub(crate) struct AppState {
     /// What each user's clients last reported, for picking who a new request is told to.
     pub(crate) presence: Arc<crate::presence::Presence>,
     pub(crate) problems: Arc<puddle_types::Problems>,
+    /// The errors the app's pages reported, and each user's rate.
+    pub(crate) ui_errors: Arc<crate::ui_errors::UiErrors>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
     pub(crate) network_health: Arc<dyn NetworkHealthService>,
@@ -137,7 +140,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(meta::health))
         .routes(routes!(problems::list_problems))
         .routes(routes!(events::events))
-        .routes(routes!(presence::report))
+        .merge(client_router())
         .routes(routes!(network_health::network_health))
         .routes(routes!(
             proxy_sign_in::list_proxy_sign_ins,
@@ -230,6 +233,17 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             identities::set_git_repo,
             identities::remove_git_repo
+        ))
+}
+
+/// What the app's pages report of themselves: their presence and the errors they hit.
+#[inline(never)]
+fn client_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(presence::report))
+        .routes(routes!(
+            ui_errors::list_ui_errors,
+            ui_errors::report_ui_error
         ))
 }
 

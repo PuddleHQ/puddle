@@ -1,0 +1,12 @@
+{
+  "name": "canary-secret",
+  "displayName": "Secret storage canary (tests only)",
+  "description": "Keeps a made-up session in the editor's secret storage and logs whether it found it again, so a test can tell a secret that survived closing the window from one that did not.",
+  "publisher": "puddle-test",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-or-later",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"]
+}

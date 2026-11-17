@@ -978,3 +978,48 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     );
     host.shutdown().await;
 }
+
+/// The clean-up of deleted workspaces runs in the background at start: a credential store that
+/// holds it up never holds up a quit, and an id whose leftovers are all gone is not cleaned again
+/// at every later start.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_clean_up_of_deleted_workspaces_never_holds_up_a_quit_and_is_not_repeated_once_done() {
+    let rig = Rig::named_ids();
+    *rig.deletes.counted.lock().unwrap() = Some(WorkspaceId::new("acme").unwrap());
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    assert!(
+        rig.deletes.count.load(Ordering::SeqCst) > 0,
+        "the delete removed no saved login"
+    );
+    // A start cleans acme up for good; the next start finds nothing to do.
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    let before = rig.deletes.count.load(Ordering::SeqCst);
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    assert_eq!(
+        rig.deletes.count.load(Ordering::SeqCst),
+        before,
+        "a finished clean-up ran again"
+    );
+
+    // A delete that another Puddle did not finish, under a store that does not answer for it.
+    let mut book = read_list(&rig);
+    book["retired_ids"] = json!(["acme", "gone"]);
+    std::fs::write(list_path(&rig), book.to_string()).unwrap();
+    *rig.deletes.held.lock().unwrap() = Some(WorkspaceId::new("gone").unwrap());
+    let host = rig.start().await;
+    let quit = tokio::time::timeout(Duration::from_secs(60), host.shutdown()).await;
+    *rig.deletes.held.lock().unwrap() = None;
+    assert!(quit.is_ok(), "the quit waited for the held clean-up");
+    drop(host);
+}

@@ -37,6 +37,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         parts: Parts<R>,
         restored: Vec<Stored>,
         mut retired: BTreeSet<WorkspaceId>,
+        cleaned: BTreeSet<WorkspaceId>,
         status: &BTreeMap<WorkspaceId, WorkspaceStatus>,
     ) -> Result<Self, HostError> {
         let mut slots = BTreeMap::new();
@@ -117,6 +118,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 names_writing: Mutex::new(()),
                 state: Mutex::new(State {
                     slots,
+                    cleaned: cleaned.intersection(&retired).cloned().collect(),
                     retired,
                     closed: false,
                 }),
@@ -204,7 +206,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 deleting: slot.deleting,
             })
             .collect();
-        self.inner.book.save(stored, &state.retired)?;
+        self.inner
+            .book
+            .save(stored, &state.retired, &state.cleaned)?;
         self.note_names(state);
         Ok(())
     }

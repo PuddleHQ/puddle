@@ -267,6 +267,8 @@ struct State {
     slots: BTreeMap<WorkspaceId, Slot>,
     /// The ids of deleted workspaces: no new workspace gets one.
     retired: BTreeSet<WorkspaceId>,
+    /// The retired ids whose leftovers are all gone: the sweep at start skips them.
+    cleaned: BTreeSet<WorkspaceId>,
     closed: bool,
 }
 

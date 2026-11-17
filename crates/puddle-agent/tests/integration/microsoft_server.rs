@@ -1083,7 +1083,7 @@ async fn the_first_build_has_nothing_to_go_back_to_and_a_confirmed_build_is_neve
     let (builds, service) = installed(&dir).await;
     // The first install: no previous build, so no trial and no rollback.
     assert!(!on_trial(&builds));
-    assert!(!roll_back(&builds, COMMIT).unwrap());
+    assert!(!roll_back(&builds, COMMIT, true).unwrap());
     confirm(&builds, COMMIT).unwrap();
     service.publish(NEWER, NEWER_RELEASE, good_tarball());
     stage_update(&service, PLATFORM, &builds).await.unwrap();
@@ -1093,12 +1093,12 @@ async fn the_first_build_has_nothing_to_go_back_to_and_a_confirmed_build_is_neve
     // nothing: it is not the current build any more, and it is still kept.
     confirm(&builds, COMMIT).unwrap();
     assert!(on_trial(&builds));
-    assert!(!roll_back(&builds, COMMIT).unwrap());
+    assert!(!roll_back(&builds, COMMIT, true).unwrap());
     assert!(builds.join(COMMIT).is_dir());
     // Confirmed: the trial is over and the old build is gone.
     confirm(&builds, NEWER).unwrap();
     assert!(!on_trial(&builds));
-    assert!(!roll_back(&builds, NEWER).unwrap());
+    assert!(!roll_back(&builds, NEWER, true).unwrap());
     assert_eq!(names(&builds), [NEWER, "confirmed", "current"]);
     // With nothing current at all, confirming is a no-op.
     let empty = dir.path().join("empty");

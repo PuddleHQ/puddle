@@ -435,13 +435,14 @@ pub fn confirm(builds: &Path, commit: &str) -> io::Result<()> {
 
 /// The build `failed` exited before it ever accepted a connection: the previous one is current
 /// again and the failed one is never staged again. `false` when `failed` is not the current build
-/// on trial any more, or there was no previous build. Like [`confirm`], not to be run during a
-/// download nor while a switch is being made.
+/// on trial any more, or there was no previous build. Not to be run while a switch is being made.
+/// With `clean_up`, the folders no pointer names go too ([`confirm`]'s clean-up), which must not
+/// run during a download; without it they stay for the next clean-up.
 ///
 /// # Errors
 ///
 /// When a pointer cannot be written.
-pub fn roll_back(builds: &Path, failed: &str) -> io::Result<bool> {
+pub fn roll_back(builds: &Path, failed: &str, clean_up: bool) -> io::Result<bool> {
     let previous = pointer(builds, PREVIOUS)
         .filter(|_| on_trial(builds) && pointer(builds, CURRENT).as_deref() == Some(failed));
     let Some(previous) = previous else {
@@ -451,7 +452,9 @@ pub fn roll_back(builds: &Path, failed: &str) -> io::Result<bool> {
     write_pointer(builds, CURRENT, &previous)?;
     // best-effort cleanup of a pointer file; a leftover one is replaced on the next write
     let _ = std::fs::remove_file(builds.join(PREVIOUS));
-    prune(builds);
+    if clean_up {
+        prune(builds);
+    }
     Ok(true)
 }
 

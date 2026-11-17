@@ -535,6 +535,55 @@ fn refusing(dir: &Path, auto_update: bool) -> (EditorConfig, Arc<WrongHash>) {
     (config, service)
 }
 
+/// A build folder `commit` that `microsoft` takes for complete.
+fn complete_build(builds: &Path, commit: &str) {
+    let dir = builds.join(commit);
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    std::fs::write(dir.join(microsoft::PROGRAM), b"").unwrap();
+    std::fs::write(dir.join(".puddle-installed"), b"").unwrap();
+}
+
+/// The update loop holds `work` for a whole download (hundreds of MB), and the server's restart
+/// after a failed new build must not wait for it.
+#[tokio::test]
+async fn the_rollback_after_a_failed_new_build_does_not_wait_for_a_running_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = refusing(dir.path(), true);
+    let control = Control::new(&config.server);
+    let (old, new) = ("a".repeat(40), "b".repeat(40));
+    let builds = &control.builds;
+    std::fs::create_dir_all(builds).unwrap();
+    complete_build(builds, &old);
+    complete_build(builds, &new);
+    std::fs::write(builds.join("previous"), &old).unwrap();
+    std::fs::write(builds.join("current"), &new).unwrap();
+    // The folder of the download that is running: a clean-up now would delete it.
+    let partial = builds.join(format!("{}.partial", "c".repeat(40)));
+    std::fs::create_dir(&partial).unwrap();
+
+    let download = control.work.lock().await;
+    // A rollback that waited would block here for good, as the download never ends.
+    settle_trial(&control, &new);
+    assert_eq!(
+        std::fs::read_to_string(builds.join("current")).unwrap(),
+        old,
+        "the previous build runs again"
+    );
+    assert!(
+        partial.exists(),
+        "the running download's folder is not cleaned up"
+    );
+    drop(download);
+
+    // With no download running, the clean-up goes with the rollback as before.
+    std::fs::write(builds.join("previous"), &old).unwrap();
+    std::fs::write(builds.join("current"), &new).unwrap();
+    std::fs::remove_file(builds.join("rejected")).unwrap();
+    settle_trial(&control, &new);
+    assert!(!partial.exists());
+    assert!(!builds.join(&new).exists());
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_download_with_the_wrong_hash_is_fetched_on_a_slowing_schedule_not_every_30_seconds() {
     use std::sync::atomic::Ordering::SeqCst;
@@ -877,14 +926,14 @@ async fn a_build_rolled_back_after_a_bad_start_is_told_and_one_that_stays_is_not
         out,
     ));
     // A build that is not the one on trial is left alone and nothing is said.
-    settle_trial(&control, &old).await;
+    settle_trial(&control, &old);
     puddle_test_kit::no_event_for(
         "a report for no rollback",
         Duration::from_secs(1),
         &mut host,
     )
     .await;
-    settle_trial(&control, &new).await;
+    settle_trial(&control, &new);
     assert_eq!(
         host.recv().await,
         Some(update_message(Some(

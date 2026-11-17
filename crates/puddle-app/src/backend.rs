@@ -202,6 +202,20 @@ impl Backend {
         })
     }
 
+    /// The same backend whose shutdown first runs `seen` (a test says what stopped it).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn on_shutdown(mut self, seen: impl FnOnce() + Send + 'static) -> Self {
+        let stop = self.stop.get_mut();
+        *stop = stop.take().map(|inner| -> Stop {
+            Box::new(move || {
+                seen();
+                inner()
+            })
+        });
+        self
+    }
+
     /// The same backend with `label` as its way to name a workspace in a notice.
     #[must_use]
     pub(crate) fn with_label(mut self, label: WorkspaceLabel) -> Self {

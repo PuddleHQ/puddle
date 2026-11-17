@@ -140,6 +140,36 @@ fn a_probe_can_open_before_the_main_window() {
 }
 
 #[test]
+fn a_window_that_fails_to_open_stops_the_backend_it_started() {
+    let app = app();
+    // A file where the probe window's data folder should be: the window cannot be made over it.
+    let dir = tempfile::tempdir().unwrap();
+    let webview = dir.path().join("webview");
+    std::fs::create_dir_all(&webview).unwrap();
+    std::fs::write(webview.join("probe"), b"not a folder").unwrap();
+    let options = Options {
+        data_dir: Some(dir.path().to_owned()),
+        sandbox_probe: SandboxProbe::parse(
+            Some("http://probe.localhost:4900/"),
+            Some("9444"),
+            None,
+            Some("1"),
+        ),
+        ..fixture_options()
+    };
+    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = stopped.clone();
+    let backend = tauri::async_runtime::block_on(start_fixture(0))
+        .on_shutdown(move || seen.store(true, std::sync::atomic::Ordering::SeqCst));
+    assert!(open_in_order(app.handle(), &options, backend, true).is_err());
+    assert!(
+        stopped.load(std::sync::atomic::Ordering::SeqCst),
+        "the backend of the failed start was shut down"
+    );
+    assert!(app.try_state::<Backend>().is_none());
+}
+
+#[test]
 fn stop_without_a_backend_does_nothing() {
     assert_eq!(stop(app().handle()), None);
 }

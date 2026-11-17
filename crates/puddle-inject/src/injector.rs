@@ -443,17 +443,59 @@ fn refuse(status: u16, code: ReasonCode, message: impl Into<String>) -> InjectDe
 
 /// What an LFS batch request asks for: a download is a read, every other `operation` (and a body
 /// that cannot be read) is a write.
+///
+/// The body is read as the strictest server would and the loosest: Go's `encoding/json` (Gitea
+/// up to 1.21 at least) matches a key to a field ignoring case and lets a later key win, so
+/// `{"operation":"download","Operation":"upload"}` is an upload there. A read is a body whose top
+/// level has exactly one key that is `operation` in any case, spelled `operation`, with the value
+/// `download`.
 fn batch_access(body: Option<&[u8]>) -> GitAccess {
-    let operation = body
-        .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
-        .and_then(|json| {
-            json.get("operation")
-                .and_then(|o| o.as_str().map(str::to_owned))
-        });
+    let operation = body.and_then(|body| {
+        serde::Deserializer::deserialize_map(
+            &mut serde_json::Deserializer::from_slice(body),
+            OnlyOperation,
+        )
+        .ok()
+        .flatten()
+    });
     if operation.as_deref() == Some("download") {
         GitAccess::Pull
     } else {
         GitAccess::Push
+    }
+}
+
+/// Reads a JSON object's `operation`: `None` unless exactly one key is `operation` ignoring case
+/// (Unicode lower case, so a sign that folds to an ASCII letter counts too), that key is spelled
+/// `operation`, and its value is a string.
+struct OnlyOperation;
+
+impl<'de> serde::de::Visitor<'de> for OnlyOperation {
+    type Value = Option<String>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an LFS batch object")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let (mut seen, mut operation) = (0_usize, None);
+        while let Some(key) = map.next_key::<String>()? {
+            if key
+                .chars()
+                .flat_map(char::to_lowercase)
+                .eq("operation".chars())
+            {
+                seen += 1;
+                let value = map.next_value::<serde_json::Value>()?;
+                // spelled otherwise, a case-sensitive server finds no `operation` at all
+                operation = (key == "operation")
+                    .then(|| value.as_str().map(str::to_owned))
+                    .flatten();
+            } else {
+                map.next_value::<serde::de::IgnoredAny>()?;
+            }
+        }
+        Ok(if seen == 1 { operation } else { None })
     }
 }
 

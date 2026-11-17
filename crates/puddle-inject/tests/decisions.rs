@@ -452,6 +452,42 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
 
 // Git LFS: a batch request reads or writes by its body.
 
+/// Go's `encoding/json` (Gitea up to 1.21 at least, checked with 1.21.11) matches a key to a field
+/// ignoring case and lets a later key win, so a body with a second `operation` in another case is an
+/// upload there. Only a body whose one `operation` key, in any case, says `download` is a read.
+#[tokio::test]
+async fn an_lfs_batch_with_a_second_operation_key_in_another_case_is_a_push() {
+    let w = world();
+    w.switches(OnlyListed::Push);
+    let batch = "/someone/big.git/info/lfs/objects/batch";
+    for body in [
+        &br#"{"operation":"download","Operation":"upload","objects":[{"oid":"a","size":1}]}"#[..],
+        br#"{"Operation":"upload","operation":"download","objects":[]}"#,
+        br#"{"operation":"download","OPERATION":"download","objects":[]}"#,
+        br#"{"operation":"download","operation":"download","objects":[]}"#,
+        br#"{"OPERATION":"upload","objects":[]}"#,
+        br#"{"Operation":"download","objects":[]}"#,
+        br#"{"operation":"download","oper\u0041tion":"upload","objects":[]}"#,
+    ] {
+        let decision = w
+            .decide_with("github.com", "POST", batch, &[], Some(body))
+            .await;
+        assert_eq!(
+            refusal(&decision).1,
+            "push_denied",
+            "{}",
+            String::from_utf8_lossy(body)
+        );
+    }
+    // A key that only contains the word, or sits in an object inside, changes nothing.
+    let download =
+        br#"{"operation":"download","operations":"upload","ref":{"operation":"upload"},"objects":[]}"#;
+    let ok = w
+        .decide_with("github.com", "POST", batch, &[], Some(download))
+        .await;
+    assert!(injected(&ok, &token_header("CANARY-PERSONAL")), "{ok:?}");
+}
+
 #[tokio::test]
 async fn an_lfs_batch_is_decided_by_its_operation() {
     let w = world();

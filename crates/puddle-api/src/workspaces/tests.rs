@@ -949,6 +949,18 @@ fn a_refused_address_is_named_without_its_credentials() {
         "{err}"
     );
     assert!(!err.contains("tok"), "{err}");
+    // Without a scheme the credential is masked too, whatever the address looks like.
+    for typed in [
+        "x-access-token:SECRETVALUE@github.com/org/repo",
+        "SECRETVALUE@github.com/org/repo",
+        "me:SECRETVALUE@git.example.com:org/repo.git",
+    ] {
+        let err = check_repositories(&[draft(typed)], |_| false)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("SECRETVALUE"), "{typed}: {err}");
+        assert!(err.contains("(***@"), "{typed}: {err}");
+    }
     let long = format!("https://github.com/{}", "a".repeat(3000));
     let err = check_repositories(&[draft(&long)], |_| false)
         .unwrap_err()

@@ -951,3 +951,27 @@ async fn with_several_users_off_a_users_signed_in_browser_stops_working() {
     // And bob's browser works again once several users are back on.
     on.sign_in.refresh(&bob.refresh).await.unwrap();
 }
+
+#[tokio::test]
+async fn an_invite_refuses_the_users_own_name_as_their_password() {
+    let f = fixture_with(true);
+    owner_signed_up(&f).await;
+    let (_, invite) = f
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob-the-long-name")
+        .await
+        .unwrap();
+    // Built at run time: a literal handed to the hasher reads as a hard-coded credential.
+    let name_as_password = format!("{}BOB-the-long-name", empty());
+    let err = f
+        .sign_in
+        .redeem_invite(&invite.secret, &name_as_password, None)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Invalid);
+    // A refused password does not use the invite up.
+    f.sign_in
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap();
+}

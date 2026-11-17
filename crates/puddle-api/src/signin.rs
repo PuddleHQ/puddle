@@ -293,7 +293,7 @@ impl SignIn {
         device_name: Option<&str>,
     ) -> Result<Granted, ApiError> {
         self.require_password_login().await?;
-        // The name is not known before the invite is used up, so the policy is the name-free part.
+        // The name-free part of the policy first; the name is checked once the invite is found.
         password::check_policy(password, "").map_err(weak)?;
         self.admit_any()?;
         let this = self.clone();
@@ -310,7 +310,10 @@ impl SignIn {
             };
             // A user's invite waits, unused, while several users are off.
             let holder = this.secrets.invite_holder(&digest)?.ok_or_else(not_valid)?;
-            if !this.may_sign_in(this.store.user(holder)?.role) {
+            let holder = this.store.user(holder)?;
+            // A refused password leaves the invite as it was.
+            password::check_policy(&password, &holder.name).map_err(weak)?;
+            if !this.may_sign_in(holder.role) {
                 return Err(ApiError::new(
                     axum::http::StatusCode::FORBIDDEN,
                     ErrorCode::Forbidden,

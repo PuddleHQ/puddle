@@ -504,19 +504,17 @@ fn refuse_duplicates(checked: &[NewRepository]) -> Result<(), RepositoryListErro
 }
 
 /// `url` as an error message may quote it: trimmed, cut to a readable length, and with any user
-/// name or password replaced by `***`, so a refusal never echoes a credential.
+/// name or password replaced by `***`, so a refusal never echoes a credential. That holds without
+/// a scheme too (`token@host/path`); only the SSH convention's bare `git@` is kept.
 fn shown(url: &str) -> String {
     const MAX_SHOWN: usize = 200;
     let url = url.trim();
     let shown = match url.split_once("://") {
         Some((scheme, rest)) => {
-            let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-            match rest.get(..end).and_then(|authority| authority.rfind('@')) {
-                Some(at) => format!("{scheme}://***{}", rest.get(at..).unwrap_or_default()),
-                None => url.to_owned(),
-            }
+            masked(rest).map_or_else(|| url.to_owned(), |rest| format!("{scheme}://{rest}"))
         }
-        None => url.to_owned(),
+        None if url.strip_prefix("git@").is_some_and(|host| !host.contains('@')) => url.to_owned(),
+        None => masked(url).unwrap_or_else(|| url.to_owned()),
     };
     if shown.chars().count() > MAX_SHOWN {
         let cut: String = shown.chars().take(MAX_SHOWN).collect();
@@ -524,6 +522,14 @@ fn shown(url: &str) -> String {
     } else {
         shown
     }
+}
+
+/// `address` with everything before the last `@` of its authority (up to the first `/`, `?` or
+/// `#`) replaced by `***`, when it has one.
+fn masked(address: &str) -> Option<String> {
+    let end = address.find(['/', '?', '#']).unwrap_or(address.len());
+    let at = address.get(..end)?.rfind('@')?;
+    Some(format!("***{}", address.get(at..).unwrap_or_default()))
 }
 
 /// How the repository table spells an entry's repository, when its address names one.

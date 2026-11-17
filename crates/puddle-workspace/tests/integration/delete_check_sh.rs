@@ -204,7 +204,7 @@ async fn a_filter_that_cannot_be_switched_off_leaves_the_checkout_unchecked() {
         let f = &report.findings;
         assert_eq!(f.errors.len(), 1, "{shell}: {f:?}");
         assert!(
-            f.errors[0].contains("cannot switch off"),
+            f.errors[0].contains("filter.a b.clean has a name no setting can carry"),
             "{shell}: {:?}",
             f.errors
         );

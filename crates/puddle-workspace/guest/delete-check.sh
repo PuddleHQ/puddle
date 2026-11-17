@@ -41,34 +41,36 @@ clean() {
 tab=$(printf '\t')
 
 # The filter drivers named in the config of the repository in $1 and of those nested in it, at
-# most $2 levels down, one per line; `!` for one no -c setting can name, or a nesting too deep.
+# most $2 levels down, one per line; a line starting with `!` says why one cannot be switched off.
 filter_names() {
     git -c safe.directory='*' -c core.fsmonitor=false -C "$1" config --name-only \
         --get-regexp '^filter\.' 2>/dev/null |
         awk '/^filter\.[A-Za-z0-9._-]+\.[A-Za-z0-9-]+$/ { sub(/^filter\./, ""); sub(/\.[A-Za-z0-9-]+$/, ""); print; next }
-            { print "!" }'
+            { print "!the filter in config entry " $0 " has a name no setting can carry" }'
     git -c safe.directory='*' -c core.fsmonitor=false -C "$1" ls-files --stage 2>/dev/null |
         while IFS= read -r entry; do
             case $entry in 160000\ *) ;; *) continue ;; esac
             nested=${entry#*"$tab"}
             case $nested in \"*)
-                echo '!'
+                echo "!the nested repository $nested has a name git quotes"
                 continue
                 ;;
             esac
             [ -e "$1/$nested/.git" ] || continue
             if [ "$2" -le 0 ]; then
-                echo '!'
+                echo "!the repository $1/$nested is nested too deep to read its filters"
                 continue
             fi
             filter_names "$1/$nested" $(($2 - 1))
         done
 }
 
-# Sets $filters to the filter drivers of checkout $1; fails when one cannot be switched off.
+# Sets $filters to the filter drivers of checkout $1; fails, with the reason in $why, when one
+# cannot be switched off.
 read_filters() {
     filters=$(filter_names "$1" 8 | awk '!seen[$0]++')
-    case $filters in *'!'*) return 1 ;; esac
+    why=$(printf '%s\n' "$filters" | awk '/^!/ { print substr($0, 2); exit }')
+    [ -z "$why" ]
 }
 
 g() {
@@ -114,7 +116,7 @@ for d in * .[!.]* ..?*; do
         fi
         repo=$d
         if ! read_filters "$repo"; then
-            fail "$name" "its git config names a filter Puddle cannot switch off, so it was not checked"
+            fail "$name" "not checked: $why, so git could run a program the checkout names; remove that filter from its git config and check again"
             continue
         fi
         list U status --porcelain=v1 --untracked-files=normal

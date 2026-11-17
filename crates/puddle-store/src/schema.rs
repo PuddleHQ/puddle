@@ -1120,11 +1120,7 @@ impl PreUpgradeCopy {
         match std::fs::remove_file(&self.made) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => tracing::warn!(
-                path = %self.made.display(),
-                %error,
-                "unused database copy not deleted"
-            ),
+            Err(error) => tracing::warn!(%error, path = %self.made.display(), "copy not deleted"),
         }
     }
 }

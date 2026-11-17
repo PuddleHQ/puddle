@@ -241,22 +241,19 @@ impl AccountSecrets {
     pub fn redeem_invite(&self, digest: &[u8]) -> Result<Option<UserId>, StoreError> {
         let now = sql_ts(self.clock.now_ms());
         let conn = lock(&self.conn);
-        let found: Option<(i64, i64)> = conn
+        let found: Option<(i64, i64, bool)> = conn
             .query_row(
-                "DELETE FROM account_invites WHERE digest = ?1 RETURNING user_id, expires_at",
+                "DELETE FROM account_invites WHERE digest = ?1
+                 RETURNING user_id, expires_at,
+                     (SELECT count(*) > 0 FROM users u
+                      WHERE u.id = account_invites.user_id AND u.deleting_at IS NULL)",
                 [digest],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some((user, _)) = found.filter(|&(_, expires_at)| expires_at > now) else {
-            return Ok(None);
-        };
-        let active: bool = conn.query_row(
-            "SELECT count(*) > 0 FROM users WHERE id = ?1 AND deleting_at IS NULL",
-            [user],
-            |r| r.get(0),
-        )?;
-        Ok(active.then(|| UserId::from_stored(user)))
+        Ok(found
+            .filter(|&(_, expires_at, active)| active && expires_at > now)
+            .map(|(user, _, _)| UserId::from_stored(user)))
     }
 }
 

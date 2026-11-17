@@ -1098,10 +1098,7 @@ fn a_copy_that_cannot_be_deleted_is_logged_and_the_migration_goes_on() {
     copy.discard();
     let lines = logs.lines();
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(
-        lines[0].starts_with("WARN unused database copy not deleted"),
-        "{lines:?}"
-    );
+    assert!(lines[0].starts_with("WARN copy not deleted"), "{lines:?}");
     assert!(made.exists());
 }
 

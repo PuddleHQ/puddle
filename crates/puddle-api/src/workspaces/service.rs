@@ -4,6 +4,7 @@
 use std::fmt;
 
 use futures_util::future::BoxFuture;
+use puddle_store::UserId;
 use puddle_types::{EntryId, SessionUser, ToolName, ToolVersion, ToolsFileHash, WorkspaceId};
 
 use crate::checkouts::{AddRepository, Checkouts};
@@ -295,7 +296,7 @@ pub trait WorkspaceService: Send + Sync {
     /// repositories are the checkouts on the disk that have a readable remote address (so the
     /// disk has to be read in a short-lived maintenance sandbox); when there is none, `repository`
     /// is the address to use. Nothing is written to the disk, and an entry that already exists is
-    /// never replaced. The new workspace is stopped.
+    /// never replaced. The new workspace is stopped and belongs to `owner`.
     ///
     /// # Errors
     /// [`WorkspaceError::NotFound`] when the disk does not exist,
@@ -305,6 +306,7 @@ pub trait WorkspaceService: Send + Sync {
     fn restore_orphan<'a>(
         &'a self,
         _id: &'a WorkspaceId,
+        _owner: UserId,
         _repository: Option<RepoUrl>,
         _git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {

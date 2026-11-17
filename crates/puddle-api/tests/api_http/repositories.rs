@@ -4,6 +4,7 @@
 
 use puddle_api::DisplayName;
 use puddle_api::{Found, FoundList, RemoteNote, RepoUrl, Repository, Unsaved, WorkspaceRecord};
+use puddle_store::UserId;
 use puddle_types::{CheckoutDir, EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
@@ -59,7 +60,12 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, dirs: &[(&str, &str)], g
             directory: CheckoutDir::new(dir).unwrap(),
         })
         .collect();
-    let mut record = WorkspaceRecord::new(id(name), DisplayName::parse(name).unwrap(), entries);
+    let mut record = WorkspaceRecord::new(
+        id(name),
+        UserId::OWNER,
+        DisplayName::parse(name).unwrap(),
+        entries,
+    );
     record.status = status;
     api.own(name);
     api.workspaces.seed(record, Unsaved::default());

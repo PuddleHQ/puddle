@@ -153,6 +153,15 @@ struct Active {
     forward: Forward,
 }
 
+/// What [`Ports::open`] did.
+enum Opened {
+    /// The forward was already on this port.
+    Kept,
+    /// A listener was made. A forward on another port that it moved is handed back still open, so
+    /// a caller that cannot save the move can put it back.
+    Bound { replaced: Option<Active> },
+}
+
 struct Inner {
     endpoints: PuddleEndpoints,
     pins: Arc<dyn Pins>,
@@ -253,6 +262,7 @@ impl Ports {
         match self.inner.pins.pinned(workspace) {
             Ok(pins) => {
                 for pin in pins {
+                    // Nothing runs yet, so no forward is moved here.
                     if let Err(err) = self.open(workspace, pin).await {
                         self.fail(workspace, pin, err.to_string());
                     }
@@ -424,16 +434,29 @@ impl Ports {
             Ok(())
         };
         if let Err(err) = saved {
-            if opened {
-                let undone = self
-                    .entries()
-                    .get_mut(workspace)
-                    .and_then(|e| e.forwards.remove(&guest_port));
+            if let Opened::Bound { replaced } = opened {
+                // Put things back as they were: the new listener goes, the old forward serves again.
+                let undone = {
+                    let mut entries = self.entries();
+                    entries.get_mut(workspace).and_then(|e| {
+                        let undone = e.forwards.remove(&guest_port);
+                        if let Some(old) = replaced {
+                            e.forwards.insert(guest_port, old);
+                        }
+                        undone
+                    })
+                };
                 if let Some(active) = undone {
                     active.forward.close().await;
                 }
             }
             return Err(err.into());
+        }
+        if let Opened::Bound {
+            replaced: Some(old),
+        } = opened
+        {
+            old.forward.close().await;
         }
         self.changed(workspace);
         self.view(workspace)?
@@ -455,10 +478,11 @@ impl Ports {
         guest_port: u16,
     ) -> Result<(), PortsError> {
         let _changing = self.inner.changing.lock().await;
+        // Unpin first: when the pins cannot be changed the forward that works stays.
+        let unpinned = self.inner.pins.unpin(workspace, guest_port)?;
         let (active, failed) = self.entries().get_mut(workspace).map_or((None, None), |e| {
             (e.forwards.remove(&guest_port), e.failed.remove(&guest_port))
         });
-        let unpinned = self.inner.pins.unpin(workspace, guest_port)?;
         if active.is_none() && failed.is_none() && !unpinned {
             return Err(PortsError::NotForwarded { guest_port });
         }
@@ -469,14 +493,14 @@ impl Ports {
         Ok(())
     }
 
-    /// Opens (or keeps, or moves) the forward for `pin`. `true` when a listener was made.
-    async fn open(&self, workspace: &WorkspaceId, pin: Pin) -> Result<bool, PortsError> {
+    /// Opens (or keeps, or moves) the forward for `pin`; a forward it moved is not closed.
+    async fn open(&self, workspace: &WorkspaceId, pin: Pin) -> Result<Opened, PortsError> {
         let link = {
             let mut entries = self.entries();
             let entry = entries.entry(workspace.clone()).or_default();
             if entry.forwards.get(&pin.guest_port).map(|a| a.host_port) == Some(pin.host_port) {
                 entry.failed.remove(&pin.guest_port);
-                return Ok(false);
+                return Ok(Opened::Kept);
             }
             Arc::clone(entry.link.get_or_insert_with(link_cell))
         };
@@ -509,10 +533,7 @@ impl Ports {
                 },
             )
         };
-        if let Some(old) = old {
-            old.forward.close().await;
-        }
-        Ok(true)
+        Ok(Opened::Bound { replaced: old })
     }
 
     /// Who already holds `pin`'s port of this computer in Puddle's books: another forward, another

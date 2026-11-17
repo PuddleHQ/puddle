@@ -109,6 +109,15 @@ export class SessionStore {
     return this.mode === "signed-in" || this.mode === "local";
   }
 
+  /**
+   * Whether this session may start a workspace from a folder on the computer Puddle runs on. The
+   * service refuses it for every signed-in user who is not the owner, so the form does not offer it.
+   * The desktop window and a service with no accounts have no user and are the owner.
+   */
+  get mayUseServerFolders(): boolean {
+    return this.user === null || this.user.role === "owner";
+  }
+
   /** Finds out how this page is signed in; never throws. */
   async start(): Promise<void> {
     useSessionToken(() => this.#token);

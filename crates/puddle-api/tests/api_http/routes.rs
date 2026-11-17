@@ -564,6 +564,7 @@ async fn the_audit_search_box_matches_text_columns_and_combines_with_the_filters
         ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, HttpRequestLine,
     };
     let api = start().await;
+    api.own("box");
     let request = EgressRequest::new(
         WorkspaceId::new("box").unwrap(),
         Host::parse_normalised("example.com").unwrap(),
@@ -614,6 +615,7 @@ async fn the_audit_search_box_matches_text_columns_and_combines_with_the_filters
 async fn audit_records_are_typed_including_the_upstream_hop() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;
+    api.own("box");
     let request = EgressRequest::new(
         WorkspaceId::new("box").unwrap(),
         Host::parse_normalised("example.com").unwrap(),
@@ -639,6 +641,7 @@ async fn audit_records_are_typed_including_the_upstream_hop() {
 async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;
+    api.own("box");
     let host = || Host::parse_normalised("registry-1.docker.io").unwrap();
     let mut pull = ConnectionEvent::puddle(
         host(),
@@ -820,6 +823,7 @@ async fn the_audit_log_filters_on_the_company_network_category() {
         CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
     };
     let api = start().await;
+    api.own("box");
     let ask = |host: &str| {
         EgressRequest::new(
             WorkspaceId::new("box").unwrap(),

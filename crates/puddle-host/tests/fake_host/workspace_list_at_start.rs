@@ -90,11 +90,11 @@ async fn a_workspace_saved_before_session_users_keeps_root() {
     host.shutdown().await;
 }
 
-/// The workspaces listed when this build first starts were made before every create recorded its
-/// user: they become the owner's. Only then: one added to the list by hand later has no user, so
-/// no one reaches it.
+/// A list from before owners (version 3) gives each workspace the user the database names, else the
+/// install's owner. From then on the list is where the owner lives: every start records the owner
+/// each listed workspace names, so one added to the list by hand later is its list owner's.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later_one() {
+async fn a_start_records_the_owner_each_listed_workspace_names() {
     let rig = Rig::new();
     let data = rig.dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
@@ -125,47 +125,52 @@ async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later
     // The host took the reach across every user before it served anything, so nothing the API
     // is handed can take it after.
     assert!(host.store().take_all_users().is_none());
-    let listed = api(&host).get("/api/workspaces").await.json();
-    assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
+    let ann = host
+        .store()
+        .add_user(&puddle_store::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
     host.shutdown().await;
     drop(host);
 
-    let mut book: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(data.join("workspaces.json")).unwrap()).unwrap();
-    book["workspaces"]
-        .as_array_mut()
-        .unwrap()
-        .push(entry("later"));
+    // The list is version 4 from here: the owner is on the entry, and the list's word is kept.
+    let with_owner = |id: &str, owner: i64| {
+        let mut e = entry(id);
+        e["owner"] = json!(owner);
+        e
+    };
+    let book = json!({"version": 4, "workspaces": [
+        with_owner("old", puddle_store::UserId::OWNER.get()),
+        with_owner("later", ann.get()),
+    ]});
     std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
     let host = rig.start().await;
-    let api = api(&host);
-    assert_eq!(api.get("/api/workspaces/old").await.status, 200);
-    assert_eq!(api.get("/api/workspaces/later").await.status, 404);
-    let listed = api.get("/api/workspaces").await.json();
-    let ids: Vec<&str> = listed["workspaces"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|w| w["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, ["old"], "{listed}");
+    let owner_of = |id: &str| {
+        host.store()
+            .workspace_owner(&WorkspaceId::new(id).unwrap())
+            .unwrap()
+    };
+    assert_eq!(owner_of("later"), Some(ann));
+    assert_eq!(owner_of("old"), Some(puddle_store::UserId::OWNER));
     host.shutdown().await;
 }
 
-/// A first start that cannot record whose the listed workspaces are stops, saying so, rather than
-/// serve workspaces no user reaches; the next start tries again.
+/// A list and a database that disagree about whose a workspace is stop the start, saying so,
+/// rather than guess; the list put right, the next start goes through.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_tries_again() {
+async fn a_start_where_the_list_and_the_database_disagree_on_an_owner_stops() {
     let rig = Rig::new();
     let host = rig.start().await;
+    let ann = host
+        .store()
+        .add_user(&puddle_store::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    host.store()
+        .set_workspace_owner(&WorkspaceId::new("old").unwrap(), ann)
+        .unwrap();
     host.shutdown().await;
     drop(host);
-    damage_database(
-        &rig,
-        "INSERT INTO workspace_owners_adoption (id) VALUES (1);
-         CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
-         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-    );
     rig.runtime
         .create_volume(puddle_compute::VolumeSpec {
             name: WorkspaceId::new("old").unwrap().volume_name(),
@@ -173,15 +178,15 @@ async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_trie
         })
         .await
         .unwrap();
-    let book = json!({"version": 3, "workspaces": [{
-        "id": "old", "name": "old", "repositories": [], "start_folder": null,
-        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
-    }]});
-    std::fs::write(
-        rig.dir.path().join("data").join("workspaces.json"),
-        book.to_string(),
-    )
-    .unwrap();
+    let book = |owner: i64| {
+        json!({"version": 4, "workspaces": [{
+            "owner": owner,
+            "id": "old", "name": "old", "repositories": [], "start_folder": null,
+            "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+        }]})
+    };
+    let path = rig.dir.path().join("data").join("workspaces.json");
+    std::fs::write(&path, book(puddle_store::UserId::OWNER.get()).to_string()).unwrap();
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
     let err = Host::start(
         prepared,
@@ -192,12 +197,17 @@ async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_trie
     .unwrap_err();
     assert!(
         err.to_string()
-            .contains("whose the listed workspaces are could not be recorded"),
+            .contains("whose workspace old is could not be recorded"),
         "{err}"
     );
-    damage_database(&rig, "DROP TRIGGER no_owner;");
+    std::fs::write(&path, book(ann.get()).to_string()).unwrap();
     let host = rig.start().await;
-    assert_eq!(api(&host).get("/api/workspaces/old").await.status, 200);
+    assert_eq!(
+        host.store()
+            .workspace_owner(&WorkspaceId::new("old").unwrap())
+            .unwrap(),
+        Some(ann)
+    );
     host.shutdown().await;
 }
 

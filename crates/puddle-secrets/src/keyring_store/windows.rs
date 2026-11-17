@@ -30,6 +30,7 @@ pub(super) struct CredentialLock {
 
 impl Drop for CredentialLock {
     fn drop(&mut self) {
+        // Closing the file releases the lock too; the unlock only makes it immediate.
         let _ = self.file.unlock();
     }
 }

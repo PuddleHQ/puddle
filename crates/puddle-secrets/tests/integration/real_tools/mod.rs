@@ -126,8 +126,7 @@ impl Trusted {
         {
             panic!(
                 "this computer cannot trust a certificate from inside the test ({cn}): prepare one and set \
-                 PUDDLE_STANDIN_CERT_PEM and PUDDLE_STANDIN_KEY_PEM; the one made was\n{}",
-                standin.cert_pem
+                 PUDDLE_STANDIN_CERT_PEM and PUDDLE_STANDIN_KEY_PEM"
             );
         }
     }

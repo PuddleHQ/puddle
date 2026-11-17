@@ -45,6 +45,13 @@ struct State {
 pub(crate) struct StandIn {
     state: Arc<Mutex<State>>,
     /// The certificate to trust, as PEM.
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "only the Windows branch of `Trusted` writes it to the store"
+        )
+    )]
     pub(crate) cert_pem: String,
     /// The common name of the certificate when the stand-in made it, so the caller can make the
     /// computer trust it and remove it again; `None` when a runner prepared and trusts it.

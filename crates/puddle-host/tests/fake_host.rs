@@ -965,6 +965,66 @@ impl puddle_secrets::SecretStore for SharedSecrets {
     }
 }
 
+/// How many deletes of the saved logins of the `counted` workspace the rig's store saw, and the
+/// workspace whose saved logins it holds back.
+#[derive(Default)]
+struct HeldDeletes {
+    counted: Mutex<Option<WorkspaceId>>,
+    count: AtomicUsize,
+    held: Mutex<Option<WorkspaceId>>,
+    /// Woken when the test changes `held`.
+    released: std::sync::Condvar,
+}
+
+impl HeldDeletes {
+    /// Holds back the saved logins of `workspace`, or with `None` lets every held delete go on.
+    fn hold(&self, workspace: Option<WorkspaceId>) {
+        *self.held.lock().unwrap() = workspace;
+        self.released.notify_all();
+    }
+}
+
+/// The rig's memory store, counting deletes and holding back the held workspace's saved logins
+/// until the test lets them go.
+struct Counted(Arc<MemoryStore>, Arc<HeldDeletes>);
+
+impl puddle_secrets::SecretStore for Counted {
+    fn get(
+        &self,
+        id: &puddle_secrets::StoredId,
+    ) -> Result<Option<puddle_secrets::Secret>, puddle_secrets::StoreError> {
+        self.0.get(id)
+    }
+    fn set(
+        &self,
+        id: &puddle_secrets::StoredId,
+        secret: &puddle_secrets::Secret,
+    ) -> Result<(), puddle_secrets::StoreError> {
+        self.0.set(id, secret)
+    }
+    fn delete(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {
+        let of = |workspace: &Option<WorkspaceId>| {
+            workspace
+                .as_ref()
+                .is_some_and(|w| puddle_logins::is_saved_login_of(id, w))
+        };
+        if of(&self.1.counted.lock().unwrap()) {
+            self.1.count.fetch_add(1, Ordering::SeqCst);
+        }
+        // Blocks like a keyring that waits for the user, until the test lets it go.
+        drop(
+            self.1
+                .released
+                .wait_while(self.1.held.lock().unwrap(), |held| of(held))
+                .unwrap(),
+        );
+        self.0.delete(id)
+    }
+    fn keep_local(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {
+        self.0.keep_local(id)
+    }
+}
+
 struct Rig {
     dev_cert: Arc<TestDevCert>,
     dir: tempfile::TempDir,
@@ -995,6 +1055,9 @@ struct Rig {
     /// process would have: the start-up clean-up then removes what nothing names, as it does on a
     /// real machine.
     indexed: AtomicBool,
+    /// Counts the deletes of `secrets` and holds back those a test names, like a keyring that
+    /// waits for the user to unlock it.
+    deletes: Arc<HeldDeletes>,
     /// The drive the host reads its free space from, when a test sets one; else a fixed figure.
     free_space: Mutex<Option<Arc<dyn puddle_host::Space>>>,
 }
@@ -1028,6 +1091,7 @@ impl Rig {
             file_vault: AtomicBool::new(false),
             without_headless_flag: AtomicBool::new(false),
             indexed: AtomicBool::new(false),
+            deletes: Arc::default(),
             free_space: Mutex::new(None),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
@@ -1094,7 +1158,7 @@ impl Rig {
                 self.secrets.clone(),
             )))
         } else {
-            self.secrets.clone()
+            Arc::new(Counted(self.secrets.clone(), self.deletes.clone()))
         });
         if self.file_vault.load(Ordering::SeqCst) {
             options.secret_store = None;

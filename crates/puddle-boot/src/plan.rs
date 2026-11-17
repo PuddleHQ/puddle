@@ -405,6 +405,16 @@ impl BootPlan {
             .any(|f| matches!(f.apply(), ApplyKind::Merge(_)))
     }
 
+    /// The guest paths of the files applied with [`ApplyKind::Merge`].
+    #[must_use]
+    pub fn merged_paths(&self) -> Vec<String> {
+        self.files
+            .iter()
+            .filter(|f| matches!(f.apply(), ApplyKind::Merge(_)))
+            .map(|f| f.path().as_str().to_owned())
+            .collect()
+    }
+
     /// The plan as `boot.sh` reads it on stdin.
     #[must_use]
     pub fn render(&self) -> Vec<u8> {

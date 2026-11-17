@@ -27,7 +27,6 @@ pub struct TokenScope {
 /// workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum SourceSpec {
     /// The token of a named, signed-in GitHub CLI account (`gh auth token --user`), never "whichever
     /// account is active".

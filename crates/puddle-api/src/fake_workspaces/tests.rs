@@ -51,7 +51,7 @@ fn fake() -> (FakeWorkspaces, Arc<CollectingSink>) {
 
 fn new_ws(name: &str) -> NewWorkspace {
     NewWorkspace::new(
-        puddle_store::UserId::OWNER,
+        UserId::OWNER,
         DisplayName::parse(name).unwrap(),
         vec![NewRepository {
             repository: Repository::at_default_directory(
@@ -67,7 +67,12 @@ fn new_ws(name: &str) -> NewWorkspace {
 }
 
 fn seeded(fake: &FakeWorkspaces, name: &str, status: WorkspaceStatus) {
-    let mut record = WorkspaceRecord::new(id(name), DisplayName::parse(name).unwrap(), Vec::new());
+    let mut record = WorkspaceRecord::new(
+        id(name),
+        UserId::OWNER,
+        DisplayName::parse(name).unwrap(),
+        Vec::new(),
+    );
     record.status = status;
     fake.seed(record, Unsaved::default());
 }
@@ -300,7 +305,12 @@ async fn the_fingerprint_follows_every_part_of_the_report() {
 #[tokio::test]
 async fn the_launcher_records_what_it_opened() {
     let launcher = FakeLauncher::new();
-    let record = WorkspaceRecord::new(id("w"), DisplayName::parse("w").unwrap(), Vec::new());
+    let record = WorkspaceRecord::new(
+        id("w"),
+        UserId::OWNER,
+        DisplayName::parse("w").unwrap(),
+        Vec::new(),
+    );
     let target = DesktopTarget {
         ssh_host: "puddle-w".into(),
         path: "/workspaces/w".into(),
@@ -323,7 +333,12 @@ async fn the_launcher_records_what_it_opened() {
 #[tokio::test]
 async fn the_launcher_records_the_browser_windows_it_opened_and_can_fail_one() {
     let launcher = FakeLauncher::new();
-    let record = WorkspaceRecord::new(id("w"), DisplayName::parse("w").unwrap(), Vec::new());
+    let record = WorkspaceRecord::new(
+        id("w"),
+        UserId::OWNER,
+        DisplayName::parse("w").unwrap(),
+        Vec::new(),
+    );
     let target = BrowserTarget {
         origin: "http://w.localhost:18080".into(),
         front: SocketAddr::from(([127, 0, 0, 1], 18080)),
@@ -383,6 +398,7 @@ async fn an_attach_names_the_origin_and_the_ssh_alias_by_the_id() {
     );
     let mut record = WorkspaceRecord::new(
         id("k7m2x9qa"),
+        UserId::OWNER,
         DisplayName::parse("shop").unwrap(),
         Vec::new(),
     );

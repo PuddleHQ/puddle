@@ -346,11 +346,32 @@ pub fn open<R: Runtime>(
     open_in_order(app, options, backend, probe_first)
 }
 
-/// [`open`] with the order of the probe and main windows decided by the caller.
+/// [`open`] with the order of the probe and main windows decided by the caller. When a window
+/// fails the backend is shut down before the error returns: nothing else holds it, so its
+/// workspaces would otherwise keep running with no window and no one to stop them.
 fn open_in_order<R: Runtime>(
     app: &AppHandle<R>,
     options: &Options,
     backend: Backend,
+    probe_first: bool,
+) -> Result<(), ShellError> {
+    match open_windows(app, options, &backend, probe_first) {
+        Ok(()) => {
+            app.manage(backend);
+            Ok(())
+        }
+        Err(err) => {
+            // The start already failed and that error is returned; the shutdown report is not needed.
+            let _ = tauri::async_runtime::block_on(backend.shutdown());
+            Err(err)
+        }
+    }
+}
+
+fn open_windows<R: Runtime>(
+    app: &AppHandle<R>,
+    options: &Options,
+    backend: &Backend,
     probe_first: bool,
 ) -> Result<(), ShellError> {
     let probe = options.sandbox_probe.as_ref();
@@ -376,11 +397,10 @@ fn open_in_order<R: Runtime>(
     if let Some(probe) = probe.filter(|_| !probe_first) {
         open_probe(app, probe, &data_folder(options).unwrap_or_default())?;
     }
-    let tray = desktop::attach(app, &window, &backend, marker_folder, options.login.clone());
+    let tray = desktop::attach(app, &window, backend, marker_folder, options.login.clone());
     if options.at_login {
         desktop::start_out_of_the_way(&window, tray);
     }
-    app.manage(backend);
     Ok(())
 }
 

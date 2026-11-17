@@ -21,6 +21,7 @@ import {
 } from "#lib/stores/workspaces.svelte.ts";
 import type { Identity } from "#lib/identities/model.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
+import { session } from "#lib/session/session.svelte.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
 
 // The limit is 100 (pinned in repo-rows.test.ts); a form with that many rows takes seconds to
@@ -64,6 +65,8 @@ vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
 afterEach(() => {
   h.desktop = false;
+  session.mode = "checking";
+  session.user = null;
   h.pick.mockReset();
   cleanup();
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
@@ -161,6 +164,29 @@ describe("CreateWorkspaceDialog", () => {
       name: "Shop",
       repositories: [{ url: "", local_path: "/home/you/Shop/" }],
     });
+  });
+
+  it("offers the folder source to the owner and to a window with nothing to sign in to", async () => {
+    session.mode = "local";
+    mount();
+    await screen.findByRole("dialog");
+    expect(screen.getByTestId("source-folder")).toBeInTheDocument();
+    cleanup();
+    session.mode = "signed-in";
+    session.user = { id: 1, name: "ann", role: "owner" };
+    mount();
+    await screen.findByRole("dialog");
+    expect(screen.getByTestId("source-folder")).toBeInTheDocument();
+  });
+
+  it("hides the folder source from a signed-in user who is not the owner, and still offers the address", async () => {
+    session.mode = "signed-in";
+    session.user = { id: 2, name: "bob", role: "user" };
+    mount();
+    await screen.findByRole("dialog");
+    expect(screen.queryByTestId("source-folder")).toBeNull();
+    expect(screen.queryByText(/From a folder on this computer/)).toBeNull();
+    expect(screen.getByTestId("source-address")).toBeInTheDocument();
   });
 
   it("offers no folder dialog in a browser", async () => {

@@ -218,7 +218,7 @@ fn source_organisation(source: &SourceSpec) -> Option<String> {
         SourceSpec::GitCredential { path, .. } => {
             path.as_str().split('/').next().map(str::to_ascii_lowercase)
         }
-        _ => None,
+        SourceSpec::Gh { .. } => None,
     }
 }
 

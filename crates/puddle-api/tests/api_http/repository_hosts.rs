@@ -2,6 +2,7 @@
 //! Creating a workspace allows the host of its repositories (rules R-58), over real HTTP.
 
 use puddle_api::{DisplayName, RepoUrl, Repository, Unsaved, WorkspaceRecord};
+use puddle_store::UserId;
 use puddle_types::{CheckoutDir, EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
@@ -148,6 +149,7 @@ async fn adding_a_repository_allows_its_host_for_that_workspace_and_a_block_refu
     api.own("web");
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
+        UserId::OWNER,
         DisplayName::parse("web").unwrap(),
         vec![Repository {
             entry: EntryId::from_random([1, 2, 3, 4, 5]),

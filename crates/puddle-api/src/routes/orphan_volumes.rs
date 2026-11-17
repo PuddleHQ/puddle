@@ -79,17 +79,18 @@ pub(crate) async fn restore_orphan_volume(
         .transpose()?;
     let store = state.store.clone();
     let restored = id.clone();
-    blocking(move || {
+    let owner = blocking(move || {
         // The disk of a workspace a user had stays theirs; any other becomes the restorer's (only
         // the owner restores disks). Recorded first, so the workspace is never listed as nobody's.
         let owner = store.workspace_owner(&restored)?.unwrap_or(principal.user);
-        Ok(StoreGitSetup::new(store).claim(&restored, owner)?)
+        StoreGitSetup::new(store).claim(&restored, owner)?;
+        Ok(owner)
     })
     .await?;
     let git = StoreGitSetup::new(state.store.clone());
     let record = state
         .workspaces
-        .restore_orphan(&id, repository, &git)
+        .restore_orphan(&id, owner, repository, &git)
         .await?;
     crate::system_managed::refresh(&state).await;
     Ok((

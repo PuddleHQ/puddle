@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use puddle_upstream::{
-    BypassList, Config, Destination, Discovery, EnvFallback, EnvOs, FakeOs, Hop, ManualProxy, Mode,
-    PacError, ProxyAddr, ProxyConfig, ProxyRules, RouteSource, Scheme,
+    BypassList, Config, Destination, Discovery, EnvFallback, EnvOs, FakeOs, Hop, MAX_ROUTE_SAMPLES,
+    MAX_ROUTES, ManualProxy, Mode, PacError, ProxyAddr, ProxyConfig, ProxyRules, RouteSource,
+    Scheme,
 };
 
 fn proxy(host: &str, port: u16) -> Hop {
@@ -262,6 +263,34 @@ async fn decisions_are_cached_per_destination_until_the_epoch_ends() {
     assert_eq!(d.epoch(), before + 1);
     d.route(&https("a.test")).await;
     assert_eq!((os.pac_calls(), os.config_calls()), (3, 2));
+}
+
+#[tokio::test]
+async fn the_decisions_kept_per_epoch_are_bounded_and_the_oldest_goes_first() {
+    let os = FakeOs::new(pac_settings());
+    let d = discovery(&os, env(&[]), Config::default());
+    let port = |n: usize| u16::try_from(n).unwrap();
+    // A guest can pick any port on an allowed host: each is its own destination.
+    for n in 1..=MAX_ROUTES + 1 {
+        d.route(&Destination::new(Scheme::Https, "a.test", port(n)))
+            .await;
+    }
+    assert_eq!(os.pac_calls(), MAX_ROUTES + 1);
+    // The newest are still kept.
+    d.route(&Destination::new(
+        Scheme::Https,
+        "a.test",
+        port(MAX_ROUTES + 1),
+    ))
+    .await;
+    d.route(&Destination::new(Scheme::Https, "a.test", port(2)))
+        .await;
+    assert_eq!(os.pac_calls(), MAX_ROUTES + 1);
+    // The oldest was dropped to make room, so it is decided again.
+    d.route(&Destination::new(Scheme::Https, "a.test", port(1)))
+        .await;
+    assert_eq!(os.pac_calls(), MAX_ROUTES + 2);
+    assert!(d.health().await.routes.len() <= MAX_ROUTE_SAMPLES);
 }
 
 #[tokio::test]

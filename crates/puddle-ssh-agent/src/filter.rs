@@ -4,7 +4,9 @@
 //! A client must first bind its connection to a session (`session-bind@openssh.com`, which
 //! OpenSSH's `ssh` sends before it lists keys). The bind holds only when the session's key exchange
 //! was seen in clear on one of the workspace's own spliced connections ([`Context::seen`]), to a
-//! host the user turned the agent on for, and the host key is not a Git host's. After that the key
+//! host the user turned the agent on for, the host key is not a Git host's, and it is the host key
+//! that host showed at its first bind ([`Context::pin`]): a server at that name that relays another
+//! server's key exchange cannot have a login to that other server signed. After that the key
 //! list holds only the keys allowed for that host, and a signature is given only over a login to
 //! that very session with one of those keys. Everything else is refused: a list or a signature
 //! before a bind, a second bind, a bind for agent forwarding, an `SSHSIG` (commit or file signing),
@@ -71,6 +73,15 @@ impl fmt::Display for Disapproval {
     }
 }
 
+/// Why a host key is not taken for a host (see [`Context::pin`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinFailure {
+    /// The host showed another host key before: this fingerprint.
+    Changed(String),
+    /// The host key kept for the host could not be read or written.
+    Unavailable,
+}
+
 /// A key blob's type name (`ssh-ed25519`, `ssh-rsa`, ...), or `None` for a blob that is not a key.
 #[must_use]
 pub fn key_type(key: &[u8]) -> Option<String> {
@@ -93,6 +104,13 @@ pub trait Context {
     ///
     /// Whatever the host's agent fails with.
     fn list(&self) -> Result<Vec<Identity>, AgentError>;
+    /// Ties `host_key` (a SHA-256 fingerprint) to `host` when the host has none yet, else checks
+    /// that it is the one kept.
+    ///
+    /// # Errors
+    ///
+    /// The host has another host key, or it could not be checked.
+    fn pin(&self, host: &str, host_key: &str) -> Result<(), PinFailure>;
     /// Whether the user lets the workspace sign for `key` at `host` (the first-use question).
     /// It may block until the user answers; the filter runs on a blocking thread.
     ///
@@ -127,6 +145,15 @@ pub enum Refusal {
     AgentOff(String),
     /// The bind's signature does not check over its session identifier.
     BadBindSignature,
+    /// The host key is not the one the host showed at its first bind.
+    HostKeyChanged {
+        /// The fingerprint of the host key kept for the host.
+        kept: String,
+        /// The fingerprint of the host key this bind showed.
+        shown: String,
+    },
+    /// The host key kept for the host could not be checked.
+    HostKeyUnchecked,
     /// An `SSHSIG` request: commit or file signing.
     SshSig,
     /// The data to sign is not a login.
@@ -158,6 +185,11 @@ impl fmt::Display for Refusal {
             Self::UnseenSession => f.write_str("a session no spliced connection showed"),
             Self::AgentOff(host) => write!(f, "the agent is off for {host}"),
             Self::BadBindSignature => f.write_str("the bind's signature does not check"),
+            Self::HostKeyChanged { kept, shown } => write!(
+                f,
+                "host key {shown} is not the host's key {kept}; turn the agent off and on again for the host to accept a new key"
+            ),
+            Self::HostKeyUnchecked => f.write_str("the host's key could not be checked"),
             Self::SshSig => f.write_str("an SSHSIG signature"),
             Self::NotLogin => f.write_str("data that is not a login"),
             Self::OtherSession => f.write_str("a login for another session"),
@@ -251,6 +283,16 @@ impl Filter {
         }
         if !bind.is_signed() {
             return Outcome::Refused(Refusal::BadBindSignature);
+        }
+        let shown = PublicKey::from(bind.host_key.clone())
+            .fingerprint(HashAlg::Sha256)
+            .to_string();
+        match cx.pin(&host, &shown) {
+            Ok(()) => {}
+            Err(PinFailure::Changed(kept)) => {
+                return Outcome::Refused(Refusal::HostKeyChanged { kept, shown });
+            }
+            Err(PinFailure::Unavailable) => return Outcome::Refused(Refusal::HostKeyUnchecked),
         }
         self.bound = Some(Bound {
             host: host.clone(),

@@ -212,6 +212,13 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   draft, with a task to remove any stopgap. Prefer a maintained crate (licence- and
   `cargo deny`-clean, light tree) over our own per-OS code. Linux and macOS are separate cases:
   `cfg(unix)` is not "Linux".
+- **Child processes:** host code starts a program with `puddle_process::command(program)` (for tokio,
+  `tokio::process::Command::from(puddle_process::command(program))`), never `Command::new`. The desktop app is a Windows
+  GUI program without a console, so a console program it starts plainly opens a terminal window on the user's desktop;
+  the helper sets `CREATE_NO_WINDOW`. A caller that sets its own `creation_flags` must include
+  `puddle_process::CREATION_FLAGS`. The `spawn` gate (`scripts/check-spawn.py`, in `fast`) fails any other process
+  `Command::new` in the production code of the host crates (tests, test harnesses, the guest agent and `xtask` are out of
+  its scope); a site that must differ says why with `// spawn-ok: <reason>`.
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
   `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment, each `let _ =` outside tests a comment on the line or within three lines above (`let _ = name;` is exempt), and each `expect`
@@ -565,7 +572,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips | pre-commit hook |
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks | pre-commit hook |
 | `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 

@@ -148,7 +148,9 @@ type Accepted = io::Result<NamedPipeServer>;
 /// A pipe instance waiting for a client. Dropping a pipe server whose connect is pending only
 /// cancels the connect: mio keeps the handle open, and the instance listening, until the I/O
 /// driver dequeues the cancellation (mio issue 2003). Disconnecting first stops it listening at
-/// once. Remove this workaround, and the disconnect, once a mio release contains the fix.
+/// once. Remove this workaround, and the disconnect, once the locked mio (1.2.4 when this was
+/// written) is a release whose notes list the fix for that issue; `cargo update -p mio` shows the
+/// newest one.
 struct Idle(NamedPipeServer);
 
 impl Drop for Idle {

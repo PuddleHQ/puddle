@@ -2,7 +2,7 @@
 // The create form's list of repositories without the DOM: which directory an address gets, which
 // rows clash, how a start folder is checked, and which row a refusal of the service is about.
 // The service checks all of this again; these checks only tell the user sooner, in the same words.
-import { looksLikeSsh, repoUrlProblem, sshAsHttps } from "./model.ts";
+import { resolveRepoAddress } from "./model.ts";
 
 /** The most repositories one workspace lists (the service refuses more). */
 export const MAX_REPOSITORIES = 100;
@@ -133,14 +133,10 @@ export function freeDirectory(dir: string, taken: readonly string[]): string {
 
 /** An address reduced to how the repository table spells it: host and path, no `.git`, any case. */
 export function sameRepositoryKey(url: string): string | null {
-  let address = url.trim();
-  if (looksLikeSsh(address)) {
-    const https = sshAsHttps(address);
-    if ("message" in https) return null;
-    address = https.url;
-  }
+  const resolved = resolveRepoAddress(url);
+  if ("message" in resolved) return null;
   try {
-    const parsed = new URL(address);
+    const parsed = new URL(resolved.url);
     if (parsed.protocol !== "https:") return null;
     const path = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/i, "");
     return `${parsed.host}${path}`.toLowerCase();
@@ -210,8 +206,9 @@ export function rowProblems(
     const fromFolder = row.source === "folder";
     const local = fromFolder ? localPathProblem(row.localPath) : null;
     // From a folder, the address may stay empty: the checkout's origin gives it.
-    const url =
-      fromFolder && row.url.trim() === "" ? null : repoUrlProblem(row.url);
+    const resolved =
+      fromFolder && row.url.trim() === "" ? null : resolveRepoAddress(row.url);
+    const url = resolved && "message" in resolved ? resolved.message : null;
     const typed = row.directory.trim();
     const dir = typed === "" ? null : directoryProblem(typed);
     if (local) add(row.key, { localPath: local });

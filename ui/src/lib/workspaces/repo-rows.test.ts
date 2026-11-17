@@ -86,6 +86,12 @@ describe("sameRepositoryKey", () => {
     );
   });
 
+  it("reads owner/repo and an address without a scheme as the https address they mean", () => {
+    const key = sameRepositoryKey("https://github.com/sharkdp/fd");
+    expect(sameRepositoryKey("sharkdp/fd")).toBe(key);
+    expect(sameRepositoryKey("github.com/SharkDP/fd.git")).toBe(key);
+  });
+
   it("has none for what is not an https address", () => {
     expect(sameRepositoryKey("git@git.example.com:a/b")).toBeNull();
     expect(sameRepositoryKey("http://github.com/a/b")).toBeNull();
@@ -283,7 +289,7 @@ describe("a checkout on this computer", () => {
       source: "address" as const,
     };
     expect(rowProblems([switched]).get(1)?.url).toBe(
-      "Enter the repository's HTTPS URL.",
+      "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
     );
   });
 

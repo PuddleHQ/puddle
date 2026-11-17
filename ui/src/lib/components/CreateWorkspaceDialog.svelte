@@ -34,9 +34,9 @@
     type WorkspaceStore,
   } from "#lib/stores/workspaces.svelte.ts";
   import {
-    cleanRepoUrl,
     nameProblem,
     parseMemoryGib,
+    resolveRepoAddress,
     suggestName,
     type Workspace,
   } from "#lib/workspaces/model.ts";
@@ -129,19 +129,33 @@
     }
   });
 
+  /** The https:// address a row's field means, or what was typed while it names none. */
+  function addressOf(row: RowDraft): string {
+    const resolved = resolveRepoAddress(row.url);
+    return "url" in resolved ? resolved.url : row.url.trim();
+  }
+
   // What two rows share is flagged as you type, before any submit.
   const live = $derived(clashes(rows));
   const problem = (row: RowDraft, field: keyof RowProblems) =>
     rowErrors[row.key]?.[field] ?? live.get(row.key)?.[field];
 
+  /** "Will clone ..." when the field means another address than the one typed. */
+  function willClone(row: RowDraft): string | null {
+    const resolved = resolveRepoAddress(row.url);
+    return "url" in resolved && resolved.url !== row.url.trim()
+      ? `Will clone ${resolved.url}`
+      : null;
+  }
+
   const offeredFor = (row: RowDraft) =>
-    matchingUrl(identities.identities, row.url, row.listedBy);
+    matchingUrl(identities.identities, addressOf(row), row.listedBy);
   /**
    * What the form chooses itself for a row: the identity that listed the repository, else the one
    * that covers its owner best (as the host does when none is chosen).
    */
   function chosenForYou(row: RowDraft): number | null {
-    const parsed = parseRepoUrl(row.url);
+    const parsed = parseRepoUrl(addressOf(row));
     const offered = offeredFor(row);
     if (!parsed.ok || offered.length === 0) return null;
     const listed = offered.find((i) => i.id === row.listedBy);
@@ -160,7 +174,7 @@
     if (identities.status && identities.status !== "ready") return out;
     const onList: Identity[] = [];
     for (const row of rows) {
-      const parsed = parseRepoUrl(row.url);
+      const parsed = parseRepoUrl(addressOf(row));
       if (!parsed.ok) continue;
       const picked = selectedFor(row);
       const preview = previewIdentity(
@@ -311,7 +325,7 @@
         const directory = row.directory.trim();
         const local = row.source === "folder" ? cleanPath(row.localPath) : "";
         return {
-          url: cleanRepoUrl(row.url),
+          url: addressOf(row),
           ...(local === "" ? {} : { local_path: local }),
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
@@ -516,10 +530,11 @@
               {urlError}
             </p>
           {:else}
-            <p class="hint" id={rowId(row, "url-hint")}>
-              {row.source === "folder"
-                ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
-                : "An HTTPS URL, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS."}
+            <p class="hint" id={rowId(row, "url-hint")} aria-live="polite">
+              {willClone(row) ??
+                (row.source === "folder"
+                  ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
+                  : "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS.")}
             </p>
           {/if}
         </div>
@@ -531,7 +546,7 @@
           />
         {/if}
 
-        {#if tableCannotHold(row.url)}
+        {#if tableCannotHold(addressOf(row))}
           <p class="hint warn" data-testid="table-cannot-hold">
             {TABLE_CANNOT_HOLD}
           </p>
@@ -812,7 +827,7 @@
     <!-- Below the buttons: the answer arrives after the typing stops, and a note above them
          would push the button away from a press already under way. -->
     <RepositoryHostsNotice
-      urls={rows.map((row) => row.url)}
+      urls={rows.map(addressOf)}
       {...hostCheck ? { check: hostCheck } : {}}
       onBlocked={(b) => (hostBlocked = b)}
     />

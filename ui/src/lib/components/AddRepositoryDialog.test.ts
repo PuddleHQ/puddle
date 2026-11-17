@@ -94,6 +94,21 @@ describe("the Add repository dialog", () => {
     });
   });
 
+  it("reads owner/repo as a GitHub address, says so under the field and sends that", async () => {
+    const onSubmit = open();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "sharkdp/fd");
+    expect(field("Git repository (HTTPS)")).toHaveAccessibleDescription(
+      "Will clone https://github.com/sharkdp/fd",
+    );
+    expect(field("Directory").placeholder).toBe("fd");
+    await fireEvent.click(clone());
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      url: "https://github.com/sharkdp/fd",
+    });
+  });
+
   it("sends a typed directory, a chosen identity and cleared boxes", async () => {
     const onSubmit = open();
     await screen.findByRole("dialog");
@@ -175,7 +190,9 @@ describe("the Add repository dialog", () => {
     await screen.findByRole("dialog");
     await fireEvent.click(clone());
     expect(
-      await screen.findByText("Enter the repository's HTTPS URL."),
+      await screen.findByText(
+        "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
+      ),
     ).toBeInTheDocument();
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await type("Directory", ".hidden");

@@ -489,16 +489,61 @@ describe("CreateWorkspaceDialog", () => {
     );
   });
 
-  it("takes an SSH address of a Git host and sends it as typed for the host to turn into HTTPS", async () => {
+  it("takes an SSH address of a Git host, shows its HTTPS address and sends that", async () => {
     const { create } = mount();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "git@github.com:acme/web.git");
     await type("Name", "web");
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByText("Will clone https://github.com/acme/web.git"),
+    ).toBeInTheDocument();
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0]?.[0]).toMatchObject({
-      repositories: [{ url: "git@github.com:acme/web.git" }],
+      repositories: [{ url: "https://github.com/acme/web.git" }],
+    });
+  });
+
+  describe("the repository field", () => {
+    const repo = () => field("Git repository (HTTPS)");
+
+    it.each([
+      ["sharkdp/fd", "https://github.com/sharkdp/fd"],
+      ["github.com/sharkdp/fd", "https://github.com/sharkdp/fd"],
+      ["gitlab.com/acme/web", "https://gitlab.com/acme/web"],
+    ])(
+      "reads %j as %j, says so under the field and sends that",
+      async (typed, url) => {
+        const { create } = mount();
+        await screen.findByRole("dialog");
+        await type("Git repository (HTTPS)", typed);
+        expect(screen.getByText(`Will clone ${url}`)).toBeInTheDocument();
+        expect(repo()).toHaveAccessibleDescription(`Will clone ${url}`);
+        await fireEvent.click(submit());
+        await vi.waitFor(() => expect(create).toHaveBeenCalled());
+        expect(create.mock.calls[0]?.[0]).toMatchObject({
+          repositories: [{ url }],
+        });
+      },
+    );
+
+    it("says nothing extra for an address that is already the one cloned", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+      expect(screen.queryByText(/^Will clone/)).toBeNull();
+    });
+
+    it("does not nag about an empty field until Create", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await fireEvent.blur(repo());
+      expect(screen.queryByRole("alert")).toBeNull();
+      await fireEvent.click(submit());
+      expect(screen.getAllByRole("alert")[0]).toHaveTextContent(
+        "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
+      );
     });
   });
 

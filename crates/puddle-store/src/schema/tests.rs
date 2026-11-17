@@ -1200,15 +1200,15 @@ fn v30_gives_every_existing_rule_precedence_five() {
 }
 
 #[test]
-fn v31_reads_every_existing_pending_row_as_not_needing_an_exact_allow() {
+fn v32_reads_every_existing_pending_row_as_not_needing_an_exact_allow() {
     let mut conn = Connection::open_in_memory().unwrap();
-    migrate_up_to(&mut conn, 30).unwrap();
+    migrate_up_to(&mut conn, 31).unwrap();
     conn.execute_batch(
         "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
              VALUES ('a', 'db.corp.example', 5432, 1, 1);",
     )
     .unwrap();
-    assert_eq!(migrate(&mut conn).unwrap(), 30);
+    assert_eq!(migrate(&mut conn).unwrap(), 31);
     let exact_only: i64 = conn
         .query_row("SELECT exact_only FROM pending", [], |r| r.get(0))
         .unwrap();

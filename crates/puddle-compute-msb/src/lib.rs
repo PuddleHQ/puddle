@@ -14,7 +14,7 @@
 //! | Errors are [`puddle_compute::ComputeError`] | [`error::map`]: SDK variants first, messages only where the SDK has no variant |
 //! | A handle belongs to one boot (`StaleHandle`) | the handle remembers the VM process id of its boot and compares it on every exec, SSH and stop |
 //! | Exit codes exact, signals `-1` | passed through from the SDK |
-//! | `VolumeInUse` names the holder | Puddle looks it up: the running sandbox whose config mounts the volume (msb's own refusal doesn't name it) |
+//! | `VolumeInUse` names the holder | Puddle looks it up: the sandbox that is not down (starting, running, draining, paused) whose config mounts the volume (msb's own refusal doesn't name it) |
 //! | `VolumeNotFound` / `VolumeSizeMismatch` | checked against the volume catalog before the SDK create |
 //! | No stale directory after a failed create | a create that fails removes the sandbox directory it left (fixed upstream in v0.7.12, `superradcompany/microsandbox#1929`; the contract suite checks it) |
 //! | A start the runtime cannot vouch for is a named refusal | msb keeps the root-disk journal out of the guest's reach since v0.7.12 (upstream advisory GHSA-3f94-vm6x-3jv3) and refuses to start a sandbox whose stored disk state it cannot prove after an upgrade ("migration/recovery required"); [`error::map`] turns that into [`puddle_compute::StartRefusal::RootDiskNeedsRecovery`] |

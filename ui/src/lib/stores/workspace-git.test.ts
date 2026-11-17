@@ -34,6 +34,28 @@ beforeEach(() => {
   api.git["web"] = { ids: [1], repos: [repoRow(7)], push: true, pull: false };
 });
 
+describe("a change that answers after a switch to another workspace", () => {
+  it("does not put the first workspace's answer on the second", async () => {
+    api.git["shop"] = { ids: [2], repos: [], push: null, pull: null };
+    const store = make();
+    await store.load("web");
+    const real = api.PUT;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    api.PUT = (async (...args: Parameters<typeof real>) => {
+      const answer = await real(...args);
+      await gate;
+      return answer;
+    }) as typeof real;
+    const slow = store.setIdentities([1, 2]);
+    await store.load("shop");
+    expect(store.git?.identities.map((i) => i.id)).toEqual([2]);
+    release();
+    await slow;
+    expect(store.git?.identities.map((i) => i.id)).toEqual([2]);
+  });
+});
+
 describe("reading", () => {
   it("loads a workspace's identities, table and switches", async () => {
     const store = make();

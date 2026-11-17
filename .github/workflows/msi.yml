@@ -22,7 +22,14 @@
 # secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
 # editor opens in its own window, a real `npm run build` and `npm test` run in the workspace, and `git push`
 # reaches Forgejo with the injected credential while no token is in the guest, the audit log or the API.
-# What only a person can still check (SmartScreen, a company network, how it reads) is not here. A red nightly opens
+# The same job runs a second time behind the lab's company network (matrix `network: company`, the "also on the
+# corporate lab network" half of the bar): the machine's only way out is the lab company proxy from `puddle-lab`
+# (crates/puddle-e2e/src/lab/standing.rs), set up as a company sets up a Windows computer: a PAC file as the user's
+# automatic configuration script, a proxy behind it that wants the Windows sign-in (NTLM through SSPI) and inspects
+# TLS, and its root in the machine's certificate store. The checks are the same, plus checks that the workspace's
+# traffic went through that proxy (the app's network-health report and the proxy's own log). Squid has no Windows
+# build, so the proxy there is mitmproxy doing both jobs.
+# What only a person can still check (SmartScreen, a real company network, how it reads) is not here. A red nightly opens
 # "Nightly red: msi" through nightly-signal.yml. Never retried.
 name: msi
 
@@ -51,6 +58,11 @@ on:
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
       - crates/puddle-e2e/src/bin/puddle-lab-forgejo.rs
+      - crates/puddle-e2e/src/bin/puddle-lab.rs
+      - crates/puddle-e2e/src/lab/standing.rs
+      - crates/puddle-e2e/src/lab/interceptor.rs
+      - crates/puddle-e2e/src/lab/ntlm_proxy_addon.py
+      - ci/lab/requirements.txt
   workflow_dispatch:
     inputs:
       msi_run_id:
@@ -222,8 +234,17 @@ jobs:
           if-no-files-found: ignore
 
   usable:
-    name: "usable (installed app: create, approve, editor, build, push)"
+    name: ${{ matrix.name }}
     needs: msi
+    strategy:
+      # The two runs say different things: a red company run must not hide the direct one.
+      fail-fast: false
+      matrix:
+        include:
+          - network: direct
+            name: "usable (installed app: create, approve, editor, build, push)"
+          - network: company
+            name: "usable (behind the company network: PAC, NTLM sign-in, TLS inspection)"
     # Runs although the install test failed: the MSI is kept by then, and the two say different things.
     if: ${{ !cancelled() && (needs.msi.outputs.run == 'true' || inputs.msi_run_id != '') }}
     runs-on: windows-2025
@@ -277,6 +298,22 @@ jobs:
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: cargo build --locked -p puddle-e2e --bin puddle-lab-forgejo
+      # The company network's proxy: mitmproxy (NTLM sign-in and TLS inspection), pinned with hashes like the lab
+      # tests' (ci/lab/requirements.txt), and the lab's standing program that starts it.
+      - name: mitmproxy and the lab program for the company network
+        if: ${{ steps.whp.outputs.ok == 'true' && matrix.network == 'company' }}
+        shell: bash
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
+          python3 -m venv "$RUNNER_TEMP/lab-venv"
+          "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe" --version
+          cargo build --locked -p puddle-e2e --bin puddle-lab
+          {
+            echo "PUDDLE_MITMDUMP_BIN=$(cygpath -w "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe")"
+            echo "PUDDLE_REQUIRE_MITMPROXY=1"
+            echo "USABLE_COMPANY_LAB_BIN=$(cygpath -w "$PWD/target/debug/puddle-lab.exe")"
+          } >> "$GITHUB_ENV"
       - name: name the forge's host; a folder for the run's output
         if: steps.whp.outputs.ok == 'true'
         shell: pwsh
@@ -305,12 +342,14 @@ jobs:
         shell: bash
         timeout-minutes: 60
         run: node crates/puddle-app/e2e/usable.mjs
-      - name: stop the lab Forgejo, remove its root and hosts line
+      - name: stop the lab Forgejo and the company proxy, remove their roots and hosts line
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         shell: pwsh
         run: |
           Get-Process puddle-app, msb -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           certutil -delstore Root "Puddle lab Forgejo root" | Out-Null
+          certutil -delstore Root "Puddle lab interceptor root" | Out-Null
+          Get-Process puddle-lab, mitmdump -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           # What the app and the runtime logged, for a failed run.
           if (-not $env:USABLE_OUT) { exit 0 }
           $logs = Join-Path $env:USABLE_OUT 'runtime-logs'
@@ -322,13 +361,15 @@ jobs:
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: usable-run
+          name: usable-run-${{ matrix.network }}
           path: |
             ${{ runner.temp }}/usable-out/*.png
             ${{ runner.temp }}/usable-out/*.log
             ${{ runner.temp }}/usable-out/*.out
             ${{ runner.temp }}/usable-out/uia-tree-*.txt
             ${{ runner.temp }}/usable-out/forgejo-server.log
+            ${{ runner.temp }}/usable-out/company-proxy.log
+            ${{ runner.temp }}/usable-out/company-lab.out
             ${{ runner.temp }}/usable-out/runtime-logs/**
           retention-days: 14
           if-no-files-found: ignore

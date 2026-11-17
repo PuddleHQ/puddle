@@ -26,7 +26,8 @@ use crate::workspaces::{
     DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
     LocalCheckoutError, LocalSource, NameIds, NewRepository, NewWorkspace, Operation, RepoFindings,
     ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
-    WorkspaceService,
+    WorkspaceService, admit_delete_fingerprint, admit_delete_status, admit_grow_size, admit_idle,
+    admit_reset_root_disk, admit_settled, admit_start, admit_stop, not_found,
 };
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
@@ -369,12 +370,7 @@ impl FakeWorkspaces {
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let mut state = lock(&self.inner.state);
         let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
-        if let Some(busy) = entry.record.busy {
-            return Err(WorkspaceError::Conflict(format!(
-                "{} is busy ({busy}); wait for it to finish",
-                entry.record.name
-            )));
-        }
+        admit_idle(&entry.record)?;
         check(&entry.record)?;
         entry.record.busy = Some(op);
         enter(&mut entry.record);
@@ -404,6 +400,7 @@ impl FakeWorkspaces {
         if self.inner.step_delay.is_zero() {
             tokio::task::yield_now().await;
         } else {
+            // The configured step latency: a simulated delay, not a wait for a condition.
             tokio::time::sleep(self.inner.step_delay).await;
         }
     }
@@ -683,10 +680,6 @@ impl FakeWorkspaces {
     }
 }
 
-fn not_found(id: &WorkspaceId) -> WorkspaceError {
-    WorkspaceError::NotFound(format!("no workspace {id}"))
-}
-
 fn delete_check(entry: &Entry) -> DeleteCheck {
     let removes_sandbox = entry
         .record
@@ -866,21 +859,9 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
-                id,
-                Operation::Starting,
-                |r| {
-                    if r.status.is_down() {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is already {}",
-                            r.name, r.status
-                        )))
-                    }
-                },
-                |r| r.status = WorkspaceStatus::Starting,
-            )?;
+            let record = self.accept(id, Operation::Starting, admit_start, |r| {
+                r.status = WorkspaceStatus::Starting;
+            })?;
             self.emit_status(&record);
             self.run(
                 &record,
@@ -899,21 +880,9 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
-                id,
-                Operation::Stopping,
-                |r| {
-                    if r.status == WorkspaceStatus::Running {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is not running ({})",
-                            r.name, r.status
-                        )))
-                    }
-                },
-                |r| r.status = WorkspaceStatus::Draining,
-            )?;
+            let record = self.accept(id, Operation::Stopping, admit_stop, |r| {
+                r.status = WorkspaceStatus::Draining;
+            })?;
             self.emit_status(&record);
             self.run(
                 &record,
@@ -932,23 +901,7 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
-                id,
-                Operation::Reclaiming,
-                |r| {
-                    if r.status == WorkspaceStatus::Starting
-                        || r.status == WorkspaceStatus::Draining
-                    {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; try again in a moment",
-                            r.name, r.status
-                        )))
-                    } else {
-                        Ok(())
-                    }
-                },
-                |_| {},
-            )?;
+            let record = self.accept(id, Operation::Reclaiming, admit_settled, |_| {})?;
             self.run(
                 &record,
                 Operation::Reclaiming,
@@ -966,16 +919,7 @@ impl WorkspaceService for FakeWorkspaces {
             let record = self.accept(
                 id,
                 Operation::ResettingRootDisk,
-                |r| {
-                    if r.status.is_down() {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; stop it before resetting its root disk",
-                            r.name, r.status
-                        )))
-                    }
-                },
+                admit_reset_root_disk,
                 |_| {},
             )?;
             self.run(
@@ -996,13 +940,10 @@ impl WorkspaceService for FakeWorkspaces {
             let record = self.accept(
                 id,
                 Operation::GrowingRootDisk,
-                |r| match r.root_disk_size_mib {
-                    Some(current) if u64::from(size_mib) <= current => {
-                        Err(WorkspaceError::Invalid(format!(
-                            "a root disk only grows: {size_mib} MiB is not above {current} MiB"
-                        )))
-                    }
-                    _ => Ok(()),
+                |r| {
+                    admit_settled(r)?;
+                    r.root_disk_size_mib
+                        .map_or(Ok(()), |current| admit_grow_size(size_mib, current))
                 },
                 |r| {
                     r.root_disk_size_mib = Some(u64::from(size_mib));
@@ -1036,24 +977,8 @@ impl WorkspaceService for FakeWorkspaces {
                 id,
                 Operation::Deleting,
                 |r| {
-                    if !r.status.is_down() {
-                        return Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; stop it before deleting it",
-                            r.name, r.status
-                        )));
-                    }
-                    match fingerprint {
-                        Some(seen) if seen == check.fingerprint => Ok(()),
-                        Some(_) => Err(WorkspaceError::Conflict(format!(
-                            "{} has changed since it was checked; check it again",
-                            r.name
-                        ))),
-                        None if check.is_clean() => Ok(()),
-                        None => Err(WorkspaceError::Conflict(format!(
-                            "{} has work that is not saved on a remote; review it and confirm",
-                            r.name
-                        ))),
-                    }
+                    admit_delete_status(r)?;
+                    admit_delete_fingerprint(r, fingerprint, &check)
                 },
                 |_| {},
             )?;

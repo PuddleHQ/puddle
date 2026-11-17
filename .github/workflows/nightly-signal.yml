@@ -28,6 +28,7 @@ on:
       - live-contracts
       - lab-forgejo
       - freshness
+      - company-network-windows
     types: [completed]
 
 permissions:

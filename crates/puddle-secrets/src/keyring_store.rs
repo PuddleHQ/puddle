@@ -12,6 +12,17 @@ use crate::store::{SecretStore, StoreError};
 /// Service name every Puddle entry is filed under; the entry's user is `credential:<id>`.
 const SERVICE: &str = "puddle";
 
+#[cfg(windows)]
+mod windows;
+
+/// Runs one call to the platform store. On Windows it waits for every other Puddle process's call
+/// to end first: Credential Manager loses changes made side by side (see `windows.rs`).
+fn one_call<T>(call: impl FnOnce() -> T) -> T {
+    #[cfg(windows)]
+    let _held = windows::CredentialLock::hold();
+    call()
+}
+
 /// The platform's credential store, under Puddle's own name or, for a test, one of its own.
 #[derive(Debug, Default, Clone)]
 pub struct KeyringStore {
@@ -57,7 +68,8 @@ impl KeyringStore {
 
 impl SecretStore for KeyringStore {
     fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
-        match self.entry(id)?.get_password() {
+        let entry = self.entry(id)?;
+        match one_call(|| entry.get_password()) {
             Ok(value) => Ok(Some(Secret::new(value))),
             Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(keyring_core::Error::BadEncoding(mut blob)) => {
@@ -70,13 +82,13 @@ impl SecretStore for KeyringStore {
     }
 
     fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
-        self.entry(id)?
-            .set_password(secret.expose())
-            .map_err(|_| StoreError)
+        let entry = self.entry(id)?;
+        one_call(|| entry.set_password(secret.expose())).map_err(|_| StoreError)
     }
 
     fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
-        match self.entry(id)?.delete_credential() {
+        let entry = self.entry(id)?;
+        match one_call(|| entry.delete_credential()) {
             Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(_) => Err(StoreError),
         }
@@ -88,15 +100,15 @@ impl SecretStore for KeyringStore {
         #[cfg(windows)]
         {
             let entry = self.entry(id)?;
-            match entry.get_attributes() {
-                Ok(attributes) if is_kept_local(&attributes) => {}
+            one_call(|| match entry.get_attributes() {
+                Ok(attributes) if is_kept_local(&attributes) => Ok(()),
                 Ok(_) => {
                     let value = entry.get_password().map_err(|_| StoreError)?;
-                    entry.set_password(&value).map_err(|_| StoreError)?;
+                    entry.set_password(&value).map_err(|_| StoreError)
                 }
-                Err(keyring_core::Error::NoEntry) => {}
-                Err(_) => return Err(StoreError),
-            }
+                Err(keyring_core::Error::NoEntry) => Ok(()),
+                Err(_) => Err(StoreError),
+            })?;
         }
         let _ = id;
         Ok(())

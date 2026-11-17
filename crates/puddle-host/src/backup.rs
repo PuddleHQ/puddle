@@ -5,7 +5,9 @@
 //! rows, git identities), the settings documents (`settings/`) and the workspace list
 //! (`workspaces.json`). The database copy has the users but not their password hashes or open
 //! invites ([`puddle_store::backup_database`]). It never holds what only makes sense on this machine or is secret: the
-//! credential store's contents live in the operating system and are not read; the login markers
+//! credential store's contents are not read, whether they live in the operating system or in
+//! Puddle's file vault (`secrets/vault` and its record `secrets/store.json`, which no copy
+//! reaches; the vault's key sits outside the data folder, so a backup holds neither half); the login markers
 //! and the browser front's key halves, the connection file and the lock files stay behind; and
 //! the sandbox runtime and the workspace volumes are too large and have their own owner.
 //!
@@ -87,7 +89,8 @@ pub fn backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupErro
     if dest.exists() {
         return Err(BackupError::DestinationExists(dest.to_path_buf()));
     }
-    refuse_inside(paths.data(), dest)?;
+    let cwd = std::env::current_dir().map_err(io_error("cannot read the working folder", dest))?;
+    refuse_inside(&cwd, paths.data(), dest)?;
     if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
         private::create_dir(parent).map_err(io_error("cannot create", parent))?;
     }
@@ -120,11 +123,14 @@ fn fill(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
     })
 }
 
-/// Refuses a destination that resolves into the data folder.
-fn refuse_inside(data: &Path, dest: &Path) -> Result<(), BackupError> {
+/// Refuses a destination that resolves into the data folder. A relative `dest` is read against
+/// `cwd`; without that, a one-component name has no existing ancestor to resolve and would
+/// skip the check.
+fn refuse_inside(cwd: &Path, data: &Path, dest: &Path) -> Result<(), BackupError> {
     let data = data.canonicalize().unwrap_or_else(|_| data.to_path_buf());
+    let absolute = cwd.join(dest);
     // The destination does not exist yet: resolve its deepest existing ancestor.
-    let resolved = dest.ancestors().find_map(|a| a.canonicalize().ok());
+    let resolved = absolute.ancestors().find_map(|a| a.canonicalize().ok());
     if resolved.is_some_and(|real| real.starts_with(&data)) {
         return Err(BackupError::InsideData(dest.to_path_buf()));
     }

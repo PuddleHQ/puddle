@@ -62,8 +62,8 @@ describe("probe", () => {
     expect(store.available).toBe(true);
   });
 
-  it("is not available on a 404 or when the server does not answer", async () => {
-    answers["GET /api/admin/stats"] = [bad(404), "throw"];
+  it("is not available on a 404 or a 403", async () => {
+    answers["GET /api/admin/stats"] = [bad(404), bad(403)];
     const store = make();
     store.available = true;
     await store.probe();
@@ -71,6 +71,26 @@ describe("probe", () => {
     store.available = true;
     await store.probe();
     expect(store.available).toBe(false);
+  });
+
+  it("keeps what it knew when the probe fails for another reason, and looks again on the next one", async () => {
+    answers["GET /api/admin/stats"] = [
+      bad(503),
+      "throw",
+      bad(401),
+      good(stats),
+    ];
+    const store = make();
+    await store.probe();
+    await store.probe();
+    await store.probe();
+    expect(store.available).toBe(false);
+    await store.probe();
+    expect(store.available).toBe(true);
+    answers["GET /api/admin/stats"] = [bad(500), "throw"];
+    await store.probe();
+    await store.probe();
+    expect(store.available).toBe(true);
   });
 });
 

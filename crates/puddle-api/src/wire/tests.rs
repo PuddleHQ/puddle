@@ -290,6 +290,7 @@ fn global_request_sets_vscode_options() {
         },
         tools: GlobalTools { mise: Some(false) },
         limits: Limits { max_cpus: Some(48) },
+        revision: None,
     }
     .apply_to(&mut g)
     .unwrap();
@@ -955,4 +956,27 @@ fn a_name_from_another_version_reaches_the_wire_as_stored() {
         serde_json::json!(["another_new_kind"])
     );
     assert_eq!(wire["signal"], "a_new_signal");
+}
+
+#[test]
+fn a_global_save_is_current_only_while_the_covered_settings_are_unchanged() {
+    let mut g = settings::GlobalSettings::default();
+    let load = |g: &settings::GlobalSettings| {
+        GlobalSettingsView::new(&settings::Loaded {
+            settings: g.clone(),
+            migrated_from: None,
+            unknown_fields: vec![],
+        })
+    };
+    let revision = load(&g).revision;
+    assert_eq!(revision, load(&g).revision);
+    let save = |revision: Option<String>| GlobalSettingsRequest {
+        revision,
+        ..GlobalSettingsRequest::default()
+    };
+    assert!(save(Some(revision.clone())).matches(&g));
+    assert!(save(None).matches(&g));
+    g.tools.mise = Some(false);
+    assert!(!save(Some(revision)).matches(&g));
+    assert!(save(Some(load(&g).revision)).matches(&g));
 }

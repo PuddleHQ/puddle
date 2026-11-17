@@ -3,6 +3,7 @@
   import {
     EXPIRY_OPTIONS,
     PRECEDENCES,
+    PRECEDENCE_FIELD_SHOWN,
     expiryFrom,
     workspaceNameError,
   } from "#lib/rules/model.ts";
@@ -20,6 +21,7 @@
     sets = [],
     now,
     error = $bindable(null),
+    showPrecedence = PRECEDENCE_FIELD_SHOWN,
     onSubmit,
   }: {
     open?: boolean;
@@ -29,6 +31,8 @@
     sets?: readonly RuleSetChoice[];
     now: () => number;
     error?: ServerError | null;
+    /** Offer the precedence field; hidden in the v0.1 build (see `PRECEDENCE_FIELD_SHOWN`). */
+    showPrecedence?: boolean;
     onSubmit: (rule: NewRule) => Promise<ServerError | null>;
   } = $props();
 
@@ -241,19 +245,21 @@
         {/each}
       </select>
     </div>
-    <div class="field">
-      <label for="{id}-precedence">Precedence</label>
-      <select id="{id}-precedence" bind:value={precedence}>
-        <option value="">Default (5, or the rule set's)</option>
-        {#each PRECEDENCES as value (value)}
-          <option value={String(value)}>{value}</option>
-        {/each}
-      </select>
-      <p class="hint">
-        When rules overlap, the highest precedence decides, even over a more
-        specific rule. At the same precedence the more specific rule wins.
-      </p>
-    </div>
+    {#if showPrecedence}
+      <div class="field">
+        <label for="{id}-precedence">Precedence</label>
+        <select id="{id}-precedence" bind:value={precedence}>
+          <option value="">Default (5, or the rule set's)</option>
+          {#each PRECEDENCES as value (value)}
+            <option value={String(value)}>{value}</option>
+          {/each}
+        </select>
+        <p class="hint">
+          When rules overlap, the highest precedence decides, even over a more
+          specific rule. At the same precedence the more specific rule wins.
+        </p>
+      </div>
+    {/if}
     {#if formMessage}
       <p class="error" role="alert">{formMessage}</p>
     {/if}

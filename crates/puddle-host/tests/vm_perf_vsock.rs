@@ -9,6 +9,10 @@
 //! dispatch only: a wall-clock bar on a shared runner is too noisy to gate a merge. The run prints
 //! its figures (`vsock load: ...`) for the record.
 //!
+//! `vm_perf_keepalive_request_costs_within_three_times_linux` is the other bar of the same path: the
+//! cost of one request on a kept-alive connection (1000 in a row through the proxy), which was 0.52 ms
+//! on Linux KVM and 15.5 ms on Windows. On Windows it is marked known-failing, see `KNOWN_FAILING_HERE`.
+//!
 //! `vm_perf_vsock_detector_fails_on_a_stalled_stream` is the test's check on itself: the same script
 //! against a server that stops after 64 KiB must be reported as a stall, in the same VM path. (The
 //! detector alone is also tested without a VM, in `puddle-vm-tests/tests/load_selftest.rs`.)
@@ -29,6 +33,7 @@ use puddle_e2e::lab::WebOptions;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::BulkHost;
+use puddle_vm_tests::keepalive;
 use puddle_vm_tests::load::{Report, Route, parse_transfers, script};
 use serde_json::json;
 use support::{Api, ended, named_id_options};
@@ -48,6 +53,17 @@ const BYTES: u64 = 2 * 1024 * 1024;
 /// A cap on one download, under the guest command's own deadline.
 const MAX_TRANSFER_SECS: u32 = 240;
 const GUEST_DEADLINE: Duration = Duration::from_secs(300);
+
+/// Requests on one kept-alive connection.
+const KEEPALIVE_REQUESTS: usize = 1000;
+/// What a kept-alive request cost on Linux KVM, milliseconds (measured: 0.52).
+const KEEPALIVE_LINUX_MS: f64 = 0.52;
+/// The bar: a request on a kept-alive connection costs at most this many times Linux's figure.
+const KEEPALIVE_FACTOR: f64 = 3.0;
+/// Windows' kept-alive cost is known to miss the bar (about 15.5 ms a request, hosted and local runs):
+/// the test then records the figure and passes while it misses, and fails when it meets the bar, so
+/// the fix gets noticed and this marker is deleted with it.
+const KNOWN_FAILING_HERE: bool = cfg!(windows);
 
 struct Rig {
     runtime: MsbRuntime,
@@ -155,4 +171,40 @@ async fn vm_perf_vsock_detector_fails_on_a_stalled_stream() {
         "{:?}",
         report.problems()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_perf_keepalive_request_costs_within_three_times_linux() {
+    let rig = rig("perfkeep", 1).await;
+    let url = format!("http://{BULK_HOST}/keepalive/16");
+    let output = guest_within(
+        &rig.runtime,
+        &rig.sandbox,
+        &keepalive::script(
+            &url,
+            KEEPALIVE_REQUESTS,
+            Route::EnvProxyTunnel,
+            MAX_TRANSFER_SECS,
+        ),
+        GUEST_DEADLINE,
+    )
+    .await;
+    let report = keepalive::Report::new(
+        KEEPALIVE_REQUESTS,
+        keepalive::parse_requests(&output).expect("curl's lines parse"),
+    );
+    eprintln!("keepalive cost: {}", report.summary());
+    assert_eq!(report.problems(), Vec::<String>::new());
+    let bar = KEEPALIVE_LINUX_MS * KEEPALIVE_FACTOR;
+    let cost = report.per_request_ms().expect("1000 requests");
+    match (cost <= bar, KNOWN_FAILING_HERE) {
+        (true, false) => {}
+        (false, true) => eprintln!(
+            "keepalive cost: {cost:.3} ms misses the bar of {bar:.2} ms, a known failure here"
+        ),
+        (false, false) => panic!("a kept-alive request costs {cost:.3} ms, the bar is {bar:.2} ms"),
+        (true, true) => panic!(
+            "a kept-alive request costs {cost:.3} ms, within the bar of {bar:.2} ms: the known failure is fixed, delete KNOWN_FAILING_HERE"
+        ),
+    }
 }

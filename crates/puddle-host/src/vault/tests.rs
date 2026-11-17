@@ -54,7 +54,7 @@ fn a_sweep_removes_what_no_identity_or_variable_names_and_keeps_the_rest() {
     }
     let later = IndexedStore::new(Shared(disk));
     assert_eq!(
-        sweep(&later, &store),
+        sweep(&later, &store, &[]),
         Ok(Sweep {
             removed: 2,
             stuck: 0
@@ -79,7 +79,7 @@ fn a_sweep_keeps_the_proxy_sign_ins_which_no_row_names() {
     put(earlier.as_ref(), "tok-orphan");
     let later = Arc::new(IndexedStore::new(Shared(disk)));
     assert_eq!(
-        sweep(later.as_ref(), &store),
+        sweep(later.as_ref(), &store, &[]),
         Ok(Sweep {
             removed: 1,
             stuck: 0
@@ -90,13 +90,40 @@ fn a_sweep_keeps_the_proxy_sign_ins_which_no_row_names() {
 }
 
 #[test]
+fn a_sweep_keeps_the_saved_logins_of_the_listed_workspaces_and_removes_the_rest() {
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    let disk = Arc::new(MemoryStore::new());
+    let (listed, gone) = (
+        WorkspaceId::new("acme").unwrap(),
+        WorkspaceId::new("gone").unwrap(),
+    );
+    let earlier = IndexedStore::new(Shared(disk.clone()));
+    let builtin = puddle_logins::builtin();
+    let kept = puddle_logins::saved_login_ids(&listed, builtin);
+    let dropped = puddle_logins::saved_login_ids(&gone, builtin);
+    for id in kept.iter().chain(&dropped) {
+        put(&earlier, id.as_str());
+    }
+    let later = IndexedStore::new(Shared(disk));
+    assert_eq!(
+        sweep(&later, &store, std::slice::from_ref(&listed)),
+        Ok(Sweep {
+            removed: dropped.len(),
+            stuck: 0
+        })
+    );
+    assert!(kept.iter().all(|id| later.get(id).unwrap().is_some()));
+    assert!(dropped.iter().all(|id| later.get(id).unwrap().is_none()));
+}
+
+#[test]
 fn a_store_that_does_not_answer_is_left_alone_and_the_sweep_says_so() {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
     let disk = Arc::new(MemoryStore::new());
     put(&IndexedStore::new(Shared(disk.clone())), "tok-a");
     disk.break_it();
     assert_eq!(
-        sweep(&IndexedStore::new(Shared(disk.clone())), &store),
+        sweep(&IndexedStore::new(Shared(disk.clone())), &store, &[]),
         Err("the credential store did not answer")
     );
     disk.heal();
@@ -121,7 +148,7 @@ fn a_sweep_also_keeps_listed_and_named_values_on_this_computer() {
     let disk = Arc::new(MemoryStore::new());
     put(&IndexedStore::new(Shared(disk.clone())), "env-listed");
     let later = IndexedStore::new(Shared(disk.clone()));
-    sweep(&later, &store).unwrap();
+    sweep(&later, &store, &[]).unwrap();
     let kept = disk.kept_local();
     assert!(kept.contains(&"env-listed".to_owned()));
     assert!(kept.contains(&"env-named".to_owned()));
@@ -134,7 +161,7 @@ fn a_store_that_cannot_be_rewritten_does_not_stop_the_sweep() {
     let broken = MemoryStore::new();
     broken.break_it();
     keep_local(&broken, [id("a")].iter());
-    assert_eq!(sweep(&broken, &store), Ok(Sweep::default()));
+    assert_eq!(sweep(&broken, &store, &[]), Ok(Sweep::default()));
 }
 
 #[tokio::test]
@@ -146,6 +173,7 @@ async fn the_background_sweep_runs_off_the_async_threads() {
     let sweep = sweep_in_background(
         Arc::new(IndexedStore::new(Shared(disk.clone()))),
         store,
+        Vec::new(),
         Arc::new(Problems::new(Arc::new(puddle_types::NullSink))),
     );
     sweep.await.unwrap();
@@ -187,7 +215,7 @@ fn a_sweep_that_leaves_a_value_behind_raises_a_problem_until_a_later_sweep_remov
     let list = problems();
 
     report(
-        sweep(&IndexedStore::new(Stuck(disk.clone())), &store),
+        sweep(&IndexedStore::new(Stuck(disk.clone())), &store, &[]),
         &list,
     );
     let raised = list.list();
@@ -201,7 +229,7 @@ fn a_sweep_that_leaves_a_value_behind_raises_a_problem_until_a_later_sweep_remov
 
     // The store lets it go on the next start: the problem ends by itself.
     report(
-        sweep(&IndexedStore::new(Shared(disk.clone())), &store),
+        sweep(&IndexedStore::new(Shared(disk.clone())), &store, &[]),
         &list,
     );
     assert_eq!(list.list(), Vec::new());
@@ -217,7 +245,7 @@ fn a_sweep_that_cannot_run_raises_a_problem_naming_why_and_a_clean_one_raises_no
 
     disk.break_it();
     report(
-        sweep(&IndexedStore::new(Shared(disk.clone())), &store),
+        sweep(&IndexedStore::new(Shared(disk.clone())), &store, &[]),
         &list,
     );
     let raised = list.list();
@@ -226,11 +254,11 @@ fn a_sweep_that_cannot_run_raises_a_problem_naming_why_and_a_clean_one_raises_no
     disk.heal();
 
     report(
-        sweep(&IndexedStore::new(Shared(disk.clone())), &store),
+        sweep(&IndexedStore::new(Shared(disk.clone())), &store, &[]),
         &list,
     );
     assert_eq!(list.list(), Vec::new());
-    report(sweep(&IndexedStore::new(Shared(disk)), &store), &list);
+    report(sweep(&IndexedStore::new(Shared(disk)), &store, &[]), &list);
     assert_eq!(list.list(), Vec::new());
 }
 
@@ -375,6 +403,27 @@ async fn the_warning_path_runs_for_a_start_that_deserves_it_and_raises_no_proble
         Vec::new(),
         "a warning is a log line, not a problem"
     );
+}
+
+#[test]
+fn the_warning_says_whether_the_login_is_graphical_and_whether_the_store_works() {
+    let (dispatch, logs) = crate::test_logs::capture();
+    tracing::dispatcher::with_default(&dispatch, || {
+        warn_without_headless_flag(LoginSession::NotGraphical, StoreHealth::Working);
+    });
+    let text = logs.text();
+    assert!(
+        text.contains("Puddle was started without --headless")
+            && text.contains("graphical_session=false")
+            && text.contains("store_works=true"),
+        "{text}"
+    );
+    // A graphical login with a store that works has nothing to warn about.
+    let (dispatch, logs) = crate::test_logs::capture();
+    tracing::dispatcher::with_default(&dispatch, || {
+        warn_without_headless_flag(LoginSession::Graphical, StoreHealth::Working);
+    });
+    assert_eq!(logs.text(), "");
 }
 
 #[test]

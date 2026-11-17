@@ -456,3 +456,52 @@ fn the_sealed_key_is_named_and_placed_as_the_service_reads_it() {
         config.path().join("puddle").join("vault-key.cred")
     );
 }
+
+#[cfg(target_os = "linux")]
+mod aside {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_sealed_key_and_the_key_file_are_renamed_and_a_new_key_follows() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let vault = dir.path().join("data").join("vault");
+        let keys = VaultKeys::new(&config, &vault, ToolPaths::default()).with_credentials_dir(None);
+        let first = keys.find_or_make().await.unwrap();
+        let folder = config.join("puddle");
+        fs::write(folder.join("vault-key.cred"), b"sealed").unwrap();
+        assert_eq!(keys.keys_to_set_aside(), 2);
+        assert_eq!(keys.set_keys_aside("20261116T000000Z").unwrap(), 2);
+        assert_eq!(keys.keys_to_set_aside(), 0);
+        assert!(!folder.join("vault.key").exists());
+        assert!(!folder.join("vault-key.cred").exists());
+        assert_eq!(
+            fs::read(folder.join("vault-key.cred.unreadable-20261116T000000Z")).unwrap(),
+            b"sealed"
+        );
+        assert_eq!(
+            fs::read(folder.join("vault.key.unreadable-20261116T000000Z")).unwrap(),
+            first.key.expose().to_vec(),
+            "the old key is kept, not deleted"
+        );
+        assert_eq!(keys.set_keys_aside("20261116T000001Z").unwrap(), 0);
+        let second = keys.find_or_make().await.unwrap();
+        assert_ne!(second.key.expose(), first.key.expose(), "a new key");
+    }
+
+    #[tokio::test]
+    async fn a_unit_credential_is_not_moved() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join("credentials");
+        fs::create_dir_all(&credentials).unwrap();
+        fs::write(credentials.join("puddle-vault-key"), [1_u8; 32]).unwrap();
+        let keys = VaultKeys::new(
+            &dir.path().join("config"),
+            &dir.path().join("vault"),
+            ToolPaths::default(),
+        )
+        .with_credentials_dir(Some(credentials.clone()));
+        assert_eq!(keys.set_keys_aside("20261116T000000Z").unwrap(), 0);
+        assert!(credentials.join("puddle-vault-key").is_file());
+    }
+}

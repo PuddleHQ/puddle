@@ -37,7 +37,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-agent = { workspace = true }
-puddle-api = { workspace = true }
+puddle-api = { workspace = true, features = ["testing"] }
 puddle-compute-msb = { workspace = true }
 puddle-fd-limit = { workspace = true }
 puddle-ipc = { workspace = true }

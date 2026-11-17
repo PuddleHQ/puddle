@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::checkouts as domain;
 use crate::error::ApiError;
 use crate::wire::WorkspaceRepository;
-use crate::workspaces::{NewRepository, RepoUrl, RepositoryDraft, check_repositories};
+use crate::workspaces::{NewRepository, RepoUrl, RepositoryDraft, check_repositories, shown};
 
 /// Why a checkout's remote address is not shown as it stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -214,7 +214,7 @@ impl AddRepositoryRequest {
                     ApiError::invalid(format!("directory {directory:?}: {}", e.reason()))
                 })?;
                 let seen = RepoUrl::parse(&url)
-                    .map_err(|e| ApiError::invalid(format!("url {url:?}: {e}")))?;
+                    .map_err(|e| ApiError::invalid(format!("url {:?}: {e}", shown(&url))))?;
                 let identity = identity_id.map(IdentityId);
                 if let Some(id) = identity
                     && !identity_exists(id)

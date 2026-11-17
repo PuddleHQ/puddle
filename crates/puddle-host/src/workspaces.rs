@@ -34,7 +34,7 @@ use puddle_agent_proto::forward::OpenError;
 use puddle_api::{
     DeleteCheck, DisplayName, EditorLogin, GitSetup, KeptLogin, LaunchError, Launcher, Listing,
     LocalCheckoutError, Operation, RepoFindings, Repository, StartFolder, WorkspaceError,
-    WorkspaceRecord,
+    WorkspaceRecord, not_found,
 };
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -489,10 +489,6 @@ fn problem_key(kind: &str, name: &WorkspaceId) -> String {
 /// The key of the problem about one repository of a workspace that could not be cloned.
 fn clone_problem_key(name: &WorkspaceId, entry: &EntryId) -> String {
     format!("{}:{entry}", problem_key("clone", name))
-}
-
-fn not_found(id: &WorkspaceId) -> WorkspaceError {
-    WorkspaceError::NotFound(format!("no workspace {id}"))
 }
 
 fn workspace_error(e: &puddle_workspace::WorkspaceError) -> WorkspaceError {

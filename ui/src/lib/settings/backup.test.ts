@@ -27,6 +27,7 @@ const saved: { name: string; href: string }[] = [];
 const revoked: string[] = [];
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
   saved.length = 0;
   revoked.length = 0;
   wire.handler = () => Promise.reject(new TypeError("down"));
@@ -41,6 +42,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -72,6 +74,9 @@ describe("backing up", () => {
     expect(saved).toEqual([
       { name: "puddle-backup-20261115T225500Z.tar.gz", href: "blob:fake" },
     ]);
+    // Not at once: a web view that starts the download late would lose the file.
+    expect(revoked).toEqual([]);
+    vi.advanceTimersByTime(30_000);
     expect(revoked).toEqual(["blob:fake"]);
     expect(document.querySelector("a[download]")).toBeNull();
   });

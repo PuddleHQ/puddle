@@ -1434,7 +1434,8 @@ export interface paths {
         get: operations["get_global"];
         /**
          * Replaces the global settings listed in the body; `null` falls back to Puddle's default.
-         *     Consents are changed through `/api/consents`.
+         *     With the `revision` of the read the save was made from, a save over settings that changed
+         *     since is refused. Consents are changed through `/api/consents`.
          */
         put: operations["put_global"];
         post?: never;
@@ -1570,7 +1571,8 @@ export interface paths {
         put?: never;
         /**
          * Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-         *     (in a window Puddle opens).
+         *     (in a window Puddle opens). Only for a client on the host computer itself: whatever Puddle
+         *     opens appears on the host's screen, and its ssh link works only there.
          */
         post: operations["attach_workspace"];
         delete?: never;
@@ -2660,17 +2662,20 @@ export interface components {
         AttachResponse: {
             /**
              * @description Why nothing was opened, when that is not an error (for example VS Code is not
-             *     installed).
+             *     installed, or the client is not on the host computer).
              */
             message: string | null;
             /**
              * @description A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
-             *     for a client on another machine than the host (a browser on a device that reached
-             *     `puddle serve`). Present for a desktop attach, whether or not the host opened a window
-             *     itself; `null` for a browser attach.
+             *     through the ssh entry Puddle wrote on the host. Present for a desktop attach from the host
+             *     computer, whether or not a window opened; `null` for a browser attach and for a client on
+             *     another computer, where that ssh entry does not exist.
              */
             open_uri: string | null;
-            /** @description Whether Puddle opened an editor itself (desktop mode, when it worked). */
+            /**
+             * @description Whether Puddle opened an editor itself. Never for a browser signed in from another
+             *     computer: an editor would open on the host's screen, not on the asker's.
+             */
             opened: boolean;
         };
         /** @description One audit record with its position in the log. */
@@ -3950,7 +3955,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "rate_limited" | "unavailable" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "settings_changed" | "rate_limited" | "unavailable" | "internal";
         /**
          * @description The input of a request a refusal is about, so a form can put the message beside it.
          * @enum {string}
@@ -4419,6 +4424,11 @@ export interface components {
         GlobalSettingsRequest: {
             /** @description The limits; omitted or `null` falls back to the computer's cores. */
             limits?: components["schemas"]["Limits"];
+            /**
+             * @description The `revision` of the settings this save was made from. When it no longer matches, nothing
+             *     is written and the answer is 409 `settings_changed`. Omit it to replace whatever is stored.
+             */
+            revision?: string | null;
             /** @description The tool switches. */
             tools?: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -4436,6 +4446,11 @@ export interface components {
             effective_limits: components["schemas"]["EffectiveLimits"];
             /** @description The limits the user set (global only). */
             limits: components["schemas"]["Limits"];
+            /**
+             * @description Names the values above that a save replaces. Send it back as `revision` in the save: if
+             *     another client changed them in between, the save is refused (409 `settings_changed`).
+             */
+            revision: string;
             /** @description The tool switches (global only). */
             tools: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -13159,7 +13174,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), damaged (settings_unreadable), or changed since the read named by `revision` (settings_changed) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13525,7 +13540,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description forbidden origin */
+            /** @description forbidden origin, or a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names) */
             403: {
                 headers: {
                     [name: string]: unknown;

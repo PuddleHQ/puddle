@@ -160,7 +160,9 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   only to company-network or private addresses (reason `pki_distribution_point`). The URLs are read
   from the synced roots at start; the exception covers that exact host, port and path (a request
   path below the URL counts as a directory, for an OCSP `GET`), never another method, host, port or
-  path, and never loopback, link-local, metadata or a public address. (2) SSH to
+  path, and never loopback, link-local, metadata or a public address. A deny rule for the host,
+  or an IP deny for an address it resolves to (R-27), still wins: the request is decided like any
+  other. (2) SSH to
   `ssh.dev.azure.com` port 22 stays refused (`ssh_unsupported`); when the host's own probe of
   that port fails, the refusal says the company network blocks it and that HTTPS remotes work with
   Puddle's credentials, instead of only pointing at HTTPS.
@@ -185,7 +187,10 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   the rule can go into a rule set the user made (R-38).
 - **R-16 A decision is one transaction:** create the rule, set the row to `allowed`/`denied` with
   `rule_id`, `decided_at` and `decided_by`, and close every other `requested` row the new rule now
-  decides (same workspace for a workspace rule, any workspace for a global one) the same way.
+  decides (same workspace for a workspace rule, any workspace for a global one) the same way. A row
+  written after a name resolved to a local address (R-14) is decided as that request was: only an
+  exact allow counts, so a suffix allow or a set's allow never closes it, here or after a set
+  switch (R-37) or a System managed change. Once a row is asked for that way, it stays so.
 - **R-17 Stale ids are refused.** Approving or denying an unknown id or a row not in `requested`
   fails with an error naming the row's current state; nothing changes. A successful call returns
   the row as decided (workspace, host, port) and the rule created, so the CLI and UI can echo exactly
@@ -204,7 +209,10 @@ One background task, every 60 s *(default)* and at startup. (R-20 is retired: se
   rule lapsed opens a new row (R-11).
 - **R-21** on workspace deletion (not stop), deletes that workspace's rules (`rule_deleted`, reason
   `workspace_deleted`) and expires its open rows, in the same transaction as the deletion.
-- **R-22** deletes audit records older than the retention (R-26) and gives the file's free space back.
+- **R-22** deletes audit records older than the retention (R-26) and gives the file's free space back
+  in short steps. A file an older Puddle made without those steps is rebuilt once, when Puddle next
+  opens it with space to give back, never by the sweeper. The size warning is reported even when
+  giving space back fails.
 
 Sweeper work never holds a lock that a decision waits on for more than one short transaction.
 

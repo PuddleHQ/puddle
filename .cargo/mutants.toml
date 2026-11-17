@@ -26,6 +26,9 @@ exclude_globs = [
     # in the Windows test job; the mutation run does not cover them.
     "crates/puddle-certs/src/platform/windows.rs",
     "crates/puddle-certs/src/platform/windows_trust.rs",
+    # The Credential Manager lock of `puddle-secrets` (`#[cfg(windows)]`): a Linux run never compiles
+    # it. The Windows test job runs every real-store test through it.
+    "crates/puddle-secrets/src/keyring_store/windows.rs",
 ]
 
 # Equivalent mutants, each with its reason:
@@ -104,6 +107,8 @@ exclude_re = [
     # The default body of `SecretStore::sweep_orphans` is `Ok(Sweep::default())`, so `Ok(Default::default())`
     # is the same code.
     'replace SecretStore::sweep_orphans -> Result<Sweep, StoreError> with Ok\(Default::default\(\)\)',
+    # The default body of `SecretStore::listed_ids` is `Ok(Vec::new())`, so `Ok(vec![])` is the same code.
+    'replace SecretStore::listed_ids -> Result<Vec<StoredId>, StoreError> with Ok\(vec!\[\]\)',
     # `keyring_available` is `false` on a computer with no credential store (every Linux run of the
     # tests), which is what the mutant returns; on a computer that has one, the Windows job sets
     # PUDDLE_REQUIRE_OS_CREDENTIAL_STORE and its real-store tests fail when the answer is `false`.

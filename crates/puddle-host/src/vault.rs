@@ -9,12 +9,17 @@ use puddle_secrets::{
     StoredId, Sweep, probe_os_store, probe_store, reconnect_os_store, write_record,
 };
 use puddle_store::Store;
-use puddle_types::{Problem, Problems};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 use crate::proxy_passwords::ID_PREFIX;
 
+mod admin;
 mod choose;
 
+pub use admin::{
+    MigrateOutcome, ResetOutcome, StoreState, VaultAdminError, VaultStatus, vault_migrate,
+    vault_reset, vault_status,
+};
 pub use choose::SecretSetup;
 pub(crate) use choose::{Chosen, open};
 use choose::{Probe, WriteWhenWorking};
@@ -28,16 +33,27 @@ pub(crate) fn os_vault() -> Arc<dyn SecretStore> {
 /// The problem that stands while the clean-up cannot finish; the next sweep that does ends it.
 const SWEEP_PROBLEM: &str = "credential-store-sweep";
 
-/// Removes every value in `vault` that no identity and no environment secret names. `Err` says why
-/// nothing was removed: the rows or the store could not be read.
-fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> {
+/// Removes every value in `vault` that nothing names: no identity, no environment secret, no proxy
+/// sign-in and no saved login of one of `workspaces` (the saved logins of a deleted workspace go).
+/// `Err` says why nothing was removed: the rows or the store could not be read.
+fn sweep(
+    vault: &dyn SecretStore,
+    store: &Store,
+    workspaces: &[WorkspaceId],
+) -> Result<Sweep, &'static str> {
     let in_use = store.secret_ids_in_use().map_err(|err| {
         tracing::warn!(%err, "credential store sweep skipped: the rows could not be read");
         "Puddle could not read which tokens and secrets it still uses"
     })?;
     keep_local(vault, in_use.iter());
     vault
-        .sweep_orphans(&|id| in_use.contains(id) || id.as_str().starts_with(ID_PREFIX))
+        .sweep_orphans(&|id| {
+            in_use.contains(id)
+                || id.as_str().starts_with(ID_PREFIX)
+                || workspaces
+                    .iter()
+                    .any(|workspace| puddle_logins::is_saved_login_of(id, workspace))
+        })
         .map_err(|_| {
             tracing::warn!("credential store sweep skipped: the store did not answer");
             "the credential store did not answer"
@@ -100,16 +116,20 @@ fn report(outcome: Result<Sweep, &'static str>, problems: &Problems) {
 }
 
 /// Runs [`sweep`] off the async threads: a locked keyring may take a long time to answer, and
-/// starting must not wait for it. Values this run writes meanwhile are never swept.
+/// starting must not wait for it. Values this run writes meanwhile are never swept, so a workspace
+/// made after the start keeps its saved logins too.
 ///
 /// The sweep holds the store, so the host awaits the returned handle at shutdown: a restart on
 /// the same folder must not open the database while this run's connection is still closing.
 pub(crate) fn sweep_in_background(
     vault: Arc<dyn SecretStore>,
     store: Arc<Store>,
+    workspaces: Vec<WorkspaceId>,
     problems: Arc<Problems>,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
+    tokio::task::spawn_blocking(move || {
+        report(sweep(vault.as_ref(), &store, &workspaces), &problems);
+    })
 }
 
 /// The problem that stands while the credential store refuses a write. A store that failed once
@@ -163,6 +183,25 @@ fn warns(session: LoginSession, health: StoreHealth) -> bool {
     session == LoginSession::NotGraphical || health != StoreHealth::Working
 }
 
+/// Logs the advice to start with `--headless` when `session` and `health` say the operating
+/// system's store may not be there for the secrets.
+fn warn_without_headless_flag(session: LoginSession, health: StoreHealth) {
+    if !warns(session, health) {
+        return;
+    }
+    let graphical_session = session != LoginSession::NotGraphical;
+    let store_works = health == StoreHealth::Working;
+    tracing::warn!(
+        graphical_session,
+        store_works,
+        "Puddle was started without --headless and keeps its secrets in the operating \
+         system's credential store, which has no unlocked keyring to rely on here. On a \
+         server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
+         in Puddle's own file vault; that takes effect only for a data folder that has \
+         not recorded a store yet (`secrets/store.json`)"
+    );
+}
+
 fn run_check(
     probe: Probe,
     record_when_working: Option<WriteWhenWorking>,
@@ -181,18 +220,8 @@ fn run_check(
                 "could not write which store keeps the secrets; the next start tries again"
             );
         }
-        if let Some(session) = warn_without_flag
-            && warns(session, health)
-        {
-            tracing::warn!(
-                graphical_session = session != LoginSession::NotGraphical,
-                store_works = health == StoreHealth::Working,
-                "Puddle was started without --headless and keeps its secrets in the operating \
-                 system's credential store, which has no unlocked keyring to rely on here. On a \
-                 server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
-                 in Puddle's own file vault; that takes effect only for a data folder that has \
-                 not recorded a store yet (`secrets/store.json`)"
-            );
+        if let Some(session) = warn_without_flag {
+            warn_without_headless_flag(session, health);
         }
     })
 }

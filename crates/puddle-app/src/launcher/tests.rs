@@ -101,7 +101,9 @@ fn target(front: SocketAddr, login: Option<EditorSignIn>) -> BrowserTarget {
 async fn a_browser_attach_signs_in_and_opens_the_workspace_s_window_on_the_origin() {
     let app = tauri::test::mock_app();
     let data = tempfile::tempdir().unwrap();
-    let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+    // A debug port is only asked of a real WebView2; the mock window opens as without it.
+    let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"))
+        .with_debug_port(Some(9341));
     launcher.install(windows());
     let secret = password("right");
     let (addr, logins) = front(&secret).await;

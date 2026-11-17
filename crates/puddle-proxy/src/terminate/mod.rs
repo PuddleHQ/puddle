@@ -45,8 +45,9 @@
 //! - **Stand-ins**: after the injector has decided, the workspace's [`StandIns`] are swapped for
 //!   their real values in the header values of the request (or, for a secret that opts in, in
 //!   one named query parameter or the path), toward the hosts each is for, on both HTTP versions.
-//! - **Responses**: framed by an HTTP client library, then rebuilt for the guest, trailers
-//!   included. Redirects are passed through, never followed. A `401` is replaced by the
+//! - **Responses**: framed by an HTTP client library, then rebuilt for the guest. Trailers reach
+//!   an HTTP/2 guest; an HTTP/1.1 guest gets none (its chunked body ends with an empty trailer
+//!   section). Redirects are passed through, never followed. A `401` is replaced by the
 //!   injector's own refusal when the injector added the request's credential ([`Unauthorized`]);
 //!   otherwise it is the server's answer like any other. The HTTP/3 entries of `Alt-Svc` are
 //!   removed on both HTTP versions: a workspace has no UDP path, so a client would only try

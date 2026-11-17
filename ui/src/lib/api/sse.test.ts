@@ -182,6 +182,14 @@ describe("eventStream", () => {
     expect(t.resyncs).toEqual(["reconnect"]);
   });
 
+  it("keeps backing off against a server that answers 200 and closes without a message", async () => {
+    const empty = () => sse([]);
+    const t = setup([empty, empty, empty, empty, () => sse([status("up")])]);
+    const events = await take(eventStream(t.base), 1);
+    expect(events).toHaveLength(1);
+    expect(t.sleeps).toEqual([1000, 2000, 5000, 10_000]);
+  });
+
   it("treats network errors and a missing body like HTTP errors", async () => {
     const t = setup([
       () => {

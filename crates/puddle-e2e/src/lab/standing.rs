@@ -42,6 +42,15 @@ pub enum SquidAuth {
     Basic,
 }
 
+/// What the lab's TLS-intercepting proxy requires of a client.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterceptorAuth {
+    /// Anyone may use it.
+    Open,
+    /// NTLM sign-in before it opens a tunnel, as a company proxy that wants the Windows sign-in.
+    Ntlm,
+}
+
 /// The proxy a Squid sends every tunnel through (its parent), as a corporate proxy chain does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Parent {
@@ -57,7 +66,7 @@ pub struct Plan {
     /// A forward proxy (Squid), open or with Basic sign-in.
     pub squid: Option<SquidAuth>,
     /// The TLS-intercepting proxy with a root made for the run.
-    pub interceptor: bool,
+    pub interceptor: Option<InterceptorAuth>,
     /// The proxy that demands NTLM.
     pub ntlm: bool,
     /// The web server that hands out a PAC file.
@@ -77,7 +86,7 @@ impl Plan {
     fn everything() -> Self {
         Self {
             squid: Some(SquidAuth::Basic),
-            interceptor: true,
+            interceptor: Some(InterceptorAuth::Open),
             ntlm: true,
             pac: true,
             ..Self::default()
@@ -85,7 +94,7 @@ impl Plan {
     }
 
     fn is_empty(&self) -> bool {
-        self.squid.is_none() && !self.interceptor && !self.ntlm && !self.pac
+        self.squid.is_none() && self.interceptor.is_none() && !self.ntlm && !self.pac
     }
 }
 
@@ -104,7 +113,7 @@ pub struct Command {
     pub self_test: bool,
 }
 
-const USAGE: &str = "usage: puddle-lab [--squid | --squid-basic] [--interceptor] [--ntlm] [--pac] [--all]\n\
+const USAGE: &str = "usage: puddle-lab [--squid | --squid-basic] [--interceptor | --interceptor-ntlm] [--ntlm] [--pac] [--all]\n\
     \x20      [--name HOST]... [--allow-port PORT]... [--squid-through interceptor|ntlm]\n\
     \x20      [--pac-direct SUFFIX]... --info FILE [--ca FILE] [--stop FILE]\n\
     \x20      puddle-lab --self-test [pieces]";
@@ -120,12 +129,14 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
         match flag.as_str() {
             "--squid" => set_squid(&mut cmd.plan, SquidAuth::Open)?,
             "--squid-basic" => set_squid(&mut cmd.plan, SquidAuth::Basic)?,
-            "--interceptor" => cmd.plan.interceptor = true,
+            "--interceptor" => set_interceptor(&mut cmd.plan, InterceptorAuth::Open)?,
+            "--interceptor-ntlm" => set_interceptor(&mut cmd.plan, InterceptorAuth::Ntlm)?,
             "--ntlm" => cmd.plan.ntlm = true,
             "--pac" => cmd.plan.pac = true,
             "--all" => {
                 let rest = std::mem::take(&mut cmd.plan);
                 cmd.plan = Plan {
+                    interceptor: rest.interceptor.or(Plan::everything().interceptor),
                     names: rest.names,
                     allowed_ports: rest.allowed_ports,
                     squid_through: rest.squid_through,
@@ -165,6 +176,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
             );
         }
         cmd.plan = Plan {
+            interceptor: cmd.plan.interceptor.or(Plan::everything().interceptor),
             names: cmd.plan.names,
             allowed_ports: cmd.plan.allowed_ports,
             squid_through: cmd.plan.squid_through,
@@ -180,7 +192,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
     }
     match (cmd.plan.squid, cmd.plan.squid_through) {
         (None, Some(_)) => return Err("--squid-through needs --squid or --squid-basic".into()),
-        (_, Some(Parent::Interceptor)) if !cmd.plan.interceptor => {
+        (_, Some(Parent::Interceptor)) if cmd.plan.interceptor.is_none() => {
             return Err("--squid-through interceptor needs --interceptor".into());
         }
         (_, Some(Parent::Ntlm)) if !cmd.plan.ntlm => {
@@ -188,10 +200,19 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
         }
         _ => {}
     }
-    if cmd.plan.pac && cmd.plan.squid.is_none() && !cmd.plan.interceptor && !cmd.plan.ntlm {
+    if cmd.plan.pac && cmd.plan.squid.is_none() && cmd.plan.interceptor.is_none() && !cmd.plan.ntlm
+    {
         return Err("--pac needs a proxy to point at (--squid, --interceptor or --ntlm)".into());
     }
     Ok(cmd)
+}
+
+fn set_interceptor(plan: &mut Plan, auth: InterceptorAuth) -> Result<(), String> {
+    if plan.interceptor.is_some_and(|set| set != auth) {
+        return Err("--interceptor and --interceptor-ntlm exclude each other".into());
+    }
+    plan.interceptor = Some(auth);
+    Ok(())
 }
 
 fn set_squid(plan: &mut Plan, auth: SquidAuth) -> Result<(), String> {
@@ -221,9 +242,12 @@ impl Lab {
     /// written. A program that is configured but does not start panics, as the fixtures do.
     pub fn start(plan: &Plan, ca: &Path) -> Result<Self, String> {
         let names: Vec<&str> = plan.names.iter().map(String::as_str).collect();
-        let interceptor = if plan.interceptor {
-            let started = Interceptor::start(&names)
-                .ok_or("the interceptor needs PUDDLE_MITMDUMP_BIN (a mitmdump binary)")?;
+        let interceptor = if let Some(auth) = plan.interceptor {
+            let started = match auth {
+                InterceptorAuth::Ntlm => Interceptor::start_signing_in(&names),
+                InterceptorAuth::Open => Interceptor::start(&names),
+            }
+            .ok_or("the interceptor needs PUDDLE_MITMDUMP_BIN (a mitmdump binary)")?;
             std::fs::write(ca, started.root().pem())
                 .map_err(|e| format!("cannot write {}: {e}", ca.display()))?;
             Some(started)
@@ -243,7 +267,7 @@ impl Lab {
         }
         let mut lab = Self {
             plan: plan.clone(),
-            ca: plan.interceptor.then(|| ca.to_path_buf()),
+            ca: plan.interceptor.map(|_| ca.to_path_buf()),
             #[cfg(unix)]
             squid,
             interceptor,
@@ -311,13 +335,24 @@ impl Lab {
         if let Some(port) = self.interceptor_port() {
             info.insert(
                 "interceptor".into(),
-                json!({ "port": port, "proxy_url": proxy(port), "ca": self.ca }),
+                json!({
+                    "port": port,
+                    "proxy_url": proxy(port),
+                    "ca": self.ca,
+                    "sign_in": (self.plan.interceptor == Some(InterceptorAuth::Ntlm)).then_some("ntlm"),
+                    "log": self.interceptor.as_ref().map(Interceptor::log_path),
+                }),
             );
         }
         if let Some(port) = self.ntlm_port() {
             info.insert(
                 "ntlm".into(),
-                json!({ "port": port, "proxy_url": proxy(port), "accepts": NTLM_NOTE }),
+                json!({
+                    "port": port,
+                    "proxy_url": proxy(port),
+                    "accepts": NTLM_NOTE,
+                    "log": self.ntlm.as_ref().map(NtlmProxy::log_path),
+                }),
             );
         }
         if let Some(pac) = &self.pac {
@@ -339,8 +374,14 @@ impl Lab {
         if let Some(squid) = &self.squid {
             lines.push(check_squid(squid.port(), self.plan.squid, origin));
         }
-        if let (Some(port), Some(ca)) = (self.interceptor_port(), &self.ca) {
-            lines.push(check_interceptor(port, ca, origin));
+        if let (Some(port), Some(ca), Some(interceptor)) =
+            (self.interceptor_port(), &self.ca, &self.interceptor)
+        {
+            lines.push(if self.plan.interceptor == Some(InterceptorAuth::Ntlm) {
+                check_signing_in_interceptor(port, ca, interceptor)
+            } else {
+                check_interceptor(port, ca, origin)
+            });
         }
         if let (Some(port), Some(ntlm)) = (self.ntlm_port(), &self.ntlm) {
             lines.push(check_ntlm(port, ntlm, origin));
@@ -437,12 +478,41 @@ fn base64_basic(text: &str) -> String {
 
 fn check_interceptor(port: u16, ca: &Path, origin: u16) -> Result<String, String> {
     expect_status(&via_proxy(port, origin, "")?, "200", "interceptor")?;
-    let pem = std::fs::read_to_string(ca).map_err(|e| format!("CA file {}: {e}", ca.display()))?;
-    if !pem.contains("BEGIN CERTIFICATE") {
-        return Err(format!("CA file {} holds no certificate", ca.display()));
-    }
+    check_ca_file(ca)?;
     Ok(format!(
         "interceptor on {port}: forwards a request, root in {}",
+        ca.display()
+    ))
+}
+
+fn check_ca_file(ca: &Path) -> Result<(), String> {
+    let pem = std::fs::read_to_string(ca).map_err(|e| format!("CA file {}: {e}", ca.display()))?;
+    if pem.contains("BEGIN CERTIFICATE") {
+        Ok(())
+    } else {
+        Err(format!("CA file {} holds no certificate", ca.display()))
+    }
+}
+
+/// The interceptor that wants NTLM: a tunnel is refused with an NTLM demand (and the demand is
+/// logged), and the root is written.
+fn check_signing_in_interceptor(
+    port: u16,
+    ca: &Path,
+    interceptor: &Interceptor,
+) -> Result<String, String> {
+    let head = connect_head(port, port)?;
+    expect_status(&head, "407", "interceptor that wants NTLM")?;
+    ntlm_offered(&head)?;
+    puddle_test_kit::eventually_blocking("the NTLM demand is logged", ANSWER_WAIT, || {
+        interceptor
+            .legs()
+            .iter()
+            .any(|leg| matches!(leg, NtlmLeg::Demand { .. }))
+    });
+    check_ca_file(ca)?;
+    Ok(format!(
+        "interceptor on {port}: demands NTLM with a 407 before a tunnel, root in {}",
         ca.display()
     ))
 }

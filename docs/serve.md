@@ -388,7 +388,7 @@ Puddle keeps secret values (pasted tokens, environment secrets, company proxy si
 stores per data folder: the operating system's credential store (`os`), or its own encrypted file vault
 (`file`, `secrets/vault` in the data folder). The first start decides and writes the answer to
 `secrets/store.json`; later starts read it and never decide again, and nothing moves a value between
-the stores by itself. With `secret_store = "auto"` (the default) the first start picks:
+the stores by itself (`puddle secrets migrate` does it when you ask). With `secret_store = "auto"` (the default) the first start picks:
 
 1. The `secret_store` option, when it is `os` or `file`.
 2. `os`, when the data folder already has rows that name a secret: its values are in the operating
@@ -419,9 +419,36 @@ these cases under "Credential store":
 
 | What doctor says | Cause | What to do |
 |---|---|---|
-| "the key no longer opens: the machine id, the host key or the Secure Boot setting changed" | The disk was cloned or restored onto another machine (new `/etc/machine-id`), systemd's host key `/var/lib/systemd/credential.secret` was lost, or the Secure Boot setting changed. systemd gives one message for all three. | Restore a changed Secure Boot setting and the key opens again. A changed machine id does not come back: systemd deletes the host key the first time it fails, so restoring the old id no longer helps. Then stop Puddle, move `secrets/vault` in the data folder and `puddle/vault-key.cred` in your config folder aside, start Puddle and enter the secrets again. |
+| "the key no longer opens: the machine id, the host key or the Secure Boot setting changed" | The disk was cloned or restored onto another machine (new `/etc/machine-id`), systemd's host key `/var/lib/systemd/credential.secret` was lost, or the Secure Boot setting changed. systemd gives one message for all three. | Restore a changed Secure Boot setting and the key opens again. A changed machine id does not come back: systemd deletes the host key the first time it fails, so restoring the old id no longer helps. Then stop Puddle, run `puddle secrets reset --yes` (it sets `secrets/vault` and `puddle/vault-key.cred` aside and starts a new vault), start Puddle and enter the secrets again. |
 | "the key does not open: ..." with a reason | `systemd-creds` is missing, systemd is older than 256 (no per-user sealing), the key was sealed under another name, or systemd's credential service does not answer. | The fix line names the step for each reason. |
 | "this computer has a TPM2 chip, but its software libraries are missing, so the key is not tied to the TPM2" | The key was sealed with the host key only because `systemd-analyze has-tpm2` answers `partial` (exit 16) without the TPM2 libraries. The key still opens. | Install the TPM2 libraries (`apt install tpm2-tools` on Debian and Ubuntu, `dnf install tpm2-tools` on Fedora). The existing key stays host-key only; a key made after that is tied to the TPM2 too. |
+
+### `puddle secrets`
+
+Three commands look after the store, with the same `--config` and `--data-dir` as `puddle serve`:
+
+| Command | What it does |
+|---|---|
+| `puddle secrets status` | Says which store keeps the secrets and when it was chosen, for the file vault where its key comes from, how many secrets the database names and how many of them the store holds, or why the store cannot be read. It only reads, works while Puddle runs, and waits up to 20 seconds for a locked keyring. |
+| `puddle secrets migrate --to os` or `--to file` | Moves every secret (pasted tokens, environment secrets, company proxy sign-ins) to the other store and records it as the one in use. Stop Puddle first: while it runs, the command refuses and names the process. |
+| `puddle secrets reset [--yes]` | For a file vault that does not open (its key is lost or wrong, or the file is damaged): sets the old vault file and the key files aside, makes a new key and an empty vault. Without `--yes` it only says what it would do. |
+
+Each command prints counts, never a value or a secret's name.
+
+`migrate` reads every value, writes it to the new store, reads each copy back and compares it, and only then
+writes `secrets/store.json` and deletes the values from the old store. A value the new store refuses or
+changes stops the move: the copies are removed and the old store stays in charge. If the command stops half
+way (a crash, a power cut), run it again: before the record is written it copies again, after it removes what
+the old store still holds, and the store in use keeps its values. Moving to the file vault needs a place for
+its key (Linux only for now); a locked keyring may ask you to unlock it. The command waits up to 20 seconds for each store, then stops with a message and changes nothing; unlock the keyring and run it again.
+
+`reset` never deletes. The old vault becomes `vault.unreadable-<time>` in the `secrets` folder, and
+`vault-key.cred` and `vault.key` in your config folder become `<name>.unreadable-<time>`; a key the service
+passes as a credential is not touched. The secrets in the old vault stay unreadable. The tokens and
+environment secrets that your database names are listed as missing until you enter them again, and the
+company proxy sign-ins, which lived in the vault, are gone. It refuses when the data folder keeps its
+secrets in the operating system's store, has not chosen a store yet, has no vault, or has a vault that
+opens.
 
 ### The operating system's store must be unlocked
 

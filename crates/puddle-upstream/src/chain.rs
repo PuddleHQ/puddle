@@ -32,6 +32,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use zeroize::Zeroizing;
 
 use crate::auth::{AuthSession, AuthStep, ProxyAuth};
 use crate::discovery::Discovery;
@@ -139,11 +140,15 @@ impl<'a> Request<'a> {
     }
 }
 
-/// A secret header value that never prints.
+/// A secret header value that never prints, wiped from memory when dropped.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+pub struct Secret(Zeroizing<String>);
 
 impl Secret {
+    fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
     /// The value, for the one place that sends it.
     #[must_use]
     pub fn expose(&self) -> &str {
@@ -265,7 +270,13 @@ struct Memo {
     epoch: u64,
     state: AuthState,
     /// The Basic header that worked, sent up front next time.
-    basic: Option<String>,
+    basic: Option<Secret>,
+}
+
+impl Memo {
+    fn basic_header(&self) -> Option<String> {
+        self.basic.as_ref().map(|basic| basic.expose().to_owned())
+    }
 }
 
 /// A name lookup that stands in for the system resolver (see [`Chain::with_lookup`]).
@@ -524,7 +535,7 @@ impl Chain {
             .cloned()
     }
 
-    fn remember(&self, proxy: &ProxyAddr, state: AuthState, basic: Option<String>) {
+    fn remember(&self, proxy: &ProxyAddr, state: AuthState, basic: Option<Secret>) {
         let epoch = self.discovery.epoch();
         self.memo
             .lock()
@@ -630,7 +641,7 @@ impl Chain {
             })
         };
         let memo = self.memo(proxy);
-        let mut header = memo.as_ref().and_then(|m| m.basic.clone());
+        let mut header = memo.as_ref().and_then(Memo::basic_header);
         *used = header.as_deref().and_then(scheme_word);
         let mut session: Option<Box<dyn AuthSession>> = None;
         let mut preemptive = false;
@@ -676,12 +687,15 @@ impl Chain {
                 return Err(failed("407 without a Proxy-Authenticate header".into()));
             }
             let offered_owned = wire::schemes(&challenges);
-            // A preemptive session (Negotiate sent unasked) met a 407: ask again with what the proxy
+            // A preemptive session (a token sent unasked) met a 407: ask again with what the proxy
             // actually offers, so a Basic-only proxy still works on the first request. Keep the
-            // preemptive session when nothing else can answer.
-            if session.is_none() || preemptive {
+            // preemptive session when nothing else can answer, and when the 407 answers its token
+            // with one of its own (NTLM's challenge): a new session has sent nothing yet, so the
+            // Windows security package refuses that token (`SEC_E_UNSUPPORTED_FUNCTION`).
+            let restart = session.is_none() || (preemptive && !answers_a_token(&challenges));
+            preemptive = false;
+            if restart {
                 let offered: Vec<&str> = offered_owned.iter().map(String::as_str).collect();
-                preemptive = false;
                 match self.auth.begin(proxy, &offered) {
                     Ok(Some(started)) => session = Some(started),
                     Ok(None) if session.is_some() => {}
@@ -775,7 +789,7 @@ impl Chain {
                 tracing::warn!(%proxy, status = head.status, "authentication probe was refused before a login was asked for");
             }
             None => self.remember(proxy, AuthState::Open, None),
-            Some(_) => self.remember(proxy, AuthState::Required, basic.clone()),
+            Some(_) => self.remember(proxy, AuthState::Required, basic.clone().map(Secret::new)),
         }
         if form == Form::Absolute && !head.keeps_alive() {
             if header.is_some() && basic.is_none() {
@@ -804,7 +818,7 @@ fn connected(
         hop: Hop::Proxy(proxy.clone()),
         addr: None,
         authority: Some(authority.to_owned()),
-        authorization: authorization.map(Secret),
+        authorization: authorization.map(Secret::new),
         epoch: 0,
     }
 }
@@ -1001,6 +1015,18 @@ fn interleaved(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
     }
     out.extend(second.into_iter().rev());
     out
+}
+
+/// Whether a `407` carries a token of a connection-based scheme (`Negotiate <token>`, `NTLM
+/// <token>`): the proxy's answer to a token that was sent, not an offer of schemes.
+fn answers_a_token(challenges: &[&str]) -> bool {
+    challenges.iter().any(|challenge| {
+        let mut words = challenge.split_whitespace();
+        words
+            .next()
+            .is_some_and(|w| w.eq_ignore_ascii_case("negotiate") || w.eq_ignore_ascii_case("ntlm"))
+            && words.next().is_some()
+    })
 }
 
 #[cfg(test)]

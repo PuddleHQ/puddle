@@ -66,8 +66,6 @@ pub enum CheckId {
     DiskEncryption,
     /// The SSH agent on this machine.
     SshAgent,
-    /// What the runtime's guest kernel lets guest root reach.
-    GuestKernel,
     /// The Azure CLI (`az`), needed only for Azure DevOps sources.
     AzCli,
     /// Whether the credential store takes a write.
@@ -91,7 +89,6 @@ impl CheckId {
             Self::DataPath => "Data folder path",
             Self::DiskEncryption => "Disk encryption",
             Self::SshAgent => "SSH agent",
-            Self::GuestKernel => "Guest kernel",
             Self::AzCli => "Azure CLI (az)",
             Self::CredentialStore => "Credential store",
         }
@@ -195,8 +192,6 @@ pub enum Finding {
     SshAgentSlow,
     /// What answers where Puddle asks for the SSH agent is not one.
     SshAgentUnusable,
-    /// The runtime's guest kernel has `/dev/mem`, so guest root can map device registers.
-    GuestDevMemPresent,
     /// No Azure CLI (`az`) is on the search path.
     AzCliMissing,
     /// No credential store answers where Puddle keeps its secrets.

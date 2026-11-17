@@ -53,6 +53,9 @@ pub enum ErrorCode {
     /// A stored settings document is damaged or cannot be read, so the settings cannot be shown
     /// or changed until it is fixed or removed (409); the message says what is wrong.
     SettingsUnreadable,
+    /// The settings were changed by someone else since the client read them, so the save was
+    /// refused and nothing was written (409); read them again.
+    SettingsChanged,
     /// Too many sign-in attempts: wait for the time in `Retry-After` (429).
     RateLimited,
     /// The feature isn't available in this build or state (503).
@@ -192,6 +195,15 @@ impl ApiError {
         );
         err.detail = Some(detail.to_string());
         err
+    }
+
+    /// A save made from settings that have changed since.
+    pub(crate) fn settings_changed() -> Self {
+        Self::new(
+            StatusCode::CONFLICT,
+            ErrorCode::SettingsChanged,
+            "The settings changed in the meantime (another window or the command line). Review the current values and save again.",
+        )
     }
 
     /// Stored settings that cannot be read: the message names `what` and the cause, so the

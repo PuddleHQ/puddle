@@ -215,8 +215,12 @@ impl Store {
         self.flush_limits()?;
         let waiting_records_merged = self.merge_waiting_connections()?;
         let audit_records_pruned = self.prune_audit_if_due()?;
-        let audit_file_shrunk_bytes = self.shrink_audit_file()?;
+        // Before the shrink, so that a shrink that fails (a full disk) never hides the warning.
         let audit_over_warn_size = self.audit_bytes()? > self.limits.audit_warn_bytes;
+        let audit_file_shrunk_bytes = self.shrink_audit_file().unwrap_or_else(|err| {
+            tracing::warn!(%err, "the audit file's free space could not be given back; the next sweep tries again");
+            0
+        });
         Ok(SweepReport {
             rules_expired,
             audit_records_pruned,

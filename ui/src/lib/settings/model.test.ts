@@ -168,6 +168,7 @@ describe("bodyFrom", () => {
       ui: v.ui,
       tools: v.tools,
       limits: v.limits,
+      revision: v.revision,
     });
     expect(bodyFrom(v, { limits: { max_cpus: 6 } }).limits).toEqual({
       max_cpus: 6,

@@ -141,7 +141,8 @@ impl fmt::Debug for PullToken {
 /// The proxy URL for the registry client, `http://puddle:<token>@127.0.0.1:<port>`.
 ///
 /// `Debug` and `Display` show it with the token replaced by `<redacted>`;
-/// [`ProxyUrl::expose`] gives the real URL, to put into the environment.
+/// [`ProxyUrl::expose`] gives the real URL, to hand to the SDK's registry-proxy setting, never to the
+/// environment (child processes would inherit the token).
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProxyUrl {
     url: String,
@@ -149,7 +150,7 @@ pub struct ProxyUrl {
 }
 
 impl ProxyUrl {
-    /// The URL with the token, for `HTTPS_PROXY` / `HTTP_PROXY`.
+    /// The URL with the token, for the SDK's registry-proxy setting (never an environment variable).
     #[must_use]
     pub fn expose(&self) -> &str {
         &self.url
@@ -178,8 +179,8 @@ impl fmt::Debug for ProxyUrl {
 /// every request must carry (`407` otherwise), registered in [`PuddleEndpoints`] so guests never
 /// reach it, and the address guard without the rules.
 ///
-/// Bind it early (it uses a std listener, so no async runtime is needed), put
-/// [`PullProxy::proxy_url`] into the environment before any thread starts, then
+/// Bind it early (it uses a std listener, so no async runtime is needed), pass
+/// [`PullProxy::proxy_url`] to the SDK's registry-proxy setting (not the environment), then
 /// [`PullProxy::serve`] it inside the runtime.
 pub struct PullProxy {
     listener: std::net::TcpListener,
@@ -284,7 +285,7 @@ impl PullProxy {
         self.addr
     }
 
-    /// The URL for the registry client's `HTTPS_PROXY` / `HTTP_PROXY`.
+    /// The URL for the registry client's proxy setting (not for the environment).
     #[must_use]
     pub fn proxy_url(&self) -> ProxyUrl {
         ProxyUrl {

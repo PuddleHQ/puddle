@@ -546,7 +546,7 @@ pub(crate) fn scan_answer(
         || parts.status.is_informational()
         || parts.status == StatusCode::NO_CONTENT
         || parts.status == StatusCode::NOT_MODIFIED;
-    let decoder = Decoder::for_encoding(parts.headers.get(header::CONTENT_ENCODING));
+    let decoder = Decoder::for_answer(&parts.headers);
     let readable =
         !no_body && is_text_type(parts.headers.get(header::CONTENT_TYPE)) && decoder.is_ok();
     // Every header line ended with a newline, so nothing is pending that an end could add.

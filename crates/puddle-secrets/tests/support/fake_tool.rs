@@ -11,6 +11,8 @@
 //! echo_stdin=1           <- print the standard input first (bytes, as read)
 //! stdout=password=x\n    <- `\n` is a newline
 //! stderr=code\n         <- printed (and flushed) before the sleep, as `gh` prints its prompt
+//! run=/usr/bin/git       <- instead: run this program with the same arguments and standard input,
+//! env=NAME=value            with these variables added, and answer what it answered
 //! ```
 //!
 //! Every call appends the arguments, the standard input and the prompt-related environment to
@@ -57,6 +59,7 @@ fn main() {
 
     let (mut exit, mut sleep_ms, mut echo) = (0, 0, false);
     let (mut stdout, mut stderr) = (String::new(), String::new());
+    let (mut run, mut run_env) = (None, Vec::new());
     let mut active = false;
     for line in behaviour.lines() {
         if let Some(rest) = line.strip_prefix('[') {
@@ -65,6 +68,7 @@ fn main() {
             if active {
                 (exit, sleep_ms, echo) = (0, 0, false);
                 (stdout, stderr) = (String::new(), String::new());
+                (run, run_env) = (None, Vec::new());
             }
         } else if active {
             match line.split_once('=') {
@@ -73,9 +77,16 @@ fn main() {
                 Some(("echo_stdin", v)) => echo = v == "1",
                 Some(("stdout", v)) => stdout = unescape(v),
                 Some(("stderr", v)) => stderr = unescape(v),
+                Some(("run", v)) => run = Some(v.to_owned()),
+                Some(("env", v)) => {
+                    run_env.extend(v.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())));
+                }
                 _ => {}
             }
         }
+    }
+    if let Some(program) = run {
+        leave(pass_to(&program, &args, &run_env, &stdin));
     }
     eprint!("{stderr}");
     let _ = std::io::stderr().flush();
@@ -89,6 +100,20 @@ fn main() {
     print!("{stdout}");
     let _ = std::io::stdout().flush();
     leave(exit);
+}
+
+/// Runs the real `program` as this call, and returns its exit code.
+fn pass_to(program: &str, args: &[String], env: &[(String, String)], stdin: &[u8]) -> i32 {
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("the program to pass the call to");
+    if let Some(mut input) = child.stdin.take() {
+        let _ = input.write_all(stdin);
+    }
+    child.wait().ok().and_then(|s| s.code()).unwrap_or(1)
 }
 
 /// Ends the process without the exit-time profile write of an instrumented build.

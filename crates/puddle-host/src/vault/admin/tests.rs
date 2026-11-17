@@ -333,6 +333,8 @@ fn a_store_that_waits_for_an_unlock_is_given_the_wait_and_then_named() {
     assert_eq!(status.state, StoreState::Readable { found: 0 });
 }
 
+// Linux only: the move needs a file vault to move into, and only Linux has a key source for one.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_locked_keyring_stops_migrate_with_a_message_instead_of_waiting_for_ever() {
     let rig = Rig::new();

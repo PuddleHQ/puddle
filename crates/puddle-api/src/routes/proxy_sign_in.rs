@@ -49,7 +49,7 @@ pub(crate) async fn list_proxy_sign_ins(
 )]
 pub(crate) async fn put_proxy_sign_in(
     State(state): State<AppState>,
-    crate::extract::Json(body): crate::extract::Json<ProxySignInRequest>,
+    crate::extract::SecretJson(body): crate::extract::SecretJson<ProxySignInRequest>,
 ) -> Result<Json<ProxySignInList>, ApiError> {
     let proxy = proxy_addr(&body.proxy)?;
     blocking(move || {

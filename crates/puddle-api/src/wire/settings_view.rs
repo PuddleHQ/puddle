@@ -23,9 +23,10 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true, minimum = 256, maximum = 1_048_576)]
     pub memory: Option<u32>,
-    /// Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
+    /// Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs
+    /// unless set); applies at the next start.
     #[serde(default)]
-    #[schema(required = true, minimum = 1, maximum = 32)]
+    #[schema(required = true, minimum = 1, maximum = 255)]
     pub cpus: Option<u8>,
     /// Which local destination categories may be approved (all off by default).
     #[serde(default)]

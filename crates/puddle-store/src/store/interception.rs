@@ -6,6 +6,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::{Store, lock};
 use crate::error::StoreError;
+use crate::users::UserId;
 
 /// A workspace's own settings for decrypting port 443. The global setting
 /// ([`Store::interception_settings`]) and the global never-decrypt names
@@ -194,21 +195,27 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
-    /// Every never-decrypt name as (workspace, name): the global names (workspace `None`) and
-    /// each workspace's own, ordered global first, then by workspace and name.
+    /// The never-decrypt names `user` sees as (workspace, name): the global names (workspace
+    /// `None`) and the own names of each workspace of `user`, ordered global first, then by
+    /// workspace and name. Another user's workspaces and their names are left out.
     ///
     /// # Errors
     /// A database error.
-    pub fn never_decrypt_names(&self) -> Result<Vec<(Option<String>, String)>, StoreError> {
+    pub fn never_decrypt_names(
+        &self,
+        user: UserId,
+    ) -> Result<Vec<(Option<String>, String)>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(
             "SELECT NULL, pattern FROM never_decrypt_global
              UNION ALL
-             SELECT workspace_id, pattern FROM never_decrypt
+             SELECT n.workspace_id, n.pattern FROM never_decrypt n
+               JOIN workspace_owners o ON o.workspace_id = n.workspace_id
+              WHERE o.user_id = ?1
              ORDER BY 1, 2",
         )?;
         Ok(stmt
-            .query_map([], |r| {
+            .query_map([user.get()], |r| {
                 Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?)

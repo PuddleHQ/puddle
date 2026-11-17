@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # cargo-deny: licences, advisories, bans, sources. Run with `cargo deny check`.
 
 [graph]
@@ -114,7 +114,7 @@ confidence-threshold = 0.93
 unused-allowed-license = "allow"
 
 [licenses.private]
-# Our own crates are `publish = false`; they are GPL-3.0-or-later (checked by the SPDX gate).
+# Our own crates are `publish = false`; they are AGPL-3.0-or-later (checked by the SPDX gate).
 ignore = true
 
 [bans]

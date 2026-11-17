@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest cases for Git over SSH: the guest names a repository another way, asks for more
 //! than Git, attacks the SSH server before and around authentication, and lies in the Git stream.
 //! Each case ends with what reached the Git host:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The install of a workspace's managed tools, after mise is on the volume: `puddle-agent
 //! mise-install` in the guest as the session user, followed by a report every two seconds
 //! (`--missing`) while it runs. The guest's report is hostile input: [`parse_report`] takes known

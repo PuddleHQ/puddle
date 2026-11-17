@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's own encrypted file, for a computer whose credential store cannot be used (a headless
 //! Linux server, WSL, a container). One file, every value encrypted with AES-256-GCM under a key the
 //! caller supplies; where that key comes from is not this module's business.

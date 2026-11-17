@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Why a workspace operation (create, start, stop, delete and the steps they share) failed.
 //!
 //! The text of an error is what the user is shown (the operation's last event, the audit log and

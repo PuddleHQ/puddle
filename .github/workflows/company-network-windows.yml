@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The company-network bars on Windows (the Windows half of the corporate-network acceptance
 # battery), weekly on develop (Wednesday 04:41 UTC, so a regression in the real-tool radar shows within a
 # week; nightly-signal opens the issue) and by hand on any branch (`gh workflow run company-network-windows.yml --ref <branch>`):

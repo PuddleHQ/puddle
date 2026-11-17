@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle secrets migrate` over the operating system's credential store and the file vault, in
 //! both directions, with values of the sizes and kinds the keyring has trouble with. A computer
 //! without a credential store that works skips the run and says so, unless

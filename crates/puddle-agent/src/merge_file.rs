@@ -234,7 +234,10 @@ fn remove(request: &Request) -> Result<Outcome, MergeFileError> {
         return Ok(Outcome::Unchanged);
     };
     let outcome = remove_keys(request, &state)?;
-    forget(request)?;
+    // A refused remove keeps the record, so a later remove still knows what to take out.
+    if !matches!(outcome, Outcome::Left(_)) {
+        forget(request)?;
+    }
     Ok(outcome)
 }
 
@@ -299,48 +302,32 @@ fn read_file(path: &Path) -> Result<Option<(Vec<u8>, fs::Metadata)>, MergeFileEr
     Ok(Some((bytes, meta)))
 }
 
-/// Writes `bytes` to `path` through a temporary file in the same directory and a rename. An
-/// existing file's mode and owner carry over; a new file gets `mode`.
+/// Writes `bytes` to `path` atomically. The temporary file is owner-only from creation (random
+/// name, so nothing can be planted at it), so the content is never readable by others before the
+/// rename. An existing file's owner and mode carry over afterwards; a new file gets `mode`.
 fn write_atomic(
     path: &Path,
     bytes: &[u8],
     existing: Option<&fs::Metadata>,
     mode: u32,
 ) -> Result<(), MergeFileError> {
-    let dir = path.parent().unwrap_or(Path::new("/"));
-    fs::create_dir_all(dir).map_err(io_err("create", dir))?;
-    let name = path
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let tmp = dir.join(format!(".{name}.puddle-merge.{}", std::process::id()));
-    let result = (|| {
-        let _ = fs::remove_file(&tmp); // a leftover from a killed run; absent is fine
-        fs::write(&tmp, bytes).map_err(io_err("write", &tmp))?;
-        permissions(&tmp, existing, mode)?;
-        fs::File::open(&tmp)
-            .and_then(|f| f.sync_all())
-            .map_err(io_err("sync", &tmp))?;
-        fs::rename(&tmp, path).map_err(io_err("replace", path))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp); // best effort; the error that matters is returned
-    }
-    result
+    puddle_fs::private::write_atomic(path, bytes).map_err(io_err("write", path))?;
+    permissions(path, existing, mode)
 }
 
 #[cfg(unix)]
 fn permissions(
-    tmp: &Path,
+    path: &Path,
     existing: Option<&fs::Metadata>,
     mode: u32,
 ) -> Result<(), MergeFileError> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
     let bits = existing.map_or(mode, |m| m.mode() & 0o7777);
     if let Some(m) = existing {
-        std::os::unix::fs::chown(tmp, Some(m.uid()), Some(m.gid()))
-            .map_err(io_err("chown", tmp))?;
+        std::os::unix::fs::chown(path, Some(m.uid()), Some(m.gid()))
+            .map_err(io_err("chown", path))?;
     }
-    fs::set_permissions(tmp, fs::Permissions::from_mode(bits)).map_err(io_err("chmod", tmp))
+    fs::set_permissions(path, fs::Permissions::from_mode(bits)).map_err(io_err("chmod", path))
 }
 
 #[cfg(not(unix))]
@@ -530,6 +517,44 @@ mod tests {
             "{out}"
         );
         assert_eq!(fs::read_to_string(&r.file).unwrap(), "{ not json");
+        assert!(
+            state_path(&r).exists(),
+            "a refused remove must keep the record"
+        );
+    }
+
+    #[test]
+    fn a_refused_remove_still_takes_the_keys_out_once_the_file_is_repaired() {
+        let d = Dir::new("repair");
+        let r = req(&d, Action::Remove);
+        apply(&d, &docker());
+        let merged = fs::read_to_string(&r.file).unwrap();
+        assert!(merged.contains("proxies"));
+        fs::write(&r.file, "{ not json").unwrap();
+        assert!(matches!(run(&r, io::empty()).unwrap(), Outcome::Left(_)));
+        fs::write(&r.file, merged).unwrap();
+        // Puddle created the file and nothing else is in it, so the repaired remove deletes it.
+        assert_eq!(run(&r, io::empty()).unwrap(), Outcome::Removed);
+        assert!(!r.file.exists());
+    }
+
+    #[test]
+    fn a_planted_file_at_the_old_temporary_name_does_not_stop_apply() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let d = Dir::new("planted");
+        let r = req(&d, Action::Remove);
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        fs::write(&r.file, LOGIN).unwrap();
+        fs::set_permissions(&r.file, fs::Permissions::from_mode(0o600)).unwrap();
+        let name = r.file.file_name().unwrap().to_string_lossy().into_owned();
+        let old_tmp = r
+            .file
+            .with_file_name(format!(".{name}.puddle-merge.{}", std::process::id()));
+        fs::create_dir(&old_tmp).unwrap();
+        assert_eq!(apply(&d, &docker()), Outcome::Changed);
+        let mode = fs::metadata(&r.file).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o600);
+        assert!(old_tmp.is_dir(), "the planted entry is not touched");
     }
 
     #[test]
@@ -816,29 +841,18 @@ mod tests {
     fn an_ssh_config_that_cannot_be_replaced_is_left_as_it_was_with_a_notice() {
         let d = Dir::new("ssh-write");
         let r = ssh_request(&d);
-        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
-        let image = "Host *\n    SendEnv LANG LC_*\n";
-        fs::write(&r.file, image).unwrap();
-        // The temporary file's name is taken by a directory, so the write fails whoever runs it
-        // (a read-only folder would not stop root).
-        let tmp = r
-            .file
-            .with_file_name(format!(".ssh_config.puddle-merge.{}", std::process::id()));
-        fs::create_dir(&tmp).unwrap();
+        // A plain file where the folder should be, so the write fails whoever runs it (a
+        // read-only folder would not stop root).
+        fs::create_dir_all(r.file.parent().unwrap().parent().unwrap()).unwrap();
+        fs::write(r.file.parent().unwrap(), "not a folder").unwrap();
         let why = run(&r, ssh_include().as_slice()).unwrap().to_string();
-        assert!(why.starts_with("left: ") && why.contains("write"), "{why}");
-        assert_eq!(fs::read_to_string(&r.file).unwrap(), image);
+        assert!(why.starts_with("left: "), "{why}");
         // The failed write left no record, so a later boot starts clean.
         assert!(!r.state_dir.exists() || fs::read_dir(&r.state_dir).unwrap().next().is_none());
         // The same failure for the Docker config stays an error.
         let r = req(&d, Action::Apply { mode: 0o640 });
-        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
-        fs::write(&r.file, "{}").unwrap();
-        fs::create_dir(
-            r.file
-                .with_file_name(format!(".config.json.puddle-merge.{}", std::process::id())),
-        )
-        .unwrap();
+        fs::create_dir_all(r.file.parent().unwrap().parent().unwrap()).unwrap();
+        fs::write(r.file.parent().unwrap(), "not a folder").unwrap();
         assert!(run(&r, docker().as_slice()).is_err());
     }
 }

@@ -121,7 +121,8 @@ fn main() {
 ///   `https://github.com/<path>` when Git sent a path;
 /// - an entry matches when its user is the account asked for (any, when none was) and its target,
 ///   less `git:` and a user part, names the same scheme, host and path;
-/// - without an account the one entry of the service is used;
+/// - without an account the one entry of the service is used (with several, the manager asks the
+///   user to pick; this stand-in treats that as nothing found);
 /// - nothing found: a sign-in, which fails when `GCM_INTERACTIVE` is `never`;
 /// - `store` updates the entry `git:<service>` when it holds the same account, else writes it, or
 ///   `git:https://<account>@<host><path>` when it holds another account.

@@ -51,6 +51,48 @@ fn fill_answer_checks_the_account_and_the_password() {
 }
 
 #[test]
+fn fill_answer_by_account_needs_no_path_but_the_account() {
+    let h = HostName::new("github.com").unwrap();
+    let me = AccountName::new("me").unwrap();
+    let mine = "protocol=https\nhost=github.com\nusername=me\npassword=CANARY-1\n";
+    let got = parse_fill(mine, &h, None, Some(&me)).unwrap();
+    assert_eq!(got.credential.secret.expose(), "CANARY-1");
+    for bad in [
+        "protocol=https\nhost=github.com\nusername=you\npassword=x\n",
+        "protocol=https\nhost=github.com\npassword=x\n",
+        "protocol=https\nhost=gitlab.com\nusername=me\npassword=x\n",
+    ] {
+        assert_eq!(
+            parse_fill(bad, &h, None, Some(&me)).unwrap_err(),
+            SourceError::Refused(Refusal::WrongTarget),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn a_question_by_account_sends_no_path_and_one_without_sends_it() {
+    let h = HostName::new("github.com").unwrap();
+    let p = UrlPath::new("me").unwrap();
+    let me = AccountName::new("me").unwrap();
+    let by_account = GitQuery::new(&h, &p, Some(&me));
+    assert_eq!(by_account.args("fill"), ["credential", "fill"]);
+    assert_eq!(
+        by_account.input(),
+        "protocol=https\nhost=github.com\nusername=me\n\n"
+    );
+    let by_path = GitQuery::new(&h, &p, None);
+    assert_eq!(
+        by_path.args("approve"),
+        ["-c", "credential.useHttpPath=true", "credential", "approve"]
+    );
+    assert_eq!(
+        by_path.input(),
+        "protocol=https\nhost=github.com\npath=me\n\n"
+    );
+}
+
+#[test]
 fn fill_answer_expiry() {
     let (h, p) = target();
     // The remaining time is checked on the pure function, with a fixed clock: it has no secret in

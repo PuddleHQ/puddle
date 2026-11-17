@@ -45,7 +45,9 @@ pub enum SourceSpec {
         /// The URL path: the organisation or account the credential is for, and the entry Git is
         /// asked for when no account is named.
         path: UrlPath,
-        /// A GitHub account name, when the host has several.
+        /// A GitHub account name, when the host has several. When set, Git is asked by host and
+        /// account and the path is not sent, so it is only for helpers that keep one entry per
+        /// account for the whole host (Git Credential Manager on GitHub), never per organisation.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         username: Option<AccountName>,
     },

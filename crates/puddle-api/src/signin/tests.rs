@@ -1056,3 +1056,14 @@ async fn a_password_change_for_a_user_being_deleted_is_refused() {
         "the old password was not replaced"
     );
 }
+
+#[tokio::test]
+async fn an_attempt_dropped_without_an_answer_does_not_count_toward_the_lock() {
+    let f = fixture();
+    owner_signed_up(&f).await;
+    // A caller that goes away (or a database error) drops the attempt before its answer.
+    for _ in 0..3 * FREE_FAILURES {
+        drop(f.sign_in.attempt("tijs".to_owned()).unwrap());
+    }
+    f.sign_in.sign_in("Tijs", password(), None).await.unwrap();
+}

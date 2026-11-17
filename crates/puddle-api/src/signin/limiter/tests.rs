@@ -181,3 +181,11 @@ fn an_account_with_an_open_attempt_is_not_forgotten_when_the_table_is_full() {
     assert!(limiter.accounts.contains_key("ann"));
     assert_eq!(limiter.accounts.len(), MAX_TRACKED);
 }
+
+#[test]
+fn closing_an_attempt_on_an_account_it_never_opened_changes_nothing() {
+    let mut limiter = Limiter::default();
+    limiter.abandoned("ghost");
+    limiter.succeeded("ghost");
+    assert!(limiter.accounts.is_empty());
+}

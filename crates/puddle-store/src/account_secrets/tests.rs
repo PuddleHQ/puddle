@@ -221,6 +221,14 @@ fn a_failing_database_is_an_error_for_the_owner_steps() {
     store.break_database("ALTER TABLE users RENAME TO users_gone");
     let name = UserName::new("Tijs").unwrap();
     assert!(secrets.create_owner(&name, "$argon2id$x").is_err());
+    // A step made conditional on a checked password fails as an error, not as "changed".
+    let (store, secrets, _) = setup();
+    let checked = secrets
+        .set_password_hash(UserId::OWNER, "$argon2id$x")
+        .unwrap();
+    store.break_database("ALTER TABLE account_passwords RENAME TO passwords_gone");
+    assert!(secrets.add_device(&checked, "desktop", 9_000).is_err());
+    assert!(secrets.replace_password(&checked, "$argon2id$y").is_err());
 }
 
 #[test]

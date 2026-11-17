@@ -26,6 +26,9 @@ exclude_globs = [
     # in the Windows test job; the mutation run does not cover them.
     "crates/puddle-certs/src/platform/windows.rs",
     "crates/puddle-certs/src/platform/windows_trust.rs",
+    # The Credential Manager lock of `puddle-secrets` (`#[cfg(windows)]`): a Linux run never compiles
+    # it. The Windows test job runs every real-store test through it.
+    "crates/puddle-secrets/src/keyring_store/windows.rs",
 ]
 
 # Equivalent mutants, each with its reason:

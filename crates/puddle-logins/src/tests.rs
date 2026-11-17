@@ -1120,6 +1120,111 @@ async fn a_credential_store_that_does_not_answer_is_given_up_on_and_the_start_go
     }
 }
 
+/// What a [`Scripted`] store does at a `set`, before it stores the token.
+enum SetStep {
+    /// Says it has started (the sender) and waits until it is let go (the receiver).
+    Park(
+        tokio::sync::oneshot::Sender<()>,
+        std::sync::mpsc::Receiver<()>,
+    ),
+}
+
+/// A credential store that keeps tokens like [`MemoryStore`] and does the next step of its script
+/// at each `set`; with the script done, `set` just stores.
+struct Scripted {
+    inner: MemoryStore,
+    sets: Mutex<std::collections::VecDeque<SetStep>>,
+}
+
+impl Scripted {
+    fn new(steps: impl IntoIterator<Item = SetStep>) -> Self {
+        Self {
+            inner: MemoryStore::new(),
+            sets: Mutex::new(steps.into_iter().collect()),
+        }
+    }
+}
+
+impl SecretStore for Scripted {
+    fn get(
+        &self,
+        id: &puddle_secrets::StoredId,
+    ) -> Result<Option<puddle_secrets::Secret>, puddle_secrets::StoreError> {
+        self.inner.get(id)
+    }
+
+    fn set(
+        &self,
+        id: &puddle_secrets::StoredId,
+        secret: &puddle_secrets::Secret,
+    ) -> Result<(), puddle_secrets::StoreError> {
+        let step = self.sets.lock().unwrap().pop_front();
+        match step {
+            Some(SetStep::Park(started, go)) => {
+                let _ = started.send(());
+                let _ = go.recv();
+            }
+            None => {}
+        }
+        self.inner.set(id, secret)
+    }
+
+    fn delete(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {
+        self.inner.delete(id)
+    }
+}
+
+fn logins_on(store: &Arc<Scripted>, registry: &Arc<StandIns>) -> Logins {
+    Logins::new(
+        workspace(),
+        true,
+        builtin(),
+        Arc::clone(registry),
+        Arc::clone(store) as Arc<dyn SecretStore>,
+        Arc::new(Notices::default()),
+        Marker::none(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_forgotten_while_it_is_being_captured_stays_forgotten() {
+    let (started, parked) = tokio::sync::oneshot::channel();
+    let (go, wait) = std::sync::mpsc::channel();
+    let store = Arc::new(Scripted::new([SetStep::Park(started, wait)]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    let capture = tokio::spawn({
+        let logins = logins.clone();
+        async move {
+            let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+            let answer = claude_answer(REAL_ACCESS, REAL_REFRESH);
+            answered(exchange, 200, Some("application/json"), &answer).await
+        }
+    });
+    // The capture is writing its first token when the user forgets the login.
+    parked.await.unwrap();
+    let mut forget = tokio::spawn({
+        let logins = logins.clone();
+        async move { logins.forget("claude").await }
+    });
+    // A forget that does not wait for the capture is over well within this.
+    let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut forget).await;
+    go.send(()).unwrap();
+    capture.await.unwrap();
+    let result = match early {
+        Ok(done) => done.unwrap(),
+        Err(_) => forget.await.unwrap(),
+    };
+    assert_eq!(result, Ok(true));
+    assert_eq!(
+        registry.len(),
+        0,
+        "a forgotten login's stand-ins are still swapped"
+    );
+    assert_eq!(logins.kept(), []);
+    assert_eq!(store.inner.ids(), Vec::<String>::new());
+}
+
 mod properties {
     use std::fmt::Write as _;
 

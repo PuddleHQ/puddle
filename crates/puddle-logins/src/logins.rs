@@ -124,7 +124,9 @@ struct Inner {
     vault: Vault,
     notices: Arc<dyn LoginNotices>,
     marker: Marker,
-    /// One capture at a time, so two refreshes at once do not interleave their writes.
+    /// One change of the kept logins at a time (a capture, a forget, the start's load), so two
+    /// refreshes at once do not interleave their writes and a login forgotten during a capture
+    /// does not come back when the capture ends.
     capture: tokio::sync::Mutex<()>,
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
@@ -397,6 +399,7 @@ impl Logins {
             self.tell_about_kept_logins().await;
             return;
         }
+        let _one_at_a_time = self.inner.capture.lock().await;
         let mut unreadable: Vec<&'static Profile> = Vec::new();
         let mut store_down = false;
         let mut kept: BTreeSet<String> = BTreeSet::new();
@@ -585,6 +588,7 @@ impl Logins {
         else {
             return Ok(false);
         };
+        let _one_at_a_time = self.inner.capture.lock().await;
         let mut failed = false;
         for (slot, _) in profile.memory_slots() {
             self.unregister(profile, slot);

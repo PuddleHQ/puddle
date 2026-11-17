@@ -58,3 +58,12 @@ condition = "AND"
 paths = ['''^crates/puddle-api/src/authz/tests\.rs$''']
 regexTarget = "match"
 regexes = ['''token\W{1,4}ghp_(owners|anns)0123456789''']
+
+# GitHub's own REST description (the slice of it that puddle-repos tests read) names a repository
+# property `temp_clone_token` with an example value; it is a field name and a sample, not a secret.
+[[allowlists]]
+description = "temp_clone_token in the slice of GitHub's REST description"
+condition = "AND"
+paths = ['''^crates/puddle-repos/tests/data/github-rest-slice\.json$''']
+regexTarget = "match"
+regexes = ['''temp_clone_token\W{1,4}[A-Za-z0-9_-]*''']

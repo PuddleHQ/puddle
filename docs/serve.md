@@ -347,7 +347,8 @@ UI. Setting `workspace_base_domain` to a domain with a different registrable dom
 Puddle blocks the base domain and everything below it for guests, and it refuses a public host that
 is one label below the base domain (a workspace could share it). A request whose `Host` is one of
 these names goes to the workspace's editor instead of the UI, on the loopback listener and on the
-network listener alike; a name of no workspace gets 421, and so does any other unknown name. The
+network listener alike. A name of no workspace gets the same answer as a workspace's, so a caller
+that has not signed in cannot test which workspace ids exist; any other unknown name gets 421. The
 editor answers only a browser that Puddle let in. DNS records and certificates for the names are
 the proxy's job, and a wildcard certificate is needed (`*.ws.example.net`): without one the editors
 and forwarded ports are not available in a browser, while the UI itself works.

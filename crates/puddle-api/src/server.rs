@@ -1072,7 +1072,7 @@ where
         async move {
             match editor {
                 Some(editor) if editor.claims(request.headers()) => {
-                    Ok::<_, Infallible>(editor.handle(request.headers()))
+                    Ok::<_, Infallible>(editor.handle())
                 }
                 _ => hyper::service::Service::call(&api, request).await,
             }

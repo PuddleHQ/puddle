@@ -149,7 +149,7 @@ async fn an_answer_whose_body_never_ends_is_not_read() {
     });
     let answer = tokio::time::timeout(
         Duration::from_secs(5),
-        sign_in(addr, &workspace(), "password"),
+        sign_in(addr, &workspace(), &fixture::password("unused")),
     )
     .await
     .expect("the sign-in does not wait for the end of the body");

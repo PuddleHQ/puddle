@@ -459,7 +459,7 @@ impl Store {
         let tx = write_tx(conn)?;
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
-        let outcome = self.record_pending(&tx, request, now, &mut fx)?;
+        let outcome = self.record_pending(&tx, request, now, suffix_allows, &mut fx)?;
         self.commit(tx, head, fx)?;
         Ok(Decision::Pending(outcome))
     }
@@ -484,14 +484,19 @@ impl Store {
             .map(Hit::decision))
     }
 
+    /// Opens a row for `request`, or counts another try of its open row. A row asked for with
+    /// [`SuffixAllows::Ignore`] needs an exact allow from then on (R-14), so the rule and set
+    /// changes that close waiting rows never close it with a suffix allow.
     fn record_pending(
         &self,
         tx: &Transaction<'_>,
         request: &EgressRequest,
         now: u64,
+        suffix_allows: SuffixAllows,
         fx: &mut Vec<Event>,
     ) -> Result<PendingOutcome, StoreError> {
         let (workspace, host) = (request.workspace.as_str(), request.host.to_string());
+        let exact_only = suffix_allows == SuffixAllows::Ignore;
         let existing: Option<i64> = tx
             .query_row(
                 "SELECT id FROM pending
@@ -502,9 +507,10 @@ impl Store {
             .optional()?;
         if let Some(id) = existing {
             let (attempts, last_seen): (i64, i64) = tx.query_row(
-                "UPDATE pending SET last_seen = max(last_seen, ?1), attempts = attempts + 1
+                "UPDATE pending SET last_seen = max(last_seen, ?1), attempts = attempts + 1,
+                                    exact_only = max(exact_only, ?3)
                  WHERE id = ?2 RETURNING attempts, last_seen",
-                params![sql_ts(now), id],
+                params![sql_ts(now), id, exact_only],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             fx.push(Event::PendingUpdated {
@@ -529,9 +535,9 @@ impl Store {
             return Ok(PendingOutcome::Unlisted);
         }
         tx.execute(
-            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![workspace, host, request.port, sql_ts(now)],
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, exact_only)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            params![workspace, host, request.port, sql_ts(now), exact_only],
         )?;
         let id = PendingId(tx.last_insert_rowid());
         let row = load_pending(tx, id)?;

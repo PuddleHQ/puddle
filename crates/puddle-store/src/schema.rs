@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 30;
+pub const SCHEMA_VERSION: u32 = 31;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -986,6 +986,13 @@ ALTER TABLE request_rules ADD COLUMN precedence INTEGER NOT NULL DEFAULT 5
 -- A group's default for a new rule in it; none means 5 (R-59).
 ALTER TABLE rule_sets ADD COLUMN default_precedence INTEGER
     CHECK (default_precedence IS NULL OR default_precedence BETWEEN 1 AND 9);
+";
+
+const V31: &str = "
+-- A waiting request whose name resolved to a local address needs an exact allow (R-14). The row
+-- says so, so that closing waiting rows after a rule or set change asks for the same kind of
+-- allow the proxy asked for. A row stored before this column reads as not needing one.
+ALTER TABLE pending ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0 CHECK (exact_only IN (0, 1));
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

@@ -185,7 +185,10 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   the rule can go into a rule set the user made (R-38).
 - **R-16 A decision is one transaction:** create the rule, set the row to `allowed`/`denied` with
   `rule_id`, `decided_at` and `decided_by`, and close every other `requested` row the new rule now
-  decides (same workspace for a workspace rule, any workspace for a global one) the same way.
+  decides (same workspace for a workspace rule, any workspace for a global one) the same way. A row
+  written after a name resolved to a local address (R-14) is decided as that request was: only an
+  exact allow counts, so a suffix allow or a set's allow never closes it, here or after a set
+  switch (R-37) or a System managed change. Once a row is asked for that way, it stays so.
 - **R-17 Stale ids are refused.** Approving or denying an unknown id or a row not in `requested`
   fails with an error naming the row's current state; nothing changes. A successful call returns
   the row as decided (workspace, host, port) and the rule created, so the CLI and UI can echo exactly

@@ -630,6 +630,85 @@ fn r14_suffix_allow_is_no_match_when_an_exact_allow_is_required() {
 }
 
 #[test]
+fn r14_a_row_that_needs_an_exact_allow_is_never_closed_by_a_suffix_allow() {
+    let (_, store) = fixture();
+    let local = req("a", "db.corp.example", 5432);
+    let row = new_pending(store.decide(&local, SuffixAllows::Ignore).unwrap());
+    // A suffix approval of another row, a new suffix allow and one switched back on: none of
+    // them admits the local address, so none closes the row (R-16 closes only what the rule
+    // now decides).
+    let other = new_pending(decide(&store, "a", "web.corp.example"));
+    store
+        .resolve_pending(
+            other,
+            &Resolution {
+                pattern: PatternChoice::Suffix(".corp.example".into()),
+                ..Resolution::allow()
+            },
+            Actor::Ui,
+        )
+        .unwrap();
+    assert_eq!(store.pending(row).unwrap().state, PendingState::Requested);
+    let row_c = new_pending(
+        store
+            .decide(&req("c", "db.corp.example", 5432), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    let suffix = add(&store, None, ".corp.example", Effect::Allow);
+    assert_eq!(store.pending(row_c).unwrap().state, PendingState::Requested);
+    store.set_rule_enabled(suffix, false, Actor::Ui).unwrap();
+    store.set_rule_enabled(suffix, true, Actor::Ui).unwrap();
+    assert_eq!(store.pending(row_c).unwrap().state, PendingState::Requested);
+    assert_eq!(store.pending(row).unwrap().state, PendingState::Requested);
+    assert!(
+        audit_of(&store, "pending_decided")
+            .iter()
+            .all(|r| r["pending"]["id"] != row.0),
+        "{:?}",
+        audit_of(&store, "pending_decided")
+    );
+    // The next try of the tool finds the same row, not a new one.
+    assert_eq!(
+        store.decide(&local, SuffixAllows::Ignore).unwrap(),
+        Decision::Pending(PendingOutcome::Repeat(row))
+    );
+    // A suffix deny counts for it, and so does an exact allow of the name.
+    let row_b = new_pending(
+        store
+            .decide(&req("b", "x.corp.example", 22), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    let deny = add(&store, Some("b"), ".corp.example", Effect::Deny);
+    let closed = store.pending(row_b).unwrap();
+    assert_eq!(
+        (closed.state, closed.rule_id),
+        (PendingState::Denied, Some(deny))
+    );
+    let exact = add(&store, None, "db.corp.example", Effect::Allow);
+    let closed = store.pending(row).unwrap();
+    assert_eq!(
+        (closed.state, closed.rule_id),
+        (PendingState::Allowed, Some(exact))
+    );
+}
+
+#[test]
+fn r14_a_row_once_asked_for_an_exact_allow_keeps_needing_one() {
+    let (_, store) = fixture();
+    // First seen as a public address, then the name resolved to a local one: the row now
+    // needs an exact allow, whatever the first try said.
+    let row = new_pending(decide(&store, "a", "db.corp.example"));
+    assert_eq!(
+        store
+            .decide(&req("a", "db.corp.example", 443), SuffixAllows::Ignore)
+            .unwrap(),
+        Decision::Pending(PendingOutcome::Repeat(row))
+    );
+    add(&store, None, ".corp.example", Effect::Allow);
+    assert_eq!(store.pending(row).unwrap().state, PendingState::Requested);
+}
+
+#[test]
 fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
     let (clock, store) = fixture();
     let ip = add(&store, Some("a"), "192.168.1.20", Effect::Allow);

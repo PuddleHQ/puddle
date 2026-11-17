@@ -657,6 +657,87 @@ fn r42_set_allows_need_an_exact_rule_of_your_own_for_local_destinations() {
 }
 
 #[test]
+fn r14_switching_sets_never_closes_a_row_that_needs_an_exact_allow() {
+    let (_, store) = fixture();
+    let corp = store
+        .as_user(OWNER)
+        .add_rule(&new_rule(Scope::Global, ".corp.example", Effect::Allow))
+        .unwrap();
+    // The proxy found a local address behind the name and asked again without suffix allows.
+    let local = req("a", "db.corp.example");
+    let row = pending(store.decide(&local, SuffixAllows::Ignore).unwrap());
+    let github_row = pending(
+        store
+            .decide(&req("a", "api.github.com"), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    // An unrelated set switch, a set that matches switched on, one of its entries switched off
+    // and on, and a System managed change: each looks again at the waiting rows.
+    let mut closed = store
+        .switch_rule_set(
+            OWNER,
+            RuleSetId::BuiltIn("debian-ubuntu"),
+            None,
+            Some(false),
+            Actor::Ui,
+        )
+        .unwrap();
+    closed.extend(
+        store
+            .switch_rule_set(
+                OWNER,
+                RuleSetId::BuiltIn("github"),
+                None,
+                Some(true),
+                Actor::Ui,
+            )
+            .unwrap(),
+    );
+    for enabled in [false, true] {
+        closed.extend(
+            store
+                .switch_builtin_entry(
+                    OWNER,
+                    RuleSetId::BuiltIn("github"),
+                    "api.github.com",
+                    enabled,
+                    Actor::Ui,
+                )
+                .unwrap(),
+        );
+    }
+    closed.extend(
+        store
+            .set_system_managed(&plan(&[SystemReason::CodeServer], &[]))
+            .unwrap(),
+    );
+    assert_eq!(closed, Vec::<PendingId>::new());
+    for id in [row, github_row] {
+        assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
+    }
+    assert_eq!(audit_of(&store, "pending_decided"), Vec::<Value>::new());
+    // A request the suffix allow does count for still closes on a switch.
+    let public = pending(decide(&store, "b", "deb.debian.org"));
+    let closed = store
+        .switch_rule_set(
+            OWNER,
+            RuleSetId::BuiltIn("debian-ubuntu"),
+            None,
+            Some(true),
+            Actor::Ui,
+        )
+        .unwrap();
+    assert_eq!(closed, vec![public]);
+    assert_eq!(
+        store.decide(&local, SuffixAllows::Count).unwrap(),
+        Decision::Allow {
+            rule_id: corp.id,
+            pattern: PatternKind::Suffix
+        }
+    );
+}
+
+#[test]
 fn r43_connection_records_name_the_set_that_decided() {
     let (_, store) = fixture();
     store

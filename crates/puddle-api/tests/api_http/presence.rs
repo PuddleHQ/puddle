@@ -172,7 +172,7 @@ async fn a_workspace_nobody_owns_announces_nothing_and_the_next_request_still_do
 #[test]
 fn shutdown_waits_for_the_picker_to_let_go_of_the_store() {
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .max_blocking_threads(1)
@@ -188,14 +188,12 @@ fn shutdown_waits_for_the_picker_to_let_go_of_the_store() {
         let idle = Arc::strong_count(&api.store);
         api.request("box", "www.example.com");
         // `request` keeps no handle once it returns; the picker's lookup holds one until it ran.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Arc::strong_count(&api.store) == idle {
-            assert!(
-                Instant::now() < deadline,
-                "the picker never took the request"
-            );
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        puddle_test_kit::eventually(
+            "the picker took the request",
+            Duration::from_secs(10),
+            || Arc::strong_count(&api.store) != idle,
+        )
+        .await;
         let Api { running, store, .. } = api;
         let watched = Arc::downgrade(&store);
         let stopping = tokio::spawn(async move {

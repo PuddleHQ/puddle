@@ -13525,7 +13525,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description forbidden origin */
+            /** @description a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names) */
             403: {
                 headers: {
                     [name: string]: unknown;

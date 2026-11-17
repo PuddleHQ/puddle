@@ -15,6 +15,23 @@ pub trait EventSource {
     type Event: Debug;
     /// The next event, or `None` when every sender is gone.
     fn next(&mut self) -> impl Future<Output = Option<Self::Event>>;
+
+    /// Like [`next`](Self::next), but says when events were dropped before they were read. A source
+    /// that cannot drop events keeps this default.
+    fn read(&mut self) -> impl Future<Output = Read<Self::Event>> {
+        async { self.next().await.map_or(Read::Closed, Read::Event) }
+    }
+}
+
+/// One read of an [`EventSource`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Read<T> {
+    /// The next event.
+    Event(T),
+    /// This many events were dropped because the reader fell behind.
+    Lagged(u64),
+    /// Every sender is gone.
+    Closed,
 }
 
 impl<T: Debug> EventSource for mpsc::Receiver<T> {
@@ -31,17 +48,26 @@ impl<T: Debug> EventSource for mpsc::UnboundedReceiver<T> {
     }
 }
 
-/// A broadcast receiver that fell behind skips what it missed and reads on: a test that needs every
-/// event keeps its channel big enough.
+/// A broadcast receiver that fell behind skips what it missed and reads on in [`next`](EventSource::next)
+/// (waiting for an event to show up is still right then); [`no_event_matching`] sees the gap through
+/// [`read`](EventSource::read) and fails, since a dropped event could have been the unwanted one.
 impl<T: Clone + Debug> EventSource for broadcast::Receiver<T> {
     type Event = T;
     async fn next(&mut self) -> Option<T> {
         loop {
-            match self.recv().await {
-                Ok(event) => return Some(event),
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(broadcast::error::RecvError::Closed) => return None,
+            match self.read().await {
+                Read::Event(event) => return Some(event),
+                Read::Lagged(_) => {}
+                Read::Closed => return None,
             }
+        }
+    }
+
+    async fn read(&mut self) -> Read<T> {
+        match self.recv().await {
+            Ok(event) => Read::Event(event),
+            Err(broadcast::error::RecvError::Lagged(skipped)) => Read::Lagged(skipped),
+            Err(broadcast::error::RecvError::Closed) => Read::Closed,
         }
     }
 }
@@ -99,16 +125,25 @@ pub async fn no_event_matching<S: EventSource, T: Debug>(
     mut pick: impl FnMut(S::Event) -> Option<T>,
 ) {
     let seen = tokio::time::timeout(window, async {
-        while let Some(event) = source.next().await {
-            if let Some(unwanted) = pick(event) {
-                return Some(unwanted);
+        loop {
+            match source.read().await {
+                Read::Event(event) => {
+                    if let Some(unwanted) = pick(event) {
+                        return Ok(unwanted);
+                    }
+                }
+                Read::Lagged(skipped) => return Err(skipped),
+                Read::Closed => return Err(0),
             }
         }
-        None
     })
     .await;
-    if let Ok(Some(event)) = seen {
-        panic!("{what}: an event came within {window:?}: {event:?}");
+    match seen {
+        Ok(Ok(event)) => panic!("{what}: an event came within {window:?}: {event:?}"),
+        Ok(Err(skipped)) if skipped > 0 => panic!(
+            "{what}: {skipped} events were dropped before they were read, so silence proves nothing; use a bigger channel"
+        ),
+        Ok(Err(_)) | Err(_) => {}
     }
 }
 

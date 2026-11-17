@@ -142,7 +142,7 @@ async function picture(handle, name) {
   }
 }
 
-const EXPLORER_READY = "document.querySelectorAll('.explorer-folders-view .monaco-list-row .label-name').length >= 3";
+const EXPLORER_READY = "document.querySelectorAll('.explorer-folders-view .monaco-list-row .label-name').length >= 2";
 const EXPLORER_ROWS = `[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')].map(r => ({ name: r.querySelector('.label-name')?.textContent, level: r.getAttribute('aria-level') }))`;
 const WINDOW_STATE = `(() => {
   const text = (e, n) => (e?.textContent || '').replace(/\\s+/g, ' ').slice(0, n);
@@ -344,7 +344,8 @@ try {
   const opened = await explorerOf(editor, "first-open");
   await picture(editor, "first-open");
   const roots = opened.rows.filter((r) => r.level === "1").map((r) => r.name);
-  check("the window shows one explorer root per checkout", roots.includes("api") && roots.includes("web") && roots.length === 3, JSON.stringify(opened.rows));
+  // The multi-root file lists the checkouts (the volume itself only when loose files sit beside them): api and web, nothing else.
+  check("the window shows one explorer root per checkout", JSON.stringify([...roots].sort()) === JSON.stringify(["api", "web"]), JSON.stringify(opened.rows));
   check("the window opened the multi-root file the attach wrote", /\.puddle\/editor\/[^/]+\.code-workspace/.test(opened.where.search), JSON.stringify(opened.where));
 
   // 2. The test extension stores its session in the editor's secret storage when it first runs.
@@ -377,7 +378,7 @@ try {
   if (id) {
     const logs = await guest(
       id,
-      "tail -n 60 /run/puddle/agent.log; for f in $(find /workspaces/*/.puddle/vscode-server/server-data -name '*.log' 2>/dev/null | sort | tail -n 8); do echo \"== $f\"; tail -n 30 \"$f\"; done; echo == canary; cat /tmp/canary-secret.log 2>/dev/null; true",
+      "tail -n 60 /run/puddle/agent.log; grep -rn -i canary /workspaces/*/.puddle/vscode-server/server-data/data/logs 2>/dev/null | tail -n 20 | cut -c1-300; ls -la /workspaces/*/.puddle/vscode-server/extensions; for f in $(find /workspaces/*/.puddle/vscode-server/server-data -name '*.log' 2>/dev/null | sort | tail -n 8); do echo \"== $f\"; tail -n 30 \"$f\"; done; echo == canary; cat /tmp/canary-secret.log 2>/dev/null; true",
       60_000,
     ).catch(() => ({ text: "" }));
     writeFileSync(join(out, "guest-logs.txt"), logs.text);

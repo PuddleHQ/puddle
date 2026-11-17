@@ -52,9 +52,10 @@ fn a_computer_without_a_credential_store_fails_every_call_and_loses_nothing_sile
 #[cfg(windows)]
 #[test]
 fn a_keep_local_that_died_halfway_is_finished_by_the_next_one() {
-    if !keyring_available() {
-        return;
-    }
+    assert!(
+        keyring_available(),
+        "Credential Manager answers on every Windows"
+    );
     let service = format!("puddle-test-halfway-{}", std::process::id());
     let store = KeyringStore::named(&service);
     let backup = store

@@ -830,10 +830,16 @@ async fn wrong_at_once(f: &Fixture, n: usize, change: Option<DeviceId>) -> usize
             tokio::spawn(async move {
                 let wrong = pw("not the password!");
                 match change {
-                    Some(device) => sign_in
-                        .change_password(UserId::OWNER, device, wrong, pw("a new long password"))
-                        .await
-                        .map(|()| ()),
+                    Some(device) => {
+                        sign_in
+                            .change_password(
+                                UserId::OWNER,
+                                device,
+                                wrong,
+                                pw("a new long password"),
+                            )
+                            .await
+                    }
                     None => sign_in.sign_in("Tijs", wrong, None).await.map(|_| ()),
                 }
             })

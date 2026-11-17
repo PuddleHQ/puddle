@@ -162,14 +162,14 @@ fn every_request_body_that_holds_a_secret_is_read_with_secret_json() {
             .into_iter()
             .filter(|(f, _)| f.ends_with("wire.rs")),
     );
-    let secret = types_holding_a_secret(&wire);
+    let holders = types_holding_a_secret(&wire);
     for known in [
         "StoreTokenRequest",
         "EnvSetRequest",
         "ChangePasswordRequest",
         "ProxySignInRequest",
     ] {
-        assert!(secret.contains(known), "{known} not found in {secret:?}");
+        assert!(holders.contains(known), "{known} not found among the scanned types");
     }
     let bodies = json_bodies(&sources(&src.join("routes")));
     let secret_reads = bodies.iter().filter(|(_, e, _)| e == "SecretJson").count();
@@ -180,7 +180,7 @@ fn every_request_body_that_holds_a_secret_is_read_with_secret_json() {
     );
     let wrong: Vec<_> = bodies
         .iter()
-        .filter(|(_, extractor, ty)| extractor != "SecretJson" && secret.contains(ty))
+        .filter(|(_, extractor, ty)| extractor != "SecretJson" && holders.contains(ty))
         .collect();
     assert!(wrong.is_empty(), "read with plain Json: {wrong:?}");
 }

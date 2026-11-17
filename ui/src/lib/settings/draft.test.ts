@@ -62,6 +62,7 @@ describe("the change a save sends", () => {
       effective: {} as GlobalView["effective"],
       ui: fake.ui,
       unknown_fields: [],
+      revision: fake.revision(),
       vscode_server: fake.vscode,
       tools: fake.tools,
       limits: fake.limits,

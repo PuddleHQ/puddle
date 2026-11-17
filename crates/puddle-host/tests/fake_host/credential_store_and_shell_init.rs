@@ -288,6 +288,39 @@ async fn a_script_that_prints_or_does_not_parse_is_refused_with_what_was_seen_an
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_shell_init_check_that_times_out_is_refused_with_how_long_it_may_take() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    // Every command in the sandbox times out, not one: a background command (the checkouts
+    // refresh after the create) could otherwise take the one fault before the check runs.
+    rig.runtime.inject(
+        Op::Exec,
+        Fault::always(puddle_compute::ComputeError::ExecTimeout {
+            sandbox: "acme".to_owned(),
+            program: "sh".to_owned(),
+            timeout: Duration::from_secs(10),
+        })
+        .only_for("acme"),
+    );
+    let slow = put_shell_init(&api, "acme", "sleep 60\n").await;
+    rig.runtime.clear_faults();
+    assert_eq!(slow.status, 422, "{}", slow.body);
+    assert!(
+        slow.body.contains("took more than") && slow.body.contains("seconds to finish"),
+        "{}",
+        slow.body
+    );
+    assert_eq!(
+        api.get("/api/workspaces/acme/shell-init").await.json()["saved"],
+        false
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_takes_a_save_unchecked_and_the_start_mounts_it_checks_it_and_raises_a_problem_if_it_prints()
  {
     let rig = Rig::named_ids();

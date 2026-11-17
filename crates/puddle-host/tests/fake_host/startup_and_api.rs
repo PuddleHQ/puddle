@@ -374,6 +374,91 @@ async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent
     host.shutdown().await;
 }
 
+/// Waits until the guest agent `editor_stand_in` started has said hello on `name`'s route, so the
+/// host holds a link to it.
+async fn agent_linked(host: &Host<FakeRuntime>, name: &WorkspaceId) {
+    puddle_test_kit::eventually_async("the guest agent connected", Duration::from_secs(20), || {
+        host.workspaces().end_extension_hosts(name)
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connected_agent_answers_the_end_of_the_extension_hosts_and_a_build_switch() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "linked").await;
+    let name = WorkspaceId::new("linked").unwrap();
+    let _editor = editor_stand_in(&rig, "linked").await;
+    agent_linked(&host, &name).await;
+    let ending = host.workspaces().end_extension_hosts(&name).await;
+    assert!(ending.is_ok(), "{ending:?}");
+    // The agent has staged no newer build, so it switches nothing and says so.
+    let switched = host.workspaces().switch_editor_build(&name, 0).await;
+    assert!(matches!(switched, Ok(false)), "{switched:?}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_that_is_not_running_cannot_be_stopped_or_attached_to_and_an_unknown_one_has_no_delete_check()
+ {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "idle").await;
+    api.post("/api/workspaces/idle/stop", "").await;
+    events.until(ended("idle"), Duration::from_secs(20)).await;
+    let again = api.post("/api/workspaces/idle/stop", "").await;
+    assert_eq!(again.status, 409, "{}", again.body);
+    assert!(
+        again.json()["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("is not running (stopped)"),
+        "{}",
+        again.body
+    );
+    // So does the check that runs before a delete, for a workspace the host does not know.
+    let unknown = host
+        .workspaces()
+        .delete_check(&WorkspaceId::new("nobody").unwrap())
+        .await;
+    assert!(
+        matches!(unknown, Err(puddle_api::WorkspaceError::NotFound(_))),
+        "{unknown:?}"
+    );
+    // The host refuses an attach to it as well, for a caller that did not pass the API's checks.
+    let attached = host
+        .workspaces()
+        .attach(
+            &WorkspaceId::new("idle").unwrap(),
+            puddle_api::AttachMode::Browser,
+        )
+        .await;
+    assert!(
+        matches!(
+            attached,
+            Err(puddle_api::WorkspaceError::Conflict(ref m)) if m.ends_with("is not running; start it first")
+        ),
+        "{attached:?}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspace_service_prints_how_many_workspaces_it_holds() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    assert_eq!(
+        format!("{:?}", host.workspaces()),
+        "HostWorkspaces { workspaces: 0, .. }"
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_round_of_build_switches_asks_only_microsoft_workspaces_without_a_window() {
     let rig = Rig::named_ids();

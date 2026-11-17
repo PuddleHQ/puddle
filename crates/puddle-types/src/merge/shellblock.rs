@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A shell startup file (`/etc/bash.bashrc`, `/etc/zsh/zshenv`): Puddle owns the lines between two
 //! marker comments and nothing else.
 //!

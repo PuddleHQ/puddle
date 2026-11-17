@@ -2,7 +2,7 @@
 //! The notice for a file of the user's that Puddle merges its settings into and cannot parse:
 //! the file stays as it is, so the settings Puddle wanted in it are missing until it is fixed.
 
-use puddle_boot::MACHINE_SETTINGS_GUEST;
+use puddle_boot::MACHINE_SETTINGS_RELATIVE;
 use puddle_types::{Problem, Problems, WorkspaceId};
 
 /// The system `ssh_config`, where Puddle adds one `Include` line.
@@ -19,7 +19,10 @@ pub(crate) fn merge_notice_prefix(workspace: &WorkspaceId) -> String {
 
 /// What does not work while `path` is left unmerged.
 fn consequence(path: &str) -> &'static str {
-    if path == MACHINE_SETTINGS_GUEST {
+    if path
+        .strip_suffix(MACHINE_SETTINGS_RELATIVE)
+        .is_some_and(|home| home.ends_with('/'))
+    {
         "VS Code in this workspace keeps its own port forwarding, so it can forward the port of \
          Puddle's proxy, and its Git sign-in guard is not switched on"
     } else if path == SSH_CONFIG_SYSTEM {
@@ -39,11 +42,12 @@ fn consequence(path: &str) -> &'static str {
 pub(crate) fn merge_notices(
     workspace: &WorkspaceId,
     name: &str,
-    left: &[(&str, &str)],
+    left: &[(&str, impl AsRef<str>)],
 ) -> Vec<Problem> {
     left.iter()
         .filter(|(path, _)| !path.ends_with(EDITOR_FILE_SUFFIX))
         .map(|(path, why)| {
+            let why = why.as_ref();
             Problem::new(
                 format!("{}{path}", merge_notice_prefix(workspace)),
                 format!("Puddle could not update {path} in {name}"),
@@ -65,7 +69,7 @@ pub(crate) fn settle_merge_notices(
     problems: &Problems,
     workspace: &WorkspaceId,
     name: &str,
-    left: &[(&str, &str)],
+    left: &[(&str, impl AsRef<str>)],
 ) {
     let notices = merge_notices(workspace, name, left);
     let prefix = merge_notice_prefix(workspace);

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One set of cases every secret store must pass, run on the store in memory, on the file vault, and
 //! on the operating system's credential store where the computer has one that works (Credential
 //! Manager on Windows, a Secret Service on Linux). A computer without one skips that run and says

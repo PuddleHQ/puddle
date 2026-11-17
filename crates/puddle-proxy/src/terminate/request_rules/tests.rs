@@ -170,3 +170,22 @@ fn the_answer_names_the_rule_and_the_method_but_never_the_path() {
 fn refusal_for_method(method: &str) -> Refusal {
     refusal(RuleId(1), method, &host("a.example.com"))
 }
+
+#[test]
+fn a_path_too_long_to_read_in_every_form_is_refused_by_a_rule_on_its_host_and_method() {
+    let rules = RequestRules::new(vec![rule(3, "api.example.com", &["DELETE"], "/admin")]);
+    let long = format!("/public/{}", "a%2f;.%2e\\".repeat(MAX_JUDGED_PATH / 10 + 1));
+    assert!(long.len() > MAX_JUDGED_PATH);
+    assert_eq!(
+        refusing(&rules, "api.example.com", "DELETE", &long),
+        Some(3)
+    );
+    // Only where a rule could refuse it: another method, another host.
+    assert_eq!(refusing(&rules, "api.example.com", "GET", &long), None);
+    assert_eq!(refusing(&rules, "other.example.com", "DELETE", &long), None);
+    // A path of the limit is still read, and a long query is no long path.
+    let at = format!("/public/{}", "a".repeat(MAX_JUDGED_PATH - "/public/".len()));
+    assert_eq!(refusing(&rules, "api.example.com", "DELETE", &at), None);
+    let query = format!("/public?q={}", "a".repeat(64 << 10));
+    assert_eq!(refusing(&rules, "api.example.com", "DELETE", &query), None);
+}

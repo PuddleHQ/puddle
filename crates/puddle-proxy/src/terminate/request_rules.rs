@@ -15,6 +15,14 @@ use crate::proxy::Refusal;
 
 /// Headers by which a client asks a server to read a request as another method. Honoured
 /// by common frameworks, so a rule on `DELETE` has to see through `POST` plus one of these.
+/// The longest path, in bytes up to the query, that is read in every form a server may read it
+/// in. That reading costs time in proportion to the length times every combination of the ways
+/// to read it, about 30 ms for 4 KiB and 0.3 s for the 64 KiB a request head may hold, spent on
+/// the proxy's own threads. No rule names a path near this long (a pattern is at most
+/// [`puddle_types::MAX_PATH_PATTERN`] bytes), so a longer path is judged as if every rule's path
+/// named it: a rule on the host and method refuses it.
+pub(crate) const MAX_JUDGED_PATH: usize = 2048;
+
 const METHOD_OVERRIDES: [&str; 3] = [
     "x-http-method-override",
     "x-http-method",
@@ -49,10 +57,12 @@ impl RequestRule {
         })
     }
 
-    fn refuses(&self, host: &Host, methods: &[&str], paths: &[CanonicalPath]) -> bool {
+    /// `paths` is `None` for a path too long to read ([`MAX_JUDGED_PATH`]), which every path
+    /// pattern is taken to name.
+    fn refuses(&self, host: &Host, methods: &[&str], paths: Option<&[CanonicalPath]>) -> bool {
         self.hosts.contains(host)
             && self.methods.matches_any(methods.iter().copied())
-            && paths.iter().any(|path| self.path.matches(path))
+            && paths.is_none_or(|paths| paths.iter().any(|path| self.path.matches(path)))
     }
 }
 
@@ -109,12 +119,17 @@ impl RequestRules {
     /// or a `_method` in the query string, read as PHP reads it (pairs split at `&` or `;`, a `+`
     /// is a space, `.` and a space in a key are `_`) and also with a `+` in the value kept as
     /// written. A rule on `DELETE` therefore refuses a `POST` that asks to be a `DELETE`.
+    ///
+    /// A path longer than [`MAX_JUDGED_PATH`] is not read; every rule on the host and method
+    /// refuses it.
     #[must_use]
     pub fn refusing(&self, host: &Host, request: &RequestView<'_>) -> Option<RuleId> {
         if !self.covers(host) {
             return None;
         }
-        let paths = CanonicalPath::readings(request.target());
+        let target = request.target();
+        let path = target.split('?').next().unwrap_or_default();
+        let paths = (path.len() <= MAX_JUDGED_PATH).then(|| CanonicalPath::readings(target));
         let mut methods: Vec<&str> = vec![request.method()];
         for name in METHOD_OVERRIDES {
             for value in request.header_values(name) {
@@ -141,7 +156,7 @@ impl RequestRules {
         methods.extend(asked.iter().map(String::as_str));
         self.rules
             .iter()
-            .find(|rule| rule.refuses(host, &methods, &paths))
+            .find(|rule| rule.refuses(host, &methods, paths.as_deref()))
             .map(|rule| rule.id)
     }
 }

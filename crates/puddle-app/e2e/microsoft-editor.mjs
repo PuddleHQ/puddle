@@ -399,3 +399,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log("\nall checks passed");
+// The app's microVM processes outlive it and hold its output pipes, and the event loop waits for those: exit by hand
+// (the run that passed every check sat 48 more minutes until the step timeout).
+process.exit(0);

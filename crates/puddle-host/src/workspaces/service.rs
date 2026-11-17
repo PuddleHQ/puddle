@@ -151,6 +151,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 }
                 if puddle_api::label_taken(
                     state.slots.values().map(|s| &s.record),
+                    new.owner,
                     new.name.as_str(),
                     None,
                 )
@@ -169,7 +170,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .map_err(WorkspaceError::unavailable)?;
                 // Whose it is, before it is listed or announced.
                 git.claim(&id, new.owner)?;
-                let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
+                let mut record =
+                    WorkspaceRecord::new(id.clone(), new.owner, new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new
                     .image
@@ -670,10 +672,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn restore_orphan<'a>(
         &'a self,
         id: &'a WorkspaceId,
+        owner: puddle_store::UserId,
         repository: Option<puddle_api::RepoUrl>,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.restore_orphan_volume(id, repository, git).await })
+        Box::pin(async move { self.restore_orphan_volume(id, owner, repository, git).await })
     }
 
     fn checkouts<'a>(

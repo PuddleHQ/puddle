@@ -18,6 +18,7 @@
     identities as identityStore,
     type IdentitiesStore,
   } from "#lib/stores/identities.svelte.ts";
+  import { session } from "#lib/session/session.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import {
     globalSettings as globalSettingsStore,
@@ -425,19 +426,21 @@
             />
             Clone from an address
           </label>
-          <label>
-            <input
-              type="radio"
-              name={rowId(row, "source")}
-              value="folder"
-              bind:group={row.source}
-              onchange={() => {
-                rowErrors = { ...rowErrors, [row.key]: {} };
-              }}
-              data-testid="source-folder"
-            />
-            From a folder on this computer
-          </label>
+          {#if session.mayUseServerFolders}
+            <label>
+              <input
+                type="radio"
+                name={rowId(row, "source")}
+                value="folder"
+                bind:group={row.source}
+                onchange={() => {
+                  rowErrors = { ...rowErrors, [row.key]: {} };
+                }}
+                data-testid="source-folder"
+              />
+              From a folder on this computer
+            </label>
+          {/if}
         </div>
 
         {#if row.source === "folder"}

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Downloading in the guest: the guest's own `curl` (or `wget`), a SHA-256 check, nothing else.
 //! The VS Code server ([`crate::microsoft`]) and the pinned mise ([`crate::mise`]) share it, so
 //! both go through Puddle's proxy and trust store the same way.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: `puddle-agent mise-install` as the host runs it. The workspace's mise is a
 //! script whose state lives in marker files, so the report, the exit code and the last error
 //! line the host reads come from the real binary without a network.

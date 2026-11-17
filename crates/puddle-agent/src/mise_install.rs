@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The install of a workspace's managed tools: `puddle-agent mise-install <workspace-dir>`. The
 //! host runs it as the session user after [`crate::mise`] put the pinned mise on the volume, and
 //! again after a clone or when the user allowed a host the install waited on.

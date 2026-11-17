@@ -945,7 +945,7 @@ async fn with_several_users_off_a_users_signed_in_browser_stops_working() {
         .unwrap();
     let off = same_accounts(&on, false);
     let err = off.refresh(&bob.refresh).await.unwrap_err();
-    assert_eq!(code(&err), ErrorCode::Unauthorized);
+    assert_eq!(code(&err), ErrorCode::Forbidden, "the refusal names its cause");
     let device = DeviceId::from_stored(bob.grant.device.id);
     let (token, _) = off.tokens.issue(device, on.clock.now_ms()).unwrap();
     assert!(off.principal_for(&token).await.is_none());

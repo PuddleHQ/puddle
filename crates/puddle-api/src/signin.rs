@@ -104,6 +104,15 @@ fn wrong_credentials() -> ApiError {
     )
 }
 
+/// A user other than the owner, while several users are off: the cause and the way out.
+fn owner_only() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::FORBIDDEN,
+        ErrorCode::Forbidden,
+        "only the owner may sign in while several users are off; the owner can switch them on",
+    )
+}
+
 fn weak(err: PasswordError) -> ApiError {
     match err {
         PasswordError::Weak(why) => ApiError::invalid(why),
@@ -319,11 +328,7 @@ impl SignIn {
             // A refused password leaves the invite as it was.
             password::check_policy(&password, &holder.name).map_err(weak)?;
             if !this.may_sign_in(holder.role) {
-                return Err(ApiError::new(
-                    axum::http::StatusCode::FORBIDDEN,
-                    ErrorCode::Forbidden,
-                    "only the owner may sign in while several users are off",
-                ));
+                return Err(owner_only());
             }
             let user = this.secrets.redeem_invite(&digest)?.ok_or_else(not_valid)?;
             let hash = password::hash(&password).map_err(weak)?;
@@ -393,11 +398,7 @@ impl SignIn {
                 )
             })?;
             if !this.may_sign_in(session.role) {
-                return Err(ApiError::new(
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    ErrorCode::Unauthorized,
-                    "this browser is not signed in",
-                ));
+                return Err(owner_only());
             }
             this.store
                 .touch_device(session.device, this.now().saturating_add(DEVICE_TTL_MS))?;

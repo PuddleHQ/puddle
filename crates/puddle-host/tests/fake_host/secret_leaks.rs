@@ -10,11 +10,11 @@ use puddle_secrets::StoreKind;
 
 use super::terminals_and_mise::files_holding;
 
-/// `PUDDLE-CANARY-` and 16 random hex digits.
+/// 32 random hex digits, built at run time so no literal secret sits in the source.
 fn random_canary() -> String {
-    let mut bytes = [0_u8; 8];
+    let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).unwrap();
-    let mut hex = String::from("PUDDLE-CANARY-");
+    let mut hex = String::new();
     for byte in bytes {
         write!(hex, "{byte:02x}").unwrap();
     }

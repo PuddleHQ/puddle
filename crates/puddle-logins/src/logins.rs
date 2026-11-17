@@ -643,16 +643,9 @@ impl Logins {
         workspace: &WorkspaceId,
         profiles: &[Profile],
     ) -> usize {
-        let vault = Vault::new(Arc::clone(store), workspace);
-        profiles
+        crate::vault::saved_login_ids(workspace, profiles)
             .iter()
-            .flat_map(|profile| {
-                profile
-                    .slots()
-                    .into_iter()
-                    .map(move |(slot, _)| (profile, slot))
-            })
-            .filter(|(profile, slot)| vault.delete(profile, *slot).is_err())
+            .filter(|id| store.delete(id).is_err())
             .count()
     }
 

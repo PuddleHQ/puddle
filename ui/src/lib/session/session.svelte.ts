@@ -208,7 +208,12 @@ export class SessionStore {
   #takeInvite(): void {
     const { pathname, hash } = this.#location();
     if (pathname !== "/invite" || hash.length < 2) return;
-    this.invite = decodeURIComponent(hash.slice(1));
+    try {
+      this.invite = decodeURIComponent(hash.slice(1));
+    } catch {
+      // A mangled copy of the link is no invite; the page still has to start.
+      this.invite = null;
+    }
     // The secret is in the page's memory now; it should not stay in the address bar.
     this.#dropFragment();
   }

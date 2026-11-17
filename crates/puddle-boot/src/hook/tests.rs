@@ -8,6 +8,7 @@ fn the_report_lists_the_files_the_hook_put_back() {
         stdout: "puddle-boot: sysctls set\npuddle-boot: replaced /etc/a b\n\
                      puddle-boot: replaced /etc/c\npuddle-boot: ready\n"
             .into(),
+        ..Default::default()
     };
     assert_eq!(report.replaced_files(), ["/etc/a b", "/etc/c"]);
     assert_eq!(BootReport::default().replaced_files(), [] as [&str; 0]);
@@ -18,6 +19,7 @@ fn the_report_names_an_entrypoint_that_failed_at_once() {
     let said = |stdout: &str| BootReport {
         duration: Duration::ZERO,
         stdout: stdout.into(),
+        ..Default::default()
     };
     assert_eq!(
             said("puddle-boot: entrypoint chained: x\npuddle-boot: entrypoint exited with status 127: x: not found\n")
@@ -36,6 +38,7 @@ fn the_report_says_when_the_session_user_has_no_sudo() {
     let said = |stdout: &str| BootReport {
         duration: Duration::ZERO,
         stdout: stdout.into(),
+        ..Default::default()
     };
     assert!(
         said(
@@ -60,6 +63,7 @@ fn the_report_names_the_kubernetes_tools_the_hook_found() {
     let said = |stdout: &str| BootReport {
         duration: Duration::ZERO,
         stdout: stdout.into(),
+        ..Default::default()
     };
     assert_eq!(
         said("puddle-boot: ready\npuddle-boot: kubernetes tools kind minikube\n")
@@ -83,6 +87,7 @@ fn the_report_names_the_guests_git_version() {
     let said = |stdout: &str| BootReport {
         duration: Duration::ZERO,
         stdout: stdout.into(),
+        ..Default::default()
     };
     assert_eq!(
         said("puddle-boot: git version 2.39.5\n").git_version(),
@@ -166,4 +171,28 @@ fn hook_settings() {
     assert_eq!(h.timeout, Duration::from_secs(1));
     assert_eq!(h.ready_wait, Duration::from_secs(2));
     assert_eq!(BootHook::new().timeout, BootHook::DEFAULT_TIMEOUT);
+}
+
+#[test]
+fn hostile_left_files_name_only_merged_files_once_with_a_cut_clean_reason() {
+    use std::fmt::Write as _;
+    let docker = "/root/.docker/config.json";
+    let long = format!("bad\x1b[2J\rfaked{}", "x".repeat(10 * 1024));
+    let mut stdout = String::new();
+    for i in 0..1000 {
+        let _ = writeln!(stdout, "puddle-boot: /tmp/forged-{i} left as it is: {long}");
+        let _ = writeln!(stdout, "puddle-boot: {docker} left as it is: {i} {long}");
+    }
+    let report = BootReport {
+        stdout,
+        merged: vec![docker.to_owned(), "/etc/ssh/ssh_config".to_owned()],
+        ..Default::default()
+    };
+    let left = report.left_files();
+    assert_eq!(left.len(), 1);
+    let (path, why) = &left[0];
+    assert_eq!(*path, docker);
+    assert!(why.starts_with("0 bad?[2J?faked"), "{why}");
+    assert_eq!(why.chars().count(), MAX_LEFT_REASON_CHARS);
+    assert_eq!(BootReport::default().left_files(), []);
 }

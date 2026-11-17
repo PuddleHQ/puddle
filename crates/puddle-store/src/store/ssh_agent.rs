@@ -30,6 +30,19 @@ pub struct SshAgentHost {
     pub changed_at: u64,
 }
 
+/// What [`Store::pin_ssh_agent_host_key`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostKeyPin {
+    /// The host had no host key yet; this one is kept from now on.
+    Pinned,
+    /// The host key is the one kept for the host.
+    Same,
+    /// The host has another host key: this fingerprint.
+    Other(String),
+    /// The agent is not on for the host.
+    Off,
+}
+
 /// Fingerprints are stored one per line: they are base64 and never hold one.
 fn joined(keys: Option<&[String]>) -> Option<String> {
     keys.map(|keys| {
@@ -113,6 +126,42 @@ impl Store {
                 changed(fx, workspace);
             }
             row(tx, workspace, host)
+        })
+    }
+
+    /// Ties `host_key` (a SHA-256 fingerprint) to `host` in `workspace` when the host has no host
+    /// key yet, and says how it compares with the one kept. The key stays until the agent is
+    /// turned off for the host; changing the allowed keys keeps it.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn pin_ssh_agent_host_key(
+        &self,
+        workspace: &WorkspaceId,
+        host: &str,
+        host_key: &str,
+    ) -> Result<HostKeyPin, StoreError> {
+        self.change(|tx, _now, _fx| {
+            let kept: Option<Option<String>> = tx
+                .query_row(
+                    "SELECT host_key FROM ssh_agent_hosts WHERE workspace_id = ?1 AND host = ?2",
+                    params![workspace.as_str(), host],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(match kept {
+                None => HostKeyPin::Off,
+                Some(Some(kept)) if kept == host_key => HostKeyPin::Same,
+                Some(Some(kept)) => HostKeyPin::Other(kept),
+                Some(None) => {
+                    tx.execute(
+                        "UPDATE ssh_agent_hosts SET host_key = ?3
+                         WHERE workspace_id = ?1 AND host = ?2 AND host_key IS NULL",
+                        params![workspace.as_str(), host, host_key],
+                    )?;
+                    HostKeyPin::Pinned
+                }
+            })
         })
     }
 

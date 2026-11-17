@@ -124,6 +124,16 @@ export class GlobalSettings {
     try {
       const { data, error } = await this.#api.PUT("/api/settings", { body });
       if (!data) {
+        if (error?.error === "settings_changed") {
+          // Someone else saved since this page read the settings: show theirs, keep the user's
+          // edits on screen. Saving again applies only those edits on top.
+          await this.load(true);
+          return {
+            ok: false,
+            message:
+              "The settings were changed somewhere else (another window or the command line), so nothing was saved. The page now shows the current values; save again to apply your change on top.",
+          };
+        }
         return error?.error === "newer_settings"
           ? {
               ok: false,

@@ -197,6 +197,50 @@ mod gate {
     }
 
     #[test]
+    fn the_first_host_key_of_a_host_is_kept_and_another_is_refused() {
+        let store = store();
+        let gate = gate(&store, Duration::from_secs(5), Duration::ZERO);
+        assert_eq!(
+            gate.pin_host_key(&ws("a"), "h.example.com", "SHA256:first"),
+            Err(PinFailure::Unavailable),
+            "the agent is not on for the host"
+        );
+        store
+            .set_ssh_agent_host(&ws("a"), "h.example.com", None)
+            .unwrap();
+        assert_eq!(
+            gate.pin_host_key(&ws("a"), "h.example.com", "SHA256:first"),
+            Ok(())
+        );
+        assert_eq!(
+            gate.pin_host_key(&ws("a"), "h.example.com", "SHA256:first"),
+            Ok(())
+        );
+        assert_eq!(
+            gate.pin_host_key(&ws("a"), "h.example.com", "SHA256:other"),
+            Err(PinFailure::Changed("SHA256:first".into()))
+        );
+    }
+
+    #[test]
+    fn a_store_that_cannot_keep_the_host_key_refuses_the_bind() {
+        let store = store();
+        store
+            .set_ssh_agent_host(&ws("a"), "h.example.com", None)
+            .unwrap();
+        puddle_store::testing::break_database(
+            &store,
+            "CREATE TRIGGER pin_fails BEFORE UPDATE ON ssh_agent_hosts
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        );
+        let gate = gate(&store, Duration::from_secs(5), Duration::ZERO);
+        assert_eq!(
+            gate.pin_host_key(&ws("a"), "h.example.com", "SHA256:first"),
+            Err(PinFailure::Unavailable)
+        );
+    }
+
+    #[test]
     fn a_no_is_a_refusal_and_an_always_stops_the_questions() {
         let store = store();
         let gate = gate(&store, Duration::from_secs(5), Duration::ZERO);

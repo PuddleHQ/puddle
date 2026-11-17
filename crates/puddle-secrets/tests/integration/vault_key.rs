@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -30,6 +30,14 @@ const HEALTHY: &str = "[--version]\nstdout=systemd 257 (257.13-1~deb13u1)\\n\n\
 /// longer than this to start, and a timed-out `--version` is read as "go on and seal", so a
 /// limit on every call made the answers depend on the clock.
 const HANG_LIMIT: Duration = Duration::from_millis(500);
+
+/// How long one call of the real `systemd-creds` may take in the test that runs it. Its service
+/// reads `/var/lib/systemd` before it answers, so when the computer's disk stalls (the host check
+/// ran four lanes of builds on one disk, and the service answered only after 42 seconds,
+/// 2026-11-16) it answers late, not wrongly. The product's own limit (10 seconds a try, three
+/// tries) is a statement about a stuck sign-in, and the other tests here pin it with fake tools;
+/// this one checks the real tool's answers, so a slow disk must not decide it.
+const REAL_TOOL_LIMIT: Duration = Duration::from_secs(50);
 
 /// A `systemd-creds` whose `encrypt` takes ten times the limit of [`HANG_LIMIT`].
 const HANGING_ENCRYPT: &str =
@@ -470,7 +478,9 @@ async fn the_real_systemd_creds_seals_and_opens_a_key() {
     let tools = ToolPaths::resolve();
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");
-    let keys = VaultKeys::new(dir.path(), &vault, tools).with_credentials_dir(None);
+    let keys = VaultKeys::new(dir.path(), &vault, tools)
+        .with_credentials_dir(None)
+        .with_timeout(REAL_TOOL_LIMIT);
     let found = keys.find_or_make().await.unwrap();
     if found.source != KeySource::SystemdSealed {
         // skip-ok: GitHub's Linux runners ship systemd 255 (no per-user sealing); the host check and a
@@ -494,6 +504,7 @@ async fn the_real_systemd_creds_seals_and_opens_a_key() {
 
     let again = VaultKeys::new(dir.path(), &vault, ToolPaths::resolve())
         .with_credentials_dir(None)
+        .with_timeout(REAL_TOOL_LIMIT)
         .find_or_make()
         .await
         .unwrap();
@@ -505,6 +516,7 @@ async fn the_real_systemd_creds_seals_and_opens_a_key() {
     std::fs::write(&sealed, b"not a credential").unwrap();
     let err = VaultKeys::new(dir.path(), &vault, ToolPaths::resolve())
         .with_credentials_dir(None)
+        .with_timeout(REAL_TOOL_LIMIT)
         .find_or_make()
         .await
         .unwrap_err();

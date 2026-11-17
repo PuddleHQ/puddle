@@ -64,6 +64,20 @@ export class LiveState implements LiveSource {
     this.#pollMs = deps.pollMs ?? 15_000;
   }
 
+  /**
+   * Calls every listener. One that throws must not end the stream loop or starve the others: the
+   * stream would stay "connected" while nothing reads it.
+   */
+  #tell(call: (listener: LiveListener) => void): void {
+    for (const l of [...this.#listeners]) {
+      try {
+        call(l);
+      } catch {
+        // That screen's own problem; the others and the stream carry on.
+      }
+    }
+  }
+
   /** Screens that show more than the count listen here; returns the function that stops it. */
   subscribe(listener: LiveListener): () => void {
     this.#listeners.add(listener);
@@ -153,13 +167,13 @@ export class LiveState implements LiveSource {
           },
           onResync: () => {
             void this.refresh();
-            for (const l of [...this.#listeners]) l.resync?.();
+            this.#tell((l) => l.resync?.());
           },
         });
         for await (const event of stream) {
           // The count itself still comes from the poll until the API sends pending events.
           if (isAsksChanged(event)) void this.refreshAsks();
-          for (const l of [...this.#listeners]) l.event?.(event);
+          this.#tell((l) => l.event?.(event));
         }
       })();
     };

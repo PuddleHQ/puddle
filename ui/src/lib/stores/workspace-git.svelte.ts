@@ -80,11 +80,14 @@ export class WorkspaceGitStore {
     fallback: string,
     apply: (data: T) => void | Promise<void>,
   ): Promise<Result> {
+    const id = this.#id;
     try {
       const { data, error } = await run();
       if (data === undefined) {
         return { ok: false, message: sentence(error?.message ?? fallback) };
       }
+      // The page moved to another workspace meanwhile: this answer is not for what it shows.
+      if (id !== this.#id) return { ok: true };
       await apply(data);
       return { ok: true };
     } catch {
@@ -128,10 +131,11 @@ export class WorkspaceGitStore {
 
   /** Takes an identity off the workspace. */
   async detach(identity: number): Promise<Result> {
+    const id = this.#id;
     try {
       const { data, error } = await this.#api.DELETE(
         "/api/workspaces/{id}/identities/{identity}",
-        { params: { path: { id: this.#id, identity } } },
+        { params: { path: { id, identity } } },
       );
       if (!data) {
         return {
@@ -141,7 +145,7 @@ export class WorkspaceGitStore {
           ),
         };
       }
-      this.git = data;
+      if (id === this.#id) this.git = data;
       return { ok: true };
     } catch {
       return { ok: false, message: DOWN };
@@ -206,15 +210,16 @@ export class WorkspaceGitStore {
 
   /** Removes a row. A row that is already gone counts as removed. */
   async removeRepo(row: RepoRow): Promise<Result> {
+    const id = this.#id;
     try {
       const { response } = await this.#api.DELETE(
         "/api/workspaces/{id}/git/repos/{repo}",
-        { params: { path: { id: this.#id, repo: row.id } } },
+        { params: { path: { id, repo: row.id } } },
       );
       if (!response.ok && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't remove the repository." };
       }
-      if (this.git) {
+      if (this.git && id === this.#id) {
         this.git = {
           ...this.git,
           repos: this.git.repos.filter((r) => r.id !== row.id),

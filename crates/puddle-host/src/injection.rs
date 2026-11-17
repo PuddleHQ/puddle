@@ -765,7 +765,8 @@ impl Injection {
     /// its own secrets' values in the credential store. The workspace is gone either way, so a
     /// failure is logged and shown ([`Event::WorkspaceEnvFailed`]) instead of stopping anything: a
     /// value that stays behind is unreachable (nothing names it any more) but is still the user's.
-    pub(crate) async fn forget(&self, workspace: &WorkspaceId) {
+    /// Returns whether everything is gone.
+    pub(crate) async fn forget(&self, workspace: &WorkspaceId) -> bool {
         let (store, vault, name) = (
             Arc::clone(&self.inputs.store),
             Arc::clone(&self.vault),
@@ -791,10 +792,14 @@ impl Injection {
         .await
         .map_err(InjectionError::RemovalTask)
         .and_then(|removed| removed);
-        if let Err(reason) = outcome {
-            self.failed(workspace, &reason);
-        }
-        self.login_keeper.delete_workspace(workspace).await;
+        let removed = match outcome {
+            Ok(()) => true,
+            Err(reason) => {
+                self.failed(workspace, &reason);
+                false
+            }
+        };
+        self.login_keeper.delete_workspace(workspace).await && removed
     }
 
     /// The workspaces that have a CA now.

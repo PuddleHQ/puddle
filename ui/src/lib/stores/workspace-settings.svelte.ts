@@ -34,6 +34,8 @@ export class WorkspaceSettings {
   #id = "";
   /** Calls to `load` and `change` in order, so a slow answer never overwrites a newer one. */
   #ticket = 0;
+  /** The save in progress (or done); the next one starts when it settles. */
+  #saving: Promise<void> = Promise.resolve();
   readonly #api: StoreApi;
 
   constructor(api: StoreApi = defaultApi) {
@@ -92,7 +94,19 @@ export class WorkspaceSettings {
   }
 
   /** The API replaces the whole document, so each save sends both parts as stored with the change laid over. */
-  async #put(
+  #put(
+    layer: (overrides: Layer) => Layer,
+    tools: Partial<Tools>,
+  ): Promise<SaveResult> {
+    // One save at a time: each body is built from the answer to the one before, so a quick
+    // second change cannot overwrite the first.
+    const run = this.#saving.then(() => this.#send(layer, tools));
+    // `#send` answers every failure as a result, so the chain never breaks.
+    this.#saving = run.then(() => undefined);
+    return run;
+  }
+
+  async #send(
     layer: (overrides: Layer) => Layer,
     tools: Partial<Tools>,
   ): Promise<SaveResult> {

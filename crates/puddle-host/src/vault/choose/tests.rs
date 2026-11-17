@@ -225,6 +225,28 @@ async fn an_unreadable_record_stops_the_start_instead_of_choosing_again() {
 }
 
 #[tokio::test]
+async fn the_choice_of_a_store_is_logged_with_the_store_and_the_rule_that_chose_it() {
+    use tracing::instrument::WithSubscriber as _;
+    let rig = Rig::new();
+    rig.name_a_secret();
+    let (dispatch, logs) = crate::test_logs::capture();
+    rig.open(&with_os(
+        headless(rig.setup(LoginSession::NotGraphical)),
+        &working_os(),
+    ))
+    .with_subscriber(dispatch)
+    .await
+    .unwrap();
+    let text = logs.text();
+    assert!(
+        text.contains("secret store chosen")
+            && text.contains("store=\"os\"")
+            && text.contains(&format!("why={:?}", Rule::ExistingSecrets.why())),
+        "{text}"
+    );
+}
+
+#[tokio::test]
 async fn an_install_whose_rows_name_a_secret_records_os_even_headless_and_with_a_failing_probe() {
     let rig = Rig::new();
     rig.name_a_secret();

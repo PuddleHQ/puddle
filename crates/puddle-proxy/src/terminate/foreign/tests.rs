@@ -268,6 +268,26 @@ fn a_header_that_holds_one_of_the_workspaces_stand_ins_is_not_looked_at() {
 }
 
 #[test]
+fn a_stand_in_inside_basic_credentials_is_not_reported_as_foreign() {
+    let token = with_checksum("ghp_", ENTROPY);
+    let basic = format!(
+        "Basic {}",
+        STANDARD.encode(format!("x-access-token:{token}"))
+    );
+    let map = headers(&[("authorization", &basic)]);
+    let own = token.clone();
+    let held = |part: &[u8]| part == own.as_bytes();
+    for git in [false, true] {
+        assert_eq!(kinds_in_headers(&map, &[], git, &held), NONE, "git: {git}");
+    }
+    assert_eq!(
+        kinds_in_headers(&map, &[], true, &|_| false),
+        [ForeignCredentialKind::GithubToken],
+        "the same header is foreign when the registry does not hold it"
+    );
+}
+
+#[test]
 fn a_header_puddle_injected_is_not_looked_at() {
     let token = with_checksum("ghp_", ENTROPY);
     let map = headers(&[("authorization", &format!("Bearer {token}"))]);

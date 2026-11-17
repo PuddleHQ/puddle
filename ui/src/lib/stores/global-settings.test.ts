@@ -171,6 +171,31 @@ describe("saving", () => {
   });
 });
 
+describe("a save from a stale read", () => {
+  it("sends the revision it read, and goes through while nothing changed", async () => {
+    await store.load();
+    expect((await store.save({ ui: { sound: true } })).ok).toBe(true);
+    expect(api.bodies.at(-1)).toMatchObject({
+      revision: expect.stringContaining("null"),
+    });
+    expect(store.view?.revision).toBe(api.revision());
+    expect((await store.save({ ui: { badge: false } })).ok).toBe(true);
+    expect(api.ui).toMatchObject({ sound: true, badge: false });
+  });
+
+  it("is refused when another client changed a setting, shows theirs, and applies the edit on the next save", async () => {
+    await store.load();
+    api.ui = { ...api.ui, sound: true };
+    const refused = await store.save({ ui: { badge: false } });
+    expect(!refused.ok && refused.message).toMatch(/changed somewhere else/);
+    expect(api.ui.badge).toBeNull();
+    expect(store.status).toBe("ready");
+    expect(store.view?.ui.sound).toBe(true);
+    expect((await store.save({ ui: { badge: false } })).ok).toBe(true);
+    expect(api.ui).toMatchObject({ sound: true, badge: false });
+  });
+});
+
 describe("Microsoft's server", () => {
   it("records the consent with the terms version, then chooses the server", async () => {
     await store.load();

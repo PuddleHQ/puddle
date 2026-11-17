@@ -624,6 +624,7 @@ describe("every workspace needs a confirm", () => {
       effective: {} as never,
       ui: fake.ui,
       unknown_fields: [],
+      revision: fake.revision(),
       vscode_server: fake.vscode,
       tools: fake.tools,
       limits: fake.limits,
@@ -668,6 +669,7 @@ function shortcuts(on: boolean | null) {
     effective: {} as never,
     ui: fake.ui,
     unknown_fields: [],
+    revision: fake.revision(),
     vscode_server: fake.vscode,
     tools: fake.tools,
     limits: fake.limits,
@@ -745,6 +747,29 @@ describe("keyboard", () => {
       }),
     );
     await vi.waitFor(() => expect(rowOf("registry.other.org")).toHaveFocus());
+  });
+
+  it("A and D keep acting on the row that was current when a newer request arrives above it", async () => {
+    seed();
+    await ready();
+    expect(rowOf("a.example.com")).toHaveAttribute("aria-current", "true");
+    source.emit({
+      type: "pending_opened",
+      request: request(99, { host: "evil.example.net", first_seen: 9_000 }),
+      registrable_domain: "example.net",
+    });
+    await tick();
+    expect(
+      screen.getByText("evil.example.net", { selector: ".host" }),
+    ).toBeTruthy();
+    await press("a");
+    await vi.waitFor(() =>
+      expect(inbox.rules[0]).toMatchObject({
+        effect: "allow",
+        pattern: "a.example.com",
+      }),
+    );
+    expect(inbox.rules.map((r) => r.pattern)).not.toContain("evil.example.net");
   });
 
   it("the last decision moves focus to the heading", async () => {

@@ -358,6 +358,24 @@ describe("one identity", () => {
     expect(api.tokens).toEqual([]);
   });
 
+  it("leaves a pasted token another identity still reads", async () => {
+    const shared = api.identities[0]?.credentials[1];
+    if (!shared) throw new Error("fixture");
+    api.identities = [
+      ...api.identities,
+      identity(3, { label: "Other", is_default: false, credentials: [shared] }),
+    ];
+    render(Page);
+    await screen.findByRole("heading", { level: 1, name: "Work" });
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const confirm = await screen.findByRole("alertdialog");
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Delete Work" }),
+    );
+    await waitFor(() => expect(lastToast()).toBe("Deleted Work."));
+    expect(api.tokens).toEqual(["tok-1"]);
+  });
+
   it("keeps the identity when the delete is refused", async () => {
     url.id = "2";
     render(Page);

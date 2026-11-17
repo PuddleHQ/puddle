@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A stream that can be cut from outside.
 //!
 //! russh runs a connection in a task of its own and answers a `disconnect` only between key

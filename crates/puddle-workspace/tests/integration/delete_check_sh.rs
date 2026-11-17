@@ -16,7 +16,7 @@ use puddle_types::WorkspaceId;
 use puddle_workspace::{DELETE_CHECK_SH, DeleteReport, Workspaces};
 
 use crate::common;
-use common::{command, git, volume};
+use common::{command, git, hostile_checkout, hostile_commands_that_ran, volume};
 
 /// The `shells()` entry that runs the script as `busybox sh`.
 const BUSYBOX: &str = "busybox sh";
@@ -162,6 +162,53 @@ async fn the_script_finds_every_kind_of_unsaved_work() {
             !tmp.path().join("pwned").exists(),
             "{shell}: the repo's fsmonitor ran"
         );
+    }
+}
+
+/// The check runs as root, so nothing the checkout's own config names may run: not a filter (also
+/// not one a nested repository names), not a hook, not a signature check.
+#[tokio::test]
+async fn a_checkout_s_config_cannot_make_the_check_run_a_program() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = tmp.path().join("vol");
+        let markers = hostile_checkout(tmp.path(), &vol);
+        let report = check(shell, &vol).await;
+        assert_eq!(
+            hostile_commands_that_ran(&markers),
+            Vec::<String>::new(),
+            "{shell}"
+        );
+        let f = &report.findings;
+        assert!(f.errors.is_empty(), "{shell}: {:?}", f.errors);
+        let [evil] = f.repos.as_slice() else {
+            panic!("{shell}: {f:?}");
+        };
+        assert_eq!(evil.uncommitted.items, ["?? new.txt"], "{shell}");
+        assert_eq!(evil.unpushed.total(), 2, "{shell}: {:?}", evil.unpushed);
+    }
+}
+
+/// A filter whose name no setting can switch off is not run around: the checkout is reported as
+/// not checked, which keeps the delete from going ahead unseen.
+#[tokio::test]
+async fn a_filter_that_cannot_be_switched_off_leaves_the_checkout_unchecked() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = tmp.path().join("vol");
+        let repo = vol.join("odd");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "filter.a b.clean", "cat"]);
+        let report = check(shell, &vol).await;
+        let f = &report.findings;
+        assert_eq!(f.errors.len(), 1, "{shell}: {f:?}");
+        assert!(
+            f.errors[0].contains("filter.a b.clean has a name no setting can carry"),
+            "{shell}: {:?}",
+            f.errors
+        );
+        assert!(!report.is_clean(), "{shell}");
     }
 }
 

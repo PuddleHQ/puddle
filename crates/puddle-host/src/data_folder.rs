@@ -39,8 +39,9 @@ pub(crate) fn make_owner_only(paths: &HostPaths) -> Result<(), HostError> {
         note(&mut changed, &side, private::tighten_file(&side))?;
     }
     if !changed.is_empty() {
+        let changed = changed.join("; ");
         tracing::warn!(
-            changed = %changed.join("; "),
+            %changed,
             "made Puddle's data folder owner-only (access for other accounts removed)"
         );
     }

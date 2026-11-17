@@ -416,6 +416,20 @@ export class FakeIdentities {
         const found = this.identities.find((i) => i.id === id);
         if (!found) return this.reply(404);
         this.identities = this.identities.filter((i) => i.id !== id);
+        // Like the host: a pasted token goes only when no identity reads it any more.
+        const stillRead = new Set(
+          this.identities.flatMap((i) =>
+            i.credentials.flatMap((c) =>
+              c.source.kind === "stored" ? [c.source.id] : [],
+            ),
+          ),
+        );
+        const gone = found.credentials.flatMap((c) =>
+          c.source.kind === "stored" && !stillRead.has(c.source.id)
+            ? [c.source.id]
+            : [],
+        );
+        this.tokens = this.tokens.filter((t) => !gone.includes(t));
         const detached = Object.entries(this.git)
           .filter(([, g]) => g.ids.includes(id))
           .map(([name]) => name);

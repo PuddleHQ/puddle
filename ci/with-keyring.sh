@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Usage: ci/with-keyring.sh <command>...
 # Runs the command with a working Secret Service: a throwaway D-Bus session and gnome-keyring with its login
 # keyring unlocked from stdin (how a headless Linux install unlocks it). Needs the `gnome-keyring` and `dbus`

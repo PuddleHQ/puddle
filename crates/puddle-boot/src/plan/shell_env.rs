@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Carries the plan's environment past the places that drop it: `sudo` and shells that read no
 //! login file.
 //!

@@ -40,6 +40,12 @@ fn data_folder(root: &Path) -> HostPaths {
     fs::write(paths.front_keys().join("a.key"), CANARY).unwrap();
     fs::write(paths.connection_file(), CANARY).unwrap();
     fs::write(paths.data().join("host.lock"), b"").unwrap();
+    // The secret store's folder: the record and the file vault (and a key beside it, which the
+    // host keeps outside the data folder but a hand-made setup may not).
+    fs::create_dir_all(paths.data().join("secrets")).unwrap();
+    for name in ["store.json", "vault", "vault.key", "vault-key.cred"] {
+        fs::write(paths.data().join("secrets").join(name), CANARY).unwrap();
+    }
     paths
 }
 
@@ -199,6 +205,19 @@ fn destination_inside_the_data_folder_is_refused() {
 }
 
 #[test]
+fn relative_one_component_destination_is_judged_against_the_working_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    let inside = refuse_inside(
+        &paths.data().join("settings"),
+        paths.data(),
+        Path::new("out"),
+    );
+    assert!(matches!(inside, Err(BackupError::InsideData(_))));
+    refuse_inside(root.path(), paths.data(), Path::new("out")).unwrap();
+}
+
+#[test]
 fn missing_database_is_refused_and_creates_nothing() {
     let root = tempfile::tempdir().unwrap();
     let paths = HostPaths::new(root.path().join("data"));
@@ -346,6 +365,37 @@ fn the_archive_holds_the_three_parts_and_nothing_machine_bound() {
         live.rules_every_user(&puddle_store::testing::all_users())
     );
     assert!(schema_version > 0);
+}
+
+#[test]
+fn the_secret_stores_folder_and_any_key_stay_out_of_the_folder_and_the_archive() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    open(&paths.store());
+    let dest = root.path().join("out");
+    backup(&paths, &dest).unwrap();
+    let in_folder: Vec<String> = files_below(&dest)
+        .iter()
+        .map(|p| {
+            p.strip_prefix(&dest)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let in_archive: Vec<String> = entries(backup_archive(&paths).unwrap())
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    for names in [in_folder, in_archive] {
+        assert!(
+            names.iter().all(|n| {
+                !n.contains("secrets") && !n.contains("vault") && !n.contains("store.json")
+            }),
+            "{names:?}"
+        );
+        assert!(names.len() >= 4, "{names:?}");
+    }
 }
 
 #[test]

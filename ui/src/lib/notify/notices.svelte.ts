@@ -52,6 +52,56 @@ export interface Notice extends NoticeInput {
   at: number;
 }
 
+/** The most notices kept; a workspace chooses what raises one, so the list must not grow with it. */
+const MAX_NOTICES = 200;
+const MAX_TITLE = 300;
+const MAX_DETAIL = 1000;
+const MAX_LABEL = 120;
+
+/** Control characters (but not a newline or tab), direction overrides and zero-width marks. */
+const UNSAFE =
+  /[\p{Cc}\u061C\u200B\u200C\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/gu;
+
+function scrub(text: string, max: number): string {
+  const clean = text.replace(UNSAFE, (c) =>
+    c === "\n" || c === "\t" ? c : "?",
+  );
+  const chars = Array.from(clean);
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : clean;
+}
+
+/**
+ * Names and hosts in a notice come from a workspace: a direction override could make "Allow push
+ * for <repo>" read as something else. Every notice passes through here, so no raiser can forget.
+ */
+function safe(input: NoticeInput): NoticeInput {
+  const out: NoticeInput = { ...input, title: scrub(input.title, MAX_TITLE) };
+  if (input.detail !== undefined) out.detail = scrub(input.detail, MAX_DETAIL);
+  if (input.action) {
+    out.action = {
+      ...input.action,
+      label: scrub(input.action.label, MAX_LABEL),
+    };
+  }
+  return out;
+}
+
+/** Past the limit the oldest info notices go first, then the oldest of any kind. */
+function capped(items: Notice[]): Notice[] {
+  let extra = items.length - MAX_NOTICES;
+  if (extra <= 0) return items;
+  const dropInfo = new Set<number>();
+  for (const n of items) {
+    if (extra === 0) break;
+    if (n.tone === "info") {
+      dropInfo.add(n.id);
+      extra -= 1;
+    }
+  }
+  const rest = items.filter((n) => !dropInfo.has(n.id));
+  return extra > 0 ? rest.slice(extra) : rest;
+}
+
 export class NoticeCenter {
   items = $state.raw<Notice[]>([]);
   #next = 1;
@@ -64,8 +114,11 @@ export class NoticeCenter {
   /** Newest last. Returns the notice's id. */
   add(input: NoticeInput): number {
     const id = this.#next++;
-    const notice: Notice = { ...input, id, at: this.#now() };
-    this.items = [...this.items.filter((n) => n.key !== input.key), notice];
+    const notice: Notice = { ...safe(input), id, at: this.#now() };
+    this.items = capped([
+      ...this.items.filter((n) => n.key !== input.key),
+      notice,
+    ]);
     return id;
   }
 

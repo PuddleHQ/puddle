@@ -169,7 +169,8 @@ impl Store {
     }
 
     /// Starts deleting `target` on behalf of `actor`: the user stays listed as deleting, and no
-    /// code path signs them in again. Writes the audit line the first time; calling it again for
+    /// code path signs them in again (the password check, refresh sessions, device sessions and
+    /// invites all skip a user being deleted). Writes the audit line the first time; calling it again for
     /// a user already being deleted changes nothing. The owner is never deleted.
     ///
     /// # Errors

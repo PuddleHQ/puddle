@@ -152,10 +152,7 @@ pub(crate) async fn run<S: Sandbox>(
 
 /// A guest string made safe to keep and show: control characters replaced, cut at [`MAX_FIELD`].
 fn clean(text: &str) -> String {
-    text.chars()
-        .take(MAX_FIELD)
-        .map(|c| if c.is_control() { '?' } else { c })
-        .collect()
+    crate::guest_text::clean(text, MAX_FIELD)
 }
 
 fn non_empty(text: &str) -> Option<String> {

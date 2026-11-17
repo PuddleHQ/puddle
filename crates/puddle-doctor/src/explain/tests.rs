@@ -64,17 +64,51 @@ const ALL: [Finding; 59] = [
     Finding::CredentialStoreTpmLibrariesMissing,
 ];
 
+/// Every check, for the texts of a pass and of a check that did not run.
+const CHECKS: [CheckId; 14] = [
+    CheckId::Virtualization,
+    CheckId::Hypervisor,
+    CheckId::CodeIntegrity,
+    CheckId::Runtime,
+    CheckId::Launch,
+    CheckId::TestBoot,
+    CheckId::JobObject,
+    CheckId::GlobalSecureAccess,
+    CheckId::DiskSpace,
+    CheckId::DataPath,
+    CheckId::DiskEncryption,
+    CheckId::SshAgent,
+    CheckId::AzCli,
+    CheckId::CredentialStore,
+];
+
+/// At most two short sentences.
+fn assert_short(what: &str, text: &str) {
+    assert!(!text.trim().is_empty(), "{what}: empty");
+    assert!(text.chars().count() <= 170, "{what}: {text}");
+    assert!(text.ends_with('.'), "{what}: {text}");
+    assert!(text.matches(". ").count() <= 1, "{what}: {text}");
+}
+
+#[test]
+fn every_check_says_what_a_pass_and_a_skip_mean_in_short() {
+    for id in CHECKS {
+        assert_short(&format!("{id:?} ok"), ok_impact(id));
+        assert_short(&format!("{id:?} skipped"), skipped_impact(id));
+    }
+    assert_short("skipped remedy", SKIPPED_REMEDY);
+    assert_short("unworded impact", UNWORDED.0);
+    assert_short("unworded remedy", UNWORDED.1);
+}
+
 #[test]
 fn every_finding_is_worded_by_the_function_it_is_sent_to() {
     for os in [Os::Windows, Os::Linux, Os::MacOs, Os::Other] {
         for finding in ALL {
             let (impact, remedy) = finding_text(os, finding);
             assert_ne!((impact, remedy), UNWORDED, "{finding:?} on {os:?}");
-            for text in [impact, remedy] {
-                assert!(text.chars().count() <= 170, "{finding:?}: {text}");
-                assert!(text.ends_with('.'), "{finding:?}: {text}");
-                assert!(text.matches(". ").count() <= 1, "{finding:?}: {text}");
-            }
+            assert_short(&format!("{finding:?} impact"), impact);
+            assert_short(&format!("{finding:?} remedy"), remedy);
         }
     }
 }

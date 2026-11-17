@@ -66,7 +66,9 @@ vi.mock("#lib/stores/network-health.svelte.ts", () => ({
   networkHealth: network,
 }));
 
+import { brokenReport, healthyReport } from "#lib/testing/fake-first-run.ts";
 import { report } from "#lib/testing/fake-network.ts";
+import { doctor } from "#lib/stores/doctor.svelte.ts";
 import { firstRun } from "#lib/stores/first-run.svelte.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -635,4 +637,36 @@ describe("every step", () => {
       }
     },
   );
+});
+
+describe("the blocked system check", () => {
+  beforeEach(() => {
+    // The check's result outlives a step, as when the person comes back to it.
+    doctor.status = "idle";
+    doctor.report = null;
+  });
+  afterEach(() => {
+    h.firstRun.report = healthyReport();
+  });
+
+  it("offers one way out of the flow, named as such", async () => {
+    h.firstRun.report = brokenReport();
+    render(Check);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Start system check" }),
+    );
+    await screen.findByText(/1 problem to fix/);
+    // Puddle can't run workspaces here, so the person may leave setup on purpose; it comes back.
+    const out = screen
+      .getAllByRole("link")
+      .filter(
+        (link) =>
+          !isWelcome(
+            new URL(link.getAttribute("href") ?? "", "http://127.0.0.1")
+              .pathname,
+          ),
+      )
+      .map((link) => link.textContent?.trim());
+    expect(out).toEqual(["Leave setup for now"]);
+  });
 });

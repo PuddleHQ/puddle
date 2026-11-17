@@ -14,10 +14,12 @@ use std::time::{Duration, Instant};
 
 use puddle_api::SettingsRepo;
 use puddle_proxy::ssh_agent::{AgentAt, AgentGate, HostAgent};
-use puddle_ssh_agent::filter::{AllowedKeys, Disapproval, Outcome, Refusal, fingerprint, key_type};
+use puddle_ssh_agent::filter::{
+    AllowedKeys, Disapproval, Outcome, PinFailure, Refusal, fingerprint, key_type,
+};
 use puddle_ssh_agent::{AgentEndpoint, AgentError, Identity};
 use puddle_store::{
-    Actor, NewWorkspaceOp, SshAgentAskStart, SshAgentHost, Store, WorkspaceOpKind,
+    Actor, HostKeyPin, NewWorkspaceOp, SshAgentAskStart, SshAgentHost, Store, WorkspaceOpKind,
     WorkspaceOpOutcome,
 };
 use puddle_types::{Host, WorkspaceId};
@@ -153,6 +155,24 @@ impl StoreGate {
 }
 
 impl AgentGate for StoreGate {
+    fn pin_host_key(
+        &self,
+        workspace: &WorkspaceId,
+        host: &str,
+        host_key: &str,
+    ) -> Result<(), PinFailure> {
+        match self.store.pin_ssh_agent_host_key(workspace, host, host_key) {
+            Ok(HostKeyPin::Pinned | HostKeyPin::Same) => Ok(()),
+            Ok(HostKeyPin::Other(kept)) => Err(PinFailure::Changed(kept)),
+            // Turned off between the switch read and here: nothing to bind to.
+            Ok(HostKeyPin::Off) => Err(PinFailure::Unavailable),
+            Err(error) => {
+                tracing::warn!(workspace = %workspace, host, %error, "the SSH agent host key could not be checked");
+                Err(PinFailure::Unavailable)
+            }
+        }
+    }
+
     fn approve(&self, workspace: &WorkspaceId, host: &str, key: &[u8]) -> Result<(), Disapproval> {
         let (Some(fingerprint), Some(kind)) = (fingerprint(key), key_type(key)) else {
             return Err(Disapproval::Unavailable);

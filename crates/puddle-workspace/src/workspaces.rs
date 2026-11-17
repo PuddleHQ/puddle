@@ -686,10 +686,7 @@ impl Workspaces {
     ) -> Result<TrimReport, WorkspaceError> {
         let info = self.volume(rt, id).await?;
         if let Some(holder) = self.running_holder(id, &info)? {
-            let sandbox = rt
-                .get(&holder)
-                .await
-                .map_err(|e| WorkspaceError::runtime("connect to the holder", id, e))?;
+            let sandbox = connect_to_holder(rt, id, &holder).await?;
             return self.trim(&sandbox, id).await;
         }
         match self.maintenance(rt, id, &info, Job::Trim).await? {
@@ -728,10 +725,7 @@ impl Workspaces {
         };
         let removes_sandbox = self.existing_owner(rt, id).await?;
         if let Some(holder) = self.running_holder(id, &info)? {
-            let sandbox = rt
-                .get(&holder)
-                .await
-                .map_err(|e| WorkspaceError::runtime("connect to the holder", id, e))?;
+            let sandbox = connect_to_holder(rt, id, &holder).await?;
             let findings = check::run(&sandbox, id).await?;
             return Ok(DeleteReport {
                 workspace: id.clone(),
@@ -993,14 +987,17 @@ impl Workspaces {
         let name = maintenance_name(id)?;
         self.borrow(id, &name)?;
         let volume = id.volume_name();
-        let existed = match rt.volume(&volume).await {
-            Ok(found) => found.is_some(),
+        let existing = match rt.volume(&volume).await {
+            Ok(found) => found,
             Err(e) => {
                 self.registry.give_back(id);
                 return Err(WorkspaceError::runtime("look up the volume", id, e));
             }
         };
-        let result = self.run_import(rt, id, &name, image, size, imports).await;
+        let existed = existing.is_some();
+        let result = self
+            .run_import(rt, id, image, existing.as_ref(), size, imports)
+            .await;
         self.registry.give_back(id);
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = !existed && matches!(rt.volume(&volume).await, Ok(Some(_)));
@@ -1028,19 +1025,28 @@ impl Workspaces {
         &self,
         rt: &R,
         id: &WorkspaceId,
-        name: &SandboxName,
         image: &ImageRef,
+        existing: Option<&VolumeInfo>,
         size: DiskSize,
         imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
+        let name = &maintenance_name(id)?;
         clear_leftover(rt, id, name).await?;
         let layout = Layout::new(id)?;
+        // The size is for a volume the import makes; one that exists keeps its own.
+        let mount = match existing {
+            Some(info) => {
+                if info.size != size {
+                    info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
+                }
+                mount_for(id, &id.volume_name(), info)?
+            }
+            None => VolumeMount::named(id.volume_name(), layout.mount().clone()).ensure_size(size),
+        };
         let mut spec = SandboxSpec::new(name.clone(), image.clone())
             .with_memory(self.config.maintenance_memory)
             .with_cpus(1)
-            .with_volume(
-                VolumeMount::named(id.volume_name(), layout.mount().clone()).ensure_size(size),
-            );
+            .with_volume(mount);
         for (n, import) in imports.iter().enumerate() {
             spec = spec.with_file_mount(FileMount::checkout(&import.git_dir, import_mount(n)?));
         }
@@ -1260,6 +1266,23 @@ fn mount_for(
     } else {
         mount
     })
+}
+
+/// The running sandbox `holder` that holds `id`'s volume. One that is booting, stopping or paused
+/// still holds the volume but runs nothing: [`WorkspaceError::InUse`].
+async fn connect_to_holder<R: Runtime>(
+    rt: &R,
+    id: &WorkspaceId,
+    holder: &SandboxName,
+) -> Result<R::Sandbox, WorkspaceError> {
+    match rt.get(holder).await {
+        Ok(sandbox) => Ok(sandbox),
+        Err(ComputeError::InvalidState { .. }) => Err(WorkspaceError::InUse {
+            workspace: id.to_string(),
+            holder: holder.to_string(),
+        }),
+        Err(e) => Err(WorkspaceError::runtime("connect to the holder", id, e)),
+    }
 }
 
 /// Removes a maintenance sandbox an earlier run left behind (down), and a stale directory with

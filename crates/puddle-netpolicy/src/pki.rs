@@ -71,10 +71,17 @@ impl PkiDistributionPoints {
     /// Whether a plain-HTTP request is for a named URL: only `GET` and `HEAD`, the same host and
     /// port, and a `path` (query and fragment already cut) that is the URL's path or below it.
     /// An OCSP responder is asked by a `GET` that appends the request to the path, which is the
-    /// "below it" case.
+    /// "below it" case. A path the server could resolve to somewhere else is never covered: one
+    /// with a `.` or `..` segment (also escaped, behind a `;` parameter, or padded with dots and
+    /// spaces as Windows servers trim them), a `\`, a control byte, a bad or doubled escape, or a
+    /// leading `//`. It is refused rather than normalised, so no reading of it differs from the
+    /// server's.
     #[must_use]
     pub fn covers(&self, host: &Host, port: u16, method: &str, path: &str) -> bool {
         if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD") {
+            return false;
+        }
+        if !stays_put(path) {
             return false;
         }
         self.entries
@@ -91,6 +98,43 @@ fn below(path: &str, base: &str) -> bool {
         Some(rest) => base.ends_with('/') || rest.starts_with('/'),
         None => false,
     }
+}
+
+/// Whether `path`, once its escapes are decoded, names one place on any server: no segment made
+/// only of dots and spaces (before a `;` parameter), no `\`, no control byte, no `%` left after
+/// one decoding (a doubled escape) and no leading `//`. An escaped `/` is decoded and split on,
+/// so an OCSP request in escaped base64 still passes.
+fn stays_put(path: &str) -> bool {
+    let Some(decoded) = unescape(path) else {
+        return false;
+    };
+    if decoded.starts_with(b"//")
+        || decoded
+            .iter()
+            .any(|&b| b == b'\\' || b == b'%' || b.is_ascii_control())
+    {
+        return false;
+    }
+    !decoded.split(|&b| b == b'/').any(|segment| {
+        let name = segment.split(|&b| b == b';').next().unwrap_or(segment);
+        !name.is_empty() && name.iter().all(|&b| b == b'.' || b == b' ')
+    })
+}
+
+/// `path` with every `%XX` escape decoded; `None` for a `%` not followed by two hex digits.
+fn unescape(path: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(path.len());
+    let mut bytes = path.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hi = char::from(bytes.next()?).to_digit(16)?;
+            let lo = char::from(bytes.next()?).to_digit(16)?;
+            out.push(u8::try_from(hi * 16 + lo).ok()?);
+        } else {
+            out.push(b);
+        }
+    }
+    Some(out)
 }
 
 fn parse(url: &str) -> Option<Entry> {

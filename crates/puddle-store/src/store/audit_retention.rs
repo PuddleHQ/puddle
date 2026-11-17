@@ -273,9 +273,11 @@ fn worth_shrinking(conn: &Connection, min_free_bytes: u64) -> Result<Option<u64>
     let page_size = pragma_u64(conn, "page_size")?;
     let total = pragma_u64(conn, "page_count")?.saturating_mul(page_size);
     let free = pragma_u64(conn, "freelist_count")?.saturating_mul(page_size);
-    let worth = free > 0
-        && (free >= min_free_bytes
-            || free.saturating_mul(100) >= total.saturating_mul(SHRINK_MIN_FREE_PERCENT));
+    if free == 0 {
+        return Ok(None);
+    }
+    let worth = free >= min_free_bytes
+        || free.saturating_mul(100) >= total.saturating_mul(SHRINK_MIN_FREE_PERCENT);
     Ok(worth.then_some(total))
 }
 

@@ -1100,6 +1100,14 @@ fn a_copy_that_cannot_be_deleted_is_logged_and_the_migration_goes_on() {
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].starts_with("WARN copy not deleted"), "{lines:?}");
     assert!(made.exists());
+    // A copy that is already gone (put in place, or never made) is not worth a warning.
+    let gone = PreUpgradeCopy {
+        made: dir.path().join("puddle.db.pre-v2.1-1.partial"),
+        db: dir.path().join("puddle.db"),
+        target: 2,
+    };
+    gone.discard();
+    assert_eq!(logs.lines().len(), 1, "{:?}", logs.lines());
 }
 
 /// V29 adds the `enabled` columns without rebuilding a table: every rule and rule on method and

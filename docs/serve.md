@@ -215,7 +215,9 @@ never do (they use the install token on `127.0.0.1`, and there are no accounts o
 - **Limits.** Puddle never trusts `X-Forwarded-*`, so it cannot tell clients behind one proxy apart
   and has no per-address limit. Instead an account locks after 5 wrong passwords in a row, for 30
   seconds and then twice as long for each further failure (up to 15 minutes); the right password does
-  not lift a lock, and a name nobody has locks the same way. At most 30 password checks run in any
+  not lift a lock, and a name nobody has locks the same way. An attempt counts from the moment it is
+  let in: an account checks at most as many passwords at once as it has failures left before the lock
+  (one at a time after a lock), so guesses sent together cannot slip past it. At most 30 password checks run in any
   minute, whoever asks. Both answer `429` with `Retry-After`. The state is in memory and a restart
   clears it. The price: someone who knows the owner's name can keep password sign-in locked; browsers
   already signed in are not affected and `puddle user reset` still works.

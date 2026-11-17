@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_store::{Limits, ManualClock};
 
-use super::limiter::{BASE_LOCK_MS, FREE_FAILURES};
+use super::limiter::{BASE_LOCK_MS, FREE_FAILURES, MAX_LOCK_MS};
 use super::tokens::ACCESS_TTL_MS;
 use super::*;
 
@@ -819,4 +819,64 @@ async fn another_devices_revoke_does_not_end_a_stream() {
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished(), "only its own device ends it");
     waiting.abort();
+}
+
+/// Sends `n` wrong passwords for the owner at once and counts how many were checked (answered
+/// "wrong") rather than refused by the lock.
+async fn wrong_at_once(f: &Fixture, n: usize, change: Option<DeviceId>) -> usize {
+    let attempts: Vec<_> = (0..n)
+        .map(|_| {
+            let sign_in = f.sign_in.clone();
+            tokio::spawn(async move {
+                let wrong = pw("not the password!");
+                match change {
+                    Some(device) => sign_in
+                        .change_password(UserId::OWNER, device, wrong, pw("a new long password"))
+                        .await
+                        .map(|()| ()),
+                    None => sign_in.sign_in("Tijs", wrong, None).await.map(|_| ()),
+                }
+            })
+        })
+        .collect();
+    let mut checked = 0;
+    for attempt in attempts {
+        let err = attempt.await.unwrap().unwrap_err();
+        match code(&err) {
+            ErrorCode::Unauthorized => checked += 1,
+            ErrorCode::RateLimited => {}
+            other => panic!("unexpected answer {other:?}"),
+        }
+    }
+    checked
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wrong_passwords_sent_at_once_are_checked_no_more_than_the_lock_allows() {
+    let f = fixture();
+    owner_signed_up(&f).await;
+    let checked = wrong_at_once(&f, 20, None).await;
+    assert!(
+        checked <= FREE_FAILURES as usize,
+        "{checked} of 20 parallel wrong passwords were checked (lock after {FREE_FAILURES})"
+    );
+    // Once the lock has run out, guesses sent at once get one check, not a fresh batch.
+    f.clock.advance(BASE_LOCK_MS);
+    let checked = wrong_at_once(&f, 20, None).await;
+    assert_eq!(checked, 1, "after the lock ran out");
+    // The right password still works once the next lock ends.
+    f.clock.advance(MAX_LOCK_MS);
+    f.sign_in.sign_in("Tijs", password(), None).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wrong_current_passwords_sent_at_once_are_checked_no_more_than_the_lock_allows() {
+    let f = fixture();
+    let this = owner_signed_up(&f).await;
+    let device = DeviceId::from_stored(this.grant.device.id);
+    let checked = wrong_at_once(&f, 20, Some(device)).await;
+    assert!(
+        checked <= FREE_FAILURES as usize,
+        "{checked} of 20 parallel wrong current passwords were checked (lock after {FREE_FAILURES})"
+    );
 }

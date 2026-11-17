@@ -140,30 +140,32 @@ impl SignIn {
         self.clock.now_ms()
     }
 
-    fn admit(&self, key: Option<&str>) -> Result<(), ApiError> {
-        let now = self.now();
-        let mut limiter = self
-            .limiter
+    fn limiter(&self) -> std::sync::MutexGuard<'_, Limiter> {
+        self.limiter
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match key {
-            Some(key) => limiter.admit(key, now),
-            None => limiter.admit_any(now),
-        }
-        .map_err(|later| ApiError::rate_limited(later.seconds()))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn record(&self, key: &str, right: bool) {
+    /// The per-minute limit alone, for an attempt with no account to blame.
+    fn admit_any(&self) -> Result<(), ApiError> {
         let now = self.now();
-        let mut limiter = self
-            .limiter
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if right {
-            limiter.succeeded(key);
-        } else {
-            limiter.failed(key, now);
-        }
+        self.limiter()
+            .admit_any(now)
+            .map_err(|later| ApiError::rate_limited(later.seconds()))
+    }
+
+    /// Opens a password attempt on the account `key`. It counts toward the lock from now on,
+    /// so attempts sent at once cannot all be checked before the first failure is recorded.
+    fn attempt(&self, key: String) -> Result<Attempt<'_>, ApiError> {
+        let now = self.now();
+        self.limiter()
+            .admit(&key, now)
+            .map_err(|later| ApiError::rate_limited(later.seconds()))?;
+        Ok(Attempt {
+            sign_in: self,
+            key,
+            open: true,
+        })
     }
 
     async fn password_login_on(self: &Arc<Self>) -> Result<bool, ApiError> {
@@ -211,7 +213,7 @@ impl SignIn {
         let name = UserName::new(name)?;
         password::check_policy(password, name.as_str()).map_err(weak)?;
         self.require_password_login().await?;
-        self.admit(None)?;
+        self.admit_any()?;
         let this = self.clone();
         let password = Zeroizing::new(password.to_owned());
         let device_name = device_name.map(str::to_owned);
@@ -235,8 +237,7 @@ impl SignIn {
         device_name: Option<&str>,
     ) -> Result<Granted, ApiError> {
         self.require_password_login().await?;
-        let key = name.to_ascii_lowercase();
-        self.admit(Some(&key))?;
+        let attempt = self.attempt(name.to_ascii_lowercase())?;
         let this = self.clone();
         let name = name.to_owned();
         let password = Zeroizing::new(password.to_owned());
@@ -264,7 +265,7 @@ impl SignIn {
             Ok(user.filter(|_| right).map(|u| u.id))
         })
         .await?;
-        self.record(&key, user.is_some());
+        attempt.answered(user.is_some());
         let user = user.ok_or_else(wrong_credentials)?;
         let this = self.clone();
         blocking(move || this.make_session(user, device_name.as_deref())).await
@@ -280,7 +281,7 @@ impl SignIn {
         self.require_password_login().await?;
         // The name is not known before the invite is used up, so the policy is the name-free part.
         password::check_policy(password, "").map_err(weak)?;
-        self.admit(None)?;
+        self.admit_any()?;
         let this = self.clone();
         let digest = digest(secret);
         let password = Zeroizing::new(password.to_owned());
@@ -395,8 +396,7 @@ impl SignIn {
         .await?;
         password::check_policy(new, &who.name).map_err(weak)?;
         self.require_password_login().await?;
-        let key = who.name.to_ascii_lowercase();
-        self.admit(Some(&key))?;
+        let attempt = self.attempt(who.name.to_ascii_lowercase())?;
         let current = Zeroizing::new(current.to_owned());
         let new = Zeroizing::new(new.to_owned());
         let verified = blocking({
@@ -408,7 +408,7 @@ impl SignIn {
             }
         })
         .await?;
-        self.record(&key, verified);
+        attempt.answered(verified);
         if !verified {
             return Err(wrong_credentials());
         }
@@ -603,6 +603,37 @@ impl SignIn {
             .ok()
             .flatten()
             .is_some()
+    }
+}
+
+/// A password attempt let in by the per-account limit. Until it is answered it holds one of the
+/// account's open attempts; dropped unanswered (an error, a caller that went away), it gives the
+/// slot back without counting either way.
+struct Attempt<'a> {
+    sign_in: &'a SignIn,
+    key: String,
+    open: bool,
+}
+
+impl Attempt<'_> {
+    /// Records the answer: `right` forgives the account's failures, a wrong one counts.
+    fn answered(mut self, right: bool) {
+        let now = self.sign_in.now();
+        let mut limiter = self.sign_in.limiter();
+        if right {
+            limiter.succeeded(&self.key);
+        } else {
+            limiter.failed(&self.key, now);
+        }
+        self.open = false;
+    }
+}
+
+impl Drop for Attempt<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            self.sign_in.limiter().abandoned(&self.key);
+        }
     }
 }
 

@@ -101,3 +101,80 @@ fn the_tracked_accounts_are_bounded_and_the_oldest_go_first() {
     assert!(!limiter.accounts.contains_key("user0"));
     assert!(limiter.accounts.contains_key("newcomer"));
 }
+
+#[test]
+fn an_account_lets_in_only_as_many_attempts_at_once_as_it_has_failures_left() {
+    let mut limiter = Limiter::default();
+    for _ in 0..FREE_FAILURES {
+        limiter.admit("ann", 0).unwrap();
+    }
+    assert_eq!(limiter.admit("ann", 0), Err(TryLater { after_ms: BUSY_MS }));
+    // Another account is not held up.
+    assert!(limiter.admit("bob", 0).is_ok());
+    // All five come back wrong: the account is locked, not merely busy.
+    for _ in 0..FREE_FAILURES {
+        limiter.failed("ann", 0);
+    }
+    assert_eq!(
+        limiter.admit("ann", 0),
+        Err(TryLater {
+            after_ms: BASE_LOCK_MS
+        })
+    );
+}
+
+#[test]
+fn after_a_lock_attempts_go_one_at_a_time() {
+    let mut limiter = Limiter::default();
+    fail_times(&mut limiter, "ann", FREE_FAILURES, 0);
+    limiter.admit("ann", BASE_LOCK_MS).unwrap();
+    assert_eq!(
+        limiter.admit("ann", BASE_LOCK_MS),
+        Err(TryLater { after_ms: BUSY_MS })
+    );
+    limiter.failed("ann", BASE_LOCK_MS);
+    assert!(limiter.admit("ann", BASE_LOCK_MS).is_err());
+}
+
+#[test]
+fn an_attempt_without_an_answer_gives_its_slot_back_and_counts_neither_way() {
+    let mut limiter = Limiter::default();
+    fail_times(&mut limiter, "ann", FREE_FAILURES - 1, 0);
+    limiter.admit("ann", 0).unwrap();
+    assert!(limiter.admit("ann", 0).is_err(), "the last free attempt is open");
+    limiter.abandoned("ann");
+    limiter.admit("ann", 0).unwrap();
+    limiter.abandoned("ann");
+    assert_eq!(limiter.accounts["ann"].failures, FREE_FAILURES - 1);
+    // An account with nothing to remember is forgotten.
+    limiter.admit("bob", 0).unwrap();
+    limiter.abandoned("bob");
+    assert!(!limiter.accounts.contains_key("bob"));
+}
+
+#[test]
+fn a_right_password_among_open_attempts_forgives_but_keeps_the_others_open() {
+    let mut limiter = Limiter::default();
+    fail_times(&mut limiter, "ann", 3, 0);
+    limiter.admit("ann", 0).unwrap();
+    limiter.admit("ann", 0).unwrap();
+    limiter.succeeded("ann");
+    assert_eq!(limiter.accounts["ann"].failures, 0);
+    assert_eq!(limiter.accounts["ann"].in_flight, 1);
+    limiter.failed("ann", 0);
+    assert_eq!(limiter.accounts["ann"].failures, 1);
+    assert_eq!(limiter.accounts["ann"].in_flight, 0);
+    limiter.succeeded("ann");
+    assert!(!limiter.accounts.contains_key("ann"));
+}
+
+#[test]
+fn an_account_with_an_open_attempt_is_not_forgotten_when_the_table_is_full() {
+    let mut limiter = Limiter::default();
+    limiter.admit("ann", 0).unwrap();
+    for i in 0..MAX_TRACKED {
+        limiter.failed(&format!("user{i}"), 1 + i as u64);
+    }
+    assert!(limiter.accounts.contains_key("ann"));
+    assert_eq!(limiter.accounts.len(), MAX_TRACKED);
+}

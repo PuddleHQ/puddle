@@ -491,6 +491,9 @@ pub(crate) fn check<B>(
             return Err(bad("conflicting Content-Length headers"));
         }
     }
+    // `Expect: 100-continue` is accepted but never answered with a `100` on HTTP/2: hyper's
+    // HTTP/2 server cannot send an interim response. The client sends its body when its own wait
+    // runs out (curl: 1 s) and the request goes on as usual; HTTP/1.1 does get the `100`.
     for value in headers.get_all(header::EXPECT) {
         if !value.as_bytes().eq_ignore_ascii_case(b"100-continue") {
             return Err(Refusal::new(

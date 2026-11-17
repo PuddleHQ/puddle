@@ -42,3 +42,104 @@ fn the_record_lists_each_scrubbed_stand_in_once_and_stops_at_the_cap() {
     assert_eq!(outcome.scrubbed_stand_ins, ids[..MAX_UNSWAPPED_STAND_INS]);
     assert!(outcome.refused.is_none());
 }
+
+mod stream_failures {
+    //! A guest stream that fails at one exact point, scripted with
+    //! [`tokio_test::io::Builder`]: the connection ends, and nothing more is written to it.
+    use std::io;
+
+    use puddle_ca::CaBuilder;
+    use puddle_test_kit::capture_logs;
+    use puddle_types::{Host, NullSink, WorkspaceId};
+    use tokio_test::io::Builder;
+
+    use super::super::*;
+    use crate::opened::ESTABLISHED;
+    use crate::terminate::{NoInjection, Termination, TerminationSet};
+    use crate::testing::{AnyAddress, StaticPolicy};
+
+    fn reset() -> io::Error {
+        io::Error::from(io::ErrorKind::ConnectionReset)
+    }
+
+    fn context(mode: Mode) -> Arc<Context> {
+        let workspace = WorkspaceId::new("box").unwrap();
+        let ca = Arc::new(CaBuilder::new("test").build().unwrap());
+        let termination = Termination::new(
+            TerminationSet::parse(["bound.test"]).unwrap(),
+            ca,
+            Arc::new(NoInjection),
+        );
+        let proxy = Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_address_check(Arc::new(AnyAddress));
+        Arc::new(Context {
+            proxy: Arc::new(proxy),
+            termination: Arc::new(termination),
+            mode,
+            tls: TlsClient::new([]).unwrap(),
+            workspace,
+            target: Target {
+                host: Host::parse_normalised("bound.test").unwrap(),
+                port: 443,
+            },
+            admitted: Admitted::checked(Vec::new(), true),
+            connections: Arc::new(tokio::sync::Semaphore::new(8)),
+            streams: Arc::new(tokio::sync::Semaphore::new(8)),
+        })
+    }
+
+    #[tokio::test]
+    async fn a_guest_that_resets_before_its_hello_is_logged_and_nothing_is_passed_through() {
+        let (logs, _guard) = capture_logs();
+        let stream = Builder::new()
+            .write(ESTABLISHED)
+            .read_error(reset())
+            .build();
+        let opened = Opened {
+            stream,
+            early: Vec::new(),
+            answered: false,
+        };
+        let outcome = run(context(Mode::Everything), opened).await;
+        assert!(
+            logs.text()
+                .contains("guest connection failed before a TLS hello"),
+            "{}",
+            logs.text()
+        );
+        assert_eq!(outcome.connect, None);
+        assert!(!outcome.sni_mismatch && !outcome.certificate_refused);
+    }
+
+    #[tokio::test]
+    async fn a_guest_that_resets_at_the_100_continue_ends_the_body_read_and_is_logged() {
+        let (logs, _guard) = capture_logs();
+        let cx = context(Mode::Bound);
+        let mut conn = Conn {
+            cx: &cx,
+            reader: BufReader::new(Builder::new().build()),
+            writer: Builder::new().write_error(reset()).build(),
+            upstream: None,
+            deferred: None,
+            outcome: Outcome::default(),
+            unknown_tokens: Arc::new(AnswerReport::of(&cx)),
+            first: true,
+        };
+        let parsed = Parsed {
+            method: "POST".into(),
+            target: "/".into(),
+            http11: true,
+            body: http::Body::Length(5),
+            expect_continue: true,
+            close: false,
+            upgrade: false,
+        };
+        let read = conn.read_whole_body(&parsed, 1024).await;
+        assert!(matches!(read, Err(Flow::Abort)));
+        assert!(
+            logs.text().contains("guest went away before its body"),
+            "{}",
+            logs.text()
+        );
+    }
+}

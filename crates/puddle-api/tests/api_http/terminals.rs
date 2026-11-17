@@ -9,7 +9,6 @@ use puddle_api::{
 use puddle_api::{PublicHost, Remote, RemoteServing};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
-use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -714,8 +713,13 @@ async fn a_page_that_vanishes_before_the_upgrade_frees_its_terminals_place() {
             api.addr
         );
         stream.write_all(request.as_bytes()).await.unwrap();
-        // A reset, not a close: the server's answer never reaches the page.
-        stream.set_linger(Some(Duration::ZERO)).unwrap();
+        // A reset, not a close: the server's answer never reaches the page. The deprecation is
+        // about blocking on drop, which a zero linger (an immediate reset) never does.
+        #[expect(
+            deprecated,
+            reason = "a zero linger makes the drop a reset and blocks nothing"
+        )]
+        stream.set_linger(Some(std::time::Duration::ZERO)).unwrap();
         drop(stream);
     }
     puddle_test_kit::eventually_async("every place was freed", STEP, || async {

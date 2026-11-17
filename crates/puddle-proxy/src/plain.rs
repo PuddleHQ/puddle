@@ -21,7 +21,7 @@ use http_body_util::BodyExt as _;
 use hyper_util::rt::TokioIo;
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionOutcome, ConnectionReason, EgressRequest,
-    HttpRequestLine, ProtocolHint,
+    HttpRequestLine, ProtocolHint, ReasonCode,
 };
 use puddle_upstream::RouteWatch;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -78,18 +78,17 @@ impl Incoming {
         match Self::new(head, target, path) {
             Ok(incoming) => Ok(incoming),
             Err(refusal) => {
-                if let Some(code) = refusal.code {
-                    let request =
-                        EgressRequest::new(handler.workspace.clone(), seen.host, seen.port)
-                            .with_protocol(ProtocolHint::Http);
-                    let mut event = ConnectionEvent::new(
-                        &request,
-                        ConnectionDecision::Blocked,
-                        ConnectionReason::Refused(code),
-                    );
-                    event.http = Some(line);
-                    handler.proxy.record(event).await;
-                }
+                // Every refusal of a parsed head carries a code; one that did not is a bad request.
+                let code = refusal.code.unwrap_or(ReasonCode::BadRequest);
+                let request = EgressRequest::new(handler.workspace.clone(), seen.host, seen.port)
+                    .with_protocol(ProtocolHint::Http);
+                let mut event = ConnectionEvent::new(
+                    &request,
+                    ConnectionDecision::Blocked,
+                    ConnectionReason::Refused(code),
+                );
+                event.http = Some(line);
+                handler.proxy.record(event).await;
                 Err(refusal)
             }
         }

@@ -81,6 +81,30 @@ fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
 }
 
 #[test]
+fn a_rule_set_made_by_an_unknown_actor_is_a_corrupt_row_not_text() {
+    let (_, store) = store();
+    store
+        .create_rule_set(UserId::OWNER, "Odd", "", None, Actor::Ui)
+        .unwrap();
+    // The table refuses such a value; a hand-edited file may still hold one.
+    let conn = lock(&store.conn);
+    conn.execute_batch(
+        "PRAGMA ignore_check_constraints = ON;
+         UPDATE rule_sets SET created_by = 'robot';
+         PRAGMA ignore_check_constraints = OFF;",
+    )
+    .unwrap();
+    drop(conn);
+    let err = store
+        .update_rule_set(UserId::OWNER, 1, "Odd", "", None, Actor::Ui)
+        .unwrap_err();
+    assert!(
+        matches!(&err, StoreError::Corrupt { table: "rule_sets", reason, .. } if reason.contains("robot")),
+        "{err}"
+    );
+}
+
+#[test]
 fn an_unreadable_set_colour_is_no_choice_and_does_not_break_the_list() {
     let (_, store) = store();
     let made = store

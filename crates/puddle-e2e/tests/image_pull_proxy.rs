@@ -200,7 +200,7 @@ fn connection_records(store: &Store, filter: &AuditFilter) -> Vec<puddle_store::
         .unwrap()
         .iter()
         .filter_map(|(_, line)| match serde_json::from_str(line).unwrap() {
-            AuditRecord::Connection(record) => Some(record),
+            AuditRecord::Connection(record) => Some(*record),
             _ => None,
         })
         .collect()

@@ -113,13 +113,16 @@ describe("Ctrl+click", () => {
     expect(onMore).not.toHaveBeenCalled();
   });
 
-  it("is in the tooltips", () => {
+  it("is in the tooltips, on a line of its own that names what it does", () => {
     mount();
-    for (const name of [/^Allow/, /^Deny/]) {
-      expect(screen.getByRole("button", { name })).toHaveAttribute(
-        "title",
-        expect.stringContaining("Ctrl+click: every workspace"),
-      );
+    for (const [name, line] of [
+      [/^Allow/, "Ctrl+click: allow for all workspaces"],
+      [/^Deny/, "Ctrl+click: deny for all workspaces"],
+    ] as const) {
+      const lines = (
+        screen.getByRole("button", { name }).getAttribute("title") ?? ""
+      ).split("\n");
+      expect(lines).toContain(line);
     }
   });
 });

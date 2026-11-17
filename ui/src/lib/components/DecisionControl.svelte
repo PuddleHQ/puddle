@@ -48,7 +48,7 @@
       type="button"
       class="btn allow"
       aria-label="Allow {target.host} for {spoken}"
-      title="Allow for {spoken}, this host only, permanently (A). Ctrl+click: every workspace"
+      title={`Allow for ${spoken}, this host only, permanently (A)\nCtrl+click: allow for all workspaces`}
       onclick={(event) => choose("allow", event)}
     >
       Allow
@@ -58,7 +58,7 @@
     type="button"
     class="btn deny"
     aria-label="Deny {target.host} for {spoken}"
-    title="Deny for {spoken}, this host only, permanently (D). Ctrl+click: every workspace"
+    title={`Deny for ${spoken}, this host only, permanently (D)\nCtrl+click: deny for all workspaces`}
     onclick={(event) => choose("deny", event)}
   >
     Deny

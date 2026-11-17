@@ -141,7 +141,10 @@ fn an_attempt_without_an_answer_gives_its_slot_back_and_counts_neither_way() {
     let mut limiter = Limiter::default();
     fail_times(&mut limiter, "ann", FREE_FAILURES - 1, 0);
     limiter.admit("ann", 0).unwrap();
-    assert!(limiter.admit("ann", 0).is_err(), "the last free attempt is open");
+    assert!(
+        limiter.admit("ann", 0).is_err(),
+        "the last free attempt is open"
+    );
     limiter.abandoned("ann");
     limiter.admit("ann", 0).unwrap();
     limiter.abandoned("ann");

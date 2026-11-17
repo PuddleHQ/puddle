@@ -28,7 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_store::{
-    AccountSecrets, Clock, DeviceId, DeviceSession, Role, SignInMethod, Store, StoreError, UserId, UserName,
+    AccountSecrets, Clock, DeviceId, DeviceSession, Role, SignInMethod, Store, StoreError, UserId,
+    UserName,
 };
 use tokio::sync::broadcast;
 use zeroize::Zeroizing;

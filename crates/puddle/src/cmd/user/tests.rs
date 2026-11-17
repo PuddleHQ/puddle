@@ -159,7 +159,8 @@ fn the_link_is_written_on_its_own_line_and_a_failed_write_fails_the_command() {
     );
 }
 
-const REMOTE: &str = "data_dir = \".\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\nmulti_user = true\n";
+const REMOTE: &str =
+    "data_dir = \".\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\nmulti_user = true\n";
 /// [`REMOTE`] with several users off: only the owner may sign in.
 const OWNER_ONLY: &str =
     "data_dir = \".\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\n";
@@ -292,7 +293,12 @@ fn a_user_who_chose_a_password_shows_as_active_in_the_list() {
 #[test]
 fn with_several_users_off_an_add_makes_no_user_and_says_why() {
     let (dir, paths) = with_database();
-    let err = execute(&config_with(dir.path(), OWNER_ONLY, Action::Add("Ann".into()))).unwrap_err();
+    let err = execute(&config_with(
+        dir.path(),
+        OWNER_ONLY,
+        Action::Add("Ann".into()),
+    ))
+    .unwrap_err();
     assert!(err.contains("multi_user"), "{err}");
     let store = Store::open(&paths.store(), Arc::new(SystemClock), Limits::default()).unwrap();
     assert!(store.user_named("Ann").unwrap().is_none());
@@ -304,5 +310,9 @@ fn with_several_users_off_an_add_makes_no_user_and_says_why() {
         Action::Reset("owner".into()),
     ))
     .unwrap();
-    assert!(reset.result.starts_with("https://puddle.example.org/invite#"));
+    assert!(
+        reset
+            .result
+            .starts_with("https://puddle.example.org/invite#")
+    );
 }

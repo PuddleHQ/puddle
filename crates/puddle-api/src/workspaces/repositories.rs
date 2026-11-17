@@ -513,7 +513,12 @@ fn shown(url: &str) -> String {
         Some((scheme, rest)) => {
             masked(rest).map_or_else(|| url.to_owned(), |rest| format!("{scheme}://{rest}"))
         }
-        None if url.strip_prefix("git@").is_some_and(|host| !host.contains('@')) => url.to_owned(),
+        None if url
+            .strip_prefix("git@")
+            .is_some_and(|host| !host.contains('@')) =>
+        {
+            url.to_owned()
+        }
         None => masked(url).unwrap_or_else(|| url.to_owned()),
     };
     if shown.chars().count() > MAX_SHOWN {

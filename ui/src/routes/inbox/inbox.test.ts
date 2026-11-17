@@ -150,8 +150,8 @@ async function ready() {
 
 // A role query with a name works out the accessible name of every candidate, and each of those reads
 // the computed style of every node it passes: in jsdom the dialog's radios cost 5 ms apiece and the
-// page's chevron 4 ms, a label query 0.5 ms. These tests are about what the choices do, so they look
-// the radios and the chevron up by their label.
+// page's more-choices button 4 ms, a label query 0.5 ms. These tests are about what the choices do,
+// so they look the radios and the more-choices button up by their label.
 const moreChoices = () =>
   screen.getByLabelText(/^More choices for a\.example\.com/);
 const choice = (dialog: HTMLElement, label: RegExp) =>

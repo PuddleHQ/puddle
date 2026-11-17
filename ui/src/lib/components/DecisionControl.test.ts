@@ -41,13 +41,13 @@ describe("the one-click buttons", () => {
 
   it("the more-choices button hands its own element to the parent and shows whether the options are open", async () => {
     const { onMore } = mount();
-    const chevron = screen.getByRole("button", {
+    const more = screen.getByRole("button", {
       name: "More choices for api.example.com",
     });
-    expect(chevron).toHaveAttribute("aria-haspopup", "dialog");
-    expect(chevron).toHaveAttribute("aria-expanded", "false");
-    await fireEvent.click(chevron);
-    expect(onMore).toHaveBeenCalledWith(chevron);
+    expect(more).toHaveAttribute("aria-haspopup", "dialog");
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.click(more);
+    expect(onMore).toHaveBeenCalledWith(more);
     cleanup();
     mount({ optionsOpen: true });
     expect(

@@ -125,16 +125,16 @@ describe("confirming a decision for every workspace", () => {
 });
 
 describe("the more-choices popover", () => {
-  it("closes when the chevron of the row it hangs from is pressed again", async () => {
+  it("closes when the more-choices button of the row it hangs from is pressed again", async () => {
     inbox.add(request(1, { host: "a.example.com" }), "example.com");
     render(InboxPage);
     await screen.findByRole("heading", { name: "example.com" });
-    const chevron = screen.getByRole("button", {
+    const more = screen.getByRole("button", {
       name: /^More choices for a\.example\.com/,
     });
-    await fireEvent.click(chevron);
+    await fireEvent.click(more);
     await screen.findByRole("dialog", { hidden: true });
-    await fireEvent.click(chevron);
+    await fireEvent.click(more);
     await vi.waitFor(() =>
       expect(screen.queryByRole("dialog", { hidden: true })).toBeNull(),
     );

@@ -7,7 +7,7 @@
 //! start of the workspace; a plain one lives until the workspace stops or the user stops it.
 //! Pinned or not, a forward never takes a port something else holds: it says who has it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -169,6 +169,9 @@ struct Inner {
     programs: Arc<dyn ProgramLookup>,
     host: Arc<dyn HostAddrs>,
     entries: Mutex<HashMap<WorkspaceId, Entry>>,
+    /// Workspaces stopped since they last started: a report their agent sends late is dropped,
+    /// not turned into an entry again. Taken only while holding `entries`.
+    stopped: Mutex<HashSet<WorkspaceId>>,
     /// Serialises the calls that change forwards, so two of them never race for one port.
     changing: tokio::sync::Mutex<()>,
     /// The workspaces whose agent session ended, for whoever wants to check on the VM.
@@ -217,6 +220,7 @@ impl Ports {
                 programs,
                 host: Arc::new(OwnAddresses),
                 entries: Mutex::new(HashMap::new()),
+                stopped: Mutex::new(HashSet::new()),
                 changing: tokio::sync::Mutex::new(()),
                 ended: tokio::sync::broadcast::channel(64).0,
             }),
@@ -239,6 +243,13 @@ impl Ports {
         EndedSessions(self.inner.ended.subscribe())
     }
 
+    fn stopped_set(&self) -> MutexGuard<'_, HashSet<WorkspaceId>> {
+        self.inner
+            .stopped
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn entries(&self) -> MutexGuard<'_, HashMap<WorkspaceId, Entry>> {
         self.inner
             .entries
@@ -258,7 +269,11 @@ impl Ports {
     /// stays for the next start.
     pub async fn started(&self, workspace: &WorkspaceId) {
         let _changing = self.inner.changing.lock().await;
-        self.entries().entry(workspace.clone()).or_default().running = true;
+        {
+            let mut entries = self.entries();
+            self.stopped_set().remove(workspace);
+            entries.entry(workspace.clone()).or_default().running = true;
+        }
         match self.inner.pins.pinned(workspace) {
             Ok(pins) => {
                 for pin in pins {
@@ -336,10 +351,15 @@ impl Ports {
     }
 
     /// The workspace stopped: its forwards close and what the guest listened on is forgotten. Its
-    /// pins stay. Idempotent.
+    /// pins stay. What the workspace's agent reports after this is dropped until the next
+    /// [`Self::started`]. Idempotent.
     pub async fn stopped(&self, workspace: &WorkspaceId) {
         let _changing = self.inner.changing.lock().await;
-        let gone = self.entries().remove(workspace);
+        let gone = {
+            let mut entries = self.entries();
+            self.stopped_set().insert(workspace.clone());
+            entries.remove(workspace)
+        };
         if let Some(entry) = gone {
             if let Some(link) = &entry.link {
                 link.send_replace(None);
@@ -594,6 +614,9 @@ fn bind_failure(host_port: u16, err: &std::io::Error, programs: &dyn ProgramLook
 impl GuestWatcher for Ports {
     fn link(&self, workspace: &WorkspaceId, link: GuestLink) {
         let mut entries = self.entries();
+        if self.stopped_set().contains(workspace) {
+            return;
+        }
         let entry = entries.entry(workspace.clone()).or_default();
         entry
             .link
@@ -609,6 +632,9 @@ impl GuestWatcher for Ports {
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
         let changed = {
             let mut entries = self.entries();
+            if self.stopped_set().contains(workspace) {
+                return;
+            }
             let entry = entries.entry(workspace.clone()).or_default();
             if entry.listening == ports {
                 false

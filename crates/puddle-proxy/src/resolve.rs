@@ -212,7 +212,7 @@ enum Allowed {
 /// Whether a rule allows `host` for `workspace`. Asks without recording anything.
 async fn allowed(proxy: &Proxy, workspace: &WorkspaceId, host: &Host) -> Allowed {
     let request = EgressRequest::new(workspace.clone(), host.clone(), 0);
-    match proxy.look_up_rule(request, SuffixAllows::Count).await {
+    match proxy.look_up_rule(&request, SuffixAllows::Count) {
         Ok(Some(decision)) if decision.is_allow() => Allowed::Yes,
         Ok(Some(_)) => Allowed::No,
         Ok(None) => Allowed::Unmatched,

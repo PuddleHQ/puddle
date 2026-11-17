@@ -427,9 +427,7 @@ impl Proxy {
         }
         // The exception stands in for "no rule", never over a deny: a deny of the name, or of any
         // address it resolved to, sends the request to the ordinary decision (R-27).
-        let named = self
-            .look_up_rule(request.clone(), SuffixAllows::Ignore)
-            .await;
+        let named = self.look_up_rule(request, SuffixAllows::Ignore);
         let name_denied = matches!(
             named,
             Ok(Some(Decision::Deny { .. } | Decision::SetDeny { .. })) | Err(_)
@@ -456,21 +454,14 @@ impl Proxy {
         Some((Admitted::checked(addrs, true), event))
     }
 
-    /// The rule that decides `request`, without recording anything (on a blocking thread: the
-    /// policy may read SQLite).
-    pub(crate) async fn look_up_rule(
+    /// The rule that decides `request`, without recording anything. Runs on the calling thread:
+    /// [`Policy::lookup`] reads memory only.
+    pub(crate) fn look_up_rule(
         &self,
-        request: EgressRequest,
+        request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Option<Decision>, PolicyError> {
-        let policy = Arc::clone(&self.policy);
-        tokio::task::spawn_blocking(move || policy.lookup(&request, suffix_allows))
-            .await
-            .unwrap_or_else(|_| {
-                Err(PolicyError {
-                    reason: "policy task failed".into(),
-                })
-            })
+        self.policy.lookup(request, suffix_allows)
     }
 
     pub(crate) async fn decide(

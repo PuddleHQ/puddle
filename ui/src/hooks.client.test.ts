@@ -1,20 +1,57 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it, vi } from "vitest";
-import { handleError } from "./hooks.client.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { handleError, init, reporter } from "./hooks.client.ts";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function caught() {
+  const error = new TypeError("read only");
+  error.stack = "TypeError: read only\n    at x.js:1:2";
+  return { kind: "unknown", error, event: {} as never } as never;
+}
+
+function notFound() {
+  return {
+    kind: "framework",
+    error: { status: 404, message: "Not Found" },
+    event: {} as never,
+  } as never;
+}
 
 describe("handleError", () => {
   it("adds what was thrown as the error page's details and keeps SvelteKit's message", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const error = new TypeError("read only");
-    error.stack = "TypeError: read only\n    at x.js:1:2";
-    const answer = await handleError({
-      error,
-      status: 500,
-      message: "Internal Error",
-      event: {} as never,
-    } as never);
+    vi.spyOn(reporter, "report").mockImplementation(() => {});
+    const input = caught();
+    const answer = await handleError(input);
     expect(answer).toEqual({ detail: "TypeError: read only\n  at x.js:1:2" });
-    expect(logged).toHaveBeenCalledWith(error);
-    logged.mockRestore();
+    expect(logged).toHaveBeenCalledWith((input as { error: unknown }).error);
+  });
+
+  it("reports a bug to the server, but not a page that is not there", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const report = vi.spyOn(reporter, "report").mockImplementation(() => {});
+    const input = caught();
+    await handleError(input);
+    expect(report).toHaveBeenCalledExactlyOnceWith(
+      "page",
+      (input as { error: unknown }).error,
+    );
+    await handleError(notFound());
+    expect(report).toHaveBeenCalledOnce();
+  });
+});
+
+describe("init", () => {
+  it("reports what the window sees that nothing caught", async () => {
+    const report = vi.spyOn(reporter, "report").mockImplementation(() => {});
+    await init();
+    const error = new Error("in a click handler");
+    window.dispatchEvent(
+      new ErrorEvent("error", { error, message: error.message }),
+    );
+    expect(report).toHaveBeenCalledWith("uncaught", error);
   });
 });

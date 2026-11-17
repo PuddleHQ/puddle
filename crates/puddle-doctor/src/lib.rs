@@ -18,7 +18,6 @@
 //! | SSH agent | one key-list request to the agent's pipe or socket ([`puddle_ssh_agent`]), 2 s limit; on Windows also the OpenSSH Authentication Agent service | no agent, locked, no keys, slow to answer (info or warning, never a failure) |
 //! | Credential store | a write and delete of a throwaway value, through [`puddle_secrets::probe_os_store`] | no Secret Service provider or a locked keyring (a headless Linux host): saving secrets and sign-ins fails; names the fix and says to choose Retry in Puddle or restart it |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
-//! | Guest kernel (Windows) | none: a fact of the Windows runtime | its guest kernel has `/dev/mem` (info): guest root can map device registers |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
 //! in tests. The [`Report`] renders as text or as JSON with a [`SCHEMA_VERSION`] (it may be

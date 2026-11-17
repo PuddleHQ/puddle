@@ -956,6 +956,7 @@ impl GlobalSettingsRequest {
 /// Names the sections of the global settings a save replaces, so a save made from a stale read is
 /// caught. Consents have their own route and are not part of it.
 fn revision_of(global: &settings::GlobalSettings) -> String {
+    use base64::Engine as _;
     use sha2::{Digest as _, Sha256};
     let covered = (
         SettingsLayer::from(&global.workspace_defaults),
@@ -974,11 +975,8 @@ fn revision_of(global: &settings::GlobalSettings) -> String {
     );
     // Plain fields in a fixed order: the same settings always give the same bytes.
     let bytes = serde_json::to_vec(&covered).unwrap_or_default();
-    Sha256::digest(bytes)
-        .iter()
-        .take(12)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let digest = Sha256::digest(bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 impl GlobalSettingsRequest {

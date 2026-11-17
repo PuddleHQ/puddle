@@ -32,14 +32,62 @@ clean() {
     printf '%s' "$1" | tr '\000-\037\177' '?' | cut -c1-500
 }
 
-# Repo config can't run anything here: fsmonitor off, any owner accepted (the checkout may belong
-# to the session user, not root).
+# Config in a checkout can name programs for git to run, and this script runs as root, so every
+# git call switches them off: fsmonitor; hooks (with no optional locks `status` writes no index,
+# so `post-index-change` has no cause to run either); signature checks in `log`; and each filter
+# driver the checkout's config or the config of a repository nested in it names (blanked, so its
+# clean or process program never runs; the -c settings reach the git that `status` starts in a
+# nested repository). Any owner is accepted (the checkout may belong to the session user, not
+# root). A file a filter would rewrite may then read as changed: more is reported, never less.
+tab=$(printf '\t')
+
+# The filter drivers named in the config of the repository in $1 and of those nested in it, at
+# most $2 levels down, one per line; `!` for one no -c setting can name, or a nesting too deep.
+filter_names() {
+    git -c safe.directory='*' -c core.fsmonitor=false -C "$1" config --name-only \
+        --get-regexp '^filter\.' 2>/dev/null |
+        awk '/^filter\.[A-Za-z0-9._-]+\.[A-Za-z0-9-]+$/ { sub(/^filter\./, ""); sub(/\.[A-Za-z0-9-]+$/, ""); print; next }
+            { print "!" }'
+    git -c safe.directory='*' -c core.fsmonitor=false -C "$1" ls-files --stage 2>/dev/null |
+        while IFS= read -r entry; do
+            case $entry in 160000\ *) ;; *) continue ;; esac
+            nested=${entry#*"$tab"}
+            case $nested in \"*)
+                echo '!'
+                continue
+                ;;
+            esac
+            [ -e "$1/$nested/.git" ] || continue
+            if [ "$2" -le 0 ]; then
+                echo '!'
+                continue
+            fi
+            filter_names "$1/$nested" $(($2 - 1))
+        done
+}
+
+# Sets $filters to the filter drivers of checkout $1; fails when one cannot be switched off.
+read_filters() {
+    filters=$(filter_names "$1" 8 | awk '!seen[$0]++')
+    case $filters in *'!'*) return 1 ;; esac
+}
+
 g() {
-    git -c safe.directory='*' -c core.fsmonitor=false -C "./$d" "$@"
+    for f in $filters; do
+        set -- -c "filter.$f.clean=" -c "filter.$f.smudge=" -c "filter.$f.process=" \
+            -c "filter.$f.required=false" "$@"
+    done
+    git -c safe.directory='*' -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+        -c log.showSignature=false --no-optional-locks -C "./$d" "$@"
 }
 
 # Prints the record of checkout $d.
 describe() {
+    if ! read_filters "./$d"; then
+        printf 'E\t%s\t%s\n' "$(clean "$d")" \
+            "its git config names a filter Puddle cannot switch off, so it was not read"
+        return
+    fi
     if ! remotes=$(g remote 2>&1); then
         printf 'E\t%s\t%s\n' "$(clean "$d")" "$(clean "git remote failed: $remotes")"
         return

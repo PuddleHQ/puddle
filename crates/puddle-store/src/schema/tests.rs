@@ -1218,3 +1218,28 @@ fn v32_reads_every_existing_pending_row_as_not_needing_an_exact_allow() {
             .is_err()
     );
 }
+
+#[test]
+fn an_upgrade_waits_out_another_process_holding_the_file_longer_than_a_normal_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    migrate_to(&mut Connection::open(&path).unwrap(), 2).unwrap();
+    let mut conn = Connection::open(&path).unwrap();
+    // A normal write gives up quickly; the upgrade must wait for the other process's upgrade.
+    conn.busy_timeout(std::time::Duration::from_millis(50))
+        .unwrap();
+    let holder = Connection::open(&path).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        holder.execute_batch("COMMIT").unwrap();
+    });
+    let upgraded = migrate_to(&mut conn, 4);
+    release.join().unwrap();
+    assert_eq!(upgraded.unwrap(), 2);
+    assert_eq!(version(&conn), 4);
+    let timeout: i64 = conn
+        .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+        .unwrap();
+    assert_eq!(timeout, 50, "the normal wait is back after the upgrade");
+}

@@ -1017,7 +1017,22 @@ const BACKUPS_KEPT: usize = 2;
 /// One row of `PRAGMA foreign_key_check`: (child table, child rowid, parent table, constraint).
 type Violation = (String, Option<i64>, String, i64);
 
+/// How long an upgrade waits for another process that holds the file (the CLI or a host that is
+/// upgrading it too). The normal write wait is 5 s; an upgrade can run far longer, and the
+/// process that lost the race has nothing to serve until the file is current.
+const UPGRADE_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
 fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
+    let normal: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
+    conn.busy_timeout(UPGRADE_WAIT)?;
+    let result = migrate_loop(conn, migrations);
+    conn.busy_timeout(std::time::Duration::from_millis(
+        u64::try_from(normal).unwrap_or(0),
+    ))?;
+    result
+}
+
+fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     loop {
         let start = current_version(conn, supported)?;

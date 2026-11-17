@@ -184,6 +184,25 @@ describe("adding", () => {
     ).toBeNull();
   });
 
+  it("does not carry a typed secret into the plain field when the kind is switched", async () => {
+    render(Page);
+    const dialog = await openAdd();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", {
+        name: /Secret: the workspace never sees/,
+      }),
+    );
+    await fireEvent.input(within(dialog).getByLabelText("Value"), {
+      target: { value: "npm_abc123" },
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("radio", {
+        name: /Variable: the workspace sees its value/,
+      }),
+    );
+    expect(within(dialog).getByLabelText("Value")).toHaveValue("");
+  });
+
   it("adds a secret: the value goes once, the table never shows it", async () => {
     render(Page);
     const dialog = await openAdd();

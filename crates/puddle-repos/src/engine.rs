@@ -222,6 +222,14 @@ fn source_organisation(source: &SourceSpec) -> Option<String> {
     }
 }
 
+/// The credential's own organisation and the other one `target` reads, when it reads an
+/// organisation other than its own (one its coverage adds).
+fn elsewhere(target: &Target) -> Option<(String, &str)> {
+    let organisation = target.organisation.as_deref()?;
+    let own = source_organisation(&target.source)?;
+    (own != organisation).then_some((own, organisation))
+}
+
 /// The Azure DevOps organisations a credential names: the one its source is for and, unless it is a
 /// pasted token (which belongs to one organisation), those it covers.
 fn azure_organisations(binding: &CredentialBinding) -> BTreeSet<String> {
@@ -594,10 +602,30 @@ impl Inner {
                 azure::list(&exchange, &organisation, &authorization).await
             }
         };
-        if matches!(&result, Err(p) if p.kind == ProblemKind::TokenRejected) && !stored {
-            // The host says the token is bad: the cached copy must not be served again.
-            self.secrets.invalidate(&target.source);
-        }
+        let result = match result {
+            // A signed-in account reaches the organisations it is a member of: one that refuses
+            // it says nothing about the token, which still works for its own.
+            Err(problem) if problem.kind == ProblemKind::TokenRejected => {
+                if let Some((own, organisation)) = elsewhere(target) {
+                    Err(Problem::new(
+                        ProblemKind::NotFound,
+                        format!(
+                            "Azure DevOps did not accept this credential for organisation \
+                             {organisation}: it is for {own} and does not reach {organisation}; \
+                             check that the account is a member of {organisation}, or take \
+                             {organisation} out of what the credential covers"
+                        ),
+                    ))
+                } else {
+                    if !stored {
+                        // The host says the token is bad: the cached copy must not be served again.
+                        self.secrets.invalidate(&target.source);
+                    }
+                    Err(problem)
+                }
+            }
+            other => other,
+        };
         let mut listed = result?;
         listed.notes.extend(standing_notes(&target.source, &kind));
         Ok(listed)

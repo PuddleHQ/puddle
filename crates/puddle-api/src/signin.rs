@@ -28,8 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_store::{
-    AccountSecrets, Clock, DeviceId, DeviceSession, Role, SignInMethod, Store, StoreError, UserId,
-    UserName,
+    AccountSecrets, CheckedPassword, Clock, DeviceId, DeviceSession, Role, SignInMethod, Store,
+    StoreError, UserId, UserName,
 };
 use tokio::sync::broadcast;
 use zeroize::Zeroizing;
@@ -237,9 +237,10 @@ impl SignIn {
                 return Err(StoreError::SetupDone.into());
             }
             let hash = password::hash(&password).map_err(weak)?;
-            this.secrets.create_owner(&name, &hash)?;
+            let checked = this.secrets.create_owner(&name, &hash)?;
             tracing::info!("the owner account was made");
-            this.make_session(UserId::OWNER, device_name.as_deref())
+            this.make_session(&checked, device_name.as_deref())?
+                .ok_or_else(wrong_credentials)
         })
         .await
     }
@@ -257,7 +258,7 @@ impl SignIn {
         let name = name.to_owned();
         let password = Zeroizing::new(password.to_owned());
         let device_name = device_name.map(str::to_owned);
-        let user = blocking(move || {
+        let checked = blocking(move || {
             // A name that is not an account, or an account that may not sign in (users other
             // than the owner while several users are off), is checked against the decoy: the same
             // work, the same answer.
@@ -265,25 +266,28 @@ impl SignIn {
                 .store
                 .user_named(&name)?
                 .filter(|u| this.may_sign_in(u.role));
-            let right = if let Some(user) = &user {
-                let right = this
+            let checked = if let Some(user) = &user {
+                let checked = this
                     .secrets
-                    .check_password(user.id, |hash| password::verify(hash, &password))?;
-                if !right && !this.secrets.has_password(user.id)? {
+                    .verify_password(user.id, |hash| password::verify(hash, &password))?;
+                if checked.is_none() && !this.secrets.has_password(user.id)? {
                     password::verify(&this.decoy, &password);
                 }
-                right
+                checked
             } else {
                 password::verify(&this.decoy, &password);
-                false
+                None
             };
-            Ok(user.filter(|_| right).map(|u| u.id))
+            Ok(checked)
         })
         .await?;
-        attempt.answered(user.is_some());
-        let user = user.ok_or_else(wrong_credentials)?;
+        attempt.answered(checked.is_some());
+        let checked = checked.ok_or_else(wrong_credentials)?;
         let this = self.clone();
-        blocking(move || this.make_session(user, device_name.as_deref())).await
+        // A reset, password change or deletion that landed after the check wins: no device.
+        blocking(move || this.make_session(&checked, device_name.as_deref()))
+            .await?
+            .ok_or_else(wrong_credentials)
     }
 
     /// Sets a password with the secret of an invite link (made on the server) and signs in.
@@ -323,27 +327,38 @@ impl SignIn {
             }
             let user = this.secrets.redeem_invite(&digest)?.ok_or_else(not_valid)?;
             let hash = password::hash(&password).map_err(weak)?;
-            this.secrets.set_password_hash(user, &hash)?;
+            let checked = this.secrets.set_password_hash(user, &hash)?;
             let ended = this.store.revoke_devices_of(user, None)?;
-            Ok((this.make_session(user, device_name.as_deref())?, ended))
+            let granted = this
+                .make_session(&checked, device_name.as_deref())?
+                .ok_or_else(not_valid)?;
+            Ok((granted, ended))
         })
         .await?;
         self.end_devices(&ended);
         Ok(granted)
     }
 
-    /// A new device for `user` with its refresh token and first access token.
-    fn make_session(&self, user: UserId, device_name: Option<&str>) -> Result<Granted, ApiError> {
+    /// A new device for the user of `checked`, with its refresh token and first access token;
+    /// `None` when that password changed, went away or the user's deletion began since.
+    fn make_session(
+        &self,
+        checked: &CheckedPassword,
+        device_name: Option<&str>,
+    ) -> Result<Option<Granted>, ApiError> {
         let now = self.now();
-        let device = self.store.add_device(
-            user,
+        let Some(device) = self.secrets.add_device(
+            checked,
             device_name.unwrap_or(DEFAULT_DEVICE_NAME),
             now.saturating_add(DEVICE_TTL_MS),
-        )?;
+        )?
+        else {
+            return Ok(None);
+        };
         let refresh = random_secret().map_err(|e| internal(&e))?;
         self.secrets.put_session(device.id, &digest(&refresh))?;
-        let grant = self.grant(user, &device)?;
-        Ok(Granted { grant, refresh })
+        let grant = self.grant(checked.user(), &device)?;
+        Ok(Some(Granted { grant, refresh }))
     }
 
     fn grant(&self, user: UserId, device: &puddle_store::Device) -> Result<SessionGrant, ApiError> {
@@ -434,22 +449,23 @@ impl SignIn {
         let attempt = self.attempt(who.name.to_ascii_lowercase())?;
         let current = Zeroizing::new(current.to_owned());
         let new = Zeroizing::new(new.to_owned());
-        let verified = blocking({
+        let checked = blocking({
             let this = this.clone();
             move || {
                 Ok(this
                     .secrets
-                    .check_password(user, |hash| password::verify(hash, &current))?)
+                    .verify_password(user, |hash| password::verify(hash, &current))?)
             }
         })
         .await?;
-        attempt.answered(verified);
-        if !verified {
-            return Err(wrong_credentials());
-        }
+        attempt.answered(checked.is_some());
+        let checked = checked.ok_or_else(wrong_credentials)?;
         let ended = blocking(move || {
             let hash = password::hash(&new).map_err(weak)?;
-            this.secrets.set_password_hash(user, &hash)?;
+            // A reset or deletion that landed after the check wins: no password is put back.
+            if !this.secrets.replace_password(&checked, &hash)? {
+                return Err(wrong_credentials());
+            }
             Ok(this.store.revoke_devices_of(user, Some(device))?)
         })
         .await?;

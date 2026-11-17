@@ -19,6 +19,31 @@ fn device_of(row: &Row<'_>) -> Result<Device, StoreError> {
     })
 }
 
+/// Adds a device for `user`, valid until `expires_at`, unless the user is gone or being deleted
+/// (then `None`). The caller holds the connection, and a transaction when the insert depends on
+/// something it checked first.
+pub(crate) fn insert_device(
+    conn: &rusqlite::Connection,
+    user: UserId,
+    name: &str,
+    now: u64,
+    expires_at: u64,
+) -> Result<Option<Device>, StoreError> {
+    let name = device_name(name)?;
+    let written = conn.execute(
+        "INSERT INTO devices (user_id, name, created_at, last_seen_at, expires_at)
+             SELECT id, ?2, ?3, ?3, ?4 FROM users WHERE id = ?1 AND deleting_at IS NULL",
+        params![user.get(), name, sql_ts(now), sql_ts(expires_at)],
+    )?;
+    Ok((written > 0).then(|| Device {
+        id: DeviceId::from_stored(conn.last_insert_rowid()),
+        name,
+        created_at: now,
+        last_seen_at: now,
+        expires_at,
+    }))
+}
+
 impl Store {
     /// The user called `name` (ignoring ASCII case), if there is one.
     ///
@@ -37,34 +62,21 @@ impl Store {
             .transpose()
     }
 
-    /// A new device for `user`, valid until `expires_at` (epoch ms).
+    /// A new device for `user`, valid until `expires_at` (epoch ms). A user whose deletion has
+    /// begun gets none.
     ///
     /// # Errors
-    /// [`StoreError::DeviceName`], [`StoreError::UnknownUser`], or a database error.
+    /// [`StoreError::DeviceName`], [`StoreError::UnknownUser`] (also for a user being deleted), or
+    /// a database error.
     pub fn add_device(
         &self,
         user: UserId,
         name: &str,
         expires_at: u64,
     ) -> Result<Device, StoreError> {
-        let name = device_name(name)?;
         let conn = lock(&self.conn);
-        let now = self.clock.now_ms();
-        let written = conn.execute(
-            "INSERT INTO devices (user_id, name, created_at, last_seen_at, expires_at)
-                 SELECT id, ?2, ?3, ?3, ?4 FROM users WHERE id = ?1",
-            params![user.get(), name, sql_ts(now), sql_ts(expires_at)],
-        )?;
-        if written == 0 {
-            return Err(StoreError::UnknownUser(user));
-        }
-        Ok(Device {
-            id: DeviceId::from_stored(conn.last_insert_rowid()),
-            name,
-            created_at: now,
-            last_seen_at: now,
-            expires_at,
-        })
+        insert_device(&conn, user, name, self.clock.now_ms(), expires_at)?
+            .ok_or(StoreError::UnknownUser(user))
     }
 
     /// `user`'s devices that still work (not revoked, not expired), the one used last first.
@@ -87,7 +99,8 @@ impl Store {
         Ok(devices)
     }
 
-    /// Who `device` signs in as, if it is neither revoked nor expired.
+    /// Who `device` signs in as, if it is neither revoked nor expired and its user is not being
+    /// deleted.
     ///
     /// # Errors
     /// A database error, or a stored row that does not parse.
@@ -97,7 +110,8 @@ impl Store {
         let found: Option<(i64, String)> = conn
             .query_row(
                 "SELECT d.user_id, u.role FROM devices d JOIN users u ON u.id = d.user_id
-                 WHERE d.id = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2",
+                 WHERE d.id = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2
+                   AND u.deleting_at IS NULL",
                 params![device.get(), now],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )

@@ -981,3 +981,74 @@ async fn an_invite_refuses_the_users_own_name_as_their_password() {
         .await
         .unwrap();
 }
+
+/// Ann, with a password and one signed-in browser, on a server with several users on.
+async fn ann_signed_in(f: &Fixture) -> (UserId, Granted) {
+    owner_signed_up(f).await;
+    let ann = f.store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    f.secrets
+        .set_password_hash(ann, &password::hash(password()).unwrap())
+        .unwrap();
+    let granted = f.sign_in.sign_in("ann", password(), None).await.unwrap();
+    (ann, granted)
+}
+
+#[tokio::test]
+async fn once_a_users_deletion_has_begun_nothing_signs_them_in_any_more() {
+    let f = fixture_with(true);
+    let (ann, browser) = ann_signed_in(&f).await;
+    let (_, invite) = f
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob")
+        .await
+        .unwrap();
+    let bob = f.store.user_named("bob").unwrap().unwrap().id;
+    // The deletion has begun; its lock-out has not run yet (it is a separate step, and a request
+    // can land in between).
+    f.store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    f.store.begin_user_delete(UserId::OWNER, bob).unwrap();
+    let err = f
+        .sign_in
+        .sign_in("ann", password(), None)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Unauthorized);
+    assert!(
+        f.sign_in
+            .principal_for(&browser.grant.access_token)
+            .await
+            .is_none()
+    );
+    assert!(f.sign_in.refresh(&browser.refresh).await.is_err());
+    assert!(
+        f.sign_in
+            .redeem_invite(&invite.secret, pw("bob's long password"), None)
+            .await
+            .is_err()
+    );
+    assert!(!f.secrets.has_password(bob).unwrap(), "no password was set");
+    assert!(
+        f.store.devices(bob).unwrap().is_empty(),
+        "no device was made"
+    );
+}
+
+#[tokio::test]
+async fn a_password_change_for_a_user_being_deleted_is_refused() {
+    let f = fixture_with(true);
+    let (ann, browser) = ann_signed_in(&f).await;
+    let device = DeviceId::from_stored(browser.grant.device.id);
+    f.store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    let err = f
+        .sign_in
+        .change_password(ann, device, password(), pw("a new long password"))
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Unauthorized);
+    assert!(
+        f.secrets
+            .check_password(ann, |hash| password::verify(hash, password()))
+            .unwrap(),
+        "the old password was not replaced"
+    );
+}

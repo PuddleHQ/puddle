@@ -222,3 +222,91 @@ fn a_failing_database_is_an_error_for_the_owner_steps() {
     let name = UserName::new("Tijs").unwrap();
     assert!(secrets.create_owner(&name, "$argon2id$x").is_err());
 }
+
+#[test]
+fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_deletion() {
+    let (store, secrets, _) = setup();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    secrets.set_password_hash(ann, "$argon2id$one").unwrap();
+    let checked = secrets
+        .verify_password(ann, |h| h == "$argon2id$one")
+        .unwrap()
+        .unwrap();
+    assert_eq!(checked.user(), ann);
+    assert!(!format!("{checked:?}").contains("argon2id"), "{checked:?}");
+    assert!(secrets.verify_password(ann, |_| false).unwrap().is_none());
+    // Unchanged: both steps go through.
+    assert!(
+        secrets
+            .add_device(&checked, "laptop", 9_000)
+            .unwrap()
+            .is_some()
+    );
+    assert!(secrets.replace_password(&checked, "$argon2id$two").unwrap());
+    // The password changed since the check: neither goes through.
+    assert!(
+        secrets
+            .add_device(&checked, "laptop", 9_000)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !secrets
+            .replace_password(&checked, "$argon2id$three")
+            .unwrap()
+    );
+    // A reset took it away.
+    let checked = secrets.verify_password(ann, |_| true).unwrap().unwrap();
+    secrets.clear_password(ann).unwrap();
+    assert!(
+        secrets
+            .add_device(&checked, "laptop", 9_000)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !secrets
+            .replace_password(&checked, "$argon2id$four")
+            .unwrap()
+    );
+    assert!(!secrets.has_password(ann).unwrap());
+    // The deletion began.
+    let checked = secrets.set_password_hash(ann, "$argon2id$five").unwrap();
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert!(
+        secrets
+            .add_device(&checked, "laptop", 9_000)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!secrets.replace_password(&checked, "$argon2id$six").unwrap());
+    assert!(matches!(
+        secrets.set_password_hash(ann, "$argon2id$seven"),
+        Err(StoreError::UnknownUser(_))
+    ));
+    assert_eq!(
+        store.devices(ann).unwrap().len(),
+        1,
+        "only the first device"
+    );
+}
+
+#[test]
+fn a_user_being_deleted_has_no_session_and_no_invite() {
+    let (store, secrets, _) = setup();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    let device = store.add_device(ann, "laptop", 9_000).unwrap();
+    secrets.put_session(device.id, &[4; 32]).unwrap();
+    secrets.put_invite(ann, &[5; 32], 9_000).unwrap();
+    assert!(secrets.session_for(&[4; 32]).unwrap().is_some());
+    assert!(store.device_session(device.id).unwrap().is_some());
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert!(secrets.session_for(&[4; 32]).unwrap().is_none());
+    assert!(store.device_session(device.id).unwrap().is_none());
+    assert_eq!(secrets.invite_holder(&[5; 32]).unwrap(), None);
+    assert_eq!(secrets.redeem_invite(&[5; 32]).unwrap(), None);
+    assert!(matches!(
+        store.add_device(ann, "phone", 9_000),
+        Err(StoreError::UnknownUser(_))
+    ));
+}

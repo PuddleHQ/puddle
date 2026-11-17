@@ -224,10 +224,6 @@ unlink $node if $made;
 /// virtio-mmio windows maps. With `/dev/mem`, root could map every window read-write and drive a
 /// device (the memory balloon among them) past the guest kernel, leaving the device model's own
 /// checks as the only line. The probe is proven by finding the windows it tries.
-#[cfg_attr(
-    windows,
-    ignore = "the Windows firmware is built from a kernel configuration that still has /dev/mem"
-)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_hostile_hg54_guest_root_cannot_map_device_registers_through_physical_memory() {
     let settings = support::settings();

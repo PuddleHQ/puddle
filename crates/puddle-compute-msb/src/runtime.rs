@@ -336,56 +336,6 @@ pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
         if err.message.contains("before agent relay became available"))
 }
 
-/// The SDK's message when the runtime binary does not answer its own version or capability
-/// query within the SDK's fixed 2 s limit (`runtime/launch_contract.rs`, `bounded_probe`).
-const PROBE_TIMEOUT_MESSAGE: &str = "runtime version probe timed out";
-
-/// Waits between attempts after a probe timeout: four attempts, 35 s of waiting at most.
-const PROBE_RETRY_PAUSES: [Duration; 3] = [
-    Duration::from_secs(5),
-    Duration::from_secs(10),
-    Duration::from_secs(20),
-];
-
-/// The SDK starts the runtime binary for a short query before every create and start and gives
-/// it 2 s. A host at load average 20 to 40 can take longer to schedule and page in that
-/// process, and the SDK reports the miss as a failed start. Nothing is wrong with the
-/// sandbox, so the call is repeated.
-pub(crate) fn is_probe_timeout(error: &MicrosandboxError) -> bool {
-    matches!(error, MicrosandboxError::Runtime(message) if message.contains(PROBE_TIMEOUT_MESSAGE))
-}
-
-/// Runs `attempt`, repeating it after each of `pauses` while it fails with a probe timeout and
-/// `untouched` says the failed attempt left nothing behind. Any other result, and the last
-/// timeout, is returned as it is.
-pub(crate) async fn retry_probe_timeouts<T, A, AF, U, UF>(
-    pauses: &[Duration],
-    mut attempt: A,
-    mut untouched: U,
-) -> Result<T, MicrosandboxError>
-where
-    A: FnMut() -> AF,
-    AF: Future<Output = Result<T, MicrosandboxError>>,
-    U: FnMut() -> UF,
-    UF: Future<Output = bool>,
-{
-    let mut result = attempt().await;
-    for pause in pauses {
-        match &result {
-            Err(e) if is_probe_timeout(e) && untouched().await => {
-                tracing::warn!(
-                    ?pause,
-                    "msb's runtime probe timed out (host busy), trying again"
-                );
-                tokio::time::sleep(*pause).await;
-                result = attempt().await;
-            }
-            _ => break,
-        }
-    }
-    result
-}
-
 /// The last `max` bytes of every file in `dir`, each under its name; empty if there are none.
 pub(crate) fn log_tail(dir: &Path, max: usize) -> String {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -486,17 +436,7 @@ impl Runtime for MsbRuntime {
             // Checked again right before msb opens them: a pull can take minutes, and a checkout
             // is a folder the user's own programs may change meanwhile.
             self.check_mounts(&spec)?;
-            let created = retry_probe_timeouts(
-                &PROBE_RETRY_PAUSES,
-                || self.sdk(spec::builder(&spec).create()),
-                || async {
-                    // A timeout after msb began making the sandbox would make a repeat fail
-                    // with "already exists"; only repeat while nothing of it is there.
-                    matches!(self.record(name.as_str()).await, Ok(None))
-                        && !self.sandbox_dir(name.as_str()).exists()
-                },
-            )
-            .await;
+            let created = self.sdk(spec::builder(&spec).create()).await;
             match created {
                 Ok(sdk) => self.handle_for(&name, sdk).await,
                 Err(e) => {
@@ -536,15 +476,7 @@ impl Runtime for MsbRuntime {
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
             self.prune_grow_orphans(name.as_str());
-            let started = retry_probe_timeouts(
-                &PROBE_RETRY_PAUSES,
-                || self.sdk(Sandbox::start(name.as_str())),
-                || async {
-                    matches!(self.record(name.as_str()).await, Ok(Some(r))
-                        if status(r.status_snapshot()).is_down())
-                },
-            )
-            .await;
+            let started = self.sdk(Sandbox::start(name.as_str())).await;
             match started {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {

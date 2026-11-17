@@ -59,6 +59,15 @@ paths = ['''^crates/puddle-api/src/authz/tests\.rs$''']
 regexTarget = "match"
 regexes = ['''token\W{1,4}ghp_(owners|anns)0123456789''']
 
+# History only: the made-up token the app errors end-to-end test once held as a literal (it is
+# built at run time now; see the log canary entry for why it stays).
+[[allowlists]]
+description = "the made-up token of the app errors end-to-end test"
+condition = "AND"
+paths = ['''^ui/e2e/app-errors\.spec\.ts$''']
+regexTarget = "match"
+regexes = ['''SECRET\W{1,8}0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0''']
+
 # GitHub's own REST description (the slice of it that puddle-repos tests read) names a repository
 # property `temp_clone_token` with an example value; it is a field name and a sample, not a secret.
 [[allowlists]]

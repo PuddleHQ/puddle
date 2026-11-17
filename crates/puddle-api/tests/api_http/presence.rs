@@ -165,3 +165,53 @@ async fn a_workspace_nobody_owns_announces_nothing_and_the_next_request_still_do
     assert_eq!(told.len(), 1, "{told:?}");
     api.running.shutdown().await;
 }
+
+/// Shutdown returns only once the picker has let go of the store, even when it is in the middle
+/// of a new request: the store closes its database when the last handle goes, and a host that is
+/// restarted on the same data folder right after a stop must find it closed.
+#[test]
+fn shutdown_waits_for_the_picker_to_let_go_of_the_store() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (store, at_return) = runtime.block_on(async {
+        let api = start().await;
+        // The picker looks the owner up on the one blocking thread, so holding that thread keeps
+        // the picker inside the request while the API stops.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let holder = tokio::task::spawn_blocking(move || held.recv());
+        let idle = Arc::strong_count(&api.store);
+        api.request("box", "www.example.com");
+        // `request` keeps no handle once it returns; the picker's lookup holds one until it ran.
+        puddle_test_kit::eventually(
+            "the picker took the request",
+            Duration::from_secs(10),
+            || Arc::strong_count(&api.store) != idle,
+        )
+        .await;
+        let Api { running, store, .. } = api;
+        let watched = Arc::downgrade(&store);
+        let stopping = tokio::spawn(async move {
+            running.shutdown().await;
+            watched.strong_count()
+        });
+        // A shutdown that does not wait for the picker is done well within this.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        release.send(()).unwrap();
+        let at_return = stopping.await.unwrap();
+        holder.await.unwrap().unwrap();
+        (store, at_return)
+    });
+    // Ends whatever the runtime still ran; what holds the store now is outside the API.
+    drop(runtime);
+    assert_eq!(
+        at_return,
+        Arc::strong_count(&store),
+        "shutdown returned while the picker still held the store"
+    );
+}

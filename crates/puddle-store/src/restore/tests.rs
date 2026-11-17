@@ -521,3 +521,13 @@ fn a_backup_with_an_identity_and_stand_ins_keeps_them_attached_to_their_owner_ro
         1
     );
 }
+
+#[test]
+fn an_integrity_answer_other_than_ok_is_a_corruption_error_that_quotes_it() {
+    assert!(verdict("ok").is_ok());
+    let err = verdict("row 7 missing from index").unwrap_err();
+    assert!(
+        err.to_string().contains("row 7 missing from index"),
+        "{err}"
+    );
+}

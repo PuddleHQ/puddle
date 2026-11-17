@@ -662,6 +662,10 @@ impl State {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per scenario step, read top to bottom"
+    )]
     fn apply(&self, step: &Step) -> Result<(), String> {
         let now = self.clock.now_ms();
         match step {
@@ -733,34 +737,10 @@ impl State {
             Step::ReleaseRepos => self.repos.release(),
             Step::Doctor(report) => self.doctor.set((**report).clone()),
             Step::BackupFails { reason } => self.backup.fail_with(reason.as_deref()),
-            Step::RestorePreview {
-                missing_disks,
-                secrets,
-            } => {
-                self.restore
-                    .set_facts(restore_facts(missing_disks, secrets));
-            }
-            Step::RestoreApplyFails { reason } => self.restore.fail_apply_with(reason.as_deref()),
-            Step::RestoreResult { applied, message } => {
-                self.restore.set_result(message.as_ref().map(|message| {
-                    puddle_api::wire::RestoreResult {
-                        applied: *applied,
-                        mode: puddle_api::wire::RestoreMode::Add,
-                        safety_copy: "20231114T221320Z".to_owned(),
-                        at_ms: 1_700_000_000_000,
-                        message: message.clone(),
-                    }
-                }));
-            }
-            Step::SafetyCopies { names } => self.restore.set_safety_copies(
-                names
-                    .iter()
-                    .map(|name| puddle_api::wire::SafetyCopy {
-                        name: name.clone(),
-                        size_bytes: 2048,
-                    })
-                    .collect(),
-            ),
+            Step::RestorePreview { .. }
+            | Step::RestoreApplyFails { .. }
+            | Step::RestoreResult { .. }
+            | Step::SafetyCopies { .. } => self.step_restore(step),
             Step::DevCertificate {
                 state,
                 trust_answer,
@@ -924,6 +904,40 @@ impl State {
         );
         self.events.emit(Event::IdentitiesChanged {});
         Ok(())
+    }
+
+    /// The steps that set what the restore service answers.
+    fn step_restore(&self, step: &Step) {
+        match step {
+            Step::RestorePreview {
+                missing_disks,
+                secrets,
+            } => self
+                .restore
+                .set_facts(restore_facts(missing_disks, secrets)),
+            Step::RestoreApplyFails { reason } => self.restore.fail_apply_with(reason.as_deref()),
+            Step::RestoreResult { applied, message } => {
+                self.restore.set_result(message.as_ref().map(|message| {
+                    puddle_api::wire::RestoreResult {
+                        applied: *applied,
+                        mode: puddle_api::wire::RestoreMode::Add,
+                        safety_copy: "20231114T221320Z".to_owned(),
+                        at_ms: 1_700_000_000_000,
+                        message: message.clone(),
+                    }
+                }));
+            }
+            Step::SafetyCopies { names } => self.restore.set_safety_copies(
+                names
+                    .iter()
+                    .map(|name| puddle_api::wire::SafetyCopy {
+                        name: name.clone(),
+                        size_bytes: 2048,
+                    })
+                    .collect(),
+            ),
+            _ => {}
+        }
     }
 
     fn step_dev_certificate(

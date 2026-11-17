@@ -266,3 +266,24 @@ fn a_present_list_without_workspaces_takes_the_backups_whole() {
     .unwrap();
     assert_eq!(read(&new)["workspaces"][0]["id"], "ws-x");
 }
+
+#[test]
+fn two_documents_that_are_not_objects_are_left_as_they_are() {
+    assert!(merge_documents(b"[1]", b"[2]").is_none());
+    assert!(merge_documents(b"{}", b"{}").is_none());
+    assert!(merge_documents(b"{\"a\":1}", b"not json").is_none());
+    let merged = merge_documents(b"{\"a\":1}", b"{\"b\":2}").unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&merged).unwrap()["b"], 2);
+}
+
+#[test]
+fn a_present_temp_file_is_not_copied() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here");
+    write(&here, "global.json", "{}");
+    write(&here, ".global.json.1.tmp", "half");
+    let new = dir.path().join("new");
+    settings(ApplyMode::Add, &here, &dir.path().join("nothing"), &new).unwrap();
+    assert!(new.join("global.json").is_file());
+    assert!(!new.join(".global.json.1.tmp").exists());
+}

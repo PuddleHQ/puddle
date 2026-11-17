@@ -470,3 +470,18 @@ fn rolling_back_a_part_leaves_a_part_that_was_never_moved_alone() {
     roll_back_part(&s.here, &old, "workspaces.json").unwrap();
     assert_eq!(fs::read(s.here.workspace_book()).unwrap(), before);
 }
+
+#[test]
+fn a_swap_that_cannot_make_its_aside_folder_fails_and_changes_nothing() {
+    let s = setup();
+    request(&s.here, &s.staging_id, ApplyMode::Replace, "").unwrap();
+    let pending = s.here.restore_pending();
+    let marker: Marker =
+        serde_json::from_slice(&fs::read(pending.join("marker.json")).unwrap()).unwrap();
+    // A file where the aside folder goes.
+    fs::write(pending.join("old"), b"in the way").unwrap();
+    let before = rules(&s.here);
+    let err = run(&s.here, &pending, marker).unwrap_err();
+    assert!(matches!(err, RestoreError::Io { .. }), "{err}");
+    assert_eq!(rules(&s.here), before);
+}

@@ -8,6 +8,7 @@
 //! Windows front/worker split, logging, the order "prepare before the first thread", and the exit
 //! code.
 
+use std::future::Future;
 use std::process::ExitCode;
 
 use puddle_host::{Host, HostConfig, HostOptions, MsbFactory, SystemPlatform, prepare};
@@ -210,25 +211,42 @@ pub fn run(args: &ServeArgs) -> ExitCode {
                 println!("{line}");
             }
         }
-        let restore = tokio::select! {
-            shutdown = wait_for_shutdown() => {
-                match shutdown {
-                    Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
-                    Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
-                }
-                false
-            }
-            () = host.restore_requested() => {
-                tracing::info!("a restore was confirmed; shutting down to apply it at the next start");
-                true
-            }
-        };
+        let stop = stop_cause(wait_for_shutdown(), host.restore_requested()).await;
         let code = exit_after(&host.shutdown().await.sandboxes);
-        if restore {
+        if stop == Stop::Restore {
             println!("A restore from a backup is waiting. Start Puddle again to apply it.");
         }
         code
     })
+}
+
+/// Why the host is stopping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    /// The user or the system asked it to stop.
+    Request,
+    /// A restore was confirmed and applies at the next start.
+    Restore,
+}
+
+/// Waits for whichever comes first, a request to stop or a confirmed restore, and logs which.
+async fn stop_cause(
+    request: impl Future<Output = std::io::Result<puddle_lifecycle::ShutdownCause>>,
+    restore: impl Future<Output = ()>,
+) -> Stop {
+    tokio::select! {
+        cause = request => {
+            match cause {
+                Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
+                Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
+            }
+            Stop::Request
+        }
+        () = restore => {
+            tracing::info!("a restore was confirmed; shutting down to apply it at the next start");
+            Stop::Restore
+        }
+    }
 }
 
 /// The host's options for these `puddle serve` options: the shipped host's, with the choice of

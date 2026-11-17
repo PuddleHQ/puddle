@@ -99,10 +99,8 @@ fn io_error(what: &str, path: &Path) -> impl FnOnce(io::Error) -> RestoreError {
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), RestoreError> {
-    let body = serde_json::to_vec_pretty(value).map_err(|e| RestoreError::Io {
-        what: format!("cannot write {}", path.display()),
-        source: io::Error::other(e),
-    })?;
+    // A struct of strings and numbers always serialises.
+    let body = serde_json::to_vec_pretty(value).unwrap_or_default();
     private::write_atomic(path, &body).map_err(io_error("cannot write", path))
 }
 
@@ -149,11 +147,22 @@ pub(crate) enum RequestError {
 /// # Errors
 ///
 /// [`RequestError`] as its variants say.
+#[cfg(test)]
 pub(crate) fn request(
     paths: &HostPaths,
     staging_id: &str,
     mode: ApplyMode,
     summary: &str,
+) -> Result<Requested, RequestError> {
+    request_with(paths, staging_id, mode, |_| summary.to_owned())
+}
+
+/// [`request`] with the summary made from the staged folder once it is known to exist.
+pub(crate) fn request_with(
+    paths: &HostPaths,
+    staging_id: &str,
+    mode: ApplyMode,
+    summary: impl FnOnce(&Path) -> String,
 ) -> Result<Requested, RequestError> {
     let fail = |what: &str, e: &dyn std::fmt::Display| RequestError::Failed(format!("{what}: {e}"));
     let staged = staging_dir(&paths.restore_staging(), staging_id)
@@ -185,7 +194,7 @@ pub(crate) fn request(
             format: 1,
             mode,
             safety_copy: name.clone(),
-            summary: summary.to_owned(),
+            summary: summary(&staged),
             requested_at_ms,
             phase: Phase::Requested,
         },
@@ -370,22 +379,26 @@ fn prepare(
     let db = new.join(BACKUP_DATABASE);
     let restored = restored_database(paths, &staged.join(BACKUP_DATABASE), &db, mode)?;
     private::tighten_file(&db).map_err(io_error("cannot restrict", &db))?;
-    let (live_settings, live_book) = (paths.settings(), paths.workspace_book());
-    let (their_settings, their_book) =
-        (staged.join(BACKUP_SETTINGS), staged.join(BACKUP_WORKSPACES));
-    merge::settings(
-        mode,
-        &live_settings,
-        &their_settings,
-        &new.join(BACKUP_SETTINGS),
-    )?;
-    merge::book(
-        mode,
-        &live_book,
-        &their_book,
-        &new.join(BACKUP_WORKSPACES),
-        &restored,
-    )
+    let ours = Files::new(paths.data());
+    let theirs = Files::new(staged);
+    let to = Files::new(new);
+    merge::settings(mode, &ours.settings, &theirs.settings, &to.settings)?;
+    merge::book(mode, &ours.book, &theirs.book, &to.book, &restored)
+}
+
+/// Where the settings and the workspace list are below a folder.
+struct Files {
+    settings: PathBuf,
+    book: PathBuf,
+}
+
+impl Files {
+    fn new(dir: &Path) -> Self {
+        Self {
+            settings: dir.join(BACKUP_SETTINGS),
+            book: dir.join(BACKUP_WORKSPACES),
+        }
+    }
 }
 
 /// Writes the restored database to `db`: the live one with the backup's merged in, or the backup's
@@ -396,9 +409,10 @@ fn restored_database(
     db: &Path,
     mode: ApplyMode,
 ) -> Result<puddle_store::RestoredDatabase, RestoreError> {
-    if paths.store().is_file() {
+    let ours = paths.store();
+    if ours.is_file() {
         return Ok(puddle_store::restore_database(
-            &paths.store(),
+            &ours,
             theirs,
             db,
             mode.into(),

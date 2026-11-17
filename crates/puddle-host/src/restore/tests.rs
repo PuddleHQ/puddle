@@ -641,9 +641,9 @@ fn settings_are_read_by_key_with_nested_folders_odd_files_and_no_temp_files() {
 fn a_workspace_list_that_is_not_json_names_no_workspaces() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("workspaces.json");
-    assert!(workspace_names(&path).is_empty());
+    assert_eq!(workspace_names(&path).len(), 0);
     fs::write(&path, b"{ not json").unwrap();
-    assert!(workspace_names(&path).is_empty());
+    assert_eq!(workspace_names(&path).len(), 0);
     fs::write(&path, br#"{"workspaces":[{"id":"ws-a"},{"name":"no id"}]}"#).unwrap();
     assert_eq!(
         workspace_names(&path),
@@ -762,11 +762,8 @@ async fn the_result_is_read_in_either_mode_and_an_unreadable_one_is_a_failure() 
     let service = service_for(&here);
     assert!(service.result().await.unwrap().is_none());
     for (mode, wire) in [
-        (apply::ApplyMode::Add, puddle_api::wire::RestoreMode::Add),
-        (
-            apply::ApplyMode::Replace,
-            puddle_api::wire::RestoreMode::Replace,
-        ),
+        (ApplyMode::Add, puddle_api::wire::RestoreMode::Add),
+        (ApplyMode::Replace, puddle_api::wire::RestoreMode::Replace),
     ] {
         let outcome = apply::RestoreOutcome {
             applied: true,
@@ -808,7 +805,7 @@ async fn safety_copies_are_listed_newest_first_and_only_a_real_one_is_deleted() 
     let root = tempfile::tempdir().unwrap();
     let here = data_folder(root.path(), "here");
     let service = service_for(&here);
-    assert!(service.safety_copies().await.unwrap().is_empty());
+    assert_eq!(service.safety_copies().await.unwrap().len(), 0);
     for name in ["20231001T000000Z", "20231114T221320Z"] {
         let dir = here.safety_copies().join(name);
         fs::create_dir_all(dir.join("settings")).unwrap();
@@ -873,11 +870,48 @@ fn a_safety_copy_name_is_a_utc_time_and_the_summary_reads_in_both_modes() {
     };
     let parts = [part(2, 1, 3), part(1, 1, 0)];
     assert_eq!(
-        summarise(apply::ApplyMode::Add, &parts),
+        summarise(ApplyMode::Add, &parts),
         "Added 3 entries that were missing; kept your version of 2 that differ."
     );
     assert_eq!(
-        summarise(apply::ApplyMode::Replace, &parts),
+        summarise(ApplyMode::Replace, &parts),
         "Added 3, replaced 2 and dropped 3 entries that were not in the backup."
+    );
+}
+
+#[test]
+fn a_staging_id_is_32_hex_digits_and_a_failing_random_source_is_an_error() {
+    let id = staging_id(|raw| {
+        raw.fill(0xab);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(id, "ab".repeat(16));
+    let err = staging_id(|_| Err(getrandom::Error::UNSUPPORTED)).unwrap_err();
+    assert!(matches!(err, RestoreError::Io { .. }), "{err}");
+}
+
+#[test]
+fn a_part_that_cannot_be_created_is_an_io_error_and_a_taken_name_is_a_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    // The folder above it is missing.
+    let err = create_part(&dir.path().join("missing").join("x"), "x").unwrap_err();
+    assert!(matches!(err, RestoreError::Io { .. }), "{err}");
+    let taken = dir.path().join("taken");
+    fs::write(&taken, b"x").unwrap();
+    let err = create_part(&taken, "taken").unwrap_err();
+    assert!(
+        matches!(err, RestoreError::Refused(Refusal::Duplicate(_))),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_safety_copy_that_cannot_be_removed_is_a_failure_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = remove_copy(&dir.path().join("gone")).unwrap_err();
+    assert!(
+        matches!(&err, RestoreServiceError::Failed(m) if m.contains("cannot delete")),
+        "{err:?}"
     );
 }

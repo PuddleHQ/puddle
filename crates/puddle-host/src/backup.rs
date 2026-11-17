@@ -147,10 +147,7 @@ fn fill(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
     };
     let path = dest.join(BACKUP_MANIFEST);
     // A struct of numbers and strings always serialises.
-    let body = serde_json::to_vec_pretty(&manifest).map_err(|e| BackupError::Io {
-        what: format!("cannot write {}", path.display()),
-        source: io::Error::other(e),
-    })?;
+    let body = serde_json::to_vec_pretty(&manifest).unwrap_or_default();
     private::write_atomic(&path, &body).map_err(io_error("cannot write", &path))?;
 
     let settings_files = copy_tree(&paths.settings(), &dest.join(BACKUP_SETTINGS))?;

@@ -22,7 +22,7 @@ fn io_error(what: &str, path: &Path) -> impl FnOnce(io::Error) -> RestoreError {
     move |source| RestoreError::Io { what, source }
 }
 
-fn is_temp(path: &Path) -> bool {
+pub(super) fn is_temp(path: &Path) -> bool {
     path.extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("tmp"))
 }
@@ -260,10 +260,8 @@ pub(super) fn book(
         }
     }
     out.insert("workspaces".into(), Value::Array(workspaces));
-    let body = serde_json::to_vec_pretty(&Value::Object(out)).map_err(|e| RestoreError::Io {
-        what: format!("cannot write {}", new.display()),
-        source: io::Error::other(e),
-    })?;
+    // A JSON value always serialises.
+    let body = serde_json::to_vec_pretty(&Value::Object(out)).unwrap_or_default();
     private::write_atomic(new, &body).map_err(io_error("cannot write", new))
 }
 

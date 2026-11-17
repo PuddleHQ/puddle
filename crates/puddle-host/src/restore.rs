@@ -5,6 +5,7 @@
 //! Staging writes only below the staging root the caller names. Nothing in the data folder's live
 //! files is read for writing or changed: a restore applies later, at a start, from the staged parts.
 
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read};
 use std::path::{Component, Path, PathBuf};
@@ -149,23 +150,29 @@ pub fn stage_folder(folder: &Path, root: &Path) -> Result<Staged, RestoreError> 
     staged_in(root, |dir| copy_folder(folder, dir, MAX_UNPACKED_BYTES))
 }
 
+/// A new staging id: 32 lowercase hex digits from `random`, the system's source.
+fn staging_id(
+    random: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+) -> Result<String, RestoreError> {
+    let mut raw = [0_u8; 16];
+    random(&mut raw).map_err(|e| RestoreError::Io {
+        what: "cannot make a staging id".into(),
+        source: io::Error::other(e.to_string()),
+    })?;
+    Ok(raw.iter().fold(String::with_capacity(32), |mut id, b| {
+        // Writing to a String never fails.
+        let _ = write!(id, "{b:02x}");
+        id
+    }))
+}
+
 /// Makes the staging folder, fills it with `fill`, checks it, and removes it again on any failure.
 fn staged_in(
     root: &Path,
     fill: impl FnOnce(&Path) -> Result<(), RestoreError>,
 ) -> Result<Staged, RestoreError> {
     private::create_dir(root).map_err(io_error("cannot create", root))?;
-    let mut raw = [0_u8; 16];
-    getrandom::fill(&mut raw).map_err(|e| RestoreError::Io {
-        what: "cannot make a staging id".into(),
-        source: io::Error::other(e.to_string()),
-    })?;
-    let id = raw.iter().fold(String::with_capacity(32), |mut id, b| {
-        use std::fmt::Write as _;
-        // Writing to a String never fails.
-        let _ = write!(id, "{b:02x}");
-        id
-    });
+    let id = staging_id(getrandom::fill)?;
     let dir = root.join(&id);
     private::create_new_dir(&dir).map_err(io_error("cannot create", &dir))?;
     let result = fill(&dir).and_then(|()| check(&dir, id));
@@ -268,19 +275,24 @@ fn unpack(source: impl Read, dir: &Path, limit: u64) -> Result<(), RestoreError>
             if let Some(parent) = target.parent() {
                 private::create_dir(parent).map_err(io_error("cannot create", parent))?;
             }
-            let mut out = match private::create_file(&target) {
-                Ok(file) => file,
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                    return Err(Refusal::Duplicate(name).into());
-                }
-                Err(e) => return Err(io_error("cannot create", &target)(e)),
-            };
+            let mut out = create_part(&target, &name)?;
             io::copy(&mut entry, &mut out).map_err(damaged)?;
         } else {
             return Err(Refusal::UnknownEntry(name).into());
         }
     }
     Ok(())
+}
+
+/// Creates the file `target` for the archive entry `name`; the same name twice is a refusal.
+fn create_part(target: &Path, name: &str) -> Result<File, RestoreError> {
+    match private::create_file(target) {
+        Ok(file) => Ok(file),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            Err(Refusal::Duplicate(name.to_owned()).into())
+        }
+        Err(e) => Err(io_error("cannot create", target)(e)),
+    }
 }
 
 fn copy_folder(folder: &Path, dir: &Path, limit: u64) -> Result<(), RestoreError> {
@@ -404,42 +416,42 @@ fn workspace_names(path: &Path) -> Vec<(String, String)> {
 /// The settings documents below `dir` as `file#key` to the key's value, so a setting is compared by
 /// its key (a file that is not a JSON object is one entry, by its text).
 fn settings_entries(dir: &Path) -> std::collections::BTreeMap<String, String> {
-    fn walk(root: &Path, rel: &Path, out: &mut std::collections::BTreeMap<String, String>) {
-        let Ok(entries) = fs::read_dir(root.join(rel)) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let rel = rel.join(entry.file_name());
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                walk(root, &rel, out);
-            } else if kind.is_file() {
-                let name = rel.to_string_lossy().replace('\\', "/");
-                if rel
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("tmp"))
-                {
-                    continue;
-                }
-                let body = fs::read(entry.path()).unwrap_or_default();
-                match serde_json::from_slice::<serde_json::Value>(&body) {
-                    Ok(serde_json::Value::Object(map)) => {
-                        for (key, value) in map.into_iter().filter(|(k, _)| k != "version") {
-                            out.insert(format!("{name}#{key}"), value.to_string());
-                        }
-                    }
-                    _ => {
-                        out.insert(name, String::from_utf8_lossy(&body).into_owned());
-                    }
-                }
+    let mut out = std::collections::BTreeMap::new();
+    walk_settings(dir, Path::new(""), &mut out);
+    out
+}
+
+fn walk_settings(root: &Path, rel: &Path, out: &mut std::collections::BTreeMap<String, String>) {
+    let Ok(entries) = fs::read_dir(root.join(rel)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let rel = rel.join(entry.file_name());
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => walk_settings(root, &rel, out),
+            Ok(kind) if kind.is_file() && !merge::is_temp(&rel) => {
+                add_document(&rel, &entry.path(), out);
             }
+            _ => {}
         }
     }
-    let mut out = std::collections::BTreeMap::new();
-    walk(dir, Path::new(""), &mut out);
-    out
+}
+
+/// Adds the keys of the JSON document `path` (named `rel`), or the whole text of one that is not an
+/// object, to `out`.
+fn add_document(rel: &Path, path: &Path, out: &mut std::collections::BTreeMap<String, String>) {
+    let name = rel.to_string_lossy().replace('\\', "/");
+    let body = fs::read(path).unwrap_or_default();
+    match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(serde_json::Value::Object(map)) => {
+            for (key, value) in map.into_iter().filter(|(k, _)| k != "version") {
+                out.insert(format!("{name}#{key}"), value.to_string());
+            }
+        }
+        _ => {
+            out.insert(name, String::from_utf8_lossy(&body).into_owned());
+        }
+    }
 }
 
 fn compare_maps(
@@ -576,6 +588,12 @@ fn is_safety_name(name: &str) -> bool {
         })
 }
 
+/// Removes the safety copy folder `dir`.
+fn remove_copy(dir: &Path) -> Result<(), RestoreServiceError> {
+    fs::remove_dir_all(dir)
+        .map_err(|e| RestoreServiceError::Failed(format!("cannot delete {}: {e}", dir.display())))
+}
+
 /// The size in bytes of the files below `dir`.
 fn size_of(dir: &Path) -> u64 {
     fs::read_dir(dir).map_or(0, |entries| entries.flatten().map(|e| entry_size(&e)).sum())
@@ -625,24 +643,21 @@ impl puddle_api::RestoreService for DataFolderRestore {
         Box::pin(async move {
             let mode = mode_of(mode);
             let requested = blocking(move || {
-                let dir = staging_dir(&paths.restore_staging(), &id)
-                    .filter(|d| d.is_dir())
-                    .ok_or_else(|| {
-                        RestoreServiceError::NotStaged(apply::RequestError::NotStaged.to_string())
-                    })?;
-                let manifest = fs::read(dir.join(BACKUP_MANIFEST))
-                    .ok()
-                    .and_then(|b| serde_json::from_slice::<Manifest>(&b).ok());
-                let staged = Staged {
-                    id: id.clone(),
-                    dir,
-                    manifest,
-                    schema_version: puddle_store::SCHEMA_VERSION,
+                let summary = |dir: &Path| {
+                    let manifest = fs::read(dir.join(BACKUP_MANIFEST))
+                        .ok()
+                        .and_then(|b| serde_json::from_slice::<Manifest>(&b).ok());
+                    let staged = Staged {
+                        id: id.clone(),
+                        dir: dir.to_path_buf(),
+                        manifest,
+                        schema_version: puddle_store::SCHEMA_VERSION,
+                    };
+                    facts(&paths, &staged)
+                        .map(|f| summarise(mode, &f.parts))
+                        .unwrap_or_default()
                 };
-                let summary = facts(&paths, &staged)
-                    .map(|f| summarise(mode, &f.parts))
-                    .unwrap_or_default();
-                apply::request(&paths, &id, mode, &summary).map_err(|e| match e {
+                apply::request_with(&paths, &id, mode, summary).map_err(|e| match e {
                     apply::RequestError::NotStaged => RestoreServiceError::NotStaged(e.to_string()),
                     apply::RequestError::AlreadyPending | apply::RequestError::Refused(_) => {
                         RestoreServiceError::Refused(e.to_string())
@@ -757,9 +772,7 @@ impl puddle_api::RestoreService for DataFolderRestore {
         let name = name.to_owned();
         Box::pin(async move {
             blocking(move || match dir {
-                Some(dir) if dir.is_dir() => fs::remove_dir_all(&dir).map_err(|e| {
-                    RestoreServiceError::Failed(format!("cannot delete {}: {e}", dir.display()))
-                }),
+                Some(dir) if dir.is_dir() => remove_copy(&dir),
                 _ => Err(RestoreServiceError::NotStaged(format!(
                     "no safety copy named {name}"
                 ))),

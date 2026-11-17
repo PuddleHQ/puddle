@@ -159,6 +159,10 @@ fn user_key(db: &str) -> String {
     )
 }
 
+/// The secret environment variables of the backup.
+const SECRET_ENVS: &str = "SELECT workspace_id, name, secret_id FROM backup.env_vars \
+                           WHERE kind = 'secret' ORDER BY workspace_id, name";
+
 /// Attaches the backup database as `backup`.
 fn attach(conn: &Connection, backup: &Path) -> Result<(), StoreError> {
     let path = backup.to_string_lossy();
@@ -262,10 +266,7 @@ pub fn preview_merge(present: &Path, backup: &Path) -> Result<DatabasePreview, S
         }
         PartCounts::compare(&here, &there)
     };
-    let mut stmt = conn.prepare(
-        "SELECT workspace_id, name, secret_id FROM backup.env_vars \
-         WHERE kind = 'secret' ORDER BY workspace_id, name",
-    )?;
+    let mut stmt = conn.prepare(SECRET_ENVS)?;
     let secret_envs = stmt
         .query_map([], |r| {
             Ok(SecretEnv {

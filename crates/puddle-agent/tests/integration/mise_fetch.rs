@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: `puddle-agent mise-fetch` as the host runs it, against the real pin. The real
 //! download is the VM test's; here `curl` is a script, so the binary's own checks (the pinned
 //! hash, the marker, the exit codes the host reads) run without a network.

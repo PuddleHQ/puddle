@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the file vault's key comes from, first one found wins:
 //!
 //! 1. **A credential the unit passes**: `$CREDENTIALS_DIRECTORY/puddle-vault-key`, 32 raw bytes,

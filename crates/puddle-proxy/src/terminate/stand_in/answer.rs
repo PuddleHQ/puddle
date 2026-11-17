@@ -594,11 +594,32 @@ pub(super) enum Format {
 }
 
 impl Decoder {
-    /// The decoder for a `Content-Encoding` value; `Ok(None)` for none or `identity`, `Err` for
-    /// one Puddle does not read (an unknown one, or several in a row).
-    pub(super) fn for_encoding(value: Option<&HeaderValue>) -> Result<Option<Self>, ()> {
-        let Some(value) = value else { return Ok(None) };
-        let text = value.to_str().map_err(|_| ())?.trim().to_ascii_lowercase();
+    /// The decoder for an answer with these `headers`. Every coding counts, as the guest's client
+    /// would undo each one: each `Content-Encoding` line (not only the first), and each coding of
+    /// `Transfer-Encoding` but `chunked` (the HTTP library undoes only the chunking and leaves a
+    /// `gzip` before it in the body). `Ok(None)` for none or `identity`, `Err` for what Puddle
+    /// does not read (an unknown coding, or several in a row).
+    pub(super) fn for_answer(headers: &HeaderMap) -> Result<Option<Self>, ()> {
+        let mut text = String::new();
+        for line in &headers.get_all(header::CONTENT_ENCODING) {
+            text.push_str(line.to_str().map_err(|_| ())?);
+            text.push(',');
+        }
+        for line in &headers.get_all(header::TRANSFER_ENCODING) {
+            for coding in line.to_str().map_err(|_| ())?.split(',') {
+                if !coding.trim().eq_ignore_ascii_case("chunked") {
+                    text.push_str(coding);
+                    text.push(',');
+                }
+            }
+        }
+        Self::for_codings(&text)
+    }
+
+    /// The decoder for a list of codings in the form of a `Content-Encoding` value; see
+    /// [`Self::for_answer`].
+    pub(super) fn for_codings(list: &str) -> Result<Option<Self>, ()> {
+        let text = list.to_ascii_lowercase();
         let codings: Vec<&str> = text
             .split(',')
             .map(str::trim)
@@ -911,8 +932,7 @@ pub(crate) async fn scrub_answer(
     if no_body {
         return Ok(Response::from_parts(parts, inner));
     }
-    let decoder = Decoder::for_encoding(parts.headers.get(header::CONTENT_ENCODING))
-        .map_err(|()| NotScrubbed::Encoding)?;
+    let decoder = Decoder::for_answer(&parts.headers).map_err(|()| NotScrubbed::Encoding)?;
     let declared = parts
         .headers
         .get(header::CONTENT_LENGTH)
@@ -943,6 +963,7 @@ pub(crate) async fn scrub_answer(
     }
     if decoder.is_some() {
         parts.headers.remove(header::CONTENT_ENCODING);
+        parts.headers.remove(header::TRANSFER_ENCODING);
     }
     if decoder.is_some() || !scrubber.same_length {
         parts.headers.remove(header::CONTENT_LENGTH);

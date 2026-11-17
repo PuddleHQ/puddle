@@ -339,12 +339,7 @@ fn a_locked_keyring_stops_migrate_with_a_message_instead_of_waiting_for_ever() {
     let (release, waiting) = mpsc::channel();
     let mut setup = rig.setup();
     setup.os_store = Some(Arc::new(Blocked(std::sync::Mutex::new(waiting))));
-    // The stand-in for the user finally unlocking: without a wait limit migrate would sit here.
-    let unlock = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(2));
-        drop(release);
-    });
-    let started = std::time::Instant::now();
+    // The keyring is never unlocked while migrate runs: only a wait limit lets it return.
     let err = migrate_within(
         &rig.paths(),
         &setup,
@@ -352,17 +347,13 @@ fn a_locked_keyring_stops_migrate_with_a_message_instead_of_waiting_for_ever() {
         Duration::from_millis(50),
     )
     .unwrap_err();
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "waited for the unlock"
-    );
     let VaultAdminError::StoreWait { store, seconds } = &err else {
         panic!("{err}");
     };
     assert_eq!((*store, *seconds), (StoreKind::Os, 0));
     assert!(err.to_string().contains("unlock"), "{err}");
     assert!(rig.recorded().is_none(), "no record was written");
-    unlock.join().unwrap();
+    drop(release);
 }
 
 /// A file vault the way a headless first start makes it, with `CANARY` under `env-named`.

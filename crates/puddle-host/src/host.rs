@@ -374,7 +374,8 @@ impl<R: Runtime + Clone> Host<R> {
             endpoints: &endpoints,
             roots: &roots,
         };
-        let credentials = open_credentials(&shared).await?;
+        let listed: Vec<WorkspaceId> = stored.iter().map(|s| s.id.clone()).collect();
+        let credentials = open_credentials(&shared, listed).await?;
         let (outbound, pull) = build_outbound(
             &shared,
             &credentials.injecting,
@@ -788,8 +789,12 @@ struct Credentials {
 }
 
 /// Credential injection: what each workspace decrypts, the injector and the secrets behind it,
-/// and the client that verifies the real servers of decrypted hosts.
-async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError> {
+/// and the client that verifies the real servers of decrypted hosts. `listed` are the workspaces
+/// in the book, whose saved logins the clean-up of the store keeps.
+async fn open_credentials(
+    shared: &Shared<'_>,
+    listed: Vec<WorkspaceId>,
+) -> Result<Credentials, HostError> {
     let Shared {
         config,
         options,
@@ -812,7 +817,7 @@ async fn open_credentials(shared: &Shared<'_>) -> Result<Credentials, HostError>
     chosen.check_in_background(problems.clone());
     let store_retry = Arc::new(chosen.retry_check(problems.clone()));
     let vault_sweep = if chosen.usable {
-        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone())
+        crate::vault::sweep_in_background(vault.clone(), store.clone(), listed, problems.clone())
     } else {
         tokio::task::spawn_blocking(|| ())
     };

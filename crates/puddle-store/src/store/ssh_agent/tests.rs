@@ -152,3 +152,49 @@ fn deleting_the_workspace_drops_its_hosts() {
     assert_eq!(store.ssh_agent_hosts(&ws("a")).unwrap(), []);
     assert_eq!(store.ssh_agent_hosts(&ws("b")).unwrap().len(), 1);
 }
+
+#[test]
+fn the_first_host_key_is_kept_until_the_agent_is_turned_off_for_the_host() {
+    let (_, store, seen) = store();
+    assert_eq!(
+        store
+            .pin_ssh_agent_host_key(&ws("a"), "h.example", "SHA256:first")
+            .unwrap(),
+        HostKeyPin::Off
+    );
+    store
+        .set_ssh_agent_host(&ws("a"), "h.example", None)
+        .unwrap();
+    store
+        .set_ssh_agent_host(&ws("b"), "h.example", None)
+        .unwrap();
+    seen.take();
+    let pin = |w: &str, key: &str| {
+        store
+            .pin_ssh_agent_host_key(&ws(w), "h.example", key)
+            .unwrap()
+    };
+    assert_eq!(pin("a", "SHA256:first"), HostKeyPin::Pinned);
+    assert_eq!(pin("a", "SHA256:first"), HostKeyPin::Same);
+    assert_eq!(
+        pin("a", "SHA256:second"),
+        HostKeyPin::Other("SHA256:first".into())
+    );
+    assert_eq!(seen.take(), [], "a pin is no switch change");
+    // Another workspace keeps its own.
+    assert_eq!(pin("b", "SHA256:second"), HostKeyPin::Pinned);
+    // Changing the allowed keys keeps the host key.
+    store
+        .set_ssh_agent_host(&ws("a"), "h.example", Some(&keys(&["SHA256:k"])))
+        .unwrap();
+    assert_eq!(
+        pin("a", "SHA256:second"),
+        HostKeyPin::Other("SHA256:first".into())
+    );
+    // Off and on again: the next key is kept.
+    assert!(store.remove_ssh_agent_host(&ws("a"), "h.example").unwrap());
+    store
+        .set_ssh_agent_host(&ws("a"), "h.example", None)
+        .unwrap();
+    assert_eq!(pin("a", "SHA256:second"), HostKeyPin::Pinned);
+}

@@ -9,7 +9,7 @@ use puddle_secrets::{
     StoredId, Sweep, probe_os_store, probe_store, reconnect_os_store, write_record,
 };
 use puddle_store::Store;
-use puddle_types::{Problem, Problems};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 use crate::proxy_passwords::ID_PREFIX;
 
@@ -33,16 +33,27 @@ pub(crate) fn os_vault() -> Arc<dyn SecretStore> {
 /// The problem that stands while the clean-up cannot finish; the next sweep that does ends it.
 const SWEEP_PROBLEM: &str = "credential-store-sweep";
 
-/// Removes every value in `vault` that no identity and no environment secret names. `Err` says why
-/// nothing was removed: the rows or the store could not be read.
-fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> {
+/// Removes every value in `vault` that nothing names: no identity, no environment secret, no proxy
+/// sign-in and no saved login of one of `workspaces` (the saved logins of a deleted workspace go).
+/// `Err` says why nothing was removed: the rows or the store could not be read.
+fn sweep(
+    vault: &dyn SecretStore,
+    store: &Store,
+    workspaces: &[WorkspaceId],
+) -> Result<Sweep, &'static str> {
     let in_use = store.secret_ids_in_use().map_err(|err| {
         tracing::warn!(%err, "credential store sweep skipped: the rows could not be read");
         "Puddle could not read which tokens and secrets it still uses"
     })?;
     keep_local(vault, in_use.iter());
     vault
-        .sweep_orphans(&|id| in_use.contains(id) || id.as_str().starts_with(ID_PREFIX))
+        .sweep_orphans(&|id| {
+            in_use.contains(id)
+                || id.as_str().starts_with(ID_PREFIX)
+                || workspaces
+                    .iter()
+                    .any(|workspace| puddle_logins::is_saved_login_of(id, workspace))
+        })
         .map_err(|_| {
             tracing::warn!("credential store sweep skipped: the store did not answer");
             "the credential store did not answer"
@@ -105,16 +116,20 @@ fn report(outcome: Result<Sweep, &'static str>, problems: &Problems) {
 }
 
 /// Runs [`sweep`] off the async threads: a locked keyring may take a long time to answer, and
-/// starting must not wait for it. Values this run writes meanwhile are never swept.
+/// starting must not wait for it. Values this run writes meanwhile are never swept, so a workspace
+/// made after the start keeps its saved logins too.
 ///
 /// The sweep holds the store, so the host awaits the returned handle at shutdown: a restart on
 /// the same folder must not open the database while this run's connection is still closing.
 pub(crate) fn sweep_in_background(
     vault: Arc<dyn SecretStore>,
     store: Arc<Store>,
+    workspaces: Vec<WorkspaceId>,
     problems: Arc<Problems>,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
+    tokio::task::spawn_blocking(move || {
+        report(sweep(vault.as_ref(), &store, &workspaces), &problems);
+    })
 }
 
 /// The problem that stands while the credential store refuses a write. A store that failed once

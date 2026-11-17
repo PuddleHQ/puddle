@@ -66,11 +66,13 @@ fn parses_libkrunfw_makefile() {
 
 #[test]
 fn parses_compare_responses() {
-    let json = r#"{"commits": [
+    let json = r#"{"total_commits": 2, "commits": [
             {"sha": "aaa", "commit": {"message": "fix(vsock): one\n\nbody"}},
             {"sha": "bbb", "commit": {"message": ""}}
         ]}"#;
-    let commits = parse_compare(json).unwrap();
+    let page = parse_compare(json).unwrap();
+    assert_eq!(page.total, 2);
+    let commits = page.commits;
     assert_eq!(
         commits[0],
         Commit {
@@ -80,6 +82,41 @@ fn parses_compare_responses() {
     );
     assert_eq!(commits[1].subject, "");
     assert!(parse_compare("{}").is_err());
+}
+
+fn page(total: usize, shas: &[&str]) -> String {
+    let commits: Vec<String> = shas
+        .iter()
+        .map(|s| format!(r#"{{"sha":"{s}","commit":{{"message":"m {s}"}}}}"#))
+        .collect();
+    format!(
+        r#"{{"total_commits":{total},"commits":[{}]}}"#,
+        commits.join(",")
+    )
+}
+
+#[test]
+fn a_comparison_longer_than_one_page_is_read_to_the_end() {
+    let pages = [page(3, &["a", "b"]), page(3, &["c"])];
+    let commits = all_commits(|n| Ok(pages[n as usize - 1].clone())).unwrap();
+    let shas: Vec<&str> = commits.iter().map(|c| c.sha.as_str()).collect();
+    assert_eq!(shas, ["a", "b", "c"]);
+}
+
+#[test]
+fn a_comparison_that_stays_short_of_its_total_is_an_error() {
+    let pages = [page(3, &["a", "b"]), page(3, &[])];
+    let err = all_commits(|n| Ok(pages[n as usize - 1].clone()))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("2 commits against a total of 3"), "{err}");
+    let too_many = all_commits(|_| Ok(page(1, &["a", "b"])))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        too_many.contains("2 commits against a total of 1"),
+        "{too_many}"
+    );
 }
 
 fn github_source(firmware_tag: Option<&str>) -> GitHubSource {
@@ -139,7 +176,11 @@ const MAKEFILE: &[u8] = b"KERNEL_VERSION = linux-6.12.109\nFULL_VERSION = 5.6.1\
 const ROUTES: &[(&str, &[u8])] = &[
     (
         "/repos/f/m/compare/u:v1.0.0...v1.0.0-puddle.1",
-        br#"{"commits":[{"sha":"aaa","commit":{"message":"fix: one"}}]}"#,
+        br#"{"total_commits":2,"commits":[{"sha":"aaa","commit":{"message":"fix: one"}}]}"#,
+    ),
+    (
+        "/repos/f/m/compare/u:v1.0.0...v1.0.0-puddle.1?page=2",
+        br#"{"total_commits":2,"commits":[{"sha":"bbb","commit":{"message":"fix: two"}}]}"#,
     ),
     (
         "/repos/PuddleHQ/libkrunfw/commits/v5.6.1-puddle.1",
@@ -174,7 +215,7 @@ fn facts_of_a_pinned_firmware_release_come_from_the_api() {
     let facts = served_source(Some("v5.6.1-puddle.1"), dir.path())
         .facts()
         .unwrap();
-    assert_eq!(facts.commits.len(), 1);
+    assert_eq!(facts.commits.len(), 2);
     assert_eq!(facts.firmware.commit, SHA);
     assert_eq!(facts.firmware.libkrunfw_version, "5.6.1");
     assert_eq!(facts.firmware.kernel_version, "6.12.109");
@@ -225,7 +266,7 @@ fn a_release_asset_is_downloaded_into_the_folder() {
 fn a_github_answer_that_is_missing_fails_the_facts() {
     let dir = tempfile::tempdir().unwrap();
     let mut source = served_source(Some("v5.6.1-puddle.1"), dir.path());
-    let no_makefile = &ROUTES[..2];
+    let no_makefile = &ROUTES[..3];
     let base = crate::github::tests::serve(no_makefile);
     source.github = GitHub::at(&base, &base, "curl");
     let err = source.facts().unwrap_err().to_string();

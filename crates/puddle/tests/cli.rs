@@ -269,6 +269,30 @@ fn user_reset_still_reads_the_whole_option_table() {
 }
 
 #[test]
+fn recovery_commands_ignore_a_bad_value_of_an_option_they_never_read() {
+    let data = tempfile::tempdir().unwrap();
+    for args in [
+        &["audit", "status"][..],
+        &["secrets", "status"][..],
+        &["user", "list"][..],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_puddle"))
+            .args(args)
+            .arg("--data-dir")
+            .arg(data.path())
+            .env("PUDDLE_PORT", "not-a-port")
+            .env("PUDDLE_REMOTE", "true")
+            .output()
+            .expect("the Puddle binary runs");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            !stderr.contains("PUDDLE_PORT") && !stderr.contains("remote serving"),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn user_reset_prints_one_link_and_sets_no_password() {
     use std::sync::Arc;
 

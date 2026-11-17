@@ -85,6 +85,8 @@ impl fmt::Display for Operation {
 pub struct WorkspaceRecord {
     /// The workspace's id (its volume is `ws-<id>`).
     pub id: WorkspaceId,
+    /// The user the workspace belongs to. Names are unique among one owner's workspaces.
+    pub owner: UserId,
     /// What the user calls the workspace: display text. Nothing else (sandbox, volume, rules,
     /// settings, events) uses it; the id does.
     pub name: DisplayName,
@@ -121,9 +123,15 @@ pub struct WorkspaceRecord {
 impl WorkspaceRecord {
     /// A record with the defaults the fake and the tests start from.
     #[must_use]
-    pub fn new(id: WorkspaceId, name: DisplayName, repositories: Vec<Repository>) -> Self {
+    pub fn new(
+        id: WorkspaceId,
+        owner: UserId,
+        name: DisplayName,
+        repositories: Vec<Repository>,
+    ) -> Self {
         Self {
             id,
+            owner,
             name,
             repositories,
             start_folder: None,
@@ -239,20 +247,22 @@ impl fmt::Display for DisplayName {
     }
 }
 
-/// The workspace in `records` that already goes by `label`, ignoring case and `except` itself.
-/// Two workspaces never share a label, so the list, the dialogs and the toasts stay unambiguous.
+/// The workspace of `owner` in `records` that already goes by `label`, ignoring case and `except`
+/// itself. Two workspaces of one owner never share a label, so that owner's list, dialogs and
+/// toasts stay unambiguous; another owner may use the same label.
 pub fn label_taken<'a>(
     records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    owner: UserId,
     label: &str,
     except: Option<&WorkspaceId>,
 ) -> Option<&'a WorkspaceRecord> {
     let wanted = label.to_lowercase();
     records
         .into_iter()
-        .find(|r| Some(&r.id) != except && r.label().to_lowercase() == wanted)
+        .find(|r| r.owner == owner && Some(&r.id) != except && r.label().to_lowercase() == wanted)
 }
 
-/// Whether the workspace `id` may take `name` among `records`. The one rule both services apply.
+/// Whether the workspace `id` may take `name` among its owner's workspaces in `records`. The one rule both services apply.
 ///
 /// # Errors
 ///
@@ -275,7 +285,7 @@ pub fn check_rename<'a>(
             record.label()
         )));
     }
-    match label_taken(records, name.as_str(), Some(id)) {
+    match label_taken(records, record.owner, name.as_str(), Some(id)) {
         Some(other) => Err(WorkspaceError::Conflict(format!(
             "another workspace is already called {}; choose a different name",
             other.label()

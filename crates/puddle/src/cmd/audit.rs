@@ -11,8 +11,7 @@ use puddle_host::HostPaths;
 
 use crate::cli::{Command, UsageError};
 use crate::cmd::data_folder;
-use crate::cmd::serve::options::{Effective, Flags};
-use crate::cmd::serve::{ServeArgs, effective};
+use crate::cmd::serve::options::Flags;
 
 /// What `puddle audit` should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,9 +102,9 @@ pub fn run(args: &AuditArgs) -> ExitCode {
     }
 }
 
-fn paths(options: &Effective) -> Result<HostPaths, String> {
-    let data = match options.path("data_dir") {
-        Some(dir) => dir.to_path_buf(),
+fn paths(flags: &Flags) -> Result<HostPaths, String> {
+    let data = match data_folder::configured_here(flags).map_err(|e| e.to_string())? {
+        Some(dir) => dir,
         None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
     };
     Ok(HostPaths::new(data))
@@ -143,12 +142,7 @@ fn status_text(s: &puddle_host::AuditStats) -> String {
 }
 
 fn execute(args: &AuditArgs) -> Result<String, String> {
-    let options = effective(&ServeArgs {
-        flags: args.flags.clone(),
-        print_config: false,
-    })
-    .map_err(|e| e.to_string())?;
-    let paths = paths(&options)?;
+    let paths = paths(&args.flags)?;
     match args.action {
         Action::Status => {
             let s = puddle_host::audit_status(&paths).map_err(|e| e.to_string())?;

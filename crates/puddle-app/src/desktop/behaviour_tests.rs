@@ -252,17 +252,28 @@ fn low_free_space_notifies_by_its_own_switch() {
     assert!(notice.body.starts_with("12 GB are left"), "{}", notice.body);
 }
 
-/// An event that must raise nothing: afterwards, a probe event (the badge changes on it) shows the
-/// loop got past it.
+/// An event that must raise nothing: afterwards, the loop has handled it and everything the
+/// service says about the probe request that follows it. The service answers a request that opened
+/// with its pick a moment later (`Event::PendingNotify`, desktop picked); a helper that returned
+/// before that answer let it land after the test switched notices on, as a stray "demo is asking
+/// for access". Closing the probe moves the badge again, and no answer follows a close.
 fn settled_after_quiet(rig: &Rig, event: Event) {
     let before = rig.recorded.badges().len();
+    let mut events = rig.backend.events().subscribe();
     rig.backend.events().emit(event);
-    let probe = opened(10_000 + i64::try_from(before).unwrap());
-    rig.backend.events().emit(probe);
+    let id = 10_000 + i64::try_from(before).unwrap();
+    rig.backend.events().emit(opened(id));
+    service_picked(&mut events, id);
+    rig.backend.events().emit(Event::PendingClosed {
+        workspace: workspace(),
+        id,
+        state: PendingEnd::Allowed,
+        rule_id: None,
+    });
     eventually_blocking(
         "the loop did not get past the event",
         Duration::from_secs(5),
-        || rig.recorded.badges().len() > before,
+        || rig.recorded.badges().len() > before + 1,
     );
 }
 

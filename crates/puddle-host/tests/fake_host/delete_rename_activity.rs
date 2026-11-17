@@ -368,7 +368,7 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
     );
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(list_path(&rig)).unwrap()).unwrap();
-    assert_eq!(saved["version"], 3);
+    assert_eq!(saved["version"], 4);
     assert_eq!(saved["workspaces"][0]["name"], "Acme shop");
     assert!(
         saved["workspaces"][0].get("display_name").is_none(),
@@ -683,7 +683,7 @@ async fn a_version_2_list_of_the_previous_release_starts_with_the_display_name_a
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(saved["version"], 3);
+    assert_eq!(saved["version"], 4);
     assert_eq!(
         (
             saved["workspaces"][0]["id"].as_str(),

@@ -160,7 +160,13 @@ pub(crate) fn scrub(text: &str, max_chars: usize, max_lines: usize) -> String {
 
 fn is_layout_control(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        || matches!(
+            c,
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
 }
 
 /// One line with what could be a secret replaced. Spaces are kept as they were, so a stack
@@ -179,12 +185,17 @@ pub(crate) fn scrub_line(line: &str) -> String {
             out.push(replace_core(word, |_| true));
             continue;
         }
-        let after_name = matches!(word, "=" | ":")
+        // `password = x` and `password =x`: the name was the word before.
+        let after_name = (word.starts_with('=') || word.starts_with(':'))
             && out
                 .iter()
                 .rev()
                 .find(|w| !w.is_empty())
                 .is_some_and(|name| is_secret_name(name));
+        if after_name && word.len() > 1 {
+            out.push(format!("{}{REDACTED}", &word[..1]));
+            continue;
+        }
         if ends_with_secret_name(word) || after_name {
             next = Next::Value;
         } else if is_auth_scheme(trim_punctuation(word)) {
@@ -304,18 +315,18 @@ fn ends_with_secret_name(word: &str) -> bool {
 }
 
 fn is_secret_name(name: &str) -> bool {
-    const NAMES: [&str; 10] = [
+    /// Words that say secret wherever they stand in a part (`csrftoken`, `sessionid`).
+    const INSIDE: [&str; 7] = [
         "token",
         "secret",
         "password",
         "passwd",
-        "pwd",
-        "auth",
-        "key",
         "session",
         "cookie",
         "credential",
     ];
+    /// Short words that say secret only as a whole part (`api_key`, not `monkey`).
+    const WHOLE: [&str; 4] = ["pwd", "auth", "key", "apikey"];
     let name = trim_punctuation(name.trim_end_matches('='));
     // A name, not a path or a sentence: `api_key`, `"token"`, `X-Auth-Token`.
     let identifier = !name.is_empty()
@@ -326,7 +337,7 @@ fn is_secret_name(name: &str) -> bool {
     identifier
         && name_parts(name)
             .iter()
-            .any(|part| NAMES.contains(&part.as_str()))
+            .any(|part| WHOLE.contains(&part.as_str()) || INSIDE.iter().any(|n| part.contains(n)))
 }
 
 /// The lower-case parts of an identifier: `X-Auth-Token`, `api_key` and `accessToken` give

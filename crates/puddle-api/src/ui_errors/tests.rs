@@ -231,6 +231,7 @@ fn a_token_in_a_path_is_replaced_and_the_rest_of_the_path_stays() {
 fn a_secret_name_and_its_value_with_spaces_between_lose_the_value() {
     assert_eq!(scrub_line("password = hunter2"), "password = [redacted]");
     assert_eq!(scrub_line("accessToken : abc"), "accessToken : [redacted]");
+    assert_eq!(scrub_line("password =hunter2"), "password =[redacted]");
 }
 
 #[test]
@@ -248,6 +249,11 @@ fn only_whole_name_parts_say_secret() {
         ("X-Auth-Token: abc", "X-Auth-Token: [redacted]"),
         ("sessionId=abc", "sessionId=[redacted]"),
         ("API_KEY=abc", "API_KEY=[redacted]"),
+        ("apikey=abc", "apikey=[redacted]"),
+        ("APIKey=abc", "APIKey=[redacted]"),
+        ("accesstoken: abc", "accesstoken: [redacted]"),
+        ("sessionid=abc", "sessionid=[redacted]"),
+        ("csrftoken=abc", "csrftoken=[redacted]"),
     ] {
         assert_eq!(scrub_line(text), want, "{text}");
     }
@@ -255,7 +261,14 @@ fn only_whole_name_parts_say_secret() {
 
 #[test]
 fn line_separators_and_direction_marks_become_spaces() {
-    assert_eq!(scrub("a\u{2028}b\u{202e}c\u{2066}d", 100, 5), "a b c d");
+    assert_eq!(
+        scrub(
+            "a\u{2028}b\u{202e}c\u{2066}d\u{200f}e\u{200b}f\u{061c}g",
+            100,
+            5
+        ),
+        "a b c d e f g"
+    );
 }
 
 #[test]

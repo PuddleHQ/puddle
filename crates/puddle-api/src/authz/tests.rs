@@ -610,7 +610,7 @@ async fn owners_things(pair: &Pair) -> OwnersThings {
             owner,
             token,
             "/api/request-rules",
-            &json!({"host": "owners.example", "methods": ["DELETE"], "path": "/x"}),
+            &json!({"workspace": null, "host": "owners.example", "methods": ["DELETE"], "path": "/x"}),
         )
         .await
         .as_i64()

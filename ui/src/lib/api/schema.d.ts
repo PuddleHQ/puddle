@@ -5772,7 +5772,8 @@ export interface components {
         RuleExpiryRequest: {
             /**
              * Format: int64
-             * @description Epoch ms in the future, or `null` to make the rule permanent.
+             * @description Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body
+             *     never makes a rule permanent.
              */
             expires_at: number | null;
         };
@@ -5866,7 +5867,7 @@ export interface components {
         RuleSetSwitchRequest: {
             /**
              * @description On or off; `null` removes the switch, so the next level decides (the global switch, then
-             *     the set's default).
+             *     the set's default). Required, so an empty body never removes a switch.
              */
             enabled: boolean | null;
             workspace?: components["schemas"]["WorkspaceId"] | null;

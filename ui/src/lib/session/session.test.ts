@@ -181,6 +181,18 @@ describe("start", () => {
     expect(dropped).toBe(1);
   });
 
+  it("treats a malformed invite fragment as no invite, drops it and still starts", async () => {
+    answers["GET /api/auth/status"] = [status(false)];
+    answers["POST /api/auth/refresh"] = [refused(401, "no")];
+    const session = make({
+      location: () => ({ pathname: "/invite", hash: "#%E0%A4%A" }),
+    });
+    await session.start();
+    expect(session.invite).toBeNull();
+    expect(session.mode).not.toBe("checking");
+    expect(dropped).toBe(1);
+  });
+
   it("ignores a fragment on any other page and an empty one", async () => {
     answers["GET /api/auth/status"] = [status(true), status(true)];
     const other = make({

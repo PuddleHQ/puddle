@@ -31,6 +31,8 @@ export interface RepoListsDeps {
 
 const DOWN = "Puddle's service isn't answering.";
 const PAGE = 100;
+/** How long a failed quiet read waits before it asks again. */
+const QUIET_RETRY_MS = 30_000;
 
 export class RepoLists {
   /** The newest answer; kept on show while a newer one is read. */
@@ -85,12 +87,12 @@ export class RepoLists {
         this.message = sentence(
           error?.message ?? "Puddle couldn't read the lists",
         );
-        this.status = "failed";
+        this.#failed(quiet);
       }
     } catch {
       if (ticket !== this.#ticket) return;
       this.message = DOWN;
-      this.status = "failed";
+      this.#failed(quiet);
     } finally {
       if (ticket === this.#ticket) this.#stopWaiting();
     }
@@ -171,6 +173,22 @@ export class RepoLists {
       },
       resync: again,
     });
+  }
+
+  /**
+   * A failed read. A quiet one (a renewal, a retry) keeps the list on show as ready, so the live
+   * updates keep arriving, and asks again later; only a read the user waits for shows `failed`.
+   */
+  #failed(quiet: boolean): void {
+    if (!quiet || this.status !== "ready") {
+      this.status = "failed";
+      return;
+    }
+    this.message = null;
+    clearTimeout(this.#retryTimer);
+    this.#retryTimer = setTimeout(() => {
+      void this.load(this.#query, true);
+    }, QUIET_RETRY_MS);
   }
 
   #startWaiting(): void {

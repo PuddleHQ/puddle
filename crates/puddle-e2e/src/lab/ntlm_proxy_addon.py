@@ -3,7 +3,8 @@
 Squid's ntlm_fake_auth sends a malformed Type 2 (TargetName offset 3, no target info) that
 Windows SSPI rejects with SEC_E_INVALID_TOKEN. This addon sends a well-formed NTLMv2 challenge
 and accepts any Type 3: it tests the protocol (three legs on one connection), not the identity.
-Run with --ignore-hosts '.*' so tunnels are not intercepted. Logs one line per leg.
+Run with --ignore-hosts '.*' so tunnels are not intercepted, or without it to inspect them too.
+Logs one line per leg, and a `FLOW` line per request it sees inside a tunnel or in plain HTTP.
 """
 import base64
 import os
@@ -50,34 +51,49 @@ def type3_user(raw: bytes) -> str:
         return "?"
 
 
+def let_through(flow: http.HTTPFlow) -> bool:
+    """Runs the handshake for the client connection; True once it has finished it."""
+    cid = flow.client_conn.id
+    if cid in AUTHED:
+        return True
+    hdr = flow.request.headers.get("Proxy-Authorization", "")
+    if hdr.startswith("NTLM "):
+        raw = base64.b64decode(hdr[5:])
+        kind = struct.unpack("<I", raw[8:12])[0] if len(raw) >= 12 else 0
+        if kind == 1:
+            c = base64.b64encode(challenge()).decode()
+            ctx.log.info(f"NTLM leg1 {cid[:8]} -> challenge {c}")
+            flow.response = http.Response.make(
+                407, b"", {"Proxy-Authenticate": "NTLM " + c,
+                           "Content-Length": "0", "Connection": "keep-alive"})
+            return False
+        if kind == 3:
+            AUTHED.add(cid)
+            ctx.log.info(f"NTLM leg3 {cid[:8]} accepted user={type3_user(raw)} ntlmv2={len(raw) > 200}")
+            return True
+    ctx.log.info(f"NTLM 407 {cid[:8]} {flow.request.host}")
+    flow.response = http.Response.make(
+        407, b"", {"Proxy-Authenticate": "NTLM", "Content-Length": "0", "Connection": "keep-alive"})
+    return False
+
+
 class NtlmProxyAuth:
     def http_connect(self, flow: http.HTTPFlow) -> None:
-        cid = flow.client_conn.id
-        if cid in AUTHED:
-            return
-        hdr = flow.request.headers.get("Proxy-Authorization", "")
-        if hdr.startswith("NTLM "):
-            raw = base64.b64decode(hdr[5:])
-            kind = struct.unpack("<I", raw[8:12])[0] if len(raw) >= 12 else 0
-            if kind == 1:
-                c = base64.b64encode(challenge()).decode()
-                ctx.log.info(f"NTLM leg1 {cid[:8]} -> challenge {c}")
-                flow.response = http.Response.make(
-                    407, b"", {"Proxy-Authenticate": "NTLM " + c,
-                               "Content-Length": "0", "Connection": "keep-alive"})
-                return
-            if kind == 3:
-                AUTHED.add(cid)
-                ctx.log.info(f"NTLM leg3 {cid[:8]} accepted user={type3_user(raw)} ntlmv2={len(raw) > 200}")
-                return
-        ctx.log.info(f"NTLM 407 {cid[:8]} {flow.request.host}")
-        flow.response = http.Response.make(
-            407, b"", {"Proxy-Authenticate": "NTLM", "Content-Length": "0", "Connection": "keep-alive"})
+        let_through(flow)
 
     def requestheaders(self, flow: http.HTTPFlow) -> None:
-        # Plain HTTP through this proxy is out of scope: answer it like a CONNECT-only proxy would.
-        if flow.request.method != "CONNECT" and flow.client_conn.id not in AUTHED:
-            flow.response = http.Response.make(407, b"", {"Proxy-Authenticate": "NTLM", "Content-Length": "0"})
+        # Plain HTTP through this proxy runs the same handshake on its connection (a tunnel's requests
+        # arrive on a connection that has already finished it).
+        if flow.request.method != "CONNECT" and let_through(flow) and flow.request.pretty_host.endswith(".invalid"):
+            # A name no resolver knows (the client's probe on a signed-in connection): answer as a proxy
+            # does when it cannot resolve it, and keep the connection, which holds the sign-in.
+            flow.response = http.Response.make(
+                502, b"", {"Content-Length": "0", "Connection": "keep-alive"})
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        # One whole line per request that was not tunnelled blind (an intercepting run decrypts them):
+        # mitmproxy's own flow line cuts a long URL.
+        ctx.log.info(f"FLOW {flow.request.method} {flow.request.pretty_url} {flow.response.status_code}")
 
 
 addons = [NtlmProxyAuth()]

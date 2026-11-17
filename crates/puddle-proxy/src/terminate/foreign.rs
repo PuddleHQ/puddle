@@ -194,7 +194,7 @@ pub(crate) fn kinds_in_headers(
         if skip.contains(&name) || bytes.len() > MAX_VALUE || holds_stand_in(bytes) {
             continue;
         }
-        for kind in kinds_in_value(bytes, git_path && is_authorization) {
+        for kind in kinds_in_value(bytes, git_path && is_authorization, holds_stand_in) {
             if !kinds.contains(&kind) {
                 kinds.push(kind);
             }
@@ -204,11 +204,20 @@ pub(crate) fn kinds_in_headers(
 }
 
 /// The kinds one credential header value carries. `git_path_authorization`: an `Authorization` of
-/// a Git request, where a value of no known kind still counts.
-fn kinds_in_value(value: &[u8], git_path_authorization: bool) -> Vec<ForeignCredentialKind> {
+/// a Git request, where a value of no known kind still counts. A part that holds one of the
+/// workspace's stand-ins is not looked at: a `Basic` value hides it from the check on the whole
+/// header, because its base64 does not contain the stand-in's bytes.
+fn kinds_in_value(
+    value: &[u8],
+    git_path_authorization: bool,
+    holds_stand_in: &dyn Fn(&[u8]) -> bool,
+) -> Vec<ForeignCredentialKind> {
     let parts = parts_of(value);
     let mut kinds: Vec<ForeignCredentialKind> = Vec::new();
     for part in &parts {
+        if holds_stand_in(part) {
+            continue;
+        }
         if let Some(kind) = kind_of_token(part)
             && !kinds.contains(&kind)
         {
@@ -218,6 +227,7 @@ fn kinds_in_value(value: &[u8], git_path_authorization: bool) -> Vec<ForeignCred
     if kinds.is_empty()
         && git_path_authorization
         && !parts.iter().all(|part| part.is_empty())
+        && !parts.iter().any(|part| holds_stand_in(part))
         && parts
             .iter()
             .all(|part| stale::find(part, &|_| false).is_empty())

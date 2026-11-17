@@ -49,12 +49,17 @@ impl GitSshAccounts for SshAccounts {
             let ws = workspace.clone();
             // The store is SQLite: read it off the async threads. A store that cannot be read
             // lists no identity, as the injector then adds no credential either.
-            let identities =
-                tokio::task::spawn_blocking(move || store.workspace_git(&ws).map(|g| g.identities))
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-                    .unwrap_or_default();
+            let read = tokio::task::spawn_blocking(move || store.workspace_git(&ws))
+                .await
+                .map_err(|err| err.to_string())
+                .and_then(|read| read.map_err(|err| err.to_string()));
+            let identities = read.map_or_else(
+                |err| {
+                    tracing::warn!(error = %err, "ssh account: cannot read the identities");
+                    Vec::new()
+                },
+                |git| git.identities,
+            );
             let Some(source) = credential_for(&identities, host) else {
                 return GitSshAccount::NoIdentity;
             };

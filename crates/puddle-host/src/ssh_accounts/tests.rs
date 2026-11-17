@@ -167,3 +167,14 @@ async fn a_profile_that_cannot_be_read_greets_without_a_name() {
         GitSshAccount::Unnamed
     );
 }
+
+#[tokio::test]
+async fn a_workspace_the_store_does_not_know_lists_no_identity() {
+    let (store, _) = store_with(&[("me", "github.com", true)]);
+    let accounts = SshAccounts::new(store);
+    let ws = WorkspaceId::new("nowhere").unwrap();
+    assert_eq!(
+        accounts.account(&ws, &host("github.com")).await,
+        GitSshAccount::NoIdentity
+    );
+}

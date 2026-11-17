@@ -4,6 +4,7 @@
 // what the API answers, never what was typed.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
+import { DEFAULT_MODE } from "#lib/interception/modes.ts";
 import { INTERCEPTION_NOTICE_KEY } from "#lib/notify/interception.ts";
 import { notices } from "#lib/notify/notices.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
@@ -236,6 +237,6 @@ export async function takeRecommendedMode(
   const store = new GlobalInterception(api);
   await store.load();
   if (store.status === "ready" && !store.chosen) {
-    await store.setMode("all_except_curated");
+    await store.setMode(DEFAULT_MODE);
   }
 }

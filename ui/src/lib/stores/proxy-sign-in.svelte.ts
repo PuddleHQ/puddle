@@ -19,7 +19,10 @@ export class ProxySignInStore {
   /** Proxies the network report knows, to offer when typing one. */
   suggestions = $state.raw<string[]>([]);
   reason = $state<string | null>(null);
-  #ticket = 0;
+  /** Counts reads, so only the newest read answers. */
+  #reads = 0;
+  /** Counts saves that returned the list, which a read that started earlier must not undo. */
+  #writes = 0;
   readonly #api: StoreApi;
 
   constructor(api: StoreApi = defaultApi) {
@@ -29,12 +32,15 @@ export class ProxySignInStore {
   async load(): Promise<void> {
     this.status = "loading";
     this.reason = null;
-    const ticket = ++this.#ticket;
+    const ticket = ++this.#reads;
+    const writes = this.#writes;
     try {
       const { data, error, response } = await this.#api.GET(
         "/api/proxy-sign-ins",
       );
-      if (ticket !== this.#ticket) return;
+      if (ticket !== this.#reads) return;
+      // A save that finished meanwhile returned a newer list, and it left the store ready.
+      if (writes !== this.#writes) return;
       if (data) {
         this.signIns = data.sign_ins;
         this.status = "ready";
@@ -43,7 +49,7 @@ export class ProxySignInStore {
         this.reason = readFailure(error, response);
       }
     } catch {
-      if (ticket !== this.#ticket) return;
+      if (ticket !== this.#reads || writes !== this.#writes) return;
       this.status = "failed";
       this.reason = SERVICE_DOWN;
     }
@@ -72,14 +78,16 @@ export class ProxySignInStore {
 
   /** Stores the sign-in, replacing an earlier one for the same proxy. */
   async save(proxy: string, user: string, password: string): Promise<Result> {
-    const ticket = ++this.#ticket;
     try {
       const { data, error, response } = await this.#api.PUT(
         "/api/proxy-sign-ins",
         { body: { proxy, user, password } },
       );
       if (!data) return { ok: false, message: readFailure(error, response) };
-      if (ticket === this.#ticket) this.signIns = data.sign_ins;
+      this.#writes += 1;
+      this.signIns = data.sign_ins;
+      this.status = "ready";
+      this.reason = null;
       return { ok: true };
     } catch {
       return { ok: false, message: SERVICE_DOWN };

@@ -18,12 +18,14 @@
   let busy = $state(false);
   let problem = $state<string | null>(null);
 
-  $effect(() => {
+  function load() {
     void store.load().then(() => {
       // Coming back keeps what was chosen; a first visit preselects the recommended mode.
       if (store.chosen) choice = store.mode;
     });
-  });
+  }
+
+  $effect(load);
 
   /** Saves the choice, then goes on. Going Back saves nothing. */
   async function carryOn() {
@@ -47,6 +49,7 @@
   <div role="alert">
     <p class="error">Couldn't read this setting.</p>
     {#if store.reason}<p class="error">{store.reason}</p>{/if}
+    <button type="button" class="btn" onclick={load}>Try again</button>
   </div>
 {:else}
   <fieldset class="card">

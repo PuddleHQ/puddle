@@ -27,7 +27,9 @@ case "$* " in
     esac ;;
 *" -f query=mutation("*) [ "${FAKE_ENQUEUE_FAIL:-}" = 1 ] && exit 1 ;;
 "api graphql"*) [ "${FAKE_READ_FAIL:-}" = 1 ] && exit 1; cat "$FAKE_PRS" ;;
-"pr merge"*) [ "${FAKE_REARM_FAIL:-}" = 1 ] && case " $* " in *" --disable-auto "*) exit 1 ;; esac ;;
+"pr merge"*)
+    [ "${FAKE_REARM_FAIL:-}" = 1 ] && case " $* " in *" --disable-auto "*) exit 1 ;; esac
+    [ "${FAKE_ARM_FAIL:-}" = 1 ] && case " $* " in *" --auto "*) exit 1 ;; esac ;;
 esac
 exit 0
 GH
@@ -70,6 +72,9 @@ run "the enqueue call fails: disable and re-arm" 0 "$e1"$'\n'"$r1"$'\n'"$e7"$'\n
 run "the enqueue call succeeds but the PR stays outside: re-arm" 0 "$e1"$'\n'"$r1"$'\n'"$e7"$'\n'"$r7" FAKE_ENQUEUE_NOOP=1
 run "re-arm does not queue it either: exit 1" 1 "$e1"$'\n'"$r1"$'\n'"$e7"$'\n'"$r7" FAKE_ENQUEUE_NOOP=1 FAKE_REARM_NOOP=1
 run "disable fails: exit 1, no arm" 1 "$e1"$'\n'"pr merge 1 -R o/r --disable-auto"$'\n'"$e7"$'\n'"pr merge 7 -R o/r --disable-auto" FAKE_ENQUEUE_NOOP=1 FAKE_REARM_FAIL=1
+a1="$r1"$'\n'"pr merge 1 -R o/r --auto --squash --match-head-commit sha1"
+a7="$r7"$'\n'"pr merge 7 -R o/r --auto --squash --match-head-commit sha7"
+run "re-arm fails twice after the disable: said loudly, exit 1" 1 "$e1"$'\n'"$a1"$'\n'"$e7"$'\n'"$a7" FAKE_ENQUEUE_NOOP=1 FAKE_ARM_FAIL=1
 run "unreadable GitHub: exit 1, nothing changed" 1 "" FAKE_READ_FAIL=1
 { pr 8 1 1 false CLEAN 30; pr 9 0 0 false CLEAN 30; } | wrap >"$tmp/prs"
 run "nothing stuck" 0 "" FAKE_X=1

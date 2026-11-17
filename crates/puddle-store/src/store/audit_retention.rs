@@ -230,9 +230,10 @@ impl Store {
     /// Gives the free space the deletes left back to the disk, when a good part of the file is
     /// free. Returns the bytes the file shrank by.
     ///
-    /// The file is moved to incremental auto-vacuum the first time this has something to give
-    /// back (one `VACUUM`, which needs room for a copy), and freed in short steps after that, so
-    /// writers wait for one step at a time, never for the whole file.
+    /// The space is freed in short steps, so writers wait for one step at a time, never for the
+    /// whole file. A file that is not in incremental mode yet (made by an older Puddle) is left
+    /// alone here: moving it takes a `VACUUM` of the whole file, which [`Store::open`] does
+    /// before anything is served (`rebuild_older_file`).
     ///
     /// # Errors
     /// A database error.
@@ -243,22 +244,12 @@ impl Store {
     pub(super) fn shrink_file(&self, min_free_bytes: u64) -> Result<u64, StoreError> {
         let before = {
             let conn = lock(&self.conn);
-            let page_size = pragma_u64(&conn, "page_size")?;
-            let total = pragma_u64(&conn, "page_count")?.saturating_mul(page_size);
-            let free = pragma_u64(&conn, "freelist_count")?.saturating_mul(page_size);
-            let worth = free > 0
-                && (free >= min_free_bytes
-                    || free.saturating_mul(100) >= total.saturating_mul(SHRINK_MIN_FREE_PERCENT));
-            if !worth {
+            let Some(total) = worth_shrinking(&conn, min_free_bytes)? else {
                 return Ok(0);
-            }
+            };
             let mode: i64 = conn.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
             if mode != AUTO_VACUUM_INCREMENTAL {
-                conn.pragma_update(None, "auto_vacuum", AUTO_VACUUM_INCREMENTAL)?;
-                conn.execute("VACUUM", [])?;
-                tracing::info!("audit database file rebuilt to give back its free space");
-                return Ok(total
-                    .saturating_sub(pragma_u64(&conn, "page_count")?.saturating_mul(page_size)));
+                return Ok(0);
             }
             total
         };
@@ -274,6 +265,52 @@ impl Store {
         let after = pragma_u64(&conn, "page_count")?.saturating_mul(page_size);
         Ok(before.saturating_sub(after))
     }
+}
+
+/// The file's size in bytes when enough of it is free to be worth giving back: at least
+/// `min_free_bytes`, or [`SHRINK_MIN_FREE_PERCENT`] of the file.
+fn worth_shrinking(conn: &Connection, min_free_bytes: u64) -> Result<Option<u64>, StoreError> {
+    let page_size = pragma_u64(conn, "page_size")?;
+    let total = pragma_u64(conn, "page_count")?.saturating_mul(page_size);
+    let free = pragma_u64(conn, "freelist_count")?.saturating_mul(page_size);
+    let worth = free > 0
+        && (free >= min_free_bytes
+            || free.saturating_mul(100) >= total.saturating_mul(SHRINK_MIN_FREE_PERCENT));
+    Ok(worth.then_some(total))
+}
+
+/// [`rebuild_older_file`], logging the outcome: a rebuild that fails (no room for the copy,
+/// another process holding the file) costs only the space, so the open goes on.
+pub(super) fn rebuild_older_file_on_open(conn: &Connection) {
+    match rebuild_older_file(conn) {
+        Ok(0) => {}
+        Ok(bytes) => tracing::info!(
+            bytes,
+            "audit database file rebuilt to give back its free space"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            "audit database file not rebuilt; the next open tries again"
+        ),
+    }
+}
+
+/// Moves a file an older Puddle made to incremental mode with one `VACUUM` (which needs room for
+/// a copy), once it has space worth giving back; files made since are incremental from the
+/// start. Runs from [`Store::open`], before anything waits on the connection. Returns the bytes
+/// the file shrank by.
+fn rebuild_older_file(conn: &Connection) -> Result<u64, StoreError> {
+    let mode: i64 = conn.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
+    if mode == AUTO_VACUUM_INCREMENTAL {
+        return Ok(0);
+    }
+    let Some(total) = worth_shrinking(conn, SHRINK_MIN_FREE_BYTES)? else {
+        return Ok(0);
+    };
+    conn.pragma_update(None, "auto_vacuum", AUTO_VACUUM_INCREMENTAL)?;
+    conn.execute("VACUUM", [])?;
+    let page_size = pragma_u64(conn, "page_size")?;
+    Ok(total.saturating_sub(pragma_u64(conn, "page_count")?.saturating_mul(page_size)))
 }
 
 #[cfg(test)]

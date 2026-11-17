@@ -235,6 +235,21 @@ impl Store {
             ))
             .unwrap();
     }
+
+    /// Makes every `PRAGMA name` statement fail to prepare.
+    pub(crate) fn refuse_pragma(&self, name: &'static str) {
+        use rusqlite::hooks::{AuthAction, Authorization};
+        lock(&self.conn)
+            .authorizer(Some(
+                move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
+                    AuthAction::Pragma { pragma_name, .. } if pragma_name == name => {
+                        Authorization::Deny
+                    }
+                    _ => Authorization::Allow,
+                },
+            ))
+            .unwrap();
+    }
 }
 
 #[cfg(feature = "testing")]
@@ -329,7 +344,7 @@ impl Store {
         let conn = Connection::open(path)?;
         // A new file frees its pages in small steps (`Store::shrink_audit_file`); the mode cannot
         // be changed on a file that has tables without rebuilding it, so an older file is rebuilt
-        // once, when it first has space to give back.
+        // once, here, when it first has space to give back.
         let pages: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
         if pages == 0 {
             conn.pragma_update(None, "auto_vacuum", 2)?;
@@ -337,6 +352,8 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "synchronous", "normal")?;
         let mut store = Self::init(conn, clock, limits)?;
+        // Before anything is served, so no decision waits on the rebuild.
+        audit_retention::rebuild_older_file_on_open(&lock(&store.conn));
         // After `init`: the file is migrated and in WAL mode by now.
         let reader = Connection::open_with_flags(path, READ_ONLY)?;
         reader.busy_timeout(Duration::from_secs(5))?;

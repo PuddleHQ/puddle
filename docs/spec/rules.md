@@ -207,7 +207,10 @@ One background task, every 60 s *(default)* and at startup. (R-20 is retired: se
   rule lapsed opens a new row (R-11).
 - **R-21** on workspace deletion (not stop), deletes that workspace's rules (`rule_deleted`, reason
   `workspace_deleted`) and expires its open rows, in the same transaction as the deletion.
-- **R-22** deletes audit records older than the retention (R-26) and gives the file's free space back.
+- **R-22** deletes audit records older than the retention (R-26) and gives the file's free space back
+  in short steps. A file an older Puddle made without those steps is rebuilt once, when Puddle next
+  opens it with space to give back, never by the sweeper. The size warning is reported even when
+  giving space back fails.
 
 Sweeper work never holds a lock that a decision waits on for more than one short transaction.
 

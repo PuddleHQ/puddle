@@ -43,6 +43,8 @@ microsandbox	candidate	pick	fix(agentd): give every guest process a SIGTERM and 
 microsandbox	candidate	pick	fix(db): open the catalog's first connection outside the pool's connect timeout	generic catalog bug
 microsandbox	candidate	pick	fix(ssh): start SFTP sessions in the user's home directory	generic SFTP bug (a session starts in / instead of the home directory)
 microsandbox	candidate	pick	fix(ssh): answer zero-length SFTP reads with empty data	generic SFTP bug (a zero-length read fails the transfer)
+microsandbox	candidate	pick	fix(sdk): give the runtime version probe 30 s instead of 2 s	generic SDK bug (a busy host misses the 2 s limit and a create or start fails)
+microsandbox	candidate	pick	fix(image): read and write tar archives with the maintained tar crate	the tar crate it used is unmaintained (RUSTSEC-2026-0440); upstream could take the same port
 microsandbox	permanent	regen	build: version the puddle fork as*	the fork's version commit, regenerated per release
 libkrun	candidate	pick	fix(vsock): return custom stream credit within the guest's window	generic vsock bug; upstream main has since changed the same function
 libkrun	candidate	pick	fix(vsock): forward a guest shutdown only after its buffered bytes	generic vsock bug

@@ -141,6 +141,11 @@ fn an_ocsp_get_with_an_escaped_base64_request_is_still_covered() {
     assert!(p.covers(&h, 80, "GET", "/ocsp/MFEwTzBN%2FMEsw%2BSTAJ%3D%3D"));
     assert!(p.covers(&h, 80, "GET", "/ocsp/MFEwTzBN/MEsw+STAJ=="));
     let crl = points(&["http://pki.corp.example/crl/"]);
-    assert!(crl.covers(&host("pki.corp.example"), 80, "GET", "/crl/Corp%20Root%20CA.crl"));
+    assert!(crl.covers(
+        &host("pki.corp.example"),
+        80,
+        "GET",
+        "/crl/Corp%20Root%20CA.crl"
+    ));
     assert!(crl.covers(&host("pki.corp.example"), 80, "GET", "/crl/root.v2.crl"));
 }

@@ -239,16 +239,16 @@ fn low_free_space_notifies_by_its_own_switch() {
         free_mib: 40_960,
     });
     save(&rig, &json!({}));
-    // The probe request of `settled_after_quiet` was held while the request switch was off; it can
-    // be announced as the switch comes back on, before or after the disk notice, so the disk
-    // notice is looked for by its title and not taken as the first one.
-    let disk = |r: &Recorded| {
+    // An "asking for access" notice for the request the rig seeds can arrive after the switch went
+    // on (it failed here once, "demo is asking for access" first), so pick the low-disk notice by
+    // its title instead of taking whatever came first.
+    let disk_notice = |r: &Recorded| {
         r.notices()
             .into_iter()
             .find(|(notice, _)| notice.title == "Disk space is running low")
     };
-    emit_until(&rig, low(), |r| disk(r).is_some());
-    let (notice, _) = disk(&rig.recorded).unwrap();
+    emit_until(&rig, low(), |r| disk_notice(r).is_some());
+    let (notice, _) = disk_notice(&rig.recorded).unwrap();
     assert!(notice.body.starts_with("12 GB are left"), "{}", notice.body);
 }
 

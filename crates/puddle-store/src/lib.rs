@@ -35,10 +35,10 @@ mod workspace_git;
 pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
 pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
-    AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
-    PendingExpiryReason, PendingWire, RequestRuleWire, RequestRuleWireScope, RuleDeleteReason,
-    RuleSetWire, RuleSwitchKind, RuleWire, RuleWirePatternKind, RuleWireScope, WorkspaceOpKind,
-    WorkspaceOpOutcome,
+    ActorWire, AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES,
+    MAX_LINE_BYTES, PendingExpiryReason, PendingWire, RequestRuleWire, RequestRuleWireScope,
+    RuleDeleteReason, RuleSetWire, RuleSwitchKind, RuleWire, RuleWirePatternKind, RuleWireScope,
+    WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use backup::{BackupInfo, backup_database};
 pub use catalogue::{

@@ -8302,7 +8302,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(in a window Puddle opens).",
+        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(in a window Puddle opens). Only for a client on the host computer itself: whatever Puddle\nopens appears on the host's screen, and its ssh link works only there.",
         "operationId": "attach_workspace",
         "parameters": [
           {
@@ -13748,18 +13748,18 @@
               "string",
               "null"
             ],
-            "description": "Why nothing was opened, when that is not an error (for example VS Code is not\ninstalled)."
+            "description": "Why nothing was opened, when that is not an error (for example VS Code is not\ninstalled, or the client is not on the host computer)."
           },
           "open_uri": {
             "type": [
               "string",
               "null"
             ],
-            "description": "A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,\nfor a client on another machine than the host (a browser on a device that reached\n`puddle serve`). Present for a desktop attach, whether or not the host opened a window\nitself; `null` for a browser attach."
+            "description": "A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,\nthrough the ssh entry Puddle wrote on the host. Present for a desktop attach from the host\ncomputer, whether or not a window opened; `null` for a browser attach and for a client on\nanother computer, where that ssh entry does not exist."
           },
           "opened": {
             "type": "boolean",
-            "description": "Whether Puddle opened an editor itself (desktop mode, when it worked)."
+            "description": "Whether Puddle opened an editor itself. Never for a browser signed in from another\ncomputer: an editor would open on the host's screen, not on the asker's."
           }
         }
       },

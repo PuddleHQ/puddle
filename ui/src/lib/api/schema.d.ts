@@ -1570,7 +1570,8 @@ export interface paths {
         put?: never;
         /**
          * Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-         *     (in a window Puddle opens).
+         *     (in a window Puddle opens). Only for a client on the host computer itself: whatever Puddle
+         *     opens appears on the host's screen, and its ssh link works only there.
          */
         post: operations["attach_workspace"];
         delete?: never;
@@ -2660,17 +2661,20 @@ export interface components {
         AttachResponse: {
             /**
              * @description Why nothing was opened, when that is not an error (for example VS Code is not
-             *     installed).
+             *     installed, or the client is not on the host computer).
              */
             message: string | null;
             /**
              * @description A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
-             *     for a client on another machine than the host (a browser on a device that reached
-             *     `puddle serve`). Present for a desktop attach, whether or not the host opened a window
-             *     itself; `null` for a browser attach.
+             *     through the ssh entry Puddle wrote on the host. Present for a desktop attach from the host
+             *     computer, whether or not a window opened; `null` for a browser attach and for a client on
+             *     another computer, where that ssh entry does not exist.
              */
             open_uri: string | null;
-            /** @description Whether Puddle opened an editor itself (desktop mode, when it worked). */
+            /**
+             * @description Whether Puddle opened an editor itself. Never for a browser signed in from another
+             *     computer: an editor would open on the host's screen, not on the asker's.
+             */
             opened: boolean;
         };
         /** @description One audit record with its position in the log. */

@@ -2,7 +2,8 @@
 //! Named volumes: who holds one, and the catalog view as [`VolumeInfo`].
 //!
 //! msb's own refusal of a second attach doesn't name the holder, so Puddle works it out:
-//! the holder is the running sandbox whose configuration mounts the volume (ADR 0006 point 8).
+//! the holder is the sandbox that is not down (starting, running, draining or paused: msb keeps
+//! a VM process for each) whose configuration mounts the volume (ADR 0006 point 8).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -81,13 +82,11 @@ pub(crate) fn mounter<E: std::fmt::Display>(
     })
 }
 
-/// Volume name → the running sandbox that holds it. With two running holders (which msb
-/// shouldn't allow), the first in name order is reported.
+/// Volume name → the sandbox that holds it: one that is not down, so a VM that is still booting,
+/// draining or paused counts as much as a running one. With two holders (which msb shouldn't
+/// allow), the first in name order is reported.
 pub(crate) fn holders(mounters: &[Mounter]) -> BTreeMap<String, String> {
-    let mut sorted: Vec<&Mounter> = mounters
-        .iter()
-        .filter(|m| m.status == WorkspaceStatus::Running)
-        .collect();
+    let mut sorted: Vec<&Mounter> = mounters.iter().filter(|m| !m.status.is_down()).collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     let mut out = BTreeMap::new();
     for m in sorted {

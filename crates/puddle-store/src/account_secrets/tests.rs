@@ -242,9 +242,10 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
         .unwrap();
     assert_eq!(checked.user(), ann);
     let shown = format!("{checked:?}");
-    assert!(shown.starts_with("CheckedPassword"), "{shown}");
-    assert!(shown.contains(&format!("{ann:?}")), "{shown}");
-    assert!(!shown.contains("argon2id"), "{shown}");
+    // The messages never repeat the print: a failing check must not echo a hash.
+    assert!(shown.starts_with("CheckedPassword"), "names its type");
+    assert!(shown.contains(&format!("{ann:?}")), "names its user");
+    assert!(!shown.contains("argon2id"), "never shows the hash");
     assert!(secrets.verify_password(ann, |_| false).unwrap().is_none());
     // Unchanged: both steps go through.
     assert!(

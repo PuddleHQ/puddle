@@ -90,15 +90,15 @@ function safe(input: NoticeInput): NoticeInput {
 function capped(items: Notice[]): Notice[] {
   let extra = items.length - MAX_NOTICES;
   if (extra <= 0) return items;
-  const dropInfo = new Set<number>();
+  const dropInfo: number[] = [];
   for (const n of items) {
     if (extra === 0) break;
     if (n.tone === "info") {
-      dropInfo.add(n.id);
+      dropInfo.push(n.id);
       extra -= 1;
     }
   }
-  const rest = items.filter((n) => !dropInfo.has(n.id));
+  const rest = items.filter((n) => !dropInfo.includes(n.id));
   return extra > 0 ? rest.slice(extra) : rest;
 }
 

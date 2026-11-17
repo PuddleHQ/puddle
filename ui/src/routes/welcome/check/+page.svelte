@@ -21,12 +21,15 @@
   );
   const report = $derived(doctor.report);
   const running = $derived(doctor.status === "running");
+  // In the flow the check waits for the person: it starts a test machine and a few tools, and on
+  // some computers a window flashes open while they run.
+  const notStarted = $derived(doctor.status === "idle" && !fromSettings);
   const blocked = $derived(report !== null && isBlocked(report));
   let copied = $state<"yes" | "no" | null>(null);
 
   onMount(() => {
-    // Back from a later step keeps the result; opened from Settings it always runs afresh.
-    if (doctor.status === "idle" || fromSettings) void doctor.run();
+    // Opened from Settings the person asked for a run; back from a later step keeps the result.
+    if (fromSettings) void doctor.run();
   });
 
   async function copy() {
@@ -46,7 +49,12 @@
 />
 
 <div class="status" aria-live="polite">
-  {#if running}
+  {#if notStarted}
+    <p class="muted">
+      The check starts a small test machine and a few tools. On some computers a
+      window may flash open for a moment while it runs.
+    </p>
+  {:else if running}
     <p class="muted">
       Checking this computer. This takes a few seconds&hellip;
     </p>
@@ -108,9 +116,15 @@
     <a class="btn" href={around("check").back}>Back</a>
   {/if}
   <span class="grow"></span>
-  <button type="button" class="btn" disabled={running} onclick={again}
-    >Check again</button
-  >
+  {#if notStarted}
+    <button type="button" class="btn primary" onclick={again}
+      >Start system check</button
+    >
+  {:else}
+    <button type="button" class="btn" disabled={running} onclick={again}
+      >Check again</button
+    >
+  {/if}
   {#if report}
     <button type="button" class="btn" onclick={() => void copy()}
       >Copy report</button
@@ -120,8 +134,10 @@
     <a class="btn primary" href="/settings">Back to Settings</a>
   {:else if blocked}
     <a class="btn" href="/workspaces">Leave setup for now</a>
-  {:else if running}
-    <button type="button" class="btn primary" disabled>Continue</button>
+  {:else if running || notStarted}
+    <button type="button" class="btn" class:primary={running} disabled
+      >Continue</button
+    >
   {:else}
     <a class="btn primary" href={around("check").next}>Continue</a>
   {/if}

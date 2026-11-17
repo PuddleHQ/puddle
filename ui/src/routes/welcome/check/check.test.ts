@@ -50,16 +50,43 @@ afterEach(cleanup);
 const runs = () => api.calls.filter((c) => c === "GET /api/doctor").length;
 const link = (name: string) => screen.queryByRole("link", { name });
 
+/** Opens the step and presses its start button, as a person does. */
+async function start() {
+  render(Page);
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Start system check" }),
+  );
+}
+
 describe("system check step", () => {
-  it("runs the checks when it opens, says so meanwhile, and focuses its heading", async () => {
-    let release = () => {};
-    api.hold = new Promise<void>((resolve) => (release = resolve));
+  it("runs nothing until the person starts it, and says first that a window may flash", async () => {
     render(Page);
     const heading = screen.getByRole("heading", {
       level: 1,
       name: "System check",
     });
     expect(document.activeElement).toBe(heading);
+    expect(screen.getByText(/window may flash open/)).toBeVisible();
+    await Promise.resolve();
+    expect(runs()).toBe(0);
+    expect(screen.queryByRole("list", { name: "Checks" })).toBeNull();
+    // Nothing is known yet, so the step does not go on.
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Start system check" }),
+    );
+    await screen.findByText("No problems found.");
+    expect(runs()).toBe(1);
+    expect(
+      screen.queryByRole("button", { name: "Start system check" }),
+    ).toBeNull();
+  });
+
+  it("says it is checking meanwhile, with the buttons off", async () => {
+    let release = () => {};
+    api.hold = new Promise<void>((resolve) => (release = resolve));
+    await start();
     expect(screen.getByText(/Checking this computer/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check again" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
@@ -71,7 +98,7 @@ describe("system check step", () => {
 
   it("lists each check with its state in words, and goes on when nothing failed", async () => {
     api.report = healthyReport({ elapsed_ms: 2300 });
-    render(Page);
+    await start();
     const list = await screen.findByRole("list", { name: "Checks" });
     const items = within(list).getAllByRole("listitem");
     expect(items).toHaveLength(3);
@@ -94,7 +121,7 @@ describe("system check step", () => {
       fix: "Nothing to do.",
     };
     api.report = report;
-    render(Page);
+    await start();
     await screen.findByText(/No problems found; 1 warning to know about/);
     expect(screen.getByText("Note:")).toBeInTheDocument();
     expect(screen.getByText("Nothing to do.")).toBeInTheDocument();
@@ -104,7 +131,7 @@ describe("system check step", () => {
 
   it("blocks on a failed check: shows the fix and the evidence, offers no Continue", async () => {
     api.report = brokenReport();
-    render(Page);
+    await start();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "1 problem to fix before Puddle can run workspaces.",
     );
@@ -128,7 +155,7 @@ describe("system check step", () => {
 
   it("checks again and lets the user on once the problem is fixed", async () => {
     api.report = brokenReport();
-    render(Page);
+    await start();
     await screen.findByText(/1 problem to fix/);
     api.report = healthyReport();
     await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
@@ -139,7 +166,7 @@ describe("system check step", () => {
 
   it("copies the report as JSON with its schema version, and says when copying is refused", async () => {
     api.report = brokenReport();
-    render(Page);
+    await start();
     await screen.findByText(/1 problem to fix/);
     await fireEvent.click(screen.getByRole("button", { name: "Copy report" }));
     expect(await screen.findByText("Report copied.")).toBeInTheDocument();
@@ -166,7 +193,7 @@ describe("system check step", () => {
 
   it("says plainly when this Puddle has no system check, and lets the user go on", async () => {
     api.doctorStatus = 503;
-    render(Page);
+    await start();
     expect(await screen.findByText(/can't run the system check/)).toBeVisible();
     expect(link("Continue")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy report" })).toBeNull();
@@ -174,7 +201,7 @@ describe("system check step", () => {
 
   it("says when the service doesn't answer, and lets the user go on and try again", async () => {
     api.down = true;
-    render(Page);
+    await start();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /couldn't run the system check: Puddle's service isn't answering/,
     );
@@ -186,7 +213,7 @@ describe("system check step", () => {
 
   it("gives Puddle's own reason when the check itself fails", async () => {
     api.doctorStatus = 500;
-    render(Page);
+    await start();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Puddle couldn't run the system check: not here",
     );
@@ -194,7 +221,7 @@ describe("system check step", () => {
   });
 
   it("keeps the result when the user comes back from a later step", async () => {
-    render(Page);
+    await start();
     await screen.findByText("No problems found.");
     cleanup();
     render(Page);
@@ -203,7 +230,7 @@ describe("system check step", () => {
   });
 
   it("opened from Settings it runs afresh and leads back to Settings, with no step Back", async () => {
-    render(Page);
+    await start();
     await screen.findByText("No problems found.");
     cleanup();
     nav.search = "?from=settings";

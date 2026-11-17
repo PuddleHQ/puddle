@@ -63,6 +63,9 @@ test("a fresh install is led through every step and then opens on the workspaces
 
   // System check: a healthy machine goes on.
   await expect(heading(page, "System check")).toBeVisible();
+  // Nothing runs until the person starts it.
+  await expect(page.getByRole("list", { name: "Checks" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Start system check" }).click();
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(
     page.getByRole("list", { name: "Checks" }).getByRole("listitem"),
@@ -192,6 +195,7 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
   await backend.control.step({ do: "doctor", ...broken });
 
   await page.goto("/welcome/check");
+  await page.getByRole("button", { name: "Start system check" }).click();
   await expect(
     page.getByText("1 problem to fix before Puddle can run workspaces."),
   ).toBeVisible();
@@ -373,6 +377,7 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto(path);
       await expect(heading(page, title)).toBeVisible();
       if (path === "/welcome/check") {
+        await page.getByRole("button", { name: "Start system check" }).click();
         await expect(page.getByText("No problems found.")).toBeVisible();
       }
       if (path === "/welcome/connect") {
@@ -410,6 +415,7 @@ test("the blocked system check and the form dialog pass the accessibility scan",
   };
   await backend.control.step({ do: "doctor", ...healthy });
   await page.goto("/welcome/check");
+  await page.getByRole("button", { name: "Start system check" }).click();
   await expect(page.getByText(/1 problem to fix/)).toBeVisible();
   await page.getByText("Technical details").click();
   await expectNoAxeViolations(page);

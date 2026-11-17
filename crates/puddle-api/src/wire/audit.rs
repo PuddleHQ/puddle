@@ -5,7 +5,7 @@ use puddle_store as store;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::{AuditRecord, Effect, PatternKind};
+use super::{Actor, AuditRecord, Effect, PatternKind, PendingState};
 
 // ---------------------------------------------------------------------------------------------
 // Audit (docs/spec/rules.md §5)
@@ -60,6 +60,18 @@ impl From<store::RuleWirePatternKind> for PatternKind {
     }
 }
 
+impl From<store::ActorWire> for Actor {
+    fn from(actor: store::ActorWire) -> Self {
+        match actor {
+            store::ActorWire::Cli => Self::Cli,
+            store::ActorWire::Ui => Self::Ui,
+            store::ActorWire::Api => Self::Api,
+            store::ActorWire::System => Self::System,
+            store::ActorWire::WorkspaceCreate => Self::WorkspaceCreate,
+        }
+    }
+}
+
 /// A rule as an audit record shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AuditRule {
@@ -81,8 +93,8 @@ pub struct AuditRule {
     pub expires_at: Option<u64>,
     /// Epoch ms.
     pub created_at: u64,
-    /// `cli`, `ui` or `api`.
-    pub created_by: String,
+    /// Who made it.
+    pub created_by: Actor,
     /// The pending request it came from.
     #[schema(required = true)]
     pub source_pending_id: Option<i64>,
@@ -119,7 +131,7 @@ impl From<store::RuleWire> for AuditRule {
             effect: effect.into(),
             expires_at,
             created_at,
-            created_by,
+            created_by: created_by.into(),
             source_pending_id,
             set_id,
             precedence,
@@ -145,8 +157,8 @@ pub struct AuditRequestRule {
     pub path: String,
     /// Epoch ms.
     pub created_at: u64,
-    /// `cli`, `ui` or `api`.
-    pub created_by: String,
+    /// Who made it.
+    pub created_by: Actor,
     /// How the rule ranked, 1 to 9; a record from before precedence existed says 5.
     pub precedence: u8,
 }
@@ -172,7 +184,7 @@ impl From<store::RequestRuleWire> for AuditRequestRule {
             methods,
             path,
             created_at,
-            created_by,
+            created_by: created_by.into(),
             precedence,
         }
     }
@@ -189,8 +201,8 @@ pub struct AuditRuleSet {
     pub description: String,
     /// Epoch ms.
     pub created_at: u64,
-    /// `cli`, `ui` or `api`.
-    pub created_by: String,
+    /// Who made it.
+    pub created_by: Actor,
     /// The colour the user chose; `null` when the set had the default of its number.
     #[schema(required = true)]
     pub fill: Option<puddle_types::Fill>,
@@ -216,7 +228,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             name,
             description,
             created_at,
-            created_by,
+            created_by: created_by.into(),
             fill,
             default_precedence,
         }
@@ -240,14 +252,14 @@ pub struct AuditPending {
     pub last_seen: u64,
     /// Requests the row stands for.
     pub attempts: u64,
-    /// `requested`, `allowed`, `denied` or `expired`.
-    pub state: String,
+    /// Where it is in its life.
+    pub state: PendingState,
     /// Epoch ms.
     #[schema(required = true)]
     pub decided_at: Option<u64>,
-    /// `cli`, `ui`, `api` or `system`.
+    /// Who decided it.
     #[schema(required = true)]
-    pub decided_by: Option<String>,
+    pub decided_by: Option<Actor>,
     /// The deciding rule.
     #[schema(required = true)]
     pub rule_id: Option<i64>,
@@ -281,9 +293,9 @@ impl From<store::PendingWire> for AuditPending {
             first_seen,
             last_seen,
             attempts,
-            state,
+            state: state.into(),
             decided_at,
-            decided_by,
+            decided_by: decided_by.map(Actor::from),
             rule_id,
             rule_set,
         }

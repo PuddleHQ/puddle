@@ -241,7 +241,10 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
         .unwrap()
         .unwrap();
     assert_eq!(checked.user(), ann);
-    assert!(!format!("{checked:?}").contains("argon2id"), "{checked:?}");
+    let shown = format!("{checked:?}");
+    assert!(shown.starts_with("CheckedPassword"), "{shown}");
+    assert!(shown.contains(&format!("{ann:?}")), "{shown}");
+    assert!(!shown.contains("argon2id"), "{shown}");
     assert!(secrets.verify_password(ann, |_| false).unwrap().is_none());
     // Unchanged: both steps go through.
     assert!(

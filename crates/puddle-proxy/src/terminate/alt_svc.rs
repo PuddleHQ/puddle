@@ -62,10 +62,11 @@ fn without_h3(value: &[u8]) -> Option<Stripped> {
 
 /// The comma-separated entries of a field value, each without its surrounding blanks. A comma
 /// inside a quoted string (`v="46,43"`) does not end an entry, and neither does a quote that is
-/// never closed: the rest of the value is then one entry.
+/// never closed: the rest of the value is then one entry. Empty list elements (`a, , b,`) are
+/// legal padding (RFC 9110 section 5.6.1) and are not entries.
 fn entries(value: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut rest = Some(value);
-    std::iter::from_fn(move || {
+    let split = std::iter::from_fn(move || {
         let current = rest.take()?;
         let mut quoted = false;
         let mut escaped = false;
@@ -84,7 +85,8 @@ fn entries(value: &[u8]) -> impl Iterator<Item = &[u8]> {
             }
         }
         Some(current.trim_ascii())
-    })
+    });
+    split.filter(|entry| !entry.is_empty())
 }
 
 /// Whether an entry offers HTTP/3: its protocol id (the part before `=`, percent-encoded by the

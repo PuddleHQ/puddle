@@ -241,6 +241,15 @@ async fn a_create_whose_list_cannot_be_saved_leaves_no_cpu_setting_behind() {
     let host = rig.start().await;
     let api = api(&host);
     let _events = api.events().await;
+    let raised = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"limits": {"max_cpus": 8}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(raised.status, 200, "{}", raised.body);
     make_unwritable(&list_path(&rig));
     let body = json!({"name": "acme", "repositories": [{"url": REPO}], "cpus": 2}).to_string();
     let reply = api.post("/api/workspaces", &body).await;

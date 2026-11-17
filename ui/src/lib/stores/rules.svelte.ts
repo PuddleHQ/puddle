@@ -55,6 +55,8 @@ export class RulesStore {
   #sawEvents = false;
   #refreshing: Promise<void> | null = null;
   #again = false;
+  /** Counts changes made here, which a read that started earlier must not undo. */
+  #writes = 0;
 
   constructor(deps: RulesDeps = {}) {
     this.#api = deps.api ?? defaultApi;
@@ -81,9 +83,13 @@ export class RulesStore {
   }
 
   async #load(): Promise<void> {
+    const writes = this.#writes;
     try {
       const { data, error, response } = await this.#api.GET("/api/rules");
-      if (data) {
+      if (data && writes !== this.#writes) {
+        // Older than a change made here: read once more instead of showing it.
+        this.#again = true;
+      } else if (data) {
         this.rules = data.rules;
         this.loadError = null;
         this.status = "ready";
@@ -111,6 +117,7 @@ export class RulesStore {
           message: sentence(error?.message ?? "Puddle refused the rule"),
         };
       }
+      this.#writes += 1;
       this.rules = [data, ...this.rules.filter((r) => r.id !== data.id)];
       this.#onChange?.();
       return { ok: true, rule: data };
@@ -136,6 +143,7 @@ export class RulesStore {
           message: sentence(error?.message ?? "Puddle refused the change"),
         };
       }
+      this.#writes += 1;
       this.rules = this.rules.map((r) => (r.id === id ? data : r));
       return { ok: true };
     } catch {
@@ -160,6 +168,7 @@ export class RulesStore {
           message: sentence(error?.message ?? "Puddle refused the change"),
         };
       }
+      this.#writes += 1;
       this.rules = this.rules.map((r) => (r.id === id ? data : r));
       this.#onChange?.();
       return { ok: true };
@@ -177,6 +186,7 @@ export class RulesStore {
       if (!response.ok && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't delete that rule." };
       }
+      this.#writes += 1;
       this.rules = this.rules.filter((r) => r.id !== id);
       return { ok: true };
     } catch {

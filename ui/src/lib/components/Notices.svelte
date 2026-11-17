@@ -6,6 +6,7 @@
     type NoticeAction,
     type NoticeCenter,
   } from "#lib/notify/notices.svelte.ts";
+  import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
@@ -28,7 +29,15 @@
 
   function click(notice: Notice, action: NoticeAction) {
     if (!action.confirm) {
-      void action.run();
+      // Without a dialog there is nowhere to show a failure, so it becomes a toast.
+      void Promise.resolve()
+        .then(() => action.run())
+        .catch((error: unknown) =>
+          toasts.push(error instanceof Error ? error.message : String(error), {
+            tone: "error",
+            ms: 8000,
+          }),
+        );
       return;
     }
     failure = null;

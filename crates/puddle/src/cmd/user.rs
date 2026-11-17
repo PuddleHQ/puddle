@@ -148,19 +148,24 @@ fn write_result(out: &mut impl Write, result: &str) -> ExitCode {
 }
 
 fn execute(args: &UserArgs) -> Result<Output, String> {
-    let options = effective(&ServeArgs {
-        flags: args.flags.clone(),
-        print_config: false,
-    })
-    .map_err(|e| e.to_string())?;
-    let data = match options.path("data_dir") {
-        Some(dir) => dir.to_path_buf(),
+    // Only `add` and `reset` need the whole option table (the invite origin); `list` and `remove`
+    // read the data folder alone, so a bad value of another option does not stop them.
+    let origin_of_server = || {
+        let options = effective(&ServeArgs {
+            flags: args.flags.clone(),
+            print_config: false,
+        })
+        .map_err(|e| e.to_string())?;
+        invite_origin(&options)
+    };
+    let data = match data_folder::configured_here(&args.flags).map_err(|e| e.to_string())? {
+        Some(dir) => dir,
         None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
     };
     let paths = HostPaths::new(data);
     match &args.action {
         Action::Reset(name) => {
-            let origin = invite_origin(&options)?;
+            let origin = origin_of_server()?;
             let invite = puddle_host::reset_user(&paths, name).map_err(|e| e.to_string())?;
             Ok(Output {
                 notice: format!(
@@ -172,7 +177,7 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
             })
         }
         Action::Add(name) => {
-            let origin = invite_origin(&options)?;
+            let origin = origin_of_server()?;
             let invite = puddle_host::add_user(&paths, name).map_err(|e| e.to_string())?;
             Ok(Output {
                 notice: format!(

@@ -275,11 +275,15 @@ impl ReleaseSource for GitHubSource {
     }
 
     fn facts(&self) -> Result<ForkFacts> {
-        let compare = self.github.api(
-            &compare_path(&self.fork, &self.upstream, &self.upstream_tag, &self.tag),
-            false,
-        )?;
-        let commits = parse_compare(&compare)?;
+        let path = compare_path(&self.fork, &self.upstream, &self.upstream_tag, &self.tag);
+        let commits = all_commits(|page| {
+            let path = if page == 1 {
+                path.clone()
+            } else {
+                format!("{path}?page={page}")
+            };
+            self.github.api(&path, false)
+        })?;
         let src = self.checkout()?;
         Ok(ForkFacts {
             fork_repo: self.fork.clone(),
@@ -394,10 +398,17 @@ fn parse_commit_sha(json: &str) -> Result<String> {
         .map_err(|e| XtaskError::parse("GitHub commit response", e))
 }
 
-/// The commits of a GitHub compare API response, oldest first.
-fn parse_compare(json: &str) -> Result<Vec<Commit>> {
+/// One page of a GitHub compare API response: the commits on it, oldest first, and how many
+/// commits the whole comparison has.
+struct ComparePage {
+    total: usize,
+    commits: Vec<Commit>,
+}
+
+fn parse_compare(json: &str) -> Result<ComparePage> {
     #[derive(Deserialize)]
     struct Compare {
+        total_commits: usize,
         commits: Vec<Entry>,
     }
     #[derive(Deserialize)]
@@ -411,20 +422,50 @@ fn parse_compare(json: &str) -> Result<Vec<Commit>> {
     }
     let compare: Compare =
         serde_json::from_str(json).map_err(|e| XtaskError::parse("GitHub compare response", e))?;
-    Ok(compare
-        .commits
-        .into_iter()
-        .map(|e| Commit {
-            sha: e.sha,
-            subject: e
-                .commit
-                .message
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .to_owned(),
-        })
-        .collect())
+    Ok(ComparePage {
+        total: compare.total_commits,
+        commits: compare
+            .commits
+            .into_iter()
+            .map(|e| Commit {
+                sha: e.sha,
+                subject: e
+                    .commit
+                    .message
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+            })
+            .collect(),
+    })
+}
+
+/// Every commit of the comparison, oldest first. The compare API cuts its answer at a page, so
+/// this reads pages until it has `total_commits` of them. The NOTICE calls the list exact, so a
+/// short list is an error, never a quiet cut.
+fn all_commits(mut page_text: impl FnMut(u32) -> Result<String>) -> Result<Vec<Commit>> {
+    let mut commits: Vec<Commit> = Vec::new();
+    let mut page = 1;
+    loop {
+        let read = parse_compare(&page_text(page)?)?;
+        let empty = read.commits.is_empty();
+        commits.extend(read.commits);
+        if commits.len() == read.total {
+            return Ok(commits);
+        }
+        if empty || commits.len() > read.total {
+            return Err(XtaskError::parse(
+                "GitHub compare response",
+                format!(
+                    "page {page} left {} commits against a total of {}",
+                    commits.len(),
+                    read.total
+                ),
+            ));
+        }
+        page += 1;
+    }
 }
 
 #[cfg(test)]

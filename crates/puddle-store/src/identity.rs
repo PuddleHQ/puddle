@@ -188,8 +188,17 @@ pub struct CredentialBinding {
     pub covers: Coverage,
 }
 
+/// The host without the default HTTPS port: `ghe.example:443` and `ghe.example` are one host.
+fn bare_host(host: &str) -> &str {
+    host.strip_suffix(":443").unwrap_or(host)
+}
+
+fn same_host_str(a: &str, b: &str) -> bool {
+    bare_host(a).eq_ignore_ascii_case(bare_host(b))
+}
+
 fn same_host(a: &HostName, b: &HostName) -> bool {
-    a.as_str().eq_ignore_ascii_case(b.as_str())
+    same_host_str(a.as_str(), b.as_str())
 }
 
 impl CredentialBinding {
@@ -210,6 +219,8 @@ impl CredentialBinding {
     pub fn new(host: &HostName, source: SourceSpec, covers: Coverage) -> Result<Self, StoreError> {
         let host = HostName::new(host.as_str().to_ascii_lowercase())
             .map_err(|_| invalid("not a valid host"))?;
+        let host =
+            HostName::new(bare_host(host.as_str())).map_err(|_| invalid("not a valid host"))?;
         if let Some((_, port)) = host.as_str().split_once(':')
             && port != "443"
         {
@@ -415,7 +426,7 @@ pub fn resolve<'a>(attached: &'a [Identity], host: &str, owner: &str) -> Credent
         let mut hits: Vec<(&Identity, &CredentialBinding)> = Vec::new();
         for identity in attached {
             for binding in &identity.credentials {
-                if !binding.host.as_str().eq_ignore_ascii_case(host) {
+                if !same_host_str(binding.host.as_str(), host) {
                     continue;
                 }
                 let hit = if exact {

@@ -258,7 +258,7 @@ impl From<RuleScope> for store::Scope {
 pub enum PatternKind {
     /// The identical host.
     Exact,
-    /// The host and every name under it (`.example.com`).
+    /// Every name below the host, never the host itself (`.example.com`).
     Suffix,
 }
 

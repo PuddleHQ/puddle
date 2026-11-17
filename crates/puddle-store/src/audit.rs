@@ -291,7 +291,7 @@ impl From<Actor> for ActorWire {
 pub enum RuleWirePatternKind {
     /// The identical host.
     Exact,
-    /// The host and every name under it.
+    /// Every name below the host, never the host itself.
     Suffix,
 }
 

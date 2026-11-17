@@ -1026,10 +1026,10 @@ fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, Store
     let normal: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
     conn.busy_timeout(UPGRADE_WAIT)?;
     let result = migrate_loop(conn, migrations);
-    conn.busy_timeout(std::time::Duration::from_millis(
+    let restored = conn.busy_timeout(std::time::Duration::from_millis(
         u64::try_from(normal).unwrap_or(0),
-    ))?;
-    result
+    ));
+    result.and_then(|start| restored.map(|()| start).map_err(StoreError::from))
 }
 
 fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
@@ -1196,10 +1196,7 @@ pub(crate) fn remove_stale_partial_copies(db: &Path) {
         "{}.pre-v",
         db.file_name().unwrap_or_default().to_string_lossy()
     );
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !(name.starts_with(&prefix) && name.ends_with(".partial")) {
             continue;

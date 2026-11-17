@@ -1243,3 +1243,23 @@ fn an_upgrade_waits_out_another_process_holding_the_file_longer_than_a_normal_wr
         .unwrap();
     assert_eq!(timeout, 50, "the normal wait is back after the upgrade");
 }
+
+#[test]
+fn a_stale_half_made_copy_that_cannot_be_deleted_is_logged() {
+    let dir = tempfile::tempdir().unwrap();
+    let stuck = dir.path().join("puddle.db.pre-v2.1-0.partial");
+    std::fs::create_dir(&stuck).unwrap();
+    std::fs::File::open(&stuck)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_hours(3))
+        .unwrap();
+    let logs = crate::test_support::Logs::capture();
+    remove_stale_partial_copies(&dir.path().join("puddle.db"));
+    let lines = logs.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with("WARN half-made upgrade copy not deleted"),
+        "{lines:?}"
+    );
+    assert!(stuck.exists());
+}

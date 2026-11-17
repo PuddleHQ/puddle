@@ -160,32 +160,29 @@ impl Guard {
     /// Adds remote serving: the exact public authorities and their `https://` origins, for the
     /// listener this guard stands in front of.
     pub(crate) fn remote(mut self, remote: &RemoteServing, listener: Listener) -> Self {
-        if let Some(inner) = Arc::get_mut(&mut self.inner) {
-            let hosts: Vec<String> = remote
-                .public_hosts()
-                .iter()
-                .map(crate::remote::PublicHost::authority)
-                .collect();
-            let origins = remote
-                .public_hosts()
-                .iter()
-                .map(crate::remote::PublicHost::origin)
-                .collect();
-            inner.remote = Some(Remote {
-                listener,
-                hosts,
-                origins,
-            });
-        }
+        let hosts: Vec<String> = remote
+            .public_hosts()
+            .iter()
+            .map(crate::remote::PublicHost::authority)
+            .collect();
+        let origins = remote
+            .public_hosts()
+            .iter()
+            .map(crate::remote::PublicHost::origin)
+            .collect();
+        // `make_mut`, not `get_mut`: a guard whose state is shared still gets its own copy.
+        Arc::make_mut(&mut self.inner).remote = Some(Remote {
+            listener,
+            hosts,
+            origins,
+        });
         self
     }
 
     /// Lets `GET`/`HEAD` outside `/api` through without a token (the app's own files). The
     /// `Host` and `Origin` checks still apply.
     pub(crate) fn serving_ui(mut self, serves_ui: bool) -> Self {
-        if let Some(inner) = Arc::get_mut(&mut self.inner) {
-            inner.serves_ui = serves_ui;
-        }
+        Arc::make_mut(&mut self.inner).serves_ui = serves_ui;
         self
     }
 
@@ -198,9 +195,7 @@ impl Guard {
 
     /// Lets browsers sign in: their access tokens are accepted on public addresses.
     pub(crate) fn signing_in(mut self, sign_in: Arc<SignIn>) -> Self {
-        if let Some(inner) = Arc::get_mut(&mut self.inner) {
-            inner.sign_in = Some(sign_in);
-        }
+        Arc::make_mut(&mut self.inner).sign_in = Some(sign_in);
         self
     }
 

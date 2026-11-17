@@ -67,7 +67,10 @@ mod terminals;
 #[cfg(test)]
 mod test_logs;
 mod vault;
-pub use vault::SecretSetup;
+pub use vault::{
+    MigrateOutcome, ResetOutcome, SecretSetup, StoreState, VaultAdminError, VaultStatus,
+    vault_migrate, vault_reset, vault_status,
+};
 mod vscode;
 mod workspaces;
 

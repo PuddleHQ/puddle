@@ -574,7 +574,7 @@ def ban_rows(raw, code, ctx, add):
 
 # The UI keeps zero HTML injection sinks: the style policy lets the terminal emulator inject `<style>` elements, which
 # markup injected through a sink could reach. Tests, generated declarations and node_modules are out of scope.
-BAN_HTML_SINK = re.compile(r"\{@html\b|\b(?:innerHTML|outerHTML|insertAdjacentHTML)\b|\bdocument\s*\.\s*write(?:ln)?\s*\(")
+BAN_HTML_SINK = re.compile(r"\{@html\b|\b(?:innerHTML|outerHTML|insertAdjacentHTML|setHTMLUnsafe|createContextualFragment|srcdoc)\b|\.parseFromString\s*\(|\bdocument\s*\.\s*write(?:ln)?\s*\(")
 BAN_HTML_SINK_FIX = "render text with interpolation (`{value}`) or a component, never as markup"
 
 
@@ -1298,12 +1298,14 @@ def flake_self_test():
     sink_svelte, sink_ts = read("ban-html-sink.bad.svelte.txt"), read("ban-html-sink.bad.ts.txt")
     if len(sinks({"ui/src/lib/A.svelte": sink_svelte})) != 1:
         failures.append("ban-html-sink: `{@html` in a .svelte file must be flagged")
-    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+    all_sinks = ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "setHTMLUnsafe",
+                 "createContextualFragment", "parseFromString", "srcdoc")
+    for sink in all_sinks:
         hits = [ln for ln in sink_ts.split("\n") if sink in ln]
-        if len(hits) != 1 or len(sinks({"ui/src/lib/a.ts": sink_ts})) != 4:
-            failures.append(f"ban-html-sink: the fixture must trip {sink} once and all four sinks in all: {hits}")
+        if len(hits) != 1 or len(sinks({"ui/src/lib/a.ts": sink_ts})) != len(all_sinks):
+            failures.append(f"ban-html-sink: the fixture must trip {sink} once and all {len(all_sinks)} sinks in all: {hits}")
         only = "\n".join(ln for ln in sink_ts.split("\n") if sink not in ln or ln.lstrip().startswith("//"))
-        if len(sinks({"ui/src/lib/a.ts": only})) != 3:
+        if len(sinks({"ui/src/lib/a.ts": only})) != len(all_sinks) - 1:
             failures.append(f"ban-html-sink: {sink} was not flagged on its own")
     if sinks({"ui/src/lib/A.svelte": read("ban-html-sink.good.svelte.txt")}):
         failures.append("ban-html-sink: text interpolation, a component and a comment are not sinks")

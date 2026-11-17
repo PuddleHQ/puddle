@@ -9,7 +9,7 @@
 #   - a word glued to code punctuation: `puddle-api`, `puddle_host`, `puddle.exe`, `puddle/x`,
 #     `x/puddle`, `dev.puddle.owner`, `puddle:inbox`, `puddle@host`, `PUDDLE_ROOT`;
 #   - a quoted value on its own (`"puddle"`, `'puddle'`), which is an identifier or a label value;
-#   - the command: `puddle` followed by a subcommand (`doctor`, `serve`, `ssh-bridge`, `help`,
+#   - the command: `puddle` followed by a subcommand (`doctor`, `serve`, `secrets`, `ssh-bridge`, `help`,
 #     `version`), a flag, a digit (a version line) or an argument list (`[`, `<`);
 #   - a `puddle:` at the start of a quoted message (a command's diagnostic prefix);
 #   - text inside backticks in Markdown and in comments (code spans);
@@ -114,7 +114,7 @@ function hit(s, a, code, js,    pc, nc, nn, rest) {
     } else if (rest ~ /^\\n/) {
     } else if ((nc == "/" || nc == "\\") && code && js) {
     } else if (index(" \t,;)]*<?!\"\047", nc) == 0 && a + 5 < length(s)) return 0
-    if (rest ~ /^[ \t]+(doctor|serve|ssh-bridge|help|[0-9]|-[-A-Za-z]|\[|<)/) return 0
+    if (rest ~ /^[ \t]+(doctor|serve|secrets|ssh-bridge|help|[0-9]|-[-A-Za-z]|\[|<)/) return 0
     if (code && !instring(s, a, js)) return 0
     return 1
 }
@@ -183,6 +183,7 @@ md${t}See <puddle@example.org> and puddle.exe.
 md${t}Config lives in \`%LOCALAPPDATA%\\puddle\`.
 md${t}Run puddle doctor again.
 md${t}Run puddle --version.
+md${t}Then run puddle secrets status again.
 md${t}usage: puddle [--help]
 md${t}Puddle runs each workspace
 rs${t}    let path = base.join(\"puddle\");

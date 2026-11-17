@@ -26,6 +26,16 @@
 // processes do not outlive it on the runner. Its root goes into the machine's store before the app starts
 // (the app reads the store then), like a company root.
 //
+// Behind the company network: with USABLE_COMPANY_LAB_BIN set (`puddle-lab`, and PUDDLE_MITMDUMP_BIN for
+// it) the same run happens on a machine whose only way out is the lab's company proxy, set up the way a
+// company sets up a Windows computer: a PAC file as the user's automatic proxy configuration script (the
+// registry value Windows settings write), and one proxy behind it that wants the Windows sign-in (NTLM,
+// answered through SSPI as the signed-in user) and inspects every TLS connection with a root of its own,
+// which sits in the machine's certificate store. Squid has no Windows build, so this proxy is the lab's
+// NTLM-demanding interceptor (puddle-lab --interceptor-ntlm). The same checks run, plus checks that the
+// workspace's traffic went through that proxy: the app's network-health report names the PAC, the NTLM
+// sign-in and the company root, and the proxy's own log holds the sign-in and the decrypted Git requests.
+//
 // Environment: USABLE_LAB_BIN (`puddle-lab-forgejo`; PUDDLE_FORGEJO_BIN names the forge program it runs),
 // USABLE_FORGE_NAME (a name the hosts file points at this machine), PUDDLE_INSTALL_DIR (default
 // %LOCALAPPDATA%\Programs\Puddle), USABLE_OUT (a folder for screenshots and logs; default a temp one).
@@ -51,6 +61,8 @@ const httpsUrl = `https://${forge}/acme/app.git`;
 const sshUrl = `git@${forge}:acme/app.git`;
 const WORKSPACE = "usable";
 
+const companyLabBin = process.env.USABLE_COMPANY_LAB_BIN;
+const company = Boolean(companyLabBin);
 const failures = [];
 function check(name, ok, detail = "") {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
@@ -93,12 +105,72 @@ function stopForge() {
   if (rootStored) spawnSync("certutil", ["-delstore", "Root", "Puddle lab Forgejo root"], { stdio: "ignore" });
 }
 
+// ---- the company network (company mode only) ---------------------------------------------------------
+
+const companyInfoFile = join(out, "company-lab.json");
+const companyStopFile = join(out, "company-lab.stop");
+const INTERNET_SETTINGS = String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`;
+let companyLab;
+let companyLabLog = "";
+let companyLabExited = false;
+let companyInfo;
+let companyRootStored = false;
+let pacSet = false;
+/**
+ * The lab's company proxy, its root in the machine's store and its PAC file as the user's automatic
+ * configuration script, all before the app starts (it reads the store and the settings then).
+ */
+async function startCompanyNetwork() {
+  // The proxy resolves the forge's name through the machine's hosts file, like the app.
+  companyLab = spawn(companyLabBin, ["--interceptor-ntlm", "--pac", "--info", companyInfoFile, "--stop", companyStopFile], { stdio: ["ignore", "ignore", "pipe"], env: process.env });
+  companyLab.stderr.on("data", (c) => (companyLabLog += c));
+  onChildEnd(companyLab, () => (companyLabExited = true));
+  companyInfo = await until(
+    "the company lab's info file",
+    () => {
+      if (companyLabExited) throw new GiveUp(`the company lab exited: ${companyLabLog}`);
+      return JSON.parse(readFileSync(companyInfoFile, "utf8"));
+    },
+    180_000,
+    500,
+  );
+  const added = spawnSync("certutil", ["-addstore", "-f", "Root", companyInfo.interceptor.ca], { encoding: "utf8" });
+  companyRootStored = added.status === 0;
+  if (!companyRootStored) throw new Error(`the company root could not be added to the store: ${added.stdout}`);
+  const set = spawnSync("reg", ["add", INTERNET_SETTINGS, "/v", "AutoConfigURL", "/t", "REG_SZ", "/d", companyInfo.pac.url, "/f"], { encoding: "utf8" });
+  pacSet = set.status === 0;
+  if (!pacSet) throw new Error(`the PAC address could not be set: ${set.stdout} ${set.stderr}`);
+  note(`company network: proxy ${companyInfo.interceptor.proxy_url} (NTLM, inspects TLS), PAC ${companyInfo.pac.url}, root in the machine's store`);
+}
+function stopCompanyNetwork() {
+  if (pacSet) spawnSync("reg", ["delete", INTERNET_SETTINGS, "/v", "AutoConfigURL", "/f"], { stdio: "ignore" });
+  if (!companyLab) return;
+  writeFileSync(companyStopFile, "stop");
+  if (companyRootStored) spawnSync("certutil", ["-delstore", "Root", "Puddle lab interceptor root"], { stdio: "ignore" });
+}
+function companyLog() {
+  try {
+    return readFileSync(companyInfo.interceptor.log, "utf8");
+  } catch (err) {
+    return `no company proxy log: ${err.message}`;
+  }
+}
+
 // ---- the installed app ------------------------------------------------------------------------------
 
 await startForge().catch((err) => {
   console.error(`FAIL the lab forge did not start: ${err}`);
   process.exit(1);
 });
+
+if (company) {
+  await startCompanyNetwork().catch((err) => {
+    console.error(`FAIL the company network did not start: ${err}\n${companyLabLog}`);
+    stopCompanyNetwork();
+    stopForge();
+    process.exit(1);
+  });
+}
 
 const connectionFile = join(dataDir, "api.json");
 const app = spawn(join(installDir, "puddle-app.exe"), [], { stdio: ["ignore", "inherit", "pipe"] });
@@ -165,7 +237,7 @@ function guest(id, script, { root = false, within = 600_000 } = {}) {
 const approved = [];
 
 /** The hosts this run's workspace is meant to reach: the lab forge and the distribution's package archive. */
-const expectedHost = (host) => host === forge || /(^|\.)debian\.org$/.test(host) || /fastly/.test(host);
+const expectedHost = (host) => host === forge || /(^|\.)debian\.org$/.test(host) || /(^|\.)fastly(dns)?\.net$/.test(host);
 
 /** Approves the expected pending requests, as the inbox's Allow does (others stay for the user); how many. */
 async function approvePending(what) {
@@ -326,6 +398,33 @@ async function createFromTheForm() {
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
   await uia.click("Create workspace", inMain("button", "Create workspace"));
+}
+
+/**
+ * Company mode: the traffic of the run went through the company proxy, by the app's own report and by
+ * the proxy's own log (the report says what the app decided, the log what the proxy saw).
+ */
+async function checkTheCompanyProxyCarriedTheTraffic(branch) {
+  const health = (await api("GET", "/api/network-health")).json;
+  const port = String(companyInfo.interceptor.port);
+  note(`network health: ${JSON.stringify({ proxy: health?.proxy, sign_in: health?.sign_in, pull_proxy: health?.pull_proxy })}`.slice(0, 1500));
+  check("the app found the PAC file the machine is set to", health?.proxy?.pac_url === companyInfo.pac.url, `${health?.proxy?.pac_url} (wanted ${companyInfo.pac.url})`);
+  const attempts = health?.sign_in?.attempts ?? [];
+  check("the app signed in to the company proxy with the Windows sign-in", attempts.some((a) => a.result === "signed_in" && /ntlm|negotiate/i.test(a.scheme ?? "")), JSON.stringify(attempts).slice(0, 500));
+  const roots = health?.roots?.certificates ?? [];
+  check("the company root is among the roots Puddle copies into workspaces", roots.some((r) => /Puddle lab interceptor root/.test(r.subject ?? "")), `${roots.length} certificates`);
+  const route = (health?.routes ?? []).find((r) => r.host === forge);
+  check("the route chosen for the forge is the company proxy, from the PAC", route !== undefined && route.source === "pac" && route.hops.some((h) => h.includes(port)), JSON.stringify(route ?? health?.routes ?? []).slice(0, 500));
+  check("image pulls go through the company proxy too", health?.pull_proxy?.via_upstream === true, JSON.stringify(health?.pull_proxy));
+
+  const log = companyLog();
+  const signIns = log.split(/\r?\n/).filter((l) => /NTLM leg3 .* accepted user=/.test(l));
+  check("the company proxy's log holds the NTLM sign-in", signIns.length > 0, `${signIns.length} sign-ins`);
+  const flows = log.split(/\r?\n/).filter((l) => l.includes("] FLOW ") && l.includes(`https://${forge}/`));
+  check("the company proxy decrypted the clone's requests to the forge", flows.some((l) => /git-upload-pack/.test(l) && / 200$/.test(l)), flows.slice(0, 3).join(" | "));
+  check("the company proxy decrypted the push to the forge", flows.some((l) => /git-receive-pack/.test(l) && / 200$/.test(l)), flows.filter((l) => /receive-pack/.test(l)).join(" | ") || `${branch}: no receive-pack line, ${flows.length} forge lines`);
+  const archive = log.split(/\r?\n/).filter((l) => l.includes("] FLOW GET http://deb.debian.org/") && / 200$/.test(l));
+  check("the company proxy carried the package archive's requests (plain HTTP, signed in)", archive.length > 0, `${archive.length} answered requests`);
 }
 
 // ---- the run ---------------------------------------------------------------------------------------
@@ -496,6 +595,8 @@ try {
   check("the app's log holds no token", !appLog.includes(info.token));
   check("requests were approved in the inbox", approved.length > 0, approved.join("; "));
 
+  if (company) await checkTheCompanyProxyCarriedTheTraffic(branch);
+
   // Stop and delete, as the user does at the end.
   await api("POST", `/api/workspaces/${id}/stop`);
   await until("the workspace to be stopped", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id)?.status === "stopped", 180_000, 2000).catch(() => {});
@@ -510,7 +611,10 @@ try {
 } finally {
   writeFileSync(join(out, "app.log"), appLog);
   if (info) writeFileSync(join(out, "forgejo-server.log"), forgeLog());
+  if (companyInfo) writeFileSync(join(out, "company-proxy.log"), companyLog());
+  if (companyLab) writeFileSync(join(out, "company-lab.out"), companyLabLog);
   uia?.close();
+  stopCompanyNetwork();
   stopForge();
   if (!appExited) spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
 }

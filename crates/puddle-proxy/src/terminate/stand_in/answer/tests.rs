@@ -344,9 +344,18 @@ async fn answer(
     body: Vec<u8>,
     no_body: bool,
 ) -> Result<(HeaderMap, Result<Vec<u8>, String>), NotScrubbed> {
+    answer_lines(encoding.as_slice(), body, no_body).await
+}
+
+/// An answer with one `Content-Encoding` header line per entry of `encodings`.
+async fn answer_lines(
+    encodings: &[&str],
+    body: Vec<u8>,
+    no_body: bool,
+) -> Result<(HeaderMap, Result<Vec<u8>, String>), NotScrubbed> {
     let mut builder = Response::builder().header("content-length", body.len());
-    if let Some(encoding) = encoding {
-        builder = builder.header("content-encoding", encoding);
+    for encoding in encodings {
+        builder = builder.header("content-encoding", *encoding);
     }
     let response = builder
         .body(AnswerBody::Buffered(Some(Bytes::from(body))))
@@ -399,6 +408,115 @@ async fn encoded_answers_are_decoded_scrubbed_and_sent_plain() {
     two.extend(gzip(REAL_GH.as_bytes()));
     let (_, body) = answer(Some("gzip"), two, false).await.unwrap();
     assert_eq!(text(&body.unwrap()), format!("first {GH}"));
+}
+
+#[tokio::test]
+async fn every_content_encoding_line_counts_not_only_the_first() {
+    let plain = format!("{{\"echo\":\"Bearer {REAL_GH} done\"}}");
+    let expected = format!("{{\"echo\":\"Bearer {GH} done\"}}");
+    for lines in [
+        ["identity", "gzip"],
+        ["", "gzip"],
+        ["gzip", "identity"],
+        ["gzip", ""],
+    ] {
+        let (headers, body) = answer_lines(&lines, gzip(plain.as_bytes()), false)
+            .await
+            .unwrap();
+        assert_eq!(text(&body.unwrap()), expected, "{lines:?}");
+        assert!(headers.get("content-encoding").is_none(), "{lines:?}");
+    }
+    // Two codings on two lines are two codings in a row, refused as they are on one line.
+    for lines in [["gzip", "br"], ["gzip", "gzip"], ["identity", "compress"]] {
+        let refused = answer_lines(&lines, gzip(plain.as_bytes()), false).await;
+        assert_eq!(refused.err(), Some(NotScrubbed::Encoding), "{lines:?}");
+    }
+}
+
+/// The answer an HTTP/1.1 client reads from a server that writes `head` and then `body` in one
+/// chunk, as `Transfer-Encoding` must end in `chunked`.
+async fn chunked_answer_from_the_wire(head: &str, body: &[u8]) -> Response<AnswerBody> {
+    use hyper_util::rt::TokioIo;
+    use tokio::io::AsyncWriteExt as _;
+    let (client_end, mut server_end) = tokio::io::duplex(1 << 20);
+    let mut wire = format!("HTTP/1.1 200 OK\r\n{head}\r\n{:x}\r\n", body.len()).into_bytes();
+    wire.extend_from_slice(body);
+    wire.extend_from_slice(b"\r\n0\r\n\r\n");
+    tokio::spawn(async move {
+        // The client must have sent its request before an answer comes.
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            tokio::io::AsyncReadExt::read_exact(&mut server_end, &mut byte)
+                .await
+                .unwrap();
+            request.push(byte[0]);
+        }
+        server_end.write_all(&wire).await.unwrap();
+        // Held open until the client is done reading.
+        let _ = tokio::io::AsyncReadExt::read_to_end(&mut server_end, &mut request).await;
+    });
+    let (mut sender, connection) = hyper::client::conn::http1::handshake::<
+        _,
+        http_body_util::Empty<Bytes>,
+    >(TokioIo::new(client_end))
+    .await
+    .unwrap();
+    tokio::spawn(connection);
+    let response = sender
+        .send_request(
+            ::http::Request::get("/")
+                .body(http_body_util::Empty::new())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    response.map(AnswerBody::Streaming)
+}
+
+#[tokio::test]
+async fn a_transfer_coding_the_client_library_leaves_in_place_is_decoded_too() {
+    let plain = format!("{{\"echo\":\"Bearer {REAL_GH} done\"}}");
+    let expected = format!("{{\"echo\":\"Bearer {GH} done\"}}");
+    let packed = gzip(plain.as_bytes());
+    for head in [
+        "transfer-encoding: gzip, chunked\r\n",
+        "transfer-encoding: gzip\r\ntransfer-encoding: chunked\r\n",
+    ] {
+        let response = chunked_answer_from_the_wire(head, &packed).await;
+        let notes = Arc::new(ScrubNotes::default());
+        let scrubbed = scrub_answer(
+            &registry(),
+            response,
+            &host("api.github.com"),
+            false,
+            &notes,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let (parts, body) = scrubbed.into_parts();
+        let body = body.collect().await.unwrap().to_bytes();
+        assert_eq!(text(&body), expected, "{head:?}");
+        assert!(parts.headers.get("transfer-encoding").is_none(), "{head:?}");
+    }
+    // A transfer coding on top of a content coding is two codings in a row.
+    let response = chunked_answer_from_the_wire(
+        "content-encoding: gzip\r\ntransfer-encoding: gzip, chunked\r\n",
+        &gzip(&packed),
+    )
+    .await;
+    let notes = Arc::new(ScrubNotes::default());
+    let refused = scrub_answer(
+        &registry(),
+        response,
+        &host("api.github.com"),
+        false,
+        &notes,
+        Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(refused.err(), Some(NotScrubbed::Encoding));
 }
 
 #[tokio::test]
@@ -875,9 +993,7 @@ fn a_frame_that_inflates_past_the_limit_stops_decoding_there() {
     const LIMIT: usize = 1024 * 1024;
     for (encoding, packed) in bombs(48 * LIMIT) {
         assert!(packed.len() < LIMIT, "{encoding}: {}", packed.len());
-        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
-            .unwrap()
-            .unwrap();
+        let mut decoder = Decoder::for_codings(encoding).unwrap().unwrap();
         let mut out = Vec::new();
         let pushed = decoder.push(&packed, &mut out, LIMIT).unwrap();
         assert_eq!(pushed, Pushed::Full, "{encoding}");
@@ -899,9 +1015,7 @@ fn a_frame_that_inflates_past_the_limit_stops_decoding_there() {
 fn no_room_left_stops_before_a_piece_that_would_add_nothing() {
     // A gzip header decodes to no bytes, so only the room check can say `Full` for it.
     let packed = gzip(b"payload");
-    let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static("gzip")))
-        .unwrap()
-        .unwrap();
+    let mut decoder = Decoder::for_codings("gzip").unwrap().unwrap();
     let mut out = Vec::new();
     assert_eq!(
         decoder.push(&packed[..10], &mut out, 0).unwrap(),
@@ -921,9 +1035,7 @@ fn a_frame_under_the_limit_decodes_whole_in_every_coding() {
         ("br", BROTLI.to_vec()),
         ("zstd", zstd),
     ] {
-        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
-            .unwrap()
-            .unwrap();
+        let mut decoder = Decoder::for_codings(encoding).unwrap().unwrap();
         let mut out = Vec::new();
         assert_eq!(
             decoder.push(&packed, &mut out, 1 << 20).unwrap(),
@@ -1002,9 +1114,7 @@ async fn a_brotli_step_that_inflates_past_the_step_limit_ends_the_answer_with_an
 fn the_limit_counts_what_this_call_adds_not_what_the_caller_already_holds() {
     const LIMIT: usize = 1024 * 1024;
     for (encoding, packed) in bombs(8 * LIMIT) {
-        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
-            .unwrap()
-            .unwrap();
+        let mut decoder = Decoder::for_codings(encoding).unwrap().unwrap();
         let mut out = vec![1_u8; 4 * LIMIT];
         assert_eq!(
             decoder.push(&packed, &mut out, LIMIT).unwrap(),
@@ -1027,16 +1137,12 @@ fn a_body_that_stops_short_fails_at_its_end_in_the_codings_that_can_tell() {
         ("deflate", zlib(&plain)),
         ("deflate", raw_deflate(&plain)),
     ] {
-        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
-            .unwrap()
-            .unwrap();
+        let mut decoder = Decoder::for_codings(encoding).unwrap().unwrap();
         let mut out = Vec::new();
         let cut = whole.len() - 4;
         decoder.push(&whole[..cut], &mut out, 1 << 20).unwrap();
         assert!(decoder.finish(&mut out).is_err(), "{encoding} cut short");
-        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
-            .unwrap()
-            .unwrap();
+        let mut decoder = Decoder::for_codings(encoding).unwrap().unwrap();
         let mut out = Vec::new();
         decoder.push(&whole, &mut out, 1 << 20).unwrap();
         decoder.finish(&mut out).unwrap();

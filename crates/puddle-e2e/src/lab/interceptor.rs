@@ -198,6 +198,10 @@ impl Mitm {
         })
     }
 
+    fn log_path(&self) -> PathBuf {
+        self.dir.path().join("mitm.log")
+    }
+
     fn log(&self) -> String {
         // The log is a file the proxy flushes per line; a moment covers the last flow.
         std::thread::sleep(Duration::from_millis(300));
@@ -243,10 +247,40 @@ impl Interceptor {
         Some(Self { mitm, root })
     }
 
+    /// An interceptor that also demands NTLM sign-in before it opens a tunnel, as a company proxy
+    /// that wants the Windows sign-in and inspects TLS does: the handshake of [`NtlmProxy`] on
+    /// the `CONNECT`, then every tunnel terminated and re-signed with the run's [`Root`].
+    ///
+    /// # Panics
+    /// When mitmproxy is required but missing, or does not start.
+    #[must_use]
+    pub fn start_signing_in(names: &[&str]) -> Option<Self> {
+        let root = Root::generate(&Prefix::new("root"));
+        let addons = [
+            include_str!("ntlm_proxy_addon.py").to_owned(),
+            split_dns(&borrowed(&plain(names))),
+        ];
+        let mitm = Mitm::spawn("interceptor", Some(&root), &[], &addons)?;
+        Some(Self { mitm, root })
+    }
+
     /// The port the interceptor listens on (`127.0.0.1`).
     #[must_use]
     pub fn port(&self) -> u16 {
         self.mitm.port
+    }
+
+    /// The file the interceptor logs to (flows, and the sign-in legs when it demands NTLM).
+    #[must_use]
+    pub fn log_path(&self) -> PathBuf {
+        self.mitm.log_path()
+    }
+
+    /// The sign-in legs seen so far, in order (none unless it was started with
+    /// [`Self::start_signing_in`]).
+    #[must_use]
+    pub fn legs(&self) -> Vec<NtlmLeg> {
+        self.mitm.log().lines().filter_map(parse_leg).collect()
     }
 
     /// The root every intercepted certificate chains to.
@@ -355,6 +389,12 @@ impl NtlmProxy {
     #[must_use]
     pub fn log(&self) -> String {
         self.mitm.log()
+    }
+
+    /// The file the proxy logs to.
+    #[must_use]
+    pub fn log_path(&self) -> PathBuf {
+        self.mitm.log_path()
     }
 
     /// The handshake legs seen so far, in order.

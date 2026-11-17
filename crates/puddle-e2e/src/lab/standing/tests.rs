@@ -19,7 +19,7 @@ fn flags_select_the_pieces_and_the_defaults_fill_the_rest() {
         "--squid-basic --interceptor --pac --name intranet.corp.test --pac-direct .corp.test --info lab.json",
     );
     assert_eq!(cmd.plan.squid, Some(SquidAuth::Basic));
-    assert!(cmd.plan.interceptor && cmd.plan.pac && !cmd.plan.ntlm);
+    assert!(cmd.plan.interceptor.is_some() && cmd.plan.pac && !cmd.plan.ntlm);
     assert_eq!(cmd.plan.names, ["intranet.corp.test"]);
     assert_eq!(cmd.plan.pac_direct, [".corp.test"]);
     assert_eq!(cmd.plan.allowed_ports, [80, 443]);
@@ -33,7 +33,7 @@ fn all_keeps_the_other_settings_and_a_port_list_replaces_the_default() {
         "--name a.test --allow-port 8080 --allow-port 8443 --all --stop s --ca c.pem --info i.json",
     );
     assert_eq!(cmd.plan.squid, Some(SquidAuth::Basic));
-    assert!(cmd.plan.interceptor && cmd.plan.ntlm && cmd.plan.pac);
+    assert!(cmd.plan.interceptor.is_some() && cmd.plan.ntlm && cmd.plan.pac);
     assert_eq!(cmd.plan.names, ["a.test"]);
     assert_eq!(cmd.plan.allowed_ports, [8080, 8443]);
     assert_eq!(cmd.stop.as_deref(), Some(Path::new("s")));
@@ -44,7 +44,9 @@ fn all_keeps_the_other_settings_and_a_port_list_replaces_the_default() {
 fn a_self_test_with_no_pieces_runs_them_all_and_needs_no_info_file() {
     let cmd = parsed("--self-test --name a.test");
     assert_eq!(cmd.plan.names, ["a.test"]);
-    assert!(cmd.plan.squid.is_some() && cmd.plan.interceptor && cmd.plan.ntlm && cmd.plan.pac);
+    assert!(
+        cmd.plan.squid.is_some() && cmd.plan.interceptor.is_some() && cmd.plan.ntlm && cmd.plan.pac
+    );
     let some = parsed("--self-test --ntlm");
     assert!(some.plan.squid.is_none() && some.plan.ntlm && !some.plan.pac);
 }
@@ -61,6 +63,25 @@ fn the_squid_chain_is_read_and_must_name_pieces_that_run() {
     assert!(
         refused("--squid --squid-through interceptor --info i").contains("needs --interceptor")
     );
+}
+
+#[test]
+fn the_signing_in_interceptor_is_an_interceptor_that_keeps_its_flag_through_all() {
+    let cmd = parsed("--interceptor-ntlm --pac --info i");
+    assert_eq!(cmd.plan.interceptor, Some(InterceptorAuth::Ntlm));
+    assert_eq!(
+        parsed("--interceptor --pac --info i").plan.interceptor,
+        Some(InterceptorAuth::Open)
+    );
+    assert_eq!(
+        parsed("--interceptor-ntlm --all --info i").plan.interceptor,
+        Some(InterceptorAuth::Ntlm)
+    );
+    assert_eq!(
+        parsed("--self-test --interceptor-ntlm").plan.interceptor,
+        Some(InterceptorAuth::Ntlm)
+    );
+    assert!(refused("--interceptor --interceptor-ntlm --info i").contains("exclude each other"));
 }
 
 #[test]

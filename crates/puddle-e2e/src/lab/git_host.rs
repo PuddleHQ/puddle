@@ -726,6 +726,8 @@ pub struct NameProxy {
     port: u16,
     names: Arc<Mutex<Vec<(String, SocketAddr)>>>,
     connects: Arc<Mutex<Vec<String>>>,
+    /// `true` while the route is down: see [`NameProxy::set_outage`].
+    outage: Arc<tokio::sync::watch::Sender<bool>>,
     task: JoinHandle<()>,
 }
 
@@ -795,11 +797,14 @@ impl NameProxy {
         let connects = Arc::new(Mutex::new(Vec::new()));
         let seen = connects.clone();
         let names_for_self = names.clone();
+        let outage = Arc::new(tokio::sync::watch::channel(false).0);
+        let outage_for_self = outage.clone();
         let task = tokio::spawn(async move {
             loop {
                 let (mut client, _) = listener.accept().await.unwrap();
                 let seen = seen.clone();
                 let names = names.clone();
+                let outage = outage.clone();
                 tokio::spawn(async move {
                     // A client that signs in to the proxy first (Kerberos, on Windows) sends a
                     // probe request for a name that does not exist and waits for any answer on
@@ -836,6 +841,10 @@ impl NameProxy {
                         break (head, tunnel, authority);
                     };
                     lock(&seen).push(authority.clone());
+                    if *outage.borrow() {
+                        let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
+                        return;
+                    }
                     let target = held(&lock(&names), &authority);
                     // A name the fake internet does not hold goes where it says, as through any
                     // open company proxy (the image pull goes through the same chain).
@@ -864,7 +873,11 @@ impl NameProxy {
                     {
                         return;
                     }
-                    let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+                    let mut down = outage.subscribe();
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut upstream) => {}
+                        _ = down.wait_for(|down| *down) => {}
+                    }
                 });
             }
         });
@@ -872,6 +885,7 @@ impl NameProxy {
             port,
             names: names_for_self,
             connects,
+            outage: outage_for_self,
             task,
         }
     }
@@ -880,6 +894,13 @@ impl NameProxy {
     /// `target` from now on.
     pub fn route(&self, name: &str, target: SocketAddr) {
         lock(&self.names).push((name.to_owned(), target));
+    }
+
+    /// Takes the route down (`true`) or brings it back (`false`), as a portable computer that lost its
+    /// network does: tunnels that are open end at once, a new one is answered `502`, and
+    /// nothing about the registered names changes.
+    pub fn set_outage(&self, down: bool) {
+        self.outage.send_replace(down);
     }
 
     /// The port the proxy listens on (on `127.0.0.1`).

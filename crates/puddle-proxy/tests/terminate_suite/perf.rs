@@ -47,8 +47,10 @@ const MAX_IDLE_KIB: [(&str, usize); 4] = [
 ];
 
 /// Installs a global subscriber that drops every event, so the rig's own log capture, which
-/// would format each event, fails to install and costs nothing. Call it before the first rig.
+/// would format each event, fails to install and costs nothing. Call it before the first rig. It also
+/// reads the allocator's wipe switch (`zeroing_alloc`).
 fn silence_logs() {
+    crate::zeroing_alloc::configure_from_env();
     let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
 }
 
@@ -97,6 +99,9 @@ async fn bulk_server(pki: &Pki, name: &str) -> std::net::SocketAddr {
         while let Ok((tcp, _)) = listener.accept().await {
             let acceptor = acceptor.clone();
             tokio::spawn(async move {
+                // The answer goes out as a head and then a body: without this, Nagle holds the body
+                // until the peer's delayed ACK (about 40 ms) and every small request measures that.
+                tcp.set_nodelay(true).unwrap();
                 let Ok(tls) = acceptor.accept(tcp).await else {
                     return;
                 };
@@ -627,4 +632,56 @@ async fn memory_of_an_idle_terminated_http11_connection() {
 #[ignore = "measures resident memory of the whole test process; run by the nightly perf workflow or by hand in a release build"]
 async fn memory_of_an_idle_terminated_http2_connection() {
     idle_memory("h2").await;
+}
+
+/// One kept-alive HTTP/1.1 connection through the terminating proxy: a small POST and its same-sized
+/// answer, many times in a row. Prints the median and the 99th percentile of the round trip, which
+/// is what an allocator's per-call cost shows in (a bulk transfer moves a few large blocks, this
+/// moves many small ones).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "a latency measurement, meaningful only in a release build; run by the nightly perf workflow or by hand"]
+async fn small_requests_on_a_kept_alive_connection() {
+    const REQUESTS: usize = 5000;
+    const BODY: usize = 1024;
+    /// A median round trip through the proxy on a shared runner is well under a millisecond; this
+    /// catches a collapse, not a drift.
+    const MAX_MEDIAN: Duration = Duration::from_millis(20);
+    silence_logs();
+    let pki = Pki::new();
+    let bound = bulk_server(&pki, "bound.test").await;
+    let rig = RigBuilder::new(&pki).name("bound.test", bound).build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let request = {
+        let mut r =
+            format!("POST /small HTTP/1.1\r\nHost: bound.test\r\nContent-Length: {BODY}\r\n\r\n")
+                .into_bytes();
+        r.extend(std::iter::repeat_n(b'u', BODY));
+        r
+    };
+    let mut times = Vec::with_capacity(REQUESTS);
+    for round in 0..REQUESTS + 200 {
+        let started = Instant::now();
+        client.stream.write_all(&request).await.unwrap();
+        client.stream.flush().await.unwrap();
+        let response = read_response(&mut client.stream, "POST").await.unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body.len(), BODY);
+        if round >= 200 {
+            times.push(started.elapsed());
+        }
+    }
+    times.sort_unstable();
+    let median = times.get(times.len() / 2).copied().unwrap();
+    let p99 = times.get(times.len() * 99 / 100).copied().unwrap();
+    eprintln!(
+        "M latency median_us {} p99_us {} requests {REQUESTS}",
+        median.as_micros(),
+        p99.as_micros()
+    );
+    assert!(
+        median <= MAX_MEDIAN,
+        "median round trip {median:?}, above {MAX_MEDIAN:?}"
+    );
+    let _ = Arc::strong_count(&rig.ca);
 }

@@ -97,6 +97,14 @@ fn an_option_that_names_the_other_store_stops_the_start_and_says_what_to_do() {
     assert!(text.contains("`auto` or `os`"), "{text}");
     let back = decide(inputs(StoreOption::Os, Some(StoreKind::File))).unwrap_err();
     assert!(back.to_string().contains("`auto` or `file`"));
+    assert!(
+        text.contains("`puddle secrets migrate --to file`"),
+        "{text}"
+    );
+    assert!(
+        back.to_string()
+            .contains("`puddle secrets migrate --to os`")
+    );
 }
 
 #[test]
@@ -216,4 +224,26 @@ fn every_rule_and_store_has_the_words_a_record_and_a_message_print() {
     );
     assert_eq!(StoreKind::Os.to_string(), StoreKind::Os.describe());
     assert_eq!(StoreKind::File.to_string(), "Puddle's file vault");
+}
+
+#[test]
+fn the_migrated_rule_says_which_command_moved_the_values() {
+    assert_eq!(Rule::Migrated.why(), "moved by `puddle secrets migrate`");
+}
+
+#[test]
+fn a_file_stamp_is_a_utc_time_without_colons_or_dashes() {
+    let stamp = file_stamp();
+    assert_eq!(stamp.len(), 16, "{stamp}");
+    assert!(
+        stamp.ends_with('Z') && stamp.as_bytes()[8] == b'T',
+        "{stamp}"
+    );
+    assert!(
+        stamp
+            .bytes()
+            .filter(|b| *b != b'T' && *b != b'Z')
+            .all(|b| b.is_ascii_digit()),
+        "{stamp}"
+    );
 }

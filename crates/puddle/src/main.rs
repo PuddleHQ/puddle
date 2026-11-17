@@ -27,6 +27,7 @@ fn main() -> ExitCode {
         Ok(Command::Serve(args)) => puddle::cmd::serve::run(&args),
         Ok(Command::User(args)) => puddle::cmd::user::run(&args),
         Ok(Command::Audit(args)) => puddle::cmd::audit::run(&args),
+        Ok(Command::VaultAdmin(args)) => puddle::cmd::secrets::run(&args),
         Err(err) => {
             eprintln!("puddle: {err}\n{USAGE}");
             ExitCode::from(2)

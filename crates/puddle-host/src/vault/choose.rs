@@ -206,7 +206,7 @@ pub(super) struct OpenFailure {
 }
 
 /// Finds the key, then opens the vault, or makes both on the first start.
-async fn open_file_vault(
+pub(super) async fn open_file_vault(
     key_home: Option<&Path>,
     vault: &Path,
     tools: ToolPaths,
@@ -229,7 +229,7 @@ async fn open_file_vault(
 const KEY_FOLDER: &str =
     "the `puddle` folder of your config folder (`$XDG_CONFIG_HOME`, or `~/.config`)";
 
-fn key_failure(err: &KeyError) -> OpenFailure {
+pub(super) fn key_failure(err: &KeyError) -> OpenFailure {
     let (title, fix) = match err {
         KeyError::NoKeySource => (
             "Puddle cannot open its file vault: this computer has no place for its key",
@@ -246,7 +246,7 @@ fn key_failure(err: &KeyError) -> OpenFailure {
         KeyError::KeyMissing(tag) => (
             "Puddle cannot open its file vault: its key is missing",
             format!(
-                "The vault was sealed with a {} key and that key is not here. Restore it from a copy; it is kept in {KEY_FOLDER}. Then restart Puddle. If it is gone, the secrets in the vault cannot be read: stop Puddle, move the `secrets/vault` file in the data folder aside, restart, and enter the secrets again.",
+                "The vault was sealed with a {} key and that key is not here. Restore it from a copy; it is kept in {KEY_FOLDER}. Then restart Puddle. If it is gone, the secrets in the vault cannot be read: stop Puddle and run `puddle secrets reset`, which keeps the old vault file aside and starts a new one, then start Puddle and enter the secrets again.",
                 tag.as_str()
             ),
         ),
@@ -273,7 +273,7 @@ fn key_failure(err: &KeyError) -> OpenFailure {
         KeyError::Sealed(why) => (
             "Puddle cannot open its file vault: its sealed key does not open",
             format!(
-                "{} Restore the machine or the setting that sealed it and restart Puddle. If that is not possible the secrets in the vault cannot be read: stop Puddle, move the `secrets/vault` file in the data folder and `vault-key.cred` in {KEY_FOLDER} aside, restart, and enter the secrets again.",
+                "{} Restore the machine or the setting that sealed it and restart Puddle. If that is not possible the secrets in the vault cannot be read: stop Puddle and run `puddle secrets reset`, which keeps the old vault file and `vault-key.cred` aside and starts a new vault, then start Puddle and enter the secrets again.",
                 unseal_cause(*why)
             ),
         ),
@@ -311,7 +311,7 @@ fn unseal_cause(why: Unseal) -> &'static str {
     }
 }
 
-fn vault_failure(err: VaultError) -> OpenFailure {
+pub(super) fn vault_failure(err: VaultError) -> OpenFailure {
     let fix = match err {
         VaultError::WrongKey => {
             "The key Puddle found does not open the vault, so the vault was made with another key. Put the original key back and restart Puddle."
@@ -323,7 +323,7 @@ fn vault_failure(err: VaultError) -> OpenFailure {
             "Check the permissions and the free space of the `secrets` folder in the data folder and restart Puddle."
         }
         VaultError::NotAVault | VaultError::Corrupt => {
-            "The vault file is damaged. Restore `secrets/vault` in the data folder from a copy; if there is none, move it aside, restart and enter the secrets again."
+            "The vault file is damaged. Restore `secrets/vault` in the data folder from a copy; if there is none, stop Puddle and run `puddle secrets reset`, which keeps the damaged file aside and starts a new vault, then start Puddle and enter the secrets again."
         }
     };
     OpenFailure {

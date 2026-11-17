@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Microsoft's VS Code server build the Microsoft-editor nightly runs (crates/puddle-app/e2e/microsoft-editor.mjs):
+# `<release> <commit> <sha256>` of the linux-x64 web server tarball. The sha256 is the release server's own `sha256hash` of that
+# exact release (https://update.code.visualstudio.com/api/versions/<release>/server-linux-x64-web/stable); the tarball comes from
+# https://update.code.visualstudio.com/commit:<commit>/server-linux-x64-web/stable. The product itself installs the newest build;
+# the nightly then replaces it with this one so the run does not change when Microsoft ships. A bump changes all three in one change.
+1.143.1 e646868227c3e3a9e3f24277c8c7220be42c0be7 4626a9d6f036d382a77197f895eee35cce6843d0a7042ae8be850bec2c77188e

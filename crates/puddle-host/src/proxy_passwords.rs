@@ -210,20 +210,49 @@ impl ProxyPasswords {
     /// The entry naming the proxies that have a sign-in. The ids are valid by construction; an
     /// error here would be the store refusing a name.
     fn list_id(&self) -> Result<StoredId, StoreError> {
-        StoredId::new(format!("{}list", self.prefix)).map_err(|_| StoreError)
+        list_id(&self.prefix)
     }
 
     /// The prefix and 32 hex digits of the hash of `host:port`: a fixed-size id whatever the host
     /// name holds, the same for the same proxy on every run.
     fn entry_id(&self, proxy: &ProxyAddr) -> Result<StoredId, StoreError> {
-        let digest = Sha256::digest(proxy.to_string().as_bytes());
-        let hex = digest.iter().take(16).fold(String::new(), |mut hex, byte| {
-            // writing into a `String` cannot fail
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        });
-        StoredId::new(format!("{}{hex}", self.prefix)).map_err(|_| StoreError)
+        entry_id(&self.prefix, proxy)
     }
+}
+
+fn list_id(prefix: &str) -> Result<StoredId, StoreError> {
+    StoredId::new(format!("{prefix}list")).map_err(|_| StoreError)
+}
+
+fn entry_id(prefix: &str, proxy: &ProxyAddr) -> Result<StoredId, StoreError> {
+    let digest = Sha256::digest(proxy.to_string().as_bytes());
+    let hex = digest.iter().take(16).fold(String::new(), |mut hex, byte| {
+        // writing into a `String` cannot fail
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    StoredId::new(format!("{prefix}{hex}")).map_err(|_| StoreError)
+}
+
+/// Every id the sign-ins occupy in `vault`: the list and the entry of each proxy it names. Read
+/// from the store itself, because no row names them. A proxy whose entry is gone is still listed
+/// here; the caller finds no value under it.
+///
+/// # Errors
+/// [`StoreError`] when the list cannot be read.
+pub(crate) fn stored_ids(vault: &dyn SecretStore) -> Result<Vec<StoredId>, StoreError> {
+    let list = list_id(ID_PREFIX)?;
+    let mut ids = vec![list.clone()];
+    if let Some(text) = vault.get(&list)? {
+        for proxy in text
+            .expose()
+            .lines()
+            .filter_map(|l| ProxyAddr::parse(l).ok())
+        {
+            ids.push(entry_id(ID_PREFIX, &proxy)?);
+        }
+    }
+    Ok(ids)
 }
 
 #[cfg(test)]

@@ -35,7 +35,7 @@ const RUNNING: readonly Status[] = ["starting", "running", "paused"];
 const NETWORK_KEY = "network";
 const stopKey = (name: string) => `stop:${name}`;
 const oomKey = (name: string) => `oom:${name}`;
-const diskKey = (name: string, disk: string) => `disk:${name}:${disk}`;
+const diskKey = (id: string, disk: string) => `disk:${id}:${disk}`;
 const sshKey = (name: string) => `ssh:${name}`;
 
 export interface WatcherDeps {
@@ -142,7 +142,7 @@ export class NoticeWatcher {
         return;
       case "disk_nearly_full":
         this.#notifier.notify({
-          key: diskKey(name, event.disk),
+          key: diskKey(id, event.disk),
           tone: "warning",
           title: `${name}: the ${event.disk === "root" ? "root disk" : "volume"} is ${event.percent} % full.`,
           detail:
@@ -150,7 +150,7 @@ export class NoticeWatcher {
               ? "Free space in the workspace, or reset the root disk from the workspace page: packages reinstall on the next start and the volume is untouched."
               : "Delete what you no longer need in the workspace; the volume cannot grow.",
           link: {
-            href: `/workspaces/${encodeURIComponent(name)}`,
+            href: `/workspaces/${encodeURIComponent(id)}`,
             label: "Open workspace",
           },
         });

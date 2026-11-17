@@ -119,6 +119,8 @@ pub enum Rule {
     Headless,
     /// Linux without it.
     LinuxDefault,
+    /// `puddle secrets migrate` moved the values and switched the record.
+    Migrated,
 }
 
 impl Rule {
@@ -134,6 +136,7 @@ impl Rule {
             Self::OtherPlatform => "Windows and macOS use the operating system's store",
             Self::Headless => "Linux, started with the headless flag",
             Self::LinuxDefault => "Linux, started without the headless flag",
+            Self::Migrated => "moved by `puddle secrets migrate`",
         }
     }
 }
@@ -167,10 +170,11 @@ pub struct Decision {
 pub enum ChoiceError {
     /// The option names the other store than the data folder recorded.
     #[error(
-        "this data folder keeps its secrets in {}, and `secret_store` asks for {}. Puddle never moves secrets between stores on its own: set `secret_store` to `auto` or `{}`",
+        "this data folder keeps its secrets in {}, and `secret_store` asks for {}. Puddle never moves secrets between stores on its own: set `secret_store` to `auto` or `{}`, or move the secrets with `puddle secrets migrate --to {}` while Puddle is stopped",
         .recorded.describe(),
         .asked.describe(),
-        .recorded.as_str()
+        .recorded.as_str(),
+        .asked.as_str()
     )]
     Mismatch {
         /// What the folder recorded.
@@ -285,6 +289,12 @@ pub fn write_record(data: &Path, store: StoreKind, rule: Rule) -> Result<(), Rec
     let mut body = serde_json::to_vec_pretty(&record).map_err(|_| RecordError::Io)?;
     body.push(b'\n');
     puddle_fs::private::write_atomic(&folder.join(FILE), &body).map_err(|_| RecordError::Io)
+}
+
+/// The time now for a file name: `20261114T053355Z` (no colons, which Windows refuses).
+#[must_use]
+pub fn file_stamp() -> String {
+    utc(SystemTime::now()).replace(['-', ':'], "")
 }
 
 /// `time` as `2026-11-14T05:33:55Z`.

@@ -346,14 +346,14 @@ jobs:
       - name: install the keyring packages
         if: ${{ !cancelled() }}
         run: ci/apt-retry.sh sudo apt-get install -y --no-install-recommends gnome-keyring dbus
-      # The contract suite alone, first, so a keyring problem fails fast and by name; the coverage run
+      # The contract suite and the `puddle secrets migrate` round trip alone, first, so a keyring problem fails fast and by name; the coverage run
       # below runs it again together with every other test that uses the operating-system store.
       - name: secret-store contract on the real keyring (gnome-keyring under dbus-run-session)
         if: ${{ !cancelled() }}
         timeout-minutes: 15
         env:
           PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
-        run: ci/with-keyring.sh cargo test --locked -p puddle-secrets --test store_contract -- --nocapture
+        run: ci/with-keyring.sh cargo test --locked -p puddle-secrets --test store_contract --test secrets_migrate -- --nocapture
       - name: tests with coverage gate
         if: ${{ !cancelled() }}
         env:

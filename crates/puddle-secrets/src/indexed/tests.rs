@@ -293,3 +293,17 @@ fn entries_that_cannot_be_rewritten_are_counted_not_fatal() {
     assert_eq!(store.keep_all_local(), Ok(2));
     store.delete(&id("tok-a")).unwrap();
 }
+
+#[test]
+fn the_listed_ids_are_what_the_index_holds_and_a_plain_store_lists_none() {
+    let store = IndexedStore::new(MemoryStore::new());
+    assert_eq!(store.listed_ids(), Ok(Vec::new()));
+    store.set(&id("tok-a"), &secret("one")).unwrap();
+    store.set(&id("env-b"), &secret("two")).unwrap();
+    assert_eq!(store.listed_ids(), Ok(vec![id("tok-a"), id("env-b")]));
+    store.delete(&id("tok-a")).unwrap();
+    assert_eq!(store.listed_ids(), Ok(vec![id("env-b")]));
+    let plain = MemoryStore::new();
+    plain.set(&id("tok-a"), &secret("one")).unwrap();
+    assert_eq!(plain.listed_ids(), Ok(Vec::new()));
+}

@@ -239,9 +239,16 @@ fn low_free_space_notifies_by_its_own_switch() {
         free_mib: 40_960,
     });
     save(&rig, &json!({}));
-    emit_until(&rig, low(), |r| !r.notices().is_empty());
-    let (notice, _) = rig.recorded.notices().remove(0);
-    assert_eq!(notice.title, "Disk space is running low");
+    // An "asking for access" notice for the request the rig seeds can arrive after the switch went
+    // on (it failed here once, "demo is asking for access" first), so pick the low-disk notice by
+    // its title instead of taking whatever came first.
+    let disk_notice = |r: &Recorded| {
+        r.notices()
+            .into_iter()
+            .find(|(notice, _)| notice.title == "Disk space is running low")
+    };
+    emit_until(&rig, low(), |r| disk_notice(r).is_some());
+    let (notice, _) = disk_notice(&rig.recorded).unwrap();
     assert!(notice.body.starts_with("12 GB are left"), "{}", notice.body);
 }
 

@@ -105,6 +105,10 @@ impl<S: SecretStore> SecretStore for IndexedStore<S> {
         self.inner.keep_local(id)
     }
 
+    fn listed_ids(&self) -> Result<Vec<StoredId>, StoreError> {
+        self.listed()
+    }
+
     fn keep_all_local(&self) -> Result<usize, StoreError> {
         let mut failed = 0;
         let index = Self::index_id()?;

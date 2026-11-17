@@ -445,3 +445,10 @@ fn the_defaults_pick_a_free_port_and_ask_for_nothing() {
     assert!(options.sandbox_probe.is_none());
     assert_eq!(Options::from_env().port, 0);
 }
+
+#[test]
+fn the_editor_windows_take_the_debug_port_after_the_main_window_s() {
+    assert_eq!(editor_debug_port(Some(9340)), Some(9341));
+    assert_eq!(editor_debug_port(None), None);
+    assert_eq!(editor_debug_port(Some(u16::MAX)), None);
+}

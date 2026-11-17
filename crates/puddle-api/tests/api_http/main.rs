@@ -12,6 +12,7 @@
 mod app_icon;
 mod audit_retention;
 mod common;
+mod contract;
 
 mod admin;
 mod backup;

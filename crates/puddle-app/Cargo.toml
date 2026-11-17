@@ -15,7 +15,7 @@ build = "build.rs"
 # Adds the in-memory fixture backend (the real API on in-memory services with one seeded pending
 # request), for developing the window and for the smoke test; a debug build shows it when
 # `PUDDLE_APP_FIXTURE=1` is set. Without the feature the shell always runs the host.
-fixture = []
+fixture = ["puddle-api/testing"]
 # The managed mise layer (dormant in v0.1), see puddle-settings.
 mise = ["puddle-settings/mise"]
 

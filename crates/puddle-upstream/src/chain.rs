@@ -676,12 +676,15 @@ impl Chain {
                 return Err(failed("407 without a Proxy-Authenticate header".into()));
             }
             let offered_owned = wire::schemes(&challenges);
-            // A preemptive session (Negotiate sent unasked) met a 407: ask again with what the proxy
+            // A preemptive session (a token sent unasked) met a 407: ask again with what the proxy
             // actually offers, so a Basic-only proxy still works on the first request. Keep the
-            // preemptive session when nothing else can answer.
-            if session.is_none() || preemptive {
+            // preemptive session when nothing else can answer, and when the 407 answers its token
+            // with one of its own (NTLM's challenge): a new session has sent nothing yet, so the
+            // Windows security package refuses that token (`SEC_E_UNSUPPORTED_FUNCTION`).
+            let restart = session.is_none() || (preemptive && !answers_a_token(&challenges));
+            preemptive = false;
+            if restart {
                 let offered: Vec<&str> = offered_owned.iter().map(String::as_str).collect();
-                preemptive = false;
                 match self.auth.begin(proxy, &offered) {
                     Ok(Some(started)) => session = Some(started),
                     Ok(None) if session.is_some() => {}
@@ -1001,6 +1004,18 @@ fn interleaved(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
     }
     out.extend(second.into_iter().rev());
     out
+}
+
+/// Whether a `407` carries a token of a connection-based scheme (`Negotiate <token>`, `NTLM
+/// <token>`): the proxy's answer to a token that was sent, not an offer of schemes.
+fn answers_a_token(challenges: &[&str]) -> bool {
+    challenges.iter().any(|challenge| {
+        let mut words = challenge.split_whitespace();
+        words
+            .next()
+            .is_some_and(|w| w.eq_ignore_ascii_case("negotiate") || w.eq_ignore_ascii_case("ntlm"))
+            && words.next().is_some()
+    })
 }
 
 #[cfg(test)]

@@ -1068,9 +1068,15 @@ async fn every_kind_of_source_failure_lets_a_read_go_out_without_a_credential() 
         let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
         w.credentials.fail(&work.credentials[0].source, err.clone());
         let read = w.decide("github.com", "GET", FETCH, &[]).await;
+        let InjectDecision::PassThroughNoting(unauthorized) = read else {
+            panic!("{err:?}: {read:?}");
+        };
+        // A private repository's `401` becomes a refusal that names why the source failed.
+        let refused = unauthorized.refusal().expect("replaced");
         assert!(
-            matches!(read, InjectDecision::PassThroughNoting(_)),
-            "{err:?}: {read:?}"
+            refused.message().contains(&err.to_string()),
+            "{err:?}: {}",
+            refused.message()
         );
         let push = w.decide("github.com", "GET", PUSH_ADVERT, &[]).await;
         assert_eq!(refusal(&push).1, "credential_unavailable", "{err:?}");

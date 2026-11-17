@@ -7,6 +7,7 @@
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import BackupCard from "#lib/components/BackupCard.svelte";
+  import RestoreCard from "#lib/components/RestoreCard.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
@@ -1276,8 +1277,9 @@
       </section>
 
       <section class="card" id="s-backup" aria-labelledby="h-backup">
-        <h2 id="h-backup">Back up</h2>
+        <h2 id="h-backup">Back up and restore</h2>
         <BackupCard />
+        <RestoreCard />
       </section>
 
       <section class="card" id="s-priv" aria-labelledby="h-priv">

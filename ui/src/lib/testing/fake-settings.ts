@@ -271,6 +271,10 @@ export class FakeSettings {
           ).map((choice) => ({ choice, png_base64: `${choice}-png` })),
           custom_png_base64: this.customIcon,
         } satisfies S["AppIcons"]);
+      case "/api/restore/result":
+        return this.reply(200, { result: null });
+      case "/api/safety-copies":
+        return this.reply(200, { copies: [] });
       case "/api/health":
         return this.reply(200, {
           version: this.version,

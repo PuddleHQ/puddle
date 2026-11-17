@@ -2010,3 +2010,44 @@ async fn the_backup_download_works_and_a_step_makes_it_fail_and_recover() {
     run.control("POST", "/control/step", Some(&clear)).await;
     assert_eq!(run.api("POST", "/api/backup", None).await.status, 200);
 }
+
+#[tokio::test]
+async fn a_restore_previews_applies_and_lists_safety_copies_through_steps() {
+    let run = start("default").await;
+    // A body that is not a backup is refused with the reason, and nothing is applied.
+    let refused = run.api("POST", "/api/restore/preview", None).await;
+    assert_eq!(refused.status, 422, "{}", refused.body);
+
+    let steps = [
+        json!({"do": "restore_preview", "missing_disks": ["gone"], "secrets": ["TOKEN"]}),
+        json!({"do": "safety_copies", "names": ["20231114T221320Z"]}),
+        json!({"do": "restore_result", "applied": true, "message": "Restored."}),
+    ];
+    for step in steps {
+        let set = run.control("POST", "/control/step", Some(&step)).await;
+        assert_eq!(set.status, 204, "{}", set.body);
+    }
+    let copies = run.api("GET", "/api/safety-copies", None).await.json();
+    assert_eq!(copies["copies"][0]["name"], "20231114T221320Z", "{copies}");
+    let result = run.api("GET", "/api/restore/result", None).await.json();
+    assert_eq!(result["result"]["message"], "Restored.", "{result}");
+    let applied = run
+        .api(
+            "POST",
+            "/api/restore/apply",
+            Some(&json!({"staging_id": "0".repeat(32), "mode": "add"})),
+        )
+        .await;
+    assert_eq!(applied.status, 200, "{}", applied.body);
+
+    let failing = json!({"do": "restore_apply_fails", "reason": "the disk is full"});
+    run.control("POST", "/control/step", Some(&failing)).await;
+    let failed = run
+        .api(
+            "POST",
+            "/api/restore/apply",
+            Some(&json!({"staging_id": "0".repeat(32), "mode": "add"})),
+        )
+        .await;
+    assert_eq!(failed.status, 503, "{}", failed.body);
+}

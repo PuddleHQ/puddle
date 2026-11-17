@@ -199,6 +199,7 @@ struct State {
     repos: Arc<repos::HeldRepos>,
     doctor: Arc<FakeDoctor>,
     backup: Arc<FakeBackup>,
+    restore: Arc<puddle_api::FakeRestore>,
     dev_cert: Arc<FakeDevCert>,
     /// The background problems the API lists; kept here so they outlive a rebind of the API.
     problems: Arc<Problems>,
@@ -273,6 +274,7 @@ impl Fixture {
         let repos = Arc::new(repos::HeldRepos::new(credentials.clone()));
         let doctor = Arc::new(FakeDoctor::new());
         let backup = Arc::new(FakeBackup::new());
+        let restore = Arc::new(puddle_api::FakeRestore::new());
         let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
         let account_secrets = if scenario.multi_user {
@@ -293,6 +295,7 @@ impl Fixture {
             repos,
             doctor,
             backup,
+            restore,
             dev_cert,
             problems,
             ports: Arc::new(FakePorts::new()),
@@ -326,6 +329,7 @@ impl Fixture {
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
             .with_backup(state.backup.clone() as Arc<dyn BackupService>)
+            .with_restore(state.restore.clone() as Arc<dyn puddle_api::RestoreService>)
             .with_dev_cert(state.dev_cert.clone() as Arc<dyn DevCertService>)
             .with_problems(state.problems.clone())
             .with_ports(state.ports.clone() as Arc<dyn PortsService>)
@@ -729,6 +733,34 @@ impl State {
             Step::ReleaseRepos => self.repos.release(),
             Step::Doctor(report) => self.doctor.set((**report).clone()),
             Step::BackupFails { reason } => self.backup.fail_with(reason.as_deref()),
+            Step::RestorePreview {
+                missing_disks,
+                secrets,
+            } => {
+                self.restore
+                    .set_facts(restore_facts(missing_disks, secrets));
+            }
+            Step::RestoreApplyFails { reason } => self.restore.fail_apply_with(reason.as_deref()),
+            Step::RestoreResult { applied, message } => {
+                self.restore.set_result(message.as_ref().map(|message| {
+                    puddle_api::wire::RestoreResult {
+                        applied: *applied,
+                        mode: puddle_api::wire::RestoreMode::Add,
+                        safety_copy: "20231114T221320Z".to_owned(),
+                        at_ms: 1_700_000_000_000,
+                        message: message.clone(),
+                    }
+                }));
+            }
+            Step::SafetyCopies { names } => self.restore.set_safety_copies(
+                names
+                    .iter()
+                    .map(|name| puddle_api::wire::SafetyCopy {
+                        name: name.clone(),
+                        size_bytes: 2048,
+                    })
+                    .collect(),
+            ),
             Step::DevCertificate {
                 state,
                 trust_answer,
@@ -1416,3 +1448,45 @@ fn host(name: &str) -> Result<Host, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// The facts a restore preview answers with: one rule to add, the given workspaces without a disk
+/// here and the given secrets without a value here.
+fn restore_facts(missing_disks: &[String], secrets: &[String]) -> puddle_api::RestoreFacts {
+    puddle_api::RestoreFacts {
+        staging_id: "0".repeat(32),
+        format: 1,
+        puddle_version: Some("0.1.0".to_owned()),
+        schema_version: puddle_store::SCHEMA_VERSION,
+        created_at_ms: Some(1_700_000_000_000),
+        parts: vec![
+            puddle_api::wire::RestorePart {
+                name: puddle_api::wire::RestorePartName::Rules,
+                in_backup: 5,
+                add: 2,
+                differ: 1,
+                same: 2,
+                only_here: 3,
+            },
+            puddle_api::wire::RestorePart {
+                name: puddle_api::wire::RestorePartName::Settings,
+                in_backup: 4,
+                add: 0,
+                differ: 0,
+                same: 4,
+                only_here: 0,
+            },
+        ],
+        workspaces: missing_disks
+            .iter()
+            .map(|name| (format!("ws-{name}"), name.clone()))
+            .collect(),
+        secret_refs: secrets
+            .iter()
+            .map(|name| puddle_api::SecretRef {
+                workspace_id: None,
+                name: name.clone(),
+                secret_id: format!("restore-fixture-{name}"),
+            })
+            .collect(),
+    }
+}

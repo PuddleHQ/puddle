@@ -166,7 +166,7 @@ describe("the screen", () => {
       "Git and credentials",
       "Environment",
       "Devices and sign-in",
-      "Back up",
+      "Back up and restore",
       "Privacy",
       "About",
     ]);
@@ -1405,7 +1405,10 @@ describe("Microsoft's server", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Withdraw consent" }),
     );
-    expect(await screen.findByText(/service isn't answering/)).toBeVisible();
+    // The restore card, which also reads from the service, may say the same: several places do.
+    const said = await screen.findAllByText(/service isn't answering/);
+    expect(said[0]).toBeVisible();
+    expect(api.consent.state).toBe("granted");
   });
 
   it("asks again when the terms changed since the user agreed", async () => {

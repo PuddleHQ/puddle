@@ -23,6 +23,9 @@ export function sizeText(bytes: number): string {
   return `${bytes} bytes`;
 }
 
+/** How long the download address of a backup stays valid after the click. */
+const REVOKE_AFTER_MS = 30_000;
+
 /** Offers `blob` to the user as a download named `name`. */
 function save(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
@@ -32,7 +35,8 @@ function save(blob: Blob, name: string): void {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Some web views start the download after the click returns and drop it if the address is gone.
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
 }
 
 /** Makes a backup and starts its download. */

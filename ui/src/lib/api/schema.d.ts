@@ -1434,7 +1434,8 @@ export interface paths {
         get: operations["get_global"];
         /**
          * Replaces the global settings listed in the body; `null` falls back to Puddle's default.
-         *     Consents are changed through `/api/consents`.
+         *     With the `revision` of the read the save was made from, a save over settings that changed
+         *     since is refused. Consents are changed through `/api/consents`.
          */
         put: operations["put_global"];
         post?: never;
@@ -3954,7 +3955,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "rate_limited" | "unavailable" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "settings_changed" | "rate_limited" | "unavailable" | "internal";
         /**
          * @description The input of a request a refusal is about, so a form can put the message beside it.
          * @enum {string}
@@ -4423,6 +4424,11 @@ export interface components {
         GlobalSettingsRequest: {
             /** @description The limits; omitted or `null` falls back to the computer's cores. */
             limits?: components["schemas"]["Limits"];
+            /**
+             * @description The `revision` of the settings this save was made from. When it no longer matches, nothing
+             *     is written and the answer is 409 `settings_changed`. Omit it to replace whatever is stored.
+             */
+            revision?: string | null;
             /** @description The tool switches. */
             tools?: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -4440,6 +4446,11 @@ export interface components {
             effective_limits: components["schemas"]["EffectiveLimits"];
             /** @description The limits the user set (global only). */
             limits: components["schemas"]["Limits"];
+            /**
+             * @description Names the values above that a save replaces. Send it back as `revision` in the save: if
+             *     another client changed them in between, the save is refused (409 `settings_changed`).
+             */
+            revision: string;
             /** @description The tool switches (global only). */
             tools: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
@@ -13163,7 +13174,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), damaged (settings_unreadable), or changed since the read named by `revision` (settings_changed) */
             409: {
                 headers: {
                     [name: string]: unknown;

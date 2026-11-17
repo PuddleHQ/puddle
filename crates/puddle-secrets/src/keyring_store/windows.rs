@@ -10,7 +10,10 @@
 //!
 //! So every call [`super::KeyringStore`] makes holds an exclusive lock on one file in the user's
 //! default Puddle data folder, which every Puddle process of the user finds whatever data folder
-//! it was given. Changes other programs make at the same moment are not covered.
+//! it was given. Changes other programs make at the same moment are not covered. This is how
+//! Credential Manager behaves, not a bug in a crate we could fix, so the lock is meant to stay. A
+//! call that never returns would hold every other Puddle process's calls; Credential Manager calls
+//! do not wait for the user, and the operating system drops the lock when its holder exits.
 
 use std::fs::{File, OpenOptions};
 use std::io;

@@ -34,7 +34,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{ConnectionEvent, Host, WorkspaceId};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::destination::BoxFuture;
@@ -126,6 +126,7 @@ fn no_identity(host: &Host) -> GitSshGreeting {
 pub struct GitSshContext {
     pub(crate) handler: WorkspaceHandler,
     legs: Mutex<Vec<Outcome>>,
+    refused: Mutex<Option<ConnectionEvent>>,
 }
 
 impl GitSshContext {
@@ -133,6 +134,7 @@ impl GitSshContext {
         Self {
             handler,
             legs: Mutex::new(Vec::new()),
+            refused: Mutex::new(None),
         }
     }
 
@@ -149,6 +151,23 @@ impl GitSshContext {
             &mut self.legs.lock().unwrap_or_else(PoisonError::into_inner),
             outcome,
         );
+    }
+
+    /// Keeps the decision that refused an HTTPS leg before it opened (the Git host's HTTPS name can
+    /// differ from the SSH name the connection was admitted under); the first one counts.
+    pub(crate) fn leg_refused(&self, event: ConnectionEvent) {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert(event);
+    }
+
+    /// The decision that refused an HTTPS leg, if one did.
+    pub(crate) fn refused_leg(&self) -> Option<ConnectionEvent> {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The outcomes of the HTTPS legs that have closed, in the order they closed.

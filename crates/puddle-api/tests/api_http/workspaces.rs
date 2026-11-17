@@ -1174,6 +1174,80 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
     api.running.shutdown().await;
 }
 
+/// A browser signed in from another computer asks to open a workspace in an editor. Whatever
+/// the host would open (VS Code through its `code` command, or an editor window) would open on the
+/// host's own screen, connected to the workspace, and not on the asker's; and the ssh link only
+/// works on the host. So the host opens nothing and sends no link, for either mode.
+#[tokio::test]
+async fn an_attach_from_a_signed_in_browser_opens_nothing_on_the_host() {
+    use crate::sign_in::{HOST, Req, access_token, head, password};
+    let mut config = puddle_api::ApiConfig::default();
+    config.remote = Some(puddle_api::Remote::new(
+        puddle_api::RemoteServing::new(vec![puddle_api::PublicHost::parse(HOST).unwrap()], None)
+            .unwrap(),
+    ));
+    let api = crate::common::start_with(config).await;
+    running(&api, "web").await;
+    allow_direct_ssh(&api, "web").await;
+    let addr = api.addr;
+    let send = |method: &str, path: &str, req: &Req<'_>, body: &Value| {
+        let request = head(method, path, req, Some(body));
+        async move { crate::common::raw(addr, request.as_bytes()).await }
+    };
+    let setup = send(
+        "POST",
+        "/api/auth/setup",
+        &Req::page(),
+        &json!({"name": "Tijs", "password": password()}),
+    )
+    .await;
+    assert_eq!(setup.status, 201, "{setup:?}");
+    let browser = access_token(&setup);
+
+    for mode in ["desktop", "browser"] {
+        let reply = send(
+            "POST",
+            "/api/workspaces/web/attach",
+            &Req::bearer(&browser),
+            &json!({"mode": mode}),
+        )
+        .await;
+        assert_eq!(reply.status, 200, "{mode}: {reply:?}");
+        let answer = reply.json();
+        assert_eq!(answer["opened"], false, "{mode}: {answer}");
+        assert_eq!(answer["open_uri"], Value::Null, "{mode}: {answer}");
+        assert!(
+            answer["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("computer Puddle runs on")),
+            "{mode}: {answer}"
+        );
+    }
+    assert_eq!(
+        api.launcher.opened().len(),
+        0,
+        "no VS Code started on the host"
+    );
+    assert_eq!(
+        api.launcher.browsers_opened().len(),
+        0,
+        "no window opened on the host"
+    );
+
+    // Control: the same attach from the host itself (the install token) does open.
+    let local = api
+        .send(
+            "POST",
+            "/api/workspaces/web/attach",
+            Some(&json!({"mode": "desktop"})),
+        )
+        .await;
+    assert_eq!(local.status, 200, "{}", local.body);
+    assert_eq!(local.json()["opened"], true);
+    assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
+    api.running.shutdown().await;
+}
+
 async fn allow_direct_ssh(api: &Api, workspace: &str) {
     let reply = api
         .send(

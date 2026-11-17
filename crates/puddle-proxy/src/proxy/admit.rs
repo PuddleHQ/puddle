@@ -40,6 +40,8 @@ fn note(
     request: &EgressRequest,
     decided: &Result<Decision, PolicyError>,
 ) {
+    // The address walk may have filled these in before a second decision rebuilds the record.
+    let (company_network, refused_address) = (event.company_network, event.refused_address);
     *event = match decided {
         Ok(decision) => ConnectionEvent::decided(request, decision),
         Err(_) => ConnectionEvent::new(
@@ -48,6 +50,8 @@ fn note(
             ConnectionReason::PolicyUnavailable,
         ),
     };
+    event.company_network = event.company_network.or(company_network);
+    event.refused_address = event.refused_address.or(refused_address);
 }
 
 /// Marks `event` blocked for `reason`, keeping the rule that allowed the name, if any.
@@ -313,7 +317,7 @@ fn apply_ip_rules(
 type IpRuleHit = (SocketAddr, RuleId);
 
 /// What the rules say about one resolved address by itself.
-enum IpRule {
+pub(crate) enum IpRule {
     /// No rule for the address.
     NoRule,
     /// An exact allow: admits a local address after a wildcard allow (R-14).
@@ -323,7 +327,7 @@ enum IpRule {
 }
 
 /// The rule that decides `addr`'s IP for `request`'s workspace. Looks only; a miss records nothing.
-fn ip_rule(
+pub(crate) fn ip_rule(
     proxy: &Proxy,
     request: &EgressRequest,
     addr: SocketAddr,

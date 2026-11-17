@@ -122,7 +122,9 @@ impl SystemMise {
             .current_dir(folder)
             // Plain lines: the host quotes the last one.
             .env("NO_COLOR", "1")
-            .env("MISE_COLOR", "0");
+            .env("MISE_COLOR", "0")
+            // Nothing in a repository's config runs (no `exec()` templates, no hooks).
+            .env("MISE_SAFE", "1");
         command
     }
 }
@@ -146,7 +148,6 @@ impl Mise for SystemMise {
         let output = self
             .command(folder)
             .args(["install", "--yes"])
-            .env("MISE_SAFE", "1")
             .output()
             .map_err(|e| MiseFailed(format!("could not run mise: {e}")))?;
         if output.status.success() {

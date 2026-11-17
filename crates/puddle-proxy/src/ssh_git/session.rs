@@ -213,6 +213,17 @@ where
     event.injected = summary.injected;
     event.binding_id = summary.binding_id.clone();
     apply_legs(&mut event, &ctx.route.legs());
+    if let Some(refused) = ctx.route.refused_leg() {
+        // The rules refused an HTTPS leg's host before it opened: the record says so, not the
+        // SSH name's allow.
+        event.decision = refused.decision;
+        event.reason = refused.reason;
+        event.rule_id = refused.rule_id;
+        event.rule_set = refused.rule_set;
+        event.pending_id = refused.pending_id;
+        event.refused_address = refused.refused_address.or(event.refused_address);
+        event.company_network = refused.company_network.or(event.company_network);
+    }
     // A refusal Puddle's own server gave is the connection's reason, over a rule's refusal
     // inside an HTTPS leg.
     if let Some((_, code)) = &summary.refused {
@@ -292,9 +303,8 @@ async fn watch_connection<S>(
             return;
         }
     };
-    // A russh session runs in a task of its own that outlives its handle: end it however this
-    // function does.
-    let _disconnect = Disconnect(started.handle());
+    // The session runs in a task of its own that outlives its handle: `_cut` ends it, by cutting
+    // the stream, however this function ends.
     let mut running = pin!(started);
     loop {
         let phase = *watching.borrow_and_update();
@@ -318,26 +328,6 @@ async fn watch_connection<S>(
             }
         }
     }
-}
-
-/// Disconnects a session when dropped, so a limit or a cancelled connection ends it.
-struct Disconnect(russh::server::Handle);
-
-impl Drop for Disconnect {
-    fn drop(&mut self) {
-        tokio::spawn(disconnect(self.0.clone()));
-    }
-}
-
-async fn disconnect(handle: russh::server::Handle) {
-    // the guest may have disconnected first; the session is over either way
-    let _ = handle
-        .disconnect(
-            russh::Disconnect::ByApplication,
-            "closed by Puddle".to_owned(),
-            String::new(),
-        )
-        .await;
 }
 
 /// A session channel the client opened and has not used yet.

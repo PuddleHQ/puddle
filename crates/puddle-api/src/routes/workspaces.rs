@@ -390,7 +390,7 @@ impl GitSetup for StoreGitSetup {
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
-        (status = FORBIDDEN, description = "a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names)", body = ApiErrorBody),
+        (status = FORBIDDEN, description = "forbidden origin, or a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names)", body = ApiErrorBody),
         (status = CONFLICT, description = "another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
         (status = SERVICE_UNAVAILABLE, description = "workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source)", body = ApiErrorBody)
@@ -409,7 +409,7 @@ pub(crate) async fn create_workspace(
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             ErrorCode::Forbidden,
-            "only the owner of this Puddle can start a workspace from a folder on this computer",
+            "only the owner of this Puddle can start a workspace from a folder on this computer; use the repository's address instead",
         )
         .at_field(ErrorField::LocalPath));
     }

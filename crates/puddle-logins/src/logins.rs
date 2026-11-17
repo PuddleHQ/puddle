@@ -751,7 +751,9 @@ impl Logins {
         let slots: Vec<Slot> = writes.iter().map(|(slot, ..)| *slot).collect();
         // An answer with several tokens is kept whole or not at all: what the store held before
         // goes back when a later token cannot be written, so it never holds a pair that did not
-        // come from one answer. One token needs no copy: its write is the whole change.
+        // come from one answer. One token needs no copy: its write is the whole change. Only the
+        // slots written before the failure go back: a write that timed out (a locked store) may
+        // still land later, and putting its slot back would only wait out the timeout again.
         let before = if slots.len() > 1 {
             self.saved(profile, &slots).await?
         } else {
@@ -794,7 +796,7 @@ impl Logins {
     }
 
     /// Writes `saved` back into the store, as far as the store lets it: an entry that was
-    /// empty is deleted.
+    /// empty is deleted. A write the store refuses is only logged; the capture fails either way.
     async fn put_back(
         &self,
         profile: &'static Profile,

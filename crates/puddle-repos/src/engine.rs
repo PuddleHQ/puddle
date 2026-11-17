@@ -482,6 +482,7 @@ impl Repos {
             inner
                 .refresh(&renewing.0, Freshness::Cached, Announce::Yes)
                 .await;
+            // Also dropped, and the mark cleared, when the read panics or the task is dropped.
             drop(renewing);
         });
         true

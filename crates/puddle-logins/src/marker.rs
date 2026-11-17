@@ -169,7 +169,9 @@ impl Marker {
             .and_then(|()| {
                 // Written beside the marker and moved over it, so a start never reads half of one.
                 // The name is this write's own: a writer in another process (or with another
-                // `Marker` for the same file) never writes into the file this one moves.
+                // `Marker` for the same file) never writes into the file this one moves. A process
+                // killed between the write and the move leaves its part file behind, a few bytes
+                // that nothing reads.
                 let part = path.with_extension(format!(
                     "{}-{}.part",
                     std::process::id(),

@@ -238,7 +238,7 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
     // Unchanged: both steps go through.
     assert!(
         secrets
-            .add_device(&checked, "laptop", 9_000)
+            .add_device(&checked, "desktop", 9_000)
             .unwrap()
             .is_some()
     );
@@ -246,7 +246,7 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
     // The password changed since the check: neither goes through.
     assert!(
         secrets
-            .add_device(&checked, "laptop", 9_000)
+            .add_device(&checked, "desktop", 9_000)
             .unwrap()
             .is_none()
     );
@@ -260,7 +260,7 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
     secrets.clear_password(ann).unwrap();
     assert!(
         secrets
-            .add_device(&checked, "laptop", 9_000)
+            .add_device(&checked, "desktop", 9_000)
             .unwrap()
             .is_none()
     );
@@ -275,7 +275,7 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
     store.begin_user_delete(UserId::OWNER, ann).unwrap();
     assert!(
         secrets
-            .add_device(&checked, "laptop", 9_000)
+            .add_device(&checked, "desktop", 9_000)
             .unwrap()
             .is_none()
     );
@@ -295,7 +295,7 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
 fn a_user_being_deleted_has_no_session_and_no_invite() {
     let (store, secrets, _) = setup();
     let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
-    let device = store.add_device(ann, "laptop", 9_000).unwrap();
+    let device = store.add_device(ann, "desktop", 9_000).unwrap();
     secrets.put_session(device.id, &[4; 32]).unwrap();
     secrets.put_invite(ann, &[5; 32], 9_000).unwrap();
     assert!(secrets.session_for(&[4; 32]).unwrap().is_some());

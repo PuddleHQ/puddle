@@ -183,6 +183,7 @@ fn a_program_that_logs_its_failed_bind_and_exits_meanwhile_is_told_as_exited() {
         || false,
         Duration::ZERO,
         || {
+            // flake-ok: simulated latency; the log read must land after the child's exit.
             std::thread::sleep(Duration::from_millis(400));
             true
         },

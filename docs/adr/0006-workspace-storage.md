@@ -60,7 +60,9 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
    and the cleanup are done. A start that finds a marked entry whose volume is gone finishes the
    delete (the id is retired); one whose volume is still there lists the workspace again. Every
    start also sweeps each retired id in the background: a sandbox, store rows, credential-store
-   values, the settings file and the browser editor's data still named by it are removed.
+   values, the settings file and the browser editor's data still named by it are removed. An id
+   whose leftovers are all gone is listed as cleaned and not swept again, and a quit waits at most
+   ten seconds for the sweep; the next start goes on with what it left.
 2. **Code gets in by cloning inside the VM** through Puddle's proxy in the first milestone, with
    git HTTPS credentials injected by the proxy. **"Start from my Windows checkout"** is the first
    thing after it; the measurements showed the mechanism works (a read-only bind of the checkout +

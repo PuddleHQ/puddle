@@ -362,6 +362,29 @@ async fn a_volume_that_exists_is_kept_and_a_failed_create_leaves_none_behind() {
     assert!(!report.created_volume);
 }
 
+/// The size is for a volume the import makes: one that exists keeps its own, as a start does.
+#[tokio::test]
+async fn a_volume_that_exists_with_another_size_keeps_it() {
+    let s = setup();
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    s.rt.create_volume(puddle_compute::VolumeSpec {
+        name: s.id.volume_name(),
+        size: DiskSize::gib(1),
+    })
+    .await
+    .unwrap();
+    let report = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(2), &imports)
+        .await
+        .unwrap();
+    assert!(!report.created_volume);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    let volume = s.rt.volume(&s.id.volume_name()).await.unwrap().unwrap();
+    assert_eq!(volume.size, DiskSize::gib(1));
+    assert_eq!(sandboxes(&s.rt).await, Vec::<String>::new());
+}
+
 fn runtime_error(op: &'static str, message: &str) -> ComputeError {
     ComputeError::Runtime {
         op,

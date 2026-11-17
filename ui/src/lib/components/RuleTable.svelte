@@ -3,6 +3,7 @@
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import Clock from "@lucide/svelte/icons/clock";
+  import Pencil from "@lucide/svelte/icons/pencil";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import {
@@ -25,6 +26,7 @@
     onSort,
     onExpiry,
     onDelete,
+    onEdit,
     onEnabled,
   }: {
     rules: Rule[];
@@ -35,6 +37,8 @@
     /** Left out together with `onDelete`, the table is read-only. */
     onExpiry?: (rule: Rule, anchor: HTMLElement) => void;
     onDelete?: (rule: Rule, anchor: HTMLElement) => void;
+    /** Left out, the rows have no Edit button. */
+    onEdit?: (rule: Rule, anchor: HTMLElement) => void;
     /** Left out, the table has no switch column. The page changes the rule and the row follows. */
     onEnabled?: (rule: Rule, enabled: boolean) => void;
   } = $props();
@@ -156,6 +160,16 @@
           {/if}
           {#if onExpiry && onDelete}
             <td class="actions">
+              {#if onEdit}
+                <button
+                  type="button"
+                  class="btn"
+                  aria-label="Edit rule: {ruleName(rule)}"
+                  onclick={(e) => onEdit(rule, e.currentTarget)}
+                >
+                  <Pencil aria-hidden="true" size={16} />Edit
+                </button>
+              {/if}
               <button
                 type="button"
                 class="btn"

@@ -1881,7 +1881,7 @@ fn an_edit_writes_one_rule_updated_record_with_before_and_after_and_none_when_no
     let id = add(&store, Some("a"), "example.com", Effect::Allow);
     let same = edit_of(&stored(&store, id));
     store.update_rule(id, &same, Actor::Ui).unwrap();
-    assert!(audit_of(&store, "rule_updated").is_empty(), "a no-op edit");
+    assert_eq!(audit_of(&store, "rule_updated").len(), 0, "a no-op edit");
     let mut edit = same;
     edit.effect = Effect::Deny;
     store.update_rule(id, &edit, Actor::Ui).unwrap();
@@ -1969,5 +1969,5 @@ fn an_edit_that_names_something_that_is_not_there_or_not_allowed_changes_nothing
         Err(StoreError::UnknownRule(RuleId(999)))
     ));
     assert_eq!(stored(&store, id), before);
-    assert!(audit_of(&store, "rule_updated").is_empty());
+    assert_eq!(audit_of(&store, "rule_updated").len(), 0);
 }

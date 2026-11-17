@@ -451,6 +451,137 @@ describe("adding", () => {
   });
 });
 
+describe("editing a rule in place", () => {
+  async function open(name: RegExp) {
+    if (!screen.queryByRole("table")) await loaded();
+    await fireEvent.click(screen.getByRole("button", { name }));
+    return screen.findByRole("dialog", { name: "Edit rule" });
+  }
+  const save = (dialog: HTMLElement) =>
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save rule" }));
+
+  it("opens the add form filled with the rule, and saves the changes over the same rule", async () => {
+    seed();
+    const dialog = await open(
+      /Edit rule: deny \*\.github\.com for workspace shop/,
+    );
+    expect(within(dialog).getByLabelText("Host")).toHaveValue("*.github.com");
+    expect(within(dialog).getByLabelText("Deny")).toBeChecked();
+    expect(within(dialog).getByLabelText("One workspace")).toBeChecked();
+    expect(within(dialog).getByLabelText("Workspace name")).toHaveValue("shop");
+    expect(within(dialog).getByLabelText("Expires")).toHaveDisplayValue(
+      /^Unchanged/,
+    );
+    await fireEvent.input(within(dialog).getByLabelText("Host"), {
+      target: { value: "api.github.com" },
+    });
+    await fireEvent.click(within(dialog).getByLabelText("Allow"));
+    await save(dialog);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(api.calls).toContain("PUT /api/rules/{id}");
+    expect(api.calls).not.toContain("POST /api/rules");
+    expect(api.bodies).toEqual([
+      {
+        pattern: "api.github.com",
+        effect: "allow",
+        scope: { type: "workspace", workspace: "shop" },
+        expires_at: null,
+      },
+    ]);
+    expect(toasts.items.at(-1)?.message).toBe(
+      "Saved: allow api.github.com for workspace shop.",
+    );
+    expect(hosts()).toContain("api.github.com");
+    expect(hosts()).not.toContain("*.github.com and subdomains");
+    expect(rows()).toHaveLength(3);
+  });
+
+  it("keeps the expiry unless another is chosen, and can make the rule permanent", async () => {
+    seed();
+    const later = Date.now() + 3_600_000;
+    api.rules[0]!.expires_at = later;
+    const dialog = await open(/Edit rule: allow registry/);
+    await save(dialog);
+    await waitFor(() => expect(api.bodies).toHaveLength(1));
+    expect(api.bodies[0]).toMatchObject({ expires_at: later });
+    const again = await open(/Edit rule: allow registry/);
+    await fireEvent.change(within(again).getByLabelText("Expires"), {
+      target: { value: "0" },
+    });
+    await save(again);
+    await waitFor(() => expect(api.bodies).toHaveLength(2));
+    expect(api.bodies[1]).toMatchObject({ expires_at: null });
+  });
+
+  it("shows the server's refusal under the host and keeps what was typed", async () => {
+    seed();
+    const dialog = await open(/Edit rule: allow registry/);
+    await fireEvent.input(within(dialog).getByLabelText("Host"), {
+      target: { value: "*.com" },
+    });
+    api.refuse = { status: 422, message: "pattern is a public suffix" };
+    await save(dialog);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Pattern is a public suffix.",
+    );
+    expect(within(dialog).getByLabelText("Host")).toHaveValue("*.com");
+    expect(rulesStore.rules.find((r) => r.id === 1)?.pattern).toBe(
+      "registry.npmjs.org",
+    );
+  });
+
+  it("asks before it widens a rule to every workspace, and not for one that already is", async () => {
+    seed();
+    const dialog = await open(
+      /Edit rule: deny \*\.github\.com for workspace shop/,
+    );
+    await fireEvent.click(within(dialog).getByLabelText(/Every workspace/));
+    await save(dialog);
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Deny for every workspace?",
+    });
+    expect(api.bodies).toHaveLength(0);
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Cancel" }),
+    );
+    const back = await screen.findByRole("dialog", { name: "Edit rule" });
+    expect(within(back).getByLabelText("Host")).toHaveValue("*.github.com");
+    await save(back);
+    const second = await screen.findByRole("alertdialog");
+    await fireEvent.click(
+      within(second).getByRole("button", { name: "Deny in every workspace" }),
+    );
+    await waitFor(() => expect(api.bodies).toHaveLength(1));
+    expect(api.bodies[0]).toMatchObject({ scope: { type: "global" } });
+    expect(api.calls).toContain("PUT /api/rules/{id}");
+    // Rule 1 is already for every workspace: saving it asks nothing.
+    const global = await open(/Edit rule: allow registry/);
+    await save(global);
+    await waitFor(() => expect(api.bodies).toHaveLength(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("starts the add form empty after an edit, and Cancel discards the edit", async () => {
+    seed();
+    const dialog = await open(/Edit rule: allow registry/);
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(api.bodies).toHaveLength(0);
+    await fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    const add = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(add).getByLabelText("Host")).toHaveValue("");
+    expect(within(add).getByRole("button", { name: "Add rule" })).toBeVisible();
+  });
+});
+
 describe("changing the expiry", () => {
   async function open(name: RegExp) {
     await loaded();

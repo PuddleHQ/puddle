@@ -1289,8 +1289,15 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         // rescan multiplies the steps by the table size). The slowest case here is a full scan.
         let steps = store.audit_query_steps(&all, &filter, cursor, 100).unwrap();
         eprintln!("audit query {name}: {steps} steps");
+        let steps = u64::try_from(steps).unwrap();
+        // Every row returned took at least one step, so a count that does not cover them is no count.
         assert!(
-            u64::try_from(steps).unwrap() < STEP_BAR,
+            steps > rows.len() as u64,
+            "{name} returned {} rows in {steps} steps",
+            rows.len()
+        );
+        assert!(
+            steps < STEP_BAR,
             "{name} took {steps} steps over {ROWS} rows"
         );
     }

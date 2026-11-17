@@ -23,7 +23,7 @@ use crate::authz::{Principal, Via};
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
-use crate::routes::identities::workspace;
+use crate::routes::workspaces::named;
 use crate::terminals::{
     EndReason, MAX_MESSAGE_BYTES, SUBPROTOCOL, TerminalEnd, TerminalError, TerminalInput,
     TerminalLink, TerminalOutput, TerminalSize,
@@ -106,7 +106,7 @@ pub(crate) async fn create_terminal(
     Path(id): Path<String>,
     BodyJson(body): BodyJson<TerminalRequest>,
 ) -> Result<(StatusCode, Json<TerminalTicket>), ApiError> {
-    let workspace = workspace(&state, &id).await?;
+    let workspace = named(&state, &id).await?;
     let size = TerminalSize::new(body.cols, body.rows)
         .ok_or_else(|| ApiError::invalid("a terminal is 2 to 500 columns and 1 to 300 rows"))?;
     state.terminal_service.check(&workspace).await?;

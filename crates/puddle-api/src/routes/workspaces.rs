@@ -33,10 +33,14 @@ pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
     WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))
 }
 
-/// Whether direct SSH is on for each workspace, in order. A settings document that cannot be
-/// read counts as off: the answer fails closed, as the host's own check does.
+/// The workspace a path names, as the id the store keys it by; 404 for none.
+pub(super) async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
+    Ok(state.workspaces.get(&workspace_id(raw)?).await?.id)
+}
+
 /// Whether direct SSH is on for a workspace, and why that is only a guess when the settings
-/// cannot be read.
+/// cannot be read. A settings document that cannot be read counts as off: the answer fails
+/// closed, as the host's own check does.
 struct DirectSsh {
     on: bool,
     /// Set when the settings could not be read: direct SSH then counts as off (the safe side).

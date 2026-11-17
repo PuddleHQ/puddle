@@ -16,6 +16,7 @@ use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
+use crate::routes::workspaces::named;
 use crate::wire::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
     InterceptionView, LearnedHosts, LearnedLimits, MakePermanentRequest, PermanentScope,
@@ -67,12 +68,6 @@ fn patterns(raw: &[String]) -> Result<Vec<String>, ApiError> {
     out.sort();
     out.dedup();
     Ok(out)
-}
-
-async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
-    let id =
-        WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    Ok(state.workspaces.get(&id).await?.id)
 }
 
 fn settings_view(state: &AppState) -> Result<InterceptionSettingsView, ApiError> {

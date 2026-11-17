@@ -15,6 +15,7 @@ use crate::ApiErrorBody;
 use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
+use crate::routes::workspaces::named;
 use crate::routes::{AppState, record_op};
 use crate::wire::{
     AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
@@ -56,7 +57,6 @@ fn git_view(
     })
 }
 
-/// The workspace a path names, as the id the store keys it by; 404 for none.
 /// Refuses a credential `principal` may not read: another user's pasted token, or, for anyone
 /// but the owner, an account signed in on this computer.
 fn usable_sources(
@@ -67,12 +67,6 @@ fn usable_sources(
         .credentials
         .iter()
         .try_for_each(|binding| crate::stored_ids::check_source(principal.user, &binding.source))
-}
-
-pub(super) async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
-    let id =
-        WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    Ok(state.workspaces.get(&id).await?.id)
 }
 
 /// Removes the pasted tokens in `before` that no identity and no environment secret reads now, and
@@ -418,7 +412,7 @@ pub(crate) async fn get_workspace_git(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let found = blocking(move || {
         let git = state.store.workspace_git(&name)?;
         git_view(&state, name, git)
@@ -448,7 +442,7 @@ pub(crate) async fn set_workspace_identities(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceIdentitiesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let set = blocking(move || {
         let git = state.store.set_workspace_identities(&name, &ids)?;
@@ -485,7 +479,7 @@ pub(crate) async fn attach_identity(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AttachIdentityRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let set = blocking(move || {
         let position = body
             .position
@@ -525,7 +519,7 @@ pub(crate) async fn detach_identity(
     principal: Principal,
     Path((id, identity)): Path<(String, i64)>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let set = blocking(move || {
         let git = state.store.detach_identity(&name, IdentityId(identity))?;
         record_op(
@@ -560,7 +554,7 @@ pub(crate) async fn set_git_switches(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceSwitchesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let (push, pull) = body.changes()?;
     let set = blocking(move || {
         let git = state.store.change_git_switches(&name, push, pull)?;
@@ -590,7 +584,7 @@ pub(crate) async fn add_git_repo(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<GitRepoRequest>,
 ) -> Result<(StatusCode, Json<GitRepoView>), ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let repo = body.repo_ref()?;
     let row = blocking(move || {
         let entry = state.store.add_repo(&name, &repo, body.toggles())?;
@@ -628,7 +622,7 @@ pub(crate) async fn set_git_repo(
     Path((id, repo)): Path<(String, i64)>,
     crate::extract::Json(body): crate::extract::Json<GitRepoToggles>,
 ) -> Result<Json<GitRepoView>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let row = blocking(move || {
         let entry = state.store.set_repo_toggles(&name, repo, body.toggles())?;
         record_op(
@@ -667,7 +661,7 @@ pub(crate) async fn remove_git_repo(
     principal: Principal,
     Path((id, repo)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     blocking(move || {
         state.store.remove_repo(&name, repo)?;
         record_op(

@@ -14,7 +14,7 @@ use crate::ApiErrorBody;
 use crate::error::ApiError;
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
-use crate::routes::identities::workspace;
+use crate::routes::workspaces::named;
 use crate::wire::{PortEntry, PortForwardRequest, WorkspacePorts};
 
 /// The workspace's ports: the ones a process in it listens on (as the workspace reports them),
@@ -35,7 +35,7 @@ pub(crate) async fn list_ports(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspacePorts>, ApiError> {
-    let name: WorkspaceId = workspace(&state, &id).await?;
+    let name: WorkspaceId = named(&state, &id).await?;
     Ok(Json(state.ports.list(&name).await?))
 }
 
@@ -65,7 +65,7 @@ pub(crate) async fn forward_port(
     Path((id, port)): Path<(String, u16)>,
     BodyJson(body): BodyJson<PortForwardRequest>,
 ) -> Result<Json<PortEntry>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     Ok(Json(
         state
             .ports
@@ -93,7 +93,7 @@ pub(crate) async fn release_port(
     State(state): State<AppState>,
     Path((id, port)): Path<(String, u16)>,
 ) -> Result<StatusCode, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     state.ports.release(&name, port).await?;
     Ok(StatusCode::NO_CONTENT)
 }

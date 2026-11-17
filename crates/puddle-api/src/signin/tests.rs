@@ -1063,3 +1063,21 @@ async fn an_attempt_dropped_without_an_answer_does_not_count_toward_the_lock() {
     }
     f.sign_in.sign_in("Tijs", password(), None).await.unwrap();
 }
+
+#[tokio::test]
+async fn a_sign_in_whose_password_was_reset_after_the_check_gets_no_device() {
+    let f = fixture_with(true);
+    let (ann, _) = ann_signed_in(&f).await;
+    let checked = f
+        .secrets
+        .verify_password(ann, |hash| password::verify(hash, password()))
+        .unwrap()
+        .unwrap();
+    // A reset lands between the password check and the device.
+    reset_account(&f.store, &f.secrets, "ann", f.clock.now_ms()).unwrap();
+    assert!(f.sign_in.make_session(&checked, None).unwrap().is_none());
+    assert!(
+        f.store.devices(ann).unwrap().is_empty(),
+        "the reset signed every device out and none was made"
+    );
+}

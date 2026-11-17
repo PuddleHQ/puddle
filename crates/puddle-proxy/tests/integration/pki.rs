@@ -16,7 +16,7 @@ use puddle_types::{
 use tokio::io::{AsyncWriteExt, BufReader};
 
 use super::plain_keepalive::{answer, get, keep_alive_server};
-use super::route::{LOCAL, Rig};
+use super::route::{LOCAL, Rig, host};
 
 /// The guard of a workspace with every local toggle off, which still knows `LOCAL` as the
 /// company network's address: nothing is allowed by it, and only a distribution point may use it.
@@ -222,6 +222,56 @@ async fn a_name_that_does_not_resolve_is_left_to_the_ordinary_decision() {
         .unwrap();
     let got = answer(&mut reader, "GET").await;
     assert_ne!(got.code, 200);
+    let events = rig.events(1).await;
+    assert_ne!(events[0].reason, ConnectionReason::PkiDistributionPoint);
+}
+
+#[tokio::test]
+async fn a_deny_rule_for_the_host_wins_over_the_exception() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(web, &[LOCAL], &[LOCAL], &[CRL]);
+    rig.policy.deny_host(&host("pki.test"));
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    reader
+        .get_mut()
+        .write_all(request("GET", web, "/crl/root.crl").as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(answer(&mut reader, "GET").await.code, 403);
+    assert_eq!(
+        seen.lines(),
+        Vec::<String>::new(),
+        "nothing reached the server"
+    );
+    let events = rig.events(1).await;
+    assert_eq!(
+        events[0].decision,
+        ConnectionDecision::Deny,
+        "{:?}",
+        events[0]
+    );
+    assert_ne!(events[0].reason, ConnectionReason::PkiDistributionPoint);
+}
+
+#[tokio::test]
+async fn a_deny_rule_for_a_resolved_address_wins_over_the_exception() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(web, &[LOCAL], &[LOCAL], &[CRL]);
+    rig.policy.deny_host(&host("127.0.0.1"));
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    reader
+        .get_mut()
+        .write_all(request("GET", web, "/crl/root.crl").as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(answer(&mut reader, "GET").await.code, 403);
+    assert_eq!(
+        seen.lines(),
+        Vec::<String>::new(),
+        "nothing reached the server"
+    );
     let events = rig.events(1).await;
     assert_ne!(events[0].reason, ConnectionReason::PkiDistributionPoint);
 }

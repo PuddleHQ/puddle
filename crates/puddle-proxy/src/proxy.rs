@@ -404,7 +404,7 @@ impl Proxy {
 
     /// A plain-HTTP `GET` or `HEAD` of a certificate distribution point named in a synced root
     ///: `Some` admits it with its record (`pki_distribution_point`, no rule, no toggle)
-    /// when the host is a name or literal that resolves, and every address is a company-network or
+    /// unless a rule denies the name or an address, and when the host is a name or literal that resolves, and every address is a company-network or
     /// private one. `None` leaves the request to the ordinary decision, which is also what a
     /// public, late or missing answer gets.
     pub(crate) async fn admit_distribution_point(
@@ -422,6 +422,25 @@ impl Proxy {
         if !addrs
             .iter()
             .all(|addr| self.addresses.pki_address(&request.host, *addr))
+        {
+            return None;
+        }
+        // The exception stands in for "no rule", never over a deny: a deny of the name, or of any
+        // address it resolved to, sends the request to the ordinary decision (R-27).
+        let named = self
+            .look_up_rule(request.clone(), SuffixAllows::Ignore)
+            .await;
+        let name_denied = matches!(
+            named,
+            Ok(Some(Decision::Deny { .. } | Decision::SetDeny { .. })) | Err(_)
+        );
+        if name_denied
+            || addrs.iter().any(|addr| {
+                !matches!(
+                    admit::ip_rule(self, request, *addr),
+                    Ok(admit::IpRule::NoRule | admit::IpRule::Allow(_))
+                )
+            })
         {
             return None;
         }
@@ -632,7 +651,7 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
         }
     };
     if let Some(path) = path {
-        match plain::Incoming::new(head, target, path) {
+        match plain::Incoming::checked(handler, head, target, path).await {
             Ok(first) => plain::serve(handler, reader, &counts, first).await,
             Err(refusal) => refuse(reader.get_mut(), &refusal).await,
         }

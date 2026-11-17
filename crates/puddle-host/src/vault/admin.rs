@@ -27,7 +27,7 @@ use super::os_vault;
 use crate::HostPaths;
 use crate::proxy_passwords::stored_ids;
 
-/// How long `status` waits for a store that may be waiting for the user to unlock it.
+/// How long `status` and `migrate` wait for a store that may be waiting for the user to unlock it.
 const STATUS_WAIT: Duration = Duration::from_secs(20);
 
 /// Why a command could not finish. The texts carry no value, no secret id and no data-folder path.
@@ -53,6 +53,17 @@ pub enum VaultAdminError {
         title: &'static str,
         /// What to do about it.
         fix: String,
+    },
+    /// A store did not answer in time, most likely a keyring waiting to be unlocked.
+    #[error(
+        "{} did not answer within {seconds} seconds. It may be waiting for you to unlock it; unlock it and run this command again. Nothing was changed.",
+        store.describe()
+    )]
+    StoreWait {
+        /// The store that stayed silent.
+        store: StoreKind,
+        /// How long the command waited.
+        seconds: u64,
     },
     /// The move stopped; nothing changed.
     #[error("{0}")]
@@ -225,7 +236,7 @@ const fn other(kind: StoreKind) -> StoreKind {
     }
 }
 
-/// Moves every secret to the store `to` and records it as the one in charge, or finishes such a
+/// Moves every secret to the store `to` (a store that stays silent for 20 seconds, such as a locked keyring, stops it) and records it as the one in charge, or finishes such a
 /// move that stopped after the record was written.
 ///
 /// # Errors
@@ -235,6 +246,15 @@ pub fn vault_migrate(
     paths: &HostPaths,
     setup: &SecretSetup,
     to: StoreKind,
+) -> Result<MigrateOutcome, VaultAdminError> {
+    migrate_within(paths, setup, to, STATUS_WAIT)
+}
+
+fn migrate_within(
+    paths: &HostPaths,
+    setup: &SecretSetup,
+    to: StoreKind,
+    wait: Duration,
 ) -> Result<MigrateOutcome, VaultAdminError> {
     let _lock = DataLock::acquire(paths.data())?;
     let data = paths.data();
@@ -262,6 +282,10 @@ pub fn vault_migrate(
         StoreKind::Os => os_store(setup),
         StoreKind::File => file_store(paths, setup, true)?.ok_or(VaultAdminError::NoVault)?,
     };
+    // Ask each store one question first, so a keyring that waits for an unlock ends the command
+    // here, before any value moves.
+    answers_within(&old, current, wait)?;
+    answers_within(&new, to, wait)?;
     let ids = ids_in(old.as_ref(), &named)?;
     let moved = move_values(old.as_ref(), new.as_ref(), &ids, &mut || {
         write_record(data, to, Rule::Migrated)
@@ -270,6 +294,31 @@ pub fn vault_migrate(
         copied: moved.copied,
         left: moved.left,
     })
+}
+
+/// Reads one id off this thread, to learn whether the store answers within `wait`. The answer
+/// itself does not matter: a store that errors is reported by the move as before.
+fn answers_within(
+    store: &Arc<dyn SecretStore>,
+    kind: StoreKind,
+    wait: Duration,
+) -> Result<(), VaultAdminError> {
+    let Ok(probe) = StoredId::new("migrate-probe") else {
+        return Ok(());
+    };
+    let store = Arc::clone(store);
+    let (send, receive) = mpsc::channel();
+    std::thread::spawn(move || {
+        // The command may have given up waiting; nobody listens then.
+        let _ = send.send(store.get(&probe).is_ok());
+    });
+    receive
+        .recv_timeout(wait)
+        .map(|_| ())
+        .map_err(|_| VaultAdminError::StoreWait {
+            store: kind,
+            seconds: wait.as_secs(),
+        })
 }
 
 /// A move that stopped after the switch: the store in charge keeps what it has, the other one

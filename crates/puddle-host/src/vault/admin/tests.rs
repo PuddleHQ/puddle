@@ -333,6 +333,38 @@ fn a_store_that_waits_for_an_unlock_is_given_the_wait_and_then_named() {
     assert_eq!(status.state, StoreState::Readable { found: 0 });
 }
 
+#[test]
+fn a_locked_keyring_stops_migrate_with_a_message_instead_of_waiting_for_ever() {
+    let rig = Rig::new();
+    let (release, waiting) = mpsc::channel();
+    let mut setup = rig.setup();
+    setup.os_store = Some(Arc::new(Blocked(std::sync::Mutex::new(waiting))));
+    // The stand-in for the user finally unlocking: without a wait limit migrate would sit here.
+    let unlock = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        drop(release);
+    });
+    let started = std::time::Instant::now();
+    let err = migrate_within(
+        &rig.paths(),
+        &setup,
+        StoreKind::File,
+        Duration::from_millis(50),
+    )
+    .unwrap_err();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "waited for the unlock"
+    );
+    let VaultAdminError::StoreWait { store, seconds } = &err else {
+        panic!("{err}");
+    };
+    assert_eq!((*store, *seconds), (StoreKind::Os, 0));
+    assert!(err.to_string().contains("unlock"), "{err}");
+    assert!(rig.recorded().is_none(), "no record was written");
+    unlock.join().unwrap();
+}
+
 /// A file vault the way a headless first start makes it, with `CANARY` under `env-named`.
 #[cfg(target_os = "linux")]
 fn start_a_file_vault(rig: &Rig) {

@@ -169,7 +169,10 @@ fn every_request_body_that_holds_a_secret_is_read_with_secret_json() {
         "ChangePasswordRequest",
         "ProxySignInRequest",
     ] {
-        assert!(holders.contains(known), "{known} not found among the scanned types");
+        assert!(
+            holders.contains(known),
+            "{known} not found among the scanned types"
+        );
     }
     let bodies = json_bodies(&sources(&src.join("routes")));
     let secret_reads = bodies.iter().filter(|(_, e, _)| e == "SecretJson").count();

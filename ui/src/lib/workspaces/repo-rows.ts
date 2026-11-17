@@ -136,8 +136,8 @@ export function sameRepositoryKey(url: string): string | null {
   const resolved = resolveRepoAddress(url);
   if ("message" in resolved) return null;
   try {
+    // The address is https://; a port out of range still fails to parse.
     const parsed = new URL(resolved.url);
-    if (parsed.protocol !== "https:") return null;
     const path = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/i, "");
     return `${parsed.host}${path}`.toLowerCase();
   } catch {

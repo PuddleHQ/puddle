@@ -96,6 +96,7 @@ describe("sameRepositoryKey", () => {
     expect(sameRepositoryKey("git@git.example.com:a/b")).toBeNull();
     expect(sameRepositoryKey("http://github.com/a/b")).toBeNull();
     expect(sameRepositoryKey("nonsense")).toBeNull();
+    expect(sameRepositoryKey("https://git.example.com:99999/a/b")).toBeNull();
   });
 });
 

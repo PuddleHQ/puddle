@@ -97,9 +97,6 @@
       toasts.push(result.message, { tone: "error" });
       return;
     }
-    for (const credential of gone.credentials) {
-      await store.forgetToken(credential.source);
-    }
     toasts.push(`Deleted ${gone.label}.`);
     await goto("/identities");
   }

@@ -146,6 +146,29 @@ describe("a list the host renewed", () => {
     expect(lists.listing?.repos.map((r) => r.full_name)).toEqual(["acme/new"]);
   });
 
+  it("survives a failed quiet read: the list stays ready and the next event and a retry still read", async () => {
+    const lists = make();
+    await lists.load({});
+    api.down = true;
+    events.emit({ type: "repo_lists_changed" });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(lists.status).toBe("ready");
+    api.down = false;
+    api.repos = [repoView("acme", "new")];
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(lists.listing?.repos.map((r) => r.full_name)).toEqual(["acme/new"]);
+    api.down = true;
+    events.emit({ type: "repo_lists_changed" });
+    await vi.advanceTimersByTimeAsync(10);
+    api.down = false;
+    api.repos = [repoView("acme", "newer")];
+    events.emit({ type: "repo_lists_changed" });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(lists.listing?.repos.map((r) => r.full_name)).toEqual([
+      "acme/newer",
+    ]);
+  });
+
   it("is read again when events may have been missed", async () => {
     const lists = make();
     await lists.load({});

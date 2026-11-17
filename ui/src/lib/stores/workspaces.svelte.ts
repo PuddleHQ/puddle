@@ -150,6 +150,8 @@ export class WorkspaceStore {
   readonly #ended = new Map<string, number>();
   #refreshing: Promise<void> | null = null;
   #again = false;
+  /** Counts records put by an action, which a list read that began earlier must not replace. */
+  #puts = 0;
   /** Called when an operation on a workspace finished (`done`) or failed. */
   onSettled: ((settled: Settled) => void) | null = null;
 
@@ -200,9 +202,13 @@ export class WorkspaceStore {
   }
 
   async #load(): Promise<void> {
+    const puts = this.#puts;
     try {
       const { data, error, response } = await this.#api.GET("/api/workspaces");
-      if (data) {
+      if (data && puts !== this.#puts) {
+        // A record an action answered with is newer than this list: read again instead.
+        this.#again = true;
+      } else if (data) {
         this.list = sortWorkspaces(data.workspaces);
         this.loadError = null;
         this.status = "ready";
@@ -217,6 +223,7 @@ export class WorkspaceStore {
   }
 
   #put(next: Workspace): void {
+    this.#puts += 1;
     const others = this.list.filter((w) => w.id !== next.id);
     this.list = sortWorkspaces([...others, next]);
   }
@@ -501,7 +508,10 @@ export class WorkspaceStore {
         "/api/settings/workspaces/{workspace}",
         {
           params: { path: { workspace: id } },
-          body: { overrides: { ...mine.data.overrides, direct_ssh: on } },
+          body: {
+            overrides: { ...mine.data.overrides, direct_ssh: on },
+            tools: mine.data.tools,
+          },
         },
       );
       if (!saved.data) {

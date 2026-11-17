@@ -230,6 +230,8 @@ fn a_rewritten_entry_leaves_no_enterprise_copy_after_its_delete() {
         assert_eq!(store.get(id).unwrap().unwrap().expose(), "old value");
         store.delete(id).unwrap();
     }
+    // An absence window: the enterprise copy comes back some time after the delete, with no signal
+    // to wait on, so the test waits for longer than the observed delay (under 3 s).
     std::thread::sleep(std::time::Duration::from_secs(3));
     let left: Vec<&StoredId> = ids
         .iter()

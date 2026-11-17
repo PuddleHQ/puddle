@@ -123,6 +123,7 @@ impl SecretStore for KeyringStore {
                     entry.delete_credential().map_err(|_| StoreError)?;
                     entry.set_password(value.expose()).map_err(|_| StoreError)?;
                     // A backup that cannot be removed is harmless: it is replaced next time.
+                    // The value is already in the local entry, so the failure changes nothing.
                     let _ = backup.delete_credential();
                     Ok(())
                 }
@@ -130,6 +131,7 @@ impl SecretStore for KeyringStore {
                     Ok(value) => {
                         let value = Secret::new(value);
                         entry.set_password(value.expose()).map_err(|_| StoreError)?;
+                        // Same as above: the restored entry is what counts, a leftover backup is replaced next time.
                         let _ = backup.delete_credential();
                         Ok(())
                     }

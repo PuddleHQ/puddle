@@ -1012,6 +1012,19 @@ async fn installed(dir: &tempfile::TempDir) -> (PathBuf, &'static Service) {
 }
 
 #[tokio::test]
+async fn looking_for_updates_without_a_current_build_asks_nothing_and_stages_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = leak(Service::honest(good_tarball()));
+    let builds = builds(&dir);
+    assert_eq!(
+        stage_update(&service, PLATFORM, &builds).await.unwrap(),
+        Update::UpToDate
+    );
+    assert_eq!(service.requests(), 0);
+    assert!(!builds.exists() || names(&builds).is_empty());
+}
+
+#[tokio::test]
 async fn looking_for_updates_downloads_only_a_build_that_is_neither_current_nor_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let (builds, service) = installed(&dir).await;

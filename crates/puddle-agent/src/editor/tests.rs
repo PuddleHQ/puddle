@@ -764,11 +764,20 @@ async fn a_restart_request_ends_the_wait_after_a_refused_download() {
     running.abort();
 }
 
+/// Marks a build as the one in use, so that looking for an update has something to update (it
+/// does nothing before the first install).
+fn has_a_current_build(config: &EditorConfig) {
+    let builds = Path::new(&config.server.dir);
+    std::fs::create_dir_all(builds).unwrap();
+    std::fs::write(builds.join("current"), "a".repeat(40)).unwrap();
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_refused_update_is_looked_for_on_a_slowing_schedule_too() {
     use std::sync::atomic::Ordering::SeqCst;
     let dir = tempfile::tempdir().unwrap();
     let (config, service) = refusing(dir.path(), true);
+    has_a_current_build(&config);
     let times = UpdateTimes {
         first: Duration::from_secs(1),
         every: Duration::from_hours(24),
@@ -813,6 +822,7 @@ fn update_message(reason: Option<&str>) -> AgentMessage {
 async fn a_refused_newer_build_is_told_as_an_update_problem_until_a_look_works() {
     let dir = tempfile::tempdir().unwrap();
     let (config, service) = refusing(dir.path(), true);
+    has_a_current_build(&config);
     let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
     let (out, mut host) = mpsc::channel(8);
     tokio::spawn(forward_editor_problems(
@@ -838,6 +848,7 @@ async fn a_refused_newer_build_is_told_as_an_update_problem_until_a_look_works()
 async fn looks_that_fail_are_told_only_after_five_in_a_row() {
     let dir = tempfile::tempdir().unwrap();
     let (config, _) = refusing(dir.path(), true);
+    has_a_current_build(&config);
     let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
     let (out, mut host) = mpsc::channel(8);
     tokio::spawn(forward_editor_problems(

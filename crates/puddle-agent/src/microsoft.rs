@@ -363,9 +363,11 @@ pub async fn stage_update(
     platform: &str,
     builds: &Path,
 ) -> Result<Update, InstallError> {
-    let current = pointer(builds, CURRENT);
+    let Some(current) = pointer(builds, CURRENT) else {
+        return Ok(Update::UpToDate);
+    };
     let latest = resolve_latest(fetch, platform).await?;
-    let skip = current.as_deref() == Some(latest.commit.as_str())
+    let skip = current == latest.commit
         || pointer(builds, REJECTED).as_deref() == Some(latest.commit.as_str());
     if skip {
         return Ok(Update::UpToDate);

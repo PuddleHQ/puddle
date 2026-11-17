@@ -109,3 +109,54 @@ async fn a_flood_of_refused_pushes_does_not_silence_the_no_identity_notice() {
         "the no-identity notice was silenced"
     );
 }
+
+/// The owners table: never more than [`MAX_NOTICES`] keys, the newest always kept, stale ones
+/// dropped first.
+#[tokio::test(start_paused = true)]
+async fn the_owners_table_is_bounded_and_keeps_the_newest() {
+    let size = |t: &Notices| t.last.lock().unwrap().len();
+    let full = || {
+        let table = Notices::default();
+        for i in 0..MAX_NOTICES {
+            table.mark(&format!("owner{i}"));
+        }
+        table
+    };
+    let start = Instant::now();
+    let table = full();
+    assert_eq!(size(&table), MAX_NOTICES, "a full table has lost nothing");
+    // All recent: another key makes room for the newest, which stays.
+    table.mark("newest");
+    assert_eq!(size(&table), MAX_NOTICES);
+    assert!(table.marked_since("newest", start));
+    // A key the table holds again makes no room.
+    table.mark("newest");
+    assert_eq!(size(&table), MAX_NOTICES);
+
+    // Just short of the ten seconds the table keeps keys, none is stale yet.
+    let table = full();
+    tokio::time::advance(NOTICE_EVERY.saturating_sub(Duration::from_millis(1))).await;
+    table.mark("later");
+    assert_eq!(size(&table), MAX_NOTICES);
+    assert!(table.marked_since("later", start));
+    // A table that is not past its size is not swept, stale keys and all.
+    let table = full();
+    tokio::time::advance(NOTICE_EVERY).await;
+    table.mark("owner0");
+    assert_eq!(size(&table), MAX_NOTICES);
+    // Past its size, at ten seconds every older key is stale and goes.
+    let table = full();
+    tokio::time::advance(NOTICE_EVERY).await;
+    table.mark("later");
+    assert_eq!(size(&table), 1);
+}
+
+#[test]
+fn a_batch_body_that_is_no_object_says_what_was_expected() {
+    let err = serde::Deserializer::deserialize_map(
+        &mut serde_json::Deserializer::from_slice(b"[]"),
+        OnlyOperation,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("an LFS batch object"), "{err}");
+}

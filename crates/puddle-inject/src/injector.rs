@@ -144,7 +144,7 @@ impl GitInjector {
             return InjectDecision::Refuse(refusal);
         }
         if request.header("authorization").is_some() {
-            self.authed.mark(owner_key(&path));
+            self.authed.mark(&owner_key(&path));
             return InjectDecision::PassThroughOwnCredential;
         }
         match covering(&git, &path) {
@@ -531,23 +531,24 @@ struct Notices {
 }
 
 impl Notices {
-    /// Remembers that `key` happened now; when the table is full of recent keys, the oldest
-    /// makes room, so the newest is never the one forgotten.
-    fn mark(&self, key: String) {
+    /// Remembers that `key` happened now. Past [`MAX_NOTICES`] keys the stale ones go, and if all
+    /// are recent the oldest other key makes room: the newest is never the one forgotten.
+    fn mark(&self, key: &str) {
         let now = Instant::now();
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        if last.len() >= MAX_NOTICES && !last.contains_key(&key) {
+        last.insert(key.to_owned(), now);
+        if last.len() > MAX_NOTICES {
             last.retain(|_, at| now.duration_since(*at) < NOTICE_EVERY.max(NO_IDENTITY_GRACE));
-            if last.len() >= MAX_NOTICES
-                && let Some(oldest) = last
-                    .iter()
-                    .min_by_key(|(_, at)| **at)
-                    .map(|(key, _)| key.clone())
-            {
-                last.remove(&oldest);
-            }
         }
-        last.insert(key, now);
+        if last.len() > MAX_NOTICES
+            && let Some(oldest) = last
+                .iter()
+                .filter(|(other, _)| other.as_str() != key)
+                .min_by_key(|(_, at)| **at)
+                .map(|(other, _)| other.clone())
+        {
+            last.remove(&oldest);
+        }
     }
 
     /// Whether `key` happened after `since`.

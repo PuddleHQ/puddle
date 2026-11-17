@@ -447,6 +447,7 @@ fn every_way_a_key_can_fail_gives_a_problem_with_a_title_and_a_fix_and_no_key_or
         KeyError::Vault(VaultError::WrongKey),
         KeyError::Vault(VaultError::Corrupt),
         KeyError::SealTimedOut,
+        KeyError::SealFailed,
         KeyError::Io,
         KeyError::Random,
     ];

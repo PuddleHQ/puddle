@@ -77,7 +77,7 @@ fn a_secret_forgejo_cannot_make_fails_the_start_at_once() {
 }
 
 #[test]
-#[should_panic(expected = "Forgejo did not start on port")]
+#[should_panic(expected = "the fixture failed to start on port")]
 fn a_start_on_a_fixed_port_that_fails_panics_with_forgejos_output() {
     let dir = tempfile::tempdir().unwrap();
     let bin = fake(dir.path(), "migrate:", "exit 0");
@@ -90,6 +90,40 @@ fn a_start_on_a_free_port_that_fails_for_another_reason_panics_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let bin = fake(dir.path(), "migrate:", "exit 0");
     let _ = Forgejo::start_from(bin.as_os_str(), NAME, None);
+}
+
+/// The SSH port is retried on a fresh one when it is taken, as the HTTP port is. The stand-in
+/// logs "address already in use" when `app.ini` names the held port as the SSH port and fails
+/// with "boom" otherwise, so the panic names the port the second attempt used.
+#[test]
+fn a_taken_ssh_port_on_a_fixed_http_port_is_retried_on_a_fresh_one() {
+    let held = quiet_port();
+    let fresh = quiet_port();
+    let dir = tempfile::tempdir().unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+ini="$2"; if [ "$1" = generate ]; then echo secret; exit 0; fi
+case "$5" in
+  web) if grep -q "SSH_PORT = {held}$" "$ini"; then echo 'bind: address already in use'; exit 3; fi; echo boom; exit 1;;
+esac
+exit 0
+"#
+    );
+    let bin = dir.path().join("forgejo");
+    puddle_test_kit::write_executable(&bin, &script);
+    let mut picks = [held, fresh].into_iter();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Forgejo::start_picking(bin.as_os_str(), NAME, Some(quiet_port()), || {
+            picks.next().unwrap()
+        })
+    }))
+    .err()
+    .expect("the start must fail on the stand-in");
+    let text = caught.downcast_ref::<String>().unwrap();
+    assert!(
+        text.contains(&format!("failed to start on port {fresh}")),
+        "{text}"
+    );
 }
 
 /// A fixture value that points at nothing, so its calls fail the way a dead server's do.

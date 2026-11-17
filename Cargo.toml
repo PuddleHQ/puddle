@@ -108,6 +108,8 @@ thiserror = "2"
 # Names the program that holds a port this computer wants to forward to (Linux, Windows, macOS).
 listeners = { version = "0.6.1", default-features = false }
 tokio = { version = "1.52", default-features = false }
+# Scripted in-memory streams (reads, writes and errors in order) for the tests of a stream that drops or fails.
+tokio-test = "0.4"
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 # Guest agent and its protocol. tokio-yamux multiplexes guest connections over a few
 # vsock streams (a Windows vsock route tops out around 100 streams); libc for AF_VSOCK.

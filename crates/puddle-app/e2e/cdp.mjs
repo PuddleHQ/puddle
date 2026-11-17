@@ -8,8 +8,10 @@ export function connect(url) {
     const ws = new WebSocket(url);
     let next = 1;
     const pending = new Map();
+    const listeners = new Map();
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
+      if (m.method) for (const listener of listeners.get(m.method) ?? []) listener(m.params);
       const p = pending.get(m.id);
       if (p) {
         pending.delete(m.id);
@@ -32,6 +34,8 @@ export function connect(url) {
           if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
           return r.result.value;
         },
+        /** Calls `listener(params)` for each protocol event `method` (after its domain's `enable`). */
+        on: (method, listener) => listeners.set(method, [...(listeners.get(method) ?? []), listener]),
         close: () => ws.close(),
       });
     };

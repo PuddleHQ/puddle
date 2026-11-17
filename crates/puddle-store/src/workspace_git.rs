@@ -75,7 +75,7 @@ impl RepoRef {
     ///
     /// # Errors
     /// [`StoreError::IdentityInvalid`] for a name the Git hosts don't have: empty or dot
-    /// segments, more names than the host nests ([`Self::max_segments`]), a `-` name (GitLab's
+    /// segments, a host with a port or a trailing dot, an owner of `.` or `..`, more names than the host nests ([`Self::max_segments`]), a `-` name (GitLab's
     /// separator of its pages), a character outside letters, digits and `-_.` (on Azure
     /// DevOps: a space or any other letter is fine, but not a control character, `/`, `\`, `%`,
     /// `?`, `#` or `;`).
@@ -83,7 +83,15 @@ impl RepoRef {
         let bad =
             |what: &str| StoreError::IdentityInvalid(format!("not a valid repository: {what}"));
         let host = HostName::new(host.trim().to_ascii_lowercase()).map_err(|_| bad("host"))?;
+        // The proxy builds its reference from the plain host, so a port or a trailing dot would
+        // be another spelling of the same repository that never matches.
+        if host.as_str().contains(':') || host.as_str().ends_with('.') {
+            return Err(bad("host"));
+        }
         let owner = Owner::new(owner).map_err(|_| bad("owner"))?;
+        if matches!(owner.as_str(), "." | "..") {
+            return Err(bad("owner"));
+        }
         // ASCII only, as the proxy folds a request's path: `K` (the Kelvin sign) is not `k` to every host.
         let repo = repo.trim().to_ascii_lowercase();
         let repo = repo.strip_suffix(".git").unwrap_or(&repo).to_owned();

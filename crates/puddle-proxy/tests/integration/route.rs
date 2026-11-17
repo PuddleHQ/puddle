@@ -1593,6 +1593,35 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
     assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
 }
 
+#[tokio::test]
+async fn stopping_a_route_reports_the_end_of_each_session_it_cuts_off() {
+    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::control::PREAMBLE;
+    let watched = Arc::new(Watched::default());
+    let proxy = Arc::new(
+        Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_guest_watcher(watched.clone()),
+    );
+    let root = IpcRoot::new().unwrap();
+    let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
+    let mut guest = Guest::connect(&route).await;
+    let mut control = guest.stream().await;
+    control.write_all(PREAMBLE).await.unwrap();
+    control
+        .write_all(&AgentMessage::hello().to_line().unwrap())
+        .await
+        .unwrap();
+    control.flush().await.unwrap();
+    puddle_test_kit::eventually("the agent session started", Duration::from_secs(5), || {
+        watched.link.lock().unwrap().is_some()
+    })
+    .await;
+    // The guest stays connected: the route's stop is what ends the session.
+    route.shutdown().await;
+    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
+    drop(control);
+}
+
 /// Whether anything still accepts on `path`.
 async fn listening(path: &std::path::Path) -> bool {
     puddle_ipc::connect(path).await.is_ok()

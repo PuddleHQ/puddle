@@ -149,6 +149,63 @@ fn a_store_that_fails_changes_nothing_in_memory() {
 }
 
 #[test]
+fn a_change_after_a_load_that_failed_keeps_every_other_sign_in() {
+    let vault = vault();
+    let earlier = ProxyPasswords::new(vault.clone());
+    let (a, b, c) = (
+        ProxyAddr::new("a.corp", 8080),
+        ProxyAddr::new("b.corp", 8080),
+        ProxyAddr::new("c.corp", 8080),
+    );
+    earlier.set(&a, "alice", &fixture::password("a")).unwrap();
+    earlier.set(&c, "carol", &fixture::password("c")).unwrap();
+    // This run starts while the store is locked, so it knows no sign-in.
+    let passwords = ProxyPasswords::new(vault.clone());
+    vault.break_it();
+    assert_eq!(passwords.load(), Err(ProxyPasswordError::Store));
+    // The user unlocks it, saves one and takes another out.
+    vault.heal();
+    passwords.set(&b, "bob", &fixture::password("b")).unwrap();
+    passwords.remove(&c).unwrap();
+    assert_eq!(
+        passwords.proxies(),
+        [
+            (a.clone(), "alice".to_owned()),
+            (b.clone(), "bob".to_owned())
+        ]
+    );
+    let later = ProxyPasswords::new(vault);
+    assert_eq!(later.load().unwrap(), 2);
+    assert_eq!(
+        later.proxies(),
+        [(a, "alice".to_owned()), (b, "bob".to_owned())]
+    );
+}
+
+/// A listed sign-in this run could not read stays listed through a change of another, so a later
+/// run that can read it gets it back.
+#[test]
+fn a_change_keeps_a_listed_sign_in_this_run_could_not_read() {
+    let vault = vault();
+    let passwords = ProxyPasswords::new(vault.clone());
+    let other = ProxyAddr::new("other.corp", 3128);
+    passwords
+        .set(&proxy(), "alice", &fixture::password("one"))
+        .unwrap();
+    let entry = passwords.entry_id(&proxy()).unwrap();
+    let saved = vault.get(&entry).unwrap().unwrap();
+    vault
+        .set(&entry, &Secret::new("no newline".into()))
+        .unwrap();
+    let again = ProxyPasswords::new(vault.clone());
+    assert_eq!(again.load().unwrap(), 0);
+    again.set(&other, "bob", &fixture::password("two")).unwrap();
+    vault.set(&entry, &saved).unwrap();
+    let later = ProxyPasswords::new(vault);
+    assert_eq!(later.load().unwrap(), 2);
+}
+
+#[test]
 fn a_listed_proxy_without_a_readable_entry_is_skipped_on_load() {
     let vault = vault();
     let passwords = ProxyPasswords::new(vault.clone());

@@ -624,13 +624,19 @@ struct BookFile<E> {
     /// none in an older book).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retired_ids: Vec<String>,
+    /// The retired ids whose leftovers are all gone, so no start cleans them again. A Puddle that
+    /// does not know the field drops it, and its ids are cleaned once more.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cleaned_ids: Vec<String>,
 }
 
-/// What the book holds: the workspaces, and the ids no new workspace may get.
+/// What the book holds: the workspaces, the ids no new workspace may get and those of them whose
+/// leftovers are gone.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Book {
     pub(crate) workspaces: Vec<Stored>,
     pub(crate) retired: BTreeSet<WorkspaceId>,
+    pub(crate) cleaned: BTreeSet<WorkspaceId>,
 }
 
 /// The workspace book: a JSON file with one entry per workspace.
@@ -670,7 +676,7 @@ impl WorkspaceBook {
             source,
         };
         let version = Version::deserialize(&value).map_err(not_a_list)?.version;
-        let (entries, retired): (Vec<EntryV4>, Vec<String>) = match version {
+        let (entries, retired, cleaned): (Vec<EntryV4>, Vec<String>, Vec<String>) = match version {
             1 => (
                 BookFile::<EntryV1>::deserialize(&value)
                     .map_err(not_a_list)?
@@ -678,6 +684,7 @@ impl WorkspaceBook {
                     .into_iter()
                     .map(|e| with_owner(EntryV3::from(EntryV2::from(e)), owners))
                     .collect(),
+                Vec::new(),
                 Vec::new(),
             ),
             2 => (
@@ -688,6 +695,7 @@ impl WorkspaceBook {
                     .map(|e| with_owner(EntryV3::from(e), owners))
                     .collect(),
                 Vec::new(),
+                Vec::new(),
             ),
             3 => {
                 let file = BookFile::<EntryV3>::deserialize(&value).map_err(not_a_list)?;
@@ -696,11 +704,11 @@ impl WorkspaceBook {
                     .into_iter()
                     .map(|e| with_owner(e, owners))
                     .collect();
-                (entries, file.retired_ids)
+                (entries, file.retired_ids, file.cleaned_ids)
             }
             BOOK_VERSION => {
                 let file = BookFile::<EntryV4>::deserialize(&value).map_err(not_a_list)?;
-                (file.workspaces, file.retired_ids)
+                (file.workspaces, file.retired_ids, file.cleaned_ids)
             }
             newer if newer > BOOK_VERSION => {
                 return Err(BookError::Newer {
@@ -719,7 +727,7 @@ impl WorkspaceBook {
             .into_iter()
             .map(|e| e.entry.check(UserId::from_stored(e.owner)))
             .collect::<Result<_, _>>()?;
-        let retired = retired
+        let retired: BTreeSet<WorkspaceId> = retired
             .iter()
             .map(|id| {
                 WorkspaceId::new(id).map_err(|source| BookError::RetiredId {
@@ -728,9 +736,16 @@ impl WorkspaceBook {
                 })
             })
             .collect::<Result<_, _>>()?;
+        // Only an id the book still retires; one that is not an id was never cleaned.
+        let cleaned = cleaned
+            .iter()
+            .filter_map(|id| WorkspaceId::new(id).ok())
+            .filter(|id| retired.contains(id))
+            .collect();
         Ok(Book {
             workspaces,
             retired,
+            cleaned,
         })
     }
 
@@ -738,6 +753,7 @@ impl WorkspaceBook {
         &self,
         workspaces: Vec<Stored>,
         retired: &BTreeSet<WorkspaceId>,
+        cleaned: &BTreeSet<WorkspaceId>,
     ) -> Result<(), HostError> {
         let file = BookFile {
             version: BOOK_VERSION,
@@ -746,6 +762,7 @@ impl WorkspaceBook {
                 .map(EntryV4::from)
                 .collect::<Vec<_>>(),
             retired_ids: retired.iter().map(ToString::to_string).collect(),
+            cleaned_ids: cleaned.iter().map(ToString::to_string).collect(),
         };
         let value = serde_json::to_value(&file)
             .map_err(StateFileError::Encode)

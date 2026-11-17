@@ -284,20 +284,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// workspace has a new id, so it never inherits a stuck file.
     /// Under the settings repository's lock, so a settings change that read the file before this
     /// removal cannot write it back after.
-    pub(super) async fn forget_settings_file(&self, id: &WorkspaceId, name: &str) {
+    pub(super) async fn forget_settings_file(&self, id: &WorkspaceId, name: &str) -> bool {
         let inner = &self.inner;
         let key = problem_key("settings", id);
         let _lock = inner.settings.lock().await;
         match inner.settings.delete_workspace(id) {
-            Ok(()) => inner.problems.clear(&key),
-            Err(e) => inner.problems.raise(Problem::new(
-                key,
-                format!("{name}'s settings were not deleted"),
-                format!(
-                    "{e}. No later workspace gets the id {id}, so none inherits them; delete \
+            Ok(()) => {
+                inner.problems.clear(&key);
+                true
+            }
+            Err(e) => {
+                inner.problems.raise(Problem::new(
+                    key,
+                    format!("{name}'s settings were not deleted"),
+                    format!(
+                        "{e}. No later workspace gets the id {id}, so none inherits them; delete \
                      the file by hand to tidy up."
-                ),
-            )),
+                    ),
+                ));
+                false
+            }
         }
     }
 
@@ -388,12 +394,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes what the browser editor kept for a deleted workspace. A failure is a notice: the
     /// data stays under an id no later workspace gets.
-    pub(super) async fn forget_browser_state(&self, id: &WorkspaceId, name: &str) {
+    pub(super) async fn forget_browser_state(&self, id: &WorkspaceId, name: &str) -> bool {
         let inner = &self.inner;
         let key = problem_key("browser-data", id);
         let failed = self.clear_browser_state(id).await;
         if failed.is_empty() {
             inner.problems.clear(&key);
+            true
         } else {
             inner.problems.raise(Problem::new(
                 key,
@@ -405,6 +412,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     failed.join("; ")
                 ),
             ));
+            false
         }
     }
 
@@ -427,7 +435,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        self.forget_leftovers(&record.id, record.name.as_str())
+        // A step that failed is a notice; the sweep at the next start tries it again.
+        let _ = self
+            .forget_leftovers(&record.id, record.name.as_str())
             .await;
         Ok(())
     }
@@ -436,35 +446,54 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// identities, its environment and the values of its own secrets, its settings file and the
     /// browser editor's data. Every step finds nothing the second time, so the sweep at start
     /// can run it again for any retired id; a step that fails is a notice and the next start
-    /// tries again.
-    pub(super) async fn forget_leftovers(&self, id: &WorkspaceId, label: &str) {
-        self.inner.injection.forget(id).await;
-        self.forget_settings_file(id, label).await;
-        self.forget_browser_state(id, label).await;
+    /// tries again. Returns whether every step found its part gone.
+    pub(super) async fn forget_leftovers(&self, id: &WorkspaceId, label: &str) -> bool {
+        let values = self.inner.injection.forget(id).await;
+        let settings = self.forget_settings_file(id, label).await;
+        let browser = self.forget_browser_state(id, label).await;
+        values && settings && browser
     }
 
-    /// Finishes what a delete that did not end left behind, for every retired id: a sandbox
-    /// still named after it, and the leftovers [`Self::forget_leftovers`] removes. Run once in
-    /// the background at start. A retired id belongs to nobody, so nothing here can touch a
-    /// workspace the user has.
+    /// Finishes what a delete that did not end left behind, for every retired id not yet
+    /// cleaned: a sandbox still named after it, and the leftovers [`Self::forget_leftovers`]
+    /// removes. An id whose every part is gone is noted as cleaned in the book, so later starts
+    /// skip it. Run once in the background at start. A retired id belongs to nobody, so nothing
+    /// here can touch a workspace the user has.
     pub(crate) async fn sweep_retired(&self) {
-        let retired: Vec<WorkspaceId> = self.state().retired.iter().cloned().collect();
-        for id in retired {
-            self.remove_left_sandbox(&id).await;
-            self.forget_leftovers(&id, id.as_str()).await;
+        let left: Vec<WorkspaceId> = {
+            let state = self.state();
+            state.retired.difference(&state.cleaned).cloned().collect()
+        };
+        for id in left {
+            let sandbox = self.remove_left_sandbox(&id).await;
+            let leftovers = self.forget_leftovers(&id, id.as_str()).await;
+            if sandbox && leftovers {
+                let mut state = self.state();
+                state.cleaned.insert(id.clone());
+                if let Err(e) = self.persist(&state) {
+                    tracing::warn!(workspace = %id, error = %e, "a cleaned retired id was not saved; the next start cleans it again");
+                }
+            }
         }
     }
 
     /// Removes the sandbox a deleted workspace left, if there is one. A failure is a notice.
-    pub(super) async fn remove_left_sandbox(&self, id: &WorkspaceId) {
+    /// Returns whether no sandbox is left.
+    pub(super) async fn remove_left_sandbox(&self, id: &WorkspaceId) -> bool {
         let key = problem_key("left-sandbox", id);
         match self.inner.runtime.remove(&id.sandbox_name()).await {
-            Ok(()) | Err(ComputeError::NotFound { .. }) => self.inner.problems.clear(&key),
-            Err(e) => self.inner.problems.raise(Problem::new(
-                key,
-                format!("The sandbox of the deleted workspace {id} was not removed"),
-                format!("{e}. Puddle tries again the next time it starts."),
-            )),
+            Ok(()) | Err(ComputeError::NotFound { .. }) => {
+                self.inner.problems.clear(&key);
+                true
+            }
+            Err(e) => {
+                self.inner.problems.raise(Problem::new(
+                    key,
+                    format!("The sandbox of the deleted workspace {id} was not removed"),
+                    format!("{e}. Puddle tries again the next time it starts."),
+                ));
+                false
+            }
         }
     }
 }

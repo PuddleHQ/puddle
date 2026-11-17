@@ -37,6 +37,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         parts: Parts<R>,
         restored: Vec<Stored>,
         mut retired: BTreeSet<WorkspaceId>,
+        mut cleaned: BTreeSet<WorkspaceId>,
         status: &BTreeMap<WorkspaceId, WorkspaceStatus>,
     ) -> Result<Self, HostError> {
         let mut slots = BTreeMap::new();
@@ -87,6 +88,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             };
             slots.insert(id, Slot::new(record, false));
         }
+        // An id retired again above was not cleaned since.
+        cleaned.retain(|id| retired.contains(id));
         let service = Self {
             inner: Arc::new(Inner {
                 runtime: parts.runtime,
@@ -118,6 +121,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 names_writing: Mutex::new(()),
                 state: Mutex::new(State {
                     slots,
+                    cleaned,
                     retired,
                     closed: false,
                 }),
@@ -206,7 +210,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 deleting: slot.deleting,
             })
             .collect();
-        self.inner.book.save(stored, &state.retired)?;
+        self.inner
+            .book
+            .save(stored, &state.retired, &state.cleaned)?;
         self.note_names(state);
         Ok(())
     }

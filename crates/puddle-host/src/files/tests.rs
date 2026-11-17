@@ -212,8 +212,12 @@ fn the_book_round_trips_and_a_missing_book_is_empty() {
         book.load(&WorkspaceOwners::default()).unwrap().workspaces,
         Vec::new()
     );
-    book.save(vec![stored("a"), stored("b")], &BTreeSet::new())
-        .unwrap();
+    book.save(
+        vec![stored("a"), stored("b")],
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )
+    .unwrap();
     assert_eq!(
         book.load(&WorkspaceOwners::default()).unwrap().workspaces,
         vec![stored("a"), stored("b")]
@@ -418,7 +422,8 @@ fn a_version_1_book_loads_as_lists_with_the_checkout_as_start_folder_and_is_neve
     );
 
     // The next save writes version 3, without the old field, and it reads back the same.
-    book.save(loaded.clone(), &BTreeSet::new()).unwrap();
+    book.save(loaded.clone(), &BTreeSet::new(), &BTreeSet::new())
+        .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written["version"], 4);
     assert_eq!(written["workspaces"][0]["name"], "Web shop");
@@ -453,8 +458,12 @@ fn an_entry_from_before_session_users_keeps_root_and_the_user_is_saved() {
     std::fs::write(&path, old.to_string()).unwrap();
     let loaded = book.load(&WorkspaceOwners::default()).unwrap().workspaces;
     assert_eq!(loaded[0].session_user, SessionUser::Root);
-    book.save(vec![loaded[0].clone(), stored("b")], &BTreeSet::new())
-        .unwrap();
+    book.save(
+        vec![loaded[0].clone(), stored("b")],
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )
+    .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written["workspaces"][0]["session_user"], "root");
     assert_eq!(written["workspaces"][1]["session_user"], "agent");
@@ -517,7 +526,8 @@ fn a_version_2_book_written_by_the_previous_release_loads_in_place_and_saves_as_
         old,
         "a read never writes"
     );
-    book.save(loaded.clone(), &BTreeSet::new()).unwrap();
+    book.save(loaded.clone(), &BTreeSet::new(), &BTreeSet::new())
+        .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written["version"], 4);
     assert_eq!(written["workspaces"][0]["id"], "shop");
@@ -553,7 +563,8 @@ fn a_version_3_book_round_trips_with_empty_and_long_lists() {
         .map(|n| repository(&format!("https://h/a/r{n}"), &format!("r{n}")))
         .collect();
     let all = vec![stored("a"), empty, many];
-    book.save(all.clone(), &BTreeSet::new()).unwrap();
+    book.save(all.clone(), &BTreeSet::new(), &BTreeSet::new())
+        .unwrap();
     assert_eq!(
         book.load(&WorkspaceOwners::default()).unwrap().workspaces,
         all
@@ -578,7 +589,8 @@ fn entries_of_an_older_list_get_ids_on_read_and_keep_them_once_saved() {
     let unique: BTreeSet<_> = ids.iter().collect();
     assert_eq!(unique.len(), ids.len(), "one id per entry, none twice");
     assert_ne!(ids.len(), 0);
-    book.save(first.clone(), &BTreeSet::new()).unwrap();
+    book.save(first.clone(), &BTreeSet::new(), &BTreeSet::new())
+        .unwrap();
     assert_eq!(
         book.load(&WorkspaceOwners::default()).unwrap().workspaces,
         first,
@@ -632,14 +644,16 @@ fn retired_ids_are_kept_beside_the_workspaces_and_a_bad_one_is_refused() {
         .into_iter()
         .map(|id| WorkspaceId::new(id).unwrap())
         .collect();
-    book.save(vec![stored("a")], &retired).unwrap();
+    book.save(vec![stored("a")], &retired, &BTreeSet::new())
+        .unwrap();
     let loaded = book.load(&WorkspaceOwners::default()).unwrap();
     assert_eq!(loaded.workspaces, vec![stored("a")]);
     assert_eq!(loaded.retired, retired);
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written["retired_ids"], json!(["acme", "k3m9q2xa"]));
     // None retired: the field is left out, and a book without it has none.
-    book.save(vec![stored("a")], &BTreeSet::new()).unwrap();
+    book.save(vec![stored("a")], &BTreeSet::new(), &BTreeSet::new())
+        .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written.get("retired_ids"), None);
     assert!(
@@ -661,4 +675,39 @@ fn retired_ids_are_kept_beside_the_workspaces_and_a_bad_one_is_refused() {
         err.contains("retired id \"Not An Id\" is not an id"),
         "{err}"
     );
+}
+
+#[test]
+fn cleaned_ids_are_kept_only_for_ids_the_book_still_retires() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("workspaces.json");
+    let book = WorkspaceBook::new(&path);
+    let ids = |names: &[&str]| -> BTreeSet<WorkspaceId> {
+        names
+            .iter()
+            .map(|id| WorkspaceId::new(id).unwrap())
+            .collect()
+    };
+    book.save(vec![], &ids(&["acme", "gone"]), &ids(&["acme"]))
+        .unwrap();
+    let loaded = book.load(&WorkspaceOwners::default()).unwrap();
+    assert_eq!(loaded.retired, ids(&["acme", "gone"]));
+    assert_eq!(loaded.cleaned, ids(&["acme"]));
+    let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(written["cleaned_ids"], json!(["acme"]));
+    // One the book no longer retires, or that is not an id, was never cleaned.
+    std::fs::write(
+        &path,
+        br#"{"version": 3, "workspaces": [], "retired_ids": ["acme"], "cleaned_ids": ["other", "Not An Id", "acme"]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        book.load(&WorkspaceOwners::default()).unwrap().cleaned,
+        ids(&["acme"])
+    );
+    // None cleaned: the field is left out.
+    book.save(vec![], &ids(&["acme"]), &BTreeSet::new())
+        .unwrap();
+    let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(written.get("cleaned_ids"), None);
 }

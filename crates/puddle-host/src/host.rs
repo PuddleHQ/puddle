@@ -234,6 +234,20 @@ impl Background {
     }
 }
 
+/// Waits up to `within` for the clean-up of deleted workspaces, then stops it where it waits: a
+/// credential store that does not answer must not hold up a quit. What it left is cleaned at the
+/// next start, since an id is noted as cleaned only once all of it is gone.
+async fn finish_retired_sweep(mut sweep: tokio::task::JoinHandle<()>, within: std::time::Duration) {
+    if tokio::time::timeout(within, &mut sweep).await.is_err() {
+        tracing::warn!(
+            waited = ?within,
+            "the clean-up of deleted workspaces did not finish while quitting; the next start goes on with it"
+        );
+        sweep.abort();
+        let _ = sweep.await;
+    }
+}
+
 /// Aborts its task when dropped, so a forwarder never outlives the host.
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
@@ -361,6 +375,7 @@ impl<R: Runtime + Clone> Host<R> {
             book,
             stored,
             retired,
+            cleaned,
         } = open_state(&config.paths, &events, &clock, &mut steps)?;
 
         let shared = Shared {
@@ -409,7 +424,7 @@ impl<R: Runtime + Clone> Host<R> {
             (workspaces, book, all_users),
             lifecycle.clone(),
         );
-        let service = HostWorkspaces::new(parts, stored, retired, &reconciled.status)?;
+        let service = HostWorkspaces::new(parts, stored, retired, cleaned, &reconciled.status)?;
         let editor_windows = serving.front.windows().clone();
         let watchers = spawn_watchers(&shared, &service, &credentials.injecting, &editor_windows);
         steps.push(Step::WorkspacesReady);
@@ -600,7 +615,11 @@ impl<R: Runtime + Clone> Host<R> {
                         crate::vault::SWEEP_SHUTDOWN_WAIT,
                     )
                     .await;
-                    let _ = background.retired_sweep.await;
+                    finish_retired_sweep(
+                        background.retired_sweep,
+                        crate::vault::SWEEP_SHUTDOWN_WAIT,
+                    )
+                    .await;
                     for task in [
                         &mut background.network_events,
                         &mut background.sign_in_failures,
@@ -639,6 +658,7 @@ struct State {
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
     retired: BTreeSet<WorkspaceId>,
+    cleaned: BTreeSet<WorkspaceId>,
 }
 
 /// Opens the database, the settings files and the workspace list.
@@ -663,6 +683,7 @@ fn open_state(
     let crate::files::Book {
         workspaces: stored,
         retired,
+        cleaned,
     } = book.load(&store.workspace_owners()?)?;
     steps.push(Step::StoreOpened);
     Ok(State {
@@ -672,6 +693,7 @@ fn open_state(
         book,
         stored,
         retired,
+        cleaned,
     })
 }
 

@@ -52,6 +52,7 @@ puddle-ports = { path = "crates/puddle-ports" }
 puddle-front = { path = "crates/puddle-front" }
 puddle-appicon = { path = "crates/puddle-appicon" }
 puddle-freshness = { path = "crates/puddle-freshness" }
+puddle-process = { path = "crates/puddle-process" }
 # Dev-dependency only (scripts/quality-gate.py checks it): bounded waits, event reads, ports, temp folders for tests.
 puddle-test-kit = { path = "crates/puddle-test-kit" }
 # Dev-dependency only, like the kit: the rigs the puddle-proxy integration tests share.

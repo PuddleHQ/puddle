@@ -275,23 +275,24 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
     create(&api, &mut events, "acme").await;
     assert!(!has_problem(
         &host,
-        "merge-left:acme:/root/.docker/config.json"
+        "merge-left:acme:/home/agent/.docker/config.json"
     ));
 
     // A start that finds both files unparsable names each file, the error and what fails.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
-    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: /root/.docker/config.json left as it is: \
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: /home/agent/.docker/config.json left as it is: \
         the file is not valid JSON: EOF while parsing at line 1 column 1\n\
-        puddle-boot: /root/.vscode-server/data/Machine/settings.json left as it is: \
+        puddle-boot: /home/agent/.vscode-server/data/Machine/settings.json left as it is: \
         the file is not valid JSON: expected value at line 2 column 3\n"
-        .to_owned();
+            .to_owned();
     api.post("/api/workspaces/acme/start", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
-    let docker = problem_of(&host, "merge-left:acme:/root/.docker/config.json");
+    let docker = problem_of(&host, "merge-left:acme:/home/agent/.docker/config.json");
     assert_eq!(
         docker.title,
-        "Puddle could not update /root/.docker/config.json in acme"
+        "Puddle could not update /home/agent/.docker/config.json in acme"
     );
     assert!(
         docker
@@ -304,7 +305,7 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
     );
     let machine = problem_of(
         &host,
-        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json",
+        "merge-left:acme:/home/agent/.vscode-server/data/Machine/settings.json",
     );
     assert!(
         machine.detail.contains("expected value at line 2 column 3")
@@ -318,18 +319,60 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert!(!has_problem(
         &host,
-        "merge-left:acme:/root/.docker/config.json"
+        "merge-left:acme:/home/agent/.docker/config.json"
     ));
     api.post("/api/workspaces/acme/start", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert!(!has_problem(
         &host,
-        "merge-left:acme:/root/.docker/config.json"
+        "merge-left:acme:/home/agent/.docker/config.json"
     ));
     assert!(!has_problem(
         &host,
-        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json"
+        "merge-left:acme:/home/agent/.vscode-server/data/Machine/settings.json"
     ));
+    host.shutdown().await;
+}
+
+/// The boot hook runs in the guest, whose root writes what it prints: only the files Puddle's plan
+/// merges can get a notice, each once, with the reason cut and its control characters replaced.
+#[tokio::test(flavor = "multi_thread")]
+async fn hostile_a_flood_of_left_files_is_at_most_one_cleaned_notice_per_merged_file() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let long = format!("bad\x1b[2J\rfaked{}", "x".repeat(10 * 1024));
+    let mut says = String::new();
+    for i in 0..1000 {
+        says.push_str(&format!(
+            "puddle-boot: /tmp/forged-{i} left as it is: {long}\n"
+        ));
+        says.push_str(&format!(
+            "puddle-boot: /etc/ssh/ssh_config left as it is: {i} {long}\n"
+        ));
+    }
+    *rig.guest.boot_says.lock().unwrap() = says;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let merges: Vec<_> = host
+        .problems()
+        .list()
+        .into_iter()
+        .filter(|p| p.key.starts_with("merge-left:acme:"))
+        .collect();
+    let keys: Vec<&str> = merges.iter().map(|p| p.key.as_str()).collect();
+    assert_eq!(keys, ["merge-left:acme:/etc/ssh/ssh_config"]);
+    let detail = &merges[0].detail;
+    assert!(
+        detail.contains(": 0 bad"),
+        "the first line counts: {detail}"
+    );
+    assert!(!detail.chars().any(char::is_control), "{detail:?}");
+    assert!(detail.len() < 1024, "{} bytes", detail.len());
     host.shutdown().await;
 }
 

@@ -41,6 +41,10 @@ pub enum BootFailure {
     Exec(ComputeError),
 }
 
+/// The most characters of the reason a hook gives for a file it left as it was; the guest writes
+/// it, so the rest is dropped.
+pub(crate) const MAX_LEFT_REASON_CHARS: usize = 300;
+
 /// A successful hook run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BootReport {
@@ -48,6 +52,9 @@ pub struct BootReport {
     pub duration: Duration,
     /// Its progress lines (`puddle-boot: ...`).
     pub stdout: String,
+    /// The files the plan merged settings into: the only ones [`BootReport::left_files`] names,
+    /// since the guest's root can print anything.
+    pub merged: Vec<String>,
 }
 
 impl BootReport {
@@ -114,14 +121,28 @@ impl BootReport {
     }
 
     /// The merged files the hook could not parse and so left as they were: each with the reason
-    /// it gave (`<path> left as it is: <reason>`).
+    /// it gave (`<path> left as it is: <reason>`). The guest writes these lines, so only a file of
+    /// [`BootReport::merged`] counts, once, and its reason is cut to [`MAX_LEFT_REASON_CHARS`]
+    /// with every control character replaced.
     #[must_use]
-    pub fn left_files(&self) -> Vec<(&str, &str)> {
-        self.stdout
+    pub fn left_files(&self) -> Vec<(&str, String)> {
+        let mut left: Vec<(&str, String)> = Vec::new();
+        let said = self
+            .stdout
             .lines()
             .filter_map(|line| line.strip_prefix("puddle-boot: "))
-            .filter_map(|line| line.split_once(" left as it is: "))
-            .collect()
+            .filter_map(|line| line.split_once(" left as it is: "));
+        for (path, why) in said {
+            if self.merged.iter().any(|m| m == path) && !left.iter().any(|(p, _)| *p == path) {
+                let why = why
+                    .chars()
+                    .take(MAX_LEFT_REASON_CHARS)
+                    .map(|c| if c.is_control() { '?' } else { c })
+                    .collect();
+                left.push((path, why));
+            }
+        }
+        left
     }
 }
 
@@ -216,6 +237,7 @@ impl BootHook {
         classify(result).map(|stdout| BootReport {
             duration: started.elapsed(),
             stdout,
+            merged: plan.merged_paths(),
         })
     }
 

@@ -263,7 +263,7 @@ fn migrate_text(outcome: MigrateOutcome, to: StoreKind) -> String {
 }
 
 fn reset_text(outcome: ResetOutcome) -> String {
-    const AFTER: &str = "The old secrets are not deleted, but Puddle cannot read them. The proxy sign-ins lived in the vault and are gone: enter them again. The rows still name the secrets, so Puddle lists each as missing until you enter it again.";
+    const AFTER: &str = "The old secrets are not deleted, but Puddle cannot read them. The proxy sign-ins lived in the vault and are gone: Puddle lists each as lost until you enter it again. The rows still name the secrets, so Puddle lists each as missing until you enter it again.";
     match outcome {
         ResetOutcome::Plan { key_files } => format!(
             "Nothing was changed. With --yes this would set the vault file `secrets/vault` aside as `vault.unreadable-<time>` and {} in your config folder likewise, then make a new key and an empty vault.\n{AFTER}\nRun `puddle secrets reset --yes` to do it.",

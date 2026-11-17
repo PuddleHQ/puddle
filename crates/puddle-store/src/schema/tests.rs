@@ -1032,6 +1032,79 @@ fn a_copy_that_cannot_be_replaced_stops_the_migration_before_any_step() {
     assert_eq!(version(&conn), 1);
 }
 
+/// Opens `path` as a second process would, and has it migrate the file to `steps` fully at the
+/// moment the connection returned reads its first `foreign_keys` pragma: after its own version
+/// read and its copy, before its first step.
+fn racing_connection(path: &Path, steps: usize) -> Connection {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    let conn = Connection::open(path).unwrap();
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    let other = path.to_owned();
+    let fired = AtomicBool::new(false);
+    conn.authorizer(Some(move |context: AuthContext<'_>| {
+        if matches!(
+            context.action,
+            AuthAction::Pragma {
+                pragma_name: "foreign_keys",
+                ..
+            }
+        ) && !fired.swap(true, Ordering::SeqCst)
+        {
+            let mut first = Connection::open(&other).unwrap();
+            first
+                .busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            migrate_to(&mut first, steps).unwrap();
+        }
+        Authorization::Allow
+    }))
+    .unwrap();
+    conn
+}
+
+#[test]
+fn two_processes_migrating_one_file_apply_each_step_once_and_keep_the_first_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    migrate_to(&mut Connection::open(&path).unwrap(), 2).unwrap();
+    let mut second = racing_connection(&path, 4);
+    migrate_to(&mut second, 4).unwrap();
+    assert_eq!(version(&second), 4);
+    assert_eq!(count(&second, "child"), 2);
+    assert_eq!(backups(dir.path()), ["puddle.db.pre-v4"]);
+    let copy = Connection::open(dir.path().join("puddle.db.pre-v4")).unwrap();
+    assert_eq!(
+        version(&copy),
+        2,
+        "the copy is the file before either upgrade"
+    );
+}
+
+#[test]
+fn a_copy_that_cannot_be_deleted_is_logged_and_the_migration_goes_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let made = dir.path().join("puddle.db.pre-v2.1-0.partial");
+    std::fs::create_dir(&made).unwrap();
+    std::fs::write(made.join("x"), "").unwrap();
+    let copy = PreUpgradeCopy {
+        made: made.clone(),
+        db: dir.path().join("puddle.db"),
+        target: 2,
+    };
+    let logs = crate::test_support::Logs::capture();
+    copy.discard();
+    let lines = logs.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with("WARN unused database copy not deleted"),
+        "{lines:?}"
+    );
+    assert!(made.exists());
+}
+
 /// V29 adds the `enabled` columns without rebuilding a table: every rule and rule on method and
 /// path that exists before it stays on, and the built-in entry switches start empty.
 #[test]

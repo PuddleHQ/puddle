@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Versioned schema migrations, tracked in SQLite's `user_version`.
 //!
-//! Migrations only ever get appended. Each runs in its own transaction together with the
-//! version bump, so a crash leaves the database at the previous version, never in between.
+//! Migrations only ever get appended. The steps run in one write transaction together with the
+//! version bump, so a crash leaves the database at the version it had, never in between, and a
+//! second process opening the same file (the host and a CLI command at once) waits, then finds
+//! it migrated.
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
 use crate::error::StoreError;
 
@@ -1008,36 +1010,67 @@ const BACKUPS_KEPT: usize = 2;
 type Violation = (String, Option<i64>, String, i64);
 
 fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
-    let start: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
-    if start > supported {
-        return Err(StoreError::SchemaTooNew {
-            found: start,
-            supported,
-        });
+    loop {
+        let start = current_version(conn, supported)?;
+        if start == supported {
+            return Ok(start);
+        }
+        // The copy is taken before the write lock (`VACUUM INTO` cannot run inside a
+        // transaction) and only put in place under it, once the version is seen unchanged: a
+        // process that lost the race to another one must not replace that one's copy with the
+        // file it already upgraded.
+        let copy = if start > 0 {
+            copy_before(conn, supported)?
+        } else {
+            None
+        };
+        // The pragma is a no-op inside a transaction, so it is switched here. With it on, a table
+        // rebuild (`DROP TABLE` of a parent) cascades deletes into the child tables.
+        let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+        conn.pragma_update(None, "foreign_keys", false)?;
+        let result = run_steps(conn, migrations, start, copy.as_ref());
+        if foreign_keys {
+            conn.pragma_update(None, "foreign_keys", true)?;
+        }
+        if let Some(copy) = &copy {
+            copy.discard();
+        }
+        if result? {
+            return Ok(start);
+        }
+        // Another process moved the file on since `start` was read: look again.
     }
-    if start == supported {
-        return Ok(start);
-    }
-    if start > 0 {
-        back_up_before(conn, supported)?;
-    }
-    // The pragma is a no-op inside a transaction, so it is switched here. With it on, a table
-    // rebuild (`DROP TABLE` of a parent) cascades deletes into the child tables.
-    let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-    conn.pragma_update(None, "foreign_keys", false)?;
-    let result = run_steps(conn, migrations, start);
-    if foreign_keys {
-        conn.pragma_update(None, "foreign_keys", true)?;
-    }
-    result.map(|()| start)
 }
 
-fn run_steps(conn: &mut Connection, migrations: &[&str], start: u32) -> Result<(), StoreError> {
+/// The file's version, refused when a newer Puddle wrote it.
+fn current_version(conn: &Connection, supported: u32) -> Result<u32, StoreError> {
+    let found: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if found > supported {
+        return Err(StoreError::SchemaTooNew { found, supported });
+    }
+    Ok(found)
+}
+
+/// Runs the steps after `start` in one write transaction. Returns `false`, changing nothing,
+/// when the file is no longer at `start` once the lock is held.
+fn run_steps(
+    conn: &mut Connection,
+    migrations: &[&str],
+    start: u32,
+    copy: Option<&PreUpgradeCopy>,
+) -> Result<bool, StoreError> {
+    let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if current_version(&tx, supported)? != start {
+        return Ok(false);
+    }
     // Violations a step did not cause (an older bug, a hand edit) never block the upgrade.
-    let known = violations(conn)?;
+    let known = violations(&tx)?;
+    if let Some(copy) = copy {
+        copy.put_in_place()?;
+    }
     for (version, sql) in (start..).zip(migrations.iter().skip(start as usize)) {
-        let tx = conn.transaction()?;
         tx.execute_batch(sql)?;
         if let Some((table, _, parent, _)) = violations(&tx)?
             .into_iter()
@@ -1049,10 +1082,10 @@ fn run_steps(conn: &mut Connection, migrations: &[&str], start: u32) -> Result<(
                 parent,
             });
         }
-        tx.pragma_update(None, "user_version", version + 1)?;
-        tx.commit()?;
     }
-    Ok(())
+    tx.pragma_update(None, "user_version", supported)?;
+    tx.commit()?;
+    Ok(true)
 }
 
 fn violations(conn: &Connection) -> Result<Vec<Violation>, StoreError> {
@@ -1063,23 +1096,63 @@ fn violations(conn: &Connection) -> Result<Vec<Violation>, StoreError> {
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// Copies the database to `<file>.pre-v<target>` before the first step, so a bad release can be
-/// rolled back by putting the copy in place. In-memory databases have nothing to copy.
-fn back_up_before(conn: &Connection, target: u32) -> Result<(), StoreError> {
-    let Some(path) = conn.path().filter(|p| !p.is_empty() && *p != ":memory:") else {
-        return Ok(());
-    };
-    let path = Path::new(path);
-    let backup = backup_path(path, target);
-    let io = |err: std::io::Error| StoreError::Backup(format!("{}: {err}", backup.display()));
-    // A failed earlier run may have left a copy; `VACUUM INTO` refuses an existing file.
-    match std::fs::remove_file(&backup) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(io(err)),
+/// A copy of the database as it was before the steps, made under a name of its own and put in
+/// place as `<file>.pre-v<target>` only under the write lock that runs the steps, so a bad
+/// release can be rolled back by putting the copy in place.
+struct PreUpgradeCopy {
+    made: PathBuf,
+    db: PathBuf,
+    target: u32,
+}
+
+impl PreUpgradeCopy {
+    /// Renames the copy to `<file>.pre-v<target>` (replacing a copy a failed earlier run left)
+    /// and deletes all but the newest [`BACKUPS_KEPT`] copies.
+    fn put_in_place(&self) -> Result<(), StoreError> {
+        let backup = backup_path(&self.db, self.target);
+        std::fs::rename(&self.made, &backup)
+            .map_err(|err| StoreError::Backup(format!("{}: {err}", backup.display())))?;
+        prune_backups(&self.db).map_err(|err| StoreError::Backup(err.to_string()))
     }
-    conn.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
-    prune_backups(path).map_err(|err| StoreError::Backup(err.to_string()))
+
+    /// Deletes the copy if it was not put in place.
+    fn discard(&self) {
+        match std::fs::remove_file(&self.made) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                path = %self.made.display(),
+                %error,
+                "unused database copy not deleted"
+            ),
+        }
+    }
+}
+
+/// Copies the database under a name no other process uses. In-memory databases have nothing to
+/// copy.
+fn copy_before(conn: &Connection, target: u32) -> Result<Option<PreUpgradeCopy>, StoreError> {
+    static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let Some(path) = conn.path().filter(|p| !p.is_empty() && *p != ":memory:") else {
+        return Ok(None);
+    };
+    let db = PathBuf::from(path);
+    let mut name = backup_path(&db, target).into_os_string();
+    name.push(format!(
+        ".{}-{}.partial",
+        std::process::id(),
+        MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let copy = PreUpgradeCopy {
+        made: PathBuf::from(name),
+        db,
+        target,
+    };
+    // `VACUUM INTO` refuses an existing file.
+    copy.discard();
+    conn.execute("VACUUM INTO ?1", [copy.made.to_string_lossy().as_ref()])
+        .inspect_err(|_| copy.discard())?;
+    Ok(Some(copy))
 }
 
 fn backup_path(db: &Path, version: u32) -> PathBuf {

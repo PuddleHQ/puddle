@@ -44,3 +44,9 @@ mod tools;
 mod tunnel_half_close;
 mod unauthorized;
 mod unknown_tokens;
+mod zeroing_alloc;
+
+/// The perf tests compare this allocator with and without its wipe (`zeroing_alloc`); off, it is the
+/// system allocator.
+#[global_allocator]
+static ALLOCATOR: zeroing_alloc::ZeroingSystem = zeroing_alloc::ZeroingSystem;

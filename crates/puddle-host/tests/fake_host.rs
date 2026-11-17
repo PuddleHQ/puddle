@@ -15,6 +15,8 @@ mod support;
 mod attach_places;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
+#[path = "fake_host/contract.rs"]
+mod contract;
 #[path = "fake_host/credential_store_and_shell_init.rs"]
 mod credential_store_and_shell_init;
 #[path = "fake_host/delete_rename_activity.rs"]

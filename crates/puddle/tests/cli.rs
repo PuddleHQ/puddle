@@ -405,3 +405,52 @@ fn audit_without_a_data_dir_looks_in_the_per_user_folder() {
     };
     assert!(err.contains(expected.to_str().unwrap()), "{err}");
 }
+
+#[test]
+fn secrets_without_a_valid_command_exits_2() {
+    assert_eq!(puddle(&["secrets"]).status.code(), Some(2));
+    assert_eq!(puddle(&["secrets", "migrate"]).status.code(), Some(2));
+    assert_eq!(
+        puddle(&["secrets", "migrate", "--to", "keyring"])
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(
+        puddle(&["secrets", "status", "--yes"]).status.code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn secrets_status_on_a_folder_that_never_started_says_nothing_is_chosen_and_makes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    let out = puddle(&["secrets", "status", "--data-dir", data.to_str().unwrap()]);
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("store: not chosen yet"), "{text}");
+    assert!(text.contains("named by rows: 0 secrets"), "{text}");
+    assert!(!data.exists(), "status only reads");
+}
+
+#[test]
+fn secrets_migrate_and_reset_refuse_while_a_host_holds_the_data_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    let _host = puddle_fs::DataLock::acquire(&data).unwrap();
+    let data = data.to_str().unwrap();
+    for args in [
+        vec!["secrets", "migrate", "--to", "file", "--data-dir", data],
+        vec!["secrets", "reset", "--yes", "--data-dir", data],
+    ] {
+        let out = puddle(&args);
+        assert_eq!(out.status.code(), Some(1), "{args:?} {out:?}");
+        let text = String::from_utf8(out.stderr).unwrap();
+        assert!(text.contains("already using the data folder"), "{text}");
+        assert!(text.contains("process ID"), "{text}");
+    }
+    // Status reads beside the host.
+    let out = puddle(&["secrets", "status", "--data-dir", data]);
+    assert!(out.status.success(), "{out:?}");
+}

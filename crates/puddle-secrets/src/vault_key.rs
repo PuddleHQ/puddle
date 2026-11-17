@@ -241,6 +241,37 @@ impl VaultKeys {
         self.make().await
     }
 
+    /// How many files [`Self::set_keys_aside`] would rename: the sealed key and the key file that
+    /// exist.
+    #[must_use]
+    pub fn keys_to_set_aside(&self) -> usize {
+        [self.sealed_path(), self.key_file_path()]
+            .iter()
+            .filter(|path| path.is_file())
+            .count()
+    }
+
+    /// Renames the sealed key and the key file, when there are any, to `<name>.unreadable-<stamp>`
+    /// in the same folder, so the next [`Self::find_or_make`] over a missing vault makes a new
+    /// key. Nothing is deleted. A unit's credential is not Puddle's to move and stays. Returns how
+    /// many files were set aside.
+    ///
+    /// # Errors
+    /// [`KeyError::Io`] when a file cannot be renamed.
+    pub fn set_keys_aside(&self, stamp: &str) -> Result<usize, KeyError> {
+        let mut moved = 0;
+        for path in [self.sealed_path(), self.key_file_path()] {
+            if !path.is_file() {
+                continue;
+            }
+            let mut aside = path.clone().into_os_string();
+            aside.push(format!(".unreadable-{stamp}"));
+            fs::rename(&path, PathBuf::from(aside)).map_err(|_| KeyError::Io)?;
+            moved += 1;
+        }
+        Ok(moved)
+    }
+
     fn unit_credential(&self) -> Option<PathBuf> {
         let dir = self
             .credentials_dir

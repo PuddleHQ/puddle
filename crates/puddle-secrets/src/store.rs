@@ -55,6 +55,15 @@ pub trait SecretStore: Send + Sync {
         Ok(0)
     }
 
+    /// The ids this store knows it holds, for `puddle secrets migrate`. A store that does not
+    /// know what it holds (it has no index) lists none.
+    ///
+    /// # Errors
+    /// [`StoreError`] when the store cannot be reached.
+    fn listed_ids(&self) -> Result<Vec<StoredId>, StoreError> {
+        Ok(Vec::new())
+    }
+
     /// Removes the values this store holds that `keep` refuses, and says how many went and how
     /// many it tried and could not remove. A store that does not know what it holds (it has no
     /// index) has nothing to sweep.

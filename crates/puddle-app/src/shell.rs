@@ -101,7 +101,7 @@ pub struct Options {
     /// A development server for the page (`PUDDLE_APP_UI_URL`, e.g. `http://localhost:5173/`),
     /// shown in the window instead of the API's own page. The token is handed to it as well.
     pub dev_url: Option<Url>,
-    /// A port for WebView2's DevTools Protocol (`PUDDLE_APP_DEBUG_PORT`), which the smoke test
+    /// A port for WebView2's DevTools Protocol (`PUDDLE_APP_DEBUG_PORT`; the editor windows take the next one), which the smoke test
     /// drives the window through. Windows only.
     pub debug_port: Option<u16>,
     /// Show the in-memory fixture instead of running the host (`PUDDLE_APP_FIXTURE=1`; builds with
@@ -265,10 +265,10 @@ where
     // The host holds the launcher from its start; its windows need the backend's problem list,
     // so they are installed once it runs.
     let launcher = match (&source, data_folder(options)) {
-        (Source::Host(_), Some(data)) => Some(Arc::new(AppLauncher::new(
-            app.clone(),
-            data.join(WEBVIEW_FOLDER),
-        ))),
+        (Source::Host(_), Some(data)) => Some(Arc::new(
+            AppLauncher::new(app.clone(), data.join(WEBVIEW_FOLDER))
+                .with_debug_port(editor_debug_port(options.debug_port)),
+        )),
         _ => None,
     };
     let mut host = HostOptions::system();
@@ -286,6 +286,13 @@ where
         app.manage(windows);
     }
     open(app, options, backend)
+}
+
+/// The DevTools port of the workspaces' editor windows: the one after the main window's, because
+/// each window's own WebView2 browser process needs a port of its own (the forwarded-port windows
+/// take the one after the editor's).
+fn editor_debug_port(main: Option<u16>) -> Option<u16> {
+    main.and_then(|port| port.checked_add(1))
 }
 
 /// What the workspaces' editor windows ask of the shell: links go to the default browser or are

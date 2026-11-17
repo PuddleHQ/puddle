@@ -33,6 +33,7 @@ mod health;
 mod indexed;
 mod keyring_store;
 mod login_session;
+mod migrate;
 mod name;
 mod os_store;
 mod readlog;
@@ -48,7 +49,7 @@ mod vault_key;
 pub use cache::{SecretCache, SignInNeeded, Ttl, Ttls};
 pub use choice::{
     ChoiceError, Decision, Inputs, RecordError, Recording, Rule, StoreKind, StoreOption,
-    StoreRecord, decide, read_record, secrets_folder, vault_path, write_record,
+    StoreRecord, decide, file_stamp, read_record, secrets_folder, vault_path, write_record,
 };
 pub use chunked::{CHUNK_UNITS, ChunkedStore};
 pub use discovery::{DiscoveredAccount, Discovery, Listing, discover};
@@ -58,6 +59,7 @@ pub use health::{StoreAdvice, StoreHealth, probe_os_store, probe_store};
 pub use indexed::IndexedStore;
 pub use keyring_store::{KeyringStore, keyring_available};
 pub use login_session::{LoginSession, login_session, login_user_id};
+pub use migrate::{Cleared, MigrateError, Moved, clear_old_store, move_values};
 pub use name::{
     AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
 };

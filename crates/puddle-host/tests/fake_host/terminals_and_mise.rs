@@ -407,7 +407,7 @@ async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
 
 #[cfg(target_os = "linux")]
 /// Everything under `dir` that holds `needle`, as the files' relative paths.
-fn files_holding(dir: &std::path::Path, needle: &str) -> Vec<String> {
+pub(super) fn files_holding(dir: &std::path::Path, needle: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut folders = vec![dir.to_path_buf()];
     while let Some(folder) = folders.pop() {

@@ -506,7 +506,7 @@ fn refuse_duplicates(checked: &[NewRepository]) -> Result<(), RepositoryListErro
 /// `url` as an error message may quote it: trimmed, cut to a readable length, and with any user
 /// name or password replaced by `***`, so a refusal never echoes a credential. That holds without
 /// a scheme too (`token@host/path`); only the SSH convention's bare `git@` is kept.
-fn shown(url: &str) -> String {
+pub(crate) fn shown(url: &str) -> String {
     const MAX_SHOWN: usize = 200;
     let url = url.trim();
     let shown = match url.split_once("://") {

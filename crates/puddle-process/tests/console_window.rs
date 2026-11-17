@@ -10,6 +10,10 @@
         reason = "the probe asks Win32 whether its console has a window"
     )
 )]
+#![cfg_attr(
+    windows,
+    expect(clippy::unwrap_used, reason = "a failed step fails the test")
+)]
 
 use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};

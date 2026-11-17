@@ -137,9 +137,7 @@ pub(super) fn grants(entries: &[AclEntry], me: &str) -> Vec<Grant> {
 /// The login name of the user running this process.
 #[cfg(target_os = "macos")]
 pub(super) fn current_user() -> io::Result<String> {
-    let out = puddle_process::command("/usr/bin/id")
-        .arg("-un")
-        .output()?;
+    let out = puddle_process::command("/usr/bin/id").arg("-un").output()?;
     if !out.status.success() {
         return Err(io::Error::other("`id -un` failed"));
     }

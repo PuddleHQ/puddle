@@ -407,7 +407,11 @@ export class IdentitiesStore {
     }
   }
 
-  /** Removes a pasted token; never throws, since a token left behind is only an unused entry. */
+  /**
+   * Removes a pasted token that never reached an identity (a cancelled dialog, a replaced
+   * credential); never throws, since a token left behind is only an unused entry. Deleting an
+   * identity does not call this: the host removes the tokens no other identity or secret reads.
+   */
   async forgetToken(source: Source): Promise<void> {
     if (source.kind !== "stored") return;
     try {
@@ -415,7 +419,7 @@ export class IdentitiesStore {
         params: { path: { id: source.id } },
       });
     } catch {
-      // The entry stays in the credential store, unreferenced; the next removal tries again.
+      // The entry stays in the credential store, unreferenced; the host's sweep at the next start removes it.
     }
   }
 

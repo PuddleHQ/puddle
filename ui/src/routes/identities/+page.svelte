@@ -85,9 +85,6 @@
     if (!identity) return;
     const result = await store.remove(identity.id);
     if (!result.ok) return showError(result.message);
-    for (const credential of identity.credentials) {
-      await store.forgetToken(credential.source);
-    }
     const left = result.value;
     toasts.push(
       left.length === 0

@@ -424,6 +424,9 @@ pub struct ApiServer {
     admin: Option<Arc<AdminService>>,
     /// Answers the workspaces' names, when remote serving is on.
     editor: Option<Arc<RemoteEditor>>,
+    /// Says who is told about each new request. It holds the store, so shutdown waits for it:
+    /// the database closes only when its last handle goes.
+    picker: JoinHandle<()>,
 }
 
 /// What remote serving binds and registers.
@@ -659,9 +662,10 @@ async fn warn_while_unclaimed(sign_in: &Arc<SignIn>) {
 
 /// What runs beside the routes: the picker of who is told about a new request, and the system
 /// managed rules, which follow the stored setup from the first request on (rules spec R-41).
-async fn start_background(state: &AppState) {
-    crate::presence::start(state);
+async fn start_background(state: &AppState) -> JoinHandle<()> {
+    let picker = crate::presence::start(state);
     crate::system_managed::refresh(state).await;
+    picker
 }
 
 impl ApiServer {
@@ -729,7 +733,7 @@ impl ApiServer {
             ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
-        start_background(&state).await;
+        let picker = start_background(&state).await;
         let editor = editor_for(&config, &state);
         let ui = config
             .ui
@@ -778,6 +782,7 @@ impl ApiServer {
             remote,
             admin,
             editor,
+            picker,
         })
     }
 
@@ -819,21 +824,25 @@ impl ApiServer {
             remote,
             admin,
             editor,
+            picker,
             ..
         } = self;
         let shutdown = stop.subscribe();
         // One budget for both listeners, so a second listener does not double the cap.
         let open = Arc::new(Semaphore::new(max_connections));
-        let mut tasks = vec![tokio::spawn(serve(
-            listener,
-            Admission::Loopback,
-            Dispatch {
-                router,
-                editor: editor.clone(),
-            },
-            open.clone(),
-            shutdown.clone(),
-        ))];
+        let mut tasks = vec![
+            tokio::spawn(serve(
+                listener,
+                Admission::Loopback,
+                Dispatch {
+                    router,
+                    editor: editor.clone(),
+                },
+                open.clone(),
+                shutdown.clone(),
+            )),
+            picker,
+        ];
         if let Some(admin) = admin {
             tasks.push(tokio::spawn(admin.run_reaper(shutdown.clone())));
         }
@@ -906,7 +915,8 @@ impl RunningApi {
     }
 
     /// Stops accepting, ends event streams, lets open requests finish (up to 5 s) and returns
-    /// when every connection is closed.
+    /// when every connection is closed and every task the API started has ended, so nothing it
+    /// ran still holds the store.
     pub async fn shutdown(mut self) {
         // Receivers live in the server task; if it already ended there is nobody to tell.
         let _ = self.stop.send(true);

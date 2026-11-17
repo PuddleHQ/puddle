@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The inbox's keyboard and mouse shortcuts, as the shortcuts popover lists them. The page's key
-// handler and the Allow and Deny buttons do what each line says.
+// handler and the Allow and Deny buttons do what each line says, and the inbox tests (unit and
+// end-to-end) press every line of this table and check the result, so a line that stops being
+// true fails a test. Only what works goes here: a row is no Tab stop, and Enter on a button
+// presses that button, so "Tab to a request, then Enter" is not a way to more choices.
 
-/** One line per shortcut. */
+/** One line per shortcut; the tests key their proofs by it. */
 export type InboxShortcutId =
   "allow" | "deny" | "next" | "previous" | "more" | "everywhere";
 
@@ -44,7 +47,7 @@ export const INBOX_SHORTCUTS: readonly InboxShortcut[] = [
   {
     id: "more",
     keys: ["Enter"],
-    does: "More choices for the marked request",
+    does: "More choices for the request that has focus (J, K or a click focuses one)",
     singleKey: false,
   },
   {

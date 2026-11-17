@@ -81,7 +81,11 @@ import {
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
 import { sshAgentAsks } from "#lib/stores/ssh-agent-asks.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
-import { INBOX_SHORTCUTS } from "#lib/decision/inbox-shortcuts.ts";
+import {
+  INBOX_SHORTCUTS,
+  type InboxShortcut,
+  type InboxShortcutId,
+} from "#lib/decision/inbox-shortcuts.ts";
 import InboxPage from "./+page.svelte";
 
 const { inbox, setsApi, source, request, mine, agentApi, ask } = h;
@@ -698,6 +702,95 @@ function shortcuts(on: boolean | null) {
     workspace_defaults: fake.layer,
   };
 }
+
+describe("every line of the shortcuts list does what it says", () => {
+  // One proof per line of the table the list is drawn from: a line without a proof does not
+  // compile, and a line whose keys stop doing what it says fails here.
+  const proofs: Record<InboxShortcutId, (s: InboxShortcut) => Promise<void>> = {
+    allow: async (s) => {
+      await press(singleKey(s));
+      await vi.waitFor(() =>
+        expect(inbox.rules[0]).toMatchObject({
+          effect: "allow",
+          pattern: "a.example.com",
+          scope: { type: "workspace", workspace: "demo" },
+        }),
+      );
+    },
+    deny: async (s) => {
+      await press(singleKey(s));
+      await vi.waitFor(() =>
+        expect(inbox.rules[0]).toMatchObject({
+          effect: "deny",
+          pattern: "a.example.com",
+          scope: { type: "workspace", workspace: "demo" },
+        }),
+      );
+    },
+    next: async (s) => {
+      await press(singleKey(s));
+      expect(rowOf("b.example.com")).toHaveAttribute("aria-current", "true");
+      expect(rowOf("b.example.com")).toHaveFocus();
+    },
+    previous: async (s) => {
+      await press("j");
+      await press("j");
+      await press(singleKey(s));
+      expect(rowOf("b.example.com")).toHaveAttribute("aria-current", "true");
+      expect(rowOf("b.example.com")).toHaveFocus();
+    },
+    more: async (s) => {
+      await press("j");
+      await press(s.keys[0] ?? "", rowOf("b.example.com"));
+      expect(await showOptions()).toHaveAccessibleName(
+        "Choices for b.example.com",
+      );
+      expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+    },
+    everywhere: async (s) => {
+      expect(s.keys).toEqual(["Ctrl", "click"]);
+      for (const effect of ["Allow", "Deny"] as const) {
+        await fireEvent.click(
+          screen.getAllByRole("button", {
+            name: new RegExp(`^${effect} .* for demo$`),
+          })[0]!,
+          { ctrlKey: true },
+        );
+        const confirm = await screen.findByRole("alertdialog");
+        await fireEvent.click(
+          within(confirm).getByRole("button", {
+            name: `${effect} in every workspace`,
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(screen.queryByRole("alertdialog")).toBeNull(),
+        );
+      }
+      await vi.waitFor(() => expect(inbox.rules).toHaveLength(2));
+      expect(
+        inbox.rules.map((r) => [r.effect, r.pattern, r.scope.type]),
+      ).toEqual([
+        ["allow", "a.example.com", "global"],
+        ["deny", "b.example.com", "global"],
+      ]);
+    },
+  };
+
+  /** The letter a single-key line names, as the key event carries it. */
+  const singleKey = (s: InboxShortcut) => {
+    expect(s.singleKey).toBe(true);
+    expect(s.keys).toHaveLength(1);
+    return (s.keys[0] ?? "").toLowerCase();
+  };
+
+  for (const shortcut of INBOX_SHORTCUTS) {
+    it(`${shortcut.keys.join("+")}: ${shortcut.does}`, async () => {
+      seed();
+      await ready();
+      await proofs[shortcut.id](shortcut);
+    });
+  }
+});
 
 describe("the keys by default", () => {
   it("work without turning anything on, before the settings are read and with the switch unset", async () => {

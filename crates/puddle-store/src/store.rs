@@ -251,11 +251,16 @@ struct Flushed(Option<WorkspaceId>, u64, u64);
 
 /// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
-    conn: Arc<Mutex<Connection>>,
     /// A second, read-only connection to the same file for the audit list and search, so a long
     /// scan never holds the writer's lock (WAL readers don't block the writer). `None` for an
     /// in-memory store, whose database exists only in `conn`.
+    ///
+    /// Declared before `conn` on purpose: fields drop in order, and SQLite deletes the write-ahead
+    /// log only when the last connection closes and that connection can write. The reader that
+    /// has read anything keeps the file open, so if the writer closed first the read-only reader
+    /// would close last and leave `puddle.db-wal` behind.
     audit_reader: Option<Mutex<Connection>>,
+    conn: Arc<Mutex<Connection>>,
     /// Whether [`Store::take_account_secrets`] has handed the sign-in secrets out.
     secrets_taken: AtomicBool,
     /// Whether [`Store::take_all_users`] has handed the reach across every user out.

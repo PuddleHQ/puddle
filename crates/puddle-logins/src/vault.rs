@@ -187,7 +187,7 @@ pub fn saved_login_ids(workspace: &WorkspaceId, profiles: &[Profile]) -> Vec<Sto
 pub fn is_saved_login_of(id: &StoredId, workspace: &WorkspaceId) -> bool {
     id.as_str()
         .strip_prefix("login-")
-        .and_then(|rest| rest.strip_prefix(&workspace_hash(&workspace.to_string())))
+        .and_then(|rest| rest.strip_prefix(&workspace_hash(workspace.as_ref())))
         .is_some_and(|rest| rest.starts_with('-'))
 }
 

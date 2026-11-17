@@ -59,6 +59,9 @@ mod restore;
 mod root_disk;
 #[path = "fake_host/sandbox_resources.rs"]
 mod sandbox_resources;
+#[cfg(target_os = "linux")]
+#[path = "fake_host/secret_leaks.rs"]
+mod secret_leaks;
 #[path = "fake_host/shutdown.rs"]
 mod shutdown;
 #[path = "fake_host/start_failures_and_trust.rs"]

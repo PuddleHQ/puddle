@@ -206,3 +206,37 @@ fn entries_stay_on_this_computer_and_older_enterprise_ones_are_rewritten() {
     store.delete(&fresh).unwrap();
     store.delete(&old).unwrap();
 }
+
+/// Rewriting an "enterprise" entry as "local machine" over the top of it leaves the enterprise
+/// copy behind: after the delete it comes back a moment later, and keeps roaming. Raw Credential
+/// Manager calls show the same, so `keep_local` must remove the enterprise entry before it
+/// writes the local one. Ten entries one after the other, each deleted at once, then a wait for the stragglers.
+#[cfg(windows)]
+#[test]
+fn a_rewritten_entry_leaves_no_enterprise_copy_after_its_delete() {
+    if !store_available() {
+        return;
+    }
+    let service = format!("puddle-test-{}", fresh_id().as_str());
+    let store = KeyringStore::named(&service);
+    let enterprise = std::collections::HashMap::from([("persistence", "enterprise")]);
+    let ids: Vec<StoredId> = (0..10).map(|_| fresh_id()).collect();
+    for id in &ids {
+        keyring_core::Entry::new_with_modifiers(&service, &format!("credential:{id}"), &enterprise)
+            .unwrap()
+            .set_password("old value")
+            .unwrap();
+        store.keep_local(id).unwrap();
+        assert_eq!(store.get(id).unwrap().unwrap().expose(), "old value");
+        store.delete(id).unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    let left: Vec<&StoredId> = ids
+        .iter()
+        .filter(|id| store.get(id).unwrap().is_some())
+        .collect();
+    for id in &ids {
+        let _ = store.delete(id);
+    }
+    assert!(left.is_empty(), "{} deleted entries came back", left.len());
+}

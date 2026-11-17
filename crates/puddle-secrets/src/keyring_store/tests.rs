@@ -46,3 +46,29 @@ fn a_computer_without_a_credential_store_fails_every_call_and_loses_nothing_sile
         assert_eq!(store.delete(&id()), Err(StoreError));
     }
 }
+
+/// A run that died after deleting the enterprise entry and before writing the local one left the
+/// value in the backup entry: the next `keep_local` puts it back.
+#[cfg(windows)]
+#[test]
+fn a_keep_local_that_died_halfway_is_finished_by_the_next_one() {
+    if !keyring_available() {
+        return;
+    }
+    let service = format!("puddle-test-halfway-{}", std::process::id());
+    let store = KeyringStore::named(&service);
+    let backup = store
+        .entry_for_user(&format!("credential:{}{BACKUP_SUFFIX}", id()))
+        .unwrap();
+    backup.set_password("the value").unwrap();
+    assert!(store.get(&id()).unwrap().is_none());
+
+    store.keep_local(&id()).unwrap();
+
+    assert_eq!(store.get(&id()).unwrap().unwrap().expose(), "the value");
+    assert!(matches!(
+        backup.get_password(),
+        Err(keyring_core::Error::NoEntry)
+    ));
+    store.delete(&id()).unwrap();
+}

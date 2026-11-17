@@ -15,6 +15,10 @@ const SERVICE: &str = "puddle";
 #[cfg(windows)]
 mod windows;
 
+/// Added to an entry's user for the copy `keep_local` holds while it rewrites the entry.
+#[cfg(windows)]
+const BACKUP_SUFFIX: &str = ".keep-local";
+
 /// Runs one call to the platform store. On Windows it waits for every other Puddle process's call
 /// to end first: Credential Manager loses changes made side by side (see `windows.rs`).
 fn one_call<T>(call: impl FnOnce() -> T) -> T {
@@ -47,21 +51,24 @@ impl KeyringStore {
     }
 
     fn entry(&self, id: &StoredId) -> Result<keyring_core::Entry, StoreError> {
+        self.entry_for_user(&format!("credential:{id}"))
+    }
+
+    fn entry_for_user(&self, user: &str) -> Result<keyring_core::Entry, StoreError> {
         let service = self.service.as_deref().unwrap_or(SERVICE);
-        let user = format!("credential:{id}");
         #[cfg(windows)]
         {
             // Credential Manager's default, "enterprise", lets Windows copy the entry to the
             // user's other computers when the account has a roaming profile.
             let modifiers = std::collections::HashMap::from([("persistence", "local")]);
             ensure_os_store()?;
-            keyring_core::Entry::new_with_modifiers(service, &user, &modifiers)
+            keyring_core::Entry::new_with_modifiers(service, user, &modifiers)
                 .map_err(|_| StoreError)
         }
         #[cfg(not(windows))]
         {
             ensure_os_store()?;
-            keyring_core::Entry::new(service, &user).map_err(|_| StoreError)
+            keyring_core::Entry::new(service, user).map_err(|_| StoreError)
         }
     }
 }
@@ -96,17 +103,39 @@ impl SecretStore for KeyringStore {
 
     /// Windows only: an entry an earlier version wrote as "enterprise" is written again as
     /// "local machine". Other platforms have no such setting.
+    ///
+    /// Writing the local entry over the enterprise one leaves the enterprise copy behind: a delete
+    /// removes only the local one and the copy comes back a moment later, still roaming. So the
+    /// enterprise entry is deleted first. The value waits in a local backup entry meanwhile, and
+    /// a run that finds the entry missing and the backup there (a crash in between) restores it.
     fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
         #[cfg(windows)]
         {
             let entry = self.entry(id)?;
+            let backup = self.entry_for_user(&format!("credential:{id}{BACKUP_SUFFIX}"))?;
             one_call(|| match entry.get_attributes() {
                 Ok(attributes) if is_kept_local(&attributes) => Ok(()),
                 Ok(_) => {
-                    let value = entry.get_password().map_err(|_| StoreError)?;
-                    entry.set_password(&value).map_err(|_| StoreError)
+                    let value = Secret::new(entry.get_password().map_err(|_| StoreError)?);
+                    backup
+                        .set_password(value.expose())
+                        .map_err(|_| StoreError)?;
+                    entry.delete_credential().map_err(|_| StoreError)?;
+                    entry.set_password(value.expose()).map_err(|_| StoreError)?;
+                    // A backup that cannot be removed is harmless: it is replaced next time.
+                    let _ = backup.delete_credential();
+                    Ok(())
                 }
-                Err(keyring_core::Error::NoEntry) => Ok(()),
+                Err(keyring_core::Error::NoEntry) => match backup.get_password() {
+                    Ok(value) => {
+                        let value = Secret::new(value);
+                        entry.set_password(value.expose()).map_err(|_| StoreError)?;
+                        let _ = backup.delete_credential();
+                        Ok(())
+                    }
+                    Err(keyring_core::Error::NoEntry) => Ok(()),
+                    Err(_) => Err(StoreError),
+                },
                 Err(_) => Err(StoreError),
             })?;
         }

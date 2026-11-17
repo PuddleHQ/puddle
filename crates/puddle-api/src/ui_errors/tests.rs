@@ -204,3 +204,74 @@ fn only_the_most_recent_are_kept_newest_first() {
     assert_eq!(list.errors[0].message, format!("e{}", total - 1));
     assert_eq!(list.errors[KEEP - 1].message, "e5");
 }
+
+#[test]
+fn a_url_after_a_character_of_several_bytes_is_scrubbed_without_a_panic() {
+    assert_eq!(
+        scrub_line("failed “https://u:p@x.example/y?k=v” and →https://x.example/z#f"),
+        "failed “https://x.example/y” and →https://x.example/z"
+    );
+}
+
+#[test]
+fn a_token_in_a_path_is_replaced_and_the_rest_of_the_path_stays() {
+    assert_eq!(
+        scrub_line(&format!(
+            "GET https://h.example/reset/{API_TOKEN}/done failed"
+        )),
+        "GET https://h.example/reset/[redacted]/done failed"
+    );
+    assert_eq!(
+        route(&format!("/invite/{API_TOKEN}")),
+        Some("/invite/[redacted]".to_owned())
+    );
+}
+
+#[test]
+fn a_secret_name_and_its_value_with_spaces_between_lose_the_value() {
+    assert_eq!(scrub_line("password = hunter2"), "password = [redacted]");
+    assert_eq!(scrub_line("accessToken : abc"), "accessToken : [redacted]");
+}
+
+#[test]
+fn only_whole_name_parts_say_secret() {
+    for text in [
+        "author: Ann",
+        "keyboard=dvorak",
+        "monkey: banana",
+        "authenticated: yes",
+    ] {
+        assert_eq!(scrub_line(text), text);
+    }
+    for (text, want) in [
+        ("accessToken: abc", "accessToken: [redacted]"),
+        ("X-Auth-Token: abc", "X-Auth-Token: [redacted]"),
+        ("sessionId=abc", "sessionId=[redacted]"),
+        ("API_KEY=abc", "API_KEY=[redacted]"),
+    ] {
+        assert_eq!(scrub_line(text), want, "{text}");
+    }
+}
+
+#[test]
+fn line_separators_and_direction_marks_become_spaces() {
+    assert_eq!(scrub("a\u{2028}b\u{202e}c\u{2066}d", 100, 5), "a b c d");
+}
+
+#[test]
+fn a_user_whose_window_ended_is_forgotten() {
+    let book = UiErrors::default();
+    assert!(matches!(
+        book.report(UserId::OWNER, &report("e"), 0),
+        Outcome::Kept(_)
+    ));
+    assert!(matches!(
+        book.report(UserId::from_stored(2), &report("e"), WINDOW_MS),
+        Outcome::Kept(_)
+    ));
+    let inner = book.inner.lock().unwrap();
+    assert_eq!(
+        inner.taken.keys().copied().collect::<Vec<_>>(),
+        vec![UserId::from_stored(2)]
+    );
+}

@@ -67,13 +67,17 @@ impl UiErrors {
     pub(crate) fn report(&self, user: UserId, report: &UiErrorReport, now: u64) -> Outcome {
         let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let inner = &mut *guard;
+        // Forget what fell out of the window, and the users with nothing left in it.
+        inner.taken.retain(|_, taken| {
+            while taken
+                .front()
+                .is_some_and(|at| now.saturating_sub(*at) >= WINDOW_MS)
+            {
+                taken.pop_front();
+            }
+            !taken.is_empty()
+        });
         let taken = inner.taken.entry(user).or_default();
-        while taken
-            .front()
-            .is_some_and(|at| now.saturating_sub(*at) >= WINDOW_MS)
-        {
-            taken.pop_front();
-        }
         if taken.len() >= PER_WINDOW {
             let oldest = taken.front().copied().unwrap_or(now);
             *inner.dropped.entry(user).or_default() += 1;
@@ -128,7 +132,8 @@ fn scrubbed(report: &UiErrorReport, now: u64) -> UiError {
 
 /// `text` scrubbed line by line ([`scrub_line`]), cut to `max_lines` lines (a last line `…`
 /// says some were left out) and then to `max_chars` characters (ending in `…`). Control
-/// characters (an escape, a tab, a carriage return) become spaces.
+/// characters (an escape, a tab, a carriage return), line and paragraph separators and the
+/// marks that turn text direction around become spaces.
 pub(crate) fn scrub(text: &str, max_chars: usize, max_lines: usize) -> String {
     let mut lines: Vec<String> = text
         .split('\n')
@@ -136,7 +141,7 @@ pub(crate) fn scrub(text: &str, max_chars: usize, max_lines: usize) -> String {
         .map(|line| {
             let plain: String = line
                 .chars()
-                .map(|c| if c.is_control() { ' ' } else { c })
+                .map(|c| if is_layout_control(c) { ' ' } else { c })
                 .collect();
             scrub_line(plain.trim_end())
         })
@@ -151,6 +156,11 @@ pub(crate) fn scrub(text: &str, max_chars: usize, max_lines: usize) -> String {
     let mut cut: String = out.chars().take(max_chars).collect();
     cut.push(CUT);
     cut
+}
+
+fn is_layout_control(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 /// One line with what could be a secret replaced. Spaces are kept as they were, so a stack
@@ -169,7 +179,13 @@ pub(crate) fn scrub_line(line: &str) -> String {
             out.push(replace_core(word, |_| true));
             continue;
         }
-        if ends_with_secret_name(word) {
+        let after_name = matches!(word, "=" | ":")
+            && out
+                .iter()
+                .rev()
+                .find(|w| !w.is_empty())
+                .is_some_and(|name| is_secret_name(name));
+        if ends_with_secret_name(word) || after_name {
             next = Next::Value;
         } else if is_auth_scheme(trim_punctuation(word)) {
             next = Next::Credential;
@@ -215,15 +231,26 @@ fn scrub_word(word: &str) -> String {
     if let Some((name, _)) = secret_assignment(word) {
         return format!("{name}{REDACTED}");
     }
-    replace_core(word, looks_like_token)
+    scrub_path(word)
+}
+
+/// `path` with each `/`-separated part that looks like a token replaced (a reset link, an
+/// invite path).
+fn scrub_path(path: &str) -> String {
+    path.split('/')
+        .map(|part| replace_core(part, looks_like_token))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// `word` with the URL whose `://` is at `at` reduced to scheme, host and path. A `:line:col`
 /// that followed the path (a stack frame) stays, and so does punctuation around the URL.
 fn scrub_url(word: &str, at: usize) -> String {
     let start = word[..at]
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let (lead, url) = word.split_at(start);
     let rest = &url[at - start + 3..];
     let scheme = &url[..at - start];
@@ -235,12 +262,17 @@ fn scrub_url(word: &str, at: usize) -> String {
     let path_end = tail.find(['?', '#']).unwrap_or(tail.len());
     let (path, dropped) = tail.split_at(path_end);
     let place = trailing_place(dropped);
+    let path = scrub_path(path);
     format!("{lead}{scheme}://{host}{path}{place}")
 }
 
-/// The `:line:col` and closing punctuation that end `text`, if it ends in them.
+/// The `:line:col` and closing punctuation (a bracket, a quote, `”`) that end `text`, if it ends
+/// in them.
 fn trailing_place(text: &str) -> &str {
-    let closing = text.trim_end_matches([')', ']', ',', ';', '.', '"', '\'']);
+    let closing = text.trim_end_matches(|c: char| {
+        matches!(c, ')' | ']' | ',' | ';' | '.' | '"' | '\'')
+            || (!c.is_ascii() && !c.is_alphanumeric())
+    });
     let mut start = closing.len();
     let mut numbers = 0;
     while let Some(colon) = closing[..start].rfind(':') {
@@ -290,9 +322,31 @@ fn is_secret_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
-    let name = name.to_ascii_lowercase();
     // `Authorization:` is followed by its scheme, which `is_auth_scheme` handles.
-    identifier && name != "authorization" && NAMES.iter().any(|n| name.contains(n))
+    identifier
+        && name_parts(name)
+            .iter()
+            .any(|part| NAMES.contains(&part.as_str()))
+}
+
+/// The lower-case parts of an identifier: `X-Auth-Token`, `api_key` and `accessToken` give
+/// `x auth token`, `api key` and `access token`.
+fn name_parts(name: &str) -> Vec<String> {
+    let mut parts = vec![String::new()];
+    let mut lower_before = false;
+    for c in name.chars() {
+        if matches!(c, '_' | '-') || (c.is_ascii_uppercase() && lower_before) {
+            parts.push(String::new());
+        }
+        lower_before = c.is_ascii_lowercase() || c.is_ascii_digit();
+        if c.is_ascii_alphanumeric()
+            && let Some(last) = parts.last_mut()
+        {
+            last.push(c.to_ascii_lowercase());
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    parts
 }
 
 fn is_auth_scheme(word: &str) -> bool {

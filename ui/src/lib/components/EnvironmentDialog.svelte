@@ -144,11 +144,21 @@
       <fieldset>
         <legend>What is it</legend>
         <label class="choice">
-          <input type="radio" bind:group={kind} value="plain" />
+          <input
+            type="radio"
+            bind:group={kind}
+            value="plain"
+            onchange={() => (value = "")}
+          />
           Variable: the workspace sees its value
         </label>
         <label class="choice">
-          <input type="radio" bind:group={kind} value="secret" />
+          <input
+            type="radio"
+            bind:group={kind}
+            value="secret"
+            onchange={() => (value = "")}
+          />
           Secret: the workspace never sees its value
         </label>
       </fieldset>

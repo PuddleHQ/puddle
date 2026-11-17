@@ -826,7 +826,7 @@ mod filtered_agent {
     use puddle_ca::CaBuilder;
     use puddle_proxy::ssh_agent::{AgentGate, ApproveEverything, HostAgent, SshAgents};
     use puddle_proxy::{NoInjection, Termination, TerminationSet, Terminations};
-    use puddle_ssh_agent::filter::{AllowedKeys, Disapproval, Outcome};
+    use puddle_ssh_agent::filter::{AllowedKeys, Disapproval, Outcome, PinFailure};
     use puddle_ssh_agent::request;
     use puddle_ssh_agent::testing::{
         TestKey, bind, framed, login, packet, server_kex, sign_request, string,
@@ -902,6 +902,10 @@ mod filtered_agent {
     struct Unapproved(Disapproval);
 
     impl AgentGate for Unapproved {
+        fn pin_host_key(&self, _: &WorkspaceId, _: &str, _: &str) -> Result<(), PinFailure> {
+            Ok(())
+        }
+
         fn approve(&self, _: &WorkspaceId, _: &str, _: &[u8]) -> Result<(), Disapproval> {
             Err(self.0)
         }

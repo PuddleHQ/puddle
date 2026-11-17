@@ -20,7 +20,7 @@
 //! reqwest's and hyper's own system-proxy support reads only HKCU `ProxyServer`: no PAC, WPAD,
 //! machine proxy or policy. Nothing in Puddle uses it for routing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
@@ -122,11 +122,41 @@ pub struct Decision {
 
 type Resolved = (Route, RouteSource);
 
+/// The route decisions of one epoch, at most [`MAX_ROUTES`], with the order they were first asked
+/// for so the oldest can go.
+#[derive(Debug, Default)]
+struct Routes {
+    cells: HashMap<Destination, Arc<OnceCell<Resolved>>>,
+    order: VecDeque<Destination>,
+}
+
+impl Routes {
+    /// The cell for `dest`, made (and the oldest dropped when full) on first ask.
+    fn cell(&mut self, dest: &Destination) -> Arc<OnceCell<Resolved>> {
+        if let Some(cell) = self.cells.get(dest) {
+            return Arc::clone(cell);
+        }
+        if self.cells.len() >= MAX_ROUTES
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.cells.remove(&oldest);
+        }
+        let cell = Arc::new(OnceCell::new());
+        self.cells.insert(dest.clone(), Arc::clone(&cell));
+        self.order.push_back(dest.clone());
+        cell
+    }
+}
+
+/// Most route decisions one network epoch keeps. Past it the oldest is dropped: a guest picks its
+/// destinations (any port on an allowed host), so the cache must not grow with them.
+pub const MAX_ROUTES: usize = 4096;
+
 #[derive(Debug)]
 struct Epoch {
     number: u64,
     config: OnceCell<ProxyConfig>,
-    routes: Mutex<HashMap<Destination, Arc<OnceCell<Resolved>>>>,
+    routes: Mutex<Routes>,
     pac_down_until: Mutex<Option<Instant>>,
     bad: Mutex<HashMap<ProxyAddr, Instant>>,
     /// When the epoch began.
@@ -176,6 +206,7 @@ impl Epoch {
             .routes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .cells
             .iter()
             .filter_map(|(dest, cell)| {
                 let (route, source) = cell.get()?;
@@ -455,7 +486,7 @@ impl Discovery {
     async fn system_route(&self, epoch: &Arc<Epoch>, dest: &Destination) -> Resolved {
         let cell = {
             let mut routes = epoch.routes.lock().unwrap_or_else(PoisonError::into_inner);
-            Arc::clone(routes.entry(dest.clone()).or_default())
+            routes.cell(dest)
         };
         // Concurrent connections to one destination share a single lookup. An answer that must
         // not outlive the PAC outage (`Err`) is returned but not stored.

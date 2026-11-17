@@ -33,6 +33,18 @@ fn a_field_of_h3_entries_only_is_removed() {
         one(r#"h3=":443"; ma=2592000,h3-29=":443"; ma=2592000"#),
         (vec![], 2)
     );
+    // Empty list elements are legal padding (RFC 9110 section 5.6.1): a trailing comma must not
+    // leave an empty field behind.
+    assert_eq!(one(r#"h3=":443"; ma=86400, "#), (vec![], 1));
+    assert_eq!(one(r#", h3=":443",, h3-29=":443","#), (vec![], 2));
+}
+
+#[test]
+fn empty_list_elements_beside_kept_entries_are_dropped() {
+    assert_eq!(
+        one(r#"h2=":443", , h3=":443","#),
+        (vec![r#"h2=":443""#.into()], 1)
+    );
 }
 
 #[test]

@@ -12,13 +12,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use futures_util::future::BoxFuture;
 use puddle_settings::{DiskWarningPercent, resolve};
-use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Store, UserId};
+use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Role, Store, UserId};
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::WorkspaceRecord;
 use crate::authz::{self, Principal};
-use crate::error::{ApiError, blocking};
+use crate::error::{ApiError, ErrorCode, ErrorField, blocking};
 use crate::extract::Path;
 use crate::routes::{AppState, repository_hosts};
 use crate::wire::{
@@ -217,7 +217,7 @@ pub(crate) async fn lookup_workspace(
                 .collect::<Vec<_>>()
                 .join(" and ");
             let body = WorkspaceLookupConflict {
-                error: crate::ErrorCode::Conflict,
+                error: ErrorCode::Conflict,
                 message: format!("{:?} names two workspaces: {both}; use the id", query.q),
                 matches,
             };
@@ -390,6 +390,7 @@ impl GitSetup for StoreGitSetup {
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
+        (status = FORBIDDEN, description = "forbidden origin, or a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names)", body = ApiErrorBody),
         (status = CONFLICT, description = "another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
         (status = SERVICE_UNAVAILABLE, description = "workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source)", body = ApiErrorBody)
@@ -400,11 +401,22 @@ pub(crate) async fn create_workspace(
     principal: Principal,
     crate::extract::Json(body): crate::extract::Json<NewWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
+    let mut paths = body.local_paths();
+    // Every user runs as the operator's OS account, so the runtime's owner check can't tell a
+    // user from the operator: the folders here are the owner's alone. Refused before any look at
+    // the disk, with one message whatever the path names.
+    if !paths.is_empty() && principal.role != Role::Owner {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            ErrorCode::Forbidden,
+            "only the owner of this Puddle can start a workspace from a folder on this computer; use the repository's address instead",
+        )
+        .at_field(ErrorField::LocalPath));
+    }
     let store = state.store.clone();
     let user = principal.user;
     let known: BTreeSet<IdentityId> =
         blocking(move || Ok(store.identities(user)?.into_iter().map(|i| i.id).collect())).await?;
-    let mut paths = body.local_paths();
     // Looked at only for a list the create can take: each look reads the disk.
     if body.repositories.len() > crate::workspaces::MAX_REPOSITORIES {
         paths.clear();
@@ -701,7 +713,8 @@ pub(crate) async fn delete_workspace(
 }
 
 /// Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-/// (in a window Puddle opens).
+/// (in a window Puddle opens). Only for a client on the host computer itself: whatever Puddle
+/// opens appears on the host's screen, and its ssh link works only there.
 #[utoipa::path(
     post,
     path = "/api/workspaces/{id}/attach",
@@ -716,10 +729,26 @@ pub(crate) async fn delete_workspace(
 )]
 pub(crate) async fn attach_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AttachRequest>,
 ) -> Result<Json<AttachResponse>, ApiError> {
     let id = workspace_id(&id)?;
+    if let authz::Via::Device(_) = principal.via {
+        // A signed-in browser is on another computer. An editor opened here would be on the
+        // host's screen, connected to the workspace, for whoever sits there; a desktop one would
+        // also let the workspace run commands on the host. So nothing opens and no link is sent.
+        state.workspaces.get(&id).await?;
+        return Ok(Json(AttachResponse {
+            opened: false,
+            message: Some(
+                "the editor opens only on the computer Puddle runs on, not for a browser on \
+                 another computer; open it from Puddle's desktop app or command line there"
+                    .to_owned(),
+            ),
+            open_uri: None,
+        }));
+    }
     let mode = crate::AttachMode::from(body.mode);
     if mode == crate::AttachMode::Desktop {
         // Desktop editors connect over SSH, which Puddle only opens when the user allowed it.

@@ -8,6 +8,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoticeCenter } from "#lib/notify/notices.svelte.ts";
+import { toasts } from "#lib/stores/toasts.svelte.ts";
 import Notices from "./Notices.svelte";
 
 afterEach(cleanup);
@@ -108,6 +109,34 @@ describe("Notices", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "Git tab" })).toBeInTheDocument();
   });
+  it("shows an error toast when an action without a confirmation fails, and raises no unhandled rejection", async () => {
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    const center = setup();
+    center.add({
+      key: "a",
+      tone: "warning",
+      title: "A push was refused",
+      action: {
+        label: "Allow push",
+        run: () =>
+          Promise.reject(new Error("Puddle's service isn't answering.")),
+      },
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Allow push" }),
+    );
+    await vi.waitFor(() =>
+      expect(toasts.items.at(-1)).toMatchObject({
+        message: "Puddle's service isn't answering.",
+        tone: "error",
+      }),
+    );
+    await new Promise((done) => setTimeout(done, 0));
+    process.off("unhandledRejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+
   describe("an action that asks first", () => {
     const confirm = {
       title: "Forget the login?",

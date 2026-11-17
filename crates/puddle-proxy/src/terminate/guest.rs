@@ -131,10 +131,13 @@ const RECORD_HEADER: usize = 5;
 /// to the real server untouched when it is not something Puddle can decrypt.
 ///
 /// `first` bounds the wait for the first byte (a protocol where the server speaks first sends
-/// nothing, and must not wait for a handshake timeout); `rest` bounds the wait for the others.
+/// nothing, and must not wait for a handshake timeout); `rest` bounds the whole capture, counted
+/// from the start, so a guest that drips its hello a byte at a time cannot hold the connection
+/// longer than one handshake timeout.
 ///
 /// # Errors
-/// The stream failed with an error other than ending.
+/// The stream failed with an error other than ending, or a TLS record had begun and was not
+/// whole when `rest` ran out (`TimedOut`: a stalled handshake, closed as on a bound host).
 pub(crate) async fn capture_first_record<S>(
     stream: &mut S,
     early: Vec<u8>,
@@ -145,9 +148,11 @@ where
     S: AsyncRead + Unpin,
 {
     use tokio::io::AsyncReadExt as _;
+    let started = tokio::time::Instant::now();
+    let all_by = started + rest;
     let mut buf = early;
     let mut want = RECORD_HEADER;
-    let mut patience = first;
+    let mut by = all_by.min(started + first);
     loop {
         if buf.len() >= want {
             if want == RECORD_HEADER {
@@ -171,12 +176,18 @@ where
             });
         }
         let mut chunk = [0u8; 4096];
-        match tokio::time::timeout(patience, stream.read(&mut chunk)).await {
+        match tokio::time::timeout_at(by, stream.read(&mut chunk)).await {
+            Err(_) if want > RECORD_HEADER => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the TLS hello was not whole within the handshake timeout",
+                ));
+            }
             Ok(Ok(0)) | Err(_) => return Ok(FirstBytes::Other(buf)),
             Ok(Ok(n)) => buf.extend_from_slice(chunk.get(..n).unwrap_or_default()),
             Ok(Err(err)) => return Err(err),
         }
-        patience = rest;
+        by = all_by;
     }
 }
 

@@ -28,10 +28,33 @@ describe("the Add rule dialog without rule sets", () => {
     expect(screen.getByLabelText(/Every workspace/)).toBeChecked();
   });
 
-  it("sends a precedence only when one was chosen, and clears it with the form", async () => {
+  it("hides the precedence field in the shipped configuration", async () => {
     const onSubmit = vi.fn(async (_rule: unknown) => null);
     render(AddRuleDialog, {
       props: { open: true, workspaces: [], now: () => 0, onSubmit },
+    } as never);
+    await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(screen.queryByLabelText("Precedence")).toBeNull();
+    await fireEvent.input(screen.getByLabelText("Host"), {
+      target: { value: "example.com" },
+    });
+    await fireEvent.input(screen.getByLabelText("Workspace name"), {
+      target: { value: "box" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty("precedence");
+  });
+
+  it("sends a precedence only when one was chosen, and clears it with the form", async () => {
+    const onSubmit = vi.fn(async (_rule: unknown) => null);
+    render(AddRuleDialog, {
+      props: {
+        open: true,
+        workspaces: [],
+        now: () => 0,
+        onSubmit,
+        showPrecedence: true,
+      },
     } as never);
     await screen.findByRole("dialog", { name: "Add a rule" });
     await fireEvent.input(screen.getByLabelText("Host"), {

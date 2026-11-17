@@ -19,6 +19,9 @@ struct Fake {
     approval: Option<Disapproval>,
     approved: RefCell<Vec<(String, Vec<u8>)>>,
     signed: RefCell<Vec<Asked>>,
+    /// The host key kept per host.
+    pinned: RefCell<BTreeMap<String, String>>,
+    pin_down: bool,
 }
 
 impl Context for Fake {
@@ -36,6 +39,20 @@ impl Context for Fake {
             return Err(AgentError::Refused);
         }
         Ok(self.keys.clone())
+    }
+    fn pin(&self, host: &str, host_key: &str) -> Result<(), PinFailure> {
+        if self.pin_down {
+            return Err(PinFailure::Unavailable);
+        }
+        let mut pinned = self.pinned.borrow_mut();
+        let kept = pinned
+            .entry(host.to_owned())
+            .or_insert_with(|| host_key.to_owned());
+        if kept == host_key {
+            Ok(())
+        } else {
+            Err(PinFailure::Changed(kept.clone()))
+        }
     }
     fn approve(&self, host: &str, key: &[u8]) -> Result<(), Disapproval> {
         self.approved
@@ -411,6 +428,17 @@ fn each_refusal_says_why_in_words() {
             Refusal::BadBindSignature,
             "the bind's signature does not check",
         ),
+        (
+            Refusal::HostKeyChanged {
+                kept: "SHA256:k".into(),
+                shown: "SHA256:s".into(),
+            },
+            "host key SHA256:s is not the host's key SHA256:k; turn the agent off and on again for the host to accept a new key",
+        ),
+        (
+            Refusal::HostKeyUnchecked,
+            "the host's key could not be checked",
+        ),
         (Refusal::SshSig, "an SSHSIG signature"),
         (Refusal::NotLogin, "data that is not a login"),
         (Refusal::OtherSession, "a login for another session"),
@@ -515,4 +543,69 @@ fn a_first_use_that_is_not_approved_says_why_in_words() {
             format!("first use not approved: {words}")
         );
     }
+}
+
+#[test]
+fn a_second_host_key_at_the_same_name_is_refused_and_nothing_is_signed() {
+    // A server at build.example relays another server's key exchange: the proxy sees that
+    // server's host key under the name build.example.
+    let mut w = world();
+    let elsewhere = TestKey::ed25519(9);
+    let other_session = [0x77; 32];
+    let _first = bound(&w);
+    w.fake.seen.push((
+        elsewhere.key_data(),
+        elsewhere.sign(&other_session),
+        "build.example".into(),
+    ));
+    let mut filter = Filter::new();
+    let relayed = bind(
+        &elsewhere.blob(),
+        &other_session,
+        &elsewhere.sign(&other_session),
+        false,
+    );
+    let (answer, outcome) = filter.answer(&relayed, &w.fake);
+    assert_eq!(answer, request::failure());
+    assert_eq!(
+        outcome,
+        Outcome::Refused(Refusal::HostKeyChanged {
+            kept: w.host.fingerprint(),
+            shown: elsewhere.fingerprint(),
+        })
+    );
+    let data = login(&other_session, &w.user.blob(), Some(&elsewhere.blob()));
+    assert_eq!(
+        filter.answer(&sign_request(&w.user.blob(), &data, 0), &w.fake),
+        refused(Refusal::NotBound)
+    );
+    assert!(w.fake.signed.borrow().is_empty());
+    // The first host key still binds.
+    let _again = bound(&w);
+}
+
+#[test]
+fn the_host_key_is_kept_only_for_a_bind_that_holds() {
+    let w = world();
+    let mut filter = Filter::new();
+    // The seen signature with a session id of the guest's choosing.
+    let unsigned = bind(&w.host.blob(), &[0x99; 32], &w.host.sign(&SESSION), false);
+    let (_, outcome) = filter.answer(&unsigned, &w.fake);
+    assert_eq!(outcome, Outcome::Refused(Refusal::BadBindSignature));
+    assert!(w.fake.pinned.borrow().is_empty());
+    let _bound = bound(&w);
+    assert_eq!(
+        w.fake.pinned.borrow().get("build.example"),
+        Some(&w.host.fingerprint())
+    );
+}
+
+#[test]
+fn a_host_key_that_cannot_be_checked_binds_nothing() {
+    let mut w = world();
+    w.fake.pin_down = true;
+    let mut filter = Filter::new();
+    let (_, outcome) = filter.answer(&the_bind(&w), &w.fake);
+    assert_eq!(outcome, Outcome::Refused(Refusal::HostKeyUnchecked));
+    assert_eq!(filter.host(), None);
 }

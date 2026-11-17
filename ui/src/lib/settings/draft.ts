@@ -109,6 +109,25 @@ export function isDirty(draft: Draft): boolean {
   );
 }
 
+/** The draft once `sent` is saved: only the edits made after it was taken, or changed again since. */
+export function remaining(sent: Draft, now: Draft): Draft {
+  const keep = <T extends object>(was: T, is: T): T =>
+    Object.fromEntries(
+      Object.entries(is).filter(
+        ([key, value]) =>
+          !(key in was) || (was as Record<string, unknown>)[key] !== value,
+      ),
+    ) as T;
+  return {
+    layer: keep(sent.layer, now.layer),
+    toggles: keep(sent.toggles, now.toggles),
+    server: keep(sent.server, now.server),
+    ui: keep(sent.ui, now.ui),
+    tools: keep(sent.tools, now.tools),
+    limits: keep(sent.limits, now.limits),
+  };
+}
+
 /** The parts of the settings document a save replaces, built from the draft over the stored view. */
 export function savePatch(view: GlobalView, draft: Draft) {
   const toggles = Object.keys(draft.toggles).length > 0;

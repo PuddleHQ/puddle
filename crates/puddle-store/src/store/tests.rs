@@ -60,24 +60,43 @@ fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name
     assert!(store.set_workspace_name(&ws, "Lost").is_err());
 }
 
+/// Set by the busy handler of `a_write_waits_for_another_connection_holding_the_file`.
+static WRITER_IS_WAITING: AtomicBool = AtomicBool::new(false);
+
+fn note_writer_is_waiting(_attempts: i32) -> bool {
+    WRITER_IS_WAITING.store(true, std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(1));
+    true
+}
+
 #[test]
 fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
+    use std::sync::atomic::Ordering;
+
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.db");
     let clock = Arc::new(ManualClock::new(1_000_000));
     let store = Store::open(&path, clock, Limits::default()).unwrap();
+    // The write's own busy handler marks the moment it is blocked, and that releases the lock.
+    lock(&store.conn)
+        .busy_handler(Some(note_writer_is_waiting))
+        .unwrap();
     // The other writer: the CLI, or the host a restart has not finished with.
     let holder = Connection::open(&path).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     let release = std::thread::spawn(move || {
-        // The write below blocks inside the call under test, so no signal can mark the moment to
-        // release: the lock is held for a fixed window that the write has to wait out.
-        std::thread::sleep(Duration::from_millis(300));
+        while !WRITER_IS_WAITING.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
         holder.execute_batch("COMMIT").unwrap();
     });
     let made = store.create_rule_set(UserId::OWNER, "Waits", "", None, Actor::Ui);
     release.join().unwrap();
     assert!(made.is_ok(), "{:?}", made.err());
+    assert!(
+        WRITER_IS_WAITING.load(Ordering::SeqCst),
+        "the write ran only after the holder let go"
+    );
 }
 
 #[test]

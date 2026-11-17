@@ -261,13 +261,20 @@ try {
   );
   check("the workspace is running", running.status === "running", `${running.status}, image ${running.image}, id ${id}`);
 
-  // The product's own install of the newest build comes first; wait for it so it cannot overwrite the pinned build later.
+  // The product's own install of the newest build comes first; wait until it is installed, running and confirmed (its cleanup
+  // of the builds folder has run then) so it can neither overwrite nor delete the pinned build later.
   const builds = `/workspaces/${id}/.puddle/vscode-server/servers`;
   const own = await until(
     "the editor's own install of Microsoft's newest build",
     async () => {
       const r = await guest(id, `cat ${builds}/current 2>/dev/null`, 60_000);
-      return /^[0-9a-f]{40}$/.test(r.text.trim()) ? r.text.trim() : false;
+      const named = r.text.trim();
+      if (!/^[0-9a-f]{40}$/.test(named)) return false;
+      // `current` is written when the download ends; the agent then starts that build and, once it listens, writes `confirmed`
+      // and prunes the builds folder (every `*.partial` and every build that is not named). Downloading the pinned build
+      // before that deleted its tarball under the script (run 44080141935), so wait for the confirmation.
+      const confirmed = await guest(id, `cat ${builds}/confirmed 2>/dev/null`, 60_000);
+      return confirmed.text.trim() === named ? named : false;
     },
     600_000,
     5000,

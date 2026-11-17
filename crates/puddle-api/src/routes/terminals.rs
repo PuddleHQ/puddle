@@ -209,12 +209,23 @@ pub(crate) async fn terminal_socket(
             (Some(device), Some(sign_in)) => Box::pin(sign_in.clone().ended(device)),
             _ => Box::pin(std::future::pending()),
         };
+    // Not axum's own detached spawn: the API's shutdown has to wait for this task, because it
+    // holds the store.
+    let (handed, socket) = tokio::sync::oneshot::channel();
+    let sockets = state.sockets.clone();
+    sockets.spawn(async move {
+        // Without an upgrade there is no socket; the terminal's place is freed all the same.
+        if let Ok(socket) = socket.await {
+            run(socket, &state, &workspace, size, shutdown, ended).await;
+        }
+        state.terminals.release(terminal);
+    });
     Ok(upgrade
         .protocols([SUBPROTOCOL])
         .max_message_size(MAX_MESSAGE_BYTES + 1024)
         .on_upgrade(move |socket| async move {
-            run(socket, &state, &workspace, size, shutdown, ended).await;
-            state.terminals.release(terminal);
+            // The task is already tracked; it only waits for the socket.
+            let _ = handed.send(socket);
         }))
 }
 

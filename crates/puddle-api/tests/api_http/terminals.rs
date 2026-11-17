@@ -660,3 +660,35 @@ async fn a_session_that_vanishes_without_an_end_is_a_crash_and_pings_are_ignored
     }
     assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }
+
+/// Shutdown returns only once an open terminal's socket task has let go of the store, even when
+/// the page does not answer the close: the store closes its database when the last handle goes,
+/// and a host restarted on the same data folder right after a stop must find it closed.
+#[test]
+fn shutdown_waits_for_an_open_terminal_to_let_go_of_the_store() {
+    use std::sync::Arc;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (store, at_return, _page) = runtime.block_on(async {
+        let api = start().await;
+        workspace(&api, "shop").await;
+        let (terminal, ticket) = ticket(&api, "shop").await;
+        let mut page = connect(&api, "shop", terminal, &ticket).await;
+        read_until(&mut page, "$ ").await;
+        let Api { running, store, .. } = api;
+        let watched = Arc::downgrade(&store);
+        // The page never reads again, so the socket task waits out its close wait.
+        running.shutdown().await;
+        let at_return = watched.strong_count();
+        (store, at_return, page)
+    });
+    drop(runtime);
+    assert_eq!(
+        at_return,
+        Arc::strong_count(&store),
+        "shutdown returned while a terminal's socket task still held the store"
+    );
+}

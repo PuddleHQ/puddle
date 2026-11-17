@@ -880,3 +880,74 @@ async fn wrong_current_passwords_sent_at_once_are_checked_no_more_than_the_lock_
         "{checked} of 20 parallel wrong current passwords were checked (lock after {FREE_FAILURES})"
     );
 }
+
+/// `f`'s accounts as a server with several users switched `multi_user` sees them.
+fn same_accounts(f: &Fixture, multi_user: bool) -> Arc<SignIn> {
+    Arc::new(
+        SignIn::new(
+            f.store.clone(),
+            f.secrets.clone(),
+            f.clock.clone(),
+            multi_user,
+        )
+        .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn with_several_users_off_an_invite_for_a_user_does_not_sign_in_and_is_kept() {
+    let on = fixture_with(true);
+    owner_signed_up(&on).await;
+    let (_, invite) = on
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob")
+        .await
+        .unwrap();
+    let off = same_accounts(&on, false);
+    let err = off
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Forbidden);
+    // Nothing was used up: once several users are on again, the link works.
+    let granted = on
+        .sign_in
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap();
+    assert_eq!(granted.grant.user.name, "bob");
+    // The owner's own reset link still works with several users off.
+    let reset = reset_account(&on.store, &on.secrets, "Tijs", on.clock.now_ms()).unwrap();
+    off.redeem_invite(&reset.secret, pw("brand new long password"), None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn with_several_users_off_a_users_signed_in_browser_stops_working() {
+    let on = fixture_with(true);
+    let owner = owner_signed_up(&on).await;
+    let (_, invite) = on
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob")
+        .await
+        .unwrap();
+    let bob = on
+        .sign_in
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap();
+    let off = same_accounts(&on, false);
+    let err = off.refresh(&bob.refresh).await.unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Unauthorized);
+    let device = DeviceId::from_stored(bob.grant.device.id);
+    let (token, _) = off.tokens.issue(device, on.clock.now_ms()).unwrap();
+    assert!(off.principal_for(&token).await.is_none());
+    tokio::time::timeout(Duration::from_secs(5), off.clone().ended(device))
+        .await
+        .expect("a user's event stream ends while several users are off");
+    // The owner carries on.
+    off.refresh(&owner.refresh).await.unwrap();
+    // And bob's browser works again once several users are back on.
+    on.sign_in.refresh(&bob.refresh).await.unwrap();
+}

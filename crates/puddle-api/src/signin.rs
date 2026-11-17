@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_store::{
-    AccountSecrets, Clock, DeviceId, Role, SignInMethod, Store, StoreError, UserId, UserName,
+    AccountSecrets, Clock, DeviceId, DeviceSession, Role, SignInMethod, Store, StoreError, UserId, UserName,
 };
 use tokio::sync::broadcast;
 use zeroize::Zeroizing;
@@ -140,6 +140,20 @@ impl SignIn {
         self.clock.now_ms()
     }
 
+    /// Whether a user with `role` may sign in or stay signed in: the owner always, others only
+    /// while several users are on.
+    fn may_sign_in(&self, role: Role) -> bool {
+        self.multi_user || role == Role::Owner
+    }
+
+    /// `device`'s session while it works and its user may be signed in.
+    fn live_session(&self, device: DeviceId) -> Result<Option<DeviceSession>, ApiError> {
+        Ok(self
+            .store
+            .device_session(device)?
+            .filter(|s| self.may_sign_in(s.role)))
+    }
+
     fn limiter(&self) -> std::sync::MutexGuard<'_, Limiter> {
         self.limiter
             .lock()
@@ -249,7 +263,7 @@ impl SignIn {
             let user = this
                 .store
                 .user_named(&name)?
-                .filter(|u| this.multi_user || u.role == Role::Owner);
+                .filter(|u| this.may_sign_in(u.role));
             let right = if let Some(user) = &user {
                 let right = this
                     .secrets
@@ -287,13 +301,23 @@ impl SignIn {
         let password = Zeroizing::new(password.to_owned());
         let device_name = device_name.map(str::to_owned);
         let (granted, ended) = blocking(move || {
-            let user = this.secrets.redeem_invite(&digest)?.ok_or_else(|| {
+            let not_valid = || {
                 ApiError::new(
                     axum::http::StatusCode::UNAUTHORIZED,
                     ErrorCode::Unauthorized,
                     "this invite link is not valid any more",
                 )
-            })?;
+            };
+            // A user's invite waits, unused, while several users are off.
+            let holder = this.secrets.invite_holder(&digest)?.ok_or_else(not_valid)?;
+            if !this.may_sign_in(this.store.user(holder)?.role) {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::FORBIDDEN,
+                    ErrorCode::Forbidden,
+                    "only the owner may sign in while several users are off",
+                ));
+            }
+            let user = this.secrets.redeem_invite(&digest)?.ok_or_else(not_valid)?;
             let hash = password::hash(&password).map_err(weak)?;
             this.secrets.set_password_hash(user, &hash)?;
             let ended = this.store.revoke_devices_of(user, None)?;
@@ -349,6 +373,13 @@ impl SignIn {
                     "this browser is not signed in",
                 )
             })?;
+            if !this.may_sign_in(session.role) {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    ErrorCode::Unauthorized,
+                    "this browser is not signed in",
+                ));
+            }
             this.store
                 .touch_device(session.device, this.now().saturating_add(DEVICE_TTL_MS))?;
             let device = this
@@ -485,9 +516,7 @@ impl SignIn {
     pub(crate) async fn principal_for(self: &Arc<Self>, token: &str) -> Option<Principal> {
         let device = self.tokens.device_of(token, self.now())?;
         let this = self.clone();
-        let session = blocking(move || Ok(this.store.device_session(device)?))
-            .await
-            .ok()??;
+        let session = blocking(move || this.live_session(device)).await.ok()??;
         Some(Principal {
             user: session.user,
             role: session.role,
@@ -598,7 +627,7 @@ impl SignIn {
     async fn still_works(self: &Arc<Self>, device: DeviceId) -> bool {
         let this = self.clone();
         // A database that cannot answer ends the stream: it must not outlive a revoke it cannot see.
-        blocking(move || Ok(this.store.device_session(device)?))
+        blocking(move || this.live_session(device))
             .await
             .ok()
             .flatten()

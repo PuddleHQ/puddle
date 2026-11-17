@@ -230,6 +230,22 @@ impl AccountSecrets {
         Ok(())
     }
 
+    /// The user the invite `digest` is for, while it has not expired, without using it up.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn invite_holder(&self, digest: &[u8]) -> Result<Option<UserId>, StoreError> {
+        let now = sql_ts(self.clock.now_ms());
+        let found: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT user_id FROM account_invites WHERE digest = ?1 AND expires_at > ?2",
+                params![digest, now],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.map(UserId::from_stored))
+    }
+
     /// Uses up the invite `digest`: the user it was for, if it exists and has not expired. An
     /// invite works once; an expired one is removed and answers `None`.
     ///

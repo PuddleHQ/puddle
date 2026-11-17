@@ -173,6 +173,12 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
         }
         Action::Add(name) => {
             let origin = invite_origin(&options)?;
+            if options.switch("multi_user") != Some(true) {
+                return Err(format!(
+                    "several users are off (multi_user), so only the owner can sign in and \
+                     {name} could not use an invite; switch multi_user on first"
+                ));
+            }
             let invite = puddle_host::add_user(&paths, name).map_err(|e| e.to_string())?;
             Ok(Output {
                 notice: format!(

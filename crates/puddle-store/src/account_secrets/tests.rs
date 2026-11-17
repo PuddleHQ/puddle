@@ -67,10 +67,15 @@ fn an_invite_works_once_and_not_after_it_expires() {
     // A new invite replaces the one before.
     secrets.put_invite(ann, &[2; 32], 5_000).unwrap();
     assert_eq!(secrets.redeem_invite(&[1; 32]).unwrap(), None);
+    // Looking an invite up does not use it.
+    assert_eq!(secrets.invite_holder(&[2; 32]).unwrap(), Some(ann));
+    assert_eq!(secrets.invite_holder(&[2; 32]).unwrap(), Some(ann));
     assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), Some(ann));
     assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), None, "used up");
+    assert_eq!(secrets.invite_holder(&[2; 32]).unwrap(), None);
     secrets.put_invite(ann, &[3; 32], 5_000).unwrap();
     clock.set(5_000);
+    assert_eq!(secrets.invite_holder(&[3; 32]).unwrap(), None, "expired");
     assert_eq!(secrets.redeem_invite(&[3; 32]).unwrap(), None, "expired");
 }
 

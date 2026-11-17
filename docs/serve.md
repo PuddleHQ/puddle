@@ -232,7 +232,10 @@ never do (they use the install token on `127.0.0.1`, and there are no accounts o
   signing in exists; the last way that is on cannot be switched off. Passkeys, the other way, come
   after the first release; until then password sign-in cannot be switched off.
 - **Several users.** `multi_user` is off by default and everything belongs to the one owner. With it
-  on, other users can sign in (the admin screen that creates them comes separately).
+  on, other users can sign in (the admin screen that creates them comes separately). Switching it
+  off holds on every way in: other users' signed-in browsers stop working (they work again once it is
+  back on), their invite links are refused but not used up, and `puddle user add` refuses to make a
+  user.
 - **Reset from the server.** `puddle user reset <name>` (same `--config`, `--data-dir` and environment
   as the server) takes the user's password away, signs every one of their devices out, and prints a
   one-time invite link, `https://<public host>/invite#<secret>`, valid for 24 hours. The secret is

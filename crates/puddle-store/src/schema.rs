@@ -1180,6 +1180,44 @@ fn backup_path(db: &Path, version: u32) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// A half-made copy nobody has written to for this long belongs to a process that died (a live
+/// `VACUUM INTO` keeps growing its file).
+const STALE_PARTIAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Deletes the `<file>.pre-v<N>.<pid>-<n>.partial` files a crash during the pre-upgrade copy
+/// left next to `db`. A file written to within [`STALE_PARTIAL`] may be another process's copy in
+/// progress and stays. Failures are logged; the open goes on.
+pub(crate) fn remove_stale_partial_copies(db: &Path) {
+    let dir = db
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let prefix = format!(
+        "{}.pre-v",
+        db.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with(&prefix) && name.ends_with(".partial")) {
+            continue;
+        }
+        let idle = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|written| written.elapsed().ok());
+        if idle.is_none_or(|idle| idle < STALE_PARTIAL) {
+            continue;
+        }
+        if let Err(error) = std::fs::remove_file(entry.path()) {
+            tracing::warn!(%error, path = %entry.path().display(), "half-made upgrade copy not deleted");
+        }
+    }
+}
+
 /// Deletes all but the newest [`BACKUPS_KEPT`] copies next to `db`.
 fn prune_backups(db: &Path) -> std::io::Result<()> {
     let dir = db

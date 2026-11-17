@@ -341,6 +341,7 @@ impl Store {
     /// # Errors
     /// [`StoreError`] if the file can't be opened, is from a newer Puddle, or holds invalid rows.
     pub fn open(path: &Path, clock: Arc<dyn Clock>, limits: Limits) -> Result<Self, StoreError> {
+        schema::remove_stale_partial_copies(path);
         let conn = Connection::open(path)?;
         // A new file frees its pages in small steps (`Store::shrink_audit_file`); the mode cannot
         // be changed on a file that has tables without rebuilding it, so an older file is rebuilt

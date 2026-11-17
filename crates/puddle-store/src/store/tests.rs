@@ -565,3 +565,37 @@ fn closing_a_store_that_read_the_audit_leaves_no_write_ahead_log() {
     drop(store);
     assert!(!dir.path().join("puddle.db-wal").exists());
 }
+
+fn partial_copy(dir: &Path, name: &str, age: Duration) -> std::path::PathBuf {
+    let path = dir.join(name);
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_modified(std::time::SystemTime::now() - age)
+        .unwrap();
+    path
+}
+
+#[test]
+fn an_open_deletes_the_half_made_upgrade_copy_a_crash_left_but_not_one_still_being_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let crashed = partial_copy(
+        dir.path(),
+        "store.db.pre-v9.4242-0.partial",
+        Duration::from_secs(3 * 3600),
+    );
+    let running = partial_copy(
+        dir.path(),
+        "store.db.pre-v9.4243-0.partial",
+        Duration::from_secs(5),
+    );
+    let other = partial_copy(
+        dir.path(),
+        "other.db.pre-v9.1-0.partial",
+        Duration::from_secs(9999),
+    );
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    Store::open(&path, clock, Limits::default()).unwrap();
+    assert!(!crashed.exists(), "the crash leftover is deleted");
+    assert!(running.exists(), "a copy another process is writing stays");
+    assert!(other.exists(), "another database's file stays");
+}

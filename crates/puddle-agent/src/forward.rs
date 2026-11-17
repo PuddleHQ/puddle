@@ -18,10 +18,9 @@ use puddle_agent_proto::forward::{
     ANSWER_TIMEOUT, Answer, MAX_REQUEST_LINE, parse_request, read_line_exact,
 };
 use puddle_agent_proto::relay::splice;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
-use tokio_yamux::StreamHandle;
 
 /// How long the connect to the guest's port may take. Loopback answers at once or not at all.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,7 +48,10 @@ impl Forwards {
 
     /// Serves one `forward` stream the host opened, whose preamble [`crate::host_streams`] has
     /// read, until the connection ends. A stream that sends no valid request is dropped.
-    pub async fn serve(&self, mut stream: StreamHandle) {
+    pub async fn serve<S>(&self, mut stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let Some(port) = self.read_request(&mut stream).await else {
             return;
         };
@@ -85,7 +87,10 @@ impl Forwards {
         }
     }
 
-    async fn read_request(&self, stream: &mut StreamHandle) -> Option<u16> {
+    async fn read_request<S>(&self, stream: &mut S) -> Option<u16>
+    where
+        S: AsyncRead + Unpin,
+    {
         let read = async {
             let line = read_line_exact(stream, MAX_REQUEST_LINE).await?;
             Ok::<_, io::Error>(parse_request(&line).ok())
@@ -109,7 +114,10 @@ impl Forwards {
 }
 
 /// Writes `answer`; `false` when the stream is gone. A refusal ends the stream cleanly.
-pub(crate) async fn answer(stream: &mut StreamHandle, answer: &Answer) -> bool {
+pub(crate) async fn answer<S>(stream: &mut S, answer: &Answer) -> bool
+where
+    S: AsyncWrite + Unpin,
+{
     if stream.write_all(&answer.to_line()).await.is_err() || stream.flush().await.is_err() {
         return false;
     }

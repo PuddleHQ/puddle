@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A bulk byte source for the vsock load tests: an HTTP/1.1 server that answers `GET /gate/<n>` with
 //! `n` zero bytes once a whole load has connected, and `GET /stall/<n>` with a head and the first
-//! 64 KiB of `n` bytes, then nothing until the client leaves. Test code only.
+//! 64 KiB of `n` bytes, then nothing until the client leaves. `GET /keepalive/<n>` answers `n` zero bytes
+//! and keeps the connection open for the next request, for as long as the client sends them. Test code only.
 //!
 //! The gate is what makes the load simultaneous: no body starts until `gate` connections have asked
 //! for one, so every stream of a run is open at the same moment and the test does not depend on how
@@ -40,9 +41,10 @@ impl Drop for BulkHost {
 enum Ask {
     Gate(u64),
     Stall(u64),
+    Keepalive(u64),
 }
 
-/// Reads `GET /gate/<n>` or `GET /stall/<n>` from the head of a request.
+/// Reads `GET /gate/<n>`, `GET /stall/<n>` or `GET /keepalive/<n>` from the head of a request.
 fn parse_ask(head: &str) -> Option<Ask> {
     let line = head.lines().next()?;
     let mut parts = line.split_whitespace();
@@ -55,6 +57,7 @@ fn parse_ask(head: &str) -> Option<Ask> {
     match kind {
         "gate" => Some(Ask::Gate(n)),
         "stall" => Some(Ask::Stall(n)),
+        "keepalive" => Some(Ask::Keepalive(n)),
         _ => None,
     }
 }
@@ -117,46 +120,77 @@ async fn accept_loop(
 async fn answer(mut tcp: TcpStream, gate: &Barrier, served: &AtomicUsize) -> std::io::Result<()> {
     let mut head = Vec::new();
     let mut chunk = [0u8; 1024];
-    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-        let n = tcp.read(&mut chunk).await?;
-        if n == 0 || head.len() + n > MAX_HEAD {
-            return Ok(());
-        }
-        head.extend_from_slice(chunk.get(..n).unwrap_or_default());
-    }
-    let Some(ask) = parse_ask(&String::from_utf8_lossy(&head)) else {
-        return tcp
-            .write_all(
-                b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-            )
-            .await;
-    };
-    let (Ask::Gate(n) | Ask::Stall(n)) = ask;
-    let reply = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {n}\r\nconnection: close\r\n\r\n"
-    );
-    tcp.write_all(reply.as_bytes()).await?;
-    let zeros = vec![0u8; CHUNK];
-    match ask {
-        Ask::Gate(n) => {
-            gate.wait().await;
-            let mut left = n;
-            while left > 0 {
-                let k = usize::try_from(left).map_or(CHUNK, |l| l.min(CHUNK));
-                tcp.write_all(zeros.get(..k).unwrap_or_default()).await?;
-                left -= k as u64;
+    loop {
+        let end = loop {
+            if let Some(at) = head.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
             }
-            tcp.shutdown().await?;
-            served.fetch_add(1, Ordering::SeqCst);
-        }
-        Ask::Stall(n) => {
-            let first = usize::try_from(n).map_or(STALL_AFTER_BYTES, |n| n.min(STALL_AFTER_BYTES));
-            tcp.write_all(zeros.get(..first).unwrap_or_default())
-                .await?;
-            // Hold the connection open until the client gives up: read returns when it closes.
-            let _closed = tcp.read(&mut chunk).await?;
+            let n = tcp.read(&mut chunk).await?;
+            if n == 0 || head.len() + n > MAX_HEAD {
+                return Ok(());
+            }
+            head.extend_from_slice(chunk.get(..n).unwrap_or_default());
+        };
+        let Some(ask) = parse_ask(&String::from_utf8_lossy(&head)) else {
+            return tcp
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await;
+        };
+        match ask {
+            Ask::Keepalive(n) => {
+                let size = usize::try_from(n).map_or(CHUNK, |n| n.min(CHUNK));
+                // One write, so a request costs one round trip and no more.
+                let mut reply =
+                    reply_head(u64::try_from(size).unwrap_or_default(), "keep-alive").into_bytes();
+                reply.resize(reply.len() + size, 0);
+                tcp.write_all(&reply).await?;
+                served.fetch_add(1, Ordering::SeqCst);
+                // The next request starts after this head; a client that does not pipeline leaves nothing.
+                head.drain(..end);
+            }
+            Ask::Gate(n) => return answer_gate(tcp, n, gate, served).await,
+            Ask::Stall(n) => return answer_stall(tcp, n).await,
         }
     }
+}
+
+fn reply_head(length: u64, connection: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {length}\r\nconnection: {connection}\r\n\r\n"
+    )
+}
+
+/// `n` zero bytes, once the whole load has asked; then the connection ends.
+async fn answer_gate(
+    mut tcp: TcpStream,
+    n: u64,
+    gate: &Barrier,
+    served: &AtomicUsize,
+) -> std::io::Result<()> {
+    tcp.write_all(reply_head(n, "close").as_bytes()).await?;
+    let zeros = vec![0u8; CHUNK];
+    gate.wait().await;
+    let mut left = n;
+    while left > 0 {
+        let k = usize::try_from(left).map_or(CHUNK, |l| l.min(CHUNK));
+        tcp.write_all(zeros.get(..k).unwrap_or_default()).await?;
+        left -= k as u64;
+    }
+    tcp.shutdown().await?;
+    served.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
+/// The head and the first 64 KiB, then silence until the client leaves.
+async fn answer_stall(mut tcp: TcpStream, n: u64) -> std::io::Result<()> {
+    tcp.write_all(reply_head(n, "close").as_bytes()).await?;
+    let first = usize::try_from(n).map_or(STALL_AFTER_BYTES, |n| n.min(STALL_AFTER_BYTES));
+    tcp.write_all(vec![0u8; first].as_slice()).await?;
+    let mut chunk = [0u8; 1024];
+    // Hold the connection open until the client gives up: read returns when it closes.
+    let _closed = tcp.read(&mut chunk).await?;
     Ok(())
 }
 

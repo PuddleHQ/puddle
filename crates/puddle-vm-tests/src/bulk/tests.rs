@@ -11,6 +11,10 @@ fn parse_ask_reads_both_paths_and_refuses_the_rest() {
         parse_ask("GET /stall/10 HTTP/1.1\r\n\r\n"),
         Some(Ask::Stall(10))
     );
+    assert_eq!(
+        parse_ask("GET /keepalive/16 HTTP/1.1\r\n\r\n"),
+        Some(Ask::Keepalive(16))
+    );
     for bad in [
         "",
         "POST /gate/1 HTTP/1.1",
@@ -206,4 +210,33 @@ async fn a_request_that_is_not_one_of_ours_gets_a_400() {
     let host = BulkHost::start(1).await.unwrap();
     let reply = get(host.addr(), "/elsewhere/1").await;
     assert!(reply.starts_with(b"HTTP/1.1 400 "), "{reply:?}");
+}
+
+#[tokio::test]
+async fn a_keepalive_connection_answers_request_after_request() {
+    let host = BulkHost::start(1).await.unwrap();
+    let mut tcp = TcpStream::connect(host.addr()).await.unwrap();
+    for round in 1..=3 {
+        tcp.write_all(b"GET /keepalive/16 HTTP/1.1\r\nhost: t\r\n\r\n")
+            .await
+            .unwrap();
+        let mut reply = vec![0u8; 0];
+        while !reply.windows(4).any(|w| w == b"\r\n\r\n") {
+            let mut b = [0u8; 256];
+            let n = tcp.read(&mut b).await.unwrap();
+            assert_ne!(n, 0, "closed after {} replies", round - 1);
+            reply.extend_from_slice(&b[..n]);
+        }
+        let at = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let head = String::from_utf8_lossy(&reply[..at]).to_ascii_lowercase();
+        assert!(head.contains("connection: keep-alive"), "{head}");
+        let mut body = reply[at..].to_vec();
+        while body.len() < 16 {
+            let mut b = [0u8; 16];
+            let n = tcp.read(&mut b).await.unwrap();
+            body.extend_from_slice(&b[..n]);
+        }
+        assert_eq!(body, vec![0u8; 16]);
+    }
+    assert_eq!(host.served(), 3);
 }

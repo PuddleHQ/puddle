@@ -17,7 +17,7 @@ use puddle_fs::private;
 use puddle_store::RestoreMode;
 use serde::{Deserialize, Serialize};
 
-use super::{RestoreError, staging_dir};
+use super::{RestoreError, merge, staging_dir};
 use crate::HostPaths;
 use crate::backup::{BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, make_backup};
 
@@ -368,40 +368,52 @@ fn prepare(
 ) -> Result<(), RestoreError> {
     private::create_dir(new).map_err(io_error("cannot create", new))?;
     let db = new.join(BACKUP_DATABASE);
-    let restored = if paths.store().is_file() {
-        puddle_store::restore_database(
-            &paths.store(),
-            &staged.join(BACKUP_DATABASE),
-            &db,
-            mode.into(),
-        )?
-    } else {
-        // A machine with no database yet: the backup's, as it is.
-        fs::copy(staged.join(BACKUP_DATABASE), &db).map_err(io_error("cannot copy", &db))?;
-        puddle_store::RestoredDatabase {
-            user_map: Vec::new(),
-            owner_id: 1,
-        }
-    };
+    let restored = restored_database(paths, &staged.join(BACKUP_DATABASE), &db, mode)?;
     private::tighten_file(&db).map_err(io_error("cannot restrict", &db))?;
-    super::merge::settings(
+    let (live_settings, live_book) = (paths.settings(), paths.workspace_book());
+    let (their_settings, their_book) =
+        (staged.join(BACKUP_SETTINGS), staged.join(BACKUP_WORKSPACES));
+    merge::settings(
         mode,
-        &paths.settings(),
-        &staged.join(BACKUP_SETTINGS),
+        &live_settings,
+        &their_settings,
         &new.join(BACKUP_SETTINGS),
     )?;
-    super::merge::book(
+    merge::book(
         mode,
-        &paths.workspace_book(),
-        &staged.join(BACKUP_WORKSPACES),
+        &live_book,
+        &their_book,
         &new.join(BACKUP_WORKSPACES),
         &restored,
     )
 }
 
+/// Writes the restored database to `db`: the live one with the backup's merged in, or the backup's
+/// as it is on a machine that has no database yet.
+fn restored_database(
+    paths: &HostPaths,
+    theirs: &Path,
+    db: &Path,
+    mode: ApplyMode,
+) -> Result<puddle_store::RestoredDatabase, RestoreError> {
+    if paths.store().is_file() {
+        return Ok(puddle_store::restore_database(
+            &paths.store(),
+            theirs,
+            db,
+            mode.into(),
+        )?);
+    }
+    fs::copy(theirs, db).map_err(io_error("cannot copy", db))?;
+    Ok(puddle_store::RestoredDatabase {
+        user_map: Vec::new(),
+        owner_id: 1,
+    })
+}
+
 /// Whether the two workspace lists can be merged, for the request to refuse early.
 fn book_versions_agree(paths: &HostPaths, staged: &Path) -> Result<(), String> {
-    super::merge::check_book_versions(&paths.workspace_book(), &staged.join(BACKUP_WORKSPACES))
+    merge::check_book_versions(&paths.workspace_book(), &staged.join(BACKUP_WORKSPACES))
 }
 
 #[cfg(test)]

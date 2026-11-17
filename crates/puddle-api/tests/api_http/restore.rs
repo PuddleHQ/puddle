@@ -204,3 +204,96 @@ async fn the_last_result_is_read_and_forgotten_and_safety_copies_are_listed_and_
     );
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_preview_says_which_disks_are_here_which_secrets_lack_a_value_and_what_runs() {
+    use puddle_secrets::{Secret, SecretStore as _, StoredId};
+
+    let fake = Arc::new(FakeRestore::new());
+    let api = start_with_restore(fake.clone()).await;
+    // A workspace of this machine that runs, one unclaimed disk, and secrets with and without a value.
+    let made = serde_json::json!({"name": "mine", "repositories": [{"url": "https://github.com/acme/api.git"}]});
+    let created = api.send("POST", "/api/workspaces", Some(&made)).await;
+    assert_eq!(created.status, 202, "{}", created.body);
+    api.workspaces.idle().await;
+    let mine = api.get("/api/workspaces").await.json()["workspaces"][0].clone();
+    let mine_id = mine["id"].as_str().unwrap().to_owned();
+    let running = u64::from(matches!(
+        mine["status"].as_str(),
+        Some("running" | "starting")
+    ));
+    api.workspaces
+        .add_orphan_volume(&puddle_types::WorkspaceId::new("kept").unwrap(), None);
+    api.secrets
+        .set(
+            &StoredId::new("restore-has-value").unwrap(),
+            &Secret::new("x".into()),
+        )
+        .unwrap();
+    let mut facts = facts();
+    facts.workspaces = vec![
+        (mine_id.clone(), "Mine".into()),
+        ("kept".into(), "Kept".into()),
+        ("gone".into(), "Gone".into()),
+        ("not a valid id!".into(), "Odd".into()),
+    ];
+    let secret = |name: &str, id: &str| SecretRef {
+        workspace_id: Some("gone".into()),
+        name: name.into(),
+        secret_id: id.into(),
+    };
+    facts.secret_refs = vec![
+        secret("HAS", "restore-has-value"),
+        secret("LACKS", "restore-no-value"),
+        secret("BADID", "not a valid id!"),
+    ];
+    fake.set_facts(facts);
+
+    let reply = api
+        .send_file("POST", "/api/restore/preview", FAKE_RESTORE_MAGIC)
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let json = reply.json();
+    let disks: Vec<(&str, &str)> = json["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| (w["id"].as_str().unwrap(), w["disk"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        disks,
+        [
+            (mine_id.as_str(), "present"),
+            ("kept", "present"),
+            ("gone", "missing"),
+            ("not a valid id!", "missing")
+        ]
+    );
+    let names: Vec<&str> = json["secrets_needing_value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["LACKS", "BADID"]);
+    assert_eq!(json["running_workspaces"], running);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn without_a_service_every_other_restore_call_says_it_is_unavailable() {
+    let api = start().await;
+    let body = serde_json::json!({"staging_id": "0".repeat(32), "mode": "add"});
+    for (method, path, body) in [
+        ("POST", "/api/restore/apply", Some(&body)),
+        ("GET", "/api/restore/result", None),
+        ("DELETE", "/api/restore/result", None),
+        ("GET", "/api/safety-copies", None),
+        ("DELETE", "/api/safety-copies/20231114T221320Z", None),
+    ] {
+        let reply = api.send(method, path, body).await;
+        assert_eq!(reply.status, 503, "{method} {path}: {}", reply.body);
+        assert_eq!(reply.error(), "unavailable");
+    }
+    api.running.shutdown().await;
+}

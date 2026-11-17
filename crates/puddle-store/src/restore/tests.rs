@@ -445,3 +445,79 @@ fn a_failed_merge_leaves_no_new_file_and_the_present_database_intact() {
     assert!(!dest.exists());
     assert_eq!(count(&here, "SELECT count(*) FROM rules"), 3);
 }
+
+#[test]
+fn a_path_that_cannot_be_opened_as_a_database_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder where the database should be.
+    let refusal = check_staged_database(dir.path()).unwrap().unwrap_err();
+    assert_eq!(
+        refusal,
+        DatabaseRefusal::NotPuddle("it cannot be opened".into())
+    );
+}
+
+#[test]
+fn a_backup_missing_a_table_this_schema_has_adds_nothing_from_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    sql(&there, "DROP TABLE never_decrypt_global;");
+    sql(
+        &here,
+        "INSERT INTO never_decrypt_global (pattern) VALUES ('mine.example.org');",
+    );
+    let dest = dir.path().join("new.db");
+    restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(count(&dest, "SELECT count(*) FROM never_decrypt_global"), 1);
+}
+
+#[test]
+fn a_present_database_with_a_dangling_reference_is_not_restored_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    // A rule that names a rule set that is not there, as a damaged file might hold.
+    sql(
+        &here,
+        "PRAGMA foreign_keys = OFF;
+         INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('set', 999, 'exact', 'dangling.example.org', 'allow', 1, 'cli', 1);",
+    );
+    let dest = dir.path().join("new.db");
+    let err = restore_database(&here, &there, &dest, RestoreMode::Add).unwrap_err();
+    assert!(
+        err.to_string().contains("without their parent row"),
+        "{err}"
+    );
+    assert!(!dest.exists());
+}
+
+#[test]
+fn a_backup_with_an_identity_and_stand_ins_keeps_them_attached_to_their_owner_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    sql(
+        &there,
+        "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at, user_id)
+             VALUES ('w1', 'PLAIN', 'plain', 'v', 1, 1);
+         INSERT INTO env_stand_ins (workspace_id, env_id, stand_in)
+             VALUES ('w1', (SELECT id FROM env_vars WHERE name = 'PLAIN'), 'standin');
+         INSERT INTO workspace_identities (workspace_id, identity_id, position)
+             VALUES ('w1', (SELECT id FROM identities WHERE label = 'work'), 0);",
+    );
+    let dest = dir.path().join("new.db");
+    restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM env_stand_ins s JOIN env_vars e ON e.id = s.env_id WHERE e.name = 'PLAIN'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM workspace_identities w JOIN identities i ON i.id = w.identity_id WHERE i.label = 'work'"
+        ),
+        1
+    );
+}

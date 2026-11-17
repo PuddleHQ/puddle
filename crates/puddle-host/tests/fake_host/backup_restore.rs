@@ -189,3 +189,57 @@ async fn only_a_staged_copy_can_be_confirmed() {
     assert_eq!(missing.status, 404, "{}", missing.body);
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_that_fails_at_the_start_is_undone_and_raises_a_problem() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    add_rule(&api(&host), "mine.example.org").await;
+    host.shutdown().await;
+    drop(host);
+
+    // A confirmed restore whose backup holds a workspace list that is not a list.
+    let data = rig.dir.path().join("data");
+    let staged = data.join("restore-pending").join("staged");
+    std::fs::create_dir_all(&staged).unwrap();
+    let source = Rig::new();
+    let source_host = source.start().await;
+    source_host.shutdown().await;
+    drop(source_host);
+    std::fs::copy(
+        source.dir.path().join("data").join("puddle.db"),
+        staged.join("puddle.db"),
+    )
+    .unwrap();
+    std::fs::write(staged.join("workspaces.json"), b"[1, 2]").unwrap();
+    let marker = json!({
+        "format": 1, "mode": "add", "safety_copy": "20231114T221320Z", "summary": "",
+        "requested_at_ms": 1, "phase": "requested"
+    });
+    std::fs::write(
+        data.join("restore-pending").join("marker.json"),
+        marker.to_string(),
+    )
+    .unwrap();
+
+    let again = rig.start().await;
+    let api = api(&again);
+    assert_eq!(patterns(&api.get("/api/rules").await), ["mine.example.org"]);
+    let problems = api.get("/api/problems").await.json();
+    let found = problems["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["key"] == "restore-failed")
+        .unwrap_or_else(|| panic!("no restore-failed problem: {problems}"));
+    assert!(
+        found["detail"]
+            .as_str()
+            .unwrap()
+            .contains("not a workspace list"),
+        "{found}"
+    );
+    let result = api.get("/api/restore/result").await.json();
+    assert_eq!(result["result"]["applied"], false, "{result}");
+    again.shutdown().await;
+}

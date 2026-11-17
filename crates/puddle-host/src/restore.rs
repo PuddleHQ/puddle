@@ -533,6 +533,14 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| RestoreServiceError::Failed(format!("the restore stopped: {e}")))?
 }
 
+/// A refusal is the user's to read; anything else is a failure of this machine.
+fn refused_or_failed(error: RestoreError) -> RestoreServiceError {
+    match error {
+        RestoreError::Refused(why) => RestoreServiceError::Refused(why.to_string()),
+        other => RestoreServiceError::Failed(other.to_string()),
+    }
+}
+
 fn mode_of(mode: puddle_api::wire::RestoreMode) -> ApplyMode {
     match mode {
         puddle_api::wire::RestoreMode::Add => ApplyMode::Add,
@@ -570,16 +578,18 @@ fn is_safety_name(name: &str) -> bool {
 
 /// The size in bytes of the files below `dir`.
 fn size_of(dir: &Path) -> u64 {
-    fs::read_dir(dir).map_or(0, |entries| {
-        entries
-            .flatten()
-            .map(|e| match e.metadata() {
-                Ok(m) if m.is_dir() => size_of(&e.path()),
-                Ok(m) => m.len(),
-                Err(_) => 0,
-            })
-            .sum()
-    })
+    fs::read_dir(dir).map_or(0, |entries| entries.flatten().map(|e| entry_size(&e)).sum())
+}
+
+fn entry_size(entry: &fs::DirEntry) -> u64 {
+    let size = |m: fs::Metadata| {
+        if m.is_dir() {
+            size_of(&entry.path())
+        } else {
+            m.len()
+        }
+    };
+    entry.metadata().map_or(0, size)
 }
 
 impl puddle_api::RestoreService for DataFolderRestore {
@@ -590,22 +600,15 @@ impl puddle_api::RestoreService for DataFolderRestore {
         let paths = self.paths.clone();
         Box::pin(async move {
             let spooled = spool(upload, &tempfile::env::temp_dir()).await?;
-            let job = move || {
+            blocking(move || {
                 let root = paths.restore_staging();
                 sweep_staging(&root, STAGING_LIFETIME);
-                let staged = stage_archive(spooled, &root)?;
-                facts(&paths, &staged).inspect_err(|_| discard(&staged.dir))
-            };
-            match tokio::task::spawn_blocking(job).await {
-                Ok(Ok(facts)) => Ok(facts),
-                Ok(Err(RestoreError::Refused(why))) => {
-                    Err(RestoreServiceError::Refused(why.to_string()))
-                }
-                Ok(Err(other)) => Err(RestoreServiceError::Failed(other.to_string())),
-                Err(e) => Err(RestoreServiceError::Failed(format!(
-                    "the restore check stopped: {e}"
-                ))),
-            }
+                let staged = stage_archive(spooled, &root).map_err(refused_or_failed)?;
+                facts(&paths, &staged)
+                    .inspect_err(|_| discard(&staged.dir))
+                    .map_err(refused_or_failed)
+            })
+            .await
         })
     }
 

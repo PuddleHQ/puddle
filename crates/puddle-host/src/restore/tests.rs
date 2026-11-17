@@ -522,3 +522,362 @@ async fn the_service_stages_an_upload_and_refuses_a_bad_file_leaving_nothing() {
     );
     assert_eq!(fs::read_dir(here.restore_staging()).unwrap().count(), 1);
 }
+
+fn service_for(here: &HostPaths) -> DataFolderRestore {
+    DataFolderRestore::new(here.clone(), Arc::default())
+}
+
+fn upload_of(bytes: Vec<u8>) -> puddle_api::UploadStream {
+    use futures_util::StreamExt as _;
+    futures_util::stream::iter([Ok(bytes)]).boxed()
+}
+
+#[test]
+fn a_dot_path_and_a_folder_entry_are_the_same_as_the_plain_one() {
+    let root = tempfile::tempdir().unwrap();
+    let db = good_db(root.path());
+    let archive = gz_tar(&[
+        Entry {
+            name: "./",
+            kind: tar::EntryType::Directory,
+            body: b"",
+            link: None,
+        },
+        Entry {
+            name: "settings/",
+            kind: tar::EntryType::Directory,
+            body: b"",
+            link: None,
+        },
+        file("./puddle.db", &db),
+        file("settings/global.json", b"{}"),
+    ]);
+    let staged = stage(&archive, root.path()).unwrap();
+    assert!(staged.dir.join("puddle.db").is_file());
+    assert!(staged.dir.join("settings").join("global.json").is_file());
+}
+
+#[test]
+fn a_file_where_a_folder_must_be_is_an_io_error_not_a_refusal() {
+    let root = tempfile::tempdir().unwrap();
+    let archive = gz_tar(&[
+        file("settings", b"a file"),
+        file("settings/global.json", b"{}"),
+    ]);
+    let err = stage(&archive, root.path()).unwrap_err();
+    assert!(matches!(err, RestoreError::Io { .. }), "{err}");
+    nothing_staged(root.path());
+}
+
+#[test]
+fn a_special_entry_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let archive = gz_tar(&[Entry {
+        name: "settings/pipe",
+        kind: tar::EntryType::Fifo,
+        body: b"",
+        link: None,
+    }]);
+    let r = refusal(stage(&archive, root.path()));
+    assert_eq!(r, Refusal::UnknownEntry("settings/pipe".into()));
+}
+
+#[test]
+fn a_folder_over_the_limit_is_refused_and_a_nested_one_is_copied() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("folder");
+    fs::create_dir_all(folder.join("settings").join("workspaces")).unwrap();
+    fs::write(folder.join("puddle.db"), good_db(root.path())).unwrap();
+    fs::write(
+        folder.join("settings").join("workspaces").join("a.json"),
+        b"{}",
+    )
+    .unwrap();
+    let staging = root.path().join("staging");
+    let staged = stage_folder(&folder, &staging).unwrap();
+    assert!(staged.dir.join("settings/workspaces/a.json").is_file());
+    let r = refusal(staged_in(&staging, |dir| copy_folder(&folder, dir, 10)));
+    assert_eq!(r, Refusal::TooLarge);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_special_file_in_a_folder_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("folder");
+    fs::create_dir(&folder).unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(folder.join("puddle.db")).unwrap();
+    let r = refusal(stage_folder(&folder, &root.path().join("staging")));
+    assert_eq!(r, Refusal::UnknownEntry("puddle.db".into()));
+}
+
+#[test]
+fn a_manifest_that_cannot_be_read_is_an_io_error() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("folder");
+    fs::create_dir_all(folder.join("manifest.json")).unwrap();
+    fs::write(folder.join("puddle.db"), good_db(root.path())).unwrap();
+    let err = stage_folder(&folder, &root.path().join("staging")).unwrap_err();
+    assert!(matches!(err, RestoreError::Io { .. }), "{err}");
+}
+
+#[test]
+fn settings_are_read_by_key_with_nested_folders_odd_files_and_no_temp_files() {
+    let root = tempfile::tempdir().unwrap();
+    let settings = root.path().join("settings");
+    fs::create_dir_all(settings.join("workspaces")).unwrap();
+    fs::write(settings.join("global.json"), br#"{"version":1,"a":1}"#).unwrap();
+    fs::write(settings.join("workspaces").join("w.json"), br#"{"b":2}"#).unwrap();
+    fs::write(settings.join("notes.txt"), b"plain text").unwrap();
+    fs::write(settings.join(".global.json.9.tmp"), b"half").unwrap();
+    let entries = settings_entries(&settings);
+    let keys: Vec<&str> = entries.keys().map(String::as_str).collect();
+    assert_eq!(keys, ["global.json#a", "notes.txt", "workspaces/w.json#b"]);
+    assert_eq!(entries["notes.txt"], "plain text");
+    assert!(settings_entries(&root.path().join("missing")).is_empty());
+}
+
+#[test]
+fn a_workspace_list_that_is_not_json_names_no_workspaces() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("workspaces.json");
+    assert!(workspace_names(&path).is_empty());
+    fs::write(&path, b"{ not json").unwrap();
+    assert!(workspace_names(&path).is_empty());
+    fs::write(&path, br#"{"workspaces":[{"id":"ws-a"},{"name":"no id"}]}"#).unwrap();
+    assert_eq!(
+        workspace_names(&path),
+        [("ws-a".to_owned(), "ws-a".to_owned())]
+    );
+}
+
+#[test]
+fn the_preview_lists_the_secret_variables_of_the_backup() {
+    let root = tempfile::tempdir().unwrap();
+    let there = data_folder(root.path(), "there");
+    let here = data_folder(root.path(), "here");
+    sql(
+        &there,
+        "INSERT INTO env_vars (workspace_id, name, kind, secret_id, hosts, changed_at, user_id)
+         VALUES (NULL, 'TOKEN', 'secret', 'sid-1', 'example.org', 1, 1);",
+    );
+    let mut archive = crate::backup_archive(&there).unwrap();
+    let mut bytes = Vec::new();
+    Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
+    let staged = stage_archive(&bytes[..], &here.restore_staging()).unwrap();
+    let got = facts(&here, &staged).unwrap();
+    assert_eq!(
+        got.secret_refs,
+        [SecretRef {
+            workspace_id: None,
+            name: "TOKEN".into(),
+            secret_id: "sid-1".into()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_machine_with_no_database_fails_the_preview_as_a_failure_not_a_refusal() {
+    use puddle_api::RestoreService as _;
+    let root = tempfile::tempdir().unwrap();
+    let there = data_folder(root.path(), "there");
+    let mut archive = crate::backup_archive(&there).unwrap();
+    let mut bytes = Vec::new();
+    Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
+    let nowhere = HostPaths::new(root.path().join("nowhere"));
+    let err = service_for(&nowhere)
+        .preview(upload_of(bytes))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, RestoreServiceError::Failed(_)), "{err:?}");
+    // The staged copy of a failed preview is not left behind.
+    assert_eq!(fs::read_dir(nowhere.restore_staging()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn an_upload_that_stops_is_a_failure_that_says_so() {
+    use futures_util::StreamExt as _;
+    use puddle_api::RestoreService as _;
+    let root = tempfile::tempdir().unwrap();
+    let here = data_folder(root.path(), "here");
+    let broken = futures_util::stream::iter([Err(io::Error::other("connection reset"))]).boxed();
+    let err = service_for(&here).preview(broken).await.unwrap_err();
+    assert!(
+        matches!(&err, RestoreServiceError::Failed(m) if m.contains("the upload stopped")),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn confirming_names_what_is_wrong_in_the_words_of_the_failure() {
+    use puddle_api::RestoreService as _;
+    use puddle_api::wire::RestoreMode;
+    let root = tempfile::tempdir().unwrap();
+    let there = data_folder(root.path(), "there");
+    let here = data_folder(root.path(), "here");
+    let service = service_for(&here);
+    let mut archive = crate::backup_archive(&there).unwrap();
+    let mut bytes = Vec::new();
+    Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
+    let id = service.preview(upload_of(bytes)).await.unwrap().staging_id;
+
+    // Not staged.
+    let err = service
+        .apply(&"0".repeat(32), RestoreMode::Add)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, RestoreServiceError::NotStaged(_)), "{err:?}");
+    // The safety copy cannot be written: a failure of this machine.
+    fs::write(here.safety_copies(), b"in the way").unwrap();
+    let err = service.apply(&id, RestoreMode::Add).await.unwrap_err();
+    assert!(matches!(err, RestoreServiceError::Failed(_)), "{err:?}");
+    fs::remove_file(here.safety_copies()).unwrap();
+    // A restore already waits: the user's to read.
+    service.apply(&id, RestoreMode::Replace).await.unwrap();
+    let again = service.apply(&id, RestoreMode::Add).await.unwrap_err();
+    assert!(
+        matches!(
+            again,
+            RestoreServiceError::NotStaged(_) | RestoreServiceError::Refused(_)
+        ),
+        "{again:?}"
+    );
+    // A second staged copy meets the waiting one.
+    let mut archive = crate::backup_archive(&there).unwrap();
+    let mut bytes = Vec::new();
+    Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
+    let second = service.preview(upload_of(bytes)).await.unwrap().staging_id;
+    let waiting = service.apply(&second, RestoreMode::Add).await.unwrap_err();
+    assert!(
+        matches!(&waiting, RestoreServiceError::Refused(m) if m.contains("already waiting")),
+        "{waiting:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_result_is_read_in_either_mode_and_an_unreadable_one_is_a_failure() {
+    use puddle_api::RestoreService as _;
+    let root = tempfile::tempdir().unwrap();
+    let here = data_folder(root.path(), "here");
+    let service = service_for(&here);
+    assert!(service.result().await.unwrap().is_none());
+    for (mode, wire) in [
+        (apply::ApplyMode::Add, puddle_api::wire::RestoreMode::Add),
+        (
+            apply::ApplyMode::Replace,
+            puddle_api::wire::RestoreMode::Replace,
+        ),
+    ] {
+        let outcome = apply::RestoreOutcome {
+            applied: true,
+            mode,
+            safety_copy: "20231114T221320Z".into(),
+            at_ms: 5,
+            message: "done".into(),
+        };
+        fs::write(here.restore_result(), serde_json::to_vec(&outcome).unwrap()).unwrap();
+        let got = service.result().await.unwrap().unwrap();
+        assert_eq!(
+            (got.mode, got.at_ms, got.message.as_str()),
+            (wire, 5, "done")
+        );
+    }
+    fs::write(here.restore_result(), b"{ not json").unwrap();
+    assert!(matches!(
+        service.result().await.unwrap_err(),
+        RestoreServiceError::Failed(_)
+    ));
+    fs::remove_file(here.restore_result()).unwrap();
+    // A folder where the file should be cannot be read or removed.
+    fs::create_dir(here.restore_result()).unwrap();
+    assert!(matches!(
+        service.result().await.unwrap_err(),
+        RestoreServiceError::Failed(_)
+    ));
+    assert!(matches!(
+        service.dismiss_result().await.unwrap_err(),
+        RestoreServiceError::Failed(_)
+    ));
+    fs::remove_dir(here.restore_result()).unwrap();
+    service.dismiss_result().await.unwrap();
+}
+
+#[tokio::test]
+async fn safety_copies_are_listed_newest_first_and_only_a_real_one_is_deleted() {
+    use puddle_api::RestoreService as _;
+    let root = tempfile::tempdir().unwrap();
+    let here = data_folder(root.path(), "here");
+    let service = service_for(&here);
+    assert!(service.safety_copies().await.unwrap().is_empty());
+    for name in ["20231001T000000Z", "20231114T221320Z"] {
+        let dir = here.safety_copies().join(name);
+        fs::create_dir_all(dir.join("settings")).unwrap();
+        fs::write(dir.join("puddle.db"), vec![0_u8; 100]).unwrap();
+        fs::write(dir.join("settings").join("global.json"), b"{}").unwrap();
+    }
+    // Neither a stray file nor a folder with another name is a safety copy.
+    fs::write(here.safety_copies().join("20231201T000000Z"), b"a file").unwrap();
+    fs::create_dir(here.safety_copies().join("not-a-copy")).unwrap();
+    let copies = service.safety_copies().await.unwrap();
+    let names: Vec<&str> = copies.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["20231114T221320Z", "20231001T000000Z"]);
+    assert_eq!(copies[0].size_bytes, 102);
+
+    service
+        .delete_safety_copy("20231001T000000Z")
+        .await
+        .unwrap();
+    assert!(!here.safety_copies().join("20231001T000000Z").exists());
+    for bad in [
+        "20231001T000000Z",
+        "../here",
+        "not-a-copy",
+        "20231201T000000Z",
+    ] {
+        let err = service.delete_safety_copy(bad).await.unwrap_err();
+        assert!(
+            matches!(err, RestoreServiceError::NotStaged(_)),
+            "{bad}: {err:?}"
+        );
+    }
+    assert!(here.safety_copies().join("not-a-copy").exists());
+
+    // A file where the safety copies' folder should be cannot be listed.
+    fs::remove_dir_all(here.safety_copies()).unwrap();
+    fs::write(here.safety_copies(), b"in the way").unwrap();
+    assert!(matches!(
+        service.safety_copies().await.unwrap_err(),
+        RestoreServiceError::Failed(_)
+    ));
+}
+
+#[test]
+fn a_safety_copy_name_is_a_utc_time_and_the_summary_reads_in_both_modes() {
+    assert!(is_safety_name("20231114T221320Z"));
+    for bad in [
+        "",
+        "20231114221320Z",
+        "20231114T22132Z",
+        "2023111aT221320Z",
+        "20231114T221320z",
+    ] {
+        assert!(!is_safety_name(bad), "{bad}");
+    }
+    let part = |add, differ, only_here| RestorePart {
+        name: RestorePartName::Rules,
+        in_backup: 0,
+        add,
+        differ,
+        same: 0,
+        only_here,
+    };
+    let parts = [part(2, 1, 3), part(1, 1, 0)];
+    assert_eq!(
+        summarise(apply::ApplyMode::Add, &parts),
+        "Added 3 entries that were missing; kept your version of 2 that differ."
+    );
+    assert_eq!(
+        summarise(apply::ApplyMode::Replace, &parts),
+        "Added 3, replaced 2 and dropped 3 entries that were not in the backup."
+    );
+}

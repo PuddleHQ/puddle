@@ -190,3 +190,79 @@ fn a_backup_without_a_list_leaves_the_present_list_alone_and_a_bad_one_is_refuse
     let err = book(ApplyMode::Add, &here, &bad, &new, &restored()).unwrap_err();
     assert!(err.to_string().contains("not a workspace list"), "{err}");
 }
+
+#[test]
+fn a_backup_with_no_settings_folder_adds_and_replaces_nothing_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here");
+    write(&here, "global.json", r#"{"a":1}"#);
+    let nothing = dir.path().join("nothing");
+    let new = dir.path().join("new");
+    settings(ApplyMode::Add, &here, &nothing, &new).unwrap();
+    assert_eq!(read(&new.join("global.json"))["a"], 1);
+    let replaced = dir.path().join("replaced");
+    settings(ApplyMode::Replace, &here, &nothing, &replaced).unwrap();
+    assert!(!replaced.exists());
+}
+
+#[test]
+fn nested_present_folders_are_copied_and_a_document_that_is_not_json_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here");
+    let there = dir.path().join("there");
+    write(&here, "workspaces/deep/w.json", r#"{"a":1}"#);
+    write(&here, "notes.txt", "mine");
+    write(&there, "notes.txt", "theirs");
+    write(&there, "workspaces/deep/w.json", "not json at all");
+    let new = dir.path().join("new");
+    settings(ApplyMode::Add, &here, &there, &new).unwrap();
+    assert_eq!(fs::read_to_string(new.join("notes.txt")).unwrap(), "mine");
+    assert_eq!(read(&new.join("workspaces/deep/w.json"))["a"], 1);
+}
+
+#[test]
+fn a_document_that_cannot_be_read_back_is_an_io_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here");
+    let there = dir.path().join("there");
+    write(&here, "a.json", "{}");
+    write(&there, "a.json", r#"{"b":1}"#);
+    let new = dir.path().join("new");
+    // A folder where the merged document goes: reading it back fails with something other than missing.
+    fs::create_dir_all(new.join("a.json")).unwrap();
+    let err = add_missing(&there, Path::new(""), &new).unwrap_err();
+    assert!(matches!(err, RestoreError::Io { .. }), "{err}");
+}
+
+#[test]
+fn a_workspace_list_that_cannot_be_read_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder where the list should be.
+    let err = read_book(dir.path()).unwrap_err();
+    assert!(err.contains("cannot read"), "{err}");
+}
+
+#[test]
+fn a_present_list_without_workspaces_takes_the_backups_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = write(dir.path(), "here.json", r#"{"version":4,"workspaces":[]}"#);
+    let there = write(
+        dir.path(),
+        "there.json",
+        r#"{"version":4,"workspaces":[{"id":"ws-x","name":"X","owner":1}]}"#,
+    );
+    let new = dir.path().join("new.json");
+    book(ApplyMode::Add, &here, &there, &new, &restored()).unwrap();
+    assert_eq!(read(&new)["workspaces"][0]["owner"], 7);
+    // No list here at all.
+    let new = dir.path().join("new2.json");
+    book(
+        ApplyMode::Add,
+        &dir.path().join("missing.json"),
+        &there,
+        &new,
+        &restored(),
+    )
+    .unwrap();
+    assert_eq!(read(&new)["workspaces"][0]["id"], "ws-x");
+}

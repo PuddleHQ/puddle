@@ -404,3 +404,69 @@ fn restored_files_are_owner_only() {
 fn utc_names_sort_by_time() {
     assert_eq!(utc_name(1_700_000_000_000), "20231114T221320Z");
 }
+
+#[test]
+fn a_second_confirm_while_one_waits_is_refused_even_with_another_staged_copy() {
+    let s = setup();
+    request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    // A second upload, staged while the first waits.
+    let second = data_folder(s.root.path(), "second", &[], BOOK_THERE, "{}");
+    let mut archive = crate::backup_archive(&second).unwrap();
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
+    let staged = stage_archive(&bytes[..], &s.here.restore_staging()).unwrap();
+    let err = request(&s.here, &staged.id, ApplyMode::Add, "").unwrap_err();
+    assert!(matches!(err, RequestError::AlreadyPending), "{err}");
+    assert!(err.to_string().contains("already waiting"), "{err}");
+    assert!(s.here.restore_staging().join(&staged.id).is_dir());
+}
+
+#[test]
+fn a_machine_with_no_database_takes_the_backups_as_it_is() {
+    let s = setup();
+    request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    // The live database is gone (a data folder that never started).
+    fs::remove_file(s.here.store()).unwrap();
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(outcome.applied, "{}", outcome.message);
+    assert_eq!(rules(&s.here), ["a.example.org", "new.example.org"]);
+}
+
+#[test]
+fn a_marker_that_cannot_be_read_at_all_is_set_aside_like_one_that_is_not_json() {
+    let s = setup();
+    request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    let marker = s.here.restore_pending().join("marker.json");
+    fs::remove_file(&marker).unwrap();
+    // A folder where the marker should be: reading it fails with something other than "missing".
+    fs::create_dir(&marker).unwrap();
+    let before = rules(&s.here);
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(!outcome.applied);
+    assert!(
+        outcome.message.contains("marker could not be read"),
+        "{}",
+        outcome.message
+    );
+    assert_eq!(rules(&s.here), before);
+}
+
+#[test]
+fn rolling_back_a_part_leaves_a_part_that_was_never_moved_alone() {
+    let s = setup();
+    let old = s.root.path().join("old");
+    fs::create_dir_all(&old).unwrap();
+    let before = fs::read(s.here.workspace_book()).unwrap();
+    roll_back_part(&s.here, &old, "workspaces.json").unwrap();
+    assert_eq!(fs::read(s.here.workspace_book()).unwrap(), before);
+    // A part that was moved aside comes back over what is live (a file, or a whole folder).
+    fs::rename(s.here.settings(), old.join("settings")).unwrap();
+    fs::create_dir_all(s.here.settings().join("restored")).unwrap();
+    roll_back_part(&s.here, &old, "settings").unwrap();
+    assert!(s.here.settings().join("global.json").is_file());
+    assert!(!s.here.settings().join("restored").exists());
+    fs::rename(s.here.workspace_book(), old.join("workspaces.json")).unwrap();
+    fs::write(s.here.workspace_book(), b"restored").unwrap();
+    roll_back_part(&s.here, &old, "workspaces.json").unwrap();
+    assert_eq!(fs::read(s.here.workspace_book()).unwrap(), before);
+}

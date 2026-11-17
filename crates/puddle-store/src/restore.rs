@@ -66,7 +66,7 @@ pub fn check_staged_database(
         Ok(answer) => return Ok(Err(DatabaseRefusal::Integrity(answer))),
         Err(e) => return Ok(Err(DatabaseRefusal::NotPuddle(e.to_string()))),
     }
-    let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let version: u32 = scalar(&conn, "PRAGMA user_version")?;
     if version == 0 {
         return Ok(Err(DatabaseRefusal::NotPuddle(
             "it has no schema version".into(),
@@ -159,6 +159,18 @@ fn user_key(db: &str) -> String {
     )
 }
 
+/// Attaches the backup database as `backup`.
+fn attach(conn: &Connection, backup: &Path) -> Result<(), StoreError> {
+    let path = backup.to_string_lossy();
+    conn.execute("ATTACH DATABASE ?1 AS backup", [path.as_ref()])?;
+    Ok(())
+}
+
+/// The one value of a query that returns one row and one column.
+fn scalar<T: rusqlite::types::FromSql>(conn: &Connection, sql: &str) -> Result<T, StoreError> {
+    Ok(conn.query_row(sql, [], |r| r.get(0))?)
+}
+
 /// Entries of one part keyed by natural key, each with a signature of what else the entry holds.
 type Keyed = BTreeMap<String, String>;
 
@@ -233,10 +245,7 @@ fn queries(db: &str) -> [(&'static str, String); 6] {
 pub fn preview_merge(present: &Path, backup: &Path) -> Result<DatabasePreview, StoreError> {
     let conn = Connection::open_with_flags(present, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    conn.execute(
-        "ATTACH DATABASE ?1 AS backup",
-        [backup.to_string_lossy().as_ref()],
-    )?;
+    attach(&conn, backup)?;
     conn.pragma_update(None, "query_only", true)?;
     let mut maps: BTreeMap<&str, (Keyed, Keyed)> = BTreeMap::new();
     for ((part, here), (_, there)) in queries("main").into_iter().zip(queries("backup")) {
@@ -476,16 +485,28 @@ fn copy_rows(conn: &Connection, t: &Table) -> Result<(), StoreError> {
         })
         .collect::<Vec<_>>()
         .join(" AND ");
-    conn.execute(
-        &format!(
-            "INSERT OR IGNORE INTO main.{name} ({list}) SELECT {values} FROM backup.{name} b \
-             WHERE NOT EXISTS (SELECT 1 FROM main.{name} m WHERE {same})",
-            name = t.name
-        ),
-        [],
-    )?;
+    let sql = format!(
+        "INSERT OR IGNORE INTO main.{name} ({list}) SELECT {values} FROM backup.{name} b \
+         WHERE NOT EXISTS (SELECT 1 FROM main.{name} m WHERE {same})",
+        name = t.name
+    );
+    conn.execute(&sql, [])?;
     Ok(())
 }
+
+/// How a row of the backup and one here are the same row, for the id maps.
+const SAME_SET: &str = concat!(
+    "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id)",
+    " AND m.name = b.name COLLATE NOCASE"
+);
+const SAME_ENV: &str = concat!(
+    "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id)",
+    " AND ifnull(m.workspace_id, '') = ifnull(b.workspace_id, '') AND m.name = b.name"
+);
+const SAME_IDENTITY: &str = concat!(
+    "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id)",
+    " AND m.label = b.label COLLATE NOCASE"
+);
 
 /// Builds `temp.<map>` from the rows of `t` that now exist on both sides, matched by their key.
 fn map_rows(conn: &Connection, map: &str, table: &str, key: &str) -> Result<(), StoreError> {
@@ -558,10 +579,7 @@ fn merge_into(
     mode: RestoreMode,
 ) -> Result<RestoredDatabase, StoreError> {
     let mut conn = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-    conn.execute(
-        "ATTACH DATABASE ?1 AS backup",
-        [backup.to_string_lossy().as_ref()],
-    )?;
+    attach(&conn, backup)?;
     let tx = conn.transaction()?;
     map_users(&tx)?;
     if mode == RestoreMode::Replace {
@@ -574,32 +592,13 @@ fn merge_into(
     for t in &carried {
         copy_rows(&tx, t)?;
         match t.name {
-            "rule_sets" => map_rows(
-                &tx,
-                "smap",
-                "rule_sets",
-                "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id) AND m.name = b.name COLLATE NOCASE",
-            )?,
-            "env_vars" => map_rows(
-                &tx,
-                "emap",
-                "env_vars",
-                "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id) \
-                 AND ifnull(m.workspace_id, '') = ifnull(b.workspace_id, '') AND m.name = b.name",
-            )?,
-            "identities" => map_rows(
-                &tx,
-                "imap",
-                "identities",
-                "m.user_id = (SELECT p_id FROM temp.umap WHERE b_id = b.user_id) AND m.label = b.label COLLATE NOCASE",
-            )?,
+            "rule_sets" => map_rows(&tx, "smap", "rule_sets", SAME_SET)?,
+            "env_vars" => map_rows(&tx, "emap", "env_vars", SAME_ENV)?,
+            "identities" => map_rows(&tx, "imap", "identities", SAME_IDENTITY)?,
             _ => {}
         }
     }
-    let log_is_empty: bool =
-        tx.query_row("SELECT NOT EXISTS (SELECT 1 FROM main.audit)", [], |r| {
-            r.get(0)
-        })?;
+    let log_is_empty: bool = scalar(&tx, "SELECT NOT EXISTS (SELECT 1 FROM main.audit)")?;
     if log_is_empty {
         copy_audit(&tx)?;
     }
@@ -608,9 +607,7 @@ fn merge_into(
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<(i64, i64)>, _>>()?
     };
-    let broken: i64 = tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| {
-        r.get(0)
-    })?;
+    let broken: i64 = scalar(&tx, "SELECT count(*) FROM pragma_foreign_key_check")?;
     if broken > 0 {
         return Err(StoreError::Database(rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
@@ -619,13 +616,10 @@ fn merge_into(
             )),
         )));
     }
-    let owner_id: i64 =
-        tx.query_row("SELECT id FROM main.users WHERE role = 'owner'", [], |r| {
-            r.get(0)
-        })?;
+    let owner_id: i64 = scalar(&tx, "SELECT id FROM main.users WHERE role = 'owner'")?;
     tx.commit()?;
     conn.execute("DETACH DATABASE backup", [])?;
-    let check: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    let check: String = scalar(&conn, "PRAGMA integrity_check")?;
     verdict(&check)?;
     Ok(RestoredDatabase { user_map, owner_id })
 }
@@ -647,12 +641,10 @@ fn copy_audit(conn: &Connection) -> Result<(), StoreError> {
         .map(|c| value_of("audit", c))
         .collect::<Vec<_>>()
         .join(", ");
-    conn.execute(
-        &format!(
-            "INSERT INTO main.audit ({list}) SELECT {values} FROM backup.audit b ORDER BY b.id"
-        ),
-        [],
-    )?;
+    let sql = format!(
+        "INSERT INTO main.audit ({list}) SELECT {values} FROM backup.audit b ORDER BY b.id"
+    );
+    conn.execute(&sql, [])?;
     Ok(())
 }
 

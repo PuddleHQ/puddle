@@ -37,11 +37,16 @@ pub(crate) fn exclude(names: &[String], allow: bool) -> Outcome {
 }
 
 /// One executable name, for the current user only (`bAllUsers` FALSE: no administrator needed).
-#[expect(unsafe_code, reason = "Windows Error Reporting registration")]
+#[expect(
+    unsafe_code,
+    reason = "the Windows Error Reporting calls are raw FFI; no safe wrapper exists"
+)]
 fn set_excluded(name: &str, excluded: bool) -> Result<(), u32> {
     let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
     // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call; the second
-    // argument is FALSE, so the per-user list in HKCU changes, not the machine's.
+    // argument is FALSE, so the per-user list in HKCU changes, not the machine's. The API
+    // documents a limit of `MAX_PATH` characters for a name; the names here are file names of
+    // executables, which stay within it.
     let hr = unsafe {
         if excluded {
             WerAddExcludedApplication(wide.as_ptr(), 0)

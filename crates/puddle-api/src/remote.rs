@@ -118,7 +118,15 @@ impl PublicHost {
         let (host, port) = match text.strip_prefix('[') {
             Some(rest) => {
                 let (inside, after) = rest.split_once(']').ok_or_else(|| fail("a missing `]`"))?;
-                (format!("[{inside}]"), after.strip_prefix(':'))
+                let port = match after {
+                    "" => None,
+                    _ => Some(
+                        after
+                            .strip_prefix(':')
+                            .ok_or_else(|| fail("only a port may follow the `]`"))?,
+                    ),
+                };
+                (format!("[{inside}]"), port)
             }
             None => match text.split_once(':') {
                 Some((host, port)) => (host.to_owned(), Some(port)),

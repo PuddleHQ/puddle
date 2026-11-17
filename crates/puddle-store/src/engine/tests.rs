@@ -433,9 +433,9 @@ fn the_plain_precedence_lets_a_more_specific_set_block_beat_your_rule() {
         rule_id: Some(RuleId(2)),
         pattern: PatternKind::Exact,
     });
-    assert_eq!(
-        reference_p3(&index, &name, &h, 5, SuffixAllows::Count),
-        expected
+    assert_among_top_ties(
+        expected,
+        &reference_p3(&index, &name, &h, 5, SuffixAllows::Count),
     );
     assert_eq!(
         index
@@ -783,9 +783,11 @@ fn reference_p3(
     h: &Host,
     now: u64,
     suffix_allows: SuffixAllows,
-) -> Option<Decision> {
+) -> Vec<Decision> {
     // A workspace that is nobody's has no rules.
-    let owner = index.owner_of(workspace)?;
+    let Some(owner) = index.owner_of(workspace) else {
+        return Vec::new();
+    };
     let ignore = suffix_allows == SuffixAllows::Ignore;
     // (precedence, specificity, scope rank, deny, the hit)
     let mut all: Vec<Candidate<'_>> = Vec::new();
@@ -828,10 +830,30 @@ fn reference_p3(
             ));
         }
     }
-    // Hits that tie on all four decide the same way, so any of them will do.
+    // Hits that tie on all four keys differ in `rule_id`, and the index may pick any of them:
+    // return every top tie, empty when nothing matches.
+    let key = |c: &Candidate<'_>| (c.0, c.1, c.2, c.3);
+    let Some(best) = all.iter().map(key).max() else {
+        return Vec::new();
+    };
     all.iter()
-        .max_by_key(|(p, spec, rank, deny, _)| (*p, *spec, *rank, *deny))
+        .filter(|c| key(c) == best)
         .map(|(.., hit)| hit.decision())
+        .collect()
+}
+
+/// The index's answer must be one of the reference's top ties, and `None` only when there is none.
+fn assert_among_top_ties(got: Option<Decision>, ties: &[Decision]) {
+    match got {
+        Some(d) => assert!(
+            ties.contains(&d),
+            "{d:?} is not among the top ties {ties:?}"
+        ),
+        None => assert!(
+            ties.is_empty(),
+            "no decision, but the top ties are {ties:?}"
+        ),
+    }
 }
 
 #[test]
@@ -851,9 +873,9 @@ fn at_equal_precedence_a_more_specific_set_deny_beats_a_less_specific_rule_of_th
         index.decide(workspace, h, now, mode).map(Hit::decision),
         Some(expected)
     );
-    assert_eq!(
-        reference_p3(&index, workspace, h, now, mode),
-        Some(expected)
+    assert_among_top_ties(
+        Some(expected),
+        &reference_p3(&index, workspace, h, now, mode),
     );
 }
 
@@ -987,7 +1009,8 @@ proptest! {
     ) {
         let mode = if ignore { SuffixAllows::Ignore } else { SuffixAllows::Count };
         let got = index.decide(&sb(workspace), &host(h), now, mode).map(Hit::decision);
-        prop_assert_eq!(got, reference_p3(&index, &sb(workspace), &host(h), now, mode));
+        let ties = reference_p3(&index, &sb(workspace), &host(h), now, mode);
+        assert_among_top_ties(got, &ties);
     }
 
     #[test]

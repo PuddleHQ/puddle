@@ -199,6 +199,19 @@ fn destination_inside_the_data_folder_is_refused() {
 }
 
 #[test]
+fn relative_one_component_destination_is_judged_against_the_working_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    let inside = refuse_inside(
+        &paths.data().join("settings"),
+        paths.data(),
+        Path::new("out"),
+    );
+    assert!(matches!(inside, Err(BackupError::InsideData(_))));
+    refuse_inside(root.path(), paths.data(), Path::new("out")).unwrap();
+}
+
+#[test]
 fn missing_database_is_refused_and_creates_nothing() {
     let root = tempfile::tempdir().unwrap();
     let paths = HostPaths::new(root.path().join("data"));

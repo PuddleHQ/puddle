@@ -17,7 +17,7 @@ use std::time::SystemTime;
 
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    KeyUsagePurpose, SanType,
+    KeyUsagePurpose, PublicKeyData as _, SanType,
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -133,8 +133,17 @@ fn generate(
     ))
 }
 
+/// The certificate's public key is the one `key` signs with.
+fn key_belongs_to(cert_der: &[u8], key: &PrivateKey) -> bool {
+    let Ok((_, cert)) = x509_parser::parse_x509_certificate(cert_der) else {
+        return false;
+    };
+    KeyPair::try_from(key.pkcs8_der())
+        .is_ok_and(|pair| pair.subject_public_key_info() == cert.public_key().raw)
+}
+
 /// The stored leaf, if the file is owner-only, parses, is an end-entity certificate naming
-/// exactly these addresses and names, and has at least [`RENEW_WITHIN`] left.
+/// exactly these addresses and names, is paired with its own key, and has at least [`RENEW_WITHIN`] left.
 fn load(dir: &Path, ips: &[IpAddr], dns_names: &[String], now: SystemTime) -> Option<ListenerCert> {
     let file = fs::File::open(dir.join(FILE)).ok()?;
     // A key file others can read is a leaked key: replace it, never use it.
@@ -153,6 +162,8 @@ fn load(dir: &Path, ips: &[IpAddr], dns_names: &[String], now: SystemTime) -> Op
         }
     }
     let (cert_der, key) = (cert?, key?);
+    // A leaf next to a key that is not its own would serve a handshake that fails every time.
+    key_belongs_to(&cert_der, &key).then_some(())?;
     let info = leaf::inspect(&cert_der).ok()?;
     let mut want_dns: Vec<&str> = dns_names.iter().map(String::as_str).collect();
     let mut have_dns: Vec<&str> = info.dns_names.iter().map(String::as_str).collect();

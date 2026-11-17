@@ -70,6 +70,15 @@ describe("the prototype guard", () => {
     ).toBe("TypeError");
   });
 
+  it("leaves each built-in as a getter and setter that can't be redefined", () => {
+    expect(
+      underGuard(`
+        const found = Object.getOwnPropertyDescriptor(Object.prototype, "toString");
+        return [typeof found.get, typeof found.set, found.configurable, "value" in found];
+      `),
+    ).toEqual(["function", "function", false, false]);
+  });
+
   it("refuses an own property on an object that is frozen", () => {
     expect(thrown(`const o = Object.freeze({}); o.toString = () => "x";`)).toBe(
       "TypeError",

@@ -8,7 +8,8 @@
 // when it loads, so a frozen prototype broke the Terminal tab. Here each data property of the
 // prototype becomes a getter and setter first: reading gives the built-in, and assigning defines the
 // property on the object assigned to. Assigning on the prototype itself still throws, and the
-// freeze still refuses new or changed properties on it.
+// freeze still refuses new or changed properties on it. Seen through
+// `Object.getOwnPropertyDescriptor`, the built-ins are now getters and setters, not values.
 (function () {
   "use strict";
   const proto = Object.prototype;

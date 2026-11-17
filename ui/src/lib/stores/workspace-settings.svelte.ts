@@ -101,10 +101,8 @@ export class WorkspaceSettings {
     // One save at a time: each body is built from the answer to the one before, so a quick
     // second change cannot overwrite the first.
     const run = this.#saving.then(() => this.#send(layer, tools));
-    this.#saving = run.then(
-      () => undefined,
-      () => undefined,
-    );
+    // `#send` answers every failure as a result, so the chain never breaks.
+    this.#saving = run.then(() => undefined);
     return run;
   }
 

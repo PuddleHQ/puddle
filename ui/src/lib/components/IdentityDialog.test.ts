@@ -211,7 +211,7 @@ describe("a token pasted into the dialog", () => {
 });
 
 describe("closing while a save is running", () => {
-  it("does not take back the tokens the saved identity points at", async () => {
+  async function pasteAndSave() {
     mount({ mode: "create" });
     await type("Identity name", "Home");
     await fireEvent.input(screen.getByLabelText("Author name"), {
@@ -229,19 +229,32 @@ describe("closing while a save is running", () => {
       screen.getByRole("button", { name: "Add credential" }),
     );
     await screen.findByRole("button", { name: /^Remove Pasted token/ });
-    const real = store.create.bind(store);
     let release: () => void = () => {};
     const gate = new Promise<void>((done) => (release = done));
+    const real = store.create.bind(store);
     vi.spyOn(store, "create").mockImplementation(async (request) => {
       await gate;
       return real(request);
     });
     await fireEvent.click(screen.getByRole("button", { name: "Add identity" }));
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    return release;
+  }
+
+  it("does not take back the tokens the saved identity points at", async () => {
+    const release = await pasteAndSave();
     release();
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     await Promise.resolve();
     expect(api.tokens).toHaveLength(1);
+  });
+
+  it("takes the tokens back when that save then fails", async () => {
+    const release = await pasteAndSave();
+    api.refuse = { status: 422, message: "no" };
+    release();
+    await waitFor(() => expect(api.tokens).toHaveLength(0));
+    expect(onSaved).not.toHaveBeenCalled();
   });
 });
 

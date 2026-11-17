@@ -22,7 +22,7 @@ use puddle_workspace::{
 };
 
 use crate::common;
-use common::{command, git, shells, volume};
+use common::{command, git, hostile_checkout, hostile_commands_that_ran, shells, volume};
 
 fn id() -> WorkspaceId {
     WorkspaceId::new("acme").unwrap()
@@ -197,6 +197,27 @@ async fn each_checkout_says_where_it_came_from_and_what_state_it_is_in() {
             !tmp.path().join("pwned").exists(),
             "{shell}: the repo's fsmonitor ran"
         );
+    }
+}
+
+/// The listing runs as root, so nothing the checkout's own config names may run while it reads
+/// whether the tree is dirty.
+#[tokio::test]
+async fn a_checkout_s_config_cannot_make_the_listing_run_a_program() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = tmp.path().join("vol");
+        let markers = hostile_checkout(tmp.path(), &vol);
+        let found = list(shell, &vol).await;
+        assert_eq!(
+            hostile_commands_that_ran(&markers),
+            Vec::<String>::new(),
+            "{shell}"
+        );
+        let [evil] = found.checkouts.as_slice() else {
+            panic!("{shell}: {found:?}");
+        };
+        assert!(evil.dirty && evil.head.is_some(), "{shell}: {evil:?}");
     }
 }
 

@@ -217,7 +217,7 @@ impl MsbRuntime {
         }
     }
 
-    /// Volume name → the running sandbox that holds it.
+    /// Volume name → the sandbox that holds it (see [`holders`]).
     async fn volume_holders(&self) -> Result<BTreeMap<String, String>, ComputeError> {
         let mounters = self
             .records()

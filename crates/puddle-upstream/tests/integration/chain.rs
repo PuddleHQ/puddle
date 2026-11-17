@@ -187,6 +187,33 @@ async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
 }
 
 #[tokio::test]
+async fn the_remembered_basic_header_never_shows_in_debug_output() {
+    let secret = fixture::password("secret");
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "alice".into(),
+        password: secret.clone(),
+    })
+    .await;
+    proxy.resolve_name("a.test", echo.addr);
+    let chain = chain(vec![via(&proxy)], basic("alice", &secret));
+    let dest = https("a.test");
+    let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
+    let mut connected = chain.connect(&request).await.unwrap();
+    round_trip(&mut connected.stream, b"one").await;
+    let header = proxy.seen()[1].proxy_authorization.clone().unwrap();
+    let encoded = header.strip_prefix("Basic ").unwrap();
+
+    let printed = format!("{chain:?}");
+    assert!(
+        printed.contains("Required"),
+        "the memo is printed: {printed}"
+    );
+    assert!(!printed.contains(encoded), "{printed}");
+    assert!(!printed.contains(&secret), "{printed}");
+}
+
+#[tokio::test]
 async fn forgetting_the_remembered_basic_headers_makes_the_next_connection_ask_again() {
     let secret = fixture::password("secret");
     let echo = start_echo().await;

@@ -73,6 +73,12 @@ pub(crate) fn shells() -> Vec<&'static str> {
 /// repository while the script under test reads it.
 #[cfg(unix)]
 pub(crate) fn git(dir: &Path, args: &[&str]) {
+    git_output(dir, args);
+}
+
+/// [`git`], returning what it printed.
+#[cfg(unix)]
+pub(crate) fn git_output(dir: &Path, args: &[&str]) -> String {
     let out = command("git")
         .args(args)
         .current_dir(dir)
@@ -92,6 +98,7 @@ pub(crate) fn git(dir: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
 /// A volume root with: ext4's `lost+found`, Puddle's `.puddle`, a checkout with every kind of
@@ -144,4 +151,130 @@ pub(crate) fn volume(root: &Path) -> PathBuf {
     git(&fresh, &["init", "-q"]);
     std::fs::write(fresh.join("x"), "x\n").unwrap();
     vol
+}
+
+/// Every way a checkout's own config or attributes could make `git status` or `git log` start a
+/// program, by the name of the marker file that program leaves.
+#[cfg(unix)]
+pub(crate) const HOSTILE_COMMANDS: [&str; 5] = [
+    "clean-filter",
+    "process-filter",
+    "index-hook",
+    "signature-check",
+    "submodule-filter",
+];
+
+/// Makes `vol/evil`: a checkout whose config names a program for each of [`HOSTILE_COMMANDS`]
+/// (a clean filter from `.gitattributes`, a process filter from `.git/info/attributes`, a
+/// `post-index-change` hook, a `gpg.program` with `log.showSignature` and a signed commit, and a
+/// clean filter in the config of a repository nested in it), with files whose content is
+/// unchanged but whose time is not, so git has to run the filters to compare them. It also has
+/// one untracked file, `new.txt`. Each program writes its marker in the returned folder.
+#[cfg(unix)]
+pub(crate) fn hostile_checkout(root: &Path, vol: &Path) -> PathBuf {
+    let markers = root.join("ran");
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&markers).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = |name: &str| {
+        format!(
+            "#!/bin/sh\n: > '{}'\nexec cat\n",
+            markers.join(name).display()
+        )
+    };
+    for name in HOSTILE_COMMANDS {
+        puddle_test_kit::write_executable(&bin.join(name), &script(name));
+    }
+    let program = |name: &str| bin.join(name).display().to_string();
+    let touch_old = |file: &Path| {
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(file)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    };
+
+    let evil = vol.join("evil");
+    std::fs::create_dir_all(&evil).unwrap();
+    git(&evil, &["init", "-q", "-b", "main"]);
+    std::fs::write(evil.join(".gitattributes"), "*.c filter=evil\n").unwrap();
+    std::fs::write(evil.join("a.c"), "c\n").unwrap();
+    std::fs::write(evil.join("a.p"), "p\n").unwrap();
+
+    let inner = evil.join("inner");
+    std::fs::create_dir(&inner).unwrap();
+    git(&inner, &["init", "-q", "-b", "main"]);
+    std::fs::write(inner.join(".gitattributes"), "*.s filter=nested\n").unwrap();
+    std::fs::write(inner.join("x.s"), "s\n").unwrap();
+    git(&inner, &["add", "."]);
+    git(&inner, &["commit", "-qm", "inner"]);
+    git(&evil, &["add", ".gitattributes", "a.c", "a.p", "inner"]);
+    git(&evil, &["commit", "-qm", "first"]);
+
+    // A signed commit on top: `log.showSignature` hands its signature to `gpg.program`.
+    let tree = git_output(&evil, &["rev-parse", "HEAD^{tree}"]);
+    let parent = git_output(&evil, &["rev-parse", "HEAD"]);
+    let commit = root.join("signed-commit");
+    std::fs::write(
+        &commit,
+        format!(
+            "tree {tree}\nparent {parent}\nauthor T <t@example.org> 1700000000 +0000\n\
+             committer T <t@example.org> 1700000000 +0000\n\
+             gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n\
+             \nsigned\n"
+        ),
+    )
+    .unwrap();
+    let signed = git_output(
+        &evil,
+        &[
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            commit.to_str().unwrap(),
+        ],
+    );
+    git(&evil, &["update-ref", "refs/heads/main", &signed]);
+
+    std::fs::write(evil.join(".git/info/attributes"), "*.p filter=info\n").unwrap();
+    let hooks = root.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    puddle_test_kit::write_executable(&hooks.join("post-index-change"), &script("index-hook"));
+    for (key, value) in [
+        ("filter.evil.clean", program("clean-filter")),
+        ("filter.evil.required", "true".to_owned()),
+        ("filter.info.process", program("process-filter")),
+        ("core.hooksPath", hooks.display().to_string()),
+        ("log.showSignature", "true".to_owned()),
+        ("gpg.program", program("signature-check")),
+    ] {
+        git(&evil, &["config", key, &value]);
+    }
+    git(
+        &inner,
+        &[
+            "config",
+            "filter.nested.clean",
+            &program("submodule-filter"),
+        ],
+    );
+    for file in [evil.join("a.c"), evil.join("a.p"), inner.join("x.s")] {
+        touch_old(&file);
+    }
+    std::fs::write(evil.join("new.txt"), "untracked\n").unwrap();
+    markers
+}
+
+/// The [`HOSTILE_COMMANDS`] that left a marker in `markers`.
+#[cfg(unix)]
+pub(crate) fn hostile_commands_that_ran(markers: &Path) -> Vec<String> {
+    let mut ran: Vec<String> = std::fs::read_dir(markers)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    ran.sort();
+    ran
 }

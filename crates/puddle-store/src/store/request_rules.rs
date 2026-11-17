@@ -57,7 +57,7 @@ impl RequestRule {
             methods: self.methods.names().to_vec(),
             path: self.path.to_string(),
             created_at: self.created_at,
-            created_by: actor_str(self.created_by),
+            created_by: self.created_by.into(),
             precedence: self.precedence.get(),
         }
     }

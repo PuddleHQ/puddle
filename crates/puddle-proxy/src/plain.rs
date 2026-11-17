@@ -454,3 +454,6 @@ fn upstream_request(
         .map_err(|_| Refusal::new("400 Bad Request", "malformed request"))?;
     Ok((request, tx, abort))
 }
+
+#[cfg(test)]
+mod tests;

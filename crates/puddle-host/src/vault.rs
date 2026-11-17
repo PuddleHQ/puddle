@@ -13,8 +13,13 @@ use puddle_types::{Problem, Problems};
 
 use crate::proxy_passwords::ID_PREFIX;
 
+mod admin;
 mod choose;
 
+pub use admin::{
+    MigrateOutcome, ResetOutcome, StoreState, VaultAdminError, VaultStatus, vault_migrate,
+    vault_reset, vault_status,
+};
 pub use choose::SecretSetup;
 pub(crate) use choose::{Chosen, open};
 use choose::{Probe, WriteWhenWorking};

@@ -65,7 +65,10 @@ mod ssh_login;
 mod ssh_target;
 mod terminals;
 mod vault;
-pub use vault::SecretSetup;
+pub use vault::{
+    MigrateOutcome, ResetOutcome, SecretSetup, StoreState, VaultAdminError, VaultStatus,
+    vault_migrate, vault_reset, vault_status,
+};
 mod vscode;
 mod workspaces;
 

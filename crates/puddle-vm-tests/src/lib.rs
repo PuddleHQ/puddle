@@ -54,6 +54,7 @@ mod bulk;
 mod driver;
 mod env;
 mod error;
+mod flush_trace;
 mod freeze;
 mod host_memory;
 pub mod load;
@@ -69,6 +70,7 @@ pub use browser::{
 pub use bulk::{BulkHost, STALL_AFTER_BYTES};
 pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
+pub use flush_trace::{FlushTrace, Flushes, flushes_between};
 pub use freeze::{FrozenProcess, Gaps, parse_ticks};
 #[cfg(target_os = "linux")]
 pub use host_memory::peak_resident_bytes;

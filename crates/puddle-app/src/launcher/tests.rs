@@ -99,7 +99,9 @@ fn target(front: SocketAddr, login: Option<EditorSignIn>) -> BrowserTarget {
 async fn a_browser_attach_signs_in_and_opens_the_workspace_s_window_on_the_origin() {
     let app = tauri::test::mock_app();
     let data = tempfile::tempdir().unwrap();
-    let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+    // A debug port is only asked of a real WebView2; the mock window opens as without it.
+    let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"))
+        .with_debug_port(Some(9341));
     launcher.install(windows());
     let secret = password("right");
     let (addr, logins) = front(&secret).await;
@@ -488,7 +490,11 @@ async fn before_the_windows_are_installed_nothing_opens_and_the_user_is_told() {
 async fn the_desktop_editor_goes_through_the_code_command_and_opens_no_window() {
     let app = tauri::test::mock_app();
     let mut launcher = AppLauncher::new(app.handle().clone(), "unused".into());
-    launcher.desktop = VsCodeLauncher::with_program("puddle-test-no-such-code-command");
+    // An absolute path that does not exist: a bare name would be searched along PATH, and a
+    // PATH entry the user cannot read (a noexec or unreadable mount) turns "not found" into
+    // "Permission denied".
+    let empty = tempfile::tempdir().unwrap();
+    launcher.desktop = VsCodeLauncher::with_program(empty.path().join("code"));
     launcher.install(windows());
     let target = DesktopTarget {
         ssh_host: "puddle-demo".into(),

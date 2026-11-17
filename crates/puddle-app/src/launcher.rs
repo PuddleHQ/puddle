@@ -35,6 +35,8 @@ pub struct AppLauncher<R: Runtime> {
     desktop: VsCodeLauncher,
     windows: OnceLock<SandboxWindows>,
     close_wait: Duration,
+    /// WebView2's DevTools port for the editor windows (debug builds, `PUDDLE_APP_DEBUG_PORT`).
+    debug_port: Option<u16>,
 }
 
 impl<R: Runtime> std::fmt::Debug for AppLauncher<R> {
@@ -54,7 +56,16 @@ impl<R: Runtime> AppLauncher<R> {
             desktop: VsCodeLauncher::new(),
             windows: OnceLock::new(),
             close_wait: CLOSE_WAIT,
+            debug_port: None,
         }
+    }
+
+    /// The launcher whose editor windows open WebView2's DevTools Protocol on `port`, for the
+    /// scripted tests that drive a real editor window.
+    #[must_use]
+    pub fn with_debug_port(mut self, port: Option<u16>) -> Self {
+        self.debug_port = port;
+        self
     }
 
     /// The same launcher waiting at most `wait` for windows to close before a delete removes
@@ -122,7 +133,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 data_folder: sandbox_window::data_folder(&self.webview_root, &workspace.id),
                 settings: WindowSettings::from(&target.settings),
                 cookie,
-                debug_port: None,
+                debug_port: self.debug_port,
             };
             // Building a window waits for the window system: not on an async worker.
             let (windows, app) = (windows.clone(), self.app.clone());

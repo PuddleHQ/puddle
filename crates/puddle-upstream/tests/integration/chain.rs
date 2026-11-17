@@ -323,6 +323,70 @@ async fn a_three_leg_exchange_stays_on_one_connection() {
     );
 }
 
+/// An NTLM client that signs in before it is asked (as one that has learned the proxy wants NTLM
+/// does). Like Windows SSPI, a session that has sent no first token refuses a challenge.
+#[derive(Debug)]
+struct PreemptiveNtlm;
+
+#[derive(Debug, Default)]
+struct PreemptiveNtlmSession {
+    sent_first: bool,
+}
+
+impl AuthSession for PreemptiveNtlmSession {
+    fn step(&mut self, challenge: Option<&str>) -> Result<AuthStep, AuthError> {
+        match challenge.map(str::trim) {
+            None | Some("NTLM") => {
+                self.sent_first = true;
+                Ok(AuthStep::Authorization("NTLM T1".into()))
+            }
+            Some("NTLM CHALLENGE") if self.sent_first => {
+                Ok(AuthStep::Authorization("NTLM T3".into()))
+            }
+            other => Err(AuthError::Failed(format!(
+                "InitializeSecurityContext 0x80090302 for {other:?}"
+            ))),
+        }
+    }
+}
+
+impl ProxyAuth for PreemptiveNtlm {
+    fn begin(
+        &self,
+        _proxy: &ProxyAddr,
+        offered: &[&str],
+    ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
+        Ok(
+            (offered.is_empty() || offered.iter().any(|s| s.eq_ignore_ascii_case("ntlm")))
+                .then(|| Box::new(PreemptiveNtlmSession::default()) as Box<dyn AuthSession>),
+        )
+    }
+}
+
+#[tokio::test]
+async fn a_preemptive_ntlm_token_is_answered_on_the_same_session_when_the_proxy_challenges_it() {
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Ntlm).await;
+    proxy.resolve_name("ntlm.test", echo.addr);
+    let chain = chain(vec![via(&proxy)], Arc::new(PreemptiveNtlm));
+    let dest = https("ntlm.test");
+    let mut connected = chain
+        .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
+        .await
+        .unwrap();
+    round_trip(&mut connected.stream, b"signed in").await;
+    let auth: Vec<_> = proxy
+        .seen()
+        .iter()
+        .map(|s| s.proxy_authorization.clone())
+        .collect();
+    assert_eq!(
+        auth,
+        [Some("NTLM T1".to_owned()), Some("NTLM T3".to_owned())],
+        "the first request carries the token, the second answers the challenge"
+    );
+}
+
 #[tokio::test]
 async fn a_connection_based_scheme_that_loses_its_connection_ends_after_the_leg_limit() {
     let proxy = FakeProxy::start(Behaviour::NtlmClosing).await;

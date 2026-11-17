@@ -10,8 +10,7 @@ use std::path::PathBuf;
 use puddle_agent_proto::editor_stream::{MAX_REQUEST_LINE, Request, password_line};
 use puddle_agent_proto::forward::{ANSWER_TIMEOUT, Answer, read_line_exact};
 use puddle_agent_proto::relay::splice;
-use tokio::io::AsyncWriteExt;
-use tokio_yamux::StreamHandle;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::editor::{EditorConfig, unsupported_image};
 use crate::forward::{answer, connect};
@@ -43,7 +42,10 @@ impl EditorAccess {
 const NO_SERVER: &str = "the workspace runs no editor server";
 
 /// Serves one `editor` stream whose preamble [`crate::host_streams`] has read.
-pub async fn serve(mut stream: StreamHandle, access: Option<&EditorAccess>) {
+pub async fn serve<S>(mut stream: S, access: Option<&EditorAccess>)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let line = tokio::time::timeout(
         ANSWER_TIMEOUT,
         read_line_exact(&mut stream, MAX_REQUEST_LINE),
@@ -71,7 +73,10 @@ pub async fn serve(mut stream: StreamHandle, access: Option<&EditorAccess>) {
     }
 }
 
-async fn connect_through(mut stream: StreamHandle, port: u16) {
+async fn connect_through<S>(mut stream: S, port: u16)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut tcp = match connect(port).await {
         Ok(tcp) => tcp,
         Err(reason) => {
@@ -87,7 +92,10 @@ async fn connect_through(mut stream: StreamHandle, port: u16) {
     }
 }
 
-async fn send_password(mut stream: StreamHandle, access: &EditorAccess) {
+async fn send_password<S>(mut stream: S, access: &EditorAccess)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let Ok(password) = tokio::fs::read_to_string(&access.password_file).await else {
         answer(
             &mut stream,
@@ -108,3 +116,6 @@ async fn send_password(mut stream: StreamHandle, access: &EditorAccess) {
         tracing::debug!(error = %err, "the editor password could not be sent");
     }
 }
+
+#[cfg(test)]
+mod tests;

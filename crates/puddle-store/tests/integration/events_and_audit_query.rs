@@ -14,10 +14,10 @@ use std::time::Duration;
 use proptest::prelude::*;
 use puddle_store::testing::own;
 use puddle_store::{
-    Actor, AuditCursor, AuditFilter, AuditOutcome, AuditRecord, ConnectionRecord, Effect, Limits,
-    ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, RequestRuleWire,
-    RequestRuleWireScope, Resolution, RuleDeleteReason, RuleWire, RuleWirePatternKind,
-    RuleWireScope, Scope, Store, UserId, UserName,
+    Actor, ActorWire, AuditCursor, AuditFilter, AuditOutcome, AuditRecord, ConnectionRecord,
+    Effect, Limits, ManualClock, NewRule, Pattern, PendingExpiryReason, PendingState, PendingWire,
+    RequestRuleWire, RequestRuleWireScope, Resolution, RuleDeleteReason, RuleWire,
+    RuleWirePatternKind, RuleWireScope, Scope, Store, UserId, UserName,
 };
 use puddle_test_kit::cpu_time;
 use puddle_types::{
@@ -406,7 +406,7 @@ fn a_store_without_a_sink_works() {
 // ---------------------------------------------------------------------------------------------
 // Audit queries
 
-fn pending_wire(workspace: &str, host: &str, state: &str) -> PendingWire {
+fn pending_wire(workspace: &str, host: &str, state: PendingState) -> PendingWire {
     PendingWire {
         id: 1,
         workspace_id: workspace.into(),
@@ -415,7 +415,7 @@ fn pending_wire(workspace: &str, host: &str, state: &str) -> PendingWire {
         first_seen: 1,
         last_seen: 1,
         attempts: 1,
-        state: state.into(),
+        state,
         decided_at: None,
         decided_by: None,
         rule_id: None,
@@ -433,7 +433,7 @@ fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
         effect: Effect::Allow,
         expires_at: None,
         created_at: 1,
-        created_by: "cli".into(),
+        created_by: ActorWire::Cli,
         source_pending_id: None,
         set_id: None,
         precedence: 5,
@@ -442,7 +442,7 @@ fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
 
 /// A connection record; an empty `workspace` is one of Puddle's own (no workspace).
 fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision) -> AuditRecord {
-    AuditRecord::Connection(ConnectionRecord {
+    AuditRecord::connection(ConnectionRecord {
         ts,
         workspace_id: (!workspace.is_empty()).then(|| workspace.to_owned()),
         origin: if workspace.is_empty() {
@@ -588,7 +588,12 @@ fn any_record() -> impl Strategy<Value = AuditRecord> {
         ConnectionDecision::Pending,
         ConnectionDecision::Blocked,
     ]);
-    let state = prop::sample::select(vec!["requested", "allowed", "denied", "expired"]);
+    let state = prop::sample::select(vec![
+        PendingState::Requested,
+        PendingState::Allowed,
+        PendingState::Denied,
+        PendingState::Expired,
+    ]);
     (0..8_u8, workspace, host, ts, decision, state).prop_map(|(kind, sb_, host, ts, d, st)| {
         let host = host.to_lowercase();
         match kind {
@@ -596,7 +601,7 @@ fn any_record() -> impl Strategy<Value = AuditRecord> {
             1 => connection(ts, "", &host, d),
             2 => AuditRecord::PendingCreated {
                 ts,
-                pending: pending_wire(sb_, &host, "requested"),
+                pending: pending_wire(sb_, &host, PendingState::Requested),
             },
             3 => AuditRecord::PendingDecided {
                 ts,
@@ -604,7 +609,7 @@ fn any_record() -> impl Strategy<Value = AuditRecord> {
             },
             4 => AuditRecord::PendingExpired {
                 ts,
-                pending: pending_wire(sb_, &host, "expired"),
+                pending: pending_wire(sb_, &host, PendingState::Expired),
                 reason: PendingExpiryReason::Stale,
             },
             5 => AuditRecord::RuleCreated {
@@ -848,7 +853,7 @@ fn the_search_box_matches_each_text_column_and_combines_with_the_other_filters()
         // 4: a pending request's host.
         AuditRecord::PendingCreated {
             ts: T0 + 3,
-            pending: pending_wire("a", "queued.example.net", "requested"),
+            pending: pending_wire("a", "queued.example.net", PendingState::Requested),
         },
         // 5: a rule on method and path, by its host and path.
         AuditRecord::RequestRuleCreated {
@@ -861,7 +866,7 @@ fn the_search_box_matches_each_text_column_and_combines_with_the_other_filters()
                 methods: vec!["DELETE".into()],
                 path: "/Admin/**".into(),
                 created_at: T0,
-                created_by: "ui".into(),
+                created_by: ActorWire::Ui,
                 precedence: 5,
             },
         },
@@ -1052,7 +1057,11 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 },
                 1 => AuditRecord::PendingCreated {
                     ts,
-                    pending: pending_wire(workspace, &format!("host{i}.example.org"), "requested"),
+                    pending: pending_wire(
+                        workspace,
+                        &format!("host{i}.example.org"),
+                        PendingState::Requested,
+                    ),
                 },
                 _ => with_request(
                     connection(

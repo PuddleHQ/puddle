@@ -4,12 +4,14 @@
 use std::time::Duration;
 
 use puddle_types::{Host, PendingId, RuleId, WorkspaceId};
+use serde::{Deserialize, Serialize};
 
 use crate::rule::{Actor, Effect, Rule};
 
 /// A pending row's state: `requested → allowed | denied | expired`; the end states are final.
 /// A row only expires when its workspace is deleted: waiting requests never lapse by age (R-46).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PendingState {
     /// Waiting for the user.
     Requested,

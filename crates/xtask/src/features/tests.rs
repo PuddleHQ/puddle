@@ -111,3 +111,14 @@ fn leaks_become_one_error_that_names_each_once() {
     assert_eq!(err, format!("a test-only feature would ship:\n{leak}"));
     assert!(verdict(vec![], 3).unwrap().ends_with("on 3 targets"));
 }
+
+#[test]
+fn an_opt_in_feature_is_tolerated_only_when_all_features_are_on() {
+    let tree =
+        "puddle-api v0.0.0 (/w/crates/puddle-api)|testing\npuddle-proxy v0.0.0 (/w/p)|testing\n";
+    assert_eq!(
+        describe(tree, "t", true).unwrap(),
+        ["puddle-proxy v0.0.0 (/w/p) has the `testing` feature on (target t, all features)"]
+    );
+    assert_eq!(describe(tree, "t", false).unwrap().len(), 2);
+}

@@ -42,3 +42,53 @@ jobs:
       # resident size, and the throughput tests want the machine to themselves.
       - name: terminate_suite perf::, ignored tests only
         run: cargo nextest run --release -p puddle-proxy --test terminate_suite -E "test(/^perf::/)" --run-ignored only --no-capture --test-threads 1
+
+  # What a zero-on-free allocator would cost the proxy (hardening of the secret store: a freed block is
+  # wiped before it goes back). The perf tests' global allocator wraps `System` and wipes every freed
+  # block when PUDDLE_PERF_ZERO_ON_FREE is set (crates/puddle-proxy/tests/terminate_suite/zeroing_alloc.rs),
+  # so one binary is both sides. Five runs per side, interleaved and alternating which side goes first
+  # in a pair, so a slow minute on a shared runner hits both; the summary shows the median of each side
+  # and the ratio. Dispatch only: shared-runner numbers move too much to gate anything.
+  zero-on-free-ab:
+    name: perf A/B (zero-on-free allocator, ${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: Build the perf tests once
+        run: cargo nextest run --release -p puddle-proxy --test terminate_suite -E "test(/^perf::(terminating_costs|http2_costs|small_requests)/)" --run-ignored only --no-run
+      - name: Five interleaved pairs
+        run: |
+          mkdir ab
+          for n in 1 2 3 4 5; do
+            if [ $((n % 2)) -eq 1 ]; then sides="off on"; else sides="on off"; fi
+            for side in $sides; do
+              value=0; [ "$side" = on ] && value=1
+              echo "::group::run $n, zero-on-free $side"
+              PUDDLE_PERF_ZERO_ON_FREE=$value cargo nextest run --release -p puddle-proxy --test terminate_suite -E "test(/^perf::(terminating_costs|http2_costs|small_requests)/)" --run-ignored only --no-capture --test-threads 1 > "ab/$side-$n.log" 2>&1 || { cat "ab/$side-$n.log"; echo "::endgroup::"; exit 1; }
+              grep -E '^(A|M) |ratio' "ab/$side-$n.log"
+              echo "::endgroup::"
+            done
+          done
+      - name: Summary
+        run: |
+          py=$(command -v python3 || command -v python)
+          "$py" scripts/perf-zero-ab-summary.py ab
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: perf-zero-on-free-${{ matrix.os }}
+          path: ab/

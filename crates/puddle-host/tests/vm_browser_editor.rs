@@ -81,12 +81,55 @@ const WINDOW_STATE: &str = r"(() => {
   };
 })()";
 
+/// What the window keeps in its browser storage and which of its loads failed, for a window whose
+/// explorer does not get ready. A web workbench opens a remote multi-root file from the copy its
+/// last window cached (`CachedConfigurations`), then reads the file itself; when that read fails
+/// or comes back empty, the window keeps the file's identity with no folder and says "No Folder
+/// Opened" without an error. The cached copy says which of the two reads gave the folders, and
+/// the failed loads name the addresses the console only counts.
+const WINDOW_STORAGE: &str = r"(async () => {
+  const failed = performance.getEntriesByType('resource')
+    .filter(e => e.responseStatus >= 400)
+    .map(e => `${e.responseStatus} ${e.name}`);
+  const text = v => typeof v === 'string' ? v : new TextDecoder().decode(v);
+  const cached = await new Promise(done => {
+    const open = indexedDB.open('vscode-web-db');
+    open.onerror = () => done(`(no database: ${open.error})`);
+    open.onsuccess = () => {
+      const db = open.result;
+      const store = 'vscode-userdata-store';
+      if (!db.objectStoreNames.contains(store)) { done(`(no ${store})`); return; }
+      const all = db.transaction(store, 'readonly').objectStore(store);
+      const keys = all.getAllKeys();
+      keys.onerror = () => done(`(keys not read: ${keys.error})`);
+      keys.onsuccess = () => {
+        const wanted = keys.result.filter(k => String(k).includes('CachedConfigurations'));
+        if (!wanted.length) { done({}); return; }
+        const found = {};
+        for (const key of wanted) {
+          const get = all.get(key);
+          get.onsuccess = get.onerror = () => {
+            found[key] = get.result === undefined ? null : text(get.result).slice(0, 2000);
+            if (Object.keys(found).length === wanted.length) done(found);
+          };
+        }
+      };
+    };
+  });
+  return { failed, cached };
+})()";
+
 /// The guest's side of a window whose explorer does not get ready: the editor server's command
-/// line, the multi-root file, the volume, and the end of the server's own logs.
+/// line, the multi-root file with its times (a write at the window's start shows in them), the
+/// volume, the boot hook's last report (an attach rewrites the file through it), any cached copy
+/// on the server, and the end of the server's own logs.
 const SERVER_STATE: &str = r#"
 ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-2000
 data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
-for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; }; done
+for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
+echo "== /workspaces/*/.puddle/editor"; ls -la --time-style=full-iso /workspaces/*/.puddle/editor/
+echo "== boot report"; tail -n 20 /run/puddle/boot.log
+for f in $(find "$data" -path '*CachedConfigurations*' -type f 2>/dev/null); do echo "== $f"; head -c 2000 "$f"; echo; done
 echo "== volume"; ls -a /workspaces/*/
 for f in $(find "$data/logs" -type f 2>/dev/null | sort | tail -n 12); do echo "== $f"; tail -n 30 "$f"; done
 echo "== agent"; tail -n 30 /run/puddle/agent.log
@@ -94,11 +137,13 @@ true
 "#;
 
 /// Waits in `sandbox`'s newest page until its explorer lists rows and reads `result`. When it does
-/// not, the failure carries what the window and the guest show, so a timeout names its cause.
+/// not, the failure carries what the window and the guest show and which `step` of the story
+/// waited (the backtrace names only this function), so a timeout names its cause.
 async fn explorer(
     shell: &ShellStandIn,
     runtime: &MsbRuntime,
     sandbox: &WorkspaceId,
+    step: &str,
     result: &str,
 ) -> Value {
     let page = shell.page(sandbox.as_str()).await;
@@ -117,11 +162,18 @@ async fn explorer(
                 Ok(outcome) => outcome.result.to_string(),
                 Err(e) => format!("(not read: {e})"),
             };
+            let storage = PageRequest::new("", "true")
+                .result(WINDOW_STORAGE)
+                .budget(PAGE_BUDGET);
+            let storage = match shell.browser.lock().await.wait(page, &storage).await {
+                Ok(outcome) => outcome.result.to_string(),
+                Err(e) => format!("(not read: {e})"),
+            };
             // Logged before the guest is asked: a guest that does not answer fails the test in
             // `guest_within`, and the window's state must not be lost with it.
-            tracing::error!(workspace = %sandbox, error = %e, %window, "the explorer did not get ready");
+            tracing::error!(workspace = %sandbox, step, error = %e, %window, %storage, "the explorer did not get ready");
             let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
-            panic!("{sandbox}'s explorer did not get ready; the guest:\n{server}");
+            panic!("{sandbox}'s explorer did not get ready ({step}); the guest:\n{server}");
         }
     }
 }
@@ -510,6 +562,8 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
             )
             .await;
         assert_eq!(reply.status, 200, "{}", reply.body);
+        // The time the window was asked for, to read the guest's logs against.
+        tracing::info!(workspace = %name, "attach answered");
         let answer: Value = serde_json::from_str(&reply.body).unwrap();
         assert_eq!(answer["opened"], true, "{answer}");
         answer
@@ -525,7 +579,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         "{origin}"
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
-    let rows = explorer(&shell, &runtime, &sandbox, EXPLORER_ROWS).await;
+    let rows = explorer(&shell, &runtime, &sandbox, "first window", EXPLORER_ROWS).await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
@@ -626,7 +680,14 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 
     // Opened again within the grace: the kept session, no second sign-in, a new extension host.
     attach().await;
-    explorer(&shell, &runtime, &sandbox, "true").await;
+    explorer(
+        &shell,
+        &runtime,
+        &sandbox,
+        "reopened within the grace",
+        "true",
+    )
+    .await;
     assert_eq!(
         shell.wait(&name, "true", WHERE, PAGE_BUDGET).await["login"],
         false
@@ -667,7 +728,14 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert_ne!(after, before, "the new boot kept the old boot's password");
     let sign_ins = 2;
     attach().await;
-    let rows = explorer(&shell, &runtime, &sandbox, EXPLORER_ROWS).await;
+    let rows = explorer(
+        &shell,
+        &runtime,
+        &sandbox,
+        "after the restart",
+        EXPLORER_ROWS,
+    )
+    .await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);

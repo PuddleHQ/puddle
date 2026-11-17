@@ -90,6 +90,158 @@ fn the_self_test_checks_that_every_piece_answers() {
     }
 }
 
+/// Whether mitmproxy is configured (and required, in a CI job that provides it).
+fn mitmproxy() -> bool {
+    let mitm = std::env::var_os("PUDDLE_MITMDUMP_BIN").is_some();
+    assert!(
+        mitm || std::env::var_os("PUDDLE_REQUIRE_MITMPROXY").is_none(),
+        "PUDDLE_REQUIRE_MITMPROXY is set but PUDDLE_MITMDUMP_BIN is not"
+    );
+    if !mitm {
+        eprintln!("skipped: set PUDDLE_MITMDUMP_BIN");
+    }
+    mitm
+}
+
+/// The head of the answer to one request on an open connection (`auth` is a `Proxy-Authorization`
+/// value, if any); the connection stays open for the next leg.
+fn ask(
+    conn: &mut std::io::BufReader<std::net::TcpStream>,
+    request_line: &str,
+    host: &str,
+    auth: Option<&str>,
+) -> String {
+    use std::io::{BufRead, Write};
+    let header = auth.map_or_else(String::new, |a| format!("Proxy-Authorization: {a}\r\n"));
+    conn.get_mut()
+        .write_all(format!("{request_line} HTTP/1.1\r\nHost: {host}\r\n{header}\r\n").as_bytes())
+        .unwrap();
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        let read = conn.read_line(&mut line).unwrap();
+        head.push_str(&line);
+        if read == 0 || line == "\r\n" {
+            return head;
+        }
+    }
+}
+
+fn connect(
+    conn: &mut std::io::BufReader<std::net::TcpStream>,
+    target: u16,
+    auth: Option<&str>,
+) -> String {
+    let host = format!("127.0.0.1:{target}");
+    ask(conn, &format!("CONNECT {host}"), &host, auth)
+}
+
+fn ntlm_token(kind: u32, len: usize) -> String {
+    use base64::Engine as _;
+    let mut message = b"NTLMSSP\0".to_vec();
+    message.extend_from_slice(&kind.to_le_bytes());
+    message.resize(len, 0);
+    format!(
+        "NTLM {}",
+        base64::engine::general_purpose::STANDARD.encode(message)
+    )
+}
+
+#[test]
+fn a_probe_for_a_name_nobody_resolves_keeps_the_signed_in_connection_open() {
+    if !mitmproxy() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, info) = start(&["--interceptor-ntlm"], dir.path(), true);
+    let port = u16::try_from(info["interceptor"]["port"].as_u64().unwrap()).unwrap();
+    let mut conn =
+        std::io::BufReader::new(std::net::TcpStream::connect(("127.0.0.1", port)).unwrap());
+    let probe = "HEAD http://puddle.invalid/";
+    let host = "puddle.invalid";
+    let demand = ask(&mut conn, probe, host, Some(&ntlm_token(1, 16)));
+    assert!(
+        demand.starts_with("HTTP/1.1 407")
+            && demand.contains("Proxy-Authenticate: NTLM TlRMTVNTUA"),
+        "{demand}"
+    );
+    let answer = ask(&mut conn, probe, host, Some(&ntlm_token(3, 64)));
+    assert!(answer.starts_with("HTTP/1.1 502"), "{answer}");
+    assert!(
+        answer
+            .to_ascii_lowercase()
+            .contains("connection: keep-alive"),
+        "the sign-in lives on this connection: {answer}"
+    );
+    // The connection still works for the next request, with no new sign-in.
+    let next = ask(&mut conn, probe, host, None);
+    assert!(next.starts_with("HTTP/1.1 502"), "{next}");
+    drop(conn);
+    std::fs::write(dir.path().join("stop"), "").unwrap();
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn the_signing_in_interceptor_runs_the_ntlm_handshake_before_it_opens_a_tunnel() {
+    if !mitmproxy() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, info) = start(&["--interceptor-ntlm", "--pac"], dir.path(), true);
+    let interceptor = &info["interceptor"];
+    assert_eq!(interceptor["sign_in"], "ntlm");
+    assert_eq!(info["pac"]["proxies"].as_array().unwrap().len(), 1);
+    assert!(info.get("ntlm").is_none());
+    let ca = std::fs::read_to_string(interceptor["ca"].as_str().unwrap()).unwrap();
+    assert!(ca.starts_with("-----BEGIN CERTIFICATE-----"), "{ca}");
+
+    // Somewhere for the tunnel to go once the sign-in has passed.
+    let origin_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let origin = origin_listener.local_addr().unwrap().port();
+    let port = u16::try_from(interceptor["port"].as_u64().unwrap()).unwrap();
+    let mut conn =
+        std::io::BufReader::new(std::net::TcpStream::connect(("127.0.0.1", port)).unwrap());
+    let demand = connect(&mut conn, origin, None);
+    assert!(
+        demand.starts_with("HTTP/1.1 407") && demand.contains("Proxy-Authenticate: NTLM"),
+        "{demand}"
+    );
+    let challenge = connect(&mut conn, origin, Some(&ntlm_token(1, 16)));
+    assert!(
+        challenge.starts_with("HTTP/1.1 407")
+            && challenge.contains("Proxy-Authenticate: NTLM TlRMTVNTUA"),
+        "{challenge}"
+    );
+    let opened = connect(&mut conn, origin, Some(&ntlm_token(3, 64)));
+    assert!(opened.starts_with("HTTP/1.1 200"), "{opened}");
+    let log = std::fs::read_to_string(interceptor["log"].as_str().unwrap()).unwrap();
+    assert!(
+        log.contains("NTLM leg3") && log.contains("accepted"),
+        "{log}"
+    );
+
+    drop(conn);
+    std::fs::write(dir.path().join("stop"), "").unwrap();
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn the_self_test_of_the_signing_in_interceptor_checks_the_demand_and_the_root() {
+    if !mitmproxy() {
+        return;
+    }
+    let output = lab()
+        .args(["--self-test", "--interceptor-ntlm"])
+        .output()
+        .unwrap();
+    let text = stderr(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("ok: interceptor on") && text.contains("demands NTLM"),
+        "{text}"
+    );
+}
+
 #[test]
 fn the_self_test_of_an_open_squid_alone_checks_that_it_forwards() {
     if !programs() {

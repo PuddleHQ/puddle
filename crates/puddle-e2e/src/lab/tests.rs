@@ -170,6 +170,41 @@ fn a_fixture_that_dies_while_another_process_answers_on_its_port_is_not_ready() 
     wait_ready(port, Some(&mut child), Duration::from_secs(5), String::new);
 }
 
+/// The program is still running when the loop checks for an exit, and has exited by the time the
+/// log is read: the log check (slept through here) is what sees the bind failure.
+#[cfg(unix)]
+#[test]
+fn a_program_that_logs_its_failed_bind_and_exits_meanwhile_is_told_as_exited() {
+    let mut child = Command::new("sleep").arg("0.05").spawn().unwrap();
+    let why = try_answers(
+        Some(&mut child),
+        Duration::from_secs(5),
+        &String::new,
+        || false,
+        Duration::ZERO,
+        || {
+            std::thread::sleep(Duration::from_millis(400));
+            true
+        },
+    )
+    .unwrap_err();
+    assert!(why.starts_with("the fixture exited early"), "{why}");
+}
+
+#[test]
+fn a_program_that_logs_its_failed_bind_and_stays_up_is_told_as_failed() {
+    let why = try_answers(
+        None,
+        Duration::from_secs(5),
+        &String::new,
+        || false,
+        Duration::ZERO,
+        || true,
+    )
+    .unwrap_err();
+    assert!(why.starts_with("the fixture failed to start"), "{why}");
+}
+
 #[cfg(unix)]
 #[test]
 #[should_panic(expected = "the fixture exited early")]

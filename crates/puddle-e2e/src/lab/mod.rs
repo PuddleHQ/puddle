@@ -395,7 +395,10 @@ fn try_answers(
             return Err(why);
         }
         if failed() {
-            return Err(format!("the fixture failed to start\n{}", diagnostics()));
+            // A program that logs its failed bind and then exits may do both between the two
+            // checks above: the exit is the better word for it, whichever the loop saw first.
+            return Err(exited_early(&mut child)
+                .unwrap_or_else(|| format!("the fixture failed to start\n{}", diagnostics())));
         }
         if answers() {
             std::thread::sleep(settle);

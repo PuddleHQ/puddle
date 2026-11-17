@@ -36,6 +36,36 @@ describe("notices name a workspace by its display name and key it by its id", ()
     expect(notice?.link?.href).toBe("/workspaces/w-web");
   });
 
+  it("keys and links the disk notice by id, so two workspaces with one name get two notices", () => {
+    workspaces.list = [
+      workspace("a", { name: "Shop" }),
+      workspace("b", { name: "Shop" }),
+    ];
+    const center = new NoticeCenter();
+    const watcher = new NoticeWatcher({
+      source: new FakeSource(),
+      notifier: new InAppNotifier(center),
+      api: { GET: async () => ({ response: { status: 500 } }) } as never,
+    });
+    for (const id of ["w-a", "w-b"]) {
+      watcher.handle({
+        type: "disk_nearly_full",
+        workspace: id,
+        disk: "root",
+        percent: 96,
+      });
+    }
+    expect(center.items.map((n) => n.key)).toEqual([
+      "disk:w-a:root",
+      "disk:w-b:root",
+    ]);
+    expect(center.items.map((n) => n.link?.href)).toEqual([
+      "/workspaces/w-a",
+      "/workspaces/w-b",
+    ]);
+    expect(center.items[0]?.title).toBe("Shop: the root disk is 96 % full.");
+  });
+
   it("falls back to the id for a workspace that is no longer listed", () => {
     expect(workspaces.labelOf("w-gone")).toBe("w-gone");
     workspaces.list = [workspace("web", { name: "Web shop" })];

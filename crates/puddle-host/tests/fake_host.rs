@@ -972,6 +972,16 @@ struct HeldDeletes {
     counted: Mutex<Option<WorkspaceId>>,
     count: AtomicUsize,
     held: Mutex<Option<WorkspaceId>>,
+    /// Woken when the test changes `held`.
+    released: std::sync::Condvar,
+}
+
+impl HeldDeletes {
+    /// Holds back the saved logins of `workspace`, or with `None` lets every held delete go on.
+    fn hold(&self, workspace: Option<WorkspaceId>) {
+        *self.held.lock().unwrap() = workspace;
+        self.released.notify_all();
+    }
 }
 
 /// The rig's memory store, counting deletes and holding back the held workspace's saved logins
@@ -993,19 +1003,21 @@ impl puddle_secrets::SecretStore for Counted {
         self.0.set(id, secret)
     }
     fn delete(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {
-        let of = |workspace: &Mutex<Option<WorkspaceId>>| {
+        let of = |workspace: &Option<WorkspaceId>| {
             workspace
-                .lock()
-                .unwrap()
                 .as_ref()
                 .is_some_and(|w| puddle_logins::is_saved_login_of(id, w))
         };
-        if of(&self.1.counted) {
+        if of(&self.1.counted.lock().unwrap()) {
             self.1.count.fetch_add(1, Ordering::SeqCst);
         }
-        while of(&self.1.held) {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        // Blocks like a keyring that waits for the user, until the test lets it go.
+        drop(
+            self.1
+                .released
+                .wait_while(self.1.held.lock().unwrap(), |held| of(held))
+                .unwrap(),
+        );
         self.0.delete(id)
     }
     fn keep_local(&self, id: &puddle_secrets::StoredId) -> Result<(), puddle_secrets::StoreError> {

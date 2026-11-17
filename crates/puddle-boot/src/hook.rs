@@ -122,8 +122,8 @@ impl BootReport {
 
     /// The merged files the hook could not parse and so left as they were: each with the reason
     /// it gave (`<path> left as it is: <reason>`). The guest writes these lines, so only a file of
-    /// [`BootReport::merged`] counts, once, and its reason is cut to [`MAX_LEFT_REASON_CHARS`]
-    /// with every control character replaced.
+    /// [`BootReport::merged`] counts, once, and its reason is cut to 300 characters with every
+    /// control character replaced.
     #[must_use]
     pub fn left_files(&self) -> Vec<(&str, String)> {
         let mut left: Vec<(&str, String)> = Vec::new();

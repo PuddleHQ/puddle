@@ -1016,10 +1016,10 @@ async fn the_clean_up_of_deleted_workspaces_never_holds_up_a_quit_and_is_not_rep
     let mut book = read_list(&rig);
     book["retired_ids"] = json!(["acme", "gone"]);
     std::fs::write(list_path(&rig), book.to_string()).unwrap();
-    *rig.deletes.held.lock().unwrap() = Some(WorkspaceId::new("gone").unwrap());
+    rig.deletes.hold(Some(WorkspaceId::new("gone").unwrap()));
     let host = rig.start().await;
     let quit = tokio::time::timeout(Duration::from_secs(60), host.shutdown()).await;
-    *rig.deletes.held.lock().unwrap() = None;
+    rig.deletes.hold(None);
     assert!(quit.is_ok(), "the quit waited for the held clean-up");
     drop(host);
 }

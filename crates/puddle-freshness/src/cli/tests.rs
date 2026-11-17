@@ -88,6 +88,16 @@ fn a_seed_is_32_bytes_of_base64() {
     }
 }
 
+#[test]
+fn a_malformed_seed_is_not_quoted_in_the_error() {
+    // The decoder's own message names the offending byte and its offset; neither may reach a log.
+    let err = parse_seed("QUJDRA-secretXYZ").unwrap_err().to_string();
+    assert_eq!(
+        err,
+        "cannot read the signing key seed: it is not valid base64"
+    );
+}
+
 fn args(list: &[&str]) -> Vec<OsString> {
     list.iter().map(OsString::from).collect()
 }

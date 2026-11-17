@@ -186,9 +186,11 @@ pub const SEQUENCE_CEILING: u64 = 1_000_000_000;
 
 /// Decodes a base64 32-byte value (a seed or a public key).
 fn decode32(what: &str, text: &str) -> Result<[u8; 32]> {
+    // The decoder's message names the offending byte and its offset, which for a seed is a
+    // piece of the secret, so it is not passed on.
     let raw = STANDARD
         .decode(text.trim())
-        .map_err(|e| key_error(what, &e))?;
+        .map_err(|_| key_error(what, &"it is not valid base64"))?;
     <[u8; 32]>::try_from(raw.as_slice())
         .map_err(|_| key_error(what, &format!("{} bytes, not 32", raw.len())))
 }

@@ -181,12 +181,14 @@ describe("the screen", () => {
     expect(screen.getByText(/Open VSX/)).toBeInTheDocument();
   });
 
-  it("links to the network health details", async () => {
+  it("links to the network health details and the app errors", async () => {
     await open();
-    expect(screen.getByRole("link", { name: /Details/ })).toHaveAttribute(
-      "href",
-      "/settings/network-health",
-    );
+    expect(
+      screen.getByRole("link", { name: /^Details\s*about network health$/ }),
+    ).toHaveAttribute("href", "/settings/network-health");
+    expect(
+      screen.getByRole("link", { name: /^Details\s*about app errors$/ }),
+    ).toHaveAttribute("href", "/settings/app-errors");
   });
 
   it("states that Puddle sends nothing", async () => {

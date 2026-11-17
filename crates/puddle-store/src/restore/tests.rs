@@ -202,7 +202,7 @@ fn the_backups_owner_matches_this_machines_owner_whatever_its_name() {
     open(&there);
     sql(
         &there,
-        "UPDATE users SET name = 'Old Laptop Owner' WHERE role = 'owner';",
+        "UPDATE users SET name = 'Old Computer Owner' WHERE role = 'owner';",
     );
     sql(&there, &rule("a.example.org", "allow", 5));
     sql(&here, &rule("a.example.org", "allow", 5));

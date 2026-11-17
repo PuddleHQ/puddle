@@ -44,8 +44,8 @@ const preview = {
     { name: "users", in_backup: 2, add: 1, differ: 0, same: 1, only_here: 0 },
   ],
   workspaces: [
-    { id: "w-1", name: "Acme", disk: "present" },
-    { id: "w-2", name: "Gone", disk: "missing" },
+    { id: "ws-one", name: "Acme", disk: "present" },
+    { id: "ws-two", name: "Gone", disk: "missing" },
   ],
   secrets_needing_value: [{ workspace_id: null, name: "TOKEN" }],
   running_workspaces: 2,

@@ -72,12 +72,12 @@ fn the_backups_workspaces_are_owned_by_the_users_they_map_to() {
     let here = write(
         dir.path(),
         "here.json",
-        r#"{"version":4,"workspaces":[{"id":"w-1","name":"One","owner":7}]}"#,
+        r#"{"version":4,"workspaces":[{"id":"ws-one","name":"One","owner":7}]}"#,
     );
     let there = write(
         dir.path(),
         "there.json",
-        r#"{"version":4,"workspaces":[{"id":"w-1","name":"Theirs","owner":2},{"id":"w-2","name":"Two","owner":2},{"id":"w-3","name":"Three","owner":1},{"id":"w-4","name":"Four","owner":99}]}"#,
+        r#"{"version":4,"workspaces":[{"id":"ws-one","name":"Theirs","owner":2},{"id":"ws-two","name":"Two","owner":2},{"id":"ws-three","name":"Three","owner":1},{"id":"ws-four","name":"Four","owner":99}]}"#,
     );
     let new = dir.path().join("new.json");
     book(ApplyMode::Add, &here, &there, &new, &restored()).unwrap();
@@ -91,14 +91,14 @@ fn the_backups_workspaces_are_owned_by_the_users_they_map_to() {
             )
         })
         .collect();
-    // w-1 exists here and is kept as it is; the rest follow the user map (an unknown user: the owner).
+    // ws-one exists here and is kept as it is; the rest follow the user map (an unknown user: the owner).
     assert_eq!(
         owners,
         [
-            ("w-1".into(), 7),
-            ("w-2".into(), 9),
-            ("w-3".into(), 7),
-            ("w-4".into(), 7)
+            ("ws-one".into(), 7),
+            ("ws-two".into(), 9),
+            ("ws-three".into(), 7),
+            ("ws-four".into(), 7)
         ]
     );
     assert_eq!(merged["workspaces"][0]["name"], "One");
@@ -134,12 +134,12 @@ fn lists_in_different_formats_are_not_merged() {
     let here = write(
         dir.path(),
         "here.json",
-        r#"{"version":4,"workspaces":[{"id":"w-1","name":"One","owner":7}]}"#,
+        r#"{"version":4,"workspaces":[{"id":"ws-one","name":"One","owner":7}]}"#,
     );
     let there = write(
         dir.path(),
         "there.json",
-        r#"{"version":3,"workspaces":[{"id":"w-2","name":"Two"}]}"#,
+        r#"{"version":3,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
     );
     let err = check_book_versions(&here, &there).unwrap_err();
     assert!(
@@ -168,7 +168,7 @@ fn lists_in_different_formats_are_not_merged() {
     .unwrap();
     assert_eq!(
         read(&dir.path().join("replaced.json"))["workspaces"][0]["id"],
-        "w-2"
+        "ws-two"
     );
 }
 

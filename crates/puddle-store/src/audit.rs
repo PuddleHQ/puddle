@@ -1190,7 +1190,8 @@ impl ConnectionWindow {
     /// from a failed write.
     pub(crate) fn roll(&mut self, now: u64) -> Option<(u64, u64)> {
         let second = now / 1000;
-        let finished = if second == self.second {
+        // A clock that stepped back stays in the current window, so the limit does not restart.
+        let finished = if second <= self.second {
             None
         } else {
             let finished = (self.excess > 0).then_some((self.second * 1000, self.excess));

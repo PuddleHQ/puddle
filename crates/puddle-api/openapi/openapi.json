@@ -23268,6 +23268,7 @@
           "repo_added",
           "repo_switched",
           "repo_removed",
+          "git_switches_changed",
           "git_repaired",
           "root_disk_grown",
           "ssh_agent_signed",

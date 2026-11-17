@@ -501,6 +501,10 @@ const WORKSPACE_OPS: Record<
     done: "Repository removed",
     failed: "Removing a repository failed",
   },
+  git_switches_changed: {
+    done: "Git switches changed",
+    failed: "Changing the Git switches failed",
+  },
   root_disk_grown: {
     done: "Root disk made bigger",
     failed: "Making the root disk bigger failed",

@@ -314,7 +314,7 @@ readable as JSONL (one record per line).
   identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
   plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
-  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
+  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `git_switches_changed` (a workspace's "only listed repositories" switch for push or pull changed), `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
   `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
   at boot; `detail` names the file and what was done) and three for the filtered SSH agent:
   `ssh_agent_signed` (actor `system`: it signed a login, `detail` names the host, the key family and the

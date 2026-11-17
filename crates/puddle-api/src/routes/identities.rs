@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::{SourceSpec, StoredId, TokenScope};
-use puddle_store::{CredentialBinding, IdentityId, WorkspaceOpKind};
+use puddle_store::{CredentialBinding, IdentityId, SwitchChange, WorkspaceOpKind};
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
@@ -551,6 +551,7 @@ pub(crate) async fn detach_identity(
 )]
 pub(crate) async fn set_git_switches(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceSwitchesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
@@ -558,10 +559,34 @@ pub(crate) async fn set_git_switches(
     let (push, pull) = body.changes()?;
     let set = blocking(move || {
         let git = state.store.change_git_switches(&name, push, pull)?;
+        if let Some(detail) = switches_detail(push, pull) {
+            record_op(
+                &state.store,
+                principal.user,
+                WorkspaceOpKind::GitSwitchesChanged,
+                Some(&name),
+                Some(detail),
+            );
+        }
         git_view(&state, name, git)
     })
     .await?;
     Ok(Json(set))
+}
+
+/// What a switch change says in the activity log; `None` when it changes nothing.
+fn switches_detail(push: SwitchChange, pull: SwitchChange) -> Option<String> {
+    let one = |name: &str, change: SwitchChange| match change {
+        SwitchChange::Keep => None,
+        SwitchChange::Set(true) => Some(format!("{name}: only listed repositories")),
+        SwitchChange::Set(false) => Some(format!("{name}: not only listed repositories")),
+        SwitchChange::FollowDefault => Some(format!("{name}: back to the default")),
+    };
+    let parts: Vec<String> = [one("push", push), one("pull", pull)]
+        .into_iter()
+        .flatten()
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
 /// Adds a repository to the workspace's table.

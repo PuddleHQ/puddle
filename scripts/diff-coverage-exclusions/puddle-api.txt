@@ -39,4 +39,3 @@ crates/puddle-api/src/server.rs | tracing::error!(error = %err, "api server task
 crates/puddle-api/src/signin.rs | Err(broadcast::error::RecvError::Closed) => return, | the channel closes only when its sender, which the same struct holds, is dropped
 crates/puddle-api/src/terminals.rs | .await\n.is_err()\n{\nreturn; | the page's side of the stand-in shell closing before its first prompt, which only a socket dropped at that instant does; the stand-in is test support
 crates/puddle-api/src/terminals.rs | if !answer.is_empty() && to_page.send(TerminalOutput::Bytes(answer)).await.is_err() {\nreturn; | the page's side of the stand-in shell closing between two answers; the stand-in is test support
-crates/puddle-api/src/wire/identities.rs | },\n_ => return None, | the arm for a source kind a newer Puddle adds to the non-exhaustive enum; no such kind exists yet

@@ -136,10 +136,9 @@ impl Routes {
         if let Some(cell) = self.cells.get(dest) {
             return Arc::clone(cell);
         }
-        while self.cells.len() >= MAX_ROUTES {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
+        if self.cells.len() >= MAX_ROUTES
+            && let Some(oldest) = self.order.pop_front()
+        {
             self.cells.remove(&oldest);
         }
         let cell = Arc::new(OnceCell::new());

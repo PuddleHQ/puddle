@@ -7831,7 +7831,7 @@
             }
           },
           "403": {
-            "description": "forbidden origin",
+            "description": "forbidden origin, or a `local_path` from a user who is not the owner: the folders on the server are the owner's (refused before any look at the disk, with the same message whatever the path names)",
             "content": {
               "application/json": {
                 "schema": {

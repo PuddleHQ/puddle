@@ -56,56 +56,14 @@ fn a_workspace_with_no_recorded_user_is_nobodys() {
     assert!(!owners.is(&ws("box"), UserId::OWNER));
 }
 
-/// The first start of this build records the owner for the workspaces it lists; after that a
-/// workspace with no row stays nobody's, whoever lists it.
 #[test]
-fn the_owner_adopts_the_listed_workspaces_once() {
+fn the_owners_of_a_list_name_each_workspaces_user() {
     let store = store();
     let ann = store.add_user(&name("ann")).unwrap().id;
     store.set_workspace_owner(&ws("anns"), ann).unwrap();
-    let listed = [ws("old"), ws("anns")];
-    assert_eq!(
-        store
-            .adopt_unowned_workspaces(&crate::testing::all_users(), &listed)
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        (
-            store.workspace_owner(&ws("old")).unwrap(),
-            store.workspace_owner(&ws("anns")).unwrap()
-        ),
-        (Some(UserId::OWNER), Some(ann))
-    );
-    assert_eq!(
-        store
-            .adopt_unowned_workspaces(&crate::testing::all_users(), &[ws("later")])
-            .unwrap(),
-        0
-    );
-    assert_eq!(store.workspace_owner(&ws("later")).unwrap(), None);
-}
-
-/// A database that cannot be written leaves the adoption to the next start.
-#[test]
-fn an_adoption_that_fails_is_tried_again() {
-    let store = store();
-    store.break_database(
-        "CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
-         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-    );
-    assert!(
-        store
-            .adopt_unowned_workspaces(&crate::testing::all_users(), &[ws("old")])
-            .is_err()
-    );
-    store.break_database("DROP TRIGGER no_owner");
-    assert_eq!(
-        store
-            .adopt_unowned_workspaces(&crate::testing::all_users(), &[ws("old")])
-            .unwrap(),
-        1
-    );
+    let owners = store.workspace_owners().unwrap();
+    assert_eq!(owners.of(&ws("anns")), Some(ann));
+    assert_eq!(owners.of(&ws("nobodys")), None);
 }
 
 #[test]
@@ -147,6 +105,9 @@ fn an_audit_record_carries_its_workspaces_user_and_a_filter_keeps_to_one_user() 
     let store = store();
     let ann = store.add_user(&name("ann")).unwrap().id;
     store.set_workspace_owner(&ws("annbox"), ann).unwrap();
+    store
+        .set_workspace_owner(&ws("ownerbox"), UserId::OWNER)
+        .unwrap();
     for workspace in ["annbox", "ownerbox"] {
         store
             .record_workspace_op(&NewWorkspaceOp {

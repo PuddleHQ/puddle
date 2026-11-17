@@ -23,6 +23,7 @@ fn repository(url: &str, dir: &str) -> Repository {
 fn stored(id: &str) -> Stored {
     Stored {
         id: WorkspaceId::new(id).unwrap(),
+        owner: UserId::from_stored(2),
         name: puddle_api::DisplayName::parse(id).unwrap(),
         repositories: vec![
             repository("https://example.org/a/b", "b"),
@@ -207,7 +208,10 @@ fn a_settings_folder_that_is_a_file_cannot_be_written() {
 fn the_book_round_trips_and_a_missing_book_is_empty() {
     let dir = tempfile::tempdir().unwrap();
     let book = WorkspaceBook::new(dir.path().join("workspaces.json"));
-    assert_eq!(book.load().unwrap().workspaces, Vec::new());
+    assert_eq!(
+        book.load(&WorkspaceOwners::default()).unwrap().workspaces,
+        Vec::new()
+    );
     book.save(
         vec![stored("a"), stored("b")],
         &BTreeSet::new(),
@@ -215,7 +219,7 @@ fn the_book_round_trips_and_a_missing_book_is_empty() {
     )
     .unwrap();
     assert_eq!(
-        book.load().unwrap().workspaces,
+        book.load(&WorkspaceOwners::default()).unwrap().workspaces,
         vec![stored("a"), stored("b")]
     );
 }
@@ -227,35 +231,35 @@ fn a_damaged_or_newer_book_is_refused() {
     let book = WorkspaceBook::new(&path);
     std::fs::write(&path, b"[1,2").unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap_err()
             .to_string()
             .contains("not valid JSON")
     );
     std::fs::write(&path, b"{\"nope\": true}").unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap_err()
             .to_string()
             .contains("not a workspace list")
     );
     std::fs::write(&path, br#"{"version": 99, "workspaces": []}"#).unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap_err()
             .to_string()
             .contains("newer Puddle")
     );
-    std::fs::write(&path, br#"{"version": 4, "workspaces": []}"#).unwrap();
+    std::fs::write(&path, br#"{"version": 5, "workspaces": []}"#).unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap_err()
             .to_string()
-            .contains("written by a newer Puddle (version 4)")
+            .contains("written by a newer Puddle (version 5)")
     );
     std::fs::write(&path, br#"{"version": 0, "workspaces": []}"#).unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap_err()
             .to_string()
             .contains("no Puddle wrote")
@@ -265,7 +269,7 @@ fn a_damaged_or_newer_book_is_refused() {
         "created_at": 0, "disk_size_mib": 1, "first_connect_notice_due": false
     }]});
     std::fs::write(&path, bad.to_string()).unwrap();
-    assert!(book.load().is_err());
+    assert!(book.load(&WorkspaceOwners::default()).is_err());
     for (field, value, why) in [
         ("url", json!("git@h:a/b"), "bad repository address"),
         ("directory", json!("../up"), "bad checkout directory"),
@@ -277,7 +281,10 @@ fn a_damaged_or_newer_book_is_refused() {
             "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
         }]});
         std::fs::write(&path, bad.to_string()).unwrap();
-        let err = book.load().unwrap_err().to_string();
+        let err = book
+            .load(&WorkspaceOwners::default())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(why), "{err}");
     }
     let bad = json!({"version": 2, "workspaces": [{
@@ -286,7 +293,7 @@ fn a_damaged_or_newer_book_is_refused() {
     }]});
     std::fs::write(&path, bad.to_string()).unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap_err()
             .to_string()
             .contains("bad start folder")
@@ -384,7 +391,7 @@ fn a_version_1_book_loads_as_lists_with_the_checkout_as_start_folder_and_is_neve
     std::fs::write(&path, V1_BOOK).unwrap();
     let before = std::fs::metadata(&path).unwrap().modified().unwrap();
     let book = WorkspaceBook::new(&path);
-    let loaded = book.load().unwrap().workspaces;
+    let loaded = book.load(&WorkspaceOwners::default()).unwrap().workspaces;
     assert_eq!(shape(&loaded), v1_shape());
     let shop = &loaded[0];
     assert_eq!(shop.name.as_str(), "Web shop");
@@ -403,7 +410,7 @@ fn a_version_1_book_loads_as_lists_with_the_checkout_as_start_folder_and_is_neve
             32768
         )
     );
-    book.load().unwrap();
+    book.load(&WorkspaceOwners::default()).unwrap();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         V1_BOOK,
@@ -418,7 +425,7 @@ fn a_version_1_book_loads_as_lists_with_the_checkout_as_start_folder_and_is_neve
     book.save(loaded.clone(), &BTreeSet::new(), &BTreeSet::new())
         .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(written["version"], 3);
+    assert_eq!(written["version"], 4);
     assert_eq!(written["workspaces"][0]["name"], "Web shop");
     let mut saved = written["workspaces"][0]["repositories"].clone();
     let entry = saved[0].as_object_mut().unwrap().remove("entry").unwrap();
@@ -433,7 +440,10 @@ fn a_version_1_book_loads_as_lists_with_the_checkout_as_start_folder_and_is_neve
         assert!(entry.get("display_name").is_none(), "{entry}");
         assert!(entry.get("first_connect_notice_due").is_none(), "{entry}");
     }
-    assert_eq!(book.load().unwrap().workspaces, loaded);
+    assert_eq!(
+        book.load(&WorkspaceOwners::default()).unwrap().workspaces,
+        loaded
+    );
 }
 
 #[test]
@@ -446,7 +456,7 @@ fn an_entry_from_before_session_users_keeps_root_and_the_user_is_saved() {
         "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
     }]});
     std::fs::write(&path, old.to_string()).unwrap();
-    let loaded = book.load().unwrap().workspaces;
+    let loaded = book.load(&WorkspaceOwners::default()).unwrap().workspaces;
     assert_eq!(loaded[0].session_user, SessionUser::Root);
     book.save(
         vec![loaded[0].clone(), stored("b")],
@@ -462,11 +472,11 @@ fn an_entry_from_before_session_users_keeps_root_and_the_user_is_saved() {
         "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
     }]});
     std::fs::write(&path, bad.to_string()).unwrap();
-    assert!(book.load().is_err());
+    assert!(book.load(&WorkspaceOwners::default()).is_err());
     // A version 1 book is older still: every workspace in it keeps root.
     std::fs::write(&path, V1_BOOK).unwrap();
     assert!(
-        book.load()
+        book.load(&WorkspaceOwners::default())
             .unwrap()
             .workspaces
             .iter()
@@ -484,7 +494,10 @@ fn a_version_1_book_written_by_a_puddle_before_repository_lists_loads() {
         include_str!("../../tests/fixtures/workspaces-v1.json"),
     )
     .unwrap();
-    let loaded = WorkspaceBook::new(&path).load().unwrap().workspaces;
+    let loaded = WorkspaceBook::new(&path)
+        .load(&WorkspaceOwners::default())
+        .unwrap()
+        .workspaces;
     assert_eq!(shape(&loaded), v1_shape());
 }
 
@@ -496,7 +509,7 @@ fn a_version_2_book_written_by_the_previous_release_loads_in_place_and_saves_as_
     let old = include_str!("../../tests/fixtures/workspaces-v2.json");
     std::fs::write(&path, old).unwrap();
     let book = WorkspaceBook::new(&path);
-    let loaded = book.load().unwrap().workspaces;
+    let loaded = book.load(&WorkspaceOwners::default()).unwrap().workspaces;
     // Each entry keeps its id; the name is the old display name, else the old name.
     assert_eq!(
         loaded
@@ -516,15 +529,21 @@ fn a_version_2_book_written_by_the_previous_release_loads_in_place_and_saves_as_
     book.save(loaded.clone(), &BTreeSet::new(), &BTreeSet::new())
         .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(written["version"], 3);
+    assert_eq!(written["version"], 4);
     assert_eq!(written["workspaces"][0]["id"], "shop");
     assert_eq!(written["workspaces"][0]["name"], "Shop API \u{fc}");
     assert!(written["workspaces"][0].get("display_name").is_none());
-    assert_eq!(book.load().unwrap().workspaces, loaded);
+    assert_eq!(
+        book.load(&WorkspaceOwners::default()).unwrap().workspaces,
+        loaded
+    );
     // A display name that is no longer valid text stops the start with its workspace named.
     let bad = old.replace("Shop API \u{fc}", "two\\nlines");
     std::fs::write(&path, bad).unwrap();
-    let err = book.load().unwrap_err().to_string();
+    let err = book
+        .load(&WorkspaceOwners::default())
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("\"shop\"") && err.contains("bad name"),
         "{err}"
@@ -546,7 +565,10 @@ fn a_version_3_book_round_trips_with_empty_and_long_lists() {
     let all = vec![stored("a"), empty, many];
     book.save(all.clone(), &BTreeSet::new(), &BTreeSet::new())
         .unwrap();
-    assert_eq!(book.load().unwrap().workspaces, all);
+    assert_eq!(
+        book.load(&WorkspaceOwners::default()).unwrap().workspaces,
+        all
+    );
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written["workspaces"][1]["repositories"], json!([]));
     assert_eq!(written["workspaces"][1]["start_folder"], Value::Null);
@@ -559,7 +581,7 @@ fn entries_of_an_older_list_get_ids_on_read_and_keep_them_once_saved() {
     let old = include_str!("../../tests/fixtures/workspaces-v2.json");
     std::fs::write(&path, old).unwrap();
     let book = WorkspaceBook::new(&path);
-    let first = book.load().unwrap().workspaces;
+    let first = book.load(&WorkspaceOwners::default()).unwrap().workspaces;
     let ids: Vec<&EntryId> = first
         .iter()
         .flat_map(|s| s.repositories.iter().map(|r| &r.entry))
@@ -570,12 +592,12 @@ fn entries_of_an_older_list_get_ids_on_read_and_keep_them_once_saved() {
     book.save(first.clone(), &BTreeSet::new(), &BTreeSet::new())
         .unwrap();
     assert_eq!(
-        book.load().unwrap().workspaces,
+        book.load(&WorkspaceOwners::default()).unwrap().workspaces,
         first,
         "saved ids are read back"
     );
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(written["version"], 3);
+    assert_eq!(written["version"], 4);
     assert_eq!(
         written["workspaces"][0]["repositories"][0]["entry"],
         first[0].repositories[0].entry.as_str()
@@ -605,7 +627,10 @@ fn a_list_with_a_bad_or_repeated_entry_id_is_refused() {
             "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
         }]});
         std::fs::write(&path, bad.to_string()).unwrap();
-        let err = book.load().unwrap_err().to_string();
+        let err = book
+            .load(&WorkspaceOwners::default())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(why), "{err}");
     }
 }
@@ -621,7 +646,7 @@ fn retired_ids_are_kept_beside_the_workspaces_and_a_bad_one_is_refused() {
         .collect();
     book.save(vec![stored("a")], &retired, &BTreeSet::new())
         .unwrap();
-    let loaded = book.load().unwrap();
+    let loaded = book.load(&WorkspaceOwners::default()).unwrap();
     assert_eq!(loaded.workspaces, vec![stored("a")]);
     assert_eq!(loaded.retired, retired);
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -631,13 +656,21 @@ fn retired_ids_are_kept_beside_the_workspaces_and_a_bad_one_is_refused() {
         .unwrap();
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written.get("retired_ids"), None);
-    assert!(book.load().unwrap().retired.is_empty());
+    assert!(
+        book.load(&WorkspaceOwners::default())
+            .unwrap()
+            .retired
+            .is_empty()
+    );
     std::fs::write(
         &path,
         br#"{"version": 3, "workspaces": [], "retired_ids": ["Not An Id"]}"#,
     )
     .unwrap();
-    let err = book.load().unwrap_err().to_string();
+    let err = book
+        .load(&WorkspaceOwners::default())
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("retired id \"Not An Id\" is not an id"),
         "{err}"
@@ -657,7 +690,7 @@ fn cleaned_ids_are_kept_only_for_ids_the_book_still_retires() {
     };
     book.save(vec![], &ids(&["acme", "gone"]), &ids(&["acme"]))
         .unwrap();
-    let loaded = book.load().unwrap();
+    let loaded = book.load(&WorkspaceOwners::default()).unwrap();
     assert_eq!(loaded.retired, ids(&["acme", "gone"]));
     assert_eq!(loaded.cleaned, ids(&["acme"]));
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -668,7 +701,10 @@ fn cleaned_ids_are_kept_only_for_ids_the_book_still_retires() {
         br#"{"version": 3, "workspaces": [], "retired_ids": ["acme"], "cleaned_ids": ["other", "Not An Id", "acme"]}"#,
     )
     .unwrap();
-    assert_eq!(book.load().unwrap().cleaned, ids(&["acme"]));
+    assert_eq!(
+        book.load(&WorkspaceOwners::default()).unwrap().cleaned,
+        ids(&["acme"])
+    );
     // None cleaned: the field is left out.
     book.save(vec![], &ids(&["acme"]), &BTreeSet::new())
         .unwrap();

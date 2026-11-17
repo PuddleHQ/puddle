@@ -1084,7 +1084,7 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(saved["version"], 3);
+    assert_eq!(saved["version"], 4);
     assert_eq!(
         without_entries(&saved["workspaces"][0]["repositories"]),
         json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])

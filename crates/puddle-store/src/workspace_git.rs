@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a workspace's Git settings hold: its ordered identities, the repository table with a
-//! Pull and a Push toggle per repository, and the two "only listed" switches
-//! (`docs/arch/spec/credentials.md` §7).
+//! Pull and a Push toggle per repository, and the two "only listed" switches.
 
 use puddle_secrets::HostName;
 

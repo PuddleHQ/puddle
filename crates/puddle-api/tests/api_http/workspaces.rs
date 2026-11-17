@@ -5,6 +5,7 @@ use puddle_api::DisplayName;
 use puddle_api::{
     Listing, Operation, RepoFindings, RepoUrl, Repository, SettingsRepo, Unsaved, WorkspaceRecord,
 };
+use puddle_store::UserId;
 use puddle_types::{EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
@@ -72,6 +73,7 @@ async fn running(api: &Api, name: &str) {
 fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
+        UserId::OWNER,
         DisplayName::parse(name).unwrap(),
         vec![Repository::at_default_directory(
             EntryId::from_random([7; 5]),
@@ -773,6 +775,7 @@ async fn reclaim_shrinks_what_the_disk_holds() {
     let api = start().await;
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
+        UserId::OWNER,
         DisplayName::parse("web").unwrap(),
         Vec::new(),
     );
@@ -795,6 +798,7 @@ async fn the_root_disk_figures_and_warnings_follow_the_threshold_and_a_reset_emp
     let api = start().await;
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
+        UserId::OWNER,
         DisplayName::parse("web").unwrap(),
         Vec::new(),
     );
@@ -849,6 +853,7 @@ async fn growing_the_root_disk_answers_202_and_a_size_that_is_not_bigger_is_422(
     let api = start().await;
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
+        UserId::OWNER,
         DisplayName::parse("web").unwrap(),
         Vec::new(),
     );
@@ -1695,6 +1700,7 @@ async fn lookup_answers_one_none_or_two() {
     seed(&api, "legacy", WorkspaceStatus::Stopped, Unsaved::default());
     let mut other = WorkspaceRecord::new(
         WorkspaceId::new("k7m2x9qa").unwrap(),
+        UserId::OWNER,
         DisplayName::parse("Another").unwrap(),
         Vec::new(),
     );

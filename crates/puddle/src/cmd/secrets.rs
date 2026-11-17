@@ -18,7 +18,6 @@ use puddle_secrets::StoreKind;
 use crate::cli::{Command, UsageError};
 use crate::cmd::data_folder;
 use crate::cmd::serve::options::Flags;
-use crate::cmd::serve::{ServeArgs, effective};
 
 /// What `puddle secrets` should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,15 +136,10 @@ fn execute(args: &VaultAdminArgs) -> Result<Report, String> {
 
 /// [`execute`] with the setup given, so a test never reads this machine's key folder.
 fn execute_with(args: &VaultAdminArgs, setup: &SecretSetup) -> Result<Report, String> {
-    let options = effective(&ServeArgs {
-        flags: args.flags.clone(),
-        print_config: false,
-    })
-    .map_err(|e| e.to_string())?;
-    let data = options
-        .path("data_dir")
-        .map_or_else(puddle_fs::data_dir, |dir| Ok(dir.to_path_buf()))
-        .map_err(|e| e.to_string())?;
+    let data = match data_folder::configured_here(&args.flags).map_err(|e| e.to_string())? {
+        Some(dir) => dir,
+        None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
+    };
     let paths = HostPaths::new(data);
     match args.action {
         Action::Status => {

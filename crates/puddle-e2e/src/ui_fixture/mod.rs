@@ -589,7 +589,7 @@ pub fn step_from_drop(mut item: serde_json::Value) -> Result<Step, String> {
 impl State {
     /// Records the owner as the user of `workspace` unless one is recorded. The fixture serves
     /// the owner, as the desktop window does, and every workspace it names (seeded, asking for a
-    /// host, given settings, named by an event) is theirs, as the first start records it for a
+    /// host, given settings, named by an event) is theirs, as the install records it for a
     /// workspace listed from before; one with no recorded user would be nobody's.
     fn own(&self, workspace: &WorkspaceId) -> Result<(), String> {
         let recorded = self
@@ -1013,7 +1013,7 @@ impl State {
                 ..r.repository
             })
             .collect();
-        let mut record = WorkspaceRecord::new(id.clone(), name, repositories);
+        let mut record = WorkspaceRecord::new(id.clone(), UserId::OWNER, name, repositories);
         record.start_folder = seed
             .start_folder
             .as_deref()

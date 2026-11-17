@@ -12,7 +12,7 @@ use puddle_api::{
     PublicHost, Remote, RemoteServing, RunningApi, Services, SettingsRepo, Unsaved,
     WorkspaceRecord, WorkspaceService,
 };
-use puddle_store::{Limits, ManualClock, Store};
+use puddle_store::{Limits, ManualClock, Store, UserId};
 use puddle_types::WorkspaceId;
 
 use crate::common::{Reply, START_MS, raw};
@@ -37,6 +37,7 @@ async fn site(remote: bool, seeded: &[(&str, &str)]) -> Site {
     for (id, name) in seeded {
         let record = WorkspaceRecord::new(
             WorkspaceId::new(id).unwrap(),
+            UserId::OWNER,
             DisplayName::parse(name).unwrap(),
             Vec::new(),
         );
@@ -177,6 +178,7 @@ async fn two_legacy_ids_whose_names_clash_raise_a_problem_and_the_editor_wins() 
     site.workspaces.seed(
         WorkspaceRecord::new(
             WorkspaceId::new("8080-api").unwrap(),
+            UserId::OWNER,
             DisplayName::parse("Eighty").unwrap(),
             Vec::new(),
         ),

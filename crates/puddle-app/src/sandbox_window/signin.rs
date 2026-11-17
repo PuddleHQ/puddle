@@ -11,7 +11,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::header::{CONTENT_TYPE, HOST, SET_COOKIE};
 use http::{Method, Request};
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use puddle_types::WorkspaceId;
 use tauri::webview::cookie::Cookie;
@@ -154,8 +154,10 @@ async fn post_login(
         .filter_map(|v| Cookie::parse(v.to_owned()).ok())
         .find(|c| c.name() == SESSION_COOKIE && !c.value().is_empty())
         .map(|c| SessionCookie::new(c.name(), c.value()));
-    // The answer's body is a redirect page or an error page: nothing to read.
-    let _ = response.into_body().collect().await;
+    // The answer's body is a redirect page or an error page: nothing to read, and the guest's
+    // editor chooses how much of it comes, so none of it is buffered. Aborting the driver closes
+    // the connection.
+    drop(response);
     driver.abort();
     cookie.ok_or(SignInError::NoSession(status))
 }

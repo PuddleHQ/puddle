@@ -7,6 +7,7 @@
 //! remote address) is guest input: it is parsed as an address and used only as one.
 
 use puddle_api::{NewRepository, RepoUrl};
+use puddle_store::UserId;
 use puddle_types::VolumeName;
 use puddle_workspace::{CheckoutList, FoundCheckout};
 
@@ -118,10 +119,15 @@ fn readable(checkout: &FoundCheckout) -> Option<(RepoUrl, CheckoutDir)> {
 /// The name a restored disk's entry gets: `base` (its first checkout's folder, else its id), or
 /// with ` (2)`, ` (3)` and so on when a listed workspace has that name, cut to fit the longest
 /// name.
-fn free_name(state: &State, base: &str) -> DisplayName {
+fn free_name(state: &State, owner: UserId, base: &str) -> DisplayName {
     let taken = |name: &DisplayName| {
-        puddle_api::label_taken(state.slots.values().map(|s| &s.record), name.as_str(), None)
-            .is_some()
+        puddle_api::label_taken(
+            state.slots.values().map(|s| &s.record),
+            owner,
+            name.as_str(),
+            None,
+        )
+        .is_some()
     };
     let mut n = 1_usize;
     loop {
@@ -189,6 +195,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn restore_orphan_volume(
         &self,
         id: &WorkspaceId,
+        owner: UserId,
         asked: Option<RepoUrl>,
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
@@ -243,8 +250,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // The disk was read without the lock, so claim it again here: another restore may
             // have taken it meanwhile, and an entry is never replaced.
             Self::claimed(&state, id)?;
-            let name = free_name(&state, &named_after);
-            let mut record = WorkspaceRecord::new(id.clone(), name, repositories.clone());
+            let name = free_name(&state, owner, &named_after);
+            let mut record = WorkspaceRecord::new(id.clone(), owner, name, repositories.clone());
             record.status = WorkspaceStatus::Stopped;
             record.memory = memory;
             record.created_at = self.inner.clock.now_ms();

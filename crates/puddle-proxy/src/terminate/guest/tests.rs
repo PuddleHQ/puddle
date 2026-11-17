@@ -43,21 +43,39 @@ async fn a_read_error_before_a_whole_record_is_an_error_not_a_pass_through() {
     assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
 }
 
+/// A guest that sends its bytes one at a time, 10 s apart (on the test's clock).
+struct Drip {
+    bytes: Vec<u8>,
+    at: usize,
+    gap: Pin<Box<tokio::time::Sleep>>,
+}
+
+impl AsyncRead for Drip {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        std::task::ready!(self.gap.as_mut().poll(cx));
+        if let Some(&byte) = self.bytes.get(self.at) {
+            buf.put_slice(&[byte]);
+            self.at += 1;
+            let next = tokio::time::Instant::now() + Duration::from_secs(10);
+            self.gap.as_mut().reset(next);
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_hello_dripped_a_byte_at_a_time_times_out_once_for_the_whole_record() {
+    // The guest sends one byte every 10 s: each read alone is well inside the 60 s limit.
     let hello = test_client_hello("free.test", &[]);
-    let (mut writer, mut reader) = tokio::io::duplex(64 * 1024);
-    let drip = tokio::spawn(async move {
-        for byte in hello {
-            if tokio::io::AsyncWriteExt::write_all(&mut writer, &[byte])
-                .await
-                .is_err()
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        }
-    });
+    let mut reader = Drip {
+        bytes: hello,
+        at: 0,
+        gap: Box::pin(tokio::time::sleep(Duration::ZERO)),
+    };
     let started = tokio::time::Instant::now();
     let err = capture_first_record(
         &mut reader,
@@ -69,7 +87,6 @@ async fn a_hello_dripped_a_byte_at_a_time_times_out_once_for_the_whole_record() 
     .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     assert_eq!(started.elapsed(), Duration::from_secs(60));
-    drip.abort();
 }
 
 #[tokio::test(start_paused = true)]

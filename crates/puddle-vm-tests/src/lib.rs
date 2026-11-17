@@ -57,6 +57,7 @@ mod error;
 mod flush_trace;
 mod freeze;
 mod host_memory;
+pub mod keepalive;
 pub mod load;
 mod prefix;
 mod runtime;

@@ -87,7 +87,7 @@ fn crlf_markers_are_still_puddles() {
 }
 
 #[test]
-fn damaged_markers_are_repaired_by_dropping_the_span_and_writing_the_block_again() {
+fn damaged_markers_are_repaired_by_dropping_puddles_lines_and_writing_the_block_again() {
     let two = format!(
         "a ssh-rsa A\n{}between ssh-rsa M\n{}z ssh-rsa Z\n",
         ours("one ssh-rsa 1"),
@@ -104,13 +104,13 @@ fn damaged_markers_are_repaired_by_dropping_the_span_and_writing_the_block_again
             format!("user ssh-rsa U\nold ssh-rsa C\n{END}\n"),
             "user ssh-rsa U\nold ssh-rsa C\n",
         ),
-        // the end comes before the begin: everything between and including goes
+        // the end comes before the begin: two lone markers, the line between them is the user's
         (
             format!("a ssh-rsa A\n{END}\nmid ssh-rsa M\n{BEGIN}\nz ssh-rsa Z\n"),
-            "a ssh-rsa A\nz ssh-rsa Z\n",
+            "a ssh-rsa A\nmid ssh-rsa M\nz ssh-rsa Z\n",
         ),
-        // a duplicated block: from the first marker to the last one
-        (two, "a ssh-rsa A\nz ssh-rsa Z\n"),
+        // a duplicated block: both blocks go, the line between them is the user's
+        (two, "a ssh-rsa A\nbetween ssh-rsa M\nz ssh-rsa Z\n"),
         // a marker inside its own block
         (format!("{BEGIN}\n{BEGIN}\nold ssh-rsa C\n{END}\n"), ""),
     ] {

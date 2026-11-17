@@ -4,8 +4,9 @@
 //! The file is the image's and the user's, so every byte outside the markers stays as it is. A
 //! file without markers gets the block at its end; a block that is already there (one begin line,
 //! then one end line) is replaced where it stands; a file whose markers were damaged (one
-//! removed, one duplicated, the end before the begin) loses every line from the first marker line
-//! to the last one, and the block is written at the end again. The file is line-based, so no
+//! removed, a block duplicated, the end before the begin) loses each begin-to-end block and each
+//! lone marker line, keeps every other line (also one between two blocks), and gets the block at
+//! its end again. The file is line-based, so no
 //! content makes it unparsable; only a NUL byte, invalid UTF-8 or more than [`crate::MAX_MERGE_FILE`]
 //! bytes is refused.
 
@@ -61,42 +62,65 @@ fn block(m: &Markers, entries: &[MergeEntry]) -> String {
     format!("{}\n{body}\n{}\n", m.begin, m.end)
 }
 
-/// The indexes of the lines that are one of Puddle's markers.
-fn markers(m: &Markers, lines: &[&str]) -> Vec<usize> {
-    lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| is_marker(m, line))
-        .map(|(i, _)| i)
-        .collect()
+/// Which marker a line is, if any.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Marker {
+    Begin,
+    End,
 }
 
-fn is_marker(m: &Markers, line: &str) -> bool {
+fn marker(m: &Markers, line: &str) -> Option<Marker> {
     let line = line.trim_end_matches(['\r', '\n']);
-    line == m.begin || line == m.end
+    if line == m.begin {
+        Some(Marker::Begin)
+    } else if line == m.end {
+        Some(Marker::End)
+    } else {
+        None
+    }
 }
 
-/// The file without Puddle's lines, and the byte offset where they were. Puddle's lines are one
-/// begin and one end line in order, with whatever stands between them; with damaged markers they
-/// are every line from the first marker to the last, and a lone marker is a span of one line.
-/// `in_place` says the span is a well-formed block.
+/// The file without Puddle's lines, and the byte offset where they were. Puddle's lines are each
+/// begin line whose next marker is an end line, through that end line, and every marker line
+/// that is not part of such a pair. Every other line is the user's and stays, also one between
+/// two blocks. `in_place` says the file held exactly one block and no lone marker.
 fn without(m: &Markers, lines: &[&str]) -> (String, usize, bool) {
-    let found = markers(m, lines);
-    let (Some(&first), Some(&last)) = (found.first(), found.last()) else {
-        return (lines.concat(), lines.iter().map(|l| l.len()).sum(), false);
-    };
-    let well_formed = found.len() == 2
-        && lines
-            .get(first)
-            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == m.begin)
-        && lines
-            .get(last)
-            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == m.end);
-    let before: String = lines.iter().take(first).copied().collect();
-    let at = before.len();
-    let after: String = lines.iter().skip(last + 1).copied().collect();
-    let rest = [before, after].concat();
-    (rest, at, well_formed)
+    let kinds: Vec<Option<Marker>> = lines.iter().map(|line| marker(m, line)).collect();
+    let mut rest = String::new();
+    let mut at = None;
+    let mut blocks = 0;
+    let mut lone = 0;
+    let mut i = 0;
+    while let Some(line) = lines.get(i) {
+        match kinds.get(i).copied().flatten() {
+            None => {
+                rest.push_str(line);
+                i += 1;
+            }
+            Some(Marker::Begin) => {
+                at.get_or_insert(rest.len());
+                let next = kinds.iter().skip(i + 1).position(Option::is_some);
+                match next.map(|n| i + 1 + n) {
+                    Some(end) if kinds.get(end).copied().flatten() == Some(Marker::End) => {
+                        blocks += 1;
+                        i = end + 1;
+                    }
+                    _ => {
+                        lone += 1;
+                        i += 1;
+                    }
+                }
+            }
+            Some(Marker::End) => {
+                at.get_or_insert(rest.len());
+                lone += 1;
+                i += 1;
+            }
+        }
+    }
+    let in_place = blocks == 1 && lone == 0;
+    let at = at.unwrap_or(rest.len());
+    (rest, at, in_place)
 }
 
 /// The file with the block set.

@@ -17,6 +17,13 @@ pub const SHIPPED_PROGRAMS: [&str; 3] = ["puddle", "puddle-app", "puddle-agent"]
 /// Feature names that exist for tests and tools only.
 pub const TEST_ONLY_FEATURES: [&str; 2] = ["testing", "fuzzing"];
 
+/// Opt-in features of a shipped program that turn a test-only feature on by design, as
+/// (package name, test-only feature, the opt-in that does it). Only the all-features pass
+/// tolerates them: a release build never enables the opt-in, and the default pass still fails if
+/// the feature is on without it.
+pub const OPT_IN_TEST_FEATURES: [(&str, &str, &str); 1] =
+    [("puddle-api", "testing", "puddle-app `fixture`")];
+
 /// A test-only feature found enabled in a shipped tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Leak {
@@ -91,8 +98,16 @@ fn describe(tree: &str, target: &str, all_features: bool) -> Result<Vec<String>>
     };
     Ok(leaks(tree)?
         .into_iter()
+        .filter(|leak| !(all_features && is_opt_in(leak)))
         .map(|leak| format!("{leak} (target {target}, {features})"))
         .collect())
+}
+
+/// Whether the leak is one an opt-in feature of a shipped program turns on on purpose.
+fn is_opt_in(leak: &Leak) -> bool {
+    OPT_IN_TEST_FEATURES.iter().any(|(name, feature, _)| {
+        leak.feature == *feature && leak.package.split(' ').next() == Some(name)
+    })
 }
 
 /// The command's answer: the leaks as an error, else the line that says what was checked.

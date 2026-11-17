@@ -5,7 +5,9 @@ use futures_util::future::BoxFuture;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, KeptLogins,
     LocalCheckoutError, LocalSource, NewWorkspace, Operation, ShellInitCheck, StartFolder,
-    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
+    admit_delete_status, admit_grow_size, admit_reset_root_disk, admit_settled, admit_start,
+    admit_stop,
 };
 use puddle_api::{TerminalError, TerminalLink, TerminalService, TerminalSize};
 use puddle_compute::{DiskSize, Runtime};
@@ -237,21 +239,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(
-                id,
-                Operation::Starting,
-                |r| {
-                    if r.status.is_down() {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is already {}",
-                            r.name, r.status
-                        )))
-                    }
-                },
-                |r| r.status = WorkspaceStatus::Starting,
-            )?;
+            let ticket = self.accept(id, Operation::Starting, admit_start, |r| {
+                r.status = WorkspaceStatus::Starting;
+            })?;
             let record = ticket.record().clone();
             self.status_event(&record);
             let this = self.clone();
@@ -266,21 +256,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(
-                id,
-                Operation::Stopping,
-                |r| {
-                    if r.status == WorkspaceStatus::Running {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is not running ({})",
-                            r.name, r.status
-                        )))
-                    }
-                },
-                |r| r.status = WorkspaceStatus::Draining,
-            )?;
+            let ticket = self.accept(id, Operation::Stopping, admit_stop, |r| {
+                r.status = WorkspaceStatus::Draining;
+            })?;
             let record = ticket.record().clone();
             self.status_event(&record);
             // A stopped workspace is the one a user deletes next: have the delete check's image
@@ -301,14 +279,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(
-                id,
-                Operation::Reclaiming,
-                // `Starting` and `Draining` are set only together with the busy mark `accept`
-                // refuses first, so no status needs checking here.
-                |_| Ok(()),
-                |_| {},
-            )?;
+            let ticket = self.accept(id, Operation::Reclaiming, admit_settled, |_| {})?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -333,16 +304,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let ticket = self.accept(
                 id,
                 Operation::ResettingRootDisk,
-                |r| {
-                    if r.status.is_down() {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; stop it before resetting its root disk",
-                            r.name, r.status
-                        )))
-                    }
-                },
+                admit_reset_root_disk,
                 |_| {},
             )?;
             let record = ticket.record().clone();
@@ -373,11 +335,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .root_disk_size_mib
                     .map_or(saved, |r| r.max(saved))
             };
-            if u64::from(size_mib) <= current {
-                return Err(WorkspaceError::Invalid(format!(
-                    "a root disk only grows: {size_mib} MiB is not above its {current} MiB"
-                )));
-            }
+            admit_grow_size(size_mib, current)?;
             let added = (u64::from(size_mib) - current) * 1024 * 1024;
             let space = self.inner.space.clone();
             let free = tokio::task::spawn_blocking(move || space.free_bytes())
@@ -396,14 +354,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     added / (1024 * 1024 * 1024)
                 )));
             }
-            let ticket = self.accept(
-                id,
-                Operation::GrowingRootDisk,
-                // `Starting` and `Draining` are set only together with the busy mark `accept`
-                // refuses first, so no status needs checking here.
-                |_| Ok(()),
-                |_| {},
-            )?;
+            let ticket = self.accept(id, Operation::GrowingRootDisk, admit_settled, |_| {})?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -442,21 +393,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(
-                id,
-                Operation::Deleting,
-                |r| {
-                    if r.status.is_down() {
-                        Ok(())
-                    } else {
-                        Err(WorkspaceError::Conflict(format!(
-                            "{} is {}; stop it before deleting it",
-                            r.name, r.status
-                        )))
-                    }
-                },
-                |_| {},
-            )?;
+            let ticket = self.accept(id, Operation::Deleting, admit_delete_status, |_| {})?;
             let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
             // The ticket goes with the check: a request dropped while it runs leaves the
@@ -476,18 +413,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 Err(e) => Err(workspace_error(&e)),
                 Ok(report) => {
                     let fresh = delete_check(&report);
-                    match fingerprint {
-                        Some(seen) if seen == fresh.fingerprint => Ok(report),
-                        Some(_) => Err(WorkspaceError::Conflict(format!(
-                            "{} has changed since it was checked; check it again",
-                            record.name
-                        ))),
-                        None if fresh.is_clean() => Ok(report),
-                        None => Err(WorkspaceError::Conflict(format!(
-                            "{} has work that is not saved on a remote; review it and confirm",
-                            record.name
-                        ))),
-                    }
+                    admit_delete_fingerprint(&record, fingerprint, &fresh).map(|()| report)
                 }
             };
             // The entry leaves the saved list before the volume goes, so a delete that can't be

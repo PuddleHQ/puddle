@@ -9,6 +9,8 @@ struct FakeMise {
     registry: String,
     remote: String,
     fail: Option<&'static str>,
+    /// A file the editor saves while mise runs an edit.
+    saved_meanwhile: Option<PathBuf>,
     calls: RefCell<Vec<Vec<String>>>,
 }
 
@@ -19,6 +21,7 @@ impl FakeMise {
             registry: "[]".to_owned(),
             remote: String::new(),
             fail: None,
+            saved_meanwhile: None,
             calls: RefCell::default(),
         }
     }
@@ -31,6 +34,11 @@ impl Mise for FakeMise {
             .push(args.iter().map(|a| (*a).to_owned()).collect());
         if let Some(why) = self.fail {
             return Err(MiseFailed(why.to_owned()));
+        }
+        if let (Some(file), Some("config" | "unuse")) =
+            (&self.saved_meanwhile, args.first().copied())
+        {
+            std::fs::write(file, "[tools]\nnode = \"24\"\n").unwrap();
         }
         Ok(match args.first().copied() {
             Some("ls") => self.ls.clone(),
@@ -184,11 +192,13 @@ fn a_set_checks_the_hash_creates_the_file_and_quotes_the_key() {
         out,
         "hash\tabsent\nend\n".replace("absent", &sha256_of(&root.join("mise.toml")).unwrap())
     );
-    let file = root.join("mise.toml").display().to_string();
+    // mise edits a copy of the file, which then replaces it.
+    let file = root.join(EDIT_COPY).display().to_string();
     assert_eq!(
         *mise.calls.borrow(),
         [["config", "set", "-f", &file, "tools.\"npm:prettier\"", "22"]]
     );
+    assert!(!root.join(EDIT_COPY).exists());
     // The file exists now, so `absent` is stale.
     let again = run(&mise, &request(root, set(ToolsFileHash::absent())));
     assert_eq!(again, Err(Failure::Changed));
@@ -216,11 +226,71 @@ fn a_remove_checks_the_hash_and_uses_unuse_without_pruning() {
     assert_eq!(stale, Err(Failure::Changed));
     assert!(mise.calls.borrow().is_empty());
     run(&mise, &request(root, Operation::Remove(name("node"), hash))).unwrap();
-    let file = root.join("mise.toml").display().to_string();
+    let file = root.join(EDIT_COPY).display().to_string();
     assert_eq!(
         *mise.calls.borrow(),
         [["unuse", "--no-prune", "-p", &file, "node"]]
     );
+    assert!(!root.join(EDIT_COPY).exists());
+}
+
+/// The editor saves the file while mise is editing: that save is kept and the edit is refused,
+/// instead of the save being overwritten.
+#[test]
+fn a_save_that_lands_while_mise_edits_is_kept_and_the_edit_refused() {
+    let dir = workspace();
+    let root = dir.path();
+    std::fs::write(root.join("mise.toml"), "[tools]\nnode = \"22\"\n").unwrap();
+    let hash = ToolsFileHash::new(&sha256_of(&root.join("mise.toml")).unwrap()).unwrap();
+    let mut mise = FakeMise::new("{}");
+    mise.saved_meanwhile = Some(root.join("mise.toml"));
+    let version = ToolVersion::new("1").unwrap();
+    for operation in [
+        Operation::Set(name("go"), version, hash.clone()),
+        Operation::Remove(name("node"), hash),
+    ] {
+        let err = run(&mise, &request(root, operation)).unwrap_err();
+        assert_eq!(err, Failure::Changed);
+        assert_eq!(
+            std::fs::read_to_string(root.join("mise.toml")).unwrap(),
+            "[tools]\nnode = \"24\"\n",
+            "the save is still there"
+        );
+        assert!(!root.join(EDIT_COPY).exists(), "no copy is left behind");
+    }
+}
+
+/// A `mise.toml` that is a link is edited where it points, and stays a link; one that points
+/// nowhere is refused instead of creating its target.
+#[cfg(unix)]
+#[test]
+fn an_edit_follows_a_link_to_the_file_and_refuses_a_link_to_nothing() {
+    let dir = workspace();
+    let root = dir.path();
+    let real = root.join("shared.toml");
+    std::fs::write(&real, "[tools]\n").unwrap();
+    std::os::unix::fs::symlink("shared.toml", root.join("mise.toml")).unwrap();
+    let hash = ToolsFileHash::new(&sha256_of(&root.join("mise.toml")).unwrap()).unwrap();
+    let version = ToolVersion::new("1").unwrap();
+    run(
+        &FakeMise::new("{}"),
+        &request(root, Operation::Set(name("go"), version.clone(), hash)),
+    )
+    .unwrap();
+    assert!(root.join("mise.toml").is_symlink());
+
+    let other = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("nowhere.toml", other.path().join("mise.toml")).unwrap();
+    let err = run(
+        &FakeMise::new("{}"),
+        &request(
+            other.path(),
+            Operation::Set(name("go"), version, ToolsFileHash::absent()),
+        ),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("link"), "{err}");
+    assert!(!other.path().join("nowhere.toml").exists());
 }
 
 #[test]

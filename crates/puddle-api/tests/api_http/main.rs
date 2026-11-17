@@ -38,6 +38,7 @@ mod repos;
 mod repositories;
 mod repository_hosts;
 mod request_rules;
+mod restore;
 mod routes;
 mod rule_sets;
 #[cfg(windows)]

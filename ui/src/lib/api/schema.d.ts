@@ -1272,6 +1272,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/restore/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reads the uploaded backup (the file as the request body: a `.tar.gz` made by "Back up now") into
+         *     a private staging area, checks it and answers what restoring it would do on this machine: counts
+         *     of what would be added, replaced, kept or dropped, which restored workspaces have a disk here,
+         *     which secrets need a value, and how many workspaces run. Nothing that exists changes. A file
+         *     that cannot be read faithfully is refused with the reason (a file that is not a gzip archive, an
+         *     entry outside the backup's three names or its manifest, a path or link that points out of it,
+         *     more than 4 GiB unpacked, no database, a failed integrity check, a newer schema, an unknown
+         *     format) and leaves nothing staged. A staged copy that is not applied is removed at the next
+         *     start and after 24 hours.
+         */
+        post: operations["preview_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rule-sets": {
         parameters: {
             query?: never;
@@ -5658,6 +5685,11 @@ export interface components {
              */
             value: number;
         };
+        /**
+         * @description Whether the disk of a restored workspace is on this machine.
+         * @enum {string}
+         */
+        RestoreDisk: "present" | "missing";
         /** @description `POST /api/orphan-volumes/{id}/restore`. */
         RestoreOrphanRequest: {
             /**
@@ -5665,6 +5697,96 @@ export interface components {
              *     remote of a checkout there. An HTTPS address; an SSH one is refused as in a create.
              */
             repository?: string | null;
+        };
+        /** @description How one part of the backup compares with this machine (entries match by natural key). */
+        RestorePart: {
+            /**
+             * Format: int32
+             * @description In the backup and not here: both modes add them.
+             */
+            add: number;
+            /**
+             * Format: int32
+             * @description In both and different: "Add what is missing" keeps yours, "Replace" takes the backup's.
+             */
+            differ: number;
+            /**
+             * Format: int32
+             * @description Entries in the backup.
+             */
+            in_backup: number;
+            /** @description Which part. */
+            name: components["schemas"]["RestorePartName"];
+            /**
+             * Format: int32
+             * @description Here and not in the backup: "Add what is missing" keeps them, "Replace" drops them.
+             */
+            only_here: number;
+            /**
+             * Format: int32
+             * @description In both and equal.
+             */
+            same: number;
+        };
+        /**
+         * @description A part of a backup that the preview counts.
+         * @enum {string}
+         */
+        RestorePartName: "rules" | "rule_sets" | "workspaces" | "identities" | "environment" | "settings" | "users";
+        /** @description What a restore of the uploaded file would do. Choosing a file changes nothing (BK-10). */
+        RestorePreview: {
+            /**
+             * Format: int64
+             * @description When it was made, in milliseconds since the Unix epoch; none without a manifest.
+             */
+            created_at_ms: number | null;
+            /**
+             * Format: int32
+             * @description The backup format (1).
+             */
+            format: number;
+            /** @description How each part compares with this machine. */
+            parts: components["schemas"]["RestorePart"][];
+            /** @description The Puddle that made the backup; none for a backup without a manifest. */
+            puddle_version: string | null;
+            /**
+             * Format: int32
+             * @description How many workspaces run now (a restore stops them).
+             */
+            running_workspaces: number;
+            /**
+             * Format: int32
+             * @description The schema version of the backup's database (before it is read forward).
+             */
+            schema_version: number;
+            /** @description The secrets that need a value here. */
+            secrets_needing_value: components["schemas"]["RestoreSecret"][];
+            /**
+             * @description Names the staged copy for the apply step. A copy that is not applied is removed at the next
+             *     start and after 24 hours.
+             */
+            staging_id: string;
+            /** @description The workspaces the backup lists, with whether their disk is here. */
+            workspaces: components["schemas"]["RestoreWorkspace"][];
+        };
+        /**
+         * @description A secret variable that arrives without a value because this machine's store lacks it. Names
+         *     only, never a value.
+         */
+        RestoreSecret: {
+            /** @description The variable's name. */
+            name: string;
+            /** @description The workspace it belongs to; none for a global variable. */
+            workspace_id: string | null;
+        };
+        /** @description A workspace the backup lists. */
+        RestoreWorkspace: {
+            /** @description Whether its disk is here. */
+            disk: components["schemas"]["RestoreDisk"];
+            /** @description Its id. */
+            id: string;
+            /** @description What the backup calls it. */
+            name: string;
         };
         /**
          * @description A colour as `#rrggbb`.
@@ -12271,6 +12393,85 @@ export interface operations {
             };
             /** @description Puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    preview_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description the backup file */
+        requestBody: {
+            content: {
+                "application/gzip": number[];
+            };
+        };
+        responses: {
+            /** @description what a restore of this file would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestorePreview"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the file cannot be read faithfully; the message says why */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the file cannot be staged on this machine */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

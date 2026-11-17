@@ -26,6 +26,7 @@ use crate::network_health::NetworkHealthService;
 use crate::ports::PortsService;
 use crate::proxy_sign_in::ProxySignInService;
 use crate::repos::RepoService;
+use crate::restore::RestoreService;
 use crate::settings::SettingsRepo;
 use crate::signin::SignIn;
 use crate::terminals::{Registry, TerminalService};
@@ -57,6 +58,7 @@ mod repos;
 mod repositories;
 mod repository_hosts;
 mod request_rules;
+mod restore;
 mod rule_sets;
 mod rules;
 pub(crate) mod settings;
@@ -109,6 +111,8 @@ pub(crate) struct AppState {
     pub(crate) doctor: Arc<dyn DoctorService>,
     /// Makes the backup Settings downloads.
     pub(crate) backup: Arc<dyn BackupService>,
+    /// Reads and checks the backup file a restore starts from.
+    pub(crate) restore: Arc<dyn RestoreService>,
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
     /// The credential store check the first-run banner retries.
@@ -315,6 +319,16 @@ fn app_icon_upload_router() -> OpenApiRouter<AppState> {
         ))
 }
 
+/// The upload of a backup file to restore: a body of up to the unpacked limit, which the rest of
+/// the API never takes.
+fn restore_upload_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(restore::preview_restore))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            restore::MAX_UPLOAD_BYTES,
+        ))
+}
+
 /// What a workspace keeps beside its Git settings: its environment, its shell init and the logins
 /// kept for it.
 fn environment_router() -> OpenApiRouter<AppState> {
@@ -375,6 +389,7 @@ pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
         .routes(routes!(backup::create_backup))
+        .merge(restore_upload_router())
         .routes(routes!(first_run::trust_dev_certificate))
         .routes(routes!(credential_store::retry_credential_store))
 }

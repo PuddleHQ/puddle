@@ -187,6 +187,7 @@ fn owner_only_actions_and_the_install_token_rule() {
         Action::UseComputerAccounts,
         Action::ManageUsers,
         Action::BackUp,
+        Action::Restore,
         Action::SetRemoteServing,
     ] {
         assert!(action.owner_only(), "{action:?}");
@@ -254,6 +255,7 @@ fn the_owner_alone_does_install_things_and_only_with_the_token_widens_reach() {
         (Action::ReadService, ResourceRef::Install),
         (Action::ManageUsers, ResourceRef::Own),
         (Action::BackUp, ResourceRef::Install),
+        (Action::Restore, ResourceRef::Install),
         (Action::UseComputerAccounts, ResourceRef::Install),
     ] {
         assert!(

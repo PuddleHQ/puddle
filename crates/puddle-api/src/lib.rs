@@ -72,6 +72,7 @@ mod proxy_sign_in;
 mod remote;
 mod remote_editor;
 mod repos;
+mod restore;
 mod routes;
 mod server;
 mod settings;
@@ -117,6 +118,10 @@ pub use remote::{
     WorkspaceNames,
 };
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
+pub use restore::{
+    FAKE_RESTORE_MAGIC, FakeRestore, NoRestore, RestoreFacts, RestoreService, RestoreServiceError,
+    SecretRef, UploadStream,
+};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsLock, SettingsRepo, SettingsRepoError};
 pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};

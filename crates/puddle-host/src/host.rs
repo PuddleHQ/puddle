@@ -50,6 +50,7 @@ use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::proxy_sign_ins::HostProxySignIns;
 use crate::quit_trims::QuitTrims;
+use crate::restore::DataFolderRestore;
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, RewriteGate};
 use crate::{HostConfig, HostError, HostWorkspaces, ProxyPasswords, VsCodeLauncher};
@@ -1170,6 +1171,7 @@ fn build_services<R: Runtime + Clone>(
         repos
     })
     .with_backup(Arc::new(DataFolderBackup::new(config.paths.clone())))
+    .with_restore(Arc::new(DataFolderRestore::new(config.paths.clone())))
     .with_doctor(system_doctor(
         &config.layout,
         &config.paths,

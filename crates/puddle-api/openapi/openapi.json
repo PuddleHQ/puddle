@@ -6335,6 +6335,103 @@
         }
       }
     },
+    "/api/restore/preview": {
+      "post": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Reads the uploaded backup (the file as the request body: a `.tar.gz` made by \"Back up now\") into\na private staging area, checks it and answers what restoring it would do on this machine: counts\nof what would be added, replaced, kept or dropped, which restored workspaces have a disk here,\nwhich secrets need a value, and how many workspaces run. Nothing that exists changes. A file\nthat cannot be read faithfully is refused with the reason (a file that is not a gzip archive, an\nentry outside the backup's three names or its manifest, a path or link that points out of it,\nmore than 4 GiB unpacked, no database, a failed integrity check, a newer schema, an unknown\nformat) and leaves nothing staged. A staged copy that is not applied is removed at the next\nstart and after 24 hours.",
+        "operationId": "preview_restore",
+        "requestBody": {
+          "description": "the backup file",
+          "content": {
+            "application/gzip": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "what a restore of this file would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the file cannot be read faithfully; the message says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the file cannot be staged on this machine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rule-sets": {
       "get": {
         "tags": [
@@ -20668,6 +20765,14 @@
           }
         }
       },
+      "RestoreDisk": {
+        "type": "string",
+        "description": "Whether the disk of a restored workspace is on this machine.",
+        "enum": [
+          "present",
+          "missing"
+        ]
+      },
       "RestoreOrphanRequest": {
         "type": "object",
         "description": "`POST /api/orphan-volumes/{id}/restore`.",
@@ -20681,6 +20786,187 @@
           }
         },
         "additionalProperties": false
+      },
+      "RestorePart": {
+        "type": "object",
+        "description": "How one part of the backup compares with this machine (entries match by natural key).",
+        "required": [
+          "name",
+          "in_backup",
+          "add",
+          "differ",
+          "same",
+          "only_here"
+        ],
+        "properties": {
+          "add": {
+            "type": "integer",
+            "format": "int32",
+            "description": "In the backup and not here: both modes add them.",
+            "minimum": 0
+          },
+          "differ": {
+            "type": "integer",
+            "format": "int32",
+            "description": "In both and different: \"Add what is missing\" keeps yours, \"Replace\" takes the backup's.",
+            "minimum": 0
+          },
+          "in_backup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Entries in the backup.",
+            "minimum": 0
+          },
+          "name": {
+            "$ref": "#/components/schemas/RestorePartName",
+            "description": "Which part."
+          },
+          "only_here": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Here and not in the backup: \"Add what is missing\" keeps them, \"Replace\" drops them.",
+            "minimum": 0
+          },
+          "same": {
+            "type": "integer",
+            "format": "int32",
+            "description": "In both and equal.",
+            "minimum": 0
+          }
+        }
+      },
+      "RestorePartName": {
+        "type": "string",
+        "description": "A part of a backup that the preview counts.",
+        "enum": [
+          "rules",
+          "rule_sets",
+          "workspaces",
+          "identities",
+          "environment",
+          "settings",
+          "users"
+        ]
+      },
+      "RestorePreview": {
+        "type": "object",
+        "description": "What a restore of the uploaded file would do. Choosing a file changes nothing (BK-10).",
+        "required": [
+          "staging_id",
+          "format",
+          "puddle_version",
+          "schema_version",
+          "created_at_ms",
+          "parts",
+          "workspaces",
+          "secrets_needing_value",
+          "running_workspaces"
+        ],
+        "properties": {
+          "created_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was made, in milliseconds since the Unix epoch; none without a manifest.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The backup format (1).",
+            "minimum": 0
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestorePart"
+            },
+            "description": "How each part compares with this machine."
+          },
+          "puddle_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Puddle that made the backup; none for a backup without a manifest."
+          },
+          "running_workspaces": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many workspaces run now (a restore stops them).",
+            "minimum": 0
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The schema version of the backup's database (before it is read forward).",
+            "minimum": 0
+          },
+          "secrets_needing_value": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreSecret"
+            },
+            "description": "The secrets that need a value here."
+          },
+          "staging_id": {
+            "type": "string",
+            "description": "Names the staged copy for the apply step. A copy that is not applied is removed at the next\nstart and after 24 hours."
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreWorkspace"
+            },
+            "description": "The workspaces the backup lists, with whether their disk is here."
+          }
+        }
+      },
+      "RestoreSecret": {
+        "type": "object",
+        "description": "A secret variable that arrives without a value because this machine's store lacks it. Names\nonly, never a value.",
+        "required": [
+          "workspace_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The variable's name."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace it belongs to; none for a global variable."
+          }
+        }
+      },
+      "RestoreWorkspace": {
+        "type": "object",
+        "description": "A workspace the backup lists.",
+        "required": [
+          "id",
+          "name",
+          "disk"
+        ],
+        "properties": {
+          "disk": {
+            "$ref": "#/components/schemas/RestoreDisk",
+            "description": "Whether its disk is here."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id."
+          },
+          "name": {
+            "type": "string",
+            "description": "What the backup calls it."
+          }
+        }
       },
       "Rgb": {
         "type": "string",
@@ -23533,6 +23819,10 @@
     {
       "name": "backup",
       "description": "A backup of Puddle's own state as one download. Owner only"
+    },
+    {
+      "name": "restore",
+      "description": "Restore Puddle's state from a backup file: preview first, then apply. Owner only"
     },
     {
       "name": "doctor",

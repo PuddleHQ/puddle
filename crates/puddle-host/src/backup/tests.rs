@@ -326,7 +326,7 @@ fn entries(archive: BackupArchive) -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
-fn the_archive_holds_the_three_parts_and_nothing_machine_bound() {
+fn the_archive_holds_the_three_parts_the_manifest_and_nothing_machine_bound() {
     let root = tempfile::tempdir().unwrap();
     let paths = data_folder(root.path());
     let live = open(&paths.store());
@@ -342,6 +342,7 @@ fn the_archive_holds_the_three_parts_and_nothing_machine_bound() {
     assert_eq!(
         names,
         [
+            "manifest.json",
             "puddle.db",
             "settings/global.json",
             "settings/workspaces/a.json",
@@ -353,12 +354,12 @@ fn the_archive_holds_the_three_parts_and_nothing_machine_bound() {
         .filter(|(_, body)| String::from_utf8_lossy(body).contains(CANARY))
         .count();
     assert_eq!(canary, 0, "no machine-bound file reaches the archive");
-    assert_eq!(found[3].1, fs::read(paths.workspace_book()).unwrap());
+    assert_eq!(found[4].1, fs::read(paths.workspace_book()).unwrap());
 
     // The packed database opens as the live one: same rules, and a schema this Puddle knows.
     let unpacked = tempfile::tempdir().unwrap();
     let db = unpacked.path().join(BACKUP_DATABASE);
-    fs::write(&db, &found[0].1).unwrap();
+    fs::write(&db, &found[1].1).unwrap();
     let restored = open(&db);
     assert_eq!(
         restored.rules_every_user(&puddle_store::testing::all_users()),
@@ -460,4 +461,26 @@ async fn a_backup_job_that_panics_is_a_failed_backup_not_a_dead_service() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
+}
+
+#[test]
+fn backup_has_a_manifest_that_names_the_format_the_versions_and_the_time() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    drop(open(&paths.store()));
+    let dest = root.path().join("out");
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .try_into()
+        .unwrap();
+    backup(&paths, &dest).unwrap();
+    let manifest: Manifest =
+        serde_json::from_slice(&fs::read(dest.join(BACKUP_MANIFEST)).unwrap()).unwrap();
+    assert_eq!(manifest.format, BACKUP_FORMAT);
+    assert_eq!(manifest.format, 1);
+    assert_eq!(manifest.puddle_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(manifest.schema_version, puddle_store::SCHEMA_VERSION);
+    assert!(manifest.created_at_ms >= before);
 }

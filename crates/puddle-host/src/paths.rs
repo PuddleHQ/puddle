@@ -43,6 +43,13 @@ impl HostPaths {
         self.data.join("workspaces.json")
     }
 
+    /// Where an uploaded backup is read into before a restore is confirmed: one private folder per
+    /// upload. Removed at the next start and after 24 hours.
+    #[must_use]
+    pub fn restore_staging(&self) -> PathBuf {
+        self.data.join("restore-staging")
+    }
+
     /// The workspaces whose disk the last quit could not trim, so the next start can say so.
     #[must_use]
     pub fn quit_trims(&self) -> PathBuf {

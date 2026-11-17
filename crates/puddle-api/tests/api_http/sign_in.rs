@@ -1013,6 +1013,7 @@ async fn a_plain_user_signs_in_when_several_users_are_on_and_is_not_the_owner() 
         ),
         ("GET", "/api/settings", None),
         ("POST", "/api/backup", None),
+        ("POST", "/api/restore/preview", None),
     ] {
         let reply = site
             .send(method, path, &Req::bearer(&ann), body.as_ref())

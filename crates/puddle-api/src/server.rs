@@ -47,6 +47,7 @@ use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
 use crate::remote_editor::RemoteEditor;
 use crate::repos::{NoRepos, RepoService};
+use crate::restore::{NoRestore, RestoreService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
 use crate::signin::SignIn;
@@ -171,6 +172,9 @@ pub struct Services {
     /// The backup download in Settings. [`Services::new`] starts with [`NoBackup`], which answers
     /// 503; set the real one with [`Services::with_backup`].
     pub backup: Arc<dyn BackupService>,
+    /// The restore preview in Settings. [`Services::new`] starts with [`NoRestore`], which answers
+    /// 503; set the real one with [`Services::with_restore`].
+    pub restore: Arc<dyn RestoreService>,
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
@@ -232,6 +236,7 @@ impl Services {
             secrets: Arc::new(NoSecretStore),
             repos: Arc::new(NoRepos),
             backup: Arc::new(NoBackup),
+            restore: Arc::new(NoRestore),
             doctor: Arc::new(NoDoctor),
             credential_store: Arc::new(NoCredentialStore),
             dev_cert: Arc::new(NoDevCert),
@@ -316,6 +321,13 @@ impl Services {
     #[must_use]
     pub fn with_backup(mut self, backup: Arc<dyn BackupService>) -> Self {
         self.backup = backup;
+        self
+    }
+
+    /// These services with this restore reader.
+    #[must_use]
+    pub fn with_restore(mut self, restore: Arc<dyn RestoreService>) -> Self {
+        self.restore = restore;
         self
     }
 
@@ -720,6 +732,7 @@ impl ApiServer {
             secrets: services.secrets,
             repos: services.repos,
             backup: services.backup,
+            restore: services.restore,
             doctor: services.doctor,
             credential_store: services.credential_store,
             dev_cert: services.dev_cert,

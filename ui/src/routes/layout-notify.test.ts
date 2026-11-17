@@ -32,8 +32,14 @@ const live = vi.hoisted(() => ({
   problem: null,
   stream: "connected",
   start: vi.fn(() => () => undefined),
-  listener: null as null | { event?: (e: unknown) => void },
-  subscribe: vi.fn(function (l: { event?: (e: unknown) => void }) {
+  listener: null as null | {
+    event?: (e: unknown) => void;
+    resync?: () => void;
+  },
+  subscribe: vi.fn(function (l: {
+    event?: (e: unknown) => void;
+    resync?: () => void;
+  }) {
     live.listener = l;
     return () => undefined;
   }),
@@ -51,6 +57,7 @@ import { tabNotifications } from "#lib/notify/tab-switch.svelte.ts";
 import { clientId } from "#lib/presence/client-id.ts";
 import { session } from "#lib/session/session.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { admin } from "#lib/stores/admin.svelte.ts";
 
 const shown: { title: string; options: { body: string; tag: string } }[] = [];
 class FakeNotification {
@@ -147,6 +154,14 @@ describe("the page shell and notifications", () => {
     instances[0]?.onclick?.();
     expect(focus).toHaveBeenCalled();
     expect(nav.goto).toHaveBeenCalledWith("/inbox?request=9");
+  });
+
+  it("looks again for the Admin screen when the event stream resyncs", async () => {
+    render(Layout, { children: (() => {}) as never });
+    await vi.waitFor(() => expect(live.listener).not.toBeNull());
+    const before = vi.mocked(admin.probe).mock.calls.length;
+    live.listener?.resync?.();
+    expect(admin.probe).toHaveBeenCalledTimes(before + 1);
   });
 
   it("is the desktop window's own client: reports as desktop and shows no web notification", async () => {

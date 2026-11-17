@@ -158,12 +158,14 @@ export async function* eventStream(
       }
       if (everConnected) options.onResync?.("reconnect");
       everConnected = true;
-      failures = 0;
       options.onState?.("connected");
 
       const queue: PuddleEvent[] = [];
       const parser = createParser({
         onEvent(message) {
+          // The server only counts as back once it says something: one that answers 200 and
+          // closes at once keeps backing off instead of being retried every second.
+          failures = 0;
           if (message.event === "lagged") {
             let lagged: Lagged | undefined;
             try {

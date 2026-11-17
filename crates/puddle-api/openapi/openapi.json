@@ -7364,7 +7364,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Replaces the global settings listed in the body; `null` falls back to Puddle's default.\nConsents are changed through `/api/consents`.",
+        "summary": "Replaces the global settings listed in the body; `null` falls back to Puddle's default.\nWith the `revision` of the read the save was made from, a save over settings that changed\nsince is refused. Consents are changed through `/api/consents`.",
         "operationId": "put_global",
         "requestBody": {
           "content": {
@@ -7408,7 +7408,7 @@
             }
           },
           "409": {
-            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), damaged (settings_unreadable), or changed since the read named by `revision` (settings_changed)",
             "content": {
               "application/json": {
                 "schema": {
@@ -16676,6 +16676,7 @@
           "identity_collision",
           "newer_settings",
           "settings_unreadable",
+          "settings_changed",
           "rate_limited",
           "unavailable",
           "internal"
@@ -18028,6 +18029,13 @@
             "$ref": "#/components/schemas/Limits",
             "description": "The limits; omitted or `null` falls back to the computer's cores."
           },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `revision` of the settings this save was made from. When it no longer matches, nothing\nis written and the answer is 409 `settings_changed`. Omit it to replace whatever is stored."
+          },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",
             "description": "The tool switches."
@@ -18058,7 +18066,8 @@
           "limits",
           "effective_limits",
           "effective",
-          "unknown_fields"
+          "unknown_fields",
+          "revision"
         ],
         "properties": {
           "effective": {
@@ -18072,6 +18081,10 @@
           "limits": {
             "$ref": "#/components/schemas/Limits",
             "description": "The limits the user set (global only)."
+          },
+          "revision": {
+            "type": "string",
+            "description": "Names the values above that a save replaces. Send it back as `revision` in the save: if\nanother client changed them in between, the save is refused (409 `settings_changed`)."
           },
           "tools": {
             "$ref": "#/components/schemas/GlobalTools",

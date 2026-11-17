@@ -109,11 +109,8 @@ pub(crate) async fn open(
         headless: setup.headless,
     })?;
     let tools = setup.tools.clone().unwrap_or_else(ToolPaths::resolve);
-    tracing::info!(
-        store = decision.store.as_str(),
-        why = decision.rule.why(),
-        "secret store chosen"
-    );
+    let (store, why) = (decision.store.as_str(), decision.rule.why());
+    tracing::info!(store, why, "secret store chosen");
     match decision.store {
         StoreKind::Os => {
             if decision.recording == Recording::Now {

@@ -135,7 +135,10 @@ export const LOCAL_EXPLAIN: Record<string, string> = {
   special: "Carrier-grade NAT, benchmarking and similar ranges.",
 };
 
-/** The document a save sends: today's values, with the parts being changed replaced. */
+/**
+ * The document a save sends: today's values, with the parts being changed replaced, and the
+ * revision they were read at, so the service refuses it if someone else changed them since.
+ */
 export function bodyFrom(
   view: GlobalView,
   patch: {
@@ -152,6 +155,7 @@ export function bodyFrom(
     ui: { ...view.ui, ...patch.ui },
     tools: { ...view.tools, ...patch.tools },
     limits: { ...view.limits, ...patch.limits },
+    revision: view.revision,
   };
 }
 

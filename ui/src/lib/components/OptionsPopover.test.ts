@@ -247,7 +247,10 @@ describe("OptionsPopover", () => {
     const { onClose, anchor } = mount();
     await show();
     await press(anchor);
-    await new Promise((done) => setTimeout(done, 50));
+    // Two frames: the one the close would be scheduled on, and the one after it.
+    for (let frame = 0; frame < 2; frame += 1) {
+      await new Promise((done) => requestAnimationFrame(done));
+    }
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { hidden: true })).toBeInTheDocument();
   });

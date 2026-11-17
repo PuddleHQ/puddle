@@ -305,6 +305,28 @@ fn a_rule_whose_expiry_change_cannot_be_recorded_keeps_its_expiry() {
 }
 
 #[test]
+fn a_rule_whose_edit_cannot_be_recorded_stays_as_it_was() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_updated");
+    let edit = RuleEdit {
+        scope: rule.scope.clone(),
+        pattern: rule.pattern.clone(),
+        effect: Effect::Deny,
+        expires_at: rule.expires_at,
+        precedence: None,
+    };
+
+    let err = store.update_rule(rule.id, &edit, Actor::Cli).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
 fn a_decision_that_cannot_update_its_row_makes_no_rule() {
     let store = store();
     let id = new_pending(&store, "x.example");

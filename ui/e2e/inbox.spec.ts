@@ -575,7 +575,7 @@ test.describe("keyboard only", () => {
     );
   });
 
-  test("Tab reaches Allow, the chevron and Deny of a row in order; the options are a normal form that Escape closes", async ({
+  test("Tab reaches Allow, Deny and the more-choices button of a row in order; the options are a normal form that Escape closes", async ({
     page,
     request,
     backend,
@@ -586,11 +586,10 @@ test.describe("keyboard only", () => {
     await row.waitFor();
     await row.getByRole("button", { name: /^Allow/ }).focus();
     await page.keyboard.press("Tab");
+    await expect(row.getByRole("button", { name: /^Deny/ })).toBeFocused();
+    await page.keyboard.press("Tab");
     const chevron = row.getByRole("button", { name: /^More choices/ });
     await expect(chevron).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(row.getByRole("button", { name: /^Deny/ })).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Enter");
     const dialog = page.getByRole("dialog", { name: /^Choices for/ });
     await expect(dialog).toBeVisible();
@@ -744,7 +743,7 @@ test.describe("accessibility", () => {
     }
   }
 
-  test("the options cover the chevrons of the rows beside them completely, not all but a sliver", async ({
+  test("the options cover the more-choices buttons of the rows beside them completely, not all but a sliver", async ({
     page,
     backend,
   }) => {

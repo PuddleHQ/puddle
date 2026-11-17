@@ -39,7 +39,7 @@ describe("the one-click buttons", () => {
     expect(onDecide).toHaveBeenNthCalledWith(2, { effect: "deny", ...narrow });
   });
 
-  it("the chevron hands its own element to the parent and shows whether the options are open", async () => {
+  it("the more-choices button hands its own element to the parent and shows whether the options are open", async () => {
     const { onMore } = mount();
     const chevron = screen.getByRole("button", {
       name: "More choices for api.example.com",
@@ -53,6 +53,24 @@ describe("the one-click buttons", () => {
     expect(
       screen.getByRole("button", { name: /^More choices/ }),
     ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows Allow, then Deny, then a neutral more-choices button that belongs to neither", () => {
+    mount();
+    const names = screen
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Allow api.example.com for demo",
+      "Deny api.example.com for demo",
+      "More choices for api.example.com",
+    ]);
+    const more = screen.getByRole("button", { name: /^More choices/ });
+    // Green is Allow's and red is Deny's; the menu that holds both kinds of choice is grey.
+    expect(more).not.toHaveClass("allow");
+    expect(more).not.toHaveClass("deny");
+    const allow = screen.getByRole("button", { name: /^Allow/ });
+    expect(allow.parentElement).toBe(more.parentElement);
   });
 
   it("offers only Deny when the request can't be approved yet", () => {
@@ -80,7 +98,7 @@ describe("Ctrl+click", () => {
     durationSecs: null,
   };
 
-  it("decides for every workspace on Allow and Deny, with Ctrl or Cmd, without the chevron", async () => {
+  it("decides for every workspace on Allow and Deny, with Ctrl or Cmd, without the options", async () => {
     const { onDecide, onMore } = mount();
     await fireEvent.click(
       screen.getByRole("button", { name: "Allow api.example.com for demo" }),

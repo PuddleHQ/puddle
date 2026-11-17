@@ -638,6 +638,13 @@ describe("ids and names", () => {
     expect(api.overrides["w-b-site"]?.direct_ssh).toBe(true);
     expect(store.byId("w-b-site")?.direct_ssh).toBe(true);
   });
+
+  it("keeps a workspace's tool switches when direct SSH is toggled", async () => {
+    await store.refresh();
+    api.tools["w-b-site"] = { mise: false, repo_code: true };
+    await store.setDirectSsh("w-b-site", true);
+    expect(api.tools["w-b-site"]).toEqual({ mise: false, repo_code: true });
+  });
 });
 
 describe("listening", () => {

@@ -501,7 +501,10 @@ export class WorkspaceStore {
         "/api/settings/workspaces/{workspace}",
         {
           params: { path: { workspace: id } },
-          body: { overrides: { ...mine.data.overrides, direct_ssh: on } },
+          body: {
+            overrides: { ...mine.data.overrides, direct_ssh: on },
+            tools: mine.data.tools,
+          },
         },
       );
       if (!saved.data) {

@@ -303,9 +303,8 @@ fn answers_within(
     kind: StoreKind,
     wait: Duration,
 ) -> Result<(), VaultAdminError> {
-    let Ok(probe) = StoredId::new("migrate-probe") else {
-        return Ok(());
-    };
+    let probe =
+        StoredId::new("migrate-probe").map_err(|err| VaultAdminError::Store(err.to_string()))?;
     let store = Arc::clone(store);
     let (send, receive) = mpsc::channel();
     std::thread::spawn(move || {

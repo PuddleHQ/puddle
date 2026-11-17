@@ -50,7 +50,7 @@ pub(crate) async fn list_request_rules(
         })
         .transpose()?;
     let rules = blocking(move || {
-        let never = state.store.never_decrypt_names()?;
+        let never = state.store.never_decrypt_names(principal.user)?;
         Ok(state
             .store
             .request_rules(principal.user, workspace.as_ref())?
@@ -98,7 +98,8 @@ pub(crate) async fn create_request_rule(
     };
     let rule = blocking(move || {
         let rule = state.store.as_user(principal.user).add_request_rule(&new)?;
-        Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
+        let never = state.store.never_decrypt_names(rule.user)?;
+        Ok(RequestRule::new(rule, &never))
     })
     .await?;
     Ok((StatusCode::CREATED, Json(rule)))
@@ -121,7 +122,8 @@ pub(crate) async fn delete_request_rule(
 ) -> Result<Json<RequestRule>, ApiError> {
     let rule = blocking(move || {
         let rule = state.store.delete_request_rule(id, Actor::Api)?;
-        Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
+        let never = state.store.never_decrypt_names(rule.user)?;
+        Ok(RequestRule::new(rule, &never))
     })
     .await?;
     Ok(Json(rule))
@@ -149,7 +151,8 @@ pub(crate) async fn set_request_rule_enabled(
         let rule = state
             .store
             .set_request_rule_enabled(id, body.enabled, Actor::Api)?;
-        Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
+        let never = state.store.never_decrypt_names(rule.user)?;
+        Ok(RequestRule::new(rule, &never))
     })
     .await?;
     Ok(Json(rule))

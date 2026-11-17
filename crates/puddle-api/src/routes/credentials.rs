@@ -101,8 +101,7 @@ pub(crate) async fn store_token(
         .credentials
         .store_token(principal.user, scope, token)
         .await?;
-    let source = CredentialSource::from_store(&source)
-        .ok_or_else(|| ApiError::internal(&"a stored token came back as another kind of source"))?;
+    let source = CredentialSource::from_store(&source);
     Ok((StatusCode::CREATED, Json(StoredToken { source })))
 }
 

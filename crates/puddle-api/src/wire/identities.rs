@@ -65,8 +65,8 @@ pub enum CredentialSource {
 }
 
 impl CredentialSource {
-    pub(crate) fn from_store(spec: &SourceSpec) -> Option<Self> {
-        Some(match spec {
+    pub(crate) fn from_store(spec: &SourceSpec) -> Self {
+        match spec {
             SourceSpec::Gh { host, account } => Self::Gh {
                 host: host.to_string(),
                 account: account.to_string(),
@@ -89,8 +89,7 @@ impl CredentialSource {
                 tenant: tenant.to_string(),
                 org: org.as_ref().map(ToString::to_string),
             },
-            _ => return None,
-        })
+        }
     }
 
     /// The source as `puddle-secrets` has it, or why it is refused. For tools that seed a store
@@ -242,9 +241,9 @@ impl IdentityCredentialView {
     fn from_store(
         binding: &store::CredentialBinding,
         credentials: &dyn crate::CredentialService,
-    ) -> Option<Self> {
-        let plain = IdentityCredential::from_store(binding)?;
-        Some(Self {
+    ) -> Self {
+        let plain = IdentityCredential::from_store(binding);
+        Self {
             host: plain.host,
             source: plain.source,
             covers: plain.covers,
@@ -252,15 +251,15 @@ impl IdentityCredentialView {
                 .last_read(&binding.source)
                 .as_ref()
                 .map(|read| LastCheck::from_read(&binding.source, read)),
-        })
+        }
     }
 }
 
 impl IdentityCredential {
-    fn from_store(binding: &store::CredentialBinding) -> Option<Self> {
-        Some(Self {
+    fn from_store(binding: &store::CredentialBinding) -> Self {
+        Self {
             host: binding.host.to_string(),
-            source: CredentialSource::from_store(&binding.source)?,
+            source: CredentialSource::from_store(&binding.source),
             covers: CredentialCoverage {
                 owners: binding
                     .covers
@@ -270,7 +269,7 @@ impl IdentityCredential {
                     .collect(),
                 rest_of_host: binding.covers.rest_of_host,
             },
-        })
+        }
     }
 
     fn into_store(self) -> Result<store::CredentialBinding, ApiError> {
@@ -347,7 +346,7 @@ impl IdentityView {
             credentials: identity
                 .credentials
                 .iter()
-                .filter_map(|binding| IdentityCredentialView::from_store(binding, credentials))
+                .map(|binding| IdentityCredentialView::from_store(binding, credentials))
                 .collect(),
             signing: IdentitySigning::None,
             is_default: identity.is_default,

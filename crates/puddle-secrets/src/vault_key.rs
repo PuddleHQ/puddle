@@ -15,7 +15,9 @@
 //! The first start decides the source: nothing found and no vault means sealing (when systemd 256
 //! or later answers and the sealed key opens again at once), else the key file. The key file is
 //! only for a definite "cannot seal here" (no tool, systemd before 256, a refusal, an answer that
-//! is no key); a `systemd-creds` that is too slow is tried [`SEAL_ATTEMPTS`] times and then fails
+//! is no key); a `systemd-creds` that fails with no refusal (its service closed the connection
+//! without a reply) fails the start with [`KeyError::SealFailed`], never the key file; a
+//! `systemd-creds` that is too slow is tried [`SEAL_ATTEMPTS`] times and then fails
 //! the start with [`KeyError::SealTimedOut`], so a busy machine never gets the weaker source for
 //! good. Two processes
 //! starting at once would each make a key; the data-folder lock, which the host holds, prevents it.
@@ -154,6 +156,11 @@ pub enum KeyError {
     /// made, so the next start tries again.
     #[error("systemd-creds did not answer in time when sealing the vault key")]
     SealTimedOut,
+    /// The first start could not seal a key because `systemd-creds` ran and failed with no
+    /// refusal (its service closed the connection without a reply). Nothing was made, so the next
+    /// start tries again; a failing tool is not one that cannot seal, so there is no key file.
+    #[error("systemd-creds failed when sealing the vault key")]
+    SealFailed,
     /// The sealed key exists and does not open.
     #[error("the sealed vault key cannot be opened: {0}")]
     Sealed(Unseal),
@@ -352,12 +359,22 @@ impl VaultKeys {
             Err(SourceError::Timeout(_)) => return Err(KeyError::SealTimedOut),
             Err(_) => return Ok(None),
         };
-        if !output.success || output.stdout.is_empty() {
+        if !output.success {
+            // Only a text that says "no" is a cannot; anything else (a closed connection, no text)
+            // is a tool that failed, which must not pick the weaker source.
+            return if is_refusal(&output.stderr) {
+                Ok(None)
+            } else {
+                Err(KeyError::SealFailed)
+            };
+        }
+        if output.stdout.is_empty() {
             return Ok(None);
         }
         let opened = match self.unseal(program, &output.stdout).await {
             Ok(opened) => opened,
             Err(Unseal::TimedOut) => return Err(KeyError::SealTimedOut),
+            Err(Unseal::Failed) => return Err(KeyError::SealFailed),
             Err(_) => return Ok(None),
         };
         if opened.expose() != key.expose() {
@@ -448,6 +465,19 @@ where
         }
     }
     op().await
+}
+
+/// Whether the error text of a failed `encrypt` is a definite "cannot seal here": an option this
+/// systemd does not know, or a refusal by permission. Any other text, or none, is a failure.
+fn is_refusal(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr);
+    [
+        "unrecognized option",
+        "Permission denied",
+        "Operation not permitted",
+    ]
+    .iter()
+    .any(|known| text.contains(known))
 }
 
 /// What a failed `decrypt` says, by the two texts measured on 257 to 259 (systemd gives no other

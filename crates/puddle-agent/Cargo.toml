@@ -53,6 +53,7 @@ puddle-front = { workspace = true }
 puddle-guest-env = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
+tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]

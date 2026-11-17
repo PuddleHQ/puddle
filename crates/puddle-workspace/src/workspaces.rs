@@ -686,10 +686,7 @@ impl Workspaces {
     ) -> Result<TrimReport, WorkspaceError> {
         let info = self.volume(rt, id).await?;
         if let Some(holder) = self.running_holder(id, &info)? {
-            let sandbox = rt
-                .get(&holder)
-                .await
-                .map_err(|e| WorkspaceError::runtime("connect to the holder", id, e))?;
+            let sandbox = connect_to_holder(rt, id, &holder).await?;
             return self.trim(&sandbox, id).await;
         }
         match self.maintenance(rt, id, &info, Job::Trim).await? {
@@ -728,10 +725,7 @@ impl Workspaces {
         };
         let removes_sandbox = self.existing_owner(rt, id).await?;
         if let Some(holder) = self.running_holder(id, &info)? {
-            let sandbox = rt
-                .get(&holder)
-                .await
-                .map_err(|e| WorkspaceError::runtime("connect to the holder", id, e))?;
+            let sandbox = connect_to_holder(rt, id, &holder).await?;
             let findings = check::run(&sandbox, id).await?;
             return Ok(DeleteReport {
                 workspace: id.clone(),
@@ -1260,6 +1254,23 @@ fn mount_for(
     } else {
         mount
     })
+}
+
+/// The running sandbox `holder` that holds `id`'s volume. One that is booting, stopping or paused
+/// still holds the volume but runs nothing: [`WorkspaceError::InUse`].
+async fn connect_to_holder<R: Runtime>(
+    rt: &R,
+    id: &WorkspaceId,
+    holder: &SandboxName,
+) -> Result<R::Sandbox, WorkspaceError> {
+    match rt.get(holder).await {
+        Ok(sandbox) => Ok(sandbox),
+        Err(ComputeError::InvalidState { .. }) => Err(WorkspaceError::InUse {
+            workspace: id.to_string(),
+            holder: holder.to_string(),
+        }),
+        Err(e) => Err(WorkspaceError::runtime("connect to the holder", id, e)),
+    }
 }
 
 /// Removes a maintenance sandbox an earlier run left behind (down), and a stale directory with

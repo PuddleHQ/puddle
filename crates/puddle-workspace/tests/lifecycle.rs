@@ -727,6 +727,61 @@ async fn a_running_workspace_is_checked_in_place_and_must_stop_before_delete() {
     assert_eq!(names(&rt).await, NONE);
 }
 
+/// Every way into the volume while its VM is booting, stopping or paused: each is refused as
+/// in use, and no second sandbox is put on the volume.
+#[tokio::test]
+async fn a_workspace_whose_vm_is_booting_stopping_or_paused_is_in_use() {
+    for state in [
+        WorkspaceStatus::Starting,
+        WorkspaceStatus::Draining,
+        WorkspaceStatus::Paused,
+    ] {
+        let rt = FakeRuntime::new();
+        let stub = CheckStub::install(&rt, CLEAN);
+        stub_fstrim(&rt, 0);
+        let w = Workspaces::default();
+        let id = ws("acme");
+        let _sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+        let report = w.check_delete(&rt, &id).await.unwrap();
+        assert!(rt.set_status(&name("box"), state));
+        let in_use = WorkspaceError::InUse {
+            workspace: "acme".into(),
+            holder: "box".into(),
+        };
+        let checked = w.check_delete(&rt, &id).await;
+        assert_eq!(
+            checked.as_ref().err(),
+            Some(&in_use),
+            "check_delete, {state}"
+        );
+        let trimmed = w.reclaim_space(&rt, &id).await;
+        assert_eq!(
+            trimmed.as_ref().err(),
+            Some(&in_use),
+            "reclaim_space, {state}"
+        );
+        let listed = w.list_checkouts_of_unheld_volume(&rt, &id).await;
+        assert_eq!(
+            listed.as_ref().err(),
+            Some(&in_use),
+            "list checkouts, {state}"
+        );
+        let deleted = w.delete(&rt, &id, &report.confirm()).await;
+        assert_eq!(deleted.err(), Some(in_use), "delete, {state}");
+        assert_eq!(
+            targets(&rt, Op::Create),
+            ["box"],
+            "no second sandbox, {state}"
+        );
+        assert_eq!(
+            stub.ran_in(),
+            ["box"],
+            "only the check made while it ran, {state}"
+        );
+        assert_eq!(volumes(&rt).await, ["ws-acme"], "{state}");
+    }
+}
+
 #[tokio::test]
 async fn a_confirmation_only_deletes_its_own_workspace() {
     let rt = FakeRuntime::new();

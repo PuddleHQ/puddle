@@ -490,6 +490,35 @@ async fn start_checks_volumes_again() {
 }
 
 #[tokio::test]
+async fn a_sandbox_booting_draining_or_paused_still_holds_its_volumes() {
+    for status in [
+        WorkspaceStatus::Starting,
+        WorkspaceStatus::Draining,
+        WorkspaceStatus::Paused,
+    ] {
+        let rt = FakeRuntime::new();
+        let mount = |n: &str| {
+            spec(n)
+                .with_volume(VolumeMount::named(vol("v"), path("/w")).ensure_size(DiskSize::mib(1)))
+        };
+        let _a = rt.create(mount("a")).await.unwrap();
+        assert!(rt.set_status(&name("a"), status));
+        let info = rt.volume(&vol("v")).await.unwrap().unwrap();
+        assert_eq!(info.holder.as_deref(), Some("a"), "{status}");
+        let in_use = ComputeError::VolumeInUse {
+            volume: "v".into(),
+            holder: "a".into(),
+        };
+        assert_eq!(
+            rt.remove_volume(&vol("v")).await.unwrap_err(),
+            in_use,
+            "{status}"
+        );
+        assert_eq!(rt.create(mount("b")).await.unwrap_err(), in_use, "{status}");
+    }
+}
+
+#[tokio::test]
 async fn images_and_probe() {
     let rt = FakeRuntime::with_config(FakeConfig {
         runtime_version: "0.7.7-puddle.1".into(),

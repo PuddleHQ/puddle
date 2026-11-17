@@ -103,7 +103,7 @@ async fn a_tool_that_hangs_times_out_and_asks_for_sign_in() {
 }
 
 #[tokio::test]
-async fn git_credential_always_sends_the_path_and_checks_the_answer() {
+async fn git_credential_sends_the_path_unless_an_account_picks_the_entry() {
     let fakes = Fakes::new();
     let git = fakes.install(
         "git",
@@ -134,7 +134,14 @@ async fn git_credential_always_sends_the_path_and_checks_the_answer() {
         .await
         .unwrap();
     assert_eq!(got.credential.username.as_deref(), Some("me"));
-    assert!(Fakes::log(&git).contains("path=org/project\\nusername=me\\n\\n"));
+    // A named account picks its own entry for the whole host, as Git asks for it on a clone.
+    let log = Fakes::log(&git);
+    assert!(
+        log.contains(
+            "ARGS credential fill\nSTDIN protocol=https\\nhost=dev.azure.com\\nusername=me\\n\\n\n"
+        ),
+        "{log}"
+    );
 }
 
 #[tokio::test]

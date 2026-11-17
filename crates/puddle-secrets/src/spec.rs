@@ -36,12 +36,14 @@ pub enum SourceSpec {
         /// The account.
         account: AccountName,
     },
-    /// Git Credential Manager (or any configured Git credential helper), asked for one HTTPS URL
-    /// with its path. The path is always sent.
+    /// Git Credential Manager (or any configured Git credential helper), asked for one HTTPS host
+    /// and either the account, which picks its own entry for the whole host (a GitHub sign-in), or,
+    /// without an account, the path that selects the entry (an Azure DevOps organisation).
     GitCredential {
         /// The host.
         host: HostName,
-        /// The URL path that selects the credential.
+        /// The URL path: the organisation or account the credential is for, and the entry Git is
+        /// asked for when no account is named.
         path: UrlPath,
         /// A GitHub account name, when the host has several.
         #[serde(default, skip_serializing_if = "Option::is_none")]

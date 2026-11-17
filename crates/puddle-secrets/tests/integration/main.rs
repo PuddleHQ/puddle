@@ -6,6 +6,7 @@ mod fake_log;
 
 mod discovery;
 mod fixture_profile;
+mod gcm;
 mod login_session;
 mod real_store;
 mod signin;

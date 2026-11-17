@@ -12,7 +12,7 @@ fn target() -> (HostName, UrlPath) {
 fn fill_answer_must_match_the_request() {
     let (h, p) = target();
     let ok = "protocol=https\nhost=dev.azure.com\npath=org\nusername=me\npassword=CANARY-1\n";
-    let got = parse_fill(ok, &h, &p, None).unwrap();
+    let got = parse_fill(ok, &h, Some(&p), None).unwrap();
     assert_eq!(got.credential.secret.expose(), "CANARY-1");
     assert_eq!(got.credential.username.as_deref(), Some("me"));
     for bad in [
@@ -23,7 +23,7 @@ fn fill_answer_must_match_the_request() {
         "password=x\n",
     ] {
         assert_eq!(
-            parse_fill(bad, &h, &p, None).unwrap_err(),
+            parse_fill(bad, &h, Some(&p), None).unwrap_err(),
             SourceError::Refused(Refusal::WrongTarget),
             "{bad:?}"
         );
@@ -35,17 +35,17 @@ fn fill_answer_checks_the_account_and_the_password() {
     let (h, p) = target();
     let me = AccountName::new("me").unwrap();
     let other = "host=dev.azure.com\npath=org\nusername=you\npassword=x\n";
-    assert!(parse_fill(other, &h, &p, Some(&me)).is_err());
+    assert!(parse_fill(other, &h, Some(&p), Some(&me)).is_err());
     let none = "host=dev.azure.com\npath=org/\nusername=me\npassword=\n";
     assert_eq!(
-        parse_fill(none, &h, &p, Some(&me)).unwrap_err(),
+        parse_fill(none, &h, Some(&p), Some(&me)).unwrap_err(),
         SourceError::NotSignedIn
     );
     let spaced = "host=DEV.azure.com\npath=org\npassword=a b\n";
-    assert!(parse_fill(spaced, &h, &p, None).is_ok());
+    assert!(parse_fill(spaced, &h, Some(&p), None).is_ok());
     let ctrl = "host=dev.azure.com\npath=org\npassword=a\u{7}b\n";
     assert_eq!(
-        parse_fill(ctrl, &h, &p, None).unwrap_err(),
+        parse_fill(ctrl, &h, Some(&p), None).unwrap_err(),
         SourceError::Refused(Refusal::Malformed)
     );
 }
@@ -69,10 +69,15 @@ fn fill_answer_expiry() {
         Err(SourceError::NotSignedIn)
     );
     let live = "host=dev.azure.com\npath=org\npassword=x\npassword_expiry_utc=99999999999\n";
-    assert!(parse_fill(live, &h, &p, None).unwrap().valid_for.is_some());
+    assert!(
+        parse_fill(live, &h, Some(&p), None)
+            .unwrap()
+            .valid_for
+            .is_some()
+    );
     let dead = "host=dev.azure.com\npath=org\npassword=x\npassword_expiry_utc=5\n";
     assert_eq!(
-        parse_fill(dead, &h, &p, None).unwrap_err(),
+        parse_fill(dead, &h, Some(&p), None).unwrap_err(),
         SourceError::NotSignedIn
     );
 }

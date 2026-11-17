@@ -106,6 +106,32 @@ fn a_hand_edited_overlap_is_ambiguous_never_a_guess() {
 }
 
 #[test]
+fn a_host_written_with_port_443_is_the_same_host_as_without_it() {
+    let rest = |host: &str| {
+        let host = HostName::new(host).unwrap();
+        let gh = SourceSpec::Gh {
+            host: host.clone(),
+            account: AccountName::new("me").unwrap(),
+        };
+        CredentialBinding::new(&host, gh, Coverage::new(BTreeSet::new(), true).unwrap()).unwrap()
+    };
+    let with_port = rest("ghe.example:443");
+    let without = rest("ghe.example");
+    assert_eq!(with_port.host.as_str(), "ghe.example");
+    assert!(with_port.collides_with(&without).is_some());
+    let a = identity(1, "a", vec![with_port]);
+    assert!(matches!(
+        resolve(std::slice::from_ref(&a), "ghe.example", "acme"),
+        CredentialChoice::Covered { .. }
+    ));
+    let b = identity(2, "b", vec![without]);
+    assert!(matches!(
+        resolve(&[a, b], "ghe.example", "acme"),
+        CredentialChoice::Ambiguous(_)
+    ));
+}
+
+#[test]
 fn a_credential_for_a_port_other_than_443_is_refused() {
     let own = |host: &str| {
         let host = HostName::new(host).unwrap();

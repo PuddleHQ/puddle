@@ -815,6 +815,28 @@ async fn a_bad_port_a_stopped_workspace_and_a_broken_store_are_refused_in_words(
 }
 
 #[tokio::test]
+async fn a_move_or_a_release_the_pins_refuse_leaves_the_working_forward_serving() {
+    let rig = rig("pins-refuse").await;
+    rig.started().await;
+    let guest = echo().await;
+    let (old, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    forwarded.unwrap();
+    assert!(accepts(local(old)));
+    *rig.pins.read_only.lock().unwrap() = true;
+    let (new, moved) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    assert!(matches!(moved, Err(PortsError::Pins(_))), "{moved:?}");
+    assert!(accepts(local(old)), "the forward that worked still serves");
+    assert!(!accepts(local(new)), "the refused move is not left open");
+    assert!(matches!(
+        rig.ports.release(&rig.workspace, guest).await,
+        Err(PortsError::Pins(_))
+    ));
+    assert!(accepts(local(old)), "a refused release keeps the forward");
+    let row = rig.ports.view(&rig.workspace).unwrap().ports;
+    assert!(row.iter().any(|r| r.forwarded && r.host_port == Some(old)));
+}
+
+#[tokio::test]
 async fn the_same_listening_report_twice_announces_one_change() {
     let rig = rig("twice").await;
     assert_eq!(format!("{:?}", rig.ports), "Ports { .. }");

@@ -5,6 +5,7 @@ use crate::workspaces::{DisplayName, Listing, Operation};
 fn record(status: WorkspaceStatus) -> WorkspaceRecord {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
+        puddle_store::UserId::OWNER,
         DisplayName::parse("web").unwrap(),
         Vec::new(),
     );

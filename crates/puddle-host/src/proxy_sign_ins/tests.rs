@@ -27,7 +27,8 @@ fn a_value_basic_cannot_carry_is_refused_by_the_stored_sign_ins_with_the_api_err
         .set(&proxy, "a:b", &puddle_types::fixture::password("fine"))
         .unwrap_err();
     assert_eq!(ProxySignInError::from(bad_user), ProxySignInError::BadUser);
-    let bad_password = passwords.set(&proxy, "alice", &String::new()).unwrap_err();
+    let empty = String::new();
+    let bad_password = passwords.set(&proxy, "alice", &empty).unwrap_err();
     assert_eq!(
         ProxySignInError::from(bad_password),
         ProxySignInError::BadPassword

@@ -945,6 +945,60 @@ async fn hostile_the_accounts_signed_in_on_the_computer_are_the_owners_alone() {
     shut_down(pair).await;
 }
 
+/// A checkout on the server's disk is the operator's: Ann can't start a workspace from one, and
+/// the refusal is the same whatever the path names (a checkout, a folder with no `.git`, nothing),
+/// so the route tells her nothing about the disk. The owner can (the control).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_a_checkout_on_the_server_is_the_owners_alone_and_the_refusal_names_no_path() {
+    let pair = pair().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let disk = tempfile::tempdir().unwrap();
+    let checkout = disk.path().join("private");
+    std::fs::create_dir_all(checkout.join(".git")).unwrap();
+    std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(
+        checkout.join(".git/config"),
+        "[remote \"origin\"]\n\turl = https://github.com/acme/private\n",
+    )
+    .unwrap();
+    let plain = disk.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let paths = [
+        checkout.display().to_string(),
+        checkout.join(".git").display().to_string(),
+        plain.display().to_string(),
+        disk.path().join("missing").display().to_string(),
+    ];
+    let create = |path: &str| json!({"name": "grab", "repositories": [{"local_path": path}]});
+    let mut answers = Vec::new();
+    for path in &paths {
+        let (status, answer) =
+            send(ann, token, "POST", "/api/workspaces", Some(&create(path))).await;
+        assert_eq!(status, 403, "{path}: {answer}");
+        for named in &paths {
+            assert!(!answer.contains(named.as_str()), "{path}: {answer}");
+        }
+        answers.push(answer);
+    }
+    answers.dedup();
+    assert_eq!(answers.len(), 1, "the refusal differs by path: {answers:?}");
+    let (status, list) = send(ann, token, "GET", "/api/workspaces", None).await;
+    assert_eq!(status, 200, "{list}");
+    assert!(!list.contains("grab"), "{list}");
+
+    let (status, made) = send(
+        owner,
+        token,
+        "POST",
+        "/api/workspaces",
+        Some(&create(&paths[0])),
+    )
+    .await;
+    assert_eq!(status, 202, "{made}");
+    assert!(made.contains("https://github.com/acme/private"), "{made}");
+    shut_down(pair).await;
+}
+
 /// Ann's lists hold nothing of the owner's: every list there is, read from the route table so
 /// a new one is checked too (the event stream has its own test; the lookup is below). The
 /// owner's lists do hold them (the control).

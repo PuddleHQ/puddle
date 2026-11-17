@@ -1023,6 +1023,53 @@ async fn hostile_a_rule_for_the_owners_workspace_is_refused_as_an_unknown_worksp
     shut_down(pair).await;
 }
 
+/// The warning on Ann's global request rule names only the never-decrypt names of her own
+/// workspaces: the rule never applies to the owner's, so their names are no business of hers.
+/// The owner's own global rule on the same host names the owner's workspace (the control).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_a_request_rule_warning_names_only_the_callers_never_decrypt_names() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let box_id = things.workspace;
+    let secret = "owners-secret.host.example";
+    pair.store
+        .set_never_decrypt(&ws(&box_id), &[secret.to_owned()])
+        .unwrap();
+    let mine = ws("annsbox1");
+    pair.store.set_workspace_owner(&mine, pair.ann_id).unwrap();
+    pair.store
+        .set_never_decrypt(&mine, &["anns.host.example".to_owned()])
+        .unwrap();
+    let global = json!({"workspace": null, "host": "*.host.example", "methods": [], "path": "/y"});
+    let (status, created) = send(ann, token, "POST", "/api/request-rules", Some(&global)).await;
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<Value>(&created).unwrap()["id"].clone();
+    let (_, listed) = send(ann, token, "GET", "/api/request-rules", None).await;
+    let off = json!({"enabled": false});
+    let switched_path = format!("/api/request-rules/{id}/enabled");
+    let (_, switched) = send(ann, token, "PUT", &switched_path, Some(&off)).await;
+    let delete_path = format!("/api/request-rules/{id}");
+    let (_, deleted) = send(ann, token, "DELETE", &delete_path, None).await;
+    for body in [&created, &listed, &switched, &deleted] {
+        assert!(
+            body.contains("anns.host.example (workspace annsbox1)"),
+            "her own name is named: {body}"
+        );
+        for owners in [format!("workspace {box_id})"), "owners-secret".to_owned()] {
+            assert!(!body.contains(&owners), "holds {owners}: {body}");
+        }
+    }
+    let (status, owners_rule) =
+        send(owner, token, "POST", "/api/request-rules", Some(&global)).await;
+    assert_eq!(status, 201, "{owners_rule}");
+    assert!(
+        owners_rule.contains(&format!("{secret} (workspace {box_id})")),
+        "{owners_rule}"
+    );
+    assert!(!owners_rule.contains("annsbox1"), "{owners_rule}");
+    shut_down(pair).await;
+}
+
 /// Ann may make rules for, and decide the requests of, a workspace of her own; a decision for
 /// every workspace makes a global rule of hers, which decides none of the owner's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

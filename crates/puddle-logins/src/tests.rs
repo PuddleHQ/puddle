@@ -1127,6 +1127,10 @@ enum SetStep {
         tokio::sync::oneshot::Sender<()>,
         std::sync::mpsc::Receiver<()>,
     ),
+    /// Stores the token.
+    Pass,
+    /// Stores nothing and fails.
+    Fail,
 }
 
 /// A credential store that keeps tokens like [`MemoryStore`] and does the next step of its script
@@ -1142,6 +1146,11 @@ impl Scripted {
             inner: MemoryStore::new(),
             sets: Mutex::new(steps.into_iter().collect()),
         }
+    }
+
+    /// Adds `steps` to the script.
+    fn then(&self, steps: impl IntoIterator<Item = SetStep>) {
+        self.sets.lock().unwrap().extend(steps);
     }
 }
 
@@ -1164,7 +1173,8 @@ impl SecretStore for Scripted {
                 let _ = started.send(());
                 let _ = go.recv();
             }
-            None => {}
+            Some(SetStep::Fail) => return Err(puddle_secrets::StoreError),
+            Some(SetStep::Pass) | None => {}
         }
         self.inner.set(id, secret)
     }
@@ -1186,6 +1196,85 @@ fn logins_on(store: &Arc<Scripted>, registry: &Arc<StandIns>) -> Logins {
     )
 }
 
+/// A Claude token answer as `logins` gives it to the tool, or `None` when it is refused.
+async fn capture_claude(logins: &Logins, access: &str, refresh: &str) -> Option<Value> {
+    let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let answer = claude_answer(access, refresh);
+    let given = answered(exchange, 200, Some("application/json"), &answer).await?;
+    Some(serde_json::from_slice(&given).unwrap())
+}
+
+#[tokio::test]
+async fn a_capture_that_cannot_store_every_token_leaves_the_earlier_pair_in_the_store() {
+    let store = Arc::new(Scripted::new([]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    let first = capture_claude(&logins, REAL_ACCESS, REAL_REFRESH)
+        .await
+        .unwrap();
+    // The refresh's new access token is stored, its new refresh token is not.
+    store.then([SetStep::Pass, SetStep::Fail]);
+    assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
+    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    for (role, real, given) in [
+        (Role::Access, REAL_ACCESS, &first["access_token"]),
+        (Role::Refresh, REAL_REFRESH, &first["refresh_token"]),
+    ] {
+        let kept = vault.read(&CLAUDE, role).unwrap().unwrap();
+        assert_eq!(
+            (kept.stand_in.as_str(), kept.real.as_str()),
+            (given.as_str().unwrap(), real),
+            "the store holds a pair that never went together"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_first_login_that_cannot_store_every_token_leaves_nothing_in_the_store() {
+    let store = Arc::new(Scripted::new([SetStep::Pass, SetStep::Fail]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    assert_eq!(
+        capture_claude(&logins, REAL_ACCESS, REAL_REFRESH).await,
+        None
+    );
+    assert_eq!(store.inner.ids(), Vec::<String>::new());
+    assert_eq!(registry.len(), 0);
+}
+
+#[tokio::test]
+async fn an_entry_that_cannot_be_read_is_not_put_back_and_one_the_store_refuses_stays() {
+    let store = Arc::new(Scripted::new([]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    capture_claude(&logins, REAL_ACCESS, REAL_REFRESH)
+        .await
+        .unwrap();
+    let access = crate::vault::slot_id(workspace().as_str(), "claude", Role::Access).unwrap();
+    store
+        .inner
+        .set(
+            &access,
+            &puddle_secrets::Secret::new("not an entry".to_owned()),
+        )
+        .unwrap();
+    // The damaged access entry is not put back: it goes, and the refresh entry stays as it was.
+    store.then([SetStep::Pass, SetStep::Fail]);
+    assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
+    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    assert!(vault.read(&CLAUDE, Role::Access).unwrap().is_none());
+    let refresh = vault.read(&CLAUDE, Role::Refresh).unwrap().unwrap();
+    assert_eq!(refresh.real.as_str(), REAL_REFRESH);
+    // A store that refuses the put back too keeps what it was given: nothing more can be done.
+    capture_claude(&logins, REAL_ACCESS, REAL_REFRESH)
+        .await
+        .unwrap();
+    store.then([SetStep::Pass, SetStep::Fail, SetStep::Fail]);
+    assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
+    let kept = vault.read(&CLAUDE, Role::Access).unwrap().unwrap();
+    assert_eq!(kept.real.as_str(), ACCESS_B);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_login_forgotten_while_it_is_being_captured_stays_forgotten() {
     let (started, parked) = tokio::sync::oneshot::channel();
@@ -1195,11 +1284,7 @@ async fn a_login_forgotten_while_it_is_being_captured_stays_forgotten() {
     let logins = logins_on(&store, &registry);
     let capture = tokio::spawn({
         let logins = logins.clone();
-        async move {
-            let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
-            let answer = claude_answer(REAL_ACCESS, REAL_REFRESH);
-            answered(exchange, 200, Some("application/json"), &answer).await
-        }
+        async move { capture_claude(&logins, REAL_ACCESS, REAL_REFRESH).await }
     });
     // The capture is writing its first token when the user forgets the login.
     parked.await.unwrap();

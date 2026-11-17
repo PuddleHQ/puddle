@@ -39,7 +39,7 @@ use crate::profile::{
     Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, path_matches,
 };
 use crate::shape;
-use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
+use crate::vault::{STORE_TIMEOUT, Saved, Vault, VaultError};
 
 /// What went wrong with a login, for the notice the user sees. Names only: no value is in any of
 /// these.
@@ -697,21 +697,7 @@ impl Logins {
         let _one_at_a_time = self.inner.capture.lock().await;
         let planned = self.plan(profile, found)?;
         // The credential store first: a token that was not kept is not replaced in the answer.
-        let mut stored = false;
-        for (field, real, stand_in, _) in &planned {
-            if field.keep != Keep::Stored {
-                continue;
-            }
-            let slot = field.slot();
-            let (stand_in, real) = (stand_in.clone(), real.clone());
-            self.store(move |vault| vault.write(profile, slot, &stand_in, &real))
-                .await
-                .map_err(|_| Problem::StoreUnavailable)?;
-            stored = true;
-        }
-        if stored {
-            self.inner.marker.note(profile.id, true);
-        }
+        self.keep_stored(profile, &planned).await?;
         for (field, real, stand_in, is_new) in &planned {
             let slot = (field.slot(), field.scope);
             // A refresh gives the stand-in a new token without a moment in which it has none; a
@@ -741,6 +727,94 @@ impl Logins {
             );
         }
         Ok(Some(Bytes::copy_from_slice(&parsed.render())))
+    }
+
+    /// Writes the tokens of `planned` that are kept in the credential store, with their
+    /// stand-ins, and notes the login in the marker.
+    async fn keep_stored(
+        &self,
+        profile: &'static Profile,
+        planned: &[Planned],
+    ) -> Result<(), Problem> {
+        // One write per slot, with its last field's token, as the registry gets the last one too.
+        let mut writes: Vec<(Slot, &Zeroizing<String>, &String)> = Vec::new();
+        for (field, real, stand_in, _) in planned {
+            if field.keep != Keep::Stored {
+                continue;
+            }
+            let write = (field.slot(), real, stand_in);
+            match writes.iter_mut().find(|(slot, ..)| *slot == write.0) {
+                Some(earlier) => *earlier = write,
+                None => writes.push(write),
+            }
+        }
+        let slots: Vec<Slot> = writes.iter().map(|(slot, ..)| *slot).collect();
+        // An answer with several tokens is kept whole or not at all: what the store held before
+        // goes back when a later token cannot be written, so it never holds a pair that did not
+        // come from one answer. One token needs no copy: its write is the whole change.
+        let before = if slots.len() > 1 {
+            self.saved(profile, &slots).await?
+        } else {
+            Vec::new()
+        };
+        for (written, (slot, real, stand_in)) in writes.into_iter().enumerate() {
+            let (stand_in, real) = (stand_in.clone(), real.clone());
+            if self
+                .store(move |vault| vault.write(profile, slot, &stand_in, &real))
+                .await
+                .is_err()
+            {
+                self.put_back(profile, before.into_iter().take(written))
+                    .await;
+                return Err(Problem::StoreUnavailable);
+            }
+        }
+        if !slots.is_empty() {
+            self.inner.marker.note(profile.id, true);
+        }
+        Ok(())
+    }
+
+    /// What the store holds in each of `slots` of `profile` (`None`: nothing, or nothing
+    /// readable), in their order.
+    async fn saved(
+        &self,
+        profile: &'static Profile,
+        slots: &[Slot],
+    ) -> Result<Vec<(Slot, Option<Saved>)>, Problem> {
+        let mut saved = Vec::with_capacity(slots.len());
+        for &slot in slots {
+            match self.store(move |vault| vault.read(profile, slot)).await {
+                Ok(entry) => saved.push((slot, entry)),
+                Err(VaultError::Damaged) => saved.push((slot, None)),
+                Err(VaultError::Unavailable) => return Err(Problem::StoreUnavailable),
+            }
+        }
+        Ok(saved)
+    }
+
+    /// Writes `saved` back into the store, as far as the store lets it: an entry that was
+    /// empty is deleted.
+    async fn put_back(
+        &self,
+        profile: &'static Profile,
+        saved: impl IntoIterator<Item = (Slot, Option<Saved>)>,
+    ) {
+        for (slot, entry) in saved {
+            let result = self
+                .store(move |vault| match entry {
+                    Some(entry) => vault.write(profile, slot, &entry.stand_in, &entry.real),
+                    None => vault.delete(profile, slot),
+                })
+                .await;
+            if result.is_err() {
+                tracing::warn!(
+                    workspace = %self.inner.workspace,
+                    profile = profile.id,
+                    "a login's earlier token could not be put back in the credential store"
+                );
+            }
+        }
     }
 
     /// The stand-in each found token gets, and whether it is new: the slot's own for a token that

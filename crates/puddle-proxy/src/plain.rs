@@ -20,7 +20,8 @@ use ::http::header::{HOST, PROXY_AUTHORIZATION};
 use http_body_util::BodyExt as _;
 use hyper_util::rt::TokioIo;
 use puddle_types::{
-    ConnectionEvent, ConnectionOutcome, EgressRequest, HttpRequestLine, ProtocolHint,
+    ConnectionDecision, ConnectionEvent, ConnectionOutcome, ConnectionReason, EgressRequest,
+    HttpRequestLine, ProtocolHint,
 };
 use puddle_upstream::RouteWatch;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -62,6 +63,36 @@ impl Incoming {
             target,
             parsed,
         })
+    }
+
+    /// As [`Self::new`], and a refusal is also written to the audit as a blocked record with its
+    /// code, as on a decrypted connection: the target was parsed, so the request is one to audit.
+    pub(crate) async fn checked(
+        handler: &WorkspaceHandler,
+        head: Head,
+        target: Target,
+        path: String,
+    ) -> Result<Self, Refusal> {
+        let line = HttpRequestLine::new(head.method.as_str(), &path);
+        let seen = target.clone();
+        match Self::new(head, target, path) {
+            Ok(incoming) => Ok(incoming),
+            Err(refusal) => {
+                if let Some(code) = refusal.code {
+                    let request =
+                        EgressRequest::new(handler.workspace.clone(), seen.host, seen.port)
+                            .with_protocol(ProtocolHint::Http);
+                    let mut event = ConnectionEvent::new(
+                        &request,
+                        ConnectionDecision::Blocked,
+                        ConnectionReason::Refused(code),
+                    );
+                    event.http = Some(line);
+                    handler.proxy.record(event).await;
+                }
+                Err(refusal)
+            }
+        }
     }
 
     fn has_body(&self) -> bool {
@@ -151,7 +182,7 @@ pub(crate) async fn serve<S>(
             Flow::Continue => {
                 // The record waits on the audit's thread; the next request need not wait on it.
                 let (read_next, ()) = tokio::join!(
-                    next_request(&mut reader, &mut writer, &config),
+                    next_request(handler, &mut reader, &mut writer, &config),
                     proxy.record(event),
                 );
                 next = read_next;
@@ -178,6 +209,7 @@ struct Guest<'a, R, W> {
 /// time for the rest of its head) and checks it. `None`: the connection ends, cleanly when the
 /// guest closed or went quiet, with a refusal when the head was refused.
 async fn next_request<R, W>(
+    handler: &WorkspaceHandler,
     reader: &mut R,
     writer: &mut W,
     config: &ProxyConfig,
@@ -195,10 +227,12 @@ where
     }
     let refusal = match read_request(reader, config.head_timeout).await {
         Ok(head) => match parse_request(&head) {
-            Ok((target, Some(path), _)) => match Incoming::new(head, target, path) {
-                Ok(incoming) => return Some(incoming),
-                Err(refusal) => refusal,
-            },
+            Ok((target, Some(path), _)) => {
+                match Incoming::checked(handler, head, target, path).await {
+                    Ok(incoming) => return Some(incoming),
+                    Err(refusal) => refusal,
+                }
+            }
             Ok((_, None, _)) => Refusal::new(
                 "400 Bad Request",
                 "CONNECT on a connection that carried plain HTTP; send it on a connection of its own",

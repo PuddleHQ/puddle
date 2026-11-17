@@ -957,6 +957,23 @@ async fn a_broken_first_request_is_refused_before_anything_connects() {
     }
     assert_eq!(seen.accepts(), 0, "nothing connected");
     assert_eq!(rig.policy.decisions(), 0, "no rule was asked");
+    // Each refusal is a blocked record with its code, as on a decrypted connection.
+    // (The Content-Length plus chunked head is refused while the head is read, before any target.)
+    let events = rig.events(4).await;
+    let reasons: Vec<_> = events
+        .iter()
+        .map(|e| (e.decision, e.reason.to_string(), e.host.to_string()))
+        .collect();
+    let blocked = |reason: &str| {
+        (
+            ConnectionDecision::Blocked,
+            reason.to_owned(),
+            "web.test".to_owned(),
+        )
+    };
+    let mut want = vec![blocked("expectation_unsupported")];
+    want.extend(std::iter::repeat_n(blocked("bad_request"), 3));
+    assert_eq!(reasons, want);
 }
 
 /// An empty line after an answer (some clients end a body with an extra CRLF, RFC 9112 §2.2) and

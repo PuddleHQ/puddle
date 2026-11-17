@@ -23,8 +23,8 @@ use puddle_proxy::testing::{
 };
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, LocalCategory,
-    NullSink, PendingId, RefusedReason, WorkspaceId,
+    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason, Host,
+    LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -1687,5 +1687,53 @@ async fn an_ip_rule_deny_names_the_refused_address_on_the_audit_row() {
                 Some((denied, RefusedReason::IpRule))
             ),
         ]
+    );
+}
+
+/// A guard that refuses `refused` and lets a local address through only after an exact allow of
+/// the name, which it also puts in the company network.
+struct CompanyLocal {
+    refused: IpAddr,
+}
+
+impl AddressCheck for CompanyLocal {
+    fn check(&self, _workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
+        if addr.ip() == self.refused {
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
+        } else {
+            AddressVerdict::ExactOnly(LocalCategory::Loopback)
+        }
+    }
+
+    fn company_signal(&self, _host: &Host, addr: SocketAddr) -> Option<CompanySignal> {
+        (addr.ip() != self.refused).then_some(CompanySignal::DnsSuffix)
+    }
+}
+
+/// A wildcard allow whose address needs an exact allow asks the rules again; the record that comes
+/// out keeps what the address walk saw: the company-network category and the refused address.
+#[tokio::test]
+async fn a_wildcard_allow_that_falls_back_to_the_exact_rule_keeps_the_address_findings_on_the_row()
+{
+    let refused = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let rig = Rig::with_checks(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("wild.test", &[refused, LOCAL]),
+        Arc::new(CompanyLocal { refused }),
+    );
+    rig.policy.allow_as_suffix(&host("wild.test"));
+    let mut guest = rig.guest().await;
+    let mut stream = guest.stream().await;
+    stream
+        .write_all(b"GET http://wild.test:9/ HTTP/1.1\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let _ = read_all(&mut stream).await;
+    let event = &rig.events(1).await[0];
+    assert_eq!(event.decision, ConnectionDecision::Pending, "{event:?}");
+    assert_eq!(event.company_network, Some(CompanySignal::DnsSuffix));
+    assert_eq!(
+        event.refused_address.as_ref().map(|(ip, _)| *ip),
+        Some(refused)
     );
 }

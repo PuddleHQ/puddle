@@ -213,6 +213,17 @@ where
     event.injected = summary.injected;
     event.binding_id = summary.binding_id.clone();
     apply_legs(&mut event, &ctx.route.legs());
+    if let Some(refused) = ctx.route.refused_leg() {
+        // The rules refused an HTTPS leg's host before it opened: the record says so, not the
+        // SSH name's allow.
+        event.decision = refused.decision;
+        event.reason = refused.reason;
+        event.rule_id = refused.rule_id;
+        event.rule_set = refused.rule_set;
+        event.pending_id = refused.pending_id;
+        event.refused_address = refused.refused_address.or(event.refused_address);
+        event.company_network = refused.company_network.or(event.company_network);
+    }
     // A refusal Puddle's own server gave is the connection's reason, over a rule's refusal
     // inside an HTTPS leg.
     if let Some((_, code)) = &summary.refused {

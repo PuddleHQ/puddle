@@ -1466,6 +1466,15 @@ async fn the_https_leg_reaches_only_a_host_the_rules_allow_and_puddle_decrypts()
         "{ran:?}"
     );
     assert!(t.git.server.recorded().is_empty());
+    drop(ssh);
+    // The rules refused the HTTPS host: the record says so, not the allow of the SSH name.
+    let events = t.events(1).await;
+    let record = events
+        .iter()
+        .find(|e| e.host.to_string() == "ssh.github.com")
+        .expect("a record for the SSH name");
+    assert_eq!(record.decision, ConnectionDecision::Pending, "{record:?}");
+    assert!(record.pending_id.is_some(), "{record:?}");
 }
 
 #[tokio::test]

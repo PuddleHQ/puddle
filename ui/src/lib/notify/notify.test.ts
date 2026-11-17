@@ -35,6 +35,33 @@ describe("NoticeCenter", () => {
     expect(c.items).toEqual([]);
   });
 
+  it("replaces direction marks and control characters in what a workspace could have chosen, and cuts what is very long", () => {
+    const c = new NoticeCenter();
+    c.add({
+      key: "a",
+      tone: "info",
+      title: "evil\u202Egnp.exe\u0007 repo",
+      detail: `line one\nline two \u2066x${"y".repeat(5000)}`,
+      action: { label: "Allow push for a\u202Eb", run: () => undefined },
+    });
+    const [n] = c.items;
+    expect(n?.title).toBe("evil?gnp.exe? repo");
+    expect(n?.detail?.startsWith("line one\nline two ?x")).toBe(true);
+    expect(n?.detail?.length).toBeLessThan(1100);
+    expect(n?.action?.label).toBe("Allow push for a?b");
+  });
+
+  it("keeps only the newest notices, dropping info ones before warnings", () => {
+    const c = new NoticeCenter();
+    c.add({ key: "warn-first", tone: "warning", title: "w" });
+    for (let i = 0; i < 300; i += 1) {
+      c.add({ key: `k${i}`, tone: "info", title: `t${i}` });
+    }
+    expect(c.items.length).toBeLessThanOrEqual(200);
+    expect(c.items.some((n) => n.key === "warn-first")).toBe(true);
+    expect(c.items.at(-1)?.key).toBe("k299");
+  });
+
   it("uses the clock when none is given", () => {
     const c = new NoticeCenter();
     c.add(sample("a"));

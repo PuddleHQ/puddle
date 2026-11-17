@@ -149,6 +149,8 @@ export class PendingStore {
   #sawPendingEvents = false;
   #refreshing: Promise<void> | null = null;
   #again = false;
+  /** Requests decided here since the running read began; the read may predate the decision. */
+  #decidedMeanwhile: number[] = [];
   #refetchTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(deps: PendingDeps = {}) {
@@ -177,6 +179,7 @@ export class PendingStore {
       return this.#refreshing;
     }
     this.#buffer = [];
+    this.#decidedMeanwhile = [];
     this.#refreshing = this.#load().finally(() => {
       const buffered = this.#buffer ?? [];
       this.#buffer = null;
@@ -201,10 +204,9 @@ export class PendingStore {
       this.loadError = null;
       this.openLimit = data.open_limit;
       const rows: Row[] = data.groups.flatMap((g) =>
-        g.requests.map((request) => ({
-          request,
-          domain: g.registrable_domain,
-        })),
+        g.requests
+          .filter((request) => !this.#decidedMeanwhile.includes(request.id))
+          .map((request) => ({ request, domain: g.registrable_domain })),
       );
       if (this.status !== "ready") markOnce("puddle:inbox-data");
       this.#setRows(rows);
@@ -311,6 +313,7 @@ export class PendingStore {
         };
       }
       const closed = new Set<number>([data.request.id, ...data.also_closed]);
+      this.#decidedMeanwhile.push(...closed);
       this.#setRows(this.rows.filter((r) => !closed.has(r.request.id)));
       const rule = data.rule;
       const decided: Decided = {

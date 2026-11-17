@@ -1608,24 +1608,21 @@ async fn no_identity_events_after_a_full_table(wait: Duration) -> usize {
 }
 
 #[tokio::test]
-async fn a_retry_is_remembered_once_the_old_ones_are_ten_seconds_old_and_not_before() {
+async fn a_retry_is_remembered_even_while_the_table_is_full_of_recent_owners() {
     tokio::time::pause();
-    // Entries younger than ten seconds fill the table: the retry cannot be remembered.
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_secs(5)).await,
-        1
-    );
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_millis(9_999)).await,
-        1
-    );
-    // From ten seconds on they are forgotten, so the retry is.
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_secs(10)).await,
-        0
-    );
-    assert_eq!(
-        no_identity_events_after_a_full_table(Duration::from_secs(11)).await,
-        0
-    );
+    // The oldest entry makes room, so the retry is remembered and no notice follows, however
+    // young the other entries are.
+    for wait in [
+        Duration::ZERO,
+        Duration::from_secs(5),
+        Duration::from_millis(9_999),
+        Duration::from_secs(10),
+        Duration::from_secs(11),
+    ] {
+        assert_eq!(
+            no_identity_events_after_a_full_table(wait).await,
+            0,
+            "{wait:?}"
+        );
+    }
 }

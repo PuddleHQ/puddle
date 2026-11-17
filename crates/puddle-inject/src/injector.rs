@@ -48,7 +48,7 @@ const UNCHOOSABLE: &str = "Puddle could not choose a credential for this request
 /// meet it (a Git client retries).
 const NOTICE_EVERY: Duration = Duration::from_secs(10);
 
-/// Most notices remembered.
+/// Most notices remembered, per kind.
 const MAX_NOTICES: usize = 256;
 
 /// After the server answers a request that no identity covers with `401`, the workspace's own
@@ -62,7 +62,13 @@ pub struct GitInjector {
     settings: Arc<dyn GitSettings>,
     credentials: Arc<dyn CredentialSource>,
     events: Arc<dyn EventSink>,
-    notices: Arc<Notices>,
+    /// Refused pushes and pulls, by repository: the guest names those at will, so they have a
+    /// table of their own, and a flood of them cannot silence the other notices.
+    denied: Arc<Notices>,
+    /// "No identity covers it", by host.
+    no_identity: Arc<Notices>,
+    /// "Sign in again", by source: one of the user's own, never a name the guest picks.
+    sign_in: Arc<Notices>,
     /// When a request of the workspace's own carrying an `Authorization` last went to each owner.
     authed: Arc<Notices>,
 }
@@ -90,7 +96,9 @@ impl GitInjector {
             settings,
             credentials,
             events,
-            notices: Arc::new(Notices::default()),
+            denied: Arc::new(Notices::default()),
+            no_identity: Arc::new(Notices::default()),
+            sign_in: Arc::new(Notices::default()),
             authed: Arc::new(Notices::default()),
         }
     }
@@ -209,7 +217,7 @@ impl GitInjector {
         let what = path.describe();
         let message = match &repo {
             Some(repo) => {
-                if self.notices.first(format!("{code}:{repo}")) {
+                if self.denied.first(format!("{code}:{repo}")) {
                     self.events.emit(Event::GitAccessDenied {
                         workspace: self.workspace.clone(),
                         host: repo.host.to_string(),
@@ -325,7 +333,7 @@ impl GitInjector {
     /// owner. The server's answer reaches the workspace as it is.
     fn unanswered(&self, path: &GitPath) -> Unauthorized {
         let events = Arc::clone(&self.events);
-        let notices = Arc::clone(&self.notices);
+        let notices = Arc::clone(&self.no_identity);
         let authed = Arc::clone(&self.authed);
         let workspace = self.workspace.clone();
         let (host, owner, repo) = (path.host.clone(), path.owner.clone(), path.repo.clone());
@@ -349,8 +357,7 @@ impl GitInjector {
             );
             runtime.spawn(async move {
                 tokio::time::sleep(NO_IDENTITY_GRACE).await;
-                if !authed.marked_since(&key, asked) && notices.first(format!("no_identity:{host}"))
-                {
+                if !authed.marked_since(&key, asked) && notices.first(host.clone()) {
                     events.emit(Event::GitNoIdentity {
                         workspace,
                         host,
@@ -366,7 +373,7 @@ impl GitInjector {
     fn rejected(&self, identity: &Identity, source: &SourceSpec, path: &GitPath) -> Unauthorized {
         let credentials = Arc::clone(&self.credentials);
         let events = Arc::clone(&self.events);
-        let notices = Arc::clone(&self.notices);
+        let notices = Arc::clone(&self.sign_in);
         let (source, label) = (source.clone(), identity.label.clone());
         let (host, named) = (
             path.credential_host.clone(),
@@ -375,7 +382,7 @@ impl GitInjector {
         Unauthorized::new(move || {
             // The user may have signed in again since the token was read.
             credentials.forget(&source);
-            if notices.first(format!("sign_in:{}", source.describe())) {
+            if notices.first(source.describe()) {
                 events.emit(Event::CredentialSignInNeeded {
                     host: host.clone(),
                     source: source.describe(),
@@ -522,16 +529,23 @@ struct Notices {
 }
 
 impl Notices {
-    /// Remembers that `key` happened now.
+    /// Remembers that `key` happened now; when the table is full of recent keys, the oldest
+    /// makes room, so the newest is never the one forgotten.
     fn mark(&self, key: String) {
         let now = Instant::now();
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        if last.len() >= MAX_NOTICES {
+        if last.len() >= MAX_NOTICES && !last.contains_key(&key) {
             last.retain(|_, at| now.duration_since(*at) < NOTICE_EVERY.max(NO_IDENTITY_GRACE));
+            if last.len() >= MAX_NOTICES
+                && let Some(oldest) = last
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(key, _)| key.clone())
+            {
+                last.remove(&oldest);
+            }
         }
-        if last.len() < MAX_NOTICES {
-            last.insert(key, now);
-        }
+        last.insert(key, now);
     }
 
     /// Whether `key` happened after `since`.

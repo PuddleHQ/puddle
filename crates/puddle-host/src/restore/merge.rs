@@ -84,9 +84,8 @@ fn add_missing(there: &Path, rel: &Path, new: &Path) -> Result<(), RestoreError>
             add_missing(there, &rel, new)?;
         } else if kind.is_file() && !is_temp(&entry.path()) {
             let theirs = fs::read(entry.path()).map_err(io_error("cannot read", &entry.path()))?;
-            if let Some(parent) = target.parent() {
-                private::create_dir(parent).map_err(io_error("cannot create", parent))?;
-            }
+            let parent = target.parent().unwrap_or(new);
+            private::create_dir(parent).map_err(io_error("cannot create", parent))?;
             match fs::read(&target) {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {
                     private::write_atomic(&target, &theirs)

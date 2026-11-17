@@ -411,12 +411,8 @@ fn restored_database(
 ) -> Result<puddle_store::RestoredDatabase, RestoreError> {
     let ours = paths.store();
     if ours.is_file() {
-        return Ok(puddle_store::restore_database(
-            &ours,
-            theirs,
-            db,
-            mode.into(),
-        )?);
+        let restored = puddle_store::restore_database(&ours, theirs, db, mode.into())?;
+        return Ok(restored);
     }
     fs::copy(theirs, db).map_err(io_error("cannot copy", db))?;
     Ok(puddle_store::RestoredDatabase {

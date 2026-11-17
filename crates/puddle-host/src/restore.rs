@@ -272,9 +272,8 @@ fn unpack(source: impl Read, dir: &Path, limit: u64) -> Result<(), RestoreError>
             if total > limit {
                 return Err(Refusal::TooLarge.into());
             }
-            if let Some(parent) = target.parent() {
-                private::create_dir(parent).map_err(io_error("cannot create", parent))?;
-            }
+            let parent = target.parent().unwrap_or(dir);
+            private::create_dir(parent).map_err(io_error("cannot create", parent))?;
             let mut out = create_part(&target, &name)?;
             io::copy(&mut entry, &mut out).map_err(damaged)?;
         } else {

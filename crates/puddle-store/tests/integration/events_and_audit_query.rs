@@ -100,6 +100,40 @@ fn kinds(events: &[Event]) -> Vec<&'static str> {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+/// A record of a workspace nobody owns is nobody's: no user reads it, the every-user read still
+/// sees it. A record that names no workspace stays the install owner's.
+#[test]
+fn a_record_of_a_workspace_nobody_owns_is_nobodys() {
+    let (_, _, store) = fixture(Limits::default());
+    let ghost = EgressRequest::new(
+        sb("ghost"),
+        Host::parse_normalised("example.com").unwrap(),
+        443,
+    );
+    store.record(&ConnectionEvent::new(
+        &ghost,
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    ));
+    let none = |user| {
+        store
+            .audit_query(user, &AuditFilter::default(), AuditCursor::After(0), 10)
+            .unwrap()
+            .len()
+    };
+    assert_eq!(none(UserId::OWNER), 0);
+    assert_eq!(none(UserId::from_stored(0)), 1);
+    let every = store
+        .audit_query_every_user(
+            &puddle_store::testing::all_users(),
+            &AuditFilter::default(),
+            AuditCursor::After(0),
+            10,
+        )
+        .unwrap();
+    assert_eq!(every.len(), 1);
+}
+
 #[test]
 fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
     let (_, sink, store) = fixture(Limits::default());

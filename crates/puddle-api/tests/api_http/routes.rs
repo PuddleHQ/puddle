@@ -316,6 +316,58 @@ async fn a_rule_is_switched_off_and_on_and_a_switched_off_rule_decides_nothing()
     api.running.shutdown().await;
 }
 
+/// A field the contract marks required is required: a body that leaves it out is refused and
+/// changes nothing, where reading it as `null` would make a rule permanent, reset a set's switch
+/// or make a request rule for every workspace.
+#[tokio::test]
+async fn a_body_without_a_required_nullable_field_is_refused() {
+    let api = start().await;
+    api.own("box");
+    let made = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&json!({"scope": {"type": "workspace", "workspace": "box"}, "pattern": "example.com", "effect": "allow", "expires_at": START_MS + 60_000})),
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    let id = made.json()["id"].as_i64().unwrap();
+    let on = json!({"enabled": true});
+    let switch = "/api/rule-sets/builtin:github/switch";
+    assert_eq!(api.send("PUT", switch, Some(&on)).await.status, 200);
+    for (method, path, body) in [
+        ("PUT", format!("/api/rules/{id}/expiry"), json!({})),
+        ("PUT", switch.to_owned(), json!({})),
+        ("PUT", switch.to_owned(), json!({"workspace": null})),
+        (
+            "POST",
+            "/api/request-rules".to_owned(),
+            json!({"host": "api.example.com", "path": "/x"}),
+        ),
+    ] {
+        let reply = api.send(method, &path, Some(&body)).await;
+        assert_eq!(reply.status, 422, "{method} {path} {body}: {}", reply.body);
+    }
+    assert_eq!(
+        api.get("/api/rules").await.json()["rules"][0]["expires_at"],
+        START_MS + 60_000
+    );
+    let sets = api.get("/api/rule-sets").await.json();
+    let github = sets["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|set| set["id"] == "builtin:github")
+        .unwrap()
+        .clone();
+    assert_eq!(github["global"], true, "{github}");
+    assert_eq!(
+        api.get("/api/request-rules").await.json(),
+        json!({"rules": []})
+    );
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn rules_are_created_listed_changed_and_deleted() {
     let api = start().await;
@@ -564,6 +616,7 @@ async fn the_audit_search_box_matches_text_columns_and_combines_with_the_filters
         ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, HttpRequestLine,
     };
     let api = start().await;
+    api.own("box");
     let request = EgressRequest::new(
         WorkspaceId::new("box").unwrap(),
         Host::parse_normalised("example.com").unwrap(),
@@ -614,6 +667,7 @@ async fn the_audit_search_box_matches_text_columns_and_combines_with_the_filters
 async fn audit_records_are_typed_including_the_upstream_hop() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;
+    api.own("box");
     let request = EgressRequest::new(
         WorkspaceId::new("box").unwrap(),
         Host::parse_normalised("example.com").unwrap(),
@@ -639,6 +693,7 @@ async fn audit_records_are_typed_including_the_upstream_hop() {
 async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;
+    api.own("box");
     let host = || Host::parse_normalised("registry-1.docker.io").unwrap();
     let mut pull = ConnectionEvent::puddle(
         host(),
@@ -820,6 +875,7 @@ async fn the_audit_log_filters_on_the_company_network_category() {
         CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
     };
     let api = start().await;
+    api.own("box");
     let ask = |host: &str| {
         EgressRequest::new(
             WorkspaceId::new("box").unwrap(),

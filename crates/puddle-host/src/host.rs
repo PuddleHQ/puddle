@@ -684,7 +684,7 @@ fn open_state(
         workspaces: stored,
         retired,
         cleaned,
-    } = book.load()?;
+    } = book.load(&store.workspace_owners()?)?;
     steps.push(Step::StoreOpened);
     Ok(State {
         store,

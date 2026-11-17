@@ -279,7 +279,7 @@ impl Probe for SystemProbe {
         let data = self.data_dir.clone().or_else(|| puddle_fs::data_dir().ok());
         credential_store_facts(
             data.as_deref(),
-            puddle_secrets::probe_os_store,
+            || probe_within(puddle_secrets::probe_os_store, STORE_PROBE_WAIT),
             || login_session_in(std::env::var_os("PATH"), Duration::from_secs(2)),
             |tag| {
                 let (config_home, path) = &self.sealed_key_search;
@@ -325,6 +325,31 @@ fn credential_store_facts(
         health: probe(),
         session: session(),
     }
+}
+
+/// How long the doctor waits for the operating system's credential store to take the probe write.
+/// A locked keyring can ask the user to unlock it and wait for the answer; `puddle secrets status`
+/// gives it the same 20 seconds.
+const STORE_PROBE_WAIT: Duration = Duration::from_secs(20);
+
+/// Runs `probe` on a thread of its own and waits `wait` for it. A store that has not answered by
+/// then is reported as [`puddle_secrets::StoreHealth::Locked`] (it is waiting for an unlock); the
+/// thread is left to finish by itself, which ends with this short-lived process at the latest.
+fn probe_within(
+    probe: impl FnOnce() -> puddle_secrets::StoreHealth + Send + 'static,
+    wait: Duration,
+) -> puddle_secrets::StoreHealth {
+    let (send, receive) = std::sync::mpsc::channel();
+    // A thread that cannot start drops `send`, which reads as no answer: locked.
+    let _ = std::thread::Builder::new()
+        .name("store-probe".to_owned())
+        .spawn(move || {
+            // The doctor may have given up waiting; nobody listens then.
+            let _ = send.send(probe());
+        });
+    receive
+        .recv_timeout(wait)
+        .unwrap_or(puddle_secrets::StoreHealth::Locked)
 }
 
 /// How long each `systemd-creds` call of the sealed-key check may run.

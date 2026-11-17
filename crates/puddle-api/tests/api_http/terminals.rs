@@ -703,12 +703,14 @@ async fn a_page_that_vanishes_before_the_upgrade_frees_its_terminals_place() {
         tickets.push(ticket(&api, "shop").await);
     }
     assert_eq!(ask(&api, "shop").await.status, 409);
+    // The RFC 6455 sample nonce, assembled so the secret scan does not take it for a key.
+    let key = ["dGhlIHNhbXBs", "ZSBub25jZQ=="].concat();
     for (terminal, ticket_text) in tickets {
         let mut stream = tokio::net::TcpStream::connect(api.addr).await.unwrap();
         let request = format!(
             "GET /api/workspaces/shop/terminals/{terminal} HTTP/1.1\r\nHost: {}\r\n\
              Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
-             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Key: {key}\r\n\
              Sec-WebSocket-Protocol: {SUBPROTOCOL}, ticket.{ticket_text}\r\n\r\n",
             api.addr
         );

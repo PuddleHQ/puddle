@@ -44,9 +44,28 @@ struct FakeGate {
     answer: Mutex<Option<Disapproval>>,
     asked: Mutex<Vec<(WorkspaceId, String, Vec<u8>)>>,
     recorded: Mutex<Vec<(WorkspaceId, Option<String>, Outcome)>>,
+    /// The host key kept per workspace and host.
+    pinned: Mutex<HashMap<(WorkspaceId, String), String>>,
 }
 
 impl AgentGate for FakeGate {
+    fn pin_host_key(
+        &self,
+        workspace: &WorkspaceId,
+        host: &str,
+        host_key: &str,
+    ) -> Result<(), PinFailure> {
+        let mut pinned = self.pinned.lock().unwrap();
+        let kept = pinned
+            .entry((workspace.clone(), host.to_owned()))
+            .or_insert_with(|| host_key.to_owned());
+        if kept == host_key {
+            Ok(())
+        } else {
+            Err(PinFailure::Changed(kept.clone()))
+        }
+    }
+
     fn approve(&self, workspace: &WorkspaceId, host: &str, key: &[u8]) -> Result<(), Disapproval> {
         self.asked
             .lock()
@@ -283,6 +302,52 @@ async fn a_first_use_the_user_does_not_approve_is_refused_and_nothing_is_signed(
     assert_eq!(
         recorded.last().map(|r| r.2.clone()),
         Some(Outcome::Refused(Refusal::Disapproved(Disapproval::Denied)))
+    );
+}
+
+#[tokio::test]
+async fn a_server_at_the_name_that_shows_another_host_key_gets_no_login_signed() {
+    let w = world();
+    let first = w.spliced("box", "build.example");
+    let (mut guest, _served) = w.stream("box", IDLE_LIMIT);
+    assert_eq!(ask(&mut guest, &w.the_bind()).await, request::success());
+    drop(first);
+    // The server at build.example now relays another server's key exchange.
+    let elsewhere = TestKey::ed25519(9);
+    let mut relay = KexWatch::new(
+        Arc::clone(&w.agents),
+        workspace("box"),
+        host("build.example"),
+    );
+    relay.feed(&server_kex(&elsewhere, &elsewhere.sign(&SESSION)));
+    let (mut guest, _served) = w.stream("box", IDLE_LIMIT);
+    let relayed = framed(&bind(
+        &elsewhere.blob(),
+        &SESSION,
+        &elsewhere.sign(&SESSION),
+        false,
+    ));
+    assert_eq!(ask(&mut guest, &relayed).await, request::failure());
+    let data = login(&SESSION, &w.user.blob(), Some(&elsewhere.blob()));
+    assert_eq!(
+        ask(&mut guest, &framed(&sign_request(&w.user.blob(), &data, 0))).await,
+        request::failure()
+    );
+    assert!(w.agent.signed.lock().unwrap().is_empty());
+    let recorded = w.gate.recorded.lock().unwrap();
+    assert!(recorded.iter().any(|(_, _, outcome)| *outcome
+        == Outcome::Refused(Refusal::HostKeyChanged {
+            kept: w.server.fingerprint(),
+            shown: elsewhere.fingerprint(),
+        })));
+    // The first host key stays the one kept.
+    assert_eq!(
+        w.gate
+            .pinned
+            .lock()
+            .unwrap()
+            .get(&(workspace("box"), "build.example".to_owned())),
+        Some(&w.server.fingerprint())
     );
 }
 

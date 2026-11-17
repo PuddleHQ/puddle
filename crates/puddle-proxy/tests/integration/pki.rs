@@ -275,3 +275,28 @@ async fn a_deny_rule_for_a_resolved_address_wins_over_the_exception() {
     let events = rig.events(1).await;
     assert_ne!(events[0].reason, ConnectionReason::PkiDistributionPoint);
 }
+
+#[tokio::test]
+async fn a_path_that_climbs_out_of_the_url_is_decided_like_any_request() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(web, &[LOCAL], &[LOCAL], &[CRL]);
+    for path in ["/crl/root.crl/../../secret", "/crl/%2e%2e/secret"] {
+        // A refusal closes the connection: one guest connection per path.
+        let mut guest = rig.guest().await;
+        let mut reader = BufReader::new(guest.stream().await);
+        reader
+            .get_mut()
+            .write_all(request("GET", web, path).as_bytes())
+            .await
+            .unwrap();
+        assert_eq!(answer(&mut reader, "GET").await.code, 403, "{path}");
+    }
+    assert_eq!(
+        seen.lines(),
+        Vec::<String>::new(),
+        "nothing reached the server"
+    );
+    for event in rig.events(2).await {
+        assert_ne!(event.reason, ConnectionReason::PkiDistributionPoint);
+    }
+}

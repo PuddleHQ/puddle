@@ -220,6 +220,52 @@ async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() 
     host.shutdown().await;
 }
 
+/// The saved logins of a workspace outlive a restart of Puddle, whose start-up clean-up removes
+/// what nothing names: those of a workspace that is gone go, those of one that is still there stay.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_keeps_the_saved_logins_of_every_workspace_and_drops_those_of_one_that_is_gone() {
+    let rig = Rig::named_ids();
+    rig.indexed.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    // What the run before captured, written the way a run writes: through the index.
+    let earlier = puddle_secrets::IndexedStore::new(SharedSecrets(rig.secrets.clone()));
+    let kept = puddle_logins::saved_login_ids(
+        &WorkspaceId::new("acme").unwrap(),
+        puddle_logins::builtin(),
+    );
+    let gone = puddle_logins::saved_login_ids(
+        &WorkspaceId::new("gone").unwrap(),
+        puddle_logins::builtin(),
+    );
+    for id in kept.iter().chain(&gone) {
+        earlier
+            .set(id, &puddle_secrets::Secret::new("{}".into()))
+            .unwrap();
+    }
+    // The clean-up runs at every start, and a quit waits for it.
+    for _ in 0..2 {
+        let host = rig.start().await;
+        host.shutdown().await;
+    }
+    for id in &kept {
+        assert!(
+            rig.secrets.get(id).unwrap().is_some(),
+            "{id:?} of acme was removed"
+        );
+    }
+    for id in &gone {
+        assert!(
+            rig.secrets.get(id).unwrap().is_none(),
+            "{id:?} of a gone workspace stayed"
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_kept_logins_list_says_nothing_is_kept_and_does_not_wait_on_the_credential_store() {
     let rig = Rig::named_ids();

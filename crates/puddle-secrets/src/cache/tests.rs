@@ -358,6 +358,7 @@ impl Fetch for &SlowFailure {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let delay = self.delay;
         async move {
+            // simulated latency: a tool that takes its time, on the test's paused clock
             tokio::time::sleep(delay).await;
             Err(SourceError::NotSignedIn)
         }

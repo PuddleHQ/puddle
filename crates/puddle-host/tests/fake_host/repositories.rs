@@ -380,6 +380,76 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
     host.shutdown().await;
 }
 
+/// Puddle is killed (no shutdown) while Clone again runs: git has begun writing the repository
+/// and the VM dies with Puddle. The next start lists the workspace, and once it runs again a
+/// second Clone again of the same entry works: what the killed clone left never blocks its own
+/// directory (docs/qa 07 S4c).
+#[tokio::test(flavor = "multi_thread")]
+async fn puddle_killed_during_clone_again_lists_the_workspace_and_the_next_clone_again_works() {
+    const DOCS: &str = "https://example.org/acme/docs.git";
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "adds").await;
+    // An entry that is on the list and not on the disk: its first clone failed.
+    *rig.guest.fail_clone_of.lock().unwrap() = Some(DOCS.to_owned());
+    let reply = add_and_wait(
+        &api1,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": DOCS}),
+    )
+    .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    *rig.guest.fail_clone_of.lock().unwrap() = None;
+    let docs = entry_of(&api1, "adds", "docs").await;
+
+    let held = rig.guest.hold_next(&["clone"]);
+    let reply = api1
+        .post(
+            &format!("/api/workspaces/adds/repositories/{docs}/clone"),
+            "",
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    held.wait_reached();
+    // Killed: no shutdown runs, and the VM dies with its owner.
+    drop(events);
+    drop(host);
+    held.kill();
+    rig.await_dead_host().await;
+    assert!(
+        rig.runtime
+            .set_status(&SandboxName::new("adds").unwrap(), WorkspaceStatus::Crashed)
+    );
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let ws = api2.get("/api/workspaces/adds").await;
+    assert_eq!(ws.status, 200, "{}", ws.body);
+    assert_eq!(status_of(&ws), "crashed", "{}", ws.body);
+    assert_eq!(entry_of(&api2, "adds", "docs").await, docs);
+    let mut events = api2.events().await;
+    let reply = api2.post("/api/workspaces/adds/start", "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("adds"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    let reply = api2
+        .post(
+            &format!("/api/workspaces/adds/repositories/{docs}/clone"),
+            "",
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("adds"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(problems_of(&api2).await.is_empty());
+    assert_eq!(checkouts_of(&api2, "adds").await["missing"], json!([]));
+    again.shutdown().await;
+}
+
 const MOVED_REMOTE: &str = "https://example.org/acme/moved.git";
 
 /// A running host with workspace `adds` and two foreign checkouts, `legacy` (https) and `ssh`.
@@ -1015,8 +1085,9 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
         .iter()
         .filter(|c| c.op == Op::Exec && c.target.as_deref() == Some("probe"))
         .take_while(|c| {
-            c.detail.as_deref()
-                != Some("git clone -- https://example.org/acme/web /workspaces/probe/web")
+            !c.detail.as_deref().is_some_and(|d| {
+                d.ends_with("puddle-clone https://example.org/acme/web /workspaces/probe/.puddle/cloning/web /workspaces/probe/web")
+            })
         })
         .count();
     rig.runtime.inject(

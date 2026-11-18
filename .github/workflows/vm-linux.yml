@@ -49,8 +49,9 @@ env:
   # panic file:line, test name and assertion text (they come from #[track_caller]); only backtrace frames lose their lines.
   CARGO_PROFILE_DEV_DEBUG: 0
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, memory),
-  # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
-  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle
+  # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host. `puddle serve` (the dormant `serve`
+  # feature) is built in: vm_serve_kill.rs kills the real program and starts it again.
+  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle --features=puddle/serve
   # msb's sandbox runtimes log at debug, and the harness keeps each removed sandbox's logs beside
   # the run home, so a boot that fails keeps its VMM trace and kernel.log in the artefact.
   PUDDLE_VM_MSB_LOG_LEVEL: debug

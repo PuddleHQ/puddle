@@ -33,7 +33,7 @@ regexes = ['''auth\W{1,4}dXNlcjpwdWRkbGU=''']
 
 # History only: the made-up GitHub token the log canary test once held as a literal. The tests now
 # build such tokens at run time (puddle-test-kit), so no tree has the literal, but the full scan
-# (CI, every ref) still reads the old commits. Drop the entry if that history is ever rewritten.
+# (CI, all of HEAD's history) still reads the old commits. Drop the entry if that history is ever rewritten.
 [[allowlists]]
 description = "the made-up GitHub token of the log canary test"
 condition = "AND"

@@ -56,6 +56,8 @@ on:
       - crates/puddle-app/wix/**
       - crates/puddle-app/build.rs
       - crates/puddle-app/e2e/usable.mjs
+      - crates/puddle-app/e2e/terminal-render.mjs
+      - crates/puddle-app/e2e/cdp.mjs
       - crates/puddle-app/e2e/uia.mjs
       - crates/puddle-app/e2e/uia.ps1
       - crates/puddle-app/e2e/desktop.ps1
@@ -372,6 +374,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.log
             ${{ runner.temp }}/usable-out/*.out
             ${{ runner.temp }}/usable-out/uia-tree-*.txt
+            ${{ runner.temp }}/usable-out/terminal-render.json
             ${{ runner.temp }}/usable-out/forgejo-server.log
             ${{ runner.temp }}/usable-out/company-proxy.log
             ${{ runner.temp }}/usable-out/company-lab.out

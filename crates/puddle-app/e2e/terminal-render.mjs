@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// What the Terminal tab looks like in the installed app's WebView2, read from the page over the DevTools
+// Protocol (plain Node 24, no packages). A release build has no debugging port of its own; usable.mjs
+// opens one with the WebView2 policy `AdditionalBrowserArguments` (see `debugPortPolicy`).
+//
+// The report answers: is the emulator there and sized, is its stylesheet applied, does it use the
+// terminal font, do ANSI colours differ from the default text, does a mouse drag select, and did the
+// page log a CSP or stylesheet error. A grey box with grey text fails the first four.
+import { spawnSync } from "node:child_process";
+import { connect } from "./cdp.mjs";
+import { until } from "./poll.mjs";
+
+const POLICY_KEY = "HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
+
+/** Sets (`port`) or removes (`undefined`) the policy that gives every WebView2 app of this user a DevTools port. */
+export function debugPortPolicy(port) {
+  if (port === undefined) {
+    spawnSync("reg", ["delete", POLICY_KEY, "/f"], { stdio: "ignore" });
+    return;
+  }
+  const r = spawnSync("reg", ["add", POLICY_KEY, "/v", "*", "/t", "REG_SZ", "/d", `--remote-debugging-port=${port} --remote-allow-origins=*`, "/f"], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`reg add failed: ${r.stderr || r.stdout}`);
+}
+
+/** The page target whose URL path ends in `/terminal`, or the first page. */
+async function terminalTarget(port) {
+  const list = await (await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(5000) })).json();
+  const pages = list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
+  return pages.find((t) => /\/terminal(\?|#|$)/.test(t.url)) ?? pages[0];
+}
+
+/** The page-side read: sizes, styles and the coloured cells; one object. */
+export const READ = `(() => {
+  const q = (s, r = document) => r.querySelector(s);
+  const xterm = q(".xterm");
+  const rect = (el) => (el ? (({ width, height }) => ({ width, height }))(el.getBoundingClientRect()) : null);
+  const spanOf = (text) => [...document.querySelectorAll(".xterm-rows span")].find((s) => s.textContent === text);
+  const style = (el) => (el ? getComputedStyle(el) : null);
+  const probe = document.createElement("span");
+  probe.style.fontFamily = "var(--font-mono)";
+  document.body.append(probe);
+  const wanted = getComputedStyle(probe).fontFamily;
+  probe.remove();
+  const rows = q(".xterm-rows");
+  const red = spanOf("COLOR-RED");
+  const green = spanOf("COLOR-GREEN");
+  return {
+    url: location.href,
+    xterm: rect(xterm),
+    screen: rect(q(".xterm-screen")),
+    renderer: q(".xterm-rows") ? "dom" : q("canvas.xterm-link-layer, .xterm-screen canvas") ? "canvas" : "none",
+    helperPositioned: style(q(".xterm-helpers"))?.position,
+    fontFamily: style(rows)?.fontFamily,
+    wantedFontFamily: wanted,
+    defaultColour: style(rows)?.color,
+    background: style(q(".xterm-scrollable-element, .xterm-viewport") ?? xterm)?.backgroundColor,
+    red: red && { colour: style(red).color, classes: red.className },
+    green: green && { colour: style(green).color, classes: green.className, weight: style(green).fontWeight },
+    redBox: red && (({ x, y, width, height }) => ({ x, y, width, height }))(red.getBoundingClientRect()),
+    styleSheets: document.styleSheets.length,
+  };
+})()`;
+
+const firstFamily = (f) => String(f ?? "").split(",")[0].replace(/["'\s]/g, "").toLowerCase();
+
+/**
+ * Reads the Terminal page over DevTools port `port`. The terminal must show a line coloured red
+ * ("COLOR-RED") and bold green ("COLOR-GREEN") by SGR sequences. Returns `{ checks, dump }`: `checks` is
+ * a list of `{ name, ok, detail }`, `dump` the raw reads (computed styles, console) for an artifact.
+ */
+export async function inspectTerminal(port) {
+  const target = await until("a DevTools page target", () => terminalTarget(port), 30_000, 1000);
+  const page = await connect(target.webSocketDebuggerUrl);
+  const console_ = [];
+  page.on("Runtime.consoleAPICalled", (p) => console_.push(`${p.type}: ${(p.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ")}`));
+  page.on("Runtime.exceptionThrown", (p) => console_.push(`exception: ${p.exceptionDetails?.text} ${p.exceptionDetails?.exception?.description ?? ""}`));
+  page.on("Log.entryAdded", (p) => console_.push(`${p.entry.source}/${p.entry.level}: ${p.entry.text} ${p.entry.url ?? ""}`));
+  try {
+    await page.send("Runtime.enable");
+    await page.send("Log.enable");
+    await page.send("Page.enable");
+    const read = await page.evaluate(READ);
+    // A real drag over the red word, with real mouse events: the emulator selects it.
+    let selection = { cells: 0, width: 0, copied: "" };
+    if (read.redBox) {
+      const y = read.redBox.y + read.redBox.height / 2;
+      const mouse = (type, x, extra = {}) => page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1, ...extra });
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: read.redBox.x + 1, y });
+      await mouse("mousePressed", read.redBox.x + 1);
+      for (let i = 1; i <= 6; i++) await mouse("mouseMoved", read.redBox.x + 1 + ((read.redBox.width + 2) * i) / 6);
+      await mouse("mouseReleased", read.redBox.x + read.redBox.width + 2);
+      selection = await page.evaluate(`(() => {
+        const cells = [...document.querySelectorAll(".xterm-selection div")];
+        let copied = "";
+        const grab = (e) => { copied = e.clipboardData?.getData("text/plain") ?? ""; };
+        document.addEventListener("copy", grab);
+        document.querySelector(".xterm-helper-textarea")?.focus();
+        document.execCommand("copy");
+        document.removeEventListener("copy", grab);
+        return { cells: cells.length, width: Math.max(0, ...cells.map((c) => c.getBoundingClientRect().width)), copied };
+      })()`);
+    }
+    const complaints = console_.filter((l) => /content security policy|refused to|violat|stylesheet|\.css/i.test(l));
+    const sized = (r) => Boolean(r && r.width > 50 && r.height > 20);
+    const checks = [
+      { name: "the .xterm emulator exists with a size", ok: sized(read.xterm) && sized(read.screen), detail: JSON.stringify({ xterm: read.xterm, screen: read.screen, renderer: read.renderer }) },
+      { name: "the emulator's stylesheet is applied", ok: read.helperPositioned === "absolute" && read.styleSheets > 0, detail: `xterm-helpers position ${read.helperPositioned}, ${read.styleSheets} style sheets` },
+      { name: "the terminal uses the terminal font", ok: firstFamily(read.fontFamily) !== "" && firstFamily(read.fontFamily) === firstFamily(read.wantedFontFamily), detail: `${read.fontFamily} (wanted ${read.wantedFontFamily})` },
+      {
+        name: "ANSI colours differ from the default text",
+        ok: Boolean(read.red && read.green && read.red.colour !== read.defaultColour && read.green.colour !== read.defaultColour && read.red.colour !== read.green.colour),
+        detail: `default ${read.defaultColour}, red ${read.red?.colour} (${read.red?.classes}), green ${read.green?.colour} (${read.green?.classes}), background ${read.background}`,
+      },
+      { name: "a mouse drag selects the word", ok: selection.cells > 0 && selection.width > 0 && selection.copied === "COLOR-RED", detail: JSON.stringify(selection) },
+      { name: "the page logged no CSP or stylesheet error", ok: complaints.length === 0, detail: complaints.slice(0, 3).join(" ¦ ") },
+    ];
+    return { checks, dump: { read, selection, console: console_ } };
+  } finally {
+    page.close();
+  }
+}

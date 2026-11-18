@@ -15,7 +15,9 @@
 //      is the identity's, and the guest, the audit log and the API never hold the token;
 //   6. the first run's "Copy report" puts the system check's report on the Windows clipboard;
 //   7. the workspace's Terminal tab opens a shell: `whoami; pwd; sudo -n true && echo sudo-ok`, typed
-//      with real keys, reads `agent`, the start folder and `sudo-ok`, and no error page shows;
+//      with real keys, reads `agent`, the start folder and `sudo-ok`, and no error page shows; the page
+//      itself is read over DevTools (terminal-render.mjs): emulator sized, stylesheet applied, terminal
+//      font, ANSI colours unlike the default text, a mouse drag selects, no CSP or stylesheet error;
 //   8. the close button hides the window in the tray, with exactly one Windows notification however
 //      often it is pressed, and a heartbeat the guest writes every half second has no gap over 2 s
 //      while the window is hidden;
@@ -30,7 +32,8 @@
 // Start menu shortcut's, the `identifier` in tauri.conf.json), and the window's buttons are pressed with
 // the messages its title bar sends (desktop.ps1).
 //
-// Why UI Automation (uia.mjs) and not the DevTools Protocol like smoke.mjs: a release build has no
+// Why UI Automation (uia.mjs) and not the DevTools Protocol like smoke.mjs (the Terminal tab's rendering
+// check alone uses a DevTools port, opened by a WebView2 policy value, see terminal-render.mjs): a release build has no
 // debugging port (the shell honours PUDDLE_APP_DEBUG_PORT in debug builds only, and WebView2 ignores its
 // environment variable once the API sets arguments, which wry always does), and the MSI holds a release
 // build. So the real window is clicked the way a person does it: the first-run steps, the create form,
@@ -64,6 +67,7 @@ import { fileURLToPath } from "node:url";
 import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
+import { debugPortPolicy, inspectTerminal } from "./terminal-render.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const local = process.env.LOCALAPPDATA;
@@ -188,6 +192,16 @@ if (company) {
     stopForge();
     process.exit(1);
   });
+}
+
+// A release build has no DevTools port; the WebView2 policy for additional browser arguments gives the
+// installed app one, which the Terminal tab's rendering check reads (terminal-render.mjs). The value is
+// removed at the end.
+const DEBUG_PORT = 9223;
+try {
+  debugPortPolicy(DEBUG_PORT);
+} catch (err) {
+  console.log(`     no DevTools policy: ${err.message}`);
 }
 
 const connectionFile = join(dataDir, "api.json");
@@ -582,6 +596,27 @@ async function terminalTab(startFolder) {
   screenshot("terminal");
   const lines = (await terminalLines()).filter((l) => l.trim()).slice(-12).join(" ¦ ");
   check("the terminal reads agent, the start folder and sudo-ok", user && folder && sudo, `whoami ${user}, pwd ${startFolder} ${folder}, sudo ${sudo}; lines: ${lines}`);
+  await terminalRendering();
+}
+
+/** Colours, font, size and a mouse selection of the terminal, read from the page over the policy's DevTools port. */
+async function terminalRendering() {
+  // Two SGR sequences by printf; the words appear in the output only (the typed command holds the escapes, not the words).
+  const command = "printf '\\033[31mCOLOR-RED\\033[0m \\033[1;32mCOLOR-GREEN\\033[0m\\n'";
+  await step("the colour sample is printed", async () => {
+    await uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+    await uia.waitFor("the colour sample line", { window: MAIN, role: "listitem", nameRegex: "COLOR-RED COLOR-GREEN" }, 60_000);
+  });
+  let report;
+  try {
+    report = await inspectTerminal(DEBUG_PORT);
+  } catch (err) {
+    check("the terminal's rendering could be read over DevTools", false, String(err?.message ?? err));
+    return;
+  }
+  for (const c of report.checks) check(`terminal rendering: ${c.name}`, c.ok, c.detail);
+  writeFileSync(join(out, "terminal-render.json"), JSON.stringify(report.dump, null, 2));
+  if (report.checks.some((c) => !c.ok)) screenshot("terminal-rendering");
 }
 
 /** The guest's clock, in seconds. */
@@ -922,6 +957,7 @@ try {
   note(`windows at the end: ${appWindows().join(" | ") || "none"}`);
   screenshot("failure");
 } finally {
+  debugPortPolicy(undefined);
   writeFileSync(join(out, "app.log"), appLog);
   if (info) writeFileSync(join(out, "forgejo-server.log"), forgeLog());
   if (companyInfo) writeFileSync(join(out, "company-proxy.log"), companyLog());

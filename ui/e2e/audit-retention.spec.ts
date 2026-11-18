@@ -8,11 +8,9 @@ import { staysEmpty, watchCsp } from "./support";
 
 // The group on the Settings page: a section with the "Activity log" heading.
 function activityLog(page: Page) {
-  return page
-    .locator("section.group")
-    .filter({
-      has: page.getByRole("heading", { level: 2, name: "Activity log" }),
-    });
+  return page.locator("section.group").filter({
+    has: page.getByRole("heading", { level: 2, name: "Activity log" }),
+  });
 }
 
 async function openCard(page: Page, backend: Backend) {

@@ -87,7 +87,7 @@ fn program_folder(root: &Path, runtime_dir: &Path) -> PathBuf {
     let folder = root.join("program");
     std::fs::create_dir_all(&folder).unwrap();
     let exe = folder.join("puddle");
-    std::fs::copy(puddle_bin(), &exe).expect("copy the built puddle into the program folder");
+    std::fs::copy(puddle_bin(), &exe).expect("copy the built `puddle` program into the program folder");
     std::os::unix::fs::symlink(runtime_dir, folder.join("runtime")).unwrap();
     exe
 }
@@ -361,7 +361,7 @@ async fn vm_serve_sigkill_keeps_the_commits_and_the_next_start_recovers_the_work
     let help = Command::new(puddle_bin()).arg("--help").output().unwrap();
     assert!(
         String::from_utf8_lossy(&help.stdout).contains("serve"),
-        "the built puddle has no `serve` command: build it with `--features puddle/serve` (vm-linux.yml does)"
+        "the built `puddle` program has no `serve` command: build it with `--features puddle/serve` (vm-linux.yml does)"
     );
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)

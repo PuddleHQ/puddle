@@ -499,10 +499,7 @@ test("dragging the mouse selects text that Ctrl+Shift+C copies, and the menu pas
   backend,
   browserName,
 }) => {
-  test.skip(
-    browserName !== "chromium",
-    "clipboard permissions are a Chromium grant",
-  );
+  test.skip(browserName !== "chromium", "Chromium-only clipboard grant");
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await open(page, backend);
   await start(page);

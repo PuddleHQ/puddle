@@ -568,9 +568,11 @@ async function terminalTab(startFolder) {
     await uia.waitFor("the shell's prompt", { window: MAIN, role: "listitem", nameRegex: "[$#]\\s*$" }, 120_000);
   });
   const command = "whoami; pwd; sudo -n true && echo sudo-ok";
-  await step("the command is typed into the terminal", () =>
-    uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true }),
-  );
+  await step("the command is typed into the terminal", () => {
+    // The keys go to the window in front: make sure that is this one.
+    if (!mainWindow("front").foreground) throw new Error("the main window did not come to the front");
+    return uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+  });
   const shows = (text) =>
     uia.waitFor(`the terminal line "${text}"`, { window: MAIN, role: "listitem", nameRegex: `^\\s*${literally(text)}\\s*$` }, 60_000).then(
       () => true,
@@ -605,7 +607,7 @@ async function closeToTray(id) {
   const NOTICE = "Puddle is still running";
   clearToasts();
   const before = toasts();
-  const beat = await guest(id, "rm -f /tmp/heartbeat; setsid sh -c 'while :; do date +%s.%N >> /tmp/heartbeat; sleep 0.5; done' </dev/null >/dev/null 2>&1 & sleep 2; wc -l < /tmp/heartbeat", { root: true, within: 60_000 });
+  const beat = await guest(id, "rm -f /tmp/heartbeat; setsid sh -c 'while :; do date +%s.%N >> /tmp/heartbeat; sleep 0.5; done' </dev/null >/dev/null 2>&1 & echo $! > /tmp/heartbeat.pid; sleep 2; wc -l < /tmp/heartbeat", { root: true, within: 60_000 });
   note(`the guest's heartbeat started: ${beat.text.trim()} beats so far`);
   const from = await guestNow(id);
   mainWindow("front");
@@ -622,7 +624,7 @@ async function closeToTray(id) {
   check("the close button hides the window in the tray and Puddle keeps running", hidden.every(Boolean), `hidden after each close: ${hidden.join(", ")}; exited: ${appExited}`);
   const told = newSince(before, toasts()).filter((t) => t.title === NOTICE);
   check("closing twice makes exactly one 'Puddle is still running' Windows notification", told.length === 1, `${told.length}: ${describeToasts(told)}`);
-  const beats = (await guest(id, "cat /tmp/heartbeat", { root: true, within: 60_000 })).text
+  const beats = (await guest(id, "kill $(cat /tmp/heartbeat.pid); cat /tmp/heartbeat", { root: true, within: 60_000 })).text
     .split("\n")
     .map(Number.parseFloat)
     .filter((t) => Number.isFinite(t) && t >= from - 1 && t <= to + 1);
@@ -693,7 +695,8 @@ async function exportActivity() {
   const lines = file ? readFileSync(join(downloads, file), "utf8").split("\n").filter((l) => l.trim()) : [];
   const valid = lines.every((l) => {
     try {
-      return typeof JSON.parse(l) === "object";
+      const record = JSON.parse(l);
+      return record !== null && typeof record === "object" && !Array.isArray(record);
     } catch {
       return false;
     }
@@ -704,7 +707,7 @@ async function exportActivity() {
     file !== undefined && lines.length > 0 && valid && said?.[2] === file && count === lines.length,
     `page: "${saved.name}"; file: ${file ?? "none"} with ${lines.length} lines, all JSON ${valid}; new in Downloads: ${readdirSync(downloads).filter((f) => !earlier.has(f)).join(", ") || "nothing"}`,
   );
-  check("the export holds no token", !lines.some((l) => l.includes(info.token)));
+  check("the export holds no token", lines.length > 0 && !lines.some((l) => l.includes(info.token)), `${lines.length} lines`);
 }
 
 /** The tray's "Quit Puddle" with the workspace running ends every process of Puddle, and the next start lists the workspace as stopped. */

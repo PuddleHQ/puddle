@@ -79,15 +79,22 @@ export const READ = `(() => {
     probeReads: (() => {
       const pr = q(".probe");
       if (!pr) return "no .probe";
-      const cs = getComputedStyle(pr);
       const reads = {};
-      for (const t of ["--color-surface", "--color-text", "--color-accent", "--color-danger", "--color-success", "--color-warning", "--color-accent-subtle"]) {
+      for (const t of ["--color-surface", "--color-text", "--color-danger"]) {
         pr.style.color = "";
         pr.style.color = "var(" + t + ")";
-        reads[t] = { style: pr.style.color, computed: cs.color };
+        const fresh = getComputedStyle(pr).color;
+        void pr.offsetWidth;
+        const afterLayout = getComputedStyle(pr).color;
+        const clone = document.createElement("span");
+        clone.style.color = "var(" + t + ")";
+        document.body.append(clone);
+        const inBody = getComputedStyle(clone).color;
+        clone.remove();
+        reads[t] = { styleAttr: pr.getAttribute("style"), fresh, afterLayout, inBody, rootValue: getComputedStyle(document.documentElement).getPropertyValue(t), probeValue: getComputedStyle(pr).getPropertyValue(t) };
       }
       pr.style.color = "";
-      return { reads, display: cs.display, parentColor: getComputedStyle(pr.parentElement).color };
+      return { reads, display: getComputedStyle(pr).display, connected: pr.isConnected, ancestors: (() => { const a = []; for (let e = pr.parentElement; e; e = e.parentElement) a.push(e.tagName + "." + e.className + " " + getComputedStyle(e).color + " scheme=" + getComputedStyle(e).colorScheme); return a.slice(0, 8); })() };
     })(),
     xtermClasses: xterm?.className,
     colorScheme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",

@@ -67,6 +67,16 @@ fn workspace() -> tempfile::TempDir {
         .unwrap()
 }
 
+/// The path mise is given for the copy: beside the file as the OS names it, so a temporary folder
+/// under a short (8.3) or linked name compares equal.
+fn edit_copy(root: &Path) -> String {
+    dunce::canonicalize(root)
+        .unwrap()
+        .join(EDIT_COPY)
+        .display()
+        .to_string()
+}
+
 fn entry(tool: &str, version: &str, installed: bool, path: &str) -> String {
     // A Windows path has backslashes, which JSON needs escaped.
     let path = path.replace('\\', "\\\\");
@@ -193,7 +203,7 @@ fn a_set_checks_the_hash_creates_the_file_and_quotes_the_key() {
         "hash\tabsent\nend\n".replace("absent", &sha256_of(&root.join("mise.toml")).unwrap())
     );
     // mise edits a copy of the file, which then replaces it.
-    let file = root.join(EDIT_COPY).display().to_string();
+    let file = edit_copy(root);
     assert_eq!(
         *mise.calls.borrow(),
         [["config", "set", "-f", &file, "tools.\"npm:prettier\"", "22"]]
@@ -226,7 +236,7 @@ fn a_remove_checks_the_hash_and_uses_unuse_without_pruning() {
     assert_eq!(stale, Err(Failure::Changed));
     assert!(mise.calls.borrow().is_empty());
     run(&mise, &request(root, Operation::Remove(name("node"), hash))).unwrap();
-    let file = root.join(EDIT_COPY).display().to_string();
+    let file = edit_copy(root);
     assert_eq!(
         *mise.calls.borrow(),
         [["unuse", "--no-prune", "-p", &file, "node"]]

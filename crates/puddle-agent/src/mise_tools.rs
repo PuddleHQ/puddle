@@ -264,7 +264,9 @@ fn edit(
     let file = root.join("mise.toml");
     // No such file, or a link that leads nowhere (the guard above already read a link that
     // works): the link is refused, since writing through it would create what it points at.
-    let target = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+    // On Windows the plain form (`C:\...`), not the `\\?\C:\...` that `std` returns: mise gets
+    // the copy's path from it, and its errors show that path to the person.
+    let target = dunce::canonicalize(&file).unwrap_or_else(|_| file.clone());
     if target == file && file.is_symlink() {
         return Err(MiseFailed("mise.toml is a link that leads nowhere".to_owned()).into());
     }

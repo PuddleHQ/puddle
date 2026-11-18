@@ -7012,6 +7012,107 @@
       }
     },
     "/api/rules/{id}": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Edits a rule in place: its host pattern, effect, scope and expiry (and its precedence when the\nbody names one). The rule keeps its id, creator, creation time and switch. Open requests it\nnow decides are closed the same way as for a new rule.",
+        "operationId": "update_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the edited rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule, workspace or rule set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid pattern, expiry or precedence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "rules"
@@ -22870,6 +22971,49 @@
           "openai_key",
           "jwt_with_refresh_token"
         ]
+      },
+      "UpdateRuleRequest": {
+        "type": "object",
+        "description": "What a rule says after an edit: the whole of it, so a body that leaves a field out is refused\nand never reads as a change. The rule keeps its id, creator, creation time and switch.",
+        "required": [
+          "scope",
+          "pattern",
+          "effect",
+          "expires_at"
+        ],
+        "properties": {
+          "effect": {
+            "$ref": "#/components/schemas/Effect",
+            "description": "Allow or deny."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms in the future from which the rule no longer matches; `null` is permanent.\nRequired, so an empty body never makes a rule permanent.",
+            "minimum": 0
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is\nrefused)."
+          },
+          "precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9, higher wins. Left out: the rule keeps its precedence.",
+            "minimum": 0
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RuleScope",
+            "description": "Global, one workspace, or a rule set of yours."
+          }
+        },
+        "additionalProperties": false
       },
       "UserView": {
         "type": "object",

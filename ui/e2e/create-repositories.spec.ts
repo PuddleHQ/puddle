@@ -203,7 +203,7 @@ test.describe("the list of repositories", () => {
     }
   });
 
-  test("the address field reads owner/repo and a missing scheme, says what it will clone, and refuses a credential when it is left", async ({
+  test("the address field reads owner/repo and a missing scheme, says what it will clone, and refuses a credential as it is typed", async ({
     page,
     request,
     backend,
@@ -212,8 +212,6 @@ test.describe("the list of repositories", () => {
     const dialog = await openCreate(page);
     const address = addrOf(page, 1);
     await address.fill("user:pw@github.com/acme/web");
-    await expect(rowOf(page, 1).getByRole("alert")).toHaveCount(0);
-    await address.press("Tab");
     await expect(rowOf(page, 1).getByRole("alert")).toHaveText(
       "Remove the user name and password from the URL; Puddle supplies credentials itself.",
     );
@@ -724,15 +722,12 @@ test.describe("validation speed", () => {
   }) => {
     await openList(page, backend);
     await openCreate(page);
-    const field = addrOf(page, 1);
-    await field.focus();
-    const started = Date.now();
-    await page.keyboard.type("https://user:pw@github.com/acme/api");
+    // One input event, then the clock starts: the typing itself is not what is measured.
+    await addrOf(page, 1).fill("https://user:pw@github.com/acme/api");
     await expect(dialogOf(page).getByRole("alert")).toContainText(
       "Remove the user name and password",
       { timeout: LOCAL_MS },
     );
-    expect(Date.now() - started).toBeLessThan(LOCAL_MS + 200);
   });
 
   test("the host check answers within 400 ms of the last keystroke", async ({
@@ -743,12 +738,10 @@ test.describe("validation speed", () => {
     await openCreate(page);
     await addrOf(page, 1).focus();
     await page.keyboard.type("https://newhost.example.org/acme/api.git");
-    const started = Date.now();
     await expect(
       dialogOf(page)
         .getByTestId("hosts-new")
         .or(dialogOf(page).getByTestId("hosts-blocked")),
     ).toBeVisible({ timeout: HOST_MS });
-    expect(Date.now() - started).toBeLessThan(HOST_MS);
   });
 });

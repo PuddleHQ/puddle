@@ -19,6 +19,7 @@
 #![expect(
     clippy::indexing_slicing,
     clippy::unwrap_used,
+    clippy::panic,
     reason = "VM test: JSON read from the API in helpers outside the test; a missing key fails it"
 )]
 
@@ -127,6 +128,14 @@ async fn count_within(
             Err(_) => return count,
         }
     }
+}
+
+/// The commit a guest script printed as `head=<sha>`: git and the forge's `remote:` hints share
+/// its output.
+fn head_of(out: &str) -> &str {
+    out.lines()
+        .find_map(|line| line.strip_prefix("head="))
+        .unwrap_or_else(|| panic!("no head= line in {out}"))
 }
 
 /// The guest's boot id: the same value at the end means the workspace never stopped.
@@ -277,10 +286,10 @@ async fn vm_radar_forgejo_credential_changes_apply_to_the_running_workspace_and_
         &sandbox,
         "set -eu; cd /tmp/f/app; for i in 1 2 3 4 5; do echo $i > day.txt; git add day.txt; \
          git commit -q -m \"day $i\"; git push -q origin HEAD:refs/heads/team-day; done; \
-         git rev-parse HEAD",
+         echo head=$(git rev-parse HEAD)",
     )
     .await;
-    let pushed = out.lines().last().unwrap().to_owned();
+    let pushed = head_of(&out).to_owned();
     assert_eq!(
         forgejo.branch_head("acme/app", "team-day").as_deref(),
         Some(pushed.as_str()),
@@ -354,12 +363,12 @@ async fn vm_radar_forgejo_credential_changes_apply_to_the_running_workspace_and_
     let out = guest(
         &vm.runtime,
         &sandbox,
-        "set -eu; cd /tmp/f/other; git push -q origin HEAD:main; git rev-parse HEAD",
+        "set -eu; cd /tmp/f/other; git push -q origin HEAD:main; echo head=$(git rev-parse HEAD)",
     )
     .await;
     assert_eq!(
         forgejo.branch_head("acme/other", "main").as_deref(),
-        out.lines().last(),
+        Some(head_of(&out)),
         "the push landed once push was on\n{}",
         forgejo.log()
     );
@@ -407,14 +416,14 @@ async fn vm_radar_forgejo_credential_changes_apply_to_the_running_workspace_and_
         &sandbox,
         "set -eu; cd /tmp/f/app; git fetch -q; git checkout -q -b after-new-token origin/team-day; \
          echo again > day.txt; git commit -q -am again; \
-         git push -q origin HEAD:refs/heads/after-new-token; git rev-parse HEAD",
+         git push -q origin HEAD:refs/heads/after-new-token; echo head=$(git rev-parse HEAD)",
     )
     .await;
     assert_eq!(
         forgejo
             .branch_head("acme/app", "after-new-token")
             .as_deref(),
-        out.lines().last(),
+        Some(head_of(&out)),
         "the push with the new token landed\n{}",
         forgejo.log()
     );

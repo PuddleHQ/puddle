@@ -64,4 +64,14 @@ printf 'vscode 9.9.9 file://%s/missing.zip %s\n' "$tmp/site" "$zsum" >"$pins"
 if "$tmp/ci/fetch-vscode.sh" "$tmp/gone" 2>"$tmp/err"; then fail "a download that fails was accepted"; fi
 grep -q '^::error title=fetch-vscode download failed::2 tries failed' "$tmp/err" || fail "the failed download has no annotation"
 
+# The cache (FETCH_CACHE_DIR) keeps the decoded, verified files; a run with every host gone installs from it.
+pin_both "$zsum" ssh.vsix.gz "$vsum"
+FETCH_CACHE_DIR=$tmp/cache "$tmp/ci/fetch-vscode.sh" "$tmp/c1" 2>/dev/null || fail "a cached run did not install"
+mv "$tmp/site" "$tmp/site-gone"
+FETCH_CACHE_DIR=$tmp/cache "$tmp/ci/fetch-vscode.sh" "$tmp/c2" 2>"$tmp/err" || fail "the cache was not used with the host down: $(cat "$tmp/err")"
+[ "$(grep -c 'using the cached' "$tmp/err")" -eq 2 ] || fail "not both files came from the cache: $(cat "$tmp/err")"
+cmp -s "$tmp/c2/remote-ssh.vsix" "$tmp/site-gone/ssh.vsix" || fail "the cached package is not the decoded zip"
+[ -f "$tmp/c2/app/Code.exe" ] || fail "the cached release was not unpacked"
+mv "$tmp/site-gone" "$tmp/site"
+
 echo "fetch-vscode-test: ok"

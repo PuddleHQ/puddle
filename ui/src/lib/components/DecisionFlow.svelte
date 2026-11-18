@@ -110,12 +110,12 @@
     await settleFocus(nextId);
   }
 
-  /** Deletes the rule a decision created. */
+  /** Takes a decision back: the rule goes and the request is listed again. */
   export async function undo(d: Decided) {
     const result = await store.undo(d);
     toasts.push(
       result.ok
-        ? `Undone: ${decidedSentence(d, undefined, spoken)}. It asks again the next time the workspace retries.`
+        ? `Undone: ${decidedSentence(d, undefined, spoken)}. The request is back in the list.`
         : result.message,
       { ms: result.ok ? 5000 : 8000, tone: result.ok ? "info" : "error" },
     );

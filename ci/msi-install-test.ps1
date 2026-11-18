@@ -181,6 +181,104 @@ function Invoke-MsiexecRefused([string[]]$Arguments, [string]$LogName) {
     [pscustomobject]@{ Code = $p.ExitCode; Log = $text }
 }
 
+# Windows Installer shows a shortcut's or an Add-or-remove-programs entry's icon from a file it
+# writes under the Icon table's name, and picks the file's type from the name's extension: a name
+# without ".ico" or ".exe" (WiX's default is the bare Id) leaves a shortcut with a generic icon.
+# Returns the Icon table's names and each shortcut's icon reference.
+function Get-PackageIcons([string]$Path) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @((Resolve-Path $Path).Path, 0))
+    function Select-Column([string]$Query) {
+        $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @($Query))
+        $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+        while ($true) {
+            $row = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            if ($null -eq $row) { break }
+            $row.GetType().InvokeMember('StringData', 'GetProperty', $null, $row, @(1))
+        }
+        $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+    }
+    [pscustomobject]@{
+        Icons = @(Select-Column 'SELECT `Name` FROM `Icon`')
+        ShortcutIcons = @(Select-Column 'SELECT `Icon_` FROM `Shortcut` WHERE `Icon_` IS NOT NULL')
+        ProductIcon = @(Select-Column "SELECT `Value` FROM `Property` WHERE `Property`='ARPPRODUCTICON'")
+    }
+}
+
+function Assert-PackageIcons([string]$Path) {
+    $icons = Get-PackageIcons $Path
+    Expect ($icons.Icons.Count -ge 1) "$Path has no Icon table entry"
+    foreach ($name in $icons.Icons) {
+        Expect ($name -match '\.(ico|exe)$') "$Path names an icon '$name' without an .ico or .exe extension, so Windows shows the shortcut's icon as a generic one"
+    }
+    Expect ($icons.ShortcutIcons.Count -ge 1) "$Path has a shortcut with no icon"
+    foreach ($name in @($icons.ShortcutIcons) + @($icons.ProductIcon)) {
+        Expect ($icons.Icons -contains $name) "$Path refers to icon '$name', which its Icon table does not hold"
+    }
+}
+
+Add-Type -AssemblyName System.Drawing
+Add-Type -Namespace Puddle -Name Icons -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern uint PrivateExtractIcons(string file, int index, int cx, int cy, System.IntPtr[] icons, uint[] ids, uint count, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool DestroyIcon(System.IntPtr icon);
+'@
+
+# The 256 px image of the icon a file carries (an .exe's first icon resource, or an .ico), as a bitmap.
+function Get-FileIconBitmap([string]$File) {
+    $handles = New-Object 'System.IntPtr[]' 1
+    $ids = New-Object 'uint32[]' 1
+    $got = [Puddle.Icons]::PrivateExtractIcons($File, 0, 256, 256, $handles, $ids, 1, 0)
+    Expect ($got -ge 1) "$File carries no icon"
+    try {
+        $icon = [System.Drawing.Icon]::FromHandle($handles[0])
+        $bitmap = New-Object System.Drawing.Bitmap 256, 256
+        $g = [System.Drawing.Graphics]::FromImage($bitmap)
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $g.DrawIcon($icon, (New-Object System.Drawing.Rectangle 0, 0, 256, 256))
+        $g.Dispose()
+        return $bitmap
+    } finally { [void][Puddle.Icons]::DestroyIcon($handles[0]) }
+}
+
+# Share of pixels that differ clearly (a channel off by more than 24) between two 256 px bitmaps.
+function Get-IconDifference([System.Drawing.Bitmap]$A, [System.Drawing.Bitmap]$B) {
+    $bad = 0
+    for ($y = 0; $y -lt 256; $y += 2) {
+        for ($x = 0; $x -lt 256; $x += 2) {
+            $p = $A.GetPixel($x, $y); $q = $B.GetPixel($x, $y)
+            if ([math]::Abs($p.A - $q.A) -gt 24 -or [math]::Abs($p.R - $q.R) -gt 24 -or
+                [math]::Abs($p.G - $q.G) -gt 24 -or [math]::Abs($p.B - $q.B) -gt 24) { $bad++ }
+        }
+    }
+    $bad / (128 * 128)
+}
+
+# The duck: crates/puddle-app/icons/icon.png, which crates/puddle-appicon/tests/installed_icon.rs
+# pins to the drawing the tray uses.
+function Get-DuckBitmap {
+    $png = Join-Path $PSScriptRoot '..\crates\puddle-app\icons\icon.png'
+    New-Object System.Drawing.Bitmap ((Resolve-Path $png).Path)
+}
+
+function Assert-FileIsDuck([string]$File, [string]$What) {
+    $diff = Get-IconDifference (Get-FileIconBitmap $File) (Get-DuckBitmap)
+    Expect ($diff -lt 0.02) ("{0}'s icon ({1}) is not the duck: {2:P1} of its pixels differ" -f $What, $File, $diff)
+}
+
+# What a user sees of the install: the program's own icon, and the icon file of the Start menu
+# shortcut, are the duck.
+function Assert-InstalledIcon {
+    Assert-FileIsDuck (Join-Path $InstallDir 'puddle-app.exe') 'the installed program'
+    $link = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$ProductName\$ProductName.lnk"
+    Expect (Test-Path -LiteralPath $link) "the Start menu has no $link"
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+    $location = [Environment]::ExpandEnvironmentVariables(($shortcut.IconLocation -replace ',-?\d+$', ''))
+    Expect (Test-Path -LiteralPath $location) "the Start menu shortcut's icon file $location does not exist"
+    Assert-FileIsDuck $location 'the Start menu shortcut'
+}
+
 # Path, size and SHA-256 of every file under the install folder, sorted: two listings are equal
 # when the folder is byte for byte the same.
 function Get-TreeDigest {
@@ -657,6 +755,20 @@ if ($SelfTest) {
         $InstallDir = $savedInstallDir
     }
     if ($failures -gt 0) { Fail "$failures self-test checks failed" }
+
+    # The icon checks: the duck passes, a plain yellow disc (what the installer once shipped) does not.
+    $duckIco = (Resolve-Path (Join-Path $PSScriptRoot '..\crates\puddle-app\icons\icon.ico')).Path
+    Check 'the duck icon file is the duck' (-not (Throws { Assert-FileIsDuck $duckIco 'the file' } '.'))
+    $discIco = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName() + '.ico')
+    $disc = New-Object System.Drawing.Bitmap 256, 256
+    $g = [System.Drawing.Graphics]::FromImage($disc)
+    $g.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(246, 196, 49))), 12, 12, 232, 232)
+    $g.Dispose()
+    $stream = [IO.File]::Create($discIco)
+    ([System.Drawing.Icon]::FromHandle($disc.GetHicon())).Save($stream)
+    $stream.Dispose()
+    Check 'a yellow disc is refused as the icon' (Throws { Assert-FileIsDuck $discIco 'the file' } 'is not the duck')
+    [IO.File]::Delete($discIco)
     Write-Host 'self-test ok'
     return
 }
@@ -688,6 +800,8 @@ Step 'the package is per user'
 foreach ($path in @($Msi, $BaselineMsi, $UpgradeMsi) | Where-Object { $_ }) {
     Expect (Test-PerUserPackage $path) "$path is not a per-user package (needs no elevation, no ALLUSERS)"
 }
+Step 'the package names its icon so the shortcut shows it'
+foreach ($path in @($Msi, $UpgradeMsi) | Where-Object { $_ }) { Assert-PackageIcons $path }
 
 Step 'the installer page says what it does in plain words'
 # The older build of -BaselineMsi is a release made before this text; only the MSIs of this commit are held to it.
@@ -707,6 +821,8 @@ if ($BaselineMsi) {
 
 Invoke-Msiexec @('/i', "`"$Msi`"") 'msi-install.log'
 $first = Assert-InstalledLayout
+Step 'the program and its Start menu shortcut carry the duck icon'
+Assert-InstalledIcon
 Write-Host "installed version $($first.Version) in $InstallDir"
 # The program must report the version of the package it came in (the kept MSI is named by it).
 $reported = (& (Join-Path $InstallDir 'puddle.exe') --version) -join ' '

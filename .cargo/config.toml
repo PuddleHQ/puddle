@@ -2,3 +2,11 @@
 [alias]
 # Developer and release tasks (crates/xtask): `cargo xtask runtime`, `cargo xtask notices --check`.
 xtask = "run --quiet --locked -p xtask --"
+
+# A git dependency with submodules (microsandbox) is fetched by one `git fetch` per repository; the
+# git program (always installed where Cargo's git dependencies build) retries and reports a TLS
+# error better than the built-in libgit2, which failed on `SSL error: class=Ssl` in CI. HTTP
+# requests (the registry) retry ten times. `ci/cargo-fetch.sh` adds a retry window around the fetch.
+[net]
+retry = 10
+git-fetch-with-cli = true

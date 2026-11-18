@@ -535,13 +535,11 @@ describe("CreateWorkspaceDialog", () => {
       expect(screen.queryByText(/^Will clone/)).toBeNull();
     });
 
-    it("refuses an address with credentials when the field is left, before Create", async () => {
+    it("refuses an address with credentials at the keystroke, before Create", async () => {
       const { create } = mount();
       await screen.findByRole("dialog");
       await type("Git repository (HTTPS)", "https://user:pw@github.com/x/y");
-      // Not while the address is still being typed.
-      expect(screen.queryByRole("alert")).toBeNull();
-      await fireEvent.blur(repo());
+      // No timer, no blur: the message is there as soon as the typing event is handled.
       expect(screen.getByRole("alert")).toHaveTextContent(
         "Remove the user name and password from the URL; Puddle supplies credentials itself.",
       );
@@ -550,24 +548,29 @@ describe("CreateWorkspaceDialog", () => {
       expect(create).not.toHaveBeenCalled();
     });
 
-    it("refuses a bad address once the typing stops, without leaving the field", async () => {
+    it("refuses a bad address while typing, and takes the message away once it is fixed", async () => {
       mount();
       await screen.findByRole("dialog");
       await type("Git repository (HTTPS)", "user:pw@github.com/x/y");
-      expect(screen.queryByRole("alert")).toBeNull();
-      await vi.waitFor(
-        () =>
-          expect(screen.getByRole("alert")).toHaveTextContent(
-            "Remove the user name and password from the URL",
-          ),
-        { timeout: 3000 },
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Remove the user name and password from the URL",
       );
-      // Typing again takes the message away until the typing stops again.
       await type("Git repository (HTTPS)", "sharkdp/fd");
       expect(screen.queryByRole("alert")).toBeNull();
       expect(
         screen.getByText("Will clone https://github.com/sharkdp/fd"),
       ).toBeInTheDocument();
+    });
+
+    it("waits for the field to be left before calling a half-typed owner/repo wrong", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "sharkdp");
+      expect(screen.queryByRole("alert")).toBeNull();
+      await fireEvent.blur(repo());
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Give owner/repo for a GitHub repository",
+      );
     });
 
     it("does not nag about an empty field until Create", async () => {

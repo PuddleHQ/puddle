@@ -103,6 +103,26 @@ pub fn effective(args: &ServeArgs) -> Result<Effective, ConfigError> {
     Ok(options)
 }
 
+/// Applies the guest agent and code-server overrides from the environment when `enabled`.
+///
+/// A shipped build passes `false`: the agent is copied into the guest as is, so the process
+/// environment must not be able to choose it there.
+pub fn apply_dev_overrides(
+    config: &mut HostConfig,
+    enabled: bool,
+    var: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) {
+    if !enabled {
+        return;
+    }
+    if let Some(agent) = var(AGENT_VAR) {
+        config.guest.agent_binary = agent.into();
+    }
+    if let Some(dir) = var(CODE_SERVER_VAR) {
+        config.guest.code_server = Some(dir.into());
+    }
+}
+
 /// The host configuration for this machine and these options.
 ///
 /// # Errors
@@ -116,12 +136,9 @@ pub fn config(
         Some(data) => HostConfig::installed(exe, data)?,
         None => HostConfig::installed_for_user(exe)?,
     };
-    if let Some(agent) = std::env::var_os(AGENT_VAR) {
-        config.guest.agent_binary = agent.into();
-    }
-    if let Some(dir) = std::env::var_os(CODE_SERVER_VAR) {
-        config.guest.code_server = Some(dir.into());
-    }
+    apply_dev_overrides(&mut config, cfg!(debug_assertions), &|name| {
+        std::env::var_os(name)
+    });
     if let Some(port) = options.port() {
         config.api.port = port;
     }

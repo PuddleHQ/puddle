@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "#lib/api/client.ts";
 import {
@@ -99,7 +100,12 @@ describe("reporter", () => {
     const POST = vi.spyOn(api, "POST").mockResolvedValue({
       response: new Response(null, { status: 204 }),
     } as never);
-    reporter.report("uncaught", new Error("through the client"));
+    // The shared reporter sends a message once per page, and a repeat of this test is the same page: a
+    // message of its own keeps every repeat a first report.
+    reporter.report(
+      "uncaught",
+      new Error(`through the client ${randomUUID()}`),
+    );
     await vi.waitFor(() => expect(POST).toHaveBeenCalledOnce());
     expect(POST.mock.calls[0]?.[0]).toBe("/api/ui-errors");
   });

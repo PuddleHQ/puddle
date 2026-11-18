@@ -47,14 +47,16 @@ async fn a_thrown_error_reaches_the_log_scrubbed_and_settings_lists_it() {
     );
     // The failure names the value, never prints it: a scrubber that broke must not put the
     // token into the test's own output.
-    for (what, secret) in [
-        ("the bearer token", TOKEN),
-        ("the url password", "hunter2"),
-        ("the access_token parameter", "access_token"),
-        ("the ticket parameter", "ticket=xyz"),
-    ] {
-        assert!(!log.contains(secret), "{what} reached the log");
-    }
+    assert!(!log.contains(TOKEN), "the bearer token reached the log");
+    assert!(!log.contains("hunter2"), "the url password reached the log");
+    assert!(
+        !log.contains("access_token"),
+        "the access_token parameter reached the log"
+    );
+    assert!(
+        !log.contains("ticket=xyz"),
+        "the ticket parameter reached the log"
+    );
 
     let listed = api.send("GET", "/api/ui-errors", None).await;
     assert_eq!(listed.status, 200, "{}", listed.body);

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { session } from "#lib/session/session.svelte.ts";
 import { workspace } from "#lib/testing/fake-workspaces.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import ConnectDialog from "./ConnectDialog.svelte";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  session.mode = "checking";
+});
 
 function open(
   over: Partial<Workspace> = {},
@@ -33,6 +37,29 @@ const gone = () =>
   vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
 describe("the Connect dialog", () => {
+  it("offers the VS Code button on the host computer", async () => {
+    session.mode = "local";
+    open({ direct_ssh: true });
+    expect(
+      await screen.findByRole("button", { name: /Open in VS Code/ }),
+    ).toBeTruthy();
+  });
+
+  it("shows no VS Code button to a browser signed in from another computer", async () => {
+    session.mode = "signed-in";
+    open({ direct_ssh: true });
+    await screen.findByRole("dialog");
+    expect(
+      screen.queryByRole("button", { name: /Open in VS Code/ }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/opens only on the computer Puddle runs on/),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Open in the browser/ }),
+    ).toBeTruthy();
+  });
+
   it("names the server the browser editor uses, when known", async () => {
     open({}, "microsoft");
     await screen.findByRole("dialog");

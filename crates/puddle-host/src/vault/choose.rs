@@ -203,6 +203,10 @@ pub(super) struct OpenFailure {
     pub(super) fix: String,
     /// What went wrong, in a line a log may carry (no path content, no key).
     pub(super) cause: String,
+    /// Whether starting a new vault is the way out: the key or the file is gone or cannot be
+    /// made to match. A failure with a fix in place (permissions, a service that is not running,
+    /// a full disk) is not.
+    pub(super) resettable: bool,
 }
 
 /// Finds the key, then opens the vault, or makes both on the first start.
@@ -287,10 +291,19 @@ pub(super) fn key_failure(err: &KeyError) -> OpenFailure {
             "Restart Puddle; if it fails again the computer's random source needs attention.".to_owned(),
         ),
     };
+    let resettable = match err {
+        KeyError::KeyMissing(_) => true,
+        KeyError::Sealed(why) => matches!(
+            why,
+            Unseal::Rejected | Unseal::NameMismatch | Unseal::NotAKey
+        ),
+        _ => false,
+    };
     OpenFailure {
         title,
         fix,
         cause: err.to_string(),
+        resettable,
     }
 }
 
@@ -330,6 +343,10 @@ pub(super) fn vault_failure(err: VaultError) -> OpenFailure {
         title: "Puddle cannot open its file vault: the vault file cannot be read",
         fix: fix.to_owned(),
         cause: err.to_string(),
+        resettable: matches!(
+            err,
+            VaultError::WrongKey | VaultError::NotAVault | VaultError::Corrupt
+        ),
     }
 }
 

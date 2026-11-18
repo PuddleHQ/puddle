@@ -76,6 +76,19 @@ export const READ = `(() => {
     themeRules: [...document.querySelectorAll("style")].flatMap((e) => [...(e.sheet?.cssRules ?? [])].map((r) => r.cssText)).filter((t) => /fg-(0|1|2|9) |fg-25[0-5]|bg-(0|1|257|258)|xterm-viewport|scrollable-element \\{|xterm-rows \\{|xterm-screen|\\.xterm \\{|minimum|selection/i.test(t)).slice(0, 25).map((t) => t.slice(0, 220)),
     scrollableStyle: q(".xterm-scrollable-element")?.getAttribute("style"),
     xtermStyle: xterm?.getAttribute("style"),
+    probeReads: (() => {
+      const pr = q(".probe");
+      if (!pr) return "no .probe";
+      const cs = getComputedStyle(pr);
+      const reads = {};
+      for (const t of ["--color-surface", "--color-text", "--color-accent", "--color-danger", "--color-success", "--color-warning", "--color-accent-subtle"]) {
+        pr.style.color = "";
+        pr.style.color = "var(" + t + ")";
+        reads[t] = { style: pr.style.color, computed: cs.color };
+      }
+      pr.style.color = "";
+      return { reads, display: cs.display, parentColor: getComputedStyle(pr.parentElement).color };
+    })(),
     xtermClasses: xterm?.className,
     colorScheme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
     forcedColors: matchMedia("(forced-colors: active)").matches,

@@ -58,7 +58,7 @@ jobs:
         run: |
           version=$(awk '$1 == "version" { print $2 }' ci/az-cli.pin)
           python3 -m venv "$RUNNER_TEMP/az"
-          "$RUNNER_TEMP/az/bin/pip" install --quiet "azure-cli==$version"
+          "$RUNNER_TEMP/az/bin/pip" install --retries 10 --timeout 60 --quiet "azure-cli==$version"
           echo "$RUNNER_TEMP/az/bin" >> "$GITHUB_PATH"
       - name: source facts and the not-signed-in error
         run: ci/check-az-contract.sh

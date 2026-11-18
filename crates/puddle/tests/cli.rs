@@ -7,11 +7,14 @@
 
 use std::process::Command;
 
+/// Runs the binary with no `PUDDLE_` variable of the test run's environment.
 fn puddle(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_puddle"))
-        .args(args)
-        .output()
-        .expect("the Puddle binary runs")
+    let mut command = Command::new(env!("CARGO_BIN_EXE_puddle"));
+    command.args(args);
+    for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("PUDDLE_")) {
+        command.env_remove(name);
+    }
+    command.output().expect("the Puddle binary runs")
 }
 
 #[test]
@@ -52,6 +55,7 @@ fn serve_without_a_bundled_runtime_exits_1_and_says_why() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.starts_with("puddle: "), "{stderr}");
+    assert!(stderr.contains("bundled runtime is missing"), "{stderr}");
 }
 
 #[test]

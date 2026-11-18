@@ -10,16 +10,26 @@ import { spawnSync } from "node:child_process";
 import { connect } from "./cdp.mjs";
 import { until } from "./poll.mjs";
 
-const POLICY_KEY = "HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
+const POLICY_KEYS = ["HKCU", "HKLM"].map((hive) => `${hive}\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments`);
 
 /** Sets (`port`) or removes (`undefined`) the policy that gives every WebView2 app of this user a DevTools port. */
 export function debugPortPolicy(port) {
-  if (port === undefined) {
-    spawnSync("reg", ["delete", POLICY_KEY, "/f"], { stdio: "ignore" });
-    return;
+  for (const key of POLICY_KEYS) {
+    if (port === undefined) {
+      spawnSync("reg", ["delete", key, "/f"], { stdio: "ignore" });
+      continue;
+    }
+    for (const name of ["*", "puddle-app.exe"]) {
+      const r = spawnSync("reg", ["add", key, "/v", name, "/t", "REG_SZ", "/d", `--remote-debugging-port=${port} --remote-allow-origins=*`, "/f"], { encoding: "utf8" });
+      if (r.status !== 0) console.log(`     reg add ${key} ${name}: ${r.stderr || r.stdout}`.trim());
+    }
   }
-  const r = spawnSync("reg", ["add", POLICY_KEY, "/v", "*", "/t", "REG_SZ", "/d", `--remote-debugging-port=${port} --remote-allow-origins=*`, "/f"], { encoding: "utf8" });
-  if (r.status !== 0) throw new Error(`reg add failed: ${r.stderr || r.stdout}`);
+}
+
+/** What the WebView2 processes were started with, for the log when no DevTools page shows up. */
+export function webviewCommandLines() {
+  const r = spawnSync("powershell", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Select-Object -First 3 -ExpandProperty CommandLine"], { encoding: "utf8" });
+  return (r.stdout || r.stderr || "").trim().slice(0, 1500);
 }
 
 /** The page target whose URL path ends in `/terminal`, or the first page. */
@@ -69,7 +79,9 @@ const firstFamily = (f) => String(f ?? "").split(",")[0].replace(/["'\s]/g, "").
  * a list of `{ name, ok, detail }`, `dump` the raw reads (computed styles, console) for an artifact.
  */
 export async function inspectTerminal(port) {
-  const target = await until("a DevTools page target", () => terminalTarget(port), 30_000, 1000);
+  const target = await until("a DevTools page target", () => terminalTarget(port), 30_000, 1000).catch((err) => {
+    throw new Error(`${err.message}; webview2 command lines: ${webviewCommandLines()}`);
+  });
   const page = await connect(target.webSocketDebuggerUrl);
   const console_ = [];
   page.on("Runtime.consoleAPICalled", (p) => console_.push(`${p.type}: ${(p.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ")}`));

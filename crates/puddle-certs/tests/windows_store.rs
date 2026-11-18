@@ -211,9 +211,88 @@ fn kill_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// What the machine was doing at a PowerShell timeout, so the next stall names its cause: the
+/// PowerShell family, test binaries and likely CPU holders from `tasklist /v` (status, CPU time),
+/// how many `powershell.exe` run at once (other tests and the doctor start them too), and the
+/// counters of the whole machine (CPU, run queue, handles, free memory, processes, disk queue).
+/// Only native tools that do not start PowerShell, each bounded, so the capture adds no stall.
+fn machine_state() -> String {
+    const TOOL_LIMIT: Duration = Duration::from_secs(10);
+    const WATCHED: [&str; 11] = [
+        "powershell",
+        "pwsh",
+        "puddle",
+        "windows_store",
+        "doctor",
+        "git_inject",
+        "certutil",
+        "msmpeng",
+        "tiworker",
+        "trustedinstaller",
+        "wmiprvse",
+    ];
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "--- machine state at {} ---", clock());
+    let mut tasklist = Command::new("tasklist.exe");
+    tasklist.args(["/v", "/fo", "csv", "/nh"]);
+    match run_bounded_with(tasklist, "tasklist /v", TOOL_LIMIT, false) {
+        Ok(text) => {
+            let image = |line: &str| line.trim_start_matches('"').to_ascii_lowercase();
+            let running = |name: &str| text.lines().filter(|l| image(l).starts_with(name)).count();
+            let _ = writeln!(
+                out,
+                "powershell.exe running at once: {}, pwsh.exe: {}, processes: {}",
+                running("powershell.exe"),
+                running("pwsh.exe"),
+                text.lines().count()
+            );
+            for line in text.lines() {
+                let lower = line.to_ascii_lowercase();
+                if WATCHED.iter().any(|name| lower.contains(name)) {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        Err(failure) => {
+            let _ = writeln!(out, "tasklist: {}", failure.into_message());
+        }
+    }
+    let mut counters = Command::new("typeperf.exe");
+    counters.args([
+        "\\Processor(_Total)\\% Processor Time",
+        "\\System\\Processor Queue Length",
+        "\\System\\Processes",
+        "\\Process(_Total)\\Handle Count",
+        "\\Memory\\Available MBytes",
+        "\\PhysicalDisk(_Total)\\Avg. Disk Queue Length",
+        "-sc",
+        "2",
+    ]);
+    match run_bounded_with(counters, "typeperf", TOOL_LIMIT, false) {
+        Ok(text) => out.push_str(&text),
+        Err(failure) => {
+            let _ = writeln!(out, "typeperf: {}", failure.into_message());
+        }
+    }
+    out
+}
+
 /// Runs `command` (`call` names it in messages); `Ok(stdout and stderr)` on exit 0. A call over
 /// `limit` is killed with its whole process tree and reported as hung.
-fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<String, Failure> {
+fn run_bounded(command: Command, call: &str, limit: Duration) -> Result<String, Failure> {
+    run_bounded_with(command, call, limit, true)
+}
+
+/// [`run_bounded`]; `with_state` adds [`machine_state`] to a timeout (the capture's own tools
+/// pass `false`, so a stalled capture does not start another).
+fn run_bounded_with(
+    mut command: Command,
+    call: &str,
+    limit: Duration,
+    with_state: bool,
+) -> Result<String, Failure> {
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -232,11 +311,17 @@ fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<Stri
             break;
         }
         if start.elapsed() > limit {
+            // Before the kill: the hung call and its siblings are still in the process list.
+            let state = if with_state {
+                format!("\n{}", machine_state())
+            } else {
+                String::new()
+            };
             kill_tree(&mut child);
             return Err(Failure::TimedOut(format!(
                 "timed out after {limit:?}, process tree killed: {call} (this test process was \
                  itself away for up to {longest_gap:?} between two 100 ms polls; over a second \
-                 means the machine stalled, not this call)"
+                 means the machine stalled, not this call){state}"
             )));
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -703,6 +788,10 @@ fn a_hung_call_is_killed_with_its_children_and_named() {
         "a timeout says how long this process itself was away: {message}"
     );
     assert!(held.exists(), "the call never started its child: {message}");
+    assert!(
+        message.contains("powershell.exe running at once:") && message.contains("Processor Time"),
+        "a timeout carries the machine state (process list and counters): {message}"
+    );
     // The kill ends the processes a moment after `taskkill` returns, so the file is let go
     // shortly after; a child that survived holds it for 3000 s. The deadline is checked after a
     // try, so a stall that eats the whole wait still gets one look after it.

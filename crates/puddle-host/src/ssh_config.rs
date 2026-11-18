@@ -434,11 +434,10 @@ pub(crate) fn ensure_include(user: &Path, puddle: &Path) -> Result<(), SshConfig
         }
         Err(e) => return Err(e.into()),
     };
-    let (existing, seen) = match std::fs::read(&target) {
-        Ok(bytes) => {
-            let meta = std::fs::metadata(&target)?;
-            (Some(bytes), Some(meta))
-        }
+    // The file is described before it is read: a save in between makes the description older than
+    // the bytes, and the check before the write then refuses.
+    let (existing, seen) = match std::fs::metadata(&target) {
+        Ok(meta) => (Some(std::fs::read(&target)?), Some(meta)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => (None, None),
         Err(e) => return Err(e.into()),
     };

@@ -10,6 +10,12 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The managed mise layer (dormant in v0.1). Without it `Tools::mise()` is false whatever is
+# stored, so every piece of the layer stays off and hidden. Build with `--features mise` on `puddle`
+# or `puddle-app` (they forward it) to turn it back on; nothing is deleted.
+mise = []
+
 [dependencies]
 puddle-types = { workspace = true }
 serde = { workspace = true }

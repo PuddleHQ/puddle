@@ -9,6 +9,7 @@ mod fixture_profile;
 mod gcm;
 mod login_session;
 mod real_store;
+mod real_tools;
 mod signin;
 mod sources;
 mod vault_key;

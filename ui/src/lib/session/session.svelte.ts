@@ -115,6 +115,19 @@ export class SessionStore {
    * The desktop window and a service with no accounts have no user and are the owner.
    */
   get mayUseServerFolders(): boolean {
+    return this.#isOwner;
+  }
+
+  /**
+   * Whether this session may use the accounts signed in on the computer Puddle runs on (the GitHub
+   * CLI's, Git's credential helper's, the Azure CLI's). The service refuses them for every
+   * signed-in user who is not the owner, so the credential form does not offer them.
+   */
+  get mayUseComputerAccounts(): boolean {
+    return this.#isOwner;
+  }
+
+  get #isOwner(): boolean {
     return this.user === null || this.user.role === "owner";
   }
 

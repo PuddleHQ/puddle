@@ -282,7 +282,12 @@ repair_index() {
 repair_repo() (
     export LC_ALL=C GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0
     export GIT_DIR="$2" GIT_WORK_TREE="$1"
-    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
+    # The checkout's config is guest-controlled and this runs as root: these command-level
+    # settings beat it, so no hook folder and no fsmonitor program of the repository is run
+    # (`read-tree` rewriting the index runs `post-index-change`).
+    export GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
+    export GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null
+    export GIT_CONFIG_KEY_2=core.fsmonitor GIT_CONFIG_VALUE_2=false
     repair_head "$2" "$3" "$4"
     repair_index "$2" "$3" "$4"
 )

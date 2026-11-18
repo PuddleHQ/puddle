@@ -341,7 +341,7 @@ fn storage(os: Os, finding: Finding) -> (&'static str, &'static str) {
             "If workspaces fail to start, check that only you can change those folders.",
         ),
         F::DiskNotEncrypted => (
-            "Anyone who gets this disk, from a lost laptop for example, can read Puddle's data and secrets.",
+            "Anyone who gets this disk, from a lost or stolen computer, can read Puddle's data and secrets.",
             match os {
                 Os::Windows => "Turn on BitLocker or Device encryption for the drive.",
                 Os::MacOs => "Turn on FileVault.",

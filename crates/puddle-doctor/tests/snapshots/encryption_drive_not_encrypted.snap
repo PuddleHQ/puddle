@@ -72,7 +72,7 @@ No problems found; 1 warning to know about. (1.2 s)
       "summary": "data drive NOT encrypted; swap /dev/dm-1 encrypted (LUKS2)",
       "finding": "disk_not_encrypted",
       "fix": "The drive is not encrypted. Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), and memory can be paged out to swap or written to disk in a crash dump. Anyone who gets this disk (a lost or stolen computer, a disk taken out) can read those pages and the data folder. Put the drive under LUKS (the installer's \"encrypt the disk\" option; an existing drive needs a backup and a reinstall or `cryptsetup reencrypt`). For swap alone, give it a random key each boot: in /etc/crypttab, `swap /dev/<swap partition> /dev/urandom swap,cipher=aes-xts-plain64,size=512`, and use /dev/mapper/swap in /etc/fstab; or turn swap off with `sudo swapoff -a` if the machine has the memory.",
-      "impact": "Anyone who gets this disk, from a lost laptop for example, can read Puddle's data and secrets.",
+      "impact": "Anyone who gets this disk, from a lost or stolen computer, can read Puddle's data and secrets.",
       "remedy": "Encrypt the drive with LUKS."
     },
     {

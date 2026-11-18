@@ -659,7 +659,11 @@ async fn check_agent_boot<S: Sandbox>(sb: &GatedSandbox<S>, uid: &str, has_sudo:
     // A plain exec as the session user sees its name, like a login does (the fork's agentd sets
     // `USER` and `LOGNAME` next to `HOME`).
     let (code, said) = as_agent(sb, "printenv USER; printenv LOGNAME").await;
-    assert_eq!((code, said.as_str()), (0, "agent\nagent"), "USER and LOGNAME");
+    assert_eq!(
+        (code, said.as_str()),
+        (0, "agent\nagent"),
+        "USER and LOGNAME"
+    );
     let machine = puddle_boot::machine_settings_path(SessionUser::Agent);
     let (code, said) = as_agent(
         sb,

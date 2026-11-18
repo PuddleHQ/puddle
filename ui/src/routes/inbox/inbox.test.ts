@@ -81,6 +81,11 @@ import {
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
 import { sshAgentAsks } from "#lib/stores/ssh-agent-asks.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import {
+  INBOX_SHORTCUTS,
+  type InboxShortcut,
+  type InboxShortcutId,
+} from "#lib/decision/inbox-shortcuts.ts";
 import InboxPage from "./+page.svelte";
 
 const { inbox, setsApi, source, request, mine, agentApi, ask } = h;
@@ -145,8 +150,8 @@ async function ready() {
 
 // A role query with a name works out the accessible name of every candidate, and each of those reads
 // the computed style of every node it passes: in jsdom the dialog's radios cost 5 ms apiece and the
-// page's chevron 4 ms, a label query 0.5 ms. These tests are about what the choices do, so they look
-// the radios and the chevron up by their label.
+// page's more-choices button 4 ms, a label query 0.5 ms. These tests are about what the choices do,
+// so they look the radios and the more-choices button up by their label.
 const moreChoices = () =>
   screen.getByLabelText(/^More choices for a\.example\.com/);
 const choice = (dialog: HTMLElement, label: RegExp) =>
@@ -246,13 +251,33 @@ describe("the inbox page", () => {
     expect(sub).not.toHaveTextContent(/workspace waits/);
   });
 
-  it("lists the shortcuts in words when they are on", async () => {
-    shortcuts(true);
+  it("has no keyboard panel under the heading; a button beside it lists the shortcuts, Ctrl+click among them", async () => {
     seed();
     await ready();
-    expect(screen.getByText(/allow ·/)).toHaveTextContent(
-      "A allow · D deny · J/K move · Enter more choices",
+    expect(document.querySelector(".head")).not.toHaveTextContent(
+      /Tab to a request|more choices|Turn on the A, D, J and K keys/,
     );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Keyboard shortcuts" }),
+    );
+    const list = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+      hidden: true,
+    });
+    const lines = [...list.querySelectorAll("[data-shortcut]")].map(
+      (line) => line.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    );
+    expect(lines).toEqual(
+      INBOX_SHORTCUTS.map((s) => `${s.keys.join("+")} ${s.does}`),
+    );
+    expect(lines).toContain(
+      "Ctrl+click On Allow or Deny: allow or deny for all workspaces",
+    );
+    expect(
+      within(list).getByRole("link", {
+        name: "Turn the single keys off in Settings",
+      }),
+    ).toHaveAttribute("href", "/settings#s-inbox");
   });
 
   it("never holds a workspace's requests back: a long list has no held-back line (R-44)", async () => {
@@ -420,7 +445,7 @@ describe("deciding with the buttons", () => {
     });
   });
 
-  it("undoes from the toast: the rule is deleted and the page says so", async () => {
+  it("undoes from the toast: the rule is deleted and the request is listed again", async () => {
     seed();
     await ready();
     await fireEvent.click(
@@ -434,6 +459,11 @@ describe("deciding with the buttons", () => {
     expect(
       screen.queryByRole("region", { name: "Decided just now" }),
     ).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: "Allow a.example.com for demo",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("undoes from the Decided just now list", async () => {
@@ -455,7 +485,7 @@ describe("deciding with the buttons", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Allow a.example.com for demo" }),
     );
-    vi.spyOn(inbox, "DELETE").mockResolvedValue({
+    vi.spyOn(inbox, "POST").mockResolvedValue({
       response: { status: 500, ok: false },
     } as never);
     await fireEvent.click(
@@ -627,6 +657,7 @@ describe("every workspace needs a confirm", () => {
       revision: fake.revision(),
       vscode_server: fake.vscode,
       tools: fake.tools,
+      mise_available: true,
       limits: fake.limits,
       effective_limits: FAKE_EFFECTIVE_LIMITS,
       workspace_defaults: fake.layer,
@@ -672,31 +703,149 @@ function shortcuts(on: boolean | null) {
     revision: fake.revision(),
     vscode_server: fake.vscode,
     tools: fake.tools,
+    mise_available: true,
     limits: fake.limits,
     effective_limits: FAKE_EFFECTIVE_LIMITS,
     workspace_defaults: fake.layer,
   };
 }
 
-describe("the keys while the setting is off", () => {
-  it("leave A, D, J and K alone, whether the switch is unset or off, and say where to turn them on", async () => {
-    for (const setting of [null, false]) {
-      cleanup();
-      reset();
-      shortcuts(setting);
+describe("every line of the shortcuts list does what it says", () => {
+  // One proof per line of the table the list is drawn from: a line without a proof does not
+  // compile, and a line whose keys stop doing what it says fails here.
+  const proofs: Record<InboxShortcutId, (s: InboxShortcut) => Promise<void>> = {
+    allow: async (s) => {
+      await press(singleKey(s));
+      await vi.waitFor(() =>
+        expect(inbox.rules[0]).toMatchObject({
+          effect: "allow",
+          pattern: "a.example.com",
+          scope: { type: "workspace", workspace: "demo" },
+        }),
+      );
+    },
+    deny: async (s) => {
+      await press(singleKey(s));
+      await vi.waitFor(() =>
+        expect(inbox.rules[0]).toMatchObject({
+          effect: "deny",
+          pattern: "a.example.com",
+          scope: { type: "workspace", workspace: "demo" },
+        }),
+      );
+    },
+    next: async (s) => {
+      await press(singleKey(s));
+      expect(rowOf("b.example.com")).toHaveAttribute("aria-current", "true");
+      expect(rowOf("b.example.com")).toHaveFocus();
+    },
+    previous: async (s) => {
+      await press("j");
+      await press("j");
+      await press(singleKey(s));
+      expect(rowOf("b.example.com")).toHaveAttribute("aria-current", "true");
+      expect(rowOf("b.example.com")).toHaveFocus();
+    },
+    more: async (s) => {
+      await press("j");
+      await press(s.keys[0] ?? "", rowOf("b.example.com"));
+      expect(await showOptions()).toHaveAccessibleName(
+        "Choices for b.example.com",
+      );
+      expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+    },
+    everywhere: async (s) => {
+      expect(s.keys).toEqual(["Ctrl", "click"]);
+      for (const effect of ["Allow", "Deny"] as const) {
+        await fireEvent.click(
+          screen.getAllByRole("button", {
+            name: new RegExp(`^${effect} .* for demo$`),
+          })[0]!,
+          { ctrlKey: true },
+        );
+        const confirm = await screen.findByRole("alertdialog");
+        await fireEvent.click(
+          within(confirm).getByRole("button", {
+            name: `${effect} in every workspace`,
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(screen.queryByRole("alertdialog")).toBeNull(),
+        );
+      }
+      await vi.waitFor(() => expect(inbox.rules).toHaveLength(2));
+      expect(
+        inbox.rules.map((r) => [r.effect, r.pattern, r.scope.type]),
+      ).toEqual([
+        ["allow", "a.example.com", "global"],
+        ["deny", "b.example.com", "global"],
+      ]);
+    },
+  };
+
+  /** The letter a single-key line names, as the key event carries it. */
+  const singleKey = (s: InboxShortcut) => {
+    expect(s.singleKey).toBe(true);
+    expect(s.keys).toHaveLength(1);
+    return (s.keys[0] ?? "").toLowerCase();
+  };
+
+  for (const shortcut of INBOX_SHORTCUTS) {
+    it(`${shortcut.keys.join("+")}: ${shortcut.does}`, async () => {
       seed();
       await ready();
-      await press("a");
-      await press("d");
+      await proofs[shortcut.id](shortcut);
+    });
+  }
+});
+
+describe("the keys by default", () => {
+  it("work without turning anything on, before the settings are read and with the switch unset", async () => {
+    for (const setting of ["not read", null] as const) {
+      cleanup();
+      reset();
+      if (setting !== "not read") shortcuts(setting);
+      seed();
+      await ready();
       await press("j");
-      await press("k");
-      expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
-      expect(rowOf("a.example.com")).not.toHaveFocus();
-      expect(
-        screen.getByRole("link", { name: /Turn on the A, D, J and K keys/ }),
-      ).toHaveAttribute("href", "/settings#s-inbox");
-      expect(screen.queryByText("allow")).toBeNull();
+      expect(rowOf("b.example.com")).toHaveFocus();
+      await press("d");
+      await vi.waitFor(() =>
+        expect(inbox.rules.at(-1)).toMatchObject({
+          effect: "deny",
+          pattern: "b.example.com",
+        }),
+      );
     }
+  });
+});
+
+describe("the keys while the setting is off", () => {
+  it("leave A, D, J and K alone, and the shortcuts list says where to turn them on", async () => {
+    shortcuts(false);
+    seed();
+    await ready();
+    await press("a");
+    await press("d");
+    await press("j");
+    await press("k");
+    expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+    expect(rowOf("a.example.com")).not.toHaveFocus();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Keyboard shortcuts" }),
+    );
+    const list = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+      hidden: true,
+    });
+    expect(
+      [...list.querySelectorAll("[data-shortcut]")].map(
+        (line) => (line as HTMLElement).dataset["shortcut"],
+      ),
+    ).toEqual(INBOX_SHORTCUTS.filter((s) => !s.singleKey).map((s) => s.id));
+    expect(
+      within(list).getByRole("link", { name: "Turn them on in Settings" }),
+    ).toHaveAttribute("href", "/settings#s-inbox");
   });
 
   it("keep Enter opening the options of the current row", async () => {

@@ -84,8 +84,12 @@
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
 
-        <Icon Id="ProductIcon" SourceFile="{{icon_path}}"/>
-        <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+        <!-- The Id ends in ".ico" on purpose: Windows Installer writes the icon to a file of that name and
+             takes the type from the extension, and a shortcut whose icon file has none shows a generic icon.
+             the template value icon_path is icons/icon.ico (the duck at 16 to 256 px), also the program's own icon.
+             ci/msi-install-test.ps1 checks the Icon table and the shown icons. -->
+        <Icon Id="ProductIcon.ico" SourceFile="{{icon_path}}"/>
+        <Property Id="ARPPRODUCTICON" Value="ProductIcon.ico" />
         <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
         <SetProperty Id="ARPNOMODIFY" Value="1" After="InstallValidate" Sequence="execute"/>
         {{#if homepage}}
@@ -119,6 +123,32 @@
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
 
             <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+
+            <!-- The "Installing" page shows one line per action and, below it, a template filled in for
+                 each item the action handles. Windows Installer's built-in texts are raw
+                 ("Copying new files", then "File: [1], Directory: [9], Size: [6]" for each of the
+                 thousands of files), and a package that sets no text shows those. Each action below
+                 has a plain sentence and no template, so no per-item line is shown.
+                 ci/msi-install-test.ps1 reads the built MSI's ActionText table and fails on a "[". -->
+            <ProgressText Action="InstallFiles">Copying Puddle's files. This is the longest step and can take a minute or more.</ProgressText>
+            <ProgressText Action="CreateFolders">Creating Puddle's folders</ProgressText>
+            <ProgressText Action="RemoveFolders">Removing Puddle's folders</ProgressText>
+            <ProgressText Action="RemoveFiles">Removing Puddle's files</ProgressText>
+            <ProgressText Action="CreateShortcuts">Adding Puddle to the Start menu</ProgressText>
+            <ProgressText Action="RemoveShortcuts">Removing Puddle from the Start menu</ProgressText>
+            <ProgressText Action="WriteRegistryValues">Saving where Puddle is installed</ProgressText>
+            <ProgressText Action="RemoveRegistryValues">Removing the saved install settings</ProgressText>
+            <ProgressText Action="RegisterProduct">Adding Puddle to the Windows list of installed apps</ProgressText>
+            <ProgressText Action="PublishProduct">Adding Puddle to the Windows list of installed apps</ProgressText>
+            <ProgressText Action="PublishFeatures">Adding Puddle to the Windows list of installed apps</ProgressText>
+            <ProgressText Action="UnpublishFeatures">Removing Puddle from the Windows list of installed apps</ProgressText>
+            <ProgressText Action="RemoveExistingProducts">Removing the previous version of Puddle</ProgressText>
+            <ProgressText Action="ProcessComponents">Updating the list of Puddle's files</ProgressText>
+            <ProgressText Action="FindRelatedProducts">Looking for an earlier version of Puddle</ProgressText>
+            <ProgressText Action="AppSearch">Checking this computer</ProgressText>
+            <ProgressText Action="MigrateFeatureStates">Checking earlier install choices</ProgressText>
+            <ProgressText Action="RollbackCleanup">Cleaning up temporary files</ProgressText>
+            <ProgressText Action="InstallAdminPackage">Copying Puddle's files to the chosen folder</ProgressText>
 
             <!-- No licence dialog: the licences ship in the licenses folder. -->
             <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
@@ -164,7 +194,7 @@
                     Name="{{product_name}}"
                     Description="Runs {{product_name}}"
                     Target="[!Path]"
-                    Icon="ProductIcon"
+                    Icon="ProductIcon.ico"
                     WorkingDirectory="INSTALLDIR">
                     <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
                 </Shortcut>

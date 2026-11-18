@@ -51,8 +51,12 @@
   let addDialog = $state<{
     clear: () => void;
     intoSet: (set: number) => void;
+    edit: (rule: Rule) => void;
   }>();
   let draft = $state<NewRule | null>(null);
+  // The rule the open form edits, and the one a confirm step holds an edit of.
+  let editing = $state<Rule | null>(null);
+  let draftEditing = $state<Rule | null>(null);
   let confirmGlobalOpen = $state(false);
   let expiryRule = $state<Rule | null>(null);
   let expiryOpen = $state(false);
@@ -112,11 +116,18 @@
   }
 
   /** Every workspace, or a set that is on for every workspace: asks first. */
-  function widens(rule: NewRule): boolean {
-    const scope = rule.scope;
+  function widensScope(scope: NewRule["scope"]): boolean {
     if (scope.type === "global") return true;
     if (scope.type !== "set") return false;
     return setChoices.some((s) => s.id === scope.set && s.everywhere);
+  }
+
+  /** A new rule asks when it reaches every workspace; an edit only when it newly does. */
+  function widens(rule: NewRule): boolean {
+    return (
+      widensScope(rule.scope) &&
+      (editing === null || !widensScope(editing.scope))
+    );
   }
 
   /** "every workspace", or "rule set Client X". */
@@ -130,6 +141,7 @@
   function addEntry(set: RuleSet) {
     const number = userSetNumber(set);
     if (number === null) return;
+    editing = null;
     addDialog?.intoSet(number);
     addOpen = true;
   }
@@ -146,14 +158,42 @@
     );
   }
 
+  /** The form's answer: asks first when the rule reaches further, then adds or saves it. */
   async function create(rule: NewRule): Promise<ServerError | null> {
     if (widens(rule)) {
       draft = rule;
+      draftEditing = editing;
       addOpen = false;
       confirmGlobalOpen = true;
       return null;
     }
-    return finishAdd(rule);
+    return editing ? finishEdit(editing, rule) : finishAdd(rule);
+  }
+
+  function editRule(rule: Rule) {
+    editing = rule;
+    addError = null;
+    addDialog?.edit(rule);
+  }
+
+  async function finishEdit(
+    rule: Rule,
+    edit: NewRule,
+  ): Promise<ServerError | null> {
+    const result = await store.update(rule.id, {
+      ...edit,
+      expires_at: edit.expires_at ?? null,
+    });
+    if (!result.ok) return { field: result.field, message: result.message };
+    addOpen = false;
+    editing = null;
+    addDialog?.clear();
+    // The rule may have left or entered a set.
+    if (rule.scope.type === "set" || result.rule.scope.type === "set") {
+      await ruleSets.refresh();
+    }
+    toasts.push(`Saved: ${ruleName(result.rule)}.`);
+    return null;
   }
 
   async function finishAdd(rule: NewRule): Promise<ServerError | null> {
@@ -168,9 +208,13 @@
 
   async function confirmGlobal() {
     const rule = draft;
+    const edited = draftEditing;
     draft = null;
+    draftEditing = null;
     if (!rule) return;
-    const refusal = await finishAdd(rule);
+    const refusal = edited
+      ? await finishEdit(edited, rule)
+      : await finishAdd(rule);
     if (refusal) {
       addError = refusal;
       addOpen = true;
@@ -179,6 +223,7 @@
 
   function cancelGlobal() {
     draft = null;
+    draftEditing = null;
     addOpen = true;
   }
 
@@ -247,6 +292,7 @@
     type="button"
     class="btn primary"
     onclick={() => {
+      editing = null;
       addDialog?.clear();
       addOpen = true;
     }}
@@ -341,6 +387,7 @@
       {sort}
       {now}
       onSort={sortBy}
+      onEdit={editRule}
       onExpiry={changeExpiry}
       onDelete={askDelete}
       onEnabled={(rule, enabled) => void switchRule(rule, enabled)}
@@ -441,16 +488,7 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  .field input,
-  .field select {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
+
   .count {
     margin-bottom: var(--space-2);
     font-size: var(--text-sm);

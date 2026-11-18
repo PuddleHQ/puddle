@@ -1377,7 +1377,12 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Edits a rule in place: its host pattern, effect, scope and expiry (and its precedence when the
+         *     body names one). The rule keeps its id, creator, creation time and switch. Open requests it
+         *     now decides are closed the same way as for a new rule.
+         */
+        put: operations["update_rule"];
         post?: never;
         /** Deletes a rule. */
         delete: operations["delete_rule"];
@@ -1417,6 +1422,26 @@ export interface paths {
         /** Changes a rule's expiry, or makes it permanent with `null`. */
         put: operations["set_rule_expiry"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rules/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Takes back a decision made from the inbox: deletes the rule and puts the requests it closed
+         *     back in the inbox, in their old place.
+         */
+        post: operations["undo_decision"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1481,6 +1506,33 @@ export interface paths {
         get: operations["list_asks"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The errors the caller's pages reported since Puddle started, newest first (at most 50 kept,
+         *     for all users together), and how many reports were refused for coming too fast.
+         */
+        get: operations["list_ui_errors"];
+        put?: never;
+        /**
+         * A page's report of an error no code expected: one that showed the error page, one thrown
+         *     outside the page's own handling, or a promise nothing handled. The server takes the user
+         *     info, query and fragment out of every URL and removes what looks like a token, bounds each
+         *     field, writes the error to its log and keeps it for `GET /api/ui-errors`. A user's pages may
+         *     report 10 errors a minute; past that the server refuses with `Retry-After`.
+         */
+        post: operations["report_ui_error"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3784,6 +3836,16 @@ export interface components {
              *     `test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title.
              */
             id: string;
+            /**
+             * @description What this means for the person, in one or two short sentences: for an ok check what it
+             *     protects or makes possible, otherwise what the finding costs them. Never empty.
+             */
+            impact: string;
+            /**
+             * @description What to do about it, in one or two short sentences; `null` when the check is ok. `fix`
+             *     holds the long form.
+             */
+            remedy: string | null;
             /** @description How it came out. */
             status: components["schemas"]["DoctorStatus"];
             /** @description One line: what was found. */
@@ -4447,6 +4509,11 @@ export interface components {
             /** @description The limits the user set (global only). */
             limits: components["schemas"]["Limits"];
             /**
+             * @description Whether this build has the managed mise layer at all. When false (the v0.1 build)
+             *     the window shows no mise setting and the layer is off whatever `tools.mise` holds.
+             */
+            mise_available: boolean;
+            /**
              * @description Names the values above that a save replaces. Send it back as `revision` in the save: if
              *     another client changed them in between, the save is refused (409 `settings_changed`).
              */
@@ -4689,7 +4756,7 @@ export interface components {
             /** @description The account the invite is for. */
             user: components["schemas"]["AdminUser"];
         };
-        /** @description Uses an invite link (made by the server's command line) to set a password. */
+        /** @description Uses an invite link (made by the server's command line or an admin) to set a password. */
         InviteRequest: {
             /** @description What this browser calls itself in the device list; `null` for the default. */
             device_name?: string | null;
@@ -5787,7 +5854,8 @@ export interface components {
         RuleExpiryRequest: {
             /**
              * Format: int64
-             * @description Epoch ms in the future, or `null` to make the rule permanent.
+             * @description Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body
+             *     never makes a rule permanent.
              */
             expires_at: number | null;
         };
@@ -5881,7 +5949,7 @@ export interface components {
         RuleSetSwitchRequest: {
             /**
              * @description On or off; `null` removes the switch, so the next level decides (the global switch, then
-             *     the set's default).
+             *     the set's default). Required, so an empty body never removes a switch.
              */
             enabled: boolean | null;
             workspace?: components["schemas"]["WorkspaceId"] | null;
@@ -6040,7 +6108,8 @@ export interface components {
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
             /**
              * Format: int32
-             * @description Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
+             * @description Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs
+             *     unless set); applies at the next start.
              */
             cpus: number | null;
             /**
@@ -6530,6 +6599,55 @@ export interface components {
              */
             waiting_on: string[];
         };
+        /** @description An error a page reported, as the server kept it. */
+        UiError: {
+            /**
+             * Format: int64
+             * @description When the server received it, in epoch milliseconds.
+             */
+            at: number;
+            /** @description The build of the app the page ran, or `null`. */
+            build: string | null;
+            /** @description Where the page caught it. */
+            kind: components["schemas"]["UiErrorKind"];
+            /** @description The error's name and message. */
+            message: string;
+            /** @description The page's path, or `null`. */
+            route: string | null;
+            /** @description The top of its stack, or `null`. */
+            stack: string | null;
+        };
+        /**
+         * @description Where the page caught the error.
+         * @enum {string}
+         */
+        UiErrorKind: "page" | "uncaught" | "unhandled_rejection";
+        /** @description The errors the caller's pages reported since the server started, newest first. */
+        UiErrorList: {
+            /**
+             * Format: int64
+             * @description How many reports were refused because the pages sent too many at once.
+             */
+            dropped: number;
+            /** @description The most recent errors, newest first; the oldest make room past the limit. */
+            errors: components["schemas"]["UiError"][];
+        };
+        /**
+         * @description One error a page reports. The server bounds every field, takes the user info, query and
+         *     fragment out of every URL and removes what looks like a token before it logs or keeps it.
+         */
+        UiErrorReport: {
+            /** @description The build of the app the page runs. */
+            build?: string | null;
+            /** @description Where the page caught it. */
+            kind: components["schemas"]["UiErrorKind"];
+            /** @description The error's name and message, such as `TypeError: x is not a function`. */
+            message: string;
+            /** @description The page's path, such as `/workspaces/abc/terminal` (a query or fragment is dropped). */
+            route?: string | null;
+            /** @description The top of its stack, one frame a line, if it had one. */
+            stack?: string | null;
+        };
         /** @description Preferences for Puddle's own window. `null` means Puddle's default. */
         UiPrefs: {
             app_icon: components["schemas"]["AppIconChoice"] | null;
@@ -6565,7 +6683,7 @@ export interface components {
              *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
              */
             disk_warning_percent: number | null;
-            /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
+            /** @description The inbox's single-key shortcuts A, D, J and K (default on). */
             inbox_shortcuts: boolean | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
@@ -6597,12 +6715,45 @@ export interface components {
             start_at_login: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;
         };
+        /** @description What taking back a decision did. */
+        UndoOutcome: {
+            /** @description The requests that are open again, each as a new row in its old place. */
+            reopened: components["schemas"]["PendingRequest"][];
+            /** @description The rule that was deleted. */
+            rule: components["schemas"]["Rule"];
+        };
         /**
          * @description What Puddle can tell about a token in an answer that it does not hold: by its bytes alone
          *     (see [`Event::UnknownTokenInAnswer`]).
          * @enum {string}
          */
         UnknownTokenKind: "github_token" | "github_fine_grained_token" | "gitlab_token" | "npm_token" | "azure_devops_token" | "anthropic_key" | "openai_key" | "jwt_with_refresh_token";
+        /**
+         * @description What a rule says after an edit: the whole of it, so a body that leaves a field out is refused
+         *     and never reads as a change. The rule keeps its id, creator, creation time and switch.
+         */
+        UpdateRuleRequest: {
+            /** @description Allow or deny. */
+            effect: components["schemas"]["Effect"];
+            /**
+             * Format: int64
+             * @description Epoch ms in the future from which the rule no longer matches; `null` is permanent.
+             *     Required, so an empty body never makes a rule permanent.
+             */
+            expires_at: number | null;
+            /**
+             * @description `example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is
+             *     refused).
+             */
+            pattern: string;
+            /**
+             * Format: int32
+             * @description 1 to 9, higher wins. Left out: the rule keeps its precedence.
+             */
+            precedence?: number | null;
+            /** @description Global, one workspace, or a rule set of yours. */
+            scope: components["schemas"]["RuleScope"];
+        };
         /** @description Whose session it is. */
         UserView: {
             /**
@@ -12848,6 +12999,87 @@ export interface operations {
             };
         };
     };
+    update_rule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description the edited rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rule"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule, workspace or rule set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description invalid pattern, expiry or precedence */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     delete_rule: {
         parameters: {
             query?: never;
@@ -13051,6 +13283,74 @@ export interface operations {
             };
             /** @description expiry not in the future */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    undo_decision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the deleted rule and the requests that are open again */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoOutcome"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13435,6 +13735,129 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_ui_errors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the recent errors */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiErrorList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    report_ui_error: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UiErrorReport"];
+            };
+        };
+        responses: {
+            /** @description logged and kept */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description too many reports this minute; `Retry-After` says when to send again */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

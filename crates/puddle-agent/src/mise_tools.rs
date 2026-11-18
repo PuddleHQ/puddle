@@ -14,6 +14,8 @@
 //! other line of the file, comments included, stays as it was, and only the root file
 //! (`<workspace-dir>/mise.toml`) is ever written. `<hash>` is the SHA-256 the last `list` printed
 //! for that file (or `absent`); an edit refuses with exit code 5 when the file no longer has it.
+//! mise edits a copy of the file, which replaces it only if the file still has that hash after mise
+//! is done, so a save from the editor in between is kept and the edit refused.
 //!
 //! What it prints, one record per line, tab-separated, and `end` last (the host refuses output
 //! without it):
@@ -207,27 +209,16 @@ pub fn run(mise: &impl Mise, request: &Request) -> Outcome {
             }
         }
         Operation::Set(name, version, expected) => {
-            guard(root, expected)?;
-            let file = root.join("mise.toml");
-            if !file.exists() {
-                std::fs::write(&file, "")
-                    .map_err(|e| MiseFailed(format!("could not create mise.toml: {e}")))?;
-            }
             let key = format!("tools.\"{name}\"");
-            let file_arg = file.to_string_lossy();
-            mise.run(
-                root,
-                &["config", "set", "-f", &file_arg, &key, version.as_str()],
-            )?;
+            edit(root, expected, |file| {
+                mise.run(root, &["config", "set", "-f", file, &key, version.as_str()])
+            })?;
             let _ = writeln!(out, "hash\t{}", root_hash(root)?); // writing to a String cannot fail
         }
         Operation::Remove(name, expected) => {
-            guard(root, expected)?;
-            let file_arg = root.join("mise.toml").to_string_lossy().into_owned();
-            mise.run(
-                root,
-                &["unuse", "--no-prune", "-p", &file_arg, name.as_str()],
-            )?;
+            edit(root, expected, |file| {
+                mise.run(root, &["unuse", "--no-prune", "-p", file, name.as_str()])
+            })?;
             let _ = writeln!(out, "hash\t{}", root_hash(root)?); // writing to a String cannot fail
         }
         Operation::Registry => {
@@ -254,6 +245,50 @@ fn root_hash(root: &Path) -> Result<ToolsFileHash, MiseFailed> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ToolsFileHash::absent()),
         Err(e) => Err(MiseFailed(format!("could not read mise.toml: {e}"))),
     }
+}
+
+/// The copy of the root file that mise edits, beside the file it replaces.
+const EDIT_COPY: &str = ".mise.toml.puddle-edit";
+
+/// Edits the root `mise.toml` through `run`, which gets the path of a copy of it. The copy
+/// replaces the file only if the file still has the hash the user looked at, so a save from the
+/// editor that lands while mise runs is kept and the edit refused ([`Failure::Changed`]); mise
+/// itself reads and writes the file without any such check. A link is edited where it points, and
+/// stays a link.
+fn edit(
+    root: &Path,
+    expected: &ToolsFileHash,
+    run: impl FnOnce(&str) -> Result<String, MiseFailed>,
+) -> Result<(), Failure> {
+    guard(root, expected)?;
+    let file = root.join("mise.toml");
+    // No such file, or a link that leads nowhere (the guard above already read a link that
+    // works): the link is refused, since writing through it would create what it points at.
+    // On Windows the plain form (`C:\...`), not the `\\?\C:\...` that `std` returns: mise gets
+    // the copy's path from it, and its errors show that path to the person.
+    let target = dunce::canonicalize(&file).unwrap_or_else(|_| file.clone());
+    if target == file && file.is_symlink() {
+        return Err(MiseFailed("mise.toml is a link that leads nowhere".to_owned()).into());
+    }
+    let copy = target.with_file_name(EDIT_COPY);
+    let made = if target.exists() {
+        std::fs::copy(&target, &copy).map(drop)
+    } else {
+        std::fs::write(&copy, "")
+    };
+    made.map_err(|e| MiseFailed(format!("could not create mise.toml: {e}")))?;
+    let swapped = run(&copy.to_string_lossy())
+        .map_err(Failure::from)
+        .and_then(|_| guard(root, expected))
+        .and_then(|()| {
+            std::fs::rename(&copy, &target)
+                .map_err(|e| MiseFailed(format!("could not write mise.toml: {e}")).into())
+        });
+    if swapped.is_err() {
+        // Best effort: the failure above is the one to report.
+        let _ = std::fs::remove_file(&copy);
+    }
+    swapped
 }
 
 /// Refuses an edit when the root file is not the one the user looked at.

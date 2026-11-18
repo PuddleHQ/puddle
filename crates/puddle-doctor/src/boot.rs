@@ -302,7 +302,7 @@ fn new_folder(dir: &Path, name: &str) -> std::io::Result<PathBuf> {
 }
 
 fn command(layout: &RuntimeLayout, rootfs: &Path) -> Command {
-    let mut cmd = Command::new(layout.msb_path());
+    let mut cmd = puddle_process::command(layout.msb_path());
     RuntimeEnv::plan(layout, std::env::vars_os()).apply_to(&mut cmd);
     cmd.arg("run").arg(rootfs).args([
         "--name",

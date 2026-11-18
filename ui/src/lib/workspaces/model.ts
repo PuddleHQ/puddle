@@ -304,6 +304,57 @@ export function repoUrlProblem(raw: string): string | null {
   return null;
 }
 
+const EMPTY_ADDRESS =
+  "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.";
+const NOT_SHORTHAND =
+  "Give owner/repo for a GitHub repository, or the repository's full address.";
+/** True for the refusal of an address that may only be unfinished, so a form waits to show it. */
+export const isIncompleteAddress = (message: string): boolean =>
+  message === NOT_SHORTHAND;
+const DOT_NAME = "The address can't have . or .. as a name in its path.";
+const TRAILING_DOT = "Leave out the dot at the end of the host name.";
+
+/**
+ * The https:// address a repository field means, or why it names none. Typed without a scheme,
+ * `host/path` means `https://host/path` and `owner/repo` means a GitHub repository; an SSH address
+ * of a Git host means its HTTPS address. The result is what the form sends and shows, and
+ * `repoUrlProblem` takes it. A dot name or a host with a trailing dot is refused: it would be one
+ * more spelling of a repository that the repository table keeps once.
+ */
+export function resolveRepoAddress(
+  raw: string,
+): { url: string } | { message: string } {
+  const typed = raw.trim();
+  if (typed === "") return { message: EMPTY_ADDRESS };
+  const head = typed.split("/")[0] ?? "";
+  // `user:password@host/...` is a credential, not the `host:path` form of an SSH address.
+  const credential = /^[^@:]*:[^@]*@/.test(head);
+  let url = typed;
+  if (!credential && looksLikeSsh(typed)) {
+    const converted = sshAsHttps(typed);
+    if ("message" in converted) return converted;
+    url = converted.url;
+  } else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(typed)) {
+    if (head === "." || head === "..") return { message: DOT_NAME };
+    if (head.includes(".") || head.includes("@")) {
+      url = `https://${typed}`;
+    } else {
+      const names = typed.replace(/\/+$/, "").split("/");
+      if (names.length !== 2 || names.some((n) => n === ""))
+        return { message: NOT_SHORTHAND };
+      url = `https://github.com/${names.join("/")}`;
+    }
+  }
+  const problem = repoUrlProblem(url);
+  if (problem !== null) return { message: problem };
+  const clean = cleanRepoUrl(url);
+  const rest = clean.slice("https://".length).split(/[?#]/)[0] ?? "";
+  const [authority = "", ...path] = rest.split("/");
+  if (path.some((n) => n === "." || n === "..")) return { message: DOT_NAME };
+  if (authority.split(":")[0]?.endsWith(".")) return { message: TRAILING_DOT };
+  return { url: clean };
+}
+
 /** A workspace name suggested by a repository URL: its last path segment, as typed. */
 export function suggestName(repoUrl: string): string {
   const path = repoUrl.trim().split(/[?#]/)[0] ?? "";

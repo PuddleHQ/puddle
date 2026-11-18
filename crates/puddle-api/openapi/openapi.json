@@ -11,7 +11,7 @@
       "name": "AGPL-3.0-or-later",
       "identifier": "AGPL-3.0-or-later"
     },
-    "version": "0.32.0"
+    "version": "0.33.0"
   },
   "paths": {
     "/api/admin/audit": {
@@ -7012,6 +7012,107 @@
       }
     },
     "/api/rules/{id}": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Edits a rule in place: its host pattern, effect, scope and expiry (and its precedence when the\nbody names one). The rule keeps its id, creator, creation time and switch. Open requests it\nnow decides are closed the same way as for a new rule.",
+        "operationId": "update_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the edited rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule, workspace or rule set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid pattern, expiry or precedence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "rules"
@@ -7269,6 +7370,89 @@
           },
           "422": {
             "description": "expiry not in the future",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rules/{id}/undo": {
+      "post": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Takes back a decision made from the inbox: deletes the rule and puts the requests it closed\nback in the inbox, in their old place.",
+        "operationId": "undo_decision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the deleted rule and the requests that are open again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoOutcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
             "content": {
               "application/json": {
                 "schema": {
@@ -7712,6 +7896,139 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ui-errors": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "The errors the caller's pages reported since Puddle started, newest first (at most 50 kept,\nfor all users together), and how many reports were refused for coming too fast.",
+        "operationId": "list_ui_errors",
+        "responses": {
+          "200": {
+            "description": "the recent errors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiErrorList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "service"
+        ],
+        "summary": "A page's report of an error no code expected: one that showed the error page, one thrown\noutside the page's own handling, or a promise nothing handled. The server takes the user\ninfo, query and fragment out of every URL and removes what looks like a token, bounds each\nfield, writes the error to its log and keeps it for `GET /api/ui-errors`. A user's pages may\nreport 10 errors a minute; past that the server refuses with `Retry-After`.",
+        "operationId": "report_ui_error",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UiErrorReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "logged and kept"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many reports this minute; `Retry-After` says when to send again",
             "content": {
               "application/json": {
                 "schema": {
@@ -14867,7 +15184,7 @@
           },
           {
             "type": "object",
-            "description": "The oldest records were deleted to keep the audit under its size cap.",
+            "description": "Records older than the audit's retention period were deleted.",
             "required": [
               "ts",
               "deleted_records",
@@ -16250,7 +16567,9 @@
           "summary",
           "finding",
           "fix",
-          "detail"
+          "detail",
+          "impact",
+          "remedy"
         ],
         "properties": {
           "detail": {
@@ -16277,6 +16596,17 @@
           "id": {
             "type": "string",
             "description": "Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,\n`test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title."
+          },
+          "impact": {
+            "type": "string",
+            "description": "What this means for the person, in one or two short sentences: for an ok check what it\nprotects or makes possible, otherwise what the finding costs them. Never empty."
+          },
+          "remedy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do about it, in one or two short sentences; `null` when the check is ok. `fix`\nholds the long form."
           },
           "status": {
             "$ref": "#/components/schemas/DoctorStatus",
@@ -18063,6 +18393,7 @@
           "vscode_server",
           "ui",
           "tools",
+          "mise_available",
           "limits",
           "effective_limits",
           "effective",
@@ -18081,6 +18412,10 @@
           "limits": {
             "$ref": "#/components/schemas/Limits",
             "description": "The limits the user set (global only)."
+          },
+          "mise_available": {
+            "type": "boolean",
+            "description": "Whether this build has the managed mise layer at all. When false (the v0.1 build)\nthe window shows no mise setting and the layer is off whatever `tools.mise` holds."
           },
           "revision": {
             "type": "string",
@@ -18619,7 +18954,7 @@
       },
       "InviteRequest": {
         "type": "object",
-        "description": "Uses an invite link (made by the server's command line) to set a password.",
+        "description": "Uses an invite link (made by the server's command line or an admin) to set a password.",
         "required": [
           "secret",
           "password"
@@ -19094,7 +19429,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/WorkspaceId",
-                "description": "The workspace the rule applies to; `null` for every workspace."
+                "description": "The workspace the rule applies to; `null` for every workspace. Required, so a body that\nleaves it out never makes a rule for every workspace."
               },
               {
                 "type": "null"
@@ -20937,7 +21272,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Epoch ms in the future, or `null` to make the rule permanent.",
+            "description": "Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body\nnever makes a rule permanent.",
             "minimum": 0
           }
         },
@@ -21160,7 +21495,7 @@
               "boolean",
               "null"
             ],
-            "description": "On or off; `null` removes the switch, so the next level decides (the global switch, then\nthe set's default)."
+            "description": "On or off; `null` removes the switch, so the next level decides (the global switch, then\nthe set's default). Required, so an empty body never removes a switch."
           },
           "workspace": {
             "oneOf": [
@@ -21517,8 +21852,8 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest vCPUs (at least 1, at most the global maximum); applies at the next start.",
-            "maximum": 32,
+            "description": "Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs\nunless set); applies at the next start.",
+            "maximum": 255,
             "minimum": 1
           },
           "direct_ssh": {
@@ -22609,6 +22944,127 @@
         ],
         "description": "Where the install of a workspace's managed tools stands, as [`Event::WorkspaceTools`] reports\nit. Tool names are `<name>@<version>` as mise reports them from the guest: escape them when\nrendering."
       },
+      "UiError": {
+        "type": "object",
+        "description": "An error a page reported, as the server kept it.",
+        "required": [
+          "at",
+          "kind",
+          "message",
+          "stack",
+          "route",
+          "build"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the server received it, in epoch milliseconds.",
+            "minimum": 0
+          },
+          "build": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build of the app the page ran, or `null`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/UiErrorKind",
+            "description": "Where the page caught it."
+          },
+          "message": {
+            "type": "string",
+            "description": "The error's name and message."
+          },
+          "route": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The page's path, or `null`."
+          },
+          "stack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The top of its stack, or `null`."
+          }
+        }
+      },
+      "UiErrorKind": {
+        "type": "string",
+        "description": "Where the page caught the error.",
+        "enum": [
+          "page",
+          "uncaught",
+          "unhandled_rejection"
+        ]
+      },
+      "UiErrorList": {
+        "type": "object",
+        "description": "The errors the caller's pages reported since the server started, newest first.",
+        "required": [
+          "errors",
+          "dropped"
+        ],
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many reports were refused because the pages sent too many at once.",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UiError"
+            },
+            "description": "The most recent errors, newest first; the oldest make room past the limit."
+          }
+        }
+      },
+      "UiErrorReport": {
+        "type": "object",
+        "description": "One error a page reports. The server bounds every field, takes the user info, query and\nfragment out of every URL and removes what looks like a token before it logs or keeps it.",
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "build": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build of the app the page runs."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/UiErrorKind",
+            "description": "Where the page caught it."
+          },
+          "message": {
+            "type": "string",
+            "description": "The error's name and message, such as `TypeError: x is not a function`."
+          },
+          "route": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The page's path, such as `/workspaces/abc/terminal` (a query or fragment is dropped)."
+          },
+          "stack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The top of its stack, one frame a line, if it had one."
+          }
+        },
+        "additionalProperties": false
+      },
       "UiPrefs": {
         "type": "object",
         "description": "Preferences for Puddle's own window. `null` means Puddle's default.",
@@ -22754,7 +23210,7 @@
               "boolean",
               "null"
             ],
-            "description": "The inbox's single-key shortcuts A, D, J and K (default off)."
+            "description": "The inbox's single-key shortcuts A, D, J and K (default on)."
           },
           "minimize_to_tray": {
             "type": [
@@ -22852,6 +23308,27 @@
         },
         "additionalProperties": false
       },
+      "UndoOutcome": {
+        "type": "object",
+        "description": "What taking back a decision did.",
+        "required": [
+          "rule",
+          "reopened"
+        ],
+        "properties": {
+          "reopened": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingRequest"
+            },
+            "description": "The requests that are open again, each as a new row in its old place."
+          },
+          "rule": {
+            "$ref": "#/components/schemas/Rule",
+            "description": "The rule that was deleted."
+          }
+        }
+      },
       "UnknownTokenKind": {
         "type": "string",
         "description": "What Puddle can tell about a token in an answer that it does not hold: by its bytes alone\n(see [`Event::UnknownTokenInAnswer`]).",
@@ -22865,6 +23342,49 @@
           "openai_key",
           "jwt_with_refresh_token"
         ]
+      },
+      "UpdateRuleRequest": {
+        "type": "object",
+        "description": "What a rule says after an edit: the whole of it, so a body that leaves a field out is refused\nand never reads as a change. The rule keeps its id, creator, creation time and switch.",
+        "required": [
+          "scope",
+          "pattern",
+          "effect",
+          "expires_at"
+        ],
+        "properties": {
+          "effect": {
+            "$ref": "#/components/schemas/Effect",
+            "description": "Allow or deny."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms in the future from which the rule no longer matches; `null` is permanent.\nRequired, so an empty body never makes a rule permanent.",
+            "minimum": 0
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is\nrefused)."
+          },
+          "precedence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 9, higher wins. Left out: the rule keeps its precedence.",
+            "minimum": 0
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RuleScope",
+            "description": "Global, one workspace, or a rule set of yours."
+          }
+        },
+        "additionalProperties": false
       },
       "UserView": {
         "type": "object",

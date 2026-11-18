@@ -1,5 +1,9 @@
 # Running Puddle without a window: `puddle serve`
 
+> **Not in the v0.1 build.** The `serve` command is switched off in the build that ships: it is not in
+> `puddle --help` and `puddle serve` answers "unknown argument". The code is all still there. Build with
+> `cargo build -p puddle --features serve` to get it back; this page describes that build.
+
 `puddle serve` runs the Puddle host with no desktop window: the store, the proxies, the sandbox
 runtime, the workspaces and the local API. It runs until Ctrl-C, a termination signal or the end of
 the console session, then stops every workspace cleanly.
@@ -215,7 +219,9 @@ never do (they use the install token on `127.0.0.1`, and there are no accounts o
 - **Limits.** Puddle never trusts `X-Forwarded-*`, so it cannot tell clients behind one proxy apart
   and has no per-address limit. Instead an account locks after 5 wrong passwords in a row, for 30
   seconds and then twice as long for each further failure (up to 15 minutes); the right password does
-  not lift a lock, and a name nobody has locks the same way. At most 30 password checks run in any
+  not lift a lock, and a name nobody has locks the same way. An attempt counts from the moment it is
+  let in: an account checks at most as many passwords at once as it has failures left before the lock
+  (one at a time after a lock), so guesses sent together cannot slip past it. At most 30 password checks run in any
   minute, whoever asks. Both answer `429` with `Retry-After`. The state is in memory and a restart
   clears it. The price: someone who knows the owner's name can keep password sign-in locked; browsers
   already signed in are not affected and `puddle user reset` still works.
@@ -230,7 +236,10 @@ never do (they use the install token on `127.0.0.1`, and there are no accounts o
   signing in exists; the last way that is on cannot be switched off. Passkeys, the other way, come
   after the first release; until then password sign-in cannot be switched off.
 - **Several users.** `multi_user` is off by default and everything belongs to the one owner. With it
-  on, other users can sign in (the admin screen that creates them comes separately).
+  on, other users can sign in (the admin screen that creates them comes separately). Switching it
+  off holds on every way in: other users' signed-in browsers stop working (they work again once it is
+  back on), their invite links are refused but not used up, and `puddle user add` refuses to make a
+  user.
 - **Reset from the server.** `puddle user reset <name>` (same `--config`, `--data-dir` and environment
   as the server) takes the user's password away, signs every one of their devices out, and prints a
   one-time invite link, `https://<public host>/invite#<secret>`, valid for 24 hours. The secret is
@@ -342,7 +351,8 @@ UI. Setting `workspace_base_domain` to a domain with a different registrable dom
 Puddle blocks the base domain and everything below it for guests, and it refuses a public host that
 is one label below the base domain (a workspace could share it). A request whose `Host` is one of
 these names goes to the workspace's editor instead of the UI, on the loopback listener and on the
-network listener alike; a name of no workspace gets 421, and so does any other unknown name. The
+network listener alike. A name of no workspace gets the same answer as a workspace's, so a caller
+that has not signed in cannot test which workspace ids exist; any other unknown name gets 421. The
 editor answers only a browser that Puddle let in. DNS records and certificates for the names are
 the proxy's job, and a wildcard certificate is needed (`*.ws.example.net`): without one the editors
 and forwarded ports are not available in a browser, while the UI itself works.

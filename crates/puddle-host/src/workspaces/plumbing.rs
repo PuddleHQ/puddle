@@ -11,7 +11,7 @@ use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord, admit_i
 use puddle_compute::{ImageConfig, Runtime};
 use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
-use puddle_store::{Actor, AllUsers, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceStatus,
     WorkspaceStep,
@@ -21,9 +21,9 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use super::{
-    EndExtensionHostsError, HostWorkspaces, Inner, Live, MAINTENANCE_WAIT, Parts, Running,
-    SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError, Ticket,
-    Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
+    EndExtensionHostsError, HostWorkspaces, Inner, Leftovers, Live, MAINTENANCE_WAIT, Parts,
+    Running, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError,
+    Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
 };
 use crate::HostError;
 use crate::files::Stored;
@@ -67,7 +67,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 continue;
             }
             let (id, name) = (stored.id, stored.name);
-            let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repositories);
+            let mut record =
+                WorkspaceRecord::new(id.clone(), stored.owner, name.clone(), stored.repositories);
             record.start_folder = stored.start_folder;
             record.session_user = stored.session_user;
             record.image = stored.image;
@@ -136,7 +137,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }),
         };
         service.note_names(&service.state());
-        service.adopt_listed(&service.inner.all_users)?;
+        service.record_owners()?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
@@ -145,23 +146,23 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(service)
     }
 
-    /// On the first start of this build, records the owner as the user of every listed workspace
-    /// that has none: they were made before every create recorded its user. Before anything serves
-    /// them, or no user would reach them; later starts change nothing.
-    pub(super) fn adopt_listed(&self, all_users: &AllUsers) -> Result<(), HostError> {
-        let adopted = self
-            .inner
-            .store
-            .adopt_unowned_workspaces(all_users, self.state().slots.keys())
-            .map_err(|e| HostError::State {
-                what: "the database",
-                reason: format!("whose the listed workspaces are could not be recorded: {e}"),
-            })?;
-        if adopted > 0 {
-            tracing::info!(
-                adopted,
-                "recorded the owner as the user of the workspaces made before"
-            );
+    /// Records, on every start, the owner the list names for each listed workspace as that
+    /// workspace's user in the database, before anything serves them (recording one again is a
+    /// no-op). A list and a database that disagree about whose a workspace is stop the start:
+    /// neither is guessed.
+    pub(super) fn record_owners(&self) -> Result<(), HostError> {
+        for slot in self.state().slots.values() {
+            let record = &slot.record;
+            self.inner
+                .store
+                .set_workspace_owner(&record.id, record.owner)
+                .map_err(|e| HostError::State {
+                    what: "the database",
+                    reason: format!(
+                        "whose workspace {} is could not be recorded: {e}",
+                        record.id
+                    ),
+                })?;
         }
         Ok(())
     }
@@ -195,6 +196,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .values()
             .map(|slot| Stored {
                 id: slot.record.id.clone(),
+                owner: slot.record.owner,
                 name: slot.record.name.clone(),
                 repositories: slot.record.repositories.clone(),
                 start_folder: slot.record.start_folder.clone(),
@@ -666,6 +668,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         slot.record.busy = None;
         slot.deleting = false;
         let delete_note = slot.delete_note.take();
+        let leftovers = std::mem::replace(&mut slot.leftovers, Leftovers::Unknown);
         let name = slot.record.id.clone();
         let mut status_changed = false;
         // A failed create, and a delete either way, leave the list different from what is saved:
@@ -687,6 +690,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             (Ok(()), Operation::Deleting) => {
                 state.slots.remove(id);
                 state.retired.insert(id.clone());
+                if leftovers == Leftovers::Gone {
+                    state.cleaned.insert(id.clone());
+                }
             }
             (Err(_), Operation::Starting) => {
                 slot.record.status = if std::mem::take(&mut slot.volume_missing) {

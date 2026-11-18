@@ -32,7 +32,7 @@ pub mod testing;
 mod users;
 mod workspace_git;
 
-pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
+pub use account_secrets::{AccountSecrets, CheckedPassword, MIN_INVITE_DIGEST_BYTES};
 pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
     ActorWire, AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES,
@@ -62,7 +62,7 @@ pub use pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
 pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
-pub use rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
+pub use rule::{Actor, Effect, NewRule, Precedence, Rule, RuleEdit, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use ssh_address::{SshAddressError, looks_like_ssh, ssh_address_as_https};

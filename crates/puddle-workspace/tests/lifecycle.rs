@@ -870,6 +870,21 @@ async fn a_check_script_that_exits_non_zero_is_an_error() {
 }
 
 #[tokio::test]
+async fn a_check_script_error_with_terminal_controls_is_shown_without_them() {
+    let rt = FakeRuntime::new();
+    rt.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(DELETE_CHECK_SH))
+            .then(|| ExecOutput::new(3, "E\t.\tbad \x1b[2Jone\n", "and \x1b]0;title\x07two\n"))
+    });
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let _sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    let err = w.check_delete(&rt, &id).await.unwrap_err().to_string();
+    assert!(!err.chars().any(char::is_control), "{err:?}");
+    assert!(err.contains("bad ?[2Jone"), "{err}");
+}
+
+#[tokio::test]
 async fn unknown_workspaces_are_not_found() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
@@ -1039,7 +1054,7 @@ async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
     let w = Workspaces::default();
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
-    let seen = record_execs(&rt, &[("git", 0, ""), ("sync", 0, "")]);
+    let seen = record_execs(&rt, &[("sh", 0, ""), ("sync", 0, "")]);
     let path = w
         .clone_checkout(
             &sb,
@@ -1052,13 +1067,17 @@ async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
         .unwrap();
     w.sync(&sb, &id).await.unwrap();
     assert_eq!(path.as_str(), "/workspaces/acme/api-2");
-    assert_eq!(
-        *seen.lock().unwrap(),
-        [
-            "git clone -- https://h.example/acme/api.git /workspaces/acme/api-2 [agent]",
-            "sync  [root]"
-        ]
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!(
+        seen[0].starts_with("sh -c ")
+            && seen[0].ends_with(
+                " puddle-clone https://h.example/acme/api.git \
+                 /workspaces/acme/.puddle/cloning/api-2 /workspaces/acme/api-2 [agent]"
+            ),
+        "{seen:?}"
     );
+    assert_eq!(seen[1], "sync  [root]");
 }
 
 #[tokio::test]
@@ -1070,7 +1089,7 @@ async fn a_failed_clone_is_an_error_naming_what_git_said() {
     let seen = record_execs(
         &rt,
         &[
-            ("git", 128, "fatal: repository not found\n"),
+            ("sh", 128, "fatal: repository not found\n"),
             ("sync", 0, ""),
         ],
     );

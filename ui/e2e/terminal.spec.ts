@@ -97,6 +97,27 @@ test("is the second tab of the workspace page and offers a terminal in a running
   await staysEmpty(page, csp);
 });
 
+test("the tab opens from the workspace's Overview under the app's prototype guard, as a user reaches it", async ({
+  page,
+  backend,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await backend.control.reset("lived-in");
+  await backend.signIn(page);
+  await page.goto("/workspaces");
+  await page.getByRole("link", { name: "web-shop" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Workspace sections" })
+    .getByRole("link", { name: "Terminal" })
+    .click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Terminal" }),
+  ).toBeVisible();
+  await expect(page.getByText(/No terminal is open/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("a stopped workspace says to start it", async ({ page, backend }) => {
   await open(page, backend, "docs-site");
   await expect(
@@ -234,6 +255,7 @@ test("the right-click menu offers Copy, Select all and Clear", async ({
   const menu = page.getByRole("menu", { name: "Terminal actions" });
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Copy",
+    "Paste",
     "Select all",
     "Clear",
   ]);
@@ -437,6 +459,73 @@ test("Screen reader mode adds the emulator's accessible text", async ({
   await input(page).focus();
   await run(page, "read me");
   await expect(page.locator(".xterm-accessibility")).toContainText("read me");
+});
+
+test("colour escapes from the shell are drawn in distinct colours, bold and underline", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await start(page);
+  await run(page, "colors");
+  await expect(screen(page)).toContainText("underlined");
+  const colourOf = (text: string) =>
+    screen(page)
+      .locator("span", { hasText: new RegExp(`^${text}$`) })
+      .first()
+      .evaluate((el) => ({
+        colour: getComputedStyle(el).color,
+        classes: el.className,
+      }));
+  const red = await colourOf("red-text");
+  const green = await colourOf("bold-green");
+  const orange = await colourOf("palette-orange");
+  const cyan = await colourOf("true-cyan");
+  const plain = await screen(page)
+    .locator("> div")
+    .first()
+    .locator("span")
+    .first()
+    .evaluate((el) => getComputedStyle(el).color);
+  const colours = [red, green, orange, cyan].map((c) => c.colour);
+  expect(new Set([...colours, plain]).size).toBe(5);
+  expect(red.classes).toContain("xterm-fg-1");
+  expect(green.classes).toContain("xterm-bold");
+  expect((await colourOf("underlined")).classes).toContain("xterm-underline");
+});
+
+test("dragging the mouse selects text that Ctrl+Shift+C copies, and the menu pastes the clipboard", async ({
+  page,
+  backend,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "Chromium-only clipboard grant");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await open(page, backend);
+  await start(page);
+  await run(page, "colors");
+  await expect(screen(page)).toContainText("underlined");
+  const row = screen(page)
+    .locator("span", { hasText: /^red-text$/ })
+    .first();
+  const box = await row.boundingBox();
+  if (!box) throw new Error("the sample row has no box");
+  await page.mouse.move(box.x + 1, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width + 2, box.y + box.height / 2, {
+    steps: 6,
+  });
+  await page.mouse.up();
+  await page.keyboard.press("Control+Shift+C");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("red-text");
+  await page.evaluate(() => navigator.clipboard.writeText("from clipboard"));
+  await page
+    .getByRole("group", { name: "Terminal 1, web-shop" })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Paste" }).click();
+  await expect(screen(page)).toContainText("$ from clipboard");
 });
 
 test("the terminal's colours follow the theme", async ({ page, backend }) => {

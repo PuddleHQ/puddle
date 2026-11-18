@@ -23,9 +23,10 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true, minimum = 256, maximum = 1_048_576)]
     pub memory: Option<u32>,
-    /// Guest vCPUs (at least 1, at most the global maximum); applies at the next start.
+    /// Guest vCPUs (at least 1, at most the global maximum, which is the host's logical CPUs
+    /// unless set); applies at the next start.
     #[serde(default)]
-    #[schema(required = true, minimum = 1, maximum = 32)]
+    #[schema(required = true, minimum = 1, maximum = 255)]
     pub cpus: Option<u8>,
     /// Which local destination categories may be approved (all off by default).
     #[serde(default)]
@@ -514,7 +515,7 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub confirm_global_rules: Option<bool>,
-    /// The inbox's single-key shortcuts A, D, J and K (default off).
+    /// The inbox's single-key shortcuts A, D, J and K (default on).
     #[serde(default)]
     #[schema(required = true)]
     pub inbox_shortcuts: Option<bool>,
@@ -854,6 +855,9 @@ pub struct GlobalSettingsView {
     pub ui: UiPrefs,
     /// The tool switches (global only).
     pub tools: GlobalTools,
+    /// Whether this build has the managed mise layer at all. When false (the v0.1 build)
+    /// the window shows no mise setting and the layer is off whatever `tools.mise` holds.
+    pub mise_available: bool,
     /// The limits the user set (global only).
     pub limits: Limits,
     /// What the limits come to on this computer.
@@ -1005,6 +1009,7 @@ impl GlobalSettingsView {
             tools: GlobalTools {
                 mise: global.tools.mise,
             },
+            mise_available: settings::Tools::AVAILABLE,
             limits: Limits {
                 max_cpus: global.limits.max_cpus.map(CpuCount::get),
             },

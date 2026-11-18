@@ -104,3 +104,33 @@ fn no_marker_never_knows_and_a_folder_that_cannot_be_made_only_costs_the_marker(
     blocked.write(&set(&["claude"]));
     assert_eq!(blocked.read(), None);
 }
+
+#[test]
+fn a_write_that_cannot_be_moved_over_the_marker_leaves_no_part_file() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder where the marker should be: the move over it fails.
+    let path = dir.path().join("one.kept");
+    std::fs::create_dir(&path).unwrap();
+    Marker::in_file(path).write(&set(&["claude"]));
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn a_write_leaves_the_half_written_file_of_another_writer_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("one.kept");
+    // Another process writing the same marker, part way through its file.
+    let theirs = dir.path().join("one.part");
+    std::fs::write(&theirs, "puddle-logins-kept v2\ncla").unwrap();
+    let marker = Marker::in_file(path);
+    marker.write(&set(&["claude", "github"]));
+    marker.write(&set(&["claude"]));
+    assert_eq!(marker.read(), Some(set(&["claude"])));
+    assert_eq!(
+        std::fs::read_to_string(&theirs).unwrap(),
+        "puddle-logins-kept v2\ncla",
+        "a write took over another writer's file"
+    );
+    // Its own files are gone: only the marker and the other writer's are left.
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+}

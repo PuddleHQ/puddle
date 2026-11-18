@@ -283,6 +283,25 @@ fn a_data_folder_that_records_the_file_vault_reads_its_header_and_asks_nothing_e
 }
 
 #[test]
+fn a_store_that_never_answers_the_probe_is_reported_locked_within_the_wait() {
+    use puddle_secrets::StoreHealth;
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let health = probe_within(
+        move || {
+            let _ = hold.recv();
+            StoreHealth::Working
+        },
+        Duration::from_millis(100),
+    );
+    assert_eq!(health, StoreHealth::Locked);
+    drop(release);
+    assert_eq!(
+        probe_within(|| StoreHealth::NoProvider, Duration::from_secs(5)),
+        StoreHealth::NoProvider
+    );
+}
+
+#[test]
 fn the_operating_system_store_is_probed_when_it_is_recorded_or_nothing_is_decided() {
     use puddle_secrets::{LoginSession, StoreHealth, StoreKind};
     let recorded = data_with_store(StoreKind::Os);
@@ -445,6 +464,27 @@ fn a_sealed_key_systemd_opens_is_ok_and_its_value_is_not_kept() {
         }
     );
     assert!(!format!("{facts:?}").contains("hunter2"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_key_a_sealed_key_check_opens_is_written_to_nowhere() {
+    use puddle_secrets::KeySourceTag::SystemdHostTpm2;
+    // This `systemd-creds` opens the key only when its output goes to the null device, so the
+    // doctor never holds the key in its memory.
+    let creds = fake_systemd_creds(
+        V257,
+        "[ \"$(readlink /proc/$$/fd/1)\" = /dev/null ] || exit 3; echo hunter2-the-vault-key",
+        0,
+    );
+    assert_eq!(
+        sealed_key_with(SystemdHostTpm2, &creds, true),
+        VaultFacts::Sealed {
+            tag: SystemdHostTpm2,
+            key: SealedKeyFacts::Opens,
+            tpm: None
+        }
+    );
 }
 
 #[cfg(target_os = "linux")]

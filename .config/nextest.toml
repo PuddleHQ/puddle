@@ -2,8 +2,8 @@
 # Test runner settings. Retries stay at 0: a flaky proxy or transparency test is the bug itself
 # (docs/STANDARDS.md, "Flaky tests"). Only infrastructure steps may retry, and they do so in the
 # harness, visibly. The one exception is the Windows nightly, which passes `--retries 1` on the
-# command line to list tests that pass only on retry (ci/flaky-report.py); a test that fails twice
-# still fails the run.
+# command line so one run names every test that passes only on retry (ci/flaky-report.py fails the run on each of them);
+# a test that fails twice fails the run as well.
 #
 # VM tests (functions or test binaries named `vm_*`, crate `puddle-vm-tests`) boot real microVMs.
 # The default and ci profiles leave them out, so `scripts/check.sh` and the Linux gates never
@@ -76,6 +76,12 @@ transparency = { max-threads = 1 }
 # on a busy runner took each other's share and hit the 120 s kill (once at 116 s on four CPUs shared
 # with 16 busy loops, alone).
 flood = { max-threads = 1 }
+# Windows only: the tests that start PowerShell or read the certificate stores take turns. Four test
+# processes side by side on a two-vCPU runner each start `powershell.exe` (a start is 1 to 3 s idle),
+# and 4 of 27 runs had a first call stall for 26 to 100 s, taking the doctor and git tests with it.
+# Whether the overlap is the trigger shows in the stall count over the next runs; the machine state
+# printed at a PowerShell timeout (`windows_store.rs`) names what else was running.
+powershell = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = "test(/(^|::)vm_/) | binary(/^vm_/)"
@@ -109,9 +115,19 @@ slow-timeout = { period = "300s", terminate-after = 5 }
 # The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
 # must not turn "finishes in 30 s" into a kill (a gibibyte each way took 250 s on four busy CPUs).
 [[profile.default.overrides]]
+platform = "cfg(windows)"
+filter = "(package(puddle-certs) & binary(windows_store)) | binary_id(puddle::doctor) | (package(puddle-e2e) & test(/git_inject::/))"
+test-group = "powershell"
+
+[[profile.default.overrides]]
 filter = "binary(transparency) & package(puddle-e2e)"
 test-group = "transparency"
 slow-timeout = { period = "60s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+platform = "cfg(windows)"
+filter = "(package(puddle-certs) & binary(windows_store)) | binary_id(puddle::doctor) | (package(puddle-e2e) & test(/git_inject::/))"
+test-group = "powershell"
 
 [[profile.ci.overrides]]
 filter = "binary(transparency) & package(puddle-e2e)"

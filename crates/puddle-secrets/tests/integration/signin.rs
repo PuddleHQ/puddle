@@ -11,6 +11,7 @@ use crate::common;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::gcm::real_git;
 use common::{CANARY, Fakes};
 use puddle_secrets::{
     AccountName, HostName, OrgName, SignInError, SignInStart, SignIns, SourceError, SourceSpec,
@@ -63,6 +64,23 @@ async fn ask_until_it_starts_again(signin: &SignIns, spec: &SourceSpec, log: &Pa
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn gh_sign_in_reads_the_code_from_the_clipboard_wording_too() {
+    // What gh 2.104.0 prints on Windows, where it copies the code to the clipboard.
+    let fakes = Fakes::new();
+    let gh = fakes.install(
+        "gh",
+        "[auth login]\nstderr=\\n! One-time code (ABCD-1234) copied to clipboard\\nOpen this URL to continue in your web browser: https://github.com/login/device\\n\nsleep_ms=3000\n",
+    );
+    let signin = SignIns::new(ToolPaths::new(Some(gh), None));
+    let start = signin.begin(&gh_spec()).await.unwrap();
+    assert_eq!(start.code.as_deref(), Some("ABCD-1234"));
+    assert_eq!(
+        start.url.as_deref(),
+        Some("https://github.com/login/device")
+    );
 }
 
 #[tokio::test]
@@ -262,8 +280,14 @@ async fn git_sign_in_asks_for_the_account_when_the_credential_names_one() {
         .begin(&named)
         .await
         .unwrap_err();
+    // The account picks its entry for the whole host, so no path is sent.
     let log = Fakes::log(&git);
-    assert!(log.contains("path=me\\nusername=me\\n"), "{log}");
+    assert!(
+        log.contains(
+            "ARGS credential fill\nSTDIN protocol=https\\nhost=github.com\\nusername=me\\n\\n\n"
+        ),
+        "{log}"
+    );
 }
 
 #[tokio::test]
@@ -317,15 +341,6 @@ async fn git_that_is_still_running_after_the_early_wait_is_taken_to_wait_on_the_
     assert_eq!(Fakes::log(&git).matches("credential fill").count(), 1);
     let log = wait_for(&git, "credential approve").await;
     assert!(log.contains("credential approve"), "{log}");
-}
-
-/// The real `git` on the path (`git.exe` on Windows).
-fn real_git() -> std::path::PathBuf {
-    let name = if cfg!(windows) { "git.exe" } else { "git" };
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join(name))
-        .find(|path| path.is_file())
-        .expect("git on the path")
 }
 
 /// Git drops `path` from an HTTP credential unless `credential.useHttpPath` is on, before any

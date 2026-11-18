@@ -215,7 +215,7 @@ async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_i
     let made = api
         .post(
             "/api/request-rules",
-            r#"{"host": "api.example.com", "methods": ["DELETE"], "path": "/repos/**"}"#,
+            r#"{"workspace": null, "host": "api.example.com", "methods": ["DELETE"], "path": "/repos/**"}"#,
         )
         .await;
     assert_eq!(made.status, 201, "{}", made.body);

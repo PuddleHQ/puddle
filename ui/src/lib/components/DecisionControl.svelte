@@ -9,16 +9,16 @@
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
-  // Ctrl+click (Cmd+click on a Mac) decides for every workspace and skips the chevron.
+  // Ctrl+click (Cmd+click on a Mac) decides for every workspace and skips the options.
   const choose = (effect: "allow" | "deny", event: MouseEvent) =>
     onDecide(
       event.ctrlKey || event.metaKey ? everywhere(effect) : narrowest(effect),
     );
 
-  // Allow and Deny one click for this workspace, the exact host,
-  // permanently; the chevron asks for the rest (every workspace, subdomains, duration), which
-  // OptionsPopover shows. The choice is a plain `Choice`; what happens with it (confirm, API
-  // call) is the parent's.
+  // Allow and Deny decide with one click: this workspace, the exact host, permanently. The grey
+  // button after them belongs to neither: its options (every workspace, subdomains, duration, a
+  // rule set) end in an Allow and a Deny of their own (OptionsPopover). The choice is a plain
+  // `Choice`; what happens with it (confirm, API call) is the parent's.
   let {
     target,
     workspace,
@@ -31,10 +31,10 @@
     workspace: string;
     /** The destination can't be approved yet; only Deny is offered. */
     denyOnly?: boolean;
-    /** Whether the options are open for this row, for the chevron's `aria-expanded`. */
+    /** Whether the options are open for this row, for the more-choices button's `aria-expanded`. */
     optionsOpen?: boolean;
     onDecide: (choice: Choice) => void;
-    /** The chevron was used; the element is where the options hang from. */
+    /** The more-choices button was used; the element is where the options hang from. */
     onMore: (anchor: HTMLElement) => void;
   } = $props();
 
@@ -44,37 +44,37 @@
 
 <div class="control">
   {#if !denyOnly}
-    <div class="split">
-      <button
-        type="button"
-        class="btn allow main"
-        aria-label="Allow {target.host} for {spoken}"
-        title="Allow for {spoken}, this host only, permanently (A). Ctrl+click: every workspace"
-        onclick={(event) => choose("allow", event)}
-      >
-        Allow
-      </button>
-      <button
-        type="button"
-        class="btn allow chevron"
-        data-more
-        aria-label="More choices for {target.host}"
-        aria-haspopup="dialog"
-        aria-expanded={optionsOpen}
-        title="More choices (Enter)"
-        onclick={(event) => onMore(event.currentTarget)}
-      ></button>
-    </div>
+    <button
+      type="button"
+      class="btn allow"
+      aria-label="Allow {target.host} for {spoken}"
+      title={`Allow for ${spoken}, this host only, permanently (A)\nCtrl+click: allow for all workspaces`}
+      onclick={(event) => choose("allow", event)}
+    >
+      Allow
+    </button>
   {/if}
   <button
     type="button"
     class="btn deny"
     aria-label="Deny {target.host} for {spoken}"
-    title="Deny for {spoken}, this host only, permanently (D). Ctrl+click: every workspace"
+    title={`Deny for ${spoken}, this host only, permanently (D)\nCtrl+click: deny for all workspaces`}
     onclick={(event) => choose("deny", event)}
   >
     Deny
   </button>
+  {#if !denyOnly}
+    <button
+      type="button"
+      class="btn more"
+      data-more
+      aria-label="More choices for {target.host}"
+      aria-haspopup="dialog"
+      aria-expanded={optionsOpen}
+      title="More choices: every workspace, subdomains, how long (Enter)"
+      onclick={(event) => onMore(event.currentTarget)}
+    ></button>
+  {/if}
 </div>
 
 <style>
@@ -84,26 +84,17 @@
     gap: var(--space-2);
     justify-content: flex-end;
   }
-  .split {
-    display: inline-flex;
-  }
-  .split .main {
-    border-start-end-radius: 0;
-    border-end-end-radius: 0;
+  .more {
+    color: var(--color-text-muted);
+    padding-inline: var(--space-2);
   }
   /* The arrow is drawn here, not as an icon element: an inbox of 500 rows draws 500 of them. */
-  .chevron::after {
+  .more::after {
     content: "";
     width: 0.5rem;
     height: 0.5rem;
     border-right: 2px solid currentColor;
     border-bottom: 2px solid currentColor;
     transform: translateY(-25%) rotate(45deg);
-  }
-  .split .chevron {
-    border-start-start-radius: 0;
-    border-end-start-radius: 0;
-    border-inline-start-width: 0;
-    padding-inline: var(--space-2);
   }
 </style>

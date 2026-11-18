@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The rules screen's state: every rule the API holds, and the three things a user does to one
-// (add, change the expiry, delete).
+// (add, edit, change the expiry, delete).
 //
 // Live data: it listens to the shell's event stream for `rules_changed` and refetches. Until the
 // API sends that event it polls every 10 s; the first one it sees turns the poll down to a slow
@@ -13,6 +13,7 @@ import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type NewRule = components["schemas"]["NewRuleRequest"];
+export type UpdateRule = components["schemas"]["UpdateRuleRequest"];
 export type Status = "loading" | "ready" | "failed";
 
 /** `pattern`: the server refused the pattern or expiry; `form`: anything else. */
@@ -119,6 +120,36 @@ export class RulesStore {
       }
       this.#writes += 1;
       this.rules = [data, ...this.rules.filter((r) => r.id !== data.id)];
+      this.#onChange?.();
+      return { ok: true, rule: data };
+    } catch {
+      return { ok: false, field: "form", message: DOWN };
+    }
+  }
+
+  /**
+   * Edits a rule in place: `rule` is the whole of what it should say now. The server's refusals
+   * (public suffix, a workspace or set that is gone) come back as text, like `add`.
+   */
+  async update(id: number, rule: UpdateRule): Promise<AddResult> {
+    try {
+      const { data, error, response } = await this.#api.PUT("/api/rules/{id}", {
+        params: { path: { id } },
+        body: rule,
+      });
+      if (!data) {
+        // A 404 names the rule, the workspace or the rule set that is not there; the server's
+        // words say which, and a read shows whether the rule itself is gone.
+        if (response.status === 404) void this.refresh();
+        const field = response.status === 422 ? "pattern" : "form";
+        return {
+          ok: false,
+          field,
+          message: sentence(error?.message ?? "Puddle refused the change"),
+        };
+      }
+      this.#writes += 1;
+      this.rules = this.rules.map((r) => (r.id === id ? data : r));
       this.#onChange?.();
       return { ok: true, rule: data };
     } catch {

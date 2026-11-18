@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 puddle-fs = { workspace = true }
+puddle-process = { workspace = true }
 puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-ssh-agent = { workspace = true }

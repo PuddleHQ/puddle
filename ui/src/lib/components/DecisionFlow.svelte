@@ -38,7 +38,7 @@
   } = $props();
 
   // The options popover is one instance for the whole list; `shown` keeps its row and anchor
-  // through the close, so focus can return to the chevron.
+  // through the close, so focus can return to the more-choices button.
   let shown = $state<{ id: number; anchor: HTMLElement } | null>(null);
   let optionsOpen = $state(false);
   let confirming = $state<{ row: Row; choice: Choice } | null>(null);
@@ -110,18 +110,18 @@
     await settleFocus(nextId);
   }
 
-  /** Deletes the rule a decision created. */
+  /** Takes a decision back: the rule goes and the request is listed again. */
   export async function undo(d: Decided) {
     const result = await store.undo(d);
     toasts.push(
       result.ok
-        ? `Undone: ${decidedSentence(d, undefined, spoken)}. It asks again the next time the workspace retries.`
+        ? `Undone: ${decidedSentence(d, undefined, spoken)}. The request is back in the list.`
         : result.message,
       { ms: result.ok ? 5000 : 8000, tone: result.ok ? "info" : "error" },
     );
   }
 
-  /** Opens the more-choices popover on a row's chevron, or closes it if it is open there. */
+  /** Opens the more-choices popover on a row's more-choices button, or closes it if it is open there. */
   export function more(row: Row, anchor: HTMLElement) {
     if (optionsOpen && shown?.id === row.request.id) {
       optionsOpen = false;

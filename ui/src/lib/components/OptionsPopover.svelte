@@ -15,8 +15,9 @@
   import SetChip from "./SetChip.svelte";
   import "#lib/theme/controls.css";
 
-  // The "more choices": every workspace, subdomains, duration. One instance serves the whole
-  // list, anchored to the chevron of the row it was opened from (500 rows, one popover).
+  // The "more choices": every workspace, subdomains, duration, then Allow or Deny with them. One
+  // instance serves the whole list, anchored to the more-choices button of the row it was opened
+  // from (500 rows, one popover). That button is neither Allow nor Deny, so both end it.
   let {
     open = $bindable(false),
     target,
@@ -30,7 +31,7 @@
     open?: boolean;
     target: Target;
     workspace: string;
-    /** The chevron button it hangs from, and gives focus back to. */
+    /** The more-choices button it hangs from, and gives focus back to. */
     anchor: HTMLElement | null;
     /** Local destinations: only an exact rule counts (R-14), so no subdomain choice. */
     exactOnly?: boolean;
@@ -80,10 +81,10 @@
   }}
 >
   <Popover.Portal>
-    <!-- It hangs over the rows beside it. Its right edge sits 4px past the chevron column, in the
-         gap before Deny: flush with the chevrons it would leave a sub-pixel strip of the chevron
-         of the row above or below uncovered (the browser rounds the two edges differently), and
-         that strip counts as a target under 24px (WCAG 2.5.8). -->
+    <!-- It hangs over the rows beside it. Its right edge sits 4px past the more-choices column, in
+         the row's padding: flush with those buttons it would leave a sub-pixel strip of the one of
+         the row above or below uncovered (the browser rounds the two edges differently), and that
+         strip counts as a target under 24px (WCAG 2.5.8). -->
     <Popover.Content
       class="options"
       role="dialog"
@@ -93,7 +94,7 @@
       customAnchor={anchor}
       aria-label="Choices for {target.host}"
       onInteractOutside={(event) => {
-        // A click on the chevron toggles; it must not close here and reopen there.
+        // A click on the more-choices button toggles; it must not close here and reopen there.
         if (event.target instanceof Node && anchor?.contains(event.target)) {
           event.preventDefault();
         }
@@ -102,7 +103,7 @@
         event.preventDefault();
         // bits-ui also runs this while the popover stays open: opened again, it sets up its focus
         // trap a second time once the opening transition ends, a frame later. Focus goes back to
-        // the chevron only on a real close; otherwise a choice focused in that frame is lost.
+        // the more-choices button only on a real close; otherwise a choice focused in that frame is lost.
         if (!open && anchor?.isConnected) anchor.focus();
       }}
     >
@@ -115,7 +116,7 @@
             value="workspace"
             bind:group={who}
           />
-          Only <b class="mono">{workspace}</b>
+          <span class="text">Only <b class="mono">{workspace}</b></span>
         </label>
         <label>
           <input
@@ -124,7 +125,9 @@
             value="global"
             bind:group={who}
           />
-          Every workspace <span class="hint">(asks to confirm)</span>
+          <span class="text"
+            >Every workspace <span class="hint">(asks to confirm)</span></span
+          >
         </label>
         {#each sets as set (set.id)}
           <label>
@@ -134,9 +137,12 @@
               value="set:{set.id}"
               bind:group={who}
             />
-            Into rule set <b><SetChip name={set.name} fill={set.fill} /></b>
-            {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
-              >{/if}
+            <span class="text"
+              >Into rule set
+              <b><SetChip name={set.name} fill={set.fill} /></b>
+              {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
+                >{/if}</span
+            >
           </label>
         {/each}
       </fieldset>
@@ -149,7 +155,7 @@
             value="exact"
             bind:group={match}
           />
-          Only <span class="mono">{target.host}</span>
+          <span class="text">Only <span class="mono">{target.host}</span></span>
         </label>
         {#if suffix}
           <label>
@@ -159,7 +165,10 @@
               value="suffix"
               bind:group={match}
             />
-            Everything under <span class="mono">{suffix.slice(1)}</span>
+            <span class="text"
+              >Everything under
+              <span class="mono">{suffix.slice(1)}</span></span
+            >
           </label>
         {/if}
       </fieldset>
@@ -216,6 +225,13 @@
     align-items: center;
     gap: var(--space-2);
     min-height: 1.5rem;
+  }
+  /* One flex item per choice: words stay whole, only a host name may break. */
+  :global(.options label .text) {
+    min-width: 0;
+    overflow-wrap: normal;
+  }
+  :global(.options label .mono) {
     overflow-wrap: anywhere;
   }
   :global(.options .field) {
@@ -227,20 +243,7 @@
     font-weight: 600;
     color: var(--color-text-muted);
   }
-  :global(.options select) {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    font: inherit;
-    color: var(--color-text);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-  }
-  :global(.options input[type="radio"]) {
-    width: 1.25rem;
-    height: 1.25rem;
-    margin: 0;
-  }
+
   :global(.options .hint) {
     color: var(--color-text-muted);
   }

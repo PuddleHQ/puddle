@@ -427,6 +427,15 @@ impl DecisionOutcome {
     }
 }
 
+/// What taking back a decision did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct UndoOutcome {
+    /// The rule that was deleted.
+    pub rule: Rule,
+    /// The requests that are open again, each as a new row in its old place.
+    pub reopened: Vec<PendingRequest>,
+}
+
 /// A rule to create directly (not from a pending request).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -483,6 +492,50 @@ impl NewRuleRequest {
     }
 }
 
+/// What a rule says after an edit: the whole of it, so a body that leaves a field out is refused
+/// and never reads as a change. The rule keeps its id, creator, creation time and switch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateRuleRequest {
+    /// Global, one workspace, or a rule set of yours.
+    pub scope: RuleScope,
+    /// `example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is
+    /// refused).
+    pub pattern: String,
+    /// Allow or deny.
+    pub effect: Effect,
+    /// Epoch ms in the future from which the rule no longer matches; `null` is permanent.
+    /// Required, so an empty body never makes a rule permanent.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schema(required = true)]
+    pub expires_at: Option<u64>,
+    /// 1 to 9, higher wins. Left out: the rule keeps its precedence.
+    #[serde(default)]
+    pub precedence: Option<u8>,
+}
+
+impl UpdateRuleRequest {
+    pub(crate) fn into_edit(self) -> Result<store::RuleEdit, ApiError> {
+        let Self {
+            scope,
+            pattern,
+            effect,
+            expires_at,
+            precedence,
+        } = self;
+        let (suffix, base) = normalise_pattern("pattern", &pattern)?;
+        let text = if suffix { format!(".{base}") } else { base };
+        Ok(store::RuleEdit {
+            scope: scope.into(),
+            pattern: store::Pattern::parse(&text)
+                .map_err(|err| ApiError::invalid(format!("pattern: {err}")))?,
+            effect: effect.into(),
+            expires_at,
+            precedence: checked_precedence(precedence)?,
+        })
+    }
+}
+
 /// Normalises what a person typed as a rule pattern or suffix, with the proxy's own normaliser, so
 /// a rule matches exactly what the proxy will look up. Returns whether it was written as a suffix
 /// (`.example.com` or `*.example.com`) and the normalised host: lower case, Unicode to punycode,
@@ -525,7 +578,9 @@ pub struct RuleEnabledRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuleExpiryRequest {
-    /// Epoch ms in the future, or `null` to make the rule permanent.
+    /// Epoch ms in the future, or `null` to make the rule permanent. Required, so an empty body
+    /// never makes a rule permanent.
+    #[serde(deserialize_with = "Option::deserialize")]
     #[schema(required = true)]
     pub expires_at: Option<u64>,
 }

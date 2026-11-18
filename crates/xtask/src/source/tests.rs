@@ -66,11 +66,13 @@ fn parses_libkrunfw_makefile() {
 
 #[test]
 fn parses_compare_responses() {
-    let json = r#"{"commits": [
+    let json = r#"{"total_commits": 2, "commits": [
             {"sha": "aaa", "commit": {"message": "fix(vsock): one\n\nbody"}},
             {"sha": "bbb", "commit": {"message": ""}}
         ]}"#;
-    let commits = parse_compare(json).unwrap();
+    let page = parse_compare(json).unwrap();
+    assert_eq!(page.total, 2);
+    let commits = page.commits;
     assert_eq!(
         commits[0],
         Commit {
@@ -80,6 +82,41 @@ fn parses_compare_responses() {
     );
     assert_eq!(commits[1].subject, "");
     assert!(parse_compare("{}").is_err());
+}
+
+fn page(total: usize, shas: &[&str]) -> String {
+    let commits: Vec<String> = shas
+        .iter()
+        .map(|s| format!(r#"{{"sha":"{s}","commit":{{"message":"m {s}"}}}}"#))
+        .collect();
+    format!(
+        r#"{{"total_commits":{total},"commits":[{}]}}"#,
+        commits.join(",")
+    )
+}
+
+#[test]
+fn a_comparison_longer_than_one_page_is_read_to_the_end() {
+    let pages = [page(3, &["a", "b"]), page(3, &["c"])];
+    let commits = all_commits(|n| Ok(pages[n as usize - 1].clone())).unwrap();
+    let shas: Vec<&str> = commits.iter().map(|c| c.sha.as_str()).collect();
+    assert_eq!(shas, ["a", "b", "c"]);
+}
+
+#[test]
+fn a_comparison_that_stays_short_of_its_total_is_an_error() {
+    let pages = [page(3, &["a", "b"]), page(3, &[])];
+    let err = all_commits(|n| Ok(pages[n as usize - 1].clone()))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("2 commits against a total of 3"), "{err}");
+    let too_many = all_commits(|_| Ok(page(1, &["a", "b"])))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        too_many.contains("2 commits against a total of 1"),
+        "{too_many}"
+    );
 }
 
 fn github_source(firmware_tag: Option<&str>) -> GitHubSource {
@@ -136,35 +173,99 @@ fn a_commit_response_gives_its_sha() {
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const MAKEFILE: &[u8] = b"KERNEL_VERSION = linux-6.12.109\nFULL_VERSION = 5.6.1\n";
-const ROUTES: &[(&str, &[u8])] = &[
-    (
-        "/repos/f/m/compare/u:v1.0.0...v1.0.0-puddle.1",
-        br#"{"commits":[{"sha":"aaa","commit":{"message":"fix: one"}}]}"#,
-    ),
-    (
-        "/repos/PuddleHQ/libkrunfw/commits/v5.6.1-puddle.1",
-        br#"{"sha":"0123456789abcdef0123456789abcdef01234567"}"#,
-    ),
-    (
-        "/repos/PuddleHQ/libkrunfw/contents/Makefile?ref=0123456789abcdef0123456789abcdef01234567",
-        MAKEFILE,
-    ),
-    (
-        "/repos/x/krunfw/contents/Makefile?ref=0123456789abcdef0123456789abcdef01234567",
-        MAKEFILE,
-    ),
-    ("/f/m/releases/download/v1.0.0-puddle.1/msb", b"bin"),
-];
+const GITMODULES: &str = "[submodule \"vendor/libkrunfw\"]\n\tpath = vendor/libkrunfw\n\turl = https://github.com/x/krunfw.git\n";
 
-/// A source reading from a local server, with the fork's source already cloned under `work`.
+fn routes(fork_commit: &str) -> Vec<(String, Vec<u8>)> {
+    let makefile_path = format!("/repos/PuddleHQ/libkrunfw/contents/Makefile?ref={SHA}");
+    vec![
+        (
+            "/repos/f/m/compare/u:v1.0.0...v1.0.0-puddle.1".into(),
+            br#"{"total_commits":2,"commits":[{"sha":"aaa","commit":{"message":"fix: one"}}]}"#
+                .to_vec(),
+        ),
+        (
+            "/repos/f/m/compare/u:v1.0.0...v1.0.0-puddle.1?page=2".into(),
+            br#"{"total_commits":2,"commits":[{"sha":"bbb","commit":{"message":"fix: two"}}]}"#
+                .to_vec(),
+        ),
+        (
+            "/repos/f/m/commits/v1.0.0-puddle.1".into(),
+            format!(r#"{{"sha":"{fork_commit}"}}"#).into_bytes(),
+        ),
+        (
+            "/repos/PuddleHQ/libkrunfw/commits/v5.6.1-puddle.1".into(),
+            format!(r#"{{"sha":"{SHA}"}}"#).into_bytes(),
+        ),
+        (makefile_path, MAKEFILE.to_vec()),
+        (
+            format!("/repos/x/krunfw/contents/Makefile?ref={SHA}"),
+            MAKEFILE.to_vec(),
+        ),
+        (
+            "/f/m/releases/download/v1.0.0-puddle.1/msb".into(),
+            b"bin".to_vec(),
+        ),
+    ]
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    run(git_command()
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args))
+    .unwrap()
+}
+
+/// A repository at `dir` with the fork's files in one commit, tagged `tag`; returns the commit.
+fn fork_repo(dir: &Path, tag: &str) -> String {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+    std::fs::write(dir.join(".gitmodules"), GITMODULES).unwrap();
+    git_in(dir, &["init", "--quiet"]);
+    git_in(dir, &["add", "Cargo.toml", ".gitmodules"]);
+    git_in(
+        dir,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{SHA},vendor/libkrunfw"),
+        ],
+    );
+    git_in(dir, &["commit", "--quiet", "-m", "x"]);
+    git_in(dir, &["tag", tag]);
+    git_in(dir, &["rev-parse", "HEAD"]).trim().to_owned()
+}
+
+/// A source reading from a local server, with the fork's source already cloned under `work` at
+/// the commit the served tag names.
 fn served_source(firmware_tag: Option<&str>, work: &Path) -> GitHubSource {
-    let base = crate::github::tests::serve(ROUTES);
+    let src = work.join("src-v1.0.0-puddle.1");
+    let commit = fork_repo(&src, "v1.0.0-puddle.1");
+    served_source_at(firmware_tag, work, &commit)
+}
+
+/// Serves `routes` (leaked: the server thread outlives the test and wants `'static` ones).
+fn serve_routes(routes: Vec<(String, Vec<u8>)>) -> String {
+    let routes: Vec<(&'static str, &'static [u8])> = routes
+        .into_iter()
+        .map(|(path, body)| {
+            (
+                &*Box::leak(path.into_boxed_str()),
+                &*Box::leak(body.into_boxed_slice()),
+            )
+        })
+        .collect();
+    crate::github::tests::serve(Box::leak(routes.into_boxed_slice()))
+}
+
+/// As [`served_source`], with the served tag naming `fork_commit`.
+fn served_source_at(firmware_tag: Option<&str>, work: &Path, fork_commit: &str) -> GitHubSource {
+    let base = serve_routes(routes(fork_commit));
     let mut source = github_source(firmware_tag);
     source.github = GitHub::at(&base, &base, "curl");
     source.work = work.to_path_buf();
-    let src = work.join("src-v1.0.0-puddle.1");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("Cargo.toml"), "").unwrap();
     source
 }
 
@@ -174,7 +275,7 @@ fn facts_of_a_pinned_firmware_release_come_from_the_api() {
     let facts = served_source(Some("v5.6.1-puddle.1"), dir.path())
         .facts()
         .unwrap();
-    assert_eq!(facts.commits.len(), 1);
+    assert_eq!(facts.commits.len(), 2);
     assert_eq!(facts.firmware.commit, SHA);
     assert_eq!(facts.firmware.libkrunfw_version, "5.6.1");
     assert_eq!(facts.firmware.kernel_version, "6.12.109");
@@ -184,33 +285,48 @@ fn facts_of_a_pinned_firmware_release_come_from_the_api() {
 #[test]
 fn facts_of_upstreams_firmware_follow_the_submodule_of_the_fork_source() {
     let dir = tempfile::tempdir().unwrap();
-    let source = served_source(None, dir.path());
-    let src = dir.path().join("src-v1.0.0-puddle.1");
-    std::fs::write(
-        src.join(".gitmodules"),
-        "[submodule \"vendor/libkrunfw\"]\n\tpath = vendor/libkrunfw\n\turl = https://github.com/x/krunfw.git\n",
-    )
-    .unwrap();
-    let git = |args: &[&str]| {
-        run(git_command()
-            .arg("-C")
-            .arg(&src)
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args))
-        .unwrap();
-    };
-    git(&["init", "--quiet"]);
-    git(&[
-        "update-index",
-        "--add",
-        "--cacheinfo",
-        &format!("160000,{SHA},vendor/libkrunfw"),
-    ]);
-    git(&["commit", "--quiet", "-m", "x"]);
-    let facts = source.facts().unwrap();
+    let facts = served_source(None, dir.path()).facts().unwrap();
     assert_eq!(facts.firmware.commit, SHA);
     assert_eq!(facts.firmware.repo_url, "https://github.com/x/krunfw");
     assert_eq!(facts.firmware.fork_tag, None);
+}
+
+#[test]
+fn a_cached_clone_that_is_not_the_tag_is_cloned_again() {
+    let dir = tempfile::tempdir().unwrap();
+    // The cache holds a commit the tag no longer names; the tag now names the one in `origin`.
+    let stale = dir.path().join("work/src-v1.0.0-puddle.1");
+    std::fs::create_dir_all(&stale).unwrap();
+    let stale_commit = fork_repo(&stale, "v1.0.0-puddle.1");
+    let origin = dir.path().join("web/f/m.git");
+    std::fs::create_dir_all(&origin).unwrap();
+    let moved = fork_repo(&origin, "v1.0.0-puddle.1");
+    std::fs::write(origin.join("moved"), "").unwrap();
+    git_in(&origin, &["add", "moved"]);
+    git_in(&origin, &["commit", "--quiet", "-m", "moved"]);
+    git_in(&origin, &["tag", "-f", "v1.0.0-puddle.1"]);
+    let tagged = git_in(&origin, &["rev-parse", "HEAD"]).trim().to_owned();
+    assert_ne!(tagged, stale_commit);
+    assert_ne!(moved, tagged);
+
+    let mut source = served_source_at(None, &dir.path().join("work"), &tagged);
+    source.github = GitHub::at(
+        &source.github.api_root(),
+        &format!("file://{}", dir.path().join("web").display()),
+        "curl",
+    );
+    let src = source.checkout().unwrap();
+    assert_eq!(git_in(&src, &["rev-parse", "HEAD"]).trim(), tagged);
+}
+
+#[test]
+fn a_cached_clone_at_the_tag_is_reused() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = served_source(None, dir.path());
+    let src = dir.path().join("src-v1.0.0-puddle.1");
+    std::fs::write(src.join("marker"), "").unwrap();
+    assert_eq!(source.checkout().unwrap(), src);
+    assert!(src.join("marker").is_file());
 }
 
 #[test]
@@ -225,8 +341,13 @@ fn a_release_asset_is_downloaded_into_the_folder() {
 fn a_github_answer_that_is_missing_fails_the_facts() {
     let dir = tempfile::tempdir().unwrap();
     let mut source = served_source(Some("v5.6.1-puddle.1"), dir.path());
-    let no_makefile = &ROUTES[..2];
-    let base = crate::github::tests::serve(no_makefile);
+    let commit = git_in(
+        &dir.path().join("src-v1.0.0-puddle.1"),
+        &["rev-parse", "HEAD"],
+    );
+    let mut no_makefile = routes(commit.trim());
+    no_makefile.truncate(4);
+    let base = serve_routes(no_makefile);
     source.github = GitHub::at(&base, &base, "curl");
     let err = source.facts().unwrap_err().to_string();
     assert!(err.contains("404") && err.contains("Makefile"), "{err}");

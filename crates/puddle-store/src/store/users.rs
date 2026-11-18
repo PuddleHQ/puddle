@@ -161,8 +161,7 @@ impl Store {
 
     /// The user `workspace` belongs to, or `None` when no user is recorded for it: such a workspace
     /// is nobody's, so no user reaches it. Every create records its user before the workspace is
-    /// listed, and the first start after the upgrade records the owner for the workspaces made
-    /// before (see [`Store::adopt_unowned_workspaces`]).
+    /// listed, and every start records the user each listed workspace names.
     ///
     /// # Errors
     /// A database error.
@@ -175,35 +174,6 @@ impl Store {
             )
             .optional()?;
         Ok(id.map(UserId::from_stored))
-    }
-
-    /// Records the owner as the user of each of `workspaces` that has none, once: the workspaces
-    /// listed when this build first starts were made before every create recorded its user, so
-    /// they are the owner's. Later calls change nothing, so a workspace that lost its row is never
-    /// handed to the owner. Returns how many it recorded.
-    ///
-    /// # Errors
-    /// A database error; nothing is recorded then, and the next call tries again.
-    pub fn adopt_unowned_workspaces<'a>(
-        &self,
-        _: &AllUsers,
-        workspaces: impl IntoIterator<Item = &'a WorkspaceId>,
-    ) -> Result<usize, StoreError> {
-        let workspaces: Vec<&WorkspaceId> = workspaces.into_iter().collect();
-        self.change(|conn, _now, _fx| {
-            let open = conn.execute("DELETE FROM workspace_owners_adoption", [])? > 0;
-            if !open {
-                return Ok(0);
-            }
-            let mut stmt = conn.prepare(
-                "INSERT OR IGNORE INTO workspace_owners (workspace_id, user_id) VALUES (?1, ?2)",
-            )?;
-            let mut recorded = 0;
-            for workspace in workspaces {
-                recorded += stmt.execute(params![workspace.as_str(), UserId::OWNER.get()])?;
-            }
-            Ok(recorded)
-        })
     }
 
     /// Every recorded workspace user; a workspace that is not in the map is nobody's.
@@ -257,9 +227,8 @@ impl Store {
     }
 }
 
-/// The install's own reach across every user's data: the `*_every_user` reads and the one-shot
-/// adoption of [`Store::adopt_unowned_workspaces`] take it, for the server's jobs (maintenance,
-/// sweeps, metrics). [`Store::take_all_users`] hands out one per store, and the host takes it
+/// The install's own reach across every user's data: the `*_every_user` reads take it, for the
+/// server's jobs (maintenance, sweeps, metrics). [`Store::take_all_users`] hands out one per store, and the host takes it
 /// before it serves anything; request handlers never get one, so every read they make is kept to
 /// one user.
 #[derive(Debug)]
@@ -279,7 +248,13 @@ impl WorkspaceOwners {
     /// Whether `workspace` is `user`'s. A workspace with no recorded user is nobody's.
     #[must_use]
     pub fn is(&self, workspace: &WorkspaceId, user: UserId) -> bool {
-        self.0.get(workspace) == Some(&user)
+        self.of(workspace) == Some(user)
+    }
+
+    /// The user `workspace` belongs to, or `None` when it is nobody's.
+    #[must_use]
+    pub fn of(&self, workspace: &WorkspaceId) -> Option<UserId> {
+        self.0.get(workspace).copied()
     }
 }
 

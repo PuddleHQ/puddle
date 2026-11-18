@@ -87,6 +87,14 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
 - **R-12 Pending rows are immutable:** `id`, `workspace_id`, `host`, `port` and
   `first_seen` never change after insert; ids are never reused. Only `last_seen`, `attempts`,
   `state`, `decided_at`, `decided_by` and `rule_id` change, and `state` only along the arrows above.
+- **R-12a Undoing a decision lists the request again.** `POST /api/rules/{id}/undo` deletes the
+  rule and, for every row that rule closed (`rule_id` is the rule, state `allowed` or `denied`),
+  opens a new row with the same workspace, host, port, `first_seen`, `last_seen` and `attempts`, so
+  it sorts where the old one did and carries the same blocked state. The closed rows stay as they
+  were (R-12). A host that already has an open row (its workspace asked again meanwhile) gets no
+  second one. Each new row is a `pending_created` audit record and a `pending_opened` event. Plain
+  `DELETE /api/rules/{id}` stays a delete: it never reopens anything. A connection the proxy held
+  is answered when the decision is made, so the reopened row waits for the workspace's next try.
 - **R-44 Volume never refuses a request.** A request no rule matches is never denied, dropped or
   hidden because its workspace asks about many hosts: no rate limit slows new rows, and nothing is
   written to the audit as "held back". It is recorded and waits like any other.
@@ -548,7 +556,7 @@ the API. *Added 2026-10-08.*
 
 ### Groups and precedence
 
-*Specified 2026-11-14, amended 2026-11-16 (scale 1 to 9, no migration, precedence ranks rules on method and path, any overlap judged). Built in slices. Built: the precedence of every rule and a group's default (R-59), the order among rules on hosts (R-60), the switch (R-65). Not yet built: ranking a rule on method and path against the host rule that allowed the request, and R-61 to R-64 and R-66.*
+*Specified 2026-11-14, amended 2026-11-16 (scale 1 to 9, no migration, precedence ranks rules on method and path, any overlap judged). Built in slices. Built: the precedence of every rule and a group's default (R-59), the order among rules on hosts (R-60), the switch (R-65), editing in place (R-67). Not yet built: ranking a rule on method and path against the host rule that allowed the request, and R-61 to R-64 and R-66.*
 
 The Rules screen shows rules in **groups** (what the store calls a rule set, R-38): the locked
 *Built in* group with its parts, System managed under it, the groups the user made, and the rules
@@ -659,6 +667,14 @@ decides is each rule's own precedence.
   the database, R-36). Switching a rule on or off applies to the next request (R-8) and writes
   `rule_switched` (the rule, the new state, the actor). Switching one on closes the open requests
   it now decides, like a new rule (R-16).
+- **R-67 A rule can be edited in place.** `PUT /api/rules/{id}` takes the whole of what the rule
+  should say: host pattern, effect, scope (every workspace, one workspace, or a group of the same
+  user) and expiry, and optionally a precedence (left out, the rule keeps its own). The rule keeps
+  its id, creator, creation time and switch (R-65). The change applies to the next request (R-8),
+  closes the open requests the rule now decides, like a new rule (R-16), and writes one
+  `rule_updated` record with the actor (R-66); an edit that changes nothing writes nothing. The
+  same checks as for a new rule apply (public suffix, expiry in the future, a workspace or group
+  that is the user's), and a rule is edited only by the user it belongs to.
 - **R-66 What is recorded.** `rule_switched` (R-65), `rule_updated` (a rule edited in place:
   the fields that changed, including precedence, with the actor) and
   `rules_imported` (the group, the counts, the skipped conflicts). They use the actors of §1.

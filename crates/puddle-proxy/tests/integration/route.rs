@@ -407,6 +407,49 @@ async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
     assert_eq!(rig.policy.pending().len(), 1, "no new pending item");
 }
 
+/// The count a reader waits on to know the audit is complete: open while the tunnel lives, zero
+/// only after the connection's record is written.
+#[tokio::test]
+async fn a_connection_is_open_until_its_record_is_written() {
+    let echo = echo_server().await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("echo.test", &[LOCAL]),
+    );
+    rig.policy.allow(&host("echo.test"));
+    assert_eq!(rig.proxy.open_guest_streams(), 0);
+
+    let mut guest = rig.guest().await;
+    let (code, mut reader) = guest
+        .connect_to(&format!("echo.test:{}", echo.port()))
+        .await;
+    assert_eq!(code, 200);
+    reader.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    reader.read_exact(&mut back).await.unwrap();
+    assert_eq!(rig.proxy.open_guest_streams(), 1, "the tunnel is open");
+    assert!(
+        rig.log.events().is_empty(),
+        "nothing is recorded while it is"
+    );
+
+    reader.get_mut().shutdown().await.unwrap();
+    puddle_test_kit::eventually(
+        "the connection is closed and recorded",
+        Duration::from_secs(10),
+        || match rig.proxy.open_guest_streams() {
+            0 => Ok(()),
+            open => Err(format!("{open} still open")),
+        },
+    )
+    .await;
+    assert_eq!(
+        rig.log.events().len(),
+        1,
+        "at zero open connections the record is already written"
+    );
+}
+
 #[tokio::test]
 async fn refusals_carry_decision_headers_and_end_cleanly() {
     let rig = Rig::new(&ProxyConfig::default());
@@ -873,6 +916,71 @@ async fn the_default_address_check_blocks_loopback_even_when_allowed() {
     // Blocked at the name stage: the rules were never asked, nothing went pending (R-14).
     assert_eq!(policy.pending().len(), 0);
     assert_eq!(policy.decisions(), 0);
+}
+
+/// What the guest sees when it asks for a cloud metadata endpoint: the toggle named, never an
+/// approval to give, and with the toggle on an ordinary pending row.
+#[tokio::test]
+async fn a_cloud_metadata_destination_is_refused_naming_its_toggle_and_waits_for_approval_once_it_is_on()
+ {
+    let targets = ["169.254.169.254:80", "metadata.google.internal:80"];
+    let guard = |access: puddle_netpolicy::LocalAccess| -> Arc<dyn AddressCheck> {
+        Arc::new(puddle_netpolicy::NetPolicy::new(Arc::new(access)))
+    };
+    let off = Rig::with_checks(
+        &ProxyConfig::default(),
+        StaticResolver::new(),
+        guard(puddle_netpolicy::LocalAccess::NONE),
+    );
+    let mut guest = off.guest().await;
+    for target in targets {
+        let mut stream = guest.stream().await;
+        stream
+            .write_all(format!("CONNECT {target} HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, headers) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403, "{target}");
+        assert_eq!(
+            header_value(&headers, "x-puddle-blocked").as_deref(),
+            Some("toggle:metadata"),
+            "{target}"
+        );
+        assert_eq!(header_value(&headers, "x-puddle-pending"), None, "{target}");
+        let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
+        assert!(
+            body.contains("'metadata' (cloud metadata)") && body.contains("toggle is off"),
+            "{target}: {body}"
+        );
+    }
+    assert_eq!(off.policy.pending().len(), 0, "no pending row");
+    assert_eq!(off.policy.decisions(), 0, "the rules were never asked");
+
+    // With the toggle on, the same requests are ordinary unknown hosts.
+    let on = Rig::with_checks(
+        &ProxyConfig::default(),
+        StaticResolver::new(),
+        guard(puddle_netpolicy::LocalAccess::NONE.with_toggle(LocalCategory::Metadata, true)),
+    );
+    let mut guest = on.guest().await;
+    for target in targets {
+        let mut stream = guest.stream().await;
+        stream
+            .write_all(format!("CONNECT {target} HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, headers) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403, "{target}");
+        assert_eq!(
+            header_value(&headers, "x-puddle-decision").as_deref(),
+            Some("pending"),
+            "{target}"
+        );
+        assert_eq!(header_value(&headers, "x-puddle-blocked"), None, "{target}");
+    }
+    assert_eq!(on.policy.pending().len(), 2);
 }
 
 /// The workspace is the route's. Two routes, the same request: each pending item names the

@@ -140,6 +140,65 @@ describe("adding", () => {
   });
 });
 
+describe("editing", () => {
+  const edit = {
+    effect: "deny" as const,
+    pattern: "*.example.org",
+    scope: { type: "global" as const },
+    expires_at: null,
+  };
+  it("puts the whole rule, replaces the row with the answer and tells the badge", async () => {
+    api.rules = [rule(1), rule(2)];
+    const store = make();
+    await store.refresh();
+    const result = await store.update(2, edit);
+    expect(result).toMatchObject({ ok: true, rule: { id: 2, effect: "deny" } });
+    expect(api.calls).toContain("PUT /api/rules/{id}");
+    expect(api.bodies.at(-1)).toEqual(edit);
+    expect(store.rules.map((r) => [r.id, r.pattern, r.effect])).toEqual([
+      [1, "h1.example.com", "allow"],
+      [2, ".example.org", "deny"],
+    ]);
+    expect(changed).toBe(1);
+  });
+  it("hands back a 422 as a pattern error and a 404 in the server's words, then reads again", async () => {
+    api.rules = [rule(1)];
+    const store = make();
+    await store.refresh();
+    api.refuse = { status: 422, message: "pattern is a public suffix" };
+    expect(await store.update(1, edit)).toEqual({
+      ok: false,
+      field: "pattern",
+      message: "Pattern is a public suffix.",
+    });
+    expect(store.rules[0]?.effect).toBe("allow");
+    expect(changed).toBe(0);
+    const reads = api.calls.filter((c) => c === "GET /api/rules").length;
+    expect(await store.update(9, edit)).toEqual({
+      ok: false,
+      field: "form",
+      message: "Refused.",
+    });
+    await vi.waitFor(() =>
+      expect(api.calls.filter((c) => c === "GET /api/rules")).toHaveLength(
+        reads + 1,
+      ),
+    );
+  });
+  it("hands back any other refusal, and a stopped service, as a form error", async () => {
+    api.rules = [rule(1)];
+    const store = make();
+    await store.refresh();
+    api.refuse = { status: 500, message: "boom" };
+    expect(await store.update(1, edit)).toMatchObject({
+      field: "form",
+      message: "Boom.",
+    });
+    api.down = true;
+    expect(await store.update(1, edit)).toMatchObject({ field: "form" });
+  });
+});
+
 describe("changing", () => {
   it("replaces a rule with its new expiry", async () => {
     api.rules = [rule(1), rule(2)];

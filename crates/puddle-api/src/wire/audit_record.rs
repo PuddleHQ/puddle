@@ -339,7 +339,7 @@ pub enum AuditRecord {
         #[schema(required = true)]
         detail: Option<String>,
     },
-    /// The oldest records were deleted to keep the audit under its size cap.
+    /// Records older than the audit's retention period were deleted.
     AuditTrimmed {
         /// Epoch ms.
         ts: u64,

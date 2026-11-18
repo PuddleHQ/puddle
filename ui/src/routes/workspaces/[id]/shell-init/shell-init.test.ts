@@ -70,22 +70,26 @@ describe("the editor", () => {
     await waitFor(() => expect(hasUnsavedEdits()).toBe(false));
   });
 
-  it("shows the saved script and keeps Save for a change", async () => {
+  it("shows the saved script and keeps Save for a change and shows Discard only with one", async () => {
     render(Page);
     expect(await box()).toHaveValue("export A=1\n");
     expect(screen.getByText(/must print nothing/)).toBeTruthy();
     expect(button("Save")).toBeDisabled();
-    expect(button("Discard changes")).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Discard changes" }),
+    ).toBeNull();
     expect(button("Remove the script")).toBeEnabled();
     expect(screen.getByText(/Saved\./)).toBeTruthy();
   });
 
-  it("says nothing is saved yet, and can't remove what is not there", async () => {
+  it("says nothing is saved yet, and shows no Remove for what is not there", async () => {
     api.shell = {};
     render(Page);
     expect(await box()).toHaveValue("");
     expect(screen.getByText(/Nothing saved yet/)).toBeTruthy();
-    expect(button("Remove the script")).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Remove the script" }),
+    ).toBeNull();
   });
 
   it("saves a change and says the running workspace ran it once", async () => {

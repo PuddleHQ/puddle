@@ -21,6 +21,7 @@ import {
 } from "#lib/stores/workspaces.svelte.ts";
 import type { Identity } from "#lib/identities/model.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
+import { session } from "#lib/session/session.svelte.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
 
 // The limit is 100 (pinned in repo-rows.test.ts); a form with that many rows takes seconds to
@@ -64,6 +65,8 @@ vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
 afterEach(() => {
   h.desktop = false;
+  session.mode = "checking";
+  session.user = null;
   h.pick.mockReset();
   cleanup();
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
@@ -161,6 +164,29 @@ describe("CreateWorkspaceDialog", () => {
       name: "Shop",
       repositories: [{ url: "", local_path: "/home/you/Shop/" }],
     });
+  });
+
+  it("offers the folder source to the owner and to a window with nothing to sign in to", async () => {
+    session.mode = "local";
+    mount();
+    await screen.findByRole("dialog");
+    expect(screen.getByTestId("source-folder")).toBeInTheDocument();
+    cleanup();
+    session.mode = "signed-in";
+    session.user = { id: 1, name: "ann", role: "owner" };
+    mount();
+    await screen.findByRole("dialog");
+    expect(screen.getByTestId("source-folder")).toBeInTheDocument();
+  });
+
+  it("hides the folder source from a signed-in user who is not the owner, and still offers the address", async () => {
+    session.mode = "signed-in";
+    session.user = { id: 2, name: "bob", role: "user" };
+    mount();
+    await screen.findByRole("dialog");
+    expect(screen.queryByTestId("source-folder")).toBeNull();
+    expect(screen.queryByText(/From a folder on this computer/)).toBeNull();
+    expect(screen.getByTestId("source-address")).toBeInTheDocument();
   });
 
   it("offers no folder dialog in a browser", async () => {
@@ -463,17 +489,122 @@ describe("CreateWorkspaceDialog", () => {
     );
   });
 
-  it("takes an SSH address of a Git host and sends it as typed for the host to turn into HTTPS", async () => {
+  it("takes an SSH address of a Git host, shows its HTTPS address and sends that", async () => {
     const { create } = mount();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "git@github.com:acme/web.git");
     await type("Name", "web");
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByText("Will clone https://github.com/acme/web.git"),
+    ).toBeInTheDocument();
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0]?.[0]).toMatchObject({
-      repositories: [{ url: "git@github.com:acme/web.git" }],
+      repositories: [{ url: "https://github.com/acme/web.git" }],
     });
+  });
+
+  describe("the repository field", () => {
+    const repo = () => field("Git repository (HTTPS)");
+
+    it.each([
+      ["sharkdp/fd", "https://github.com/sharkdp/fd"],
+      ["github.com/sharkdp/fd", "https://github.com/sharkdp/fd"],
+      ["gitlab.com/acme/web", "https://gitlab.com/acme/web"],
+    ])(
+      "reads %j as %j, says so under the field and sends that",
+      async (typed, url) => {
+        const { create } = mount();
+        await screen.findByRole("dialog");
+        await type("Git repository (HTTPS)", typed);
+        expect(screen.getByText(`Will clone ${url}`)).toBeInTheDocument();
+        expect(repo()).toHaveAccessibleDescription(`Will clone ${url}`);
+        await fireEvent.click(submit());
+        await vi.waitFor(() => expect(create).toHaveBeenCalled());
+        expect(create.mock.calls[0]?.[0]).toMatchObject({
+          repositories: [{ url }],
+        });
+      },
+    );
+
+    it("says nothing extra for an address that is already the one cloned", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+      expect(screen.queryByText(/^Will clone/)).toBeNull();
+    });
+
+    it("refuses an address with credentials at the keystroke, before Create", async () => {
+      const { create } = mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "https://user:pw@github.com/x/y");
+      // No timer, no blur: the message is there as soon as the typing event is handled.
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+      );
+      expect(repo()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.queryByText(/^Will clone/)).toBeNull();
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a bad address while typing, and takes the message away once it is fixed", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "user:pw@github.com/x/y");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Remove the user name and password from the URL",
+      );
+      await type("Git repository (HTTPS)", "sharkdp/fd");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(
+        screen.getByText("Will clone https://github.com/sharkdp/fd"),
+      ).toBeInTheDocument();
+    });
+
+    it("waits for the field to be left before calling a half-typed owner/repo wrong", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await type("Git repository (HTTPS)", "sharkdp");
+      expect(screen.queryByRole("alert")).toBeNull();
+      await fireEvent.blur(repo());
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Give owner/repo for a GitHub repository",
+      );
+    });
+
+    it("does not nag about an empty field until Create", async () => {
+      mount();
+      await screen.findByRole("dialog");
+      await fireEvent.blur(repo());
+      expect(screen.queryByRole("alert")).toBeNull();
+      await fireEvent.click(submit());
+      expect(screen.getAllByRole("alert")[0]).toHaveTextContent(
+        "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
+      );
+    });
+
+    it.each([
+      [
+        "fd",
+        "Give owner/repo for a GitHub repository, or the repository's full address.",
+      ],
+      ["http://github.com/x/y", "Use an https:// URL."],
+      ["../fd", "The address can't have . or .. as a name in its path."],
+      [
+        "github.com./acme/web",
+        "Leave out the dot at the end of the host name.",
+      ],
+    ])(
+      "puts the refusal of %j at the field when it is left",
+      async (typed, message) => {
+        mount();
+        await screen.findByRole("dialog");
+        await type("Git repository (HTTPS)", typed);
+        await fireEvent.blur(repo());
+        expect(screen.getByRole("alert")).toHaveTextContent(message);
+      },
+    );
   });
 
   it("checks the memory field too", async () => {

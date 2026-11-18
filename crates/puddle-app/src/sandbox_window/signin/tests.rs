@@ -2,6 +2,7 @@
 use std::sync::{Arc, Mutex};
 
 use http::Response;
+use http_body_util::BodyExt;
 use hyper::service::service_fn;
 use puddle_types::fixture;
 use tokio::net::TcpListener;
@@ -123,4 +124,34 @@ fn the_cookie_s_debug_form_hides_its_value() {
         shown.contains("code-server-session") && !shown.contains("abc123"),
         "{shown}"
     );
+}
+
+#[tokio::test]
+async fn an_answer_whose_body_never_ends_is_not_read() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let head = "HTTP/1.1 302 Found\r\nset-cookie: code-server-session=abc123; Path=/\r\n\
+                    transfer-encoding: chunked\r\n\r\n";
+        if stream.write_all(head.as_bytes()).await.is_err() {
+            return;
+        }
+        // A request body is never read here; the answer streams until the client hangs up.
+        while stream.write_all(b"400\r\n").await.is_ok()
+            && stream.write_all(&[b'x'; 0x400]).await.is_ok()
+            && stream.write_all(b"\r\n").await.is_ok()
+        {
+            tokio::task::yield_now().await;
+        }
+    });
+    let answer = tokio::time::timeout(
+        Duration::from_secs(5),
+        sign_in(addr, &workspace(), &fixture::password("unused")),
+    )
+    .await
+    .expect("the sign-in does not wait for the end of the body");
+    assert_eq!(answer.unwrap().value(), "abc123");
 }

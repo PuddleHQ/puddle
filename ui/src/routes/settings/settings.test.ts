@@ -114,6 +114,16 @@ describe("the mise switch", () => {
     ).toBe(false);
   });
 
+  it("is not shown at all in a build without the mise layer (v0.1)", async () => {
+    api.miseAvailable = false;
+    await open();
+    expect(
+      screen.queryByLabelText("Manage tools with mise in workspaces"),
+    ).toBeNull();
+    expect(screen.queryByText(/mise/i)).toBeNull();
+    api.miseAvailable = true;
+  });
+
   it("sends nothing for a switch put back to what is stored", async () => {
     await open();
     const box = screen.getByLabelText("Manage tools with mise in workspaces");
@@ -181,12 +191,14 @@ describe("the screen", () => {
     expect(screen.getByText(/Open VSX/)).toBeInTheDocument();
   });
 
-  it("links to the network health details", async () => {
+  it("links to the network health details and the app errors", async () => {
     await open();
-    expect(screen.getByRole("link", { name: /Details/ })).toHaveAttribute(
-      "href",
-      "/settings/network-health",
-    );
+    expect(
+      screen.getByRole("link", { name: /^Details\s*about network health$/ }),
+    ).toHaveAttribute("href", "/settings/network-health");
+    expect(
+      screen.getByRole("link", { name: /^Details\s*about app errors$/ }),
+    ).toHaveAttribute("href", "/settings/app-errors");
   });
 
   it("states that Puddle sends nothing", async () => {
@@ -679,7 +691,7 @@ describe("notification and inbox switches", () => {
       "confirm_global_rules",
       true,
     ],
-    ["Keyboard shortcuts in the inbox", "inbox_shortcuts", false],
+    ["Keyboard shortcuts in the inbox", "inbox_shortcuts", true],
     ["Start Puddle when I sign in", "start_at_login", false],
     ["Minimizing hides Puddle in the tray", "minimize_to_tray", false],
   ];

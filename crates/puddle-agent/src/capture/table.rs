@@ -359,6 +359,10 @@ impl Inner {
     }
 
     /// Writes the whole table (oldest use first) to a temporary file and moves it over `path`.
+    ///
+    /// Not synced: this runs under the table's lock on the DNS and capture path, where a disk
+    /// sync would stall every answer and connection, and the table is a cache (its appended
+    /// lines are not synced either), so a crash that loses it costs only the old names.
     fn rewrite(&self, path: &Path) -> io::Result<()> {
         let text: String = self
             .lru
@@ -368,7 +372,15 @@ impl Inner {
                 Some(format!("{} {}\n", address(offset), entry.name))
             })
             .collect();
-        puddle_fs::private::write_atomic(path, text.as_bytes())
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let tmp = PathBuf::from(tmp);
+        // A leftover of a crash or of a failed rename goes first: the owner-only create refuses an
+        // existing file.
+        let _ = fs::remove_file(&tmp);
+        puddle_fs::private::create_file(&tmp)
+            .and_then(|mut file| file.write_all(text.as_bytes()))
+            .and_then(|()| fs::rename(&tmp, path))
     }
 
     fn append(&mut self, offset: u32, name: &str) {

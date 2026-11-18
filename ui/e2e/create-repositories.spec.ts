@@ -710,3 +710,45 @@ test.describe("a checkout on this computer", () => {
     await expect(folder).toHaveValue("/home/you/Shop");
   });
 });
+
+test.describe("validation speed", () => {
+  // The bars are wall-clock from the keystroke to the message in a real browser against the real
+  // backend, so they include Playwright's own round trips: generous for one frame, tight enough to
+  // fail on a debounce timer (the old form waited 700 ms).
+  const LOCAL_MS = 250;
+  const HOST_MS = 400;
+
+  test("a refusal that needs no host shows at the keystroke, with no timer", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    await openCreate(page);
+    const field = addrOf(page, 1);
+    await field.focus();
+    const started = Date.now();
+    await page.keyboard.type("https://user:pw@github.com/acme/api");
+    await expect(dialogOf(page).getByRole("alert")).toContainText(
+      "Remove the user name and password",
+      { timeout: LOCAL_MS },
+    );
+    expect(Date.now() - started).toBeLessThan(LOCAL_MS + 200);
+  });
+
+  test("the host check answers within 400 ms of the last keystroke", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    await openCreate(page);
+    await addrOf(page, 1).focus();
+    await page.keyboard.type("https://newhost.example.org/acme/api.git");
+    const started = Date.now();
+    await expect(
+      dialogOf(page)
+        .getByTestId("hosts-new")
+        .or(dialogOf(page).getByTestId("hosts-blocked")),
+    ).toBeVisible({ timeout: HOST_MS });
+    expect(Date.now() - started).toBeLessThan(HOST_MS);
+  });
+});

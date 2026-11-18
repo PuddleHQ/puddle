@@ -542,6 +542,9 @@ describe("the overview", () => {
       within(dialog).getByRole("button", { name: "Cancel" }),
     );
     expect(inbox.calls.filter((c) => c.includes("deny"))).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
     await fireEvent.click(screen.getByRole("button", { name: "Deny all" }));
     dialog = await screen.findByRole("alertdialog");
     await fireEvent.click(

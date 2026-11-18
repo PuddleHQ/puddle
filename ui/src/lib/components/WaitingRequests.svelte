@@ -20,7 +20,7 @@
   let currentId = $state<number | null>(null);
   let heading = $state<HTMLElement>();
   let flow = $state<ReturnType<typeof DecisionFlow>>();
-  let bulk = $state<Effect | null>(null);
+  let bulk = $state<Effect>("allow");
   let bulkOpen = $state(false);
   let bulkCount = $state(0);
   let working = $state(false);
@@ -54,7 +54,6 @@
 
   async function decideAll() {
     const effect = bulk;
-    if (!effect || working) return;
     working = true;
     let done = 0;
     let failed = 0;
@@ -141,9 +140,6 @@
   {working}
   holdOpen
   onConfirm={() => void decideAll()}
-  onCancel={() => {
-    bulk = null;
-  }}
 />
 
 <style>

@@ -9,13 +9,13 @@
 
   // Under the repository addresses of a form: an info box naming the hosts the create will allow
   // for the workspace, and an error box naming the rule that blocks one. `blocked` tells the form
-  // to grey out its button. The answer is asked for after the typing stops.
+  // to grey out its button. The answer is asked for 120 ms after the typing stops and a line says it is pending.
   let {
     urls,
     workspace = undefined,
     check = checkHosts,
     onBlocked = undefined,
-    delay = 300,
+    delay = 120,
   }: {
     urls: readonly string[];
     workspace?: string | undefined;
@@ -25,6 +25,7 @@
   } = $props();
 
   let hosts = $state<RepositoryHost[]>([]);
+  let pending = $state(false);
 
   // The notes sit at the end of a scrollable dialog. When the answer drops a line (a row removed,
   // an address edited) the dialog's scroll position clamps and every row above moves down with
@@ -45,12 +46,21 @@
     const asked: string[] = JSON.parse(key);
     if (asked.length === 0) {
       hosts = [];
+      pending = false;
       return;
     }
     let live = true;
+    pending = true;
     const timer = setTimeout(async () => {
-      const answer = await check(asked, workspace);
-      if (live) hosts = answer ?? [];
+      let answer: RepositoryHost[] | null | undefined;
+      try {
+        answer = await check(asked, workspace);
+      } finally {
+        if (live) {
+          hosts = answer ?? [];
+          pending = false;
+        }
+      }
     }, delay);
     return () => {
       live = false;
@@ -76,6 +86,11 @@
       {host.blocked_by ?? `${host.host} is blocked by a rule.`}
     </p>
   {/each}
+  {#if pending && fresh.length === 0 && refused.length === 0}
+    <p class="hint" data-testid="hosts-pending" aria-live="polite">
+      Checking the repository hosts...
+    </p>
+  {/if}
   {#if fresh.length > 0}
     <p class="hint" data-testid="hosts-new">
       Creating this allows {hostList(fresh.map((h) => h.host))} for this workspace,

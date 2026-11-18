@@ -32,7 +32,7 @@ pub mod testing;
 mod users;
 mod workspace_git;
 
-pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
+pub use account_secrets::{AccountSecrets, CheckedPassword, MIN_INVITE_DIGEST_BYTES};
 pub use admin::{AdminAction, AdminAuditEntry, MAX_ADMIN_AUDIT_LINES, UserFacts};
 pub use audit::{
     ActorWire, AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES,

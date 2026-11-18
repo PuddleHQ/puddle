@@ -7,7 +7,9 @@
     authorFill,
     credentialChip,
     describeSource,
+    authorProblem,
     identityProblem,
+    labelProblem,
     type AccountProfile,
     type CredentialDraft,
     type Identity,
@@ -46,6 +48,20 @@
     field: "label" | "name" | "email" | "form";
     message: string;
   } | null>(null);
+  // A refusal of a field that holds something shows as it is typed; an empty field waits for Save.
+  const typed = $derived.by(() => {
+    const others = store.identities
+      .filter((i) => i.id !== identity?.id)
+      .map((i) => i.label);
+    const bad = label.trim() === "" ? null : labelProblem(label, others);
+    if (bad) return { field: "label" as const, message: bad };
+    const author =
+      email.trim() === "" || name.trim() === ""
+        ? null
+        : authorProblem(name, email);
+    return author ? { field: "email" as const, message: author } : null;
+  });
+  const shown = $derived(problem ?? typed);
   let busy = $state(false);
   let saved = false;
   /** Tokens pasted since the dialog opened, by the line that names them. */
@@ -170,10 +186,8 @@
         maxlength="64"
         placeholder="Work"
         bind:value={label}
-        aria-invalid={problem?.field === "label" ? "true" : undefined}
-        aria-describedby={problem?.field === "label"
-          ? `${id}-error`
-          : undefined}
+        aria-invalid={shown?.field === "label" ? "true" : undefined}
+        aria-describedby={shown?.field === "label" ? `${id}-error` : undefined}
       />
     </div>
     <fieldset>
@@ -185,10 +199,8 @@
           type="text"
           autocomplete="off"
           bind:value={name}
-          aria-invalid={problem?.field === "name" ? "true" : undefined}
-          aria-describedby={problem?.field === "name"
-            ? `${id}-error`
-            : undefined}
+          aria-invalid={shown?.field === "name" ? "true" : undefined}
+          aria-describedby={shown?.field === "name" ? `${id}-error` : undefined}
         />
       </div>
       <div class="field">
@@ -199,8 +211,8 @@
           inputmode="email"
           autocomplete="off"
           bind:value={email}
-          aria-invalid={problem?.field === "email" ? "true" : undefined}
-          aria-describedby={problem?.field === "email"
+          aria-invalid={shown?.field === "email" ? "true" : undefined}
+          aria-describedby={shown?.field === "email"
             ? `${id}-error`
             : undefined}
         />
@@ -256,8 +268,8 @@
     {/if}
   </section>
 
-  {#if problem}
-    <p class="error" id="{id}-error" role="alert">{problem.message}</p>
+  {#if shown}
+    <p class="error" id="{id}-error" role="alert">{shown.message}</p>
   {/if}
   <div class="actions">
     <button type="button" class="btn" onclick={() => (open = false)}

@@ -305,17 +305,34 @@ jobs:
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
           python3 -m venv "$RUNNER_TEMP/lab-venv"
-          "$RUNNER_TEMP/lab-venv/bin/pip" install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/bin/pip" install --retries 10 --timeout 60 --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/bin/mitmdump" --version
           echo "PUDDLE_MITMDUMP_BIN=$RUNNER_TEMP/lab-venv/bin/mitmdump" >> "$GITHUB_ENV"
       # The lab's Git host (crates/puddle-e2e/src/lab/forgejo.rs): the pinned Forgejo release, so the fixture and its
       # test (`forgejo_lab`) run in the coverage lane instead of skipping.
-      - name: Forgejo for the lab Git host (pinned release; download, verify)
+      # Restored before the download and saved right after it, so one run that got the file serves every later one
+      # even when the upstream host and the mirror are down; the script still checks the cached file against the pin.
+      - name: Forgejo download cache (keyed on the pin)
+        id: forgejo-cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/forgejo-cache
+          key: forgejo-${{ runner.os }}-${{ hashFiles('ci/forgejo.sha256') }}
+      - name: Forgejo for the lab Git host (pinned release; cache, upstream or mirror; verify)
+        id: forgejo
         if: ${{ !cancelled() }}
         run: |
-          ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
+          FETCH_CACHE_DIR="$HOME/forgejo-cache" ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
           "$RUNNER_TEMP/forgejo/forgejo" --version
           echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo" >> "$GITHUB_ENV"
+      - name: Forgejo download cache (save on a miss)
+        if: ${{ !cancelled() && steps.forgejo.outcome == 'success' && steps.forgejo-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/forgejo-cache
+          key: ${{ steps.forgejo-cache.outputs.cache-primary-key }}
       # The login tests run the real Claude Code, `gh` (on the runner image) and Copilot CLI against fake
       # servers. The two npm packages are pinned in ci/login-tools/package.json and its lockfile, which
       # Dependabot bumps weekly (the npm entry for /ci/login-tools in .github/dependabot.yml): a bump PR
@@ -506,6 +523,9 @@ jobs:
       - name: early-exit pipes (grep -q after a pipe is a SIGPIPE coin toss under pipefail)
         if: ${{ !cancelled() }}
         run: scripts/check.sh early-exit-pipes
+      - name: spawn (a host process start opens no console window on Windows)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh spawn
       - name: test hooks (a test-only feature stays out of release builds; a test that starts a doctor sets az_search_path)
         if: ${{ !cancelled() }}
         run: scripts/check.sh test-hooks
@@ -641,6 +661,10 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
           restore-keys: cargo-xwin-
+      # The cold cargo home fetches the microsandbox git dependency and its `skills` submodule here, with
+      # retries, so a TLS error on one fetch ends in a retry and not in a red job (ci/cargo-fetch.sh).
+      - name: Crate sources (with retries)
+        run: ci/cargo-fetch.sh
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows

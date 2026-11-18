@@ -117,7 +117,7 @@
         <label for="{fid}-text">Script for {workspace.name}</label>
         <textarea
           id="{fid}-text"
-          class="mono"
+          class="mono input-wide"
           rows="14"
           spellcheck="false"
           autocapitalize="off"
@@ -145,21 +145,25 @@
           class="btn primary"
           disabled={busy || !dirty || text === ""}>Save</button
         >
-        <button
-          type="button"
-          class="btn"
-          disabled={busy || !dirty}
-          onclick={() => {
-            edit = null;
-            problem = null;
-          }}>Discard changes</button
-        >
-        <button
-          type="button"
-          class="btn deny"
-          disabled={busy || !view.saved}
-          onclick={remove}>Remove the script</button
-        >
+        {#if dirty}
+          <button
+            type="button"
+            class="btn"
+            disabled={busy}
+            onclick={() => {
+              edit = null;
+              problem = null;
+            }}>Discard changes</button
+          >
+        {/if}
+        {#if view.saved}
+          <button
+            type="button"
+            class="btn deny"
+            disabled={busy}
+            onclick={remove}>Remove the script</button
+          >
+        {/if}
       </div>
     </form>
   </section>
@@ -218,20 +222,7 @@
   .field label {
     font-weight: 600;
   }
-  textarea {
-    box-sizing: border-box;
-    width: 100%;
-    padding: var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font-size: var(--text-sm);
-    resize: vertical;
-  }
-  textarea[aria-invalid="true"] {
-    border-color: var(--color-danger);
-  }
+
   .acts {
     display: flex;
     flex-wrap: wrap;

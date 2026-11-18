@@ -12,7 +12,10 @@
     type IdentitiesStore,
   } from "#lib/stores/identities.svelte.ts";
   import type { AddRepository } from "#lib/stores/checkouts.svelte.ts";
-  import { resolveRepoAddress } from "#lib/workspaces/model.ts";
+  import {
+    isIncompleteAddress,
+    resolveRepoAddress,
+  } from "#lib/workspaces/model.ts";
   import {
     directoryFor,
     directoryProblem,
@@ -118,8 +121,13 @@
       return `${target} already exists in the workspace. Puddle never clones into a folder that holds anything: use another directory, or use "Manage this" on the checkout that is there.`;
     return null;
   });
+  // A definite refusal shows as it is typed; the half-typed shorthand waits until the field is left.
   const shownUrl = $derived(
-    touched || (urlLeft && url.trim() !== "") ? urlProblem : null,
+    touched ||
+      (url.trim() !== "" &&
+        (urlLeft || !(urlProblem && isIncompleteAddress(urlProblem))))
+      ? urlProblem
+      : null,
   );
   const shownDirectory = $derived(touched ? directoryError : null);
 

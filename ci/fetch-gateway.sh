@@ -5,7 +5,9 @@
 # match the SHA-256 pinned in ci/gateway.sha256.
 # Usage: ci/fetch-gateway.sh <dest-dir>
 # GATEWAY_BASE_URL replaces https://download.jetbrains.com/idea/gateway (tests);
-# FETCH_ATTEMPTS and FETCH_RETRY_BASE_S set the retry window (ci/fetch-retry.sh).
+# FETCH_ATTEMPTS and FETCH_RETRY_BASE_S set the retry window (ci/fetch-retry.sh). FETCH_CACHE_DIR (CI restores it
+# from an Actions cache keyed on the pin) is used first; a cached copy is checked against the pin like a download.
+# JetBrains' licence allows no public mirror, so the cache is what carries a run through a download.jetbrains.com outage.
 # Network failures are retried (infrastructure) and each retry is printed; a checksum mismatch never is.
 set -eu
 
@@ -23,12 +25,18 @@ want=${rest##* }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-download fetch-gateway "${GATEWAY_BASE_URL:-https://download.jetbrains.com/idea/gateway}/$asset" "$work/$asset" 900
+cached=
+if cache_get fetch-gateway "$asset" "$want" "$work/$asset"; then
+    cached=1
+else
+    download fetch-gateway "${GATEWAY_BASE_URL:-https://download.jetbrains.com/idea/gateway}/$asset" "$work/$asset" 900
+fi
 got=$(sha256sum < "$work/$asset" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then
     echo "fetch-gateway: checksum mismatch for $asset: got $got, pinned $want" >&2
     exit 1
 fi
+[ -n "$cached" ] || cache_put "$asset" "$work/$asset"
 mkdir -p "$dest"
 tar -xzf "$work/$asset" -C "$dest" --strip-components=1
 [ -x "$dest/bin/gateway.sh" ] || { echo "fetch-gateway: $asset has no bin/gateway.sh" >&2; exit 1; }

@@ -3,6 +3,7 @@
 
 mod audit_retention;
 mod events_and_audit_query;
+mod golden_database;
 mod identities_spec;
 mod rule_sets_spec;
 mod rules_spec;

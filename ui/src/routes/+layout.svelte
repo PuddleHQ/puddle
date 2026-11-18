@@ -3,6 +3,7 @@
   import "#lib/theme/fonts.css";
   import "#lib/theme/tokens.css";
   import "#lib/theme/base.css";
+  import "#lib/theme/controls.css";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { version } from "$app/env";

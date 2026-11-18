@@ -165,12 +165,7 @@
     gap: var(--space-3);
     cursor: pointer;
   }
-  .choice input {
-    flex: none;
-    width: 1.5rem;
-    height: 1.5rem;
-    margin: 0;
-  }
+
   .swatches {
     display: flex;
     margin-left: auto;

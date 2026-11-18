@@ -4,19 +4,17 @@
 //! the API's routes, on every listener the API has (the loopback one for a proxy on this machine
 //! and the network one for a proxy elsewhere).
 //!
-//! A name that is one label below the base domain but names no workspace is refused with `421`,
-//! like any other name that is not Puddle's. Nothing reaches a guest without the way in Puddle
-//! hands a signed-in browser.
+//! Every such name gets the same answer, whether or not a workspace has that id: the request has
+//! not signed in, so it must not learn which ids exist (another user's included). Nothing reaches
+//! a guest without the way in Puddle hands a signed-in browser.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use puddle_front::host_header::Refusal;
 use puddle_front::remote_label::sync_shadow_problems;
-use puddle_types::{Problems, WorkspaceId};
+use puddle_types::Problems;
 
 use crate::remote::WorkspaceNames;
 use crate::workspaces::WorkspaceService;
@@ -42,7 +40,7 @@ impl RemoteEditor {
             workspaces,
             problems,
         };
-        editor.known();
+        editor.sync_problems();
         editor
     }
 
@@ -52,26 +50,19 @@ impl RemoteEditor {
         one_host(headers).is_some_and(|host| self.names.claims(host))
     }
 
-    /// The ids of every workspace, with the clash problems brought up to date on the way.
-    fn known(&self) -> BTreeSet<WorkspaceId> {
-        let workspaces = self.workspaces.names();
-        sync_shadow_problems(&self.problems, &workspaces);
-        workspaces.into_iter().map(|(id, _)| id).collect()
+    /// Brings the address clash problems up to date with the workspaces there are now.
+    fn sync_problems(&self) {
+        sync_shadow_problems(&self.problems, &self.workspaces.names());
     }
 
-    /// Answers a request [`RemoteEditor::claims`].
-    pub(crate) fn handle(&self, headers: &HeaderMap) -> Response {
-        let host = one_host(headers).unwrap_or_default();
-        match self.names.route(host, &self.known()) {
-            Ok(_) => text(
-                StatusCode::FORBIDDEN,
-                "Open this workspace's editor from Puddle.",
-            ),
-            Err(Refusal::Missing | Refusal::Foreign | Refusal::NotAWorkspace) => text(
-                StatusCode::MISDIRECTED_REQUEST,
-                "This is not the address of a Puddle workspace.",
-            ),
-        }
+    /// Answers a request [`RemoteEditor::claims`]: the same for every name, so it never says
+    /// whether a workspace has that id.
+    pub(crate) fn handle(&self) -> Response {
+        self.sync_problems();
+        text(
+            StatusCode::FORBIDDEN,
+            "Open a workspace's editor from Puddle.",
+        )
     }
 }
 

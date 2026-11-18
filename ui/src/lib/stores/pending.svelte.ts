@@ -38,7 +38,7 @@ export type UndoResult = { ok: true } | { ok: false; message: string };
 
 export type Status = "loading" | "ready" | "failed";
 
-type StoreApi = Pick<ApiClient, "GET" | "POST" | "DELETE">;
+type StoreApi = Pick<ApiClient, "GET" | "POST">;
 
 export interface PendingDeps {
   api?: StoreApi;
@@ -313,6 +313,14 @@ export class PendingStore {
         };
       }
       const closed = new Set<number>([data.request.id, ...data.also_closed]);
+      const closedRequests = this.rows
+        .filter((r) => closed.has(r.request.id))
+        .map(({ request, domain }) => ({
+          workspace: request.workspace,
+          host: request.host,
+          port: request.port,
+          domain,
+        }));
       this.#decidedMeanwhile.push(...closed);
       this.#setRows(this.rows.filter((r) => !closed.has(r.request.id)));
       const rule = data.rule;
@@ -326,6 +334,7 @@ export class PendingStore {
         ruleSet: choice.ruleSet?.name ?? null,
         expiresAt: rule.expires_at,
         alsoClosed: data.also_closed.length,
+        closed: closedRequests,
         at: this.#now(),
       };
       this.decided = [decided, ...this.decided].slice(0, MAX_DECIDED);
@@ -339,21 +348,45 @@ export class PendingStore {
     }
   }
 
-  /** Deletes the rule a decision created. The request returns when the workspace retries. */
+  /**
+   * Takes a decision back: the service deletes the rule and opens the requests it closed again
+   * (new rows with the old first-seen times, so each sorts where it did). A rule already gone
+   * counts as undone; there is nothing left to put back.
+   */
   async undo(decided: Decided): Promise<UndoResult> {
     try {
-      const { response } = await this.#api.DELETE("/api/rules/{id}", {
+      const { data, response } = await this.#api.POST("/api/rules/{id}/undo", {
         params: { path: { id: decided.ruleId } },
       });
-      // 404: someone else already deleted it, which is what the user wanted.
-      if (!response.ok && response.status !== 404) {
+      if (!data && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't undo that." };
       }
       this.decided = this.decided.filter((d) => d.ruleId !== decided.ruleId);
+      if (data) this.#reopen(data.reopened, decided.closed);
       return { ok: true };
     } catch {
       return { ok: false, message: "Puddle's service isn't answering." };
     }
+  }
+
+  /** Lists reopened requests again, each in the group it sat in; the stream's event for it finds it there. */
+  #reopen(reopened: PendingRequest[], closed: Decided["closed"]): void {
+    const domains = new Map(
+      closed.map((c) => [`${c.workspace}\0${c.host}\0${c.port}`, c.domain]),
+    );
+    const back: Row[] = [];
+    let unknown = false;
+    for (const request of reopened) {
+      if (this.rows.some((r) => r.request.id === request.id)) continue;
+      const domain = domains.get(
+        `${request.workspace}\0${request.host}\0${request.port}`,
+      );
+      if (domain === undefined) unknown = true;
+      else back.push({ request, domain });
+    }
+    if (back.length > 0) this.#setRows([...back, ...this.rows]);
+    // The service names the group; ask it when a request came back that this page did not decide.
+    if (unknown) void this.refresh();
   }
 
   /** Starts listening and polling; returns the function that stops both. */

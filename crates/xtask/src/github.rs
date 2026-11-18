@@ -48,9 +48,22 @@ impl GitHub {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn api_root(&self) -> String {
+        self.api.clone()
+    }
+
+    /// Where `git clone` fetches the repository `slug` (`owner/name`) from.
+    #[must_use]
+    pub fn clone_url(&self, slug: &str) -> String {
+        format!("{}/{slug}.git", self.web)
+    }
+
     fn curl(&self) -> Command {
         let mut cmd = Command::new(&self.curl);
         cmd.args(["--fail", "--silent", "--show-error", "--location"]);
+        // A stalled connection must end the task, not hold the CI job until its own limit.
+        cmd.args(["--connect-timeout", "30", "--max-time", "900"]);
         if self.https_only {
             cmd.args(["--proto", "=https", "--proto-redir", "=https"]);
         }

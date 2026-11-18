@@ -763,6 +763,9 @@ async fn refused_udp_is_audited_with_its_own_reason_and_never_pending() {
         // The guest's words are data: neither a name nor escape characters become a record.
         AgentMessage::udp_refused("evil.example".to_owned(), 53, 1),
         AgentMessage::udp_refused("\u{1b}[2J".to_owned(), 53, 1),
+        // The marker: the stream is read in order, so when its record is stored every message
+        // before it has been handled.
+        AgentMessage::udp_refused("192.0.2.77".to_owned(), 1, 1),
     ] {
         control
             .write_all(&message.to_line().unwrap())
@@ -770,15 +773,16 @@ async fn refused_udp_is_audited_with_its_own_reason_and_never_pending() {
             .unwrap();
         control.flush().await.unwrap();
     }
-    let records = wait_for_records(&rig.store, 2).await;
-    // Absence window: a late third connection record would still arrive after the two awaited.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let records = if connection_records(&rig.store).len() > records.len() {
-        connection_records(&rig.store)
-    } else {
-        records
-    };
-    assert_eq!(records.len(), 2, "{records:?}");
+    let records = wait_for_records(&rig.store, 3).await;
+    assert_eq!(
+        records.len(),
+        3,
+        "only the two addresses and the marker: {records:?}"
+    );
+    assert!(
+        records.iter().any(|r| r["host"] == "192.0.2.77"),
+        "the marker is stored: {records:?}"
+    );
     for (host, port) in [("192.0.2.9", 9999), ("2001:db8::9", 443)] {
         let record = records
             .iter()

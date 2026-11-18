@@ -578,16 +578,43 @@ function Test-WorkspaceLifecycle($Conn) {
 
 # The buttons of the notification area (the tray) named after Puddle: what a person sees of a
 # running app beside the clock. Windows 11 puts them in a XAML island (class SystemTray.NormalButton),
-# older shells in a toolbar of Shell_TrayWnd or of the overflow window.
-function Get-PuddleTrayIcons {
+# older shells in a toolbar of Shell_TrayWnd or of the overflow window. A new icon may sit in the
+# hidden-icons overflow, which UI Automation lists only while it is open, so the overflow is opened
+# first (the "Show Hidden Icons" button, as a person would) when the taskbar has one.
+# With -Hover the pointer passes over each icon found (Windows prunes the icon of a program that is
+# gone when the pointer reaches it). Returns the icons found before any hover; the overflow is
+# closed again.
+function Get-PuddleTrayIcons([switch]$Hover) {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $A = [System.Windows.Automation.AutomationElement]
     $buttons = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
     $trays = @('Shell_TrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland')
-    @($A::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
-        Where-Object { $_.Current.ClassName -in $trays } |
-        ForEach-Object { $_.FindAll('Descendants', $buttons) } |
-        Where-Object { $_.Current.Name -match '^Puddle(:|$)' })
+    $find = {
+        @($A::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.ClassName -in $trays } |
+            ForEach-Object { $_.FindAll('Descendants', $buttons) })
+    }
+    $all = & $find
+    $chevron = @($all | Where-Object { $_.Current.Name -eq 'Show Hidden Icons' }) | Select-Object -First 1
+    if ($chevron) {
+        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Seconds 2
+        $all = & $find
+    }
+    $icons = @($all | Where-Object { $_.Current.Name -match '^Puddle(:|$)' })
+    if ($Hover) {
+        foreach ($icon in $icons) {
+            $r = $icon.Current.BoundingRectangle
+            [void][TrayCursor]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
+            Start-Sleep -Milliseconds 500
+        }
+        [void][TrayCursor]::SetCursorPos(0, 0)
+    }
+    if ($chevron) {
+        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 500
+    }
+    $icons
 }
 
 Add-Type -TypeDefinition @'
@@ -597,7 +624,7 @@ public static class TrayCursor {
 }
 '@
 
-# The work worth losing, as playbook 07's S1 makes it: a repository with 21 commits, a staged and
+# Work worth losing: a repository with 21 commits, a staged and
 # an unstaged file, in the workspace's folder, synced to the volume.
 function Get-MakeWorkScript([string]$Folder) {
     "set -e; cd $Folder; git init -q -b main qa-crash; cd qa-crash; git config user.name 'Puddle Test'; " +
@@ -615,7 +642,7 @@ function Get-ReadWorkScript([string]$Folder) {
     "if [ -f unstaged.txt ]; then echo 'unstaged kept'; else echo 'unstaged lost'; fi"
 }
 
-# Playbook 07, S6a and S6b, with no person: the installed app (puddle-app.exe) is ended with
+# A hard kill of the app, with no person: the installed app (puddle-app.exe) is ended with
 # TerminateProcess (Stop-Process -Force), as Task Manager's End task does, while a workspace with
 # work in it runs. Every runtime process it started (msb and the VMs) is gone within 5 s: the
 # kill-on-close job object ends them. The tray icon goes (Windows prunes a dead program's icon when
@@ -644,15 +671,9 @@ function Test-HardKill {
     } -PollMs 100 | Out-Null
     Write-Host "every runtime process was gone $([math]::Round($clock.Elapsed.TotalSeconds, 1)) s after the kill"
     Expect (@(Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue).Count -eq 0) 'a puddle-app process is left after the kill'
-    $ghosts = @(Get-PuddleTrayIcons)
+    $ghosts = @(Get-PuddleTrayIcons -Hover)
     if ($ghosts.Count -gt 0) {
         Write-Host "INFO: $($ghosts.Count) dead tray icon(s) stayed until the pointer passed over them (a Windows habit)"
-        foreach ($icon in $ghosts) {
-            $r = $icon.Current.BoundingRectangle
-            [void][TrayCursor]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-            Start-Sleep -Milliseconds 500
-        }
-        [void][TrayCursor]::SetCursorPos(0, 0)
     }
     Wait-Until 'a tray icon of the killed app is left' 10 { @(Get-PuddleTrayIcons).Count -eq 0 } -PollMs 500 | Out-Null
 

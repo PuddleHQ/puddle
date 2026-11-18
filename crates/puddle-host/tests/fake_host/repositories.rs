@@ -383,7 +383,7 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
 /// Puddle is killed (no shutdown) while Clone again runs: git has begun writing the repository
 /// and the VM dies with Puddle. The next start lists the workspace, and once it runs again a
 /// second Clone again of the same entry works: what the killed clone left never blocks its own
-/// directory (docs/qa 07 S4c).
+/// directory.
 #[tokio::test(flavor = "multi_thread")]
 async fn puddle_killed_during_clone_again_lists_the_workspace_and_the_next_clone_again_works() {
     const DOCS: &str = "https://example.org/acme/docs.git";

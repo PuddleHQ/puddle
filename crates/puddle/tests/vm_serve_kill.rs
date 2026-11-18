@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A hard kill of the real `puddle serve` process on a real microVM (tier K, Linux KVM), the
-//! steps S2 and S3 of the "bad-luck day" playbook (docs/qa/07-crash-disk-offline.md) with no
+//! A hard kill of the real `puddle serve` process on a real microVM (tier K, Linux KVM), with no
 //! person: the built `puddle` program runs from a program folder laid out as an install is
 //! (`<folder>/puddle`, `<folder>/runtime/msb`), with its own data folder, and the test drives it
 //! through its API as the window does.
@@ -42,8 +41,9 @@ const START_WAIT: Duration = Duration::from_mins(5);
 /// The repository in the workspace: one first commit and 20 more.
 const COMMITS: u32 = 21;
 
-/// The work worth losing, as the playbook's S1 makes it, in the workspace's folder. `sync` puts the commits on the volume; the kill comes after it, so the
-/// commits are the work that must survive, and the staged file is the work that may not.
+/// The work worth losing, in the workspace's folder. `sync` puts the commits on the volume; the
+/// kill comes after it, so the commits are the work that must survive, and the staged file is
+/// the work that may not.
 const MAKE_WORK: &str = r#"set -eu
 cd "$1"
 git init -q -b main qa-crash
@@ -384,7 +384,7 @@ fn share_image_cache(data: &Path) {
 }
 
 /// The staged file is still staged, or the problems list says that staged changes were lost
-/// (the boot's repair of a broken index, storage ST-18).
+/// (the repair the boot makes of a broken index).
 async fn staged_kept_or_told(api: &Api, id: &str, report: &str) {
     if report.contains("staged lost") {
         let (code, problems) = api.call("GET", "/api/problems", None).await;

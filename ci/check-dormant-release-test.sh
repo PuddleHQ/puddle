@@ -14,7 +14,7 @@ cat >"$tmp/.github/workflows/ci.yml" <<'YML'
       - run: cargo build -p puddle-app --all-features --locked
       - run: cargo nextest run --workspace --all-features
 YML
-printf 'cargo tauri build --no-bundle --ci -- --locked\ncargo build --release --locked -p puddle\n' >"$tmp/ci/build.sh"
+printf 'cargo tauri build --no-bundle --ci -- --locked\ncargo build --release --locked\n' >"$tmp/ci/build.sh"
 "$here/check-dormant-release.sh" "$tmp" >"$tmp/out" 2>&1 || fail "a clean pipeline failed: $(cat "$tmp/out")"
 
 printf 'cargo build --release --locked --features serve\n' >"$tmp/ci/build.sh"

@@ -427,6 +427,8 @@ pub struct ApiServer {
     /// Says who is told about each new request. It holds the store, so shutdown waits for it:
     /// the database closes only when its last handle goes.
     picker: JoinHandle<()>,
+    /// The upgraded terminal sockets; they hold the store too.
+    sockets: crate::routes::Sockets,
 }
 
 /// What remote serving binds and registers.
@@ -705,6 +707,7 @@ impl ApiServer {
         let (stop, shutdown) = watch::channel(false);
         let sign_in = sign_in_for(&config, &services).await?;
         let admin = admin_for(&config, sign_in.as_ref(), &services);
+        let sockets = crate::routes::Sockets::default();
         let state = AppState {
             admin: admin.clone(),
             authorizer: Arc::new(Isolation::new(services.store.clone())),
@@ -732,6 +735,7 @@ impl ApiServer {
             sign_in: sign_in.clone(),
             ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
+            sockets: sockets.clone(),
         };
         let picker = start_background(&state).await;
         let editor = editor_for(&config, &state);
@@ -783,6 +787,7 @@ impl ApiServer {
             admin,
             editor,
             picker,
+            sockets,
         })
     }
 
@@ -825,6 +830,7 @@ impl ApiServer {
             admin,
             editor,
             picker,
+            sockets,
             ..
         } = self;
         let shutdown = stop.subscribe();
@@ -885,6 +891,7 @@ impl ApiServer {
             network_addr,
             stop,
             tasks,
+            sockets,
             _held: held,
         }
     }
@@ -896,6 +903,7 @@ pub struct RunningApi {
     network_addr: Option<SocketAddr>,
     stop: watch::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
+    sockets: crate::routes::Sockets,
     /// Keeps the listeners and the blocked names in the endpoint registry for as long as the API
     /// serves.
     _held: Vec<Box<dyn std::any::Any + Send>>,
@@ -915,7 +923,7 @@ impl RunningApi {
     }
 
     /// Stops accepting, ends event streams, lets open requests finish (up to 5 s) and returns
-    /// when every connection is closed and every task the API started has ended, so nothing it
+    /// when every connection is closed and every task the API started, terminal sockets included, has ended, so nothing it
     /// ran still holds the store.
     pub async fn shutdown(mut self) {
         // Receivers live in the server task; if it already ended there is nobody to tell.
@@ -925,6 +933,9 @@ impl RunningApi {
                 tracing::error!(error = %err, "api server task failed");
             }
         }
+        // The serving tasks are done, so no new socket can start; the open ones end on the stop
+        // signal (a terminal says so to its page, then waits for the page's close).
+        self.sockets.drain().await;
     }
 }
 
@@ -933,6 +944,7 @@ impl Drop for RunningApi {
         for task in &self.tasks {
             task.abort();
         }
+        self.sockets.abort_all();
     }
 }
 

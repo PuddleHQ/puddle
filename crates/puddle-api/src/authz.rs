@@ -528,7 +528,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         ("DELETE", "/api/request-rules/{id}") | ("PUT", "/api/request-rules/{id}/enabled") => {
             (A::ChangeRules, T::RequestRule)
         }
-        ("GET", "/api/rule-sets") => (A::ReadGlobalRules, T::Own),
+        ("GET", "/api/rule-sets" | "/api/rule-sets/{id}/entries") => (A::ReadGlobalRules, T::Own),
         ("POST", "/api/rule-sets")
         | ("PUT" | "DELETE", "/api/rule-sets/{id}")
         | ("PUT", "/api/rule-sets/{id}/switch" | "/api/rule-sets/{id}/entry-switch") => {

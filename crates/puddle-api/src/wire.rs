@@ -118,9 +118,9 @@ pub use restore::{
     SafetyCopyList,
 };
 pub use rule_sets::{
-    NewRuleSetRequest, RuleSetEntry, RuleSetEntrySwitchRequest, RuleSetKind, RuleSetList,
-    RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView,
-    SystemManagedHost, SystemReason,
+    NewRuleSetRequest, RuleSetEntry, RuleSetEntryPage, RuleSetEntrySwitchRequest, RuleSetKind,
+    RuleSetList, RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest,
+    RuleSetView, SystemManagedHost, SystemReason,
 };
 pub(crate) use rules::checked_precedence;
 pub use rules::{

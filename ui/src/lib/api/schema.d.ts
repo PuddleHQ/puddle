@@ -1381,6 +1381,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rule-sets/{id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A page of the entries of a built-in set, optionally filtered by a search. The set list carries
+         *     only the first 200 entries of a built-in set, because such a set can hold tens of thousands.
+         */
+        get: operations["list_builtin_entries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rule-sets/{id}/entry-switch": {
         parameters: {
             query?: never;
@@ -6163,6 +6183,13 @@ export interface components {
              */
             rule_id: number | null;
         };
+        /** @description One page of a built-in set's entries. */
+        RuleSetEntryPage: {
+            /** @description The entries of this page, in the order the set lists them. */
+            entries: components["schemas"]["RuleSetEntry"][];
+            /** @description How many entries match the search in all. */
+            total: number;
+        };
         /** @description Switch one entry of a built-in set on or off. */
         RuleSetEntrySwitchRequest: {
             /** @description `true` to switch the entry on, `false` to switch it off. */
@@ -6244,8 +6271,13 @@ export interface components {
             default_precedence: number | null;
             /** @description What it is for. */
             description: string;
-            /** @description Its entries. */
+            /**
+             * @description Its entries. A built-in set lists only its first 200; `entry_count` says how many there are
+             *     and `GET /api/rule-sets/{id}/entries` pages and searches them.
+             */
             entries: components["schemas"]["RuleSetEntry"][];
+            /** @description How many entries the set has in all. */
+            entry_count: number;
             /**
              * @description The colour it is shown in: a built-in set's own, or the one you chose (a set you made
              *     without choosing has a default of its number).
@@ -13232,6 +13264,81 @@ export interface operations {
             };
             /** @description a built-in set */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_builtin_entries: {
+        parameters: {
+            query?: {
+                /** @description keep entries whose pattern or note contains this text, ignoring case */
+                q?: string;
+                /** @description skip this many matches (default 0) */
+                offset?: number;
+                /** @description at most this many (default and most 200) */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description `builtin:<slug>` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the entries and how many match */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetEntryPage"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such built-in set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -187,11 +187,8 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
 /// object that might stop the test boot, and an unreadable code integrity state that might stop
 /// the runtime. Shown anyway, they say "nothing to do" to a person who can do nothing.
 fn leave_out_moot(checks: &mut Vec<Check>) {
-    let passed = |id: CheckId, checks: &[Check]| {
-        checks
-            .iter()
-            .any(|c| c.id == id && c.status == Status::Ok)
-    };
+    let passed =
+        |id: CheckId, checks: &[Check]| checks.iter().any(|c| c.id == id && c.status == Status::Ok);
     let booted = passed(CheckId::TestBoot, checks);
     let launched = passed(CheckId::Launch, checks);
     checks.retain(|c| match c.id {

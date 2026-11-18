@@ -252,7 +252,11 @@ fn assert_explained(report: &Report) {
         let name = c.id.title();
         assert_short(name, "impact", &c.impact);
         if !matches!(c.status, Status::Ok | Status::Skipped) {
-            assert!(c.finding.is_some(), "{name} is {:?} without a finding", c.status);
+            assert!(
+                c.finding.is_some(),
+                "{name} is {:?} without a finding",
+                c.status
+            );
         }
         match (c.status, &c.remedy) {
             (Status::Ok, None) => {}
@@ -269,9 +273,15 @@ fn assert_short(name: &str, part: &str, text: &str) {
         text.chars().count() <= SHORT,
         "{name}: {part} longer than {SHORT} characters: {text}"
     );
-    assert!(text.ends_with('.'), "{name}: {part} is not a sentence: {text}");
+    assert!(
+        text.ends_with('.'),
+        "{name}: {part} is not a sentence: {text}"
+    );
     let sentences = text.matches(". ").count() + text.matches("? ").count() + 1;
-    assert!(sentences <= 2, "{name}: {part} has {sentences} sentences: {text}");
+    assert!(
+        sentences <= 2,
+        "{name}: {part} has {sentences} sentences: {text}"
+    );
 }
 
 /// Compares (or with `PUDDLE_UPDATE_SNAPSHOTS=1`, writes) `tests/snapshots/<name>.snap`.

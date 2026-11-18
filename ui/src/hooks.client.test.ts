@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "#lib/api/client.ts";
 import {
   handleError,
   init,
@@ -90,6 +91,17 @@ describe("sendReport", () => {
       response: new Response(null, { status: 204 }),
     }));
     expect(await sendReport({ POST } as never, body)).toEqual({ status: 204 });
+  });
+});
+
+describe("reporter", () => {
+  it("sends through the app's API client", async () => {
+    const POST = vi.spyOn(api, "POST").mockResolvedValue({
+      response: new Response(null, { status: 204 }),
+    } as never);
+    reporter.report("uncaught", new Error("through the client"));
+    await vi.waitFor(() => expect(POST).toHaveBeenCalledOnce());
+    expect(POST.mock.calls[0]?.[0]).toBe("/api/ui-errors");
   });
 });
 

@@ -26,8 +26,14 @@ pub trait Fetch: Send + Sync + 'static {
     /// The body of `url` as text (a few hundred bytes).
     fn text(&self, url: &str) -> impl Future<Output = io::Result<String>> + Send;
 
-    /// Downloads `url` to the file `dest`.
-    fn file(&self, url: &str, dest: &Path) -> impl Future<Output = io::Result<()>> + Send;
+    /// Downloads `url` to the file `dest`. A body that grows past `max_bytes` stops the download
+    /// and is an error; the partial file is left for the caller to delete.
+    fn file(
+        &self,
+        url: &str,
+        dest: &Path,
+        max_bytes: u64,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// [`Fetch`] with the guest's own `curl`, or `wget` where it has none. HTTPS only, redirects
@@ -54,7 +60,7 @@ impl Downloader {
         }
     }
 
-    fn curl_args(url: &str, secs: u32, dest: Option<&Path>, limit: Option<usize>) -> Vec<OsString> {
+    fn curl_args(url: &str, secs: u32, dest: Option<&Path>, limit: Option<u64>) -> Vec<OsString> {
         let mut args: Vec<OsString> = [
             "--fail",
             "--silent",
@@ -108,7 +114,7 @@ impl Downloader {
         url: &str,
         secs: u32,
         dest: Option<&Path>,
-        limit: Option<usize>,
+        limit: Option<u64>,
     ) -> io::Result<Vec<u8>> {
         let attempt = [
             (&self.curl, Self::curl_args(url, secs, dest, limit)),
@@ -127,8 +133,8 @@ impl Downloader {
                 Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
                 Err(err) => return Err(err),
             };
-            let (status, stdout, stderr) = read_bounded(child, limit).await?;
-            if stdout.len() > limit.unwrap_or(usize::MAX) {
+            let (status, stdout, stderr) = read_bounded(child, limit, dest).await?;
+            if stdout.len() as u64 > limit.unwrap_or(u64::MAX) {
                 return Err(io::Error::other(format!(
                     "{} sent more than {} bytes; the answer is refused",
                     program.display(),
@@ -152,11 +158,30 @@ impl Downloader {
     }
 }
 
+/// How often the size of a file being downloaded is looked at.
+const SIZE_LOOK: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Returns once the file at `path` is longer than `limit` bytes.
+async fn outgrows(path: &Path, limit: u64) {
+    loop {
+        tokio::time::sleep(SIZE_LOOK).await;
+        if tokio::fs::metadata(path)
+            .await
+            .is_ok_and(|m| m.len() > limit)
+        {
+            return;
+        }
+    }
+}
+
 /// Waits for `child`, reading its output. With a `limit`, standard output is read up to one byte
-/// past it; then the child is killed instead of waited for, and the caller sees the excess.
+/// past it; then the child is killed instead of waited for, and the caller sees the excess. The
+/// program may write to `file` instead (a download): then the child is killed, and the read is an
+/// error, once the file is longer than the `limit`.
 async fn read_bounded(
     mut child: tokio::process::Child,
-    limit: Option<usize>,
+    limit: Option<u64>,
+    file: Option<&Path>,
 ) -> io::Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>)> {
     use tokio::io::{AsyncReadExt as _, BufReader};
 
@@ -168,7 +193,7 @@ async fn read_bounded(
         .stderr
         .take()
         .ok_or_else(|| io::Error::other("no standard error"))?;
-    let cap = limit.map_or(u64::MAX, |l| l as u64 + 1);
+    let cap = limit.map_or(u64::MAX, |l| l.saturating_add(1));
     let mut out = Vec::new();
     let mut err = Vec::new();
     let read_stdout = async {
@@ -179,21 +204,54 @@ async fn read_bounded(
         }
         read
     };
-    let (read_out, read_err) = tokio::join!(read_stdout, stderr.read_to_end(&mut err));
+    let read_all = async { tokio::join!(read_stdout, stderr.read_to_end(&mut err)) };
+    let watch = async {
+        match (file, limit) {
+            (Some(file), Some(limit)) => outgrows(file, limit).await,
+            _ => std::future::pending().await,
+        }
+    };
+    let (read_out, read_err) = tokio::select! {
+        done = read_all => done,
+        () = watch => {
+            // The child may already be gone, and its exit status is of no use: the size is the error.
+            let _ = child.start_kill();
+            // Reaps the killed child; the error returned below is the one to report.
+            let _ = child.wait().await;
+            return Err(io::Error::other(format!(
+                "the download grew past {} bytes and was stopped",
+                limit.unwrap_or(0)
+            )));
+        }
+    };
     read_out?;
     read_err?;
     let status = child.wait().await?;
+    // A short download can end between two looks at the file.
+    if let (Some(file), Some(limit)) = (file, limit)
+        && tokio::fs::metadata(file)
+            .await
+            .is_ok_and(|m| m.len() > limit)
+    {
+        return Err(io::Error::other(format!(
+            "the download grew past {limit} bytes and was stopped"
+        )));
+    }
     Ok((status, out, err))
 }
 
 impl Fetch for Downloader {
     async fn text(&self, url: &str) -> io::Result<String> {
-        let body = self.run(url, ANSWER_SECS, None, Some(MAX_ANSWER)).await?;
+        let body = self
+            .run(url, ANSWER_SECS, None, Some(MAX_ANSWER as u64))
+            .await?;
         String::from_utf8(body).map_err(|_| io::Error::other("the answer is not text"))
     }
 
-    async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
-        self.run(url, STALL_SECS, Some(dest), None).await.map(drop)
+    async fn file(&self, url: &str, dest: &Path, max_bytes: u64) -> io::Result<()> {
+        self.run(url, STALL_SECS, Some(dest), Some(max_bytes))
+            .await
+            .map(drop)
     }
 }
 

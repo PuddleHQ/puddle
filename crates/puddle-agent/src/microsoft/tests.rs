@@ -41,6 +41,47 @@ fn the_urls_are_the_ones_the_code_command_uses() {
     );
 }
 
+/// A gzip tarball of `top/<name>` entries of the given sizes (zero bytes).
+fn zeros_tarball(dir: &Path, sizes: &[(&str, usize)]) -> PathBuf {
+    let path = dir.join("server.tar.gz");
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+        std::fs::File::create(&path).unwrap(),
+        flate2::Compression::fast(),
+    ));
+    for (name, size) in sizes {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(*size as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(
+                &mut header,
+                format!("top/{name}"),
+                vec![0_u8; *size].as_slice(),
+            )
+            .unwrap();
+    }
+    builder.into_inner().unwrap().finish().unwrap();
+    path
+}
+
+#[test]
+fn an_unpack_over_the_size_limit_is_refused_and_one_at_the_limit_is_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let tarball = zeros_tarball(dir.path(), &[("a", 600), ("b", 600)]);
+
+    let out = dir.path().join("fits");
+    unpack(&tarball, &out, 1200).unwrap();
+    assert_eq!(std::fs::metadata(out.join("b")).unwrap().len(), 600);
+
+    let out = dir.path().join("too-big");
+    let err = unpack(&tarball, &out, 1199).unwrap_err();
+    assert!(
+        matches!(&err, InstallError::Archive(what) if what.contains("1199")),
+        "{err}"
+    );
+}
+
 #[test]
 fn archive_paths_lose_their_top_folder_and_never_leave_the_build() {
     let below = |p: &str| below_top(Path::new(p)).map_err(|e| e.to_string());

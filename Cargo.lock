@@ -6026,6 +6026,7 @@ name = "puddle-agent"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
+ "dunce",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",

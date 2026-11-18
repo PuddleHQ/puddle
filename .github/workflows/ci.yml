@@ -305,7 +305,7 @@ jobs:
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
           python3 -m venv "$RUNNER_TEMP/lab-venv"
-          "$RUNNER_TEMP/lab-venv/bin/pip" install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/bin/pip" install --retries 10 --timeout 60 --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/bin/mitmdump" --version
           echo "PUDDLE_MITMDUMP_BIN=$RUNNER_TEMP/lab-venv/bin/mitmdump" >> "$GITHUB_ENV"
       # The lab's Git host (crates/puddle-e2e/src/lab/forgejo.rs): the pinned Forgejo release, so the fixture and its
@@ -323,7 +323,7 @@ jobs:
         id: forgejo
         if: ${{ !cancelled() }}
         run: |
-          FORGEJO_CACHE_DIR="$HOME/forgejo-cache" ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
+          FETCH_CACHE_DIR="$HOME/forgejo-cache" ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
           "$RUNNER_TEMP/forgejo/forgejo" --version
           echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo" >> "$GITHUB_ENV"
       - name: Forgejo download cache (save on a miss)
@@ -658,6 +658,10 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
           restore-keys: cargo-xwin-
+      # The cold cargo home fetches the microsandbox git dependency and its `skills` submodule here, with
+      # retries, so a TLS error on one fetch ends in a retry and not in a red job (ci/cargo-fetch.sh).
+      - name: Crate sources (with retries)
+        run: ci/cargo-fetch.sh
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows

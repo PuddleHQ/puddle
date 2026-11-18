@@ -75,6 +75,23 @@ fn an_invite_works_once_and_not_after_it_expires() {
 }
 
 #[test]
+fn no_invite_is_made_for_a_user_being_deleted_and_none_is_left_behind() {
+    let (store, secrets, _) = setup();
+    let ann = store
+        .admin_add_user(UserId::OWNER, &UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    secrets.put_invite(ann, &[1; 32], 5_000).unwrap();
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    // An owner's reissue that raced the delete: it runs after the first step.
+    assert!(matches!(
+        secrets.put_invite(ann, &[2; 32], 5_000),
+        Err(StoreError::UnknownUser(_))
+    ));
+    assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), None);
+}
+
+#[test]
 fn clearing_an_invite_ends_it_and_touches_nobody_elses() {
     let (store, secrets, _) = setup();
     let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;

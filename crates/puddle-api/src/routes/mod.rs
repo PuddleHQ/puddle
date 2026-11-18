@@ -129,6 +129,45 @@ pub(crate) struct AppState {
     pub(crate) ui_build_id: Option<String>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
+    /// The terminal sockets that took a connection over. Axum would run them on a detached task
+    /// that outlives the server, so they run here and `RunningApi::shutdown` waits for them.
+    pub(crate) sockets: Sockets,
+}
+
+/// Tasks that outlive their connection (an upgraded socket) and still hold what the API holds.
+#[derive(Clone, Default)]
+pub(crate) struct Sockets(Arc<std::sync::Mutex<tokio::task::JoinSet<()>>>);
+
+impl Sockets {
+    /// Runs `work` until it ends or the set is drained or dropped.
+    pub(crate) fn spawn(&self, work: impl Future<Output = ()> + Send + 'static) {
+        let mut set = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Reap the ended ones so the set does not grow with every terminal ever opened.
+        while set.try_join_next().is_some() {}
+        set.spawn(work);
+    }
+
+    /// Waits until every task spawned so far has ended.
+    pub(crate) async fn drain(&self) {
+        let mut set = std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        while set.join_next().await.is_some() {}
+    }
+
+    /// Ends every task now.
+    pub(crate) fn abort_all(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .abort_all();
+    }
 }
 
 /// Every documented route.
@@ -286,6 +325,7 @@ fn rules_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(rules::list_rules, rules::create_rule))
         .routes(routes!(rules::update_rule, rules::delete_rule))
+        .routes(routes!(rules::undo_decision))
         .routes(routes!(rules::set_rule_expiry))
         .routes(routes!(rules::set_rule_enabled))
         .routes(routes!(

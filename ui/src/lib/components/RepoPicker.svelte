@@ -43,7 +43,7 @@
     clearTimeout(typing);
     typing = setTimeout(() => {
       void store.load({ query: search.trim(), limit: 20 }, true);
-    }, 250);
+    }, 150);
   }
 
   $effect(() => () => {

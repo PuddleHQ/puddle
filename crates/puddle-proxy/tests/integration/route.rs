@@ -918,6 +918,71 @@ async fn the_default_address_check_blocks_loopback_even_when_allowed() {
     assert_eq!(policy.decisions(), 0);
 }
 
+/// What the guest sees when it asks for a cloud metadata endpoint: the toggle named, never an
+/// approval to give, and with the toggle on an ordinary pending row.
+#[tokio::test]
+async fn a_cloud_metadata_destination_is_refused_naming_its_toggle_and_waits_for_approval_once_it_is_on()
+ {
+    let targets = ["169.254.169.254:80", "metadata.google.internal:80"];
+    let guard = |access: puddle_netpolicy::LocalAccess| -> Arc<dyn AddressCheck> {
+        Arc::new(puddle_netpolicy::NetPolicy::new(Arc::new(access)))
+    };
+    let off = Rig::with_checks(
+        &ProxyConfig::default(),
+        StaticResolver::new(),
+        guard(puddle_netpolicy::LocalAccess::NONE),
+    );
+    let mut guest = off.guest().await;
+    for target in targets {
+        let mut stream = guest.stream().await;
+        stream
+            .write_all(format!("CONNECT {target} HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, headers) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403, "{target}");
+        assert_eq!(
+            header_value(&headers, "x-puddle-blocked").as_deref(),
+            Some("toggle:metadata"),
+            "{target}"
+        );
+        assert_eq!(header_value(&headers, "x-puddle-pending"), None, "{target}");
+        let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
+        assert!(
+            body.contains("'metadata' (cloud metadata)") && body.contains("toggle is off"),
+            "{target}: {body}"
+        );
+    }
+    assert_eq!(off.policy.pending().len(), 0, "no pending row");
+    assert_eq!(off.policy.decisions(), 0, "the rules were never asked");
+
+    // With the toggle on, the same requests are ordinary unknown hosts.
+    let on = Rig::with_checks(
+        &ProxyConfig::default(),
+        StaticResolver::new(),
+        guard(puddle_netpolicy::LocalAccess::NONE.with_toggle(LocalCategory::Metadata, true)),
+    );
+    let mut guest = on.guest().await;
+    for target in targets {
+        let mut stream = guest.stream().await;
+        stream
+            .write_all(format!("CONNECT {target} HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, headers) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403, "{target}");
+        assert_eq!(
+            header_value(&headers, "x-puddle-decision").as_deref(),
+            Some("pending"),
+            "{target}"
+        );
+        assert_eq!(header_value(&headers, "x-puddle-blocked"), None, "{target}");
+    }
+    assert_eq!(on.policy.pending().len(), 2);
+}
+
 /// The workspace is the route's. Two routes, the same request: each pending item names the
 /// workspace of the route it came in on.
 #[tokio::test]

@@ -6,10 +6,16 @@
 # Usage: ci/fetch-forgejo.sh <dest-dir> [<version> [windows]]    version defaults to the first pinned one for the platform
 # `windows` fetches the pinned Gitea Windows release instead (Forgejo ships none) and installs it as
 # <dest-dir>/forgejo.exe; the lab runs either through the same fixture.
-# FORGEJO_BASE_URL replaces https://codeberg.org/forgejo/forgejo/releases/download and GITEA_BASE_URL
-# https://dl.gitea.com/gitea (tests);
-# FETCH_ATTEMPTS and FETCH_RETRY_BASE_S set the retry window (ci/fetch-retry.sh).
-# Network failures are retried (infrastructure) and each retry is printed; a checksum mismatch never is.
+# Where the file comes from, in order: FORGEJO_CACHE_DIR (a folder CI restores between runs; a cached
+# file is hashed against the pin like a download, a bad one is ignored), the upstream release, then the
+# PuddleHQ/ci-mirror release `<forgejo|gitea>-v<version>` (unmodified upstream binaries, with their
+# licence and source pointer), so a run does not depend on one host being up. The pin is the only
+# trust: a file from any of them is installed only when it matches.
+# FORGEJO_BASE_URL replaces https://codeberg.org/forgejo/forgejo/releases/download, GITEA_BASE_URL
+# https://dl.gitea.com/gitea and FORGEJO_MIRROR_URL https://github.com/PuddleHQ/ci-mirror/releases/download
+# (tests); FETCH_ATTEMPTS, FETCH_SOURCE_ATTEMPTS and FETCH_RETRY_BASE_S set the retry window
+# (ci/fetch-retry.sh). Network failures are retried (infrastructure) and each retry is printed; a
+# checksum mismatch never is.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -34,18 +40,37 @@ want=${rest##* }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+mirror=${FORGEJO_MIRROR_URL:-https://github.com/PuddleHQ/ci-mirror/releases/download}
 if [ "$platform" = windows ]; then
     url=${GITEA_BASE_URL:-https://dl.gitea.com/gitea}/$version/$asset
+    mirror=$mirror/gitea-v$version/$asset
     installed=forgejo.exe
 else
     url=${FORGEJO_BASE_URL:-https://codeberg.org/forgejo/forgejo/releases/download}/v$version/$asset
+    mirror=$mirror/forgejo-v$version/$asset
     installed=forgejo
 fi
-download fetch-forgejo "$url" "$work/$asset" 600
-got=$(sha256sum < "$work/$asset" | cut -d' ' -f1)
+hash_of() { sha256sum < "$1" | cut -d' ' -f1; }
+cache=${FORGEJO_CACHE_DIR:-}
+cached=
+if [ -n "$cache" ] && [ -f "$cache/$asset" ]; then
+    if [ "$(hash_of "$cache/$asset")" = "$want" ]; then
+        cp "$cache/$asset" "$work/$asset"
+        cached=1
+        echo "fetch-forgejo: using the cached $asset (checksum matches the pin)" >&2
+    else
+        echo "fetch-forgejo: ignoring the cached $asset (checksum differs from the pin), downloading" >&2
+    fi
+fi
+[ -n "$cached" ] || download_from fetch-forgejo "$work/$asset" 600 "$url" "$mirror"
+got=$(hash_of "$work/$asset")
 if [ "$got" != "$want" ]; then
     echo "fetch-forgejo: checksum mismatch for $asset: got $got, pinned $want" >&2
     exit 1
+fi
+if [ -n "$cache" ] && [ -z "$cached" ]; then
+    mkdir -p "$cache"
+    cp "$work/$asset" "$cache/$asset"
 fi
 mkdir -p "$dest"
 cp "$work/$asset" "$dest/$installed"

@@ -72,6 +72,12 @@ const settings = {
   effective: { memory: 3072 },
 };
 
+function at<T>(list: T[], index: number): T {
+  const item = list[index];
+  if (item === undefined) throw new Error(`no entry ${index}`);
+  return item;
+}
+
 const same = (path: string, body: unknown) =>
   compareDump(path, body, structuredClone(body));
 
@@ -91,21 +97,21 @@ describe("an upgrade that keeps everything", () => {
 
   it("accepts what a newer build adds or moves", () => {
     const after = structuredClone(rules);
-    (after.rules[0] as Record<string, unknown>).group_default = null;
+    (at(after.rules, 0) as Record<string, unknown>).group_default = null;
     expect(compareDump("/api/rules", rules, after)).toEqual([]);
     const moved = structuredClone(workspaces);
-    moved.workspaces[0].status = "stopped";
+    at(moved.workspaces, 0).status = "stopped";
     expect(compareDump("/api/workspaces", workspaces, moved)).toEqual([]);
     const retried = structuredClone(pending);
-    retried.requests[0].attempts = 4;
-    retried.requests[0].last_seen = 99;
+    at(retried.requests, 0).attempts = 4;
+    at(retried.requests, 0).last_seen = 99;
     expect(compareDump("/api/pending", pending, retried)).toEqual([]);
     const recomputed = structuredClone(settings);
     recomputed.revision = "b";
     recomputed.effective = { memory: 2048 };
     expect(compareDump("/api/settings", settings, recomputed)).toEqual([]);
     const reread = structuredClone(identities);
-    reread.identities[0].credentials[0].last_check = { checked_at: 2 };
+    at(at(reread.identities, 0).credentials, 0).last_check = { checked_at: 2 };
     expect(compareDump("/api/identities", identities, reread)).toEqual([]);
   });
 
@@ -126,8 +132,8 @@ describe("an upgrade that loses something", () => {
 
   it("names a rule whose effect or expiry changed", () => {
     const after = structuredClone(rules);
-    after.rules[1].effect = "allow";
-    (after.rules[0] as Record<string, unknown>).expires_at = 5;
+    at(after.rules, 1).effect = "allow";
+    (at(after.rules, 0) as Record<string, unknown>).expires_at = 5;
     const losses = compareDump("/api/rules", rules, after);
     expect(losses).toContain(
       "GET /api/rules .rules[0].expires_at: was null, is 5",
@@ -152,7 +158,7 @@ describe("an upgrade that loses something", () => {
       [],
     );
     const decided = structuredClone(pending);
-    decided.requests[0].state = "approved";
+    at(decided.requests, 0).state = "approved";
     expect(compareDump("/api/pending", pending, decided)).toEqual([
       'GET /api/pending .requests[0].state: was "requested", is "approved"',
     ]);
@@ -162,7 +168,7 @@ describe("an upgrade that loses something", () => {
     const gone = { variables: env.variables.slice(0, 1) };
     expect(compareDump("/api/env", env, gone)).not.toEqual([]);
     const hosts = structuredClone(env);
-    hosts.variables[1].hosts = [];
+    at(hosts.variables, 1).hosts = [];
     expect(compareDump("/api/env", env, hosts)).toEqual([
       "GET /api/env .variables[1].hosts: 1 entries became 0",
     ]);
@@ -183,8 +189,8 @@ describe("an upgrade that loses something", () => {
 
   it("names an identity that lost its author or credentials", () => {
     const after = structuredClone(identities);
-    after.identities[0].author.email = "";
-    after.identities[0].credentials = [];
+    at(after.identities, 0).author.email = "";
+    at(after.identities, 0).credentials = [];
     const losses = compareDump("/api/identities", identities, after);
     expect(losses.length).toBe(2);
   });

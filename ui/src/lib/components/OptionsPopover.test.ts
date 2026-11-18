@@ -243,7 +243,7 @@ describe("OptionsPopover", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
-  it("stays open when the press lands on its own chevron, which toggles it", async () => {
+  it("stays open when the press lands on its own more-choices button, which toggles it", async () => {
     const { onClose, anchor } = mount();
     await show();
     await press(anchor);

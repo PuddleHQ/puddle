@@ -209,13 +209,35 @@ pub(crate) async fn terminal_socket(
             (Some(device), Some(sign_in)) => Box::pin(sign_in.clone().ended(device)),
             _ => Box::pin(std::future::pending()),
         };
+    // Not axum's own detached spawn: the API's shutdown has to wait for this task, because it
+    // holds the store.
+    let (handed, socket) = tokio::sync::oneshot::channel();
+    let sockets = state.sockets.clone();
+    sockets.spawn(async move {
+        when_handed(socket, |socket| {
+            run(socket, &state, &workspace, size, shutdown, ended)
+        })
+        .await;
+        state.terminals.release(terminal);
+    });
     Ok(upgrade
         .protocols([SUBPROTOCOL])
         .max_message_size(MAX_MESSAGE_BYTES + 1024)
         .on_upgrade(move |socket| async move {
-            run(socket, &state, &workspace, size, shutdown, ended).await;
-            state.terminals.release(terminal);
+            // The task is already tracked; it only waits for the socket.
+            let _ = handed.send(socket);
         }))
+}
+
+/// Runs `serve` on the socket the upgrade hands over. A failed upgrade drops the sender: there is
+/// no socket, and this returns at once so the caller frees the terminal's place all the same.
+async fn when_handed<S, F: Future<Output = ()>>(
+    socket: tokio::sync::oneshot::Receiver<S>,
+    serve: impl FnOnce(S) -> F,
+) {
+    if let Ok(socket) = socket.await {
+        serve(socket).await;
+    }
 }
 
 async fn run(

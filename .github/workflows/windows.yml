@@ -254,7 +254,7 @@ jobs:
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
           python3 -m venv "$RUNNER_TEMP/lab-venv"
-          "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --retries 10 --timeout 60 --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe" --version
           echo "PUDDLE_MITMDUMP_BIN=$(cygpath -w "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe")" >> "$GITHUB_ENV"
       # Some runs have minutes in which every program start is 10 to 30 times slower (mitmproxy,

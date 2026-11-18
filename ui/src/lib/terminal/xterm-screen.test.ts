@@ -140,6 +140,73 @@ describe("the emulator", () => {
   });
 });
 
+describe("colours and escapes", () => {
+  const draw = (screen: XtermScreen, text: string) =>
+    new Promise<void>((done) =>
+      screen.write(new TextEncoder().encode(text), done),
+    );
+
+  it("keeps ANSI, 256-colour and true-colour foregrounds, bold, underline and a reset on the cells", async () => {
+    const { screen } = make();
+    await draw(
+      screen,
+      "\u001b[31mR\u001b[0m\u001b[1;32mG\u001b[0m\u001b[38;5;208mP\u001b[0m" +
+        "\u001b[38;2;12;200;250mT\u001b[0m\u001b[4mU\u001b[0mN",
+    );
+    const line = screen.term.buffer.active.getLine(0);
+    const cell = (x: number) => line?.getCell(x);
+    expect(cell(0)?.isFgPalette()).toBe(true);
+    expect(cell(0)?.getFgColor()).toBe(1);
+    expect(cell(1)?.getFgColor()).toBe(2);
+    expect(cell(1)?.isBold()).toBeGreaterThan(0);
+    expect(cell(2)?.getFgColor()).toBe(208);
+    expect(cell(3)?.isFgRGB()).toBe(true);
+    expect(cell(3)?.getFgColor()).toBe((12 << 16) | (200 << 8) | 250);
+    expect(cell(4)?.isUnderline()).toBeGreaterThan(0);
+    expect(cell(5)?.isFgDefault()).toBe(true);
+    expect(cell(5)?.isUnderline()).toBe(0);
+  });
+
+  it("moves the cursor and clears the screen for a full-screen program, and keeps UTF-8", async () => {
+    const { screen } = make();
+    await draw(screen, "old\u001b[2J\u001b[3;5Hh\u00e9llo \u4e16\u754c");
+    const buffer = screen.term.buffer.active;
+    expect(buffer.getLine(0)?.translateToString(true)).toBe("");
+    expect(buffer.getLine(2)?.translateToString(true)).toBe(
+      "    h\u00e9llo \u4e16\u754c",
+    );
+  });
+
+  it("switches to the alternate screen and back, keeping the shell's screen", async () => {
+    const { screen } = make();
+    await draw(screen, "prompt$ \u001b[?1049hfull screen");
+    expect(screen.term.buffer.active.type).toBe("alternate");
+    await draw(screen, "\u001b[?1049l");
+    expect(screen.term.buffer.active.type).toBe("normal");
+    expect(screen.term.buffer.active.getLine(0)?.translateToString(true)).toBe(
+      "prompt$ ",
+    );
+  });
+
+  it("pastes the clipboard's text as typed, and ignores a refused or empty read", async () => {
+    const { screen } = make();
+    const sent: string[] = [];
+    screen.onInput((t) => sent.push(t));
+    const read = vi.fn<() => Promise<string>>();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: read },
+    });
+    read.mockResolvedValueOnce("pasted");
+    await screen.paste();
+    read.mockResolvedValueOnce("");
+    await screen.paste();
+    read.mockRejectedValueOnce(new Error("denied"));
+    await screen.paste();
+    expect(sent).toEqual(["pasted"]);
+  });
+});
+
 /** Presses a key in the emulator's input as the browser would. */
 function press(screen: XtermScreen, init: KeyboardEventInit, type = "keydown") {
   const event = new KeyboardEvent(type, {

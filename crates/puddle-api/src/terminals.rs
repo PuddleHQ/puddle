@@ -181,7 +181,7 @@ impl TerminalService for NoTerminals {
 
 /// An in-memory service for tests and the UI fixture: every workspace runs and the shell is a
 /// stand-in that echoes what it is typed. `exit N` ends it with status `N`; `size` prints the
-/// rows and columns it was last given; `vanish` drops the session without an end.
+/// rows and columns it was last given; `colors` prints a sample in ANSI colours; `vanish` drops the session without an end.
 #[derive(Debug, Default)]
 pub struct FakeTerminals {
     stopped: Mutex<Vec<WorkspaceId>>,
@@ -253,6 +253,10 @@ impl TerminalService for FakeTerminals {
     }
 }
 
+/// What `colors` prints: red, bold green, a 256-colour cell, a true-colour cell and underline,
+/// each followed by a reset, one per line.
+const COLOR_SAMPLE: &[u8] = b"\x1b[31mred-text\x1b[0m\r\n\x1b[1;32mbold-green\x1b[0m\r\n\x1b[38;5;208mpalette-orange\x1b[0m\r\n\x1b[38;2;12;200;250mtrue-cyan\x1b[0m\r\n\x1b[4munderlined\x1b[0m\r\n";
+
 fn fake_shell(mut size: TerminalSize) -> TerminalLink {
     let (input, mut from_page) = mpsc::channel(64);
     let (to_page, output) = mpsc::channel(64);
@@ -290,6 +294,9 @@ fn fake_shell(mut size: TerminalSize) -> TerminalLink {
                             }
                             if text == "vanish" {
                                 return;
+                            }
+                            if text == "colors" {
+                                answer.extend_from_slice(COLOR_SAMPLE);
                             }
                             if text == "size" {
                                 answer.extend_from_slice(

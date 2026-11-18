@@ -648,7 +648,7 @@ describe("undo", () => {
   });
 
   it("asks the service for the group of a reopened request this page did not decide, and lists one the stream already showed only once", async () => {
-    const { store, inbox, source } = setup();
+    const { store, inbox } = setup();
     inbox.add(request(1));
     await store.refresh();
     const decided = await store.decide(
@@ -664,7 +664,7 @@ describe("undo", () => {
     ) => {
       const reply = await real(...args);
       const [request] = (reply.data as { reopened: Row["request"][] }).reopened;
-      source.emit({
+      store.handleEvent({
         type: "pending_opened",
         request,
         registrable_domain: "example.com",

@@ -3,8 +3,7 @@
 // A component never styles a bare form control. Fields, dropdowns, text boxes, ticks, radios and
 // buttons take their look from src/lib/theme/controls.css (and base.css), so a screen that writes
 // `input { ... }`, `.row select { ... }` or `:global(.x textarea)` is a second copy that drifts
-// (T-2047, U-1 of the 2026-11 UI review: about 30 files had their own, and the ones that had none
-// showed the browser's raw grey control). Layout of a control (a width, a flex share) goes on a class
+// (about 30 files had their own, and the ones that had none showed the browser's raw grey control). Layout of a control (a width, a flex share) goes on a class
 // in the component or a shared utility class from controls.css, never on the element name.
 // ui/scripts/controls-lint.test.ts proves the rule fires on the old code and passes the fix.
 const CONTROLS = ["input", "select", "textarea", "button"];

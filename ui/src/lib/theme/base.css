@@ -28,7 +28,7 @@ h3 {
 }
 
 /* One size per heading level: the browser's own h3 size made "Proxy sign-in" larger than the "Network"
-   section it sits in (U-32). Screens that want another size set it on a class. */
+   section it sits in. Screens that want another size set it on a class. */
 h3 {
   font-size: var(--text-md);
 }

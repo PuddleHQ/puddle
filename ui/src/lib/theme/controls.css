@@ -190,7 +190,7 @@
   width: 16rem;
 }
 
-/* A label above its field, wrapping as one piece (U-32: a label must never part from its field). */
+/* A label above its field, wrapping as one piece (a label must never part from its field). */
 .form-field {
   display: grid;
   gap: var(--space-1);

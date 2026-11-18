@@ -147,3 +147,19 @@ fn the_summary_lists_what_would_be_lost() {
     let c = dirty.confirm();
     assert_eq!(c.workspace().as_str(), "acme");
 }
+
+#[test]
+fn terminal_controls_in_guest_text_are_replaced_in_every_record() {
+    let esc = "\u{1b}[2J";
+    let out = format!(
+        "R\tdir{esc}\nU\t M u{esc}\nC\tabc evil{esc}\nS\tstash{esc}\nO\tother{esc}\nE\tlib{esc}\tmsg{esc}\nD\n"
+    );
+    let f = parse(&out).unwrap();
+    let shown = "?[2J";
+    assert_eq!(f.repos[0].dir, format!("dir{shown}"));
+    assert_eq!(f.repos[0].uncommitted.items, [format!(" M u{shown}")]);
+    assert_eq!(f.repos[0].unpushed.items, [format!("abc evil{shown}")]);
+    assert_eq!(f.repos[0].stashes.items, [format!("stash{shown}")]);
+    assert_eq!(f.other.items, [format!("other{shown}")]);
+    assert_eq!(f.errors, [format!("lib{shown}: msg{shown}")]);
+}

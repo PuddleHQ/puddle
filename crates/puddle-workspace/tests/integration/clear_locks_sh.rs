@@ -417,6 +417,56 @@ async fn a_zero_filled_index_is_rebuilt_without_touching_the_working_tree() {
 }
 
 #[tokio::test]
+async fn a_checkout_s_config_and_hooks_cannot_make_the_repair_run_a_program() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let ran = fx.tmp.path().join("ran");
+        std::fs::create_dir(&ran).unwrap();
+        let program = |name: &str| {
+            let path = fx.tmp.path().join(name);
+            puddle_test_kit::write_executable(
+                &path,
+                &format!("#!/bin/sh\n: > '{}'\nexit 0\n", ran.join(name).display()),
+            );
+            path
+        };
+        // Rewriting the index runs `post-index-change`, from `.git/hooks` or from the folder the
+        // repository's own config names; `core.fsmonitor` is the other config entry that runs a
+        // program while git touches the index.
+        let hooks = fx.tmp.path().join("hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        std::fs::copy(program("config-hook"), hooks.join("post-index-change")).unwrap();
+        std::fs::copy(
+            program("git-hook"),
+            api.join(".git/hooks/post-index-change"),
+        )
+        .unwrap();
+        git_ok(
+            &api,
+            &["config", "core.hooksPath", &hooks.display().to_string()],
+        );
+        git_ok(
+            &api,
+            &[
+                "config",
+                "core.fsmonitor",
+                &program("fsmonitor").display().to_string(),
+            ],
+        );
+        zero_fill(&api.join(".git/index"), 1234);
+        let report = run(shell, &fx).await;
+        assert_eq!(report.repaired.len(), 1, "{shell}: {report:?}");
+        let mut ran_names: Vec<_> = std::fs::read_dir(&ran)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        ran_names.sort();
+        assert!(ran_names.is_empty(), "{shell}: ran {ran_names:?}");
+    }
+}
+
+#[tokio::test]
 async fn a_corrupt_index_is_rebuilt_and_the_damaged_file_is_kept() {
     for shell in shells() {
         let fx = repair_fixture();

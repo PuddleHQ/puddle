@@ -867,6 +867,21 @@ async fn a_check_script_that_exits_non_zero_is_an_error() {
 }
 
 #[tokio::test]
+async fn a_check_script_error_with_terminal_controls_is_shown_without_them() {
+    let rt = FakeRuntime::new();
+    rt.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(DELETE_CHECK_SH))
+            .then(|| ExecOutput::new(3, "E\t.\tbad \x1b[2Jone\n", "and \x1b]0;title\x07two\n"))
+    });
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let _sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    let err = w.check_delete(&rt, &id).await.unwrap_err().to_string();
+    assert!(!err.chars().any(char::is_control), "{err:?}");
+    assert!(err.contains("bad ?[2Jone"), "{err}");
+}
+
+#[tokio::test]
 async fn unknown_workspaces_are_not_found() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();

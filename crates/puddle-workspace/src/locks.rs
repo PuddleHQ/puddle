@@ -14,6 +14,7 @@ use std::time::Duration;
 use puddle_compute::{ExecRequest, Sandbox};
 use puddle_types::WorkspaceId;
 
+use crate::guest_text::clean;
 use crate::{Layout, WorkspaceError};
 
 /// The script (POSIX sh, run as root with the mount point as `$1`).
@@ -27,6 +28,8 @@ pub const MAX_LOCKS: usize = 100;
 
 /// Longest path or message kept.
 const MAX_LINE: usize = 500;
+/// The longest error reason kept.
+const MAX_REASON: usize = 2000;
 
 /// What clearing the stale locks of one workspace did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -93,7 +96,10 @@ pub(crate) async fn run<S: Sandbox>(
             .map(|l| l.replace('\t', ": "))
             .filter(|l| !l.is_empty())
             .unwrap_or_else(|| crate::trim::tail(&out.stderr_text()));
-        return Err(fail(format!("exited {}: {reason}", out.status.code)));
+        return Err(fail(clean(
+            &format!("exited {}: {reason}", out.status.code),
+            MAX_REASON,
+        )));
     }
     parse(&out.stdout_text()).map_err(fail)
 }
@@ -101,7 +107,7 @@ pub(crate) async fn run<S: Sandbox>(
 /// Adds `path: note` to `list` unless it is full.
 fn push_bounded(list: &mut Vec<String>, path: &str, note: &str) {
     if list.len() < MAX_LOCKS {
-        list.push(format!("{path}: {note}").chars().take(MAX_LINE).collect());
+        list.push(clean(&format!("{path}: {note}"), MAX_LINE));
     }
 }
 
@@ -122,7 +128,7 @@ pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
             ("B", None, None) => report.skipped_busy = true,
             ("L", Some(path), None) => {
                 if report.removed.len() < MAX_LOCKS {
-                    report.removed.push(path.chars().take(MAX_LINE).collect());
+                    report.removed.push(clean(path, MAX_LINE));
                 } else {
                     report.more = report.more.saturating_add(1);
                 }
@@ -131,7 +137,7 @@ pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
                 if report.errors.len() < MAX_LOCKS {
                     report
                         .errors
-                        .push(format!("{path}: {why}").chars().take(MAX_LINE).collect());
+                        .push(clean(&format!("{path}: {why}"), MAX_LINE));
                 }
             }
             ("R", Some(path), Some(what)) => push_bounded(&mut report.repaired, path, what),

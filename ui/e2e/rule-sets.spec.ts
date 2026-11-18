@@ -87,12 +87,31 @@ test("a built-in set ships off, and switches for one workspace", async ({
   ).not.toBeChecked();
 });
 
-test("the mise tools set ships off, and is gone while the global tools switch is off", async ({
+test("the mise tools set ships off, and is gone while the global tools switch is off (or never shows in a build without the layer)", async ({
   page,
   request,
   backend,
 }) => {
+  const settings = await request.get("/api/settings", {
+    headers: auth(backend),
+  });
+  const layer = (await settings.json()).mise_available as boolean;
   await openRules(page, backend);
+  if (!layer) {
+    // The v0.1 build leaves the mise layer out: nothing of it shows, on the rule screen or
+    // in Settings, and no stored switch brings it back.
+    await expect(page.getByRole("article", { name: "GitHub" })).toBeVisible();
+    await expect(page.getByRole("article", { name: "mise tools" })).toHaveCount(
+      0,
+    );
+    await expect(page.locator("main")).not.toContainText(/mise/i);
+    await page.goto("/settings");
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Appearance" }),
+    ).toBeVisible();
+    await expect(page.locator("main")).not.toContainText(/mise/i);
+    return;
+  }
   const mise = page.getByRole("article", { name: "mise tools" });
   await expect(
     mise.getByRole("switch", { name: "On for every workspace" }),

@@ -219,6 +219,20 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
   await backend.control.reset("lived-in");
   await openSettings(page, backend);
   const global = page.getByLabel("Manage tools with mise in workspaces");
+  const view0 = await request.get("/api/settings", { headers: auth(backend) });
+  if (!((await view0.json()) as { mise_available: boolean }).mise_available) {
+    // The v0.1 build leaves the mise layer out: no switch here, no Tools section on a workspace.
+    await expect(global).toHaveCount(0);
+    await page.goto("/workspaces/web-shop/settings");
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Clipboard" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tools" })).toHaveCount(0);
+    await expect(
+      page.getByLabel("Manage this workspace's tools with mise"),
+    ).toHaveCount(0);
+    return;
+  }
   await expect(global).toBeChecked();
   expect((await stored(request, backend)).tools.mise).toBeNull();
 

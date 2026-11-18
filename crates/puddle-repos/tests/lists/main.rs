@@ -13,4 +13,5 @@ mod common;
 mod etag;
 mod github;
 mod profile;
+mod rest_contract;
 mod route;

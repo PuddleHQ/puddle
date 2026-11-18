@@ -86,3 +86,17 @@ fn odd_output_is_refused() {
         assert!(parse(bad).is_err(), "{bad:?} accepted");
     }
 }
+
+#[test]
+fn terminal_controls_in_guest_text_are_replaced_in_every_record() {
+    let esc = "\u{1b}[2J";
+    let out = format!(
+        "L\tlock{esc}\nE\te{esc}\twhy{esc}\nR\tr{esc}\twhat{esc}\nP\tp{esc}\treason{esc}\nD\n"
+    );
+    let r = parse(&out).unwrap();
+    let shown = "?[2J";
+    assert_eq!(r.removed, [format!("lock{shown}")]);
+    assert_eq!(r.errors, [format!("e{shown}: why{shown}")]);
+    assert_eq!(r.repaired, [format!("r{shown}: what{shown}")]);
+    assert_eq!(r.damaged, [format!("p{shown}: reason{shown}")]);
+}

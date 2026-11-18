@@ -45,6 +45,7 @@
 mod check;
 mod checkouts;
 mod error;
+mod guest_text;
 mod import;
 mod layout;
 mod locks;

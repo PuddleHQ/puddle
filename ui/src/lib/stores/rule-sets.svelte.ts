@@ -8,7 +8,7 @@ import type { components } from "#lib/api/schema.d.ts";
 import { isRulesChanged } from "#lib/rules/events.ts";
 import { sentence } from "#lib/rules/model.ts";
 import type { Fill } from "#lib/rules/fill.ts";
-import type { RuleSet, SystemHost } from "#lib/rules/sets.ts";
+import type { EntryPage, RuleSet, SystemHost } from "#lib/rules/sets.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
@@ -72,6 +72,31 @@ export class RuleSetsStore {
     this.sets = known
       ? this.sets.map((s) => (s.id === set.id ? set : s))
       : [...this.sets, set];
+  }
+
+  /** A page of a built-in set's entries, optionally searched. */
+  async entries(
+    id: string,
+    query: string,
+    offset: number,
+  ): Promise<Result<EntryPage>> {
+    try {
+      const { data } = await this.#api.GET("/api/rule-sets/{id}/entries", {
+        params: {
+          path: { id },
+          query: query === "" ? { offset } : { q: query, offset },
+        },
+      });
+      if (!data) {
+        return {
+          ok: false,
+          message: "Puddle couldn't read the entries.",
+        };
+      }
+      return { ok: true, value: data };
+    } catch {
+      return { ok: false, message: DOWN };
+    }
   }
 
   /** Makes an empty set of your own, on everywhere; `fill` `null` leaves its colour to Puddle. */

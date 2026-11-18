@@ -77,7 +77,7 @@ export const READ = `(() => {
     scrollableStyle: q(".xterm-scrollable-element")?.getAttribute("style"),
     xtermStyle: xterm?.getAttribute("style"),
     probeReads: (() => {
-      const pr = q(".probe");
+      const pr = q(".probe") ?? q("body > span[aria-hidden=true]");
       if (!pr) return "no .probe";
       const reads = {};
       for (const t of ["--color-surface", "--color-text", "--color-danger"]) {
@@ -91,7 +91,7 @@ export const READ = `(() => {
         document.body.append(clone);
         const inBody = getComputedStyle(clone).color;
         clone.remove();
-        reads[t] = { styleAttr: pr.getAttribute("style"), fresh, afterLayout, inBody, rootValue: getComputedStyle(document.documentElement).getPropertyValue(t), probeValue: getComputedStyle(pr).getPropertyValue(t) };
+        reads[t] = { where: pr.parentElement?.tagName, styleAttr: pr.getAttribute("style"), fresh, afterLayout, inBody, rootValue: getComputedStyle(document.documentElement).getPropertyValue(t), probeValue: getComputedStyle(pr).getPropertyValue(t) };
       }
       pr.style.color = "";
       return { reads, display: getComputedStyle(pr).display, connected: pr.isConnected, ancestors: (() => { const a = []; for (let e = pr.parentElement; e; e = e.parentElement) a.push(e.tagName + "." + e.className + " " + getComputedStyle(e).color + " scheme=" + getComputedStyle(e).colorScheme); return a.slice(0, 8); })() };

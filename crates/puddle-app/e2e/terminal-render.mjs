@@ -68,6 +68,20 @@ export const READ = `(() => {
     green: green && { colour: style(green).color, classes: green.className, weight: style(green).fontWeight },
     redBox: red && (({ x, y, width, height }) => ({ x, y, width, height }))(red.getBoundingClientRect()),
     styleSheets: document.styleSheets.length,
+    viewportStyle: q(".xterm-viewport")?.getAttribute("style"),
+    viewportBackground: style(q(".xterm-viewport"))?.backgroundColor,
+    redInlineStyle: red?.getAttribute("style"),
+    rowsHead: [...document.querySelectorAll(".xterm-rows > div")].slice(0, 6).map((d) => d.innerHTML.slice(0, 300)),
+    colorScheme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+    forcedColors: matchMedia("(forced-colors: active)").matches,
+    tokens: Object.fromEntries(["--color-surface", "--color-text", "--color-accent", "--color-danger", "--color-success", "--color-warning", "--color-accent-subtle"].map((t) => {
+      const p = document.createElement("span");
+      p.style.color = "var(" + t + ")";
+      document.body.append(p);
+      const out = [getComputedStyle(document.documentElement).getPropertyValue(t).trim(), getComputedStyle(p).color];
+      p.remove();
+      return [t, out];
+    })),
   };
 })()`;
 

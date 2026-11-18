@@ -34,7 +34,7 @@ export function builtIn(slug: string, over: Partial<RuleSet> = {}): RuleSet {
   };
 }
 
-/** `n` deny entries `t0.tracker.example` and on, for a set too big to list whole. */
+/** `n` deny entries `h0.tracker.example` and on, for a set too big to list whole. */
 export function trackerEntries(n: number): RuleSet["entries"] {
   return Array.from({ length: n }, (_, i) => ({
     pattern: `h${i}.tracker.example`,

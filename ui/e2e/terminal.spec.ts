@@ -112,7 +112,8 @@ test("the tab opens from the workspace's Overview under the app's prototype guar
   await expect(
     page.getByRole("heading", { level: 2, name: "Terminal" }),
   ).toBeVisible();
-  await expect(page.getByText(/No terminal is open/)).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
+  await expect(screen(page)).toContainText("$");
   expect(errors).toEqual([]);
 });
 

@@ -529,6 +529,9 @@ jobs:
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
+      - name: dormant (the shipped build shows nothing of serve or mise)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh dormant
       - name: disk after clippy (evidence, never a gate)
         if: ${{ always() }}
         timeout-minutes: 3

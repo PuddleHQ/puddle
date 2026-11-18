@@ -16,6 +16,24 @@ fail() { echo "stress-test: $*" >&2; exit 1; }
 FLAKY="$here/flaky-report.py"
 bt='`' # markdown code ticks, for the patterns below
 
+# 0. flaky-report.py on a nightly's junit: a test that passed only on the retry fails the step
+cat >"$tmp/retry.xml" <<'XML'
+<testsuites><testsuite name="a"><testcase name="steady" classname="p::bin"/>
+<testcase name="wobbly" classname="p::bin"><flakyFailure message="x"/></testcase></testsuite></testsuites>
+XML
+set +e
+python3 "$FLAKY" "$tmp/retry.xml" >"$tmp/md" 2>"$tmp/warn"
+status=$?
+set -e
+[ "$status" = 1 ] || fail "retry: a test that passed only on retry must exit 1, got $status"
+grep -q "^- \`p::bin::wobbly\`\$" "$tmp/md" || fail "retry: the flaky test is listed: $(cat "$tmp/md")"
+grep -q "^::error title=flaky test::p::bin::wobbly" "$tmp/warn" || fail "retry: one error annotation per flaky test"
+grep -q 'steady' "$tmp/md" && fail "retry: a passing test must not be listed"
+sed 's/<flakyFailure message="x"\/>//' "$tmp/retry.xml" >"$tmp/clean.xml"
+python3 "$FLAKY" "$tmp/clean.xml" >"$tmp/md" 2>/dev/null || fail "retry: a run with no flake must exit 0"
+grep -q '^None\.' "$tmp/md" || fail "retry: a run with no flake says None"
+python3 "$FLAKY" "$tmp/absent.xml" >/dev/null 2>&1 || fail "retry: a missing report exits 0 (the run never reached its tests)"
+
 # 1. flaky-report.py --stress (its counts also feed stress-yield.py)
 cat >"$tmp/nextest.xml" <<'XML'
 <testsuites><testsuite name="a@stress-0"><testcase name="steady" classname="p::bin"/>

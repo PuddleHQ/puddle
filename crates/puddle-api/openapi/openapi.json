@@ -18063,6 +18063,7 @@
           "vscode_server",
           "ui",
           "tools",
+          "mise_available",
           "limits",
           "effective_limits",
           "effective",
@@ -18081,6 +18082,10 @@
           "limits": {
             "$ref": "#/components/schemas/Limits",
             "description": "The limits the user set (global only)."
+          },
+          "mise_available": {
+            "type": "boolean",
+            "description": "Whether this build has the managed mise layer at all. When false (the v0.1 build)\nthe window shows no mise setting and the layer is off whatever `tools.mise` holds."
           },
           "revision": {
             "type": "string",

@@ -196,10 +196,15 @@ impl Tools {
     /// Puddle's default for [`Tools::mise`].
     pub const DEFAULT_MISE: bool = true;
 
+    /// Whether the managed mise layer exists in this build (the `mise` cargo feature). The v0.1
+    /// build leaves it out: the layer is dormant, nothing of it shows and no stored value
+    /// turns it on.
+    pub const AVAILABLE: bool = cfg!(feature = "mise");
+
     /// Whether the managed mise layer is on at all.
     #[must_use]
     pub fn mise(&self) -> bool {
-        self.mise.unwrap_or(Self::DEFAULT_MISE)
+        Self::AVAILABLE && self.mise.unwrap_or(Self::DEFAULT_MISE)
     }
 
     fn is_empty(&self) -> bool {

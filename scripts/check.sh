@@ -193,7 +193,7 @@ run_gate() {
         scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/check-spdx-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/check-az-contract-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh && ci/fetch-real-tools-test.sh && ci/github-rest/check-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
+            ci/scope-test.sh && ci/cargo-fetch-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/fake-host-starved-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
             ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh &&
             scripts/check-hooks-tmpdir-test.sh
@@ -214,7 +214,8 @@ run_gate() {
         fi
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
-    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh && ci/image-pins-test.sh && ci/image-pins.sh check ;;
+    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh && ci/image-pins-test.sh && ci/image-pins.sh check &&
+        scripts/check-external-fetch.sh --self-test && scripts/check-external-fetch.sh ;;
     # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
     # (the code it covered moved): fails, so a position-keyed exclusion cannot rot unseen. A failed
     # listing is an empty list, which the script refuses. `--colors never`: CI sets CARGO_TERM_COLOR=always,

@@ -385,12 +385,29 @@ jobs:
           else
             echo "no Gateway test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: JetBrains Gateway (pinned release; download, verify)
+      # JetBrains allows no public mirror: a cache keyed on the pin carries the job through a download.jetbrains.com
+      # outage once one run got the file (the script still checks the cached copy against the pin).
+      - name: JetBrains Gateway download cache (keyed on the pin)
+        id: gateway-cache
+        if: steps.gateway.outputs.needed == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gateway-cache
+          key: gateway-${{ runner.os }}-${{ hashFiles('ci/gateway.sha256') }}
+      - name: JetBrains Gateway (pinned release; cache or download, verify)
+        id: gateway-fetch
         if: steps.gateway.outputs.needed == 'true'
         timeout-minutes: 20
         run: |
-          ci/fetch-gateway.sh "$RUNNER_TEMP/gateway"
+          FETCH_CACHE_DIR="$HOME/gateway-cache" ci/fetch-gateway.sh "$RUNNER_TEMP/gateway"
           echo "PUDDLE_GATEWAY_DIR=$RUNNER_TEMP/gateway" >> "$GITHUB_ENV"
+      - name: JetBrains Gateway download cache (save on a miss)
+        if: steps.gateway-fetch.outcome == 'success' && steps.gateway-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gateway-cache
+          key: ${{ steps.gateway-cache.outputs.cache-primary-key }}
       - name: disk after the archive download (evidence, never a gate)
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         timeout-minutes: 3

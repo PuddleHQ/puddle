@@ -1116,6 +1116,12 @@ async fn a_client_that_sends_bytes_that_are_not_http_is_answered_and_its_connect
 
 #[tokio::test]
 async fn connections_that_have_all_ended_do_not_count_against_the_next_one() {
+    // Both ends of every connection live in this process.
+    let limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
+    assert!(
+        limit.allows(3 * puddle_front::MAX_CONNECTIONS as u64),
+        "{limit:?}"
+    );
     let rig = rig().await;
     let mut open = Vec::new();
     for _ in 0..puddle_front::MAX_CONNECTIONS {

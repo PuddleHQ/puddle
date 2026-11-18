@@ -981,10 +981,13 @@ async fn a_link_asked_for_of_a_workspace_that_stops_meanwhile_is_not_running() {
 
 #[tokio::test]
 async fn a_late_agent_report_does_not_bring_a_stopped_workspace_back() {
-    let rig = rig_without_agent("late-report", |ports| ports);
+    let mut rig = rig_without_agent("late-report", |ports| ports);
     rig.started().await;
     rig.ports.stopped(&rig.workspace).await;
-    // The agent's session outlived the stop and reports once more.
+    // The agent's session outlived the stop and reports once more: its hello gives a link,
+    // then a listening report.
+    rig.start_agent().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     GuestWatcher::ports(&rig.ports, &rig.workspace, vec![3000]);
     let view = rig.ports.view(&rig.workspace).unwrap();
     assert!(!view.running);

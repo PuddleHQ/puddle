@@ -331,11 +331,7 @@ impl Store {
         max: usize,
     ) -> Result<bool, StoreError> {
         self.change(|tx, _now, fx| {
-            let held: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM never_decrypt WHERE workspace_id = ?1",
-                [workspace.as_str()],
-                |r| r.get(0),
-            )?;
+            let held: i64 = scalar(tx, COUNT_OWN, [workspace.as_str()])?;
             let added = tx.execute(
                 "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern)
                  SELECT ?1, ?2 WHERE ?3 > ?4",
@@ -344,11 +340,7 @@ impl Store {
             if added == 1 {
                 changed(fx, workspace);
             }
-            let present: bool = tx.query_row(
-                "SELECT EXISTS (SELECT 1 FROM never_decrypt WHERE workspace_id = ?1 AND pattern = ?2)",
-                params![workspace.as_str(), pattern],
-                |r| r.get(0),
-            )?;
+            let present: bool = scalar(tx, HOLDS_OWN, [workspace.as_str(), pattern])?;
             Ok(present)
         })
     }
@@ -370,11 +362,7 @@ impl Store {
             if added == 1 {
                 changed_everywhere(tx, fx)?;
             }
-            let present: bool = tx.query_row(
-                "SELECT EXISTS (SELECT 1 FROM never_decrypt_global WHERE pattern = ?1)",
-                [pattern],
-                |r| r.get(0),
-            )?;
+            let present: bool = scalar(tx, HOLDS_GLOBAL, [pattern])?;
             Ok(present)
         })
     }
@@ -396,6 +384,21 @@ impl Store {
             Ok(())
         })
     }
+}
+
+const COUNT_OWN: &str = "SELECT COUNT(*) FROM never_decrypt WHERE workspace_id = ?1";
+const COUNT_GLOBAL: &str = "SELECT COUNT(*) FROM never_decrypt_global";
+const HOLDS_OWN: &str =
+    "SELECT EXISTS (SELECT 1 FROM never_decrypt WHERE workspace_id = ?1 AND pattern = ?2)";
+const HOLDS_GLOBAL: &str = "SELECT EXISTS (SELECT 1 FROM never_decrypt_global WHERE pattern = ?1)";
+
+/// The one value a query selects.
+fn scalar<T: rusqlite::types::FromSql>(
+    tx: &Transaction<'_>,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> Result<T, StoreError> {
+    Ok(tx.query_row(sql, params, |r| r.get(0))?)
 }
 
 /// A list limit as SQLite holds integers.

@@ -16,6 +16,7 @@
 //! | Data folder path (Linux) | the mode of every folder from `/` down to Puddle's data folder, by msb's own rule | a group- or world-writable folder that is not sticky: names it and the `chmod g-w` that fixes it |
 //! | Disk encryption | `BitLocker` (Windows, read with `PowerShell`; unknown unless the process is elevated), `dm-crypt` below the data folder's drive and swap (Linux, `/sys`), `FileVault` and encrypted swap (macOS) | data drive or swap not encrypted: a secret paged out or kept on disk is readable from the disk; unreadable: an info line |
 //! | SSH agent | one key-list request to the agent's pipe or socket ([`puddle_ssh_agent`]), 2 s limit; on Windows also the OpenSSH Authentication Agent service | no agent, locked, no keys, slow to answer (info or warning, never a failure) |
+//! | Azure CLI | `az --version` found on the path, 10 s limit | not found or its version unreadable: a warning, since only Azure DevOps sources through `az` need it |
 //! | Credential store | a write and delete of a throwaway value, through [`puddle_secrets::probe_os_store`] | no Secret Service provider or a locked keyring (a headless Linux host): saving secrets and sign-ins fails; names the fix and says to choose Retry in Puddle or restart it |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
 //!

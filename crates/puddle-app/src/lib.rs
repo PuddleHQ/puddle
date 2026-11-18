@@ -54,4 +54,4 @@ pub mod tray;
 mod webview_environment;
 pub mod window;
 
-pub use shell::{Options, ShellError, context, run, with_plugins};
+pub use shell::{Options, ShellError, context, report_startup_failure, run, with_plugins};

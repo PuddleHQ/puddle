@@ -144,6 +144,19 @@ fn parse(der: &[u8]) -> X509Certificate<'_> {
 }
 
 #[test]
+fn a_certificate_that_says_it_is_a_ca_reads_as_one_and_a_leaf_does_not() {
+    let ca = Spec {
+        ca: true,
+        ..Spec::good()
+    }
+    .build();
+    let info = leaf::inspect(&ca).unwrap();
+    assert_eq!(info.basic_constraints.map(|(_, ca)| ca), Some(true));
+    assert!(info.is_ca());
+    assert!(!leaf::inspect(&Spec::good().build()).unwrap().is_ca());
+}
+
+#[test]
 fn a_certificate_without_basic_constraints_is_not_offered_for_trust() {
     // Only a certificate that says it is not a CA passes: silence is not enough.
     let mut params = CertificateParams::default();

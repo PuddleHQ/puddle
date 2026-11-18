@@ -316,6 +316,143 @@ async fn a_rule_is_switched_off_and_on_and_a_switched_off_rule_decides_nothing()
     api.running.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_rule_is_edited_in_place_and_closes_the_requests_it_now_decides() {
+    let api = start().await;
+    api.own("box");
+    api.own("other");
+    let made = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&json!({"scope": {"type": "workspace", "workspace": "box"}, "pattern": "old.example.com", "effect": "allow"})),
+        )
+        .await;
+    let id = made.json()["id"].as_i64().unwrap();
+    let off = api
+        .send(
+            "PUT",
+            &format!("/api/rules/{id}/enabled"),
+            Some(&json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(off.status, 200);
+    let waiting = api.request("box", "www.example.org");
+    let elsewhere = api.request("other", "www.example.org");
+    let untouched = api.request("box", "unrelated.example.net");
+    let path = format!("/api/rules/{id}");
+    let edited = api
+        .send(
+            "PUT",
+            &path,
+            Some(&json!({"scope": {"type": "workspace", "workspace": "box"}, "pattern": "*.example.org", "effect": "deny", "expires_at": START_MS + 60_000})),
+        )
+        .await;
+    assert_eq!(edited.status, 200, "{}", edited.body);
+    let rule = edited.json();
+    assert_eq!(rule["id"], id);
+    assert_eq!(rule["pattern"], ".example.org");
+    assert_eq!(rule["pattern_kind"], "suffix");
+    assert_eq!(rule["effect"], "deny");
+    assert_eq!(rule["expires_at"], START_MS + 60_000);
+    assert_eq!(rule["created_by"], "api");
+    assert_eq!(rule["created_at"], START_MS);
+    assert_eq!(rule["enabled"], false, "an edit leaves the switch alone");
+    assert_eq!(rule["precedence"], 5, "left out keeps the precedence");
+    assert_eq!(api.get("/api/rules").await.json()["rules"][0], rule);
+    // The rule is off, so the edit decided nothing yet.
+    let state = |pending: i64| {
+        let api = &api;
+        async move { api.get(&format!("/api/pending/{pending}")).await.json()["state"].clone() }
+    };
+    assert_eq!(state(waiting).await, "requested");
+    api.send(
+        "PUT",
+        &format!("/api/rules/{id}/enabled"),
+        Some(&json!({"enabled": true})),
+    )
+    .await;
+    assert_eq!(state(waiting).await, "denied");
+    assert_eq!(state(elsewhere).await, "requested", "another workspace");
+    // An edit of a rule that is on closes at once: widen it to every workspace and allow.
+    let widened = api
+        .send(
+            "PUT",
+            &path,
+            Some(&json!({"scope": {"type": "global"}, "pattern": "www.example.org", "effect": "allow", "expires_at": null, "precedence": 7})),
+        )
+        .await;
+    assert_eq!(widened.status, 200, "{}", widened.body);
+    assert_eq!(widened.json()["scope"], json!({"type": "global"}));
+    assert_eq!(widened.json()["precedence"], 7);
+    assert_eq!(widened.json()["expires_at"], Value::Null);
+    assert_eq!(state(elsewhere).await, "allowed");
+    assert_eq!(state(untouched).await, "requested");
+    let records = api.get("/api/audit").await.json().to_string();
+    assert!(records.contains("rule_updated"), "{records}");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_edit_that_is_not_valid_is_refused_and_changes_nothing() {
+    let api = start().await;
+    api.own("box");
+    let made = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&json!({"scope": {"type": "workspace", "workspace": "box"}, "pattern": "example.com", "effect": "allow"})),
+        )
+        .await;
+    let id = made.json()["id"].as_i64().unwrap();
+    let path = format!("/api/rules/{id}");
+    let good = json!({"scope": {"type": "global"}, "pattern": "example.net", "effect": "deny", "expires_at": null});
+    let with = |key: &str, value: Value| {
+        let mut body = good.clone();
+        body[key] = value;
+        body
+    };
+    for (path, body, status) in [
+        ("/api/rules/999", good.clone(), 404),
+        (&path, with("pattern", json!("*.com")), 422),
+        (&path, with("pattern", json!("https://example.net/x")), 422),
+        (&path, with("pattern", json!("")), 422),
+        (&path, with("expires_at", json!(1)), 422),
+        (&path, with("precedence", json!(0)), 422),
+        (&path, with("precedence", json!(10)), 422),
+        (&path, with("effect", json!("maybe")), 422),
+        (
+            &path,
+            with(
+                "scope",
+                json!({"type": "workspace", "workspace": "nobody0"}),
+            ),
+            404,
+        ),
+        (
+            &path,
+            with("scope", json!({"type": "set", "set": 404})),
+            404,
+        ),
+        (&path, with("extra", json!(1)), 422),
+        (
+            &path,
+            json!({"scope": {"type": "global"}, "pattern": "example.net", "effect": "deny"}),
+            422,
+        ),
+        (&path, json!({"pattern": "example.net"}), 422),
+        (&path, json!({}), 422),
+    ] {
+        let reply = api.send("PUT", path, Some(&body)).await;
+        assert_eq!(reply.status, status, "{path} {body}: {}", reply.body);
+    }
+    let rule = &api.get("/api/rules").await.json()["rules"][0];
+    assert_eq!(rule["pattern"], "example.com");
+    assert_eq!(rule["effect"], "allow");
+    assert_eq!(rule["scope"]["type"], "workspace");
+    api.running.shutdown().await;
+}
+
 /// A field the contract marks required is required: a body that leaves it out is refused and
 /// changes nothing, where reading it as `null` would make a rule permanent, reset a set's switch
 /// or make a request rule for every workspace.

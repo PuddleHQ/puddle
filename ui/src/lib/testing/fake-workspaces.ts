@@ -149,6 +149,8 @@ export class FakeWorkspaces {
   tools: Record<string, components["schemas"]["WorkspaceTools"]> = {};
   /** The global mise switch, answered on `/api/settings`. */
   globalMise: boolean | null = null;
+  /** Whether this build has the mise layer at all (false is the v0.1 build). */
+  miseAvailable = true;
   /** Unknown fields per workspace document. */
   unknown: Record<string, string[]> = {};
   globalMemory = 8192;
@@ -357,6 +359,7 @@ export class FakeWorkspaces {
           unknown_fields: [],
           vscode_server: {},
           tools: { mise: this.globalMise },
+          mise_available: this.miseAvailable,
           limits: { max_cpus: null },
           effective_limits: {
             max_cpus: this.hostCpus,

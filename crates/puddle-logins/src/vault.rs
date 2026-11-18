@@ -4,7 +4,10 @@
 //!
 //! The slots of a workspace are a closed, small set (each profile's roles), so an entry's name is
 //! worked out from the workspace, the profile and the role, and no index is needed to find the
-//! entries of a workspace, to list them or to delete them with it. An entry holds the stand-in
+//! entries of a workspace, to list them or to delete them with it. Deleting names only the slots
+//! of the profiles it is given; an entry of a slot this build no longer has is not among them, but
+//! [`is_saved_login_of`] still knows it as the workspace's, so a sweep of the entries nothing names
+//! removes it once the workspace is gone. An entry holds the stand-in
 //! the workspace was given and the real token; the stand-in is not a secret (the workspace has
 //! it) but is kept beside the token so the pair survives a restart of the workspace, whose disk
 //! still holds the stand-in.

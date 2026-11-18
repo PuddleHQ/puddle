@@ -15,6 +15,7 @@ import {
   ghSource,
   profile,
 } from "#lib/testing/fake-identities.ts";
+import { session } from "#lib/session/session.svelte.ts";
 import CredentialEditor from "./CredentialEditor.svelte";
 
 let api: FakeIdentities;
@@ -65,7 +66,11 @@ beforeEach(() => {
   onAdd = vi.fn();
   onCancel = vi.fn();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  session.mode = "checking";
+  session.user = null;
+});
 
 let onProfile: ReturnType<typeof vi.fn>;
 
@@ -585,5 +590,36 @@ describe("the Azure CLI", () => {
     expect(await screen.findByTestId("az-check")).toHaveTextContent(
       "Puddle can read a token from the Azure CLI",
     );
+  });
+});
+
+describe("who is offered the computer's own accounts", () => {
+  const FOUND_LABEL = "Found on this computer";
+  const AZ_LABEL = /Use the Azure CLI/;
+
+  it("offers them to the owner and to a window with nothing to sign in to", async () => {
+    session.mode = "local";
+    mount();
+    expect(await screen.findByLabelText(FOUND_LABEL)).toBeInTheDocument();
+    expect(screen.getByLabelText(AZ_LABEL)).toBeInTheDocument();
+    expect(api.calls).toContain("GET /api/credentials/found");
+    cleanup();
+    session.mode = "signed-in";
+    session.user = { id: 1, name: "ann", role: "owner" };
+    mount();
+    expect(await screen.findByLabelText(FOUND_LABEL)).toBeInTheDocument();
+    expect(screen.getByLabelText(AZ_LABEL)).toBeInTheDocument();
+  });
+
+  it("offers a signed-in user who is not the owner only a pasted token, and never asks for the accounts", async () => {
+    session.mode = "signed-in";
+    session.user = { id: 2, name: "bob", role: "user" };
+    mount();
+    expect(await screen.findByLabelText("Paste a token")).toBeChecked();
+    expect(screen.queryByLabelText(FOUND_LABEL)).toBeNull();
+    expect(screen.queryByLabelText(AZ_LABEL)).toBeNull();
+    expect(screen.queryByText(/signed-in accounts/)).toBeNull();
+    expect(screen.getByLabelText("Token")).toBeInTheDocument();
+    expect(api.calls).not.toContain("GET /api/credentials/found");
   });
 });

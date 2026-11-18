@@ -30,7 +30,7 @@ use crate::pattern::{Pattern, registrable_domain};
 use crate::pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
-use crate::rule::{Actor, NewRule, Precedence, Rule, Scope};
+use crate::rule::{Actor, NewRule, Precedence, Rule, RuleEdit, Scope};
 use crate::schema;
 use crate::users::UserId;
 
@@ -736,6 +736,84 @@ impl Store {
             fx.push(Event::RulesChanged {});
             Ok(after)
         })
+    }
+
+    /// Changes what a rule says (its host pattern, effect, scope and expiry, and its precedence
+    /// when `edit` names one) and closes the open requests it now decides, like a new rule
+    /// (R-16). The rule keeps its id, creator, creation time and switch. Writes one
+    /// `rule_updated` record, and none when nothing changes. A workspace or rule set the edit
+    /// names must belong to the rule's user.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRule`], [`StoreError::SystemActor`],
+    /// [`StoreError::ExpiryNotInFuture`], [`StoreError::UnknownWorkspace`] or
+    /// [`StoreError::UnknownRuleSet`] for another user's workspace or set, or a database error.
+    pub fn update_rule(
+        &self,
+        id: RuleId,
+        edit: &RuleEdit,
+        actor: Actor,
+    ) -> Result<Rule, StoreError> {
+        if actor == Actor::System {
+            return Err(StoreError::SystemActor);
+        }
+        let rule = self.change(|tx, now, fx| {
+            let before = load_rule(tx, id)?;
+            if edit.expires_at.is_some_and(|at| at <= now) {
+                return Err(StoreError::ExpiryNotInFuture);
+            }
+            match &edit.scope {
+                Scope::Workspace(workspace) => {
+                    users::require_owner(tx, workspace, before.user)?;
+                }
+                Scope::Set(set) => {
+                    sets::require_user_set(tx, before.user, *set)?;
+                }
+                Scope::Global => {}
+            }
+            let (kind, precedence) = (
+                match edit.pattern {
+                    Pattern::Exact(_) => "exact",
+                    Pattern::Suffix(_) => "suffix",
+                },
+                edit.precedence.unwrap_or(before.precedence),
+            );
+            tx.execute(
+                "UPDATE rules SET scope = ?1, workspace_id = ?2, set_id = ?3, pattern_kind = ?4,
+                                  pattern = ?5, effect = ?6, expires_at = ?7, precedence = ?8
+                 WHERE id = ?9",
+                params![
+                    edit.scope.as_str(),
+                    edit.scope.workspace().map(WorkspaceId::as_str),
+                    edit.scope.set(),
+                    kind,
+                    edit.pattern.to_string(),
+                    edit.effect.as_str(),
+                    edit.expires_at.map(sql_ts),
+                    precedence.get(),
+                    id.0,
+                ],
+            )?;
+            let rule = load_rule(tx, id)?;
+            if rule == before {
+                return Ok(rule);
+            }
+            append_for(
+                tx,
+                &AuditRecord::RuleUpdated {
+                    ts: now,
+                    before: RuleWire::from(&before),
+                    rule: RuleWire::from(&rule),
+                    actor: actor_str(actor),
+                },
+                rule.user,
+            )?;
+            close_decided_rows(tx, &rule, None, actor, now, fx)?;
+            fx.push(Event::RulesChanged {});
+            Ok(rule)
+        })?;
+        tracing::info!(rule = %id, "rule edited");
+        Ok(rule)
     }
 
     /// Switches a rule on or off (R-65). A rule that is off never matches and keeps its place,

@@ -56,7 +56,7 @@ pub enum ErrorCode {
     /// The settings were changed by someone else since the client read them, so the save was
     /// refused and nothing was written (409); read them again.
     SettingsChanged,
-    /// Too many sign-in attempts: wait for the time in `Retry-After` (429).
+    /// Too many sign-in attempts or error reports: wait for the time in `Retry-After` (429).
     RateLimited,
     /// The feature isn't available in this build or state (503).
     Unavailable,
@@ -159,10 +159,18 @@ impl ApiError {
 
     /// Too many attempts: try again in `seconds`.
     pub(crate) fn rate_limited(seconds: u64) -> Self {
+        Self::too_many(
+            format!("too many sign-in attempts; try again in {seconds} seconds"),
+            seconds,
+        )
+    }
+
+    /// Too many requests of this kind: `message` says which, `Retry-After` is `seconds`.
+    pub(crate) fn too_many(message: impl Into<String>, seconds: u64) -> Self {
         let mut err = Self::new(
             StatusCode::TOO_MANY_REQUESTS,
             ErrorCode::RateLimited,
-            format!("too many sign-in attempts; try again in {seconds} seconds"),
+            message,
         );
         err.retry_after = Some(seconds);
         err

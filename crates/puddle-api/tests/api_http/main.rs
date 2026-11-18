@@ -50,4 +50,5 @@ mod ssh_agent;
 mod terminals;
 mod tools;
 mod ui;
+mod ui_errors;
 mod workspaces;

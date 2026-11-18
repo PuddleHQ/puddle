@@ -29,7 +29,10 @@ ok    Credential store    the operating system's credential store: a test write 
     {
       "id": "virtualization",
       "status": "info",
-      "summary": "unknown"
+      "summary": "unknown",
+      "finding": "virtualization_unknown",
+      "impact": "Puddle couldn't read whether CPU virtualization is on.",
+      "remedy": "Fix the Hypervisor line first. If it stays, check that virtualization is on in the UEFI/BIOS setup."
     },
     {
       "id": "hypervisor",
@@ -37,49 +40,61 @@ ok    Credential store    the operating system's credential store: a test write 
       "summary": "the hypervisor query failed",
       "finding": "hypervisor_query_failed",
       "fix": "Run puddle doctor again. If this stays, include the line below when you report it.",
-      "detail": "/dev/kvm: Is a directory (os error 21)"
+      "detail": "/dev/kvm: Is a directory (os error 21)",
+      "impact": "Puddle can't tell whether it can start workspaces here.",
+      "remedy": "Restart the computer and check again. If it stays, copy the report and send it with a bug report."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
       "status": "fail",
       "summary": "msb was killed by a signal instead of answering",
       "finding": "launch_exited",
-      "fix": "If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it may have stopped the process. Otherwise reinstall Puddle and include the lines below when you report it."
+      "fix": "If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it may have stopped the process. Otherwise reinstall Puddle and include the lines below when you report it.",
+      "impact": "Puddle can't start any workspace: its runtime stops right after it starts.",
+      "remedy": "Look for msb in your security software's log, or reinstall Puddle."
     },
     {
       "id": "test_boot",
       "status": "skipped",
-      "summary": "not checked: no usable hypervisor"
+      "summary": "not checked: no usable hypervisor",
+      "impact": "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     }
   ],
   "elapsed_ms": 1234

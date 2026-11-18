@@ -46,6 +46,7 @@ mod shell_init;
 mod ssh_agent;
 mod start_folder;
 mod tools;
+mod ui_errors;
 mod workspaces;
 
 pub use admin::{
@@ -143,6 +144,7 @@ pub use start_folder::{StartFolderRequest, StartFolderSet};
 pub use tools::{
     RegistryTool, ToolChangeRequest, ToolEntry, ToolRegistry, ToolVersions, ToolsFile, ToolsListing,
 };
+pub use ui_errors::{UiError, UiErrorKind, UiErrorList, UiErrorReport};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,

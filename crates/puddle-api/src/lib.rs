@@ -82,6 +82,7 @@ mod system_managed;
 mod terminals;
 mod token;
 mod ui;
+mod ui_errors;
 pub mod wire;
 mod workspaces;
 

@@ -11,6 +11,7 @@
   } from "#lib/workspaces/direct-ssh.ts";
   import { serverNote, type ServerChoice } from "#lib/settings/model.ts";
   import type { Workspace } from "#lib/workspaces/model.ts";
+  import { session } from "#lib/session/session.svelte.ts";
   import "#lib/theme/controls.css";
 
   // The one "how do you want to connect" step. The browser editor is on top, needs no setting
@@ -97,19 +98,26 @@
         {#if !workspace.direct_ssh}Off: Puddle opens no SSH way in and writes no
           ssh config entry.{/if}
       </p>
-      <button
-        type="button"
-        class="btn"
-        disabled={!workspace.direct_ssh}
-        onclick={() => {
-          // Closing the step clears its workspace, so take it first.
-          const w = workspace;
-          open = false;
-          onDesktop(w);
-        }}
-      >
-        <Code aria-hidden="true" size={16} />Open in VS Code
-      </button>
+      {#if session.isRemote}
+        <p class="desc">
+          VS Code opens only on the computer Puddle runs on, so this page has no
+          button for it.
+        </p>
+      {:else}
+        <button
+          type="button"
+          class="btn"
+          disabled={!workspace.direct_ssh}
+          onclick={() => {
+            // Closing the step clears its workspace, so take it first.
+            const w = workspace;
+            open = false;
+            onDesktop(w);
+          }}
+        >
+          <Code aria-hidden="true" size={16} />Open in VS Code
+        </button>
+      {/if}
     </section>
 
     <div class="actions">

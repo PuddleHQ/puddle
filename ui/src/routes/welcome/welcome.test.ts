@@ -66,7 +66,9 @@ vi.mock("#lib/stores/network-health.svelte.ts", () => ({
   networkHealth: network,
 }));
 
+import { brokenReport, healthyReport } from "#lib/testing/fake-first-run.ts";
 import { report } from "#lib/testing/fake-network.ts";
+import { doctor } from "#lib/stores/doctor.svelte.ts";
 import { firstRun } from "#lib/stores/first-run.svelte.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -75,9 +77,12 @@ import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
+import { isWelcome } from "#lib/welcome/steps.ts";
 import Layout from "./+layout.svelte";
 import Welcome from "./+page.svelte";
 import Certificates from "./certificates/+page.svelte";
+import Check from "./check/+page.svelte";
+import Connect from "./connect/+page.svelte";
 import Interception from "./interception/+page.svelte";
 import Look from "./look/+page.svelte";
 import Workspace from "./workspace/+page.svelte";
@@ -227,9 +232,9 @@ describe("certificates step", () => {
       "Development certificate: not checked yet",
     );
     expect(items[1]).toHaveTextContent("1 company root certificate found");
-    expect(
-      screen.getByRole("link", { name: /Network health/ }),
-    ).toHaveAttribute("href", "/settings/network-health");
+    // Where the details are is named, not linked: a link would leave the flow.
+    expect(screen.getByText(/Settings › Network health/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Network health/ })).toBeNull();
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
       "href",
       "/welcome/check",
@@ -595,5 +600,73 @@ describe("first workspace step", () => {
     expect(toasts.items[0]?.message).toMatch(
       /newer Puddle.*may show again next time/,
     );
+  });
+});
+
+describe("every step", () => {
+  // Leaving the flow half done loses it: the steps after this one keep their defaults unseen, and
+  // the flow only comes back, at its first step, the next time Puddle opens.
+  it.each([
+    ["welcome", Welcome],
+    ["check", Check],
+    ["certificates", Certificates],
+    ["connect", Connect],
+    ["interception", Interception],
+    ["look", Look],
+    ["workspace", Workspace],
+  ] as const)(
+    "the %s step links only to steps of the flow",
+    async (_, Step) => {
+      render(Step as never);
+      // Let each step load what it shows, so links that appear with its data are counted too.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const start = screen.queryByRole("button", {
+        name: "Start system check",
+      });
+      if (start) {
+        await fireEvent.click(start);
+        await screen.findByText("No problems found.");
+      }
+      const links = screen.queryAllByRole("link");
+      for (const link of links) {
+        const href = link.getAttribute("href") ?? "";
+        expect(
+          isWelcome(new URL(href, "http://127.0.0.1").pathname),
+          href,
+        ).toBe(true);
+      }
+    },
+  );
+});
+
+describe("the blocked system check", () => {
+  beforeEach(() => {
+    // The check's result outlives a step, as when the person comes back to it.
+    doctor.status = "idle";
+    doctor.report = null;
+  });
+  afterEach(() => {
+    h.firstRun.report = healthyReport();
+  });
+
+  it("offers one way out of the flow, named as such", async () => {
+    h.firstRun.report = brokenReport();
+    render(Check);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Start system check" }),
+    );
+    await screen.findByText(/1 problem to fix/);
+    // Puddle can't run workspaces here, so the person may leave setup on purpose; it comes back.
+    const out = screen
+      .getAllByRole("link")
+      .filter(
+        (link) =>
+          !isWelcome(
+            new URL(link.getAttribute("href") ?? "", "http://127.0.0.1")
+              .pathname,
+          ),
+      )
+      .map((link) => link.textContent?.trim());
+    expect(out).toEqual(["Leave setup for now"]);
   });
 });

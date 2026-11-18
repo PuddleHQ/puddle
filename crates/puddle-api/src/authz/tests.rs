@@ -1048,7 +1048,7 @@ async fn hostile_lists_hold_only_their_callers_things() {
         })
         .map(|(_, path)| path)
         .collect();
-    assert_eq!(lists.len(), 14, "{lists:?}");
+    assert_eq!(lists.len(), 15, "{lists:?}");
     for path in &lists {
         let (status, body) = send(ann, token, "GET", path, None).await;
         // The devices list answers 503 here: this server has no sign-in.

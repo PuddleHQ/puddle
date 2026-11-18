@@ -1622,6 +1622,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The errors the caller's pages reported since Puddle started, newest first (at most 50 kept,
+         *     for all users together), and how many reports were refused for coming too fast.
+         */
+        get: operations["list_ui_errors"];
+        put?: never;
+        /**
+         * A page's report of an error no code expected: one that showed the error page, one thrown
+         *     outside the page's own handling, or a promise nothing handled. The server takes the user
+         *     info, query and fragment out of every URL and removes what looks like a token, bounds each
+         *     field, writes the error to its log and keeps it for `GET /api/ui-errors`. A user's pages may
+         *     report 10 errors a minute; past that the server refuses with `Retry-After`.
+         */
+        post: operations["report_ui_error"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces": {
         parameters: {
             query?: never;
@@ -3919,6 +3946,16 @@ export interface components {
              *     `test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title.
              */
             id: string;
+            /**
+             * @description What this means for the person, in one or two short sentences: for an ok check what it
+             *     protects or makes possible, otherwise what the finding costs them. Never empty.
+             */
+            impact: string;
+            /**
+             * @description What to do about it, in one or two short sentences; `null` when the check is ok. `fix`
+             *     holds the long form.
+             */
+            remedy: string | null;
             /** @description How it came out. */
             status: components["schemas"]["DoctorStatus"];
             /** @description One line: what was found. */
@@ -6823,6 +6860,55 @@ export interface components {
              *     when the failure had another cause.
              */
             waiting_on: string[];
+        };
+        /** @description An error a page reported, as the server kept it. */
+        UiError: {
+            /**
+             * Format: int64
+             * @description When the server received it, in epoch milliseconds.
+             */
+            at: number;
+            /** @description The build of the app the page ran, or `null`. */
+            build: string | null;
+            /** @description Where the page caught it. */
+            kind: components["schemas"]["UiErrorKind"];
+            /** @description The error's name and message. */
+            message: string;
+            /** @description The page's path, or `null`. */
+            route: string | null;
+            /** @description The top of its stack, or `null`. */
+            stack: string | null;
+        };
+        /**
+         * @description Where the page caught the error.
+         * @enum {string}
+         */
+        UiErrorKind: "page" | "uncaught" | "unhandled_rejection";
+        /** @description The errors the caller's pages reported since the server started, newest first. */
+        UiErrorList: {
+            /**
+             * Format: int64
+             * @description How many reports were refused because the pages sent too many at once.
+             */
+            dropped: number;
+            /** @description The most recent errors, newest first; the oldest make room past the limit. */
+            errors: components["schemas"]["UiError"][];
+        };
+        /**
+         * @description One error a page reports. The server bounds every field, takes the user info, query and
+         *     fragment out of every URL and removes what looks like a token before it logs or keeps it.
+         */
+        UiErrorReport: {
+            /** @description The build of the app the page runs. */
+            build?: string | null;
+            /** @description Where the page caught it. */
+            kind: components["schemas"]["UiErrorKind"];
+            /** @description The error's name and message, such as `TypeError: x is not a function`. */
+            message: string;
+            /** @description The page's path, such as `/workspaces/abc/terminal` (a query or fragment is dropped). */
+            route?: string | null;
+            /** @description The top of its stack, one frame a line, if it had one. */
+            stack?: string | null;
         };
         /** @description Preferences for Puddle's own window. `null` means Puddle's default. */
         UiPrefs: {
@@ -14309,6 +14395,129 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_ui_errors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the recent errors */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiErrorList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    report_ui_error: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UiErrorReport"];
+            };
+        };
+        responses: {
+            /** @description logged and kept */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description too many reports this minute; `Retry-After` says when to send again */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

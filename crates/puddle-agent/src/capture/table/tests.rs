@@ -272,6 +272,20 @@ fn a_file_that_grows_through_reuse_is_compacted_while_running() {
     }
     let lines = fs::read_to_string(&path).unwrap().lines().count();
     assert!(lines < 1100, "{lines} lines");
+    // The temporary file of the rewrite is gone, and the table stays owner-only.
+    let files: Vec<_> = fs::read_dir(d.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(files, ["table"], "{files:?}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
     drop(t);
     let again = StandIns::open_with_capacity(Some(&path), 2);
     assert_eq!(again.len(), 2);

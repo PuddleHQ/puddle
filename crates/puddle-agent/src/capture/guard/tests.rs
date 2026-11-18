@@ -30,6 +30,44 @@ fn the_stub_inside_the_stand_in_range_routes_the_whole_range() {
     assert_eq!(other.prefix(), 32);
 }
 
+/// A pass that panics is a failed pass: the host hears of the outage and of its end, and the
+/// loop goes on with a fresh state instead of stopping for good.
+#[tokio::test]
+async fn a_panicking_pass_is_reported_and_the_guard_keeps_going() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut g = guard();
+    g.poll = Duration::from_millis(5);
+    let passes = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&passes);
+    let tick = move |_: &Guard, _: &mut State| {
+        assert!(
+            seen.fetch_add(1, Ordering::SeqCst) > 0,
+            "an injected panic in a pass"
+        );
+        Ok(None)
+    };
+    let (tx, mut rx) = mpsc::channel(8);
+    let task = tokio::spawn(keep_with(g, tx, tick));
+
+    let first = tokio::time::timeout(Duration::from_secs(20), rx.recv())
+        .await
+        .expect("the host is told")
+        .expect("the guard still runs");
+    assert!(
+        matches!(first, AgentMessage::CaptureUnavailable { .. }),
+        "{first:?}"
+    );
+    let second = tokio::time::timeout(Duration::from_secs(20), rx.recv())
+        .await
+        .expect("the host is told the rules are back")
+        .expect("the guard still runs");
+    assert_eq!(second, AgentMessage::capture_ready());
+    assert!(!task.is_finished(), "the guard did not stop");
+    task.abort();
+}
+
 /// The install takes the batch, then the guest deletes the table before it can be read back.
 #[test]
 fn a_table_deleted_right_after_the_install_does_not_switch_the_udp_logging_off() {

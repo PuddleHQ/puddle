@@ -137,9 +137,7 @@ pub(super) fn grants(entries: &[AclEntry], me: &str) -> Vec<Grant> {
 /// The login name of the user running this process.
 #[cfg(target_os = "macos")]
 pub(super) fn current_user() -> io::Result<String> {
-    let out = std::process::Command::new("/usr/bin/id")
-        .arg("-un")
-        .output()?;
+    let out = puddle_process::command("/usr/bin/id").arg("-un").output()?;
     if !out.status.success() {
         return Err(io::Error::other("`id -un` failed"));
     }
@@ -149,7 +147,7 @@ pub(super) fn current_user() -> io::Result<String> {
 /// The grants on `folder`, read with `/bin/ls -lde`.
 #[cfg(target_os = "macos")]
 pub(super) fn read_grants(folder: &Path, me: &str) -> io::Result<Vec<Grant>> {
-    let out = std::process::Command::new("/bin/ls")
+    let out = puddle_process::command("/bin/ls")
         .args(["-lde", "--"])
         .arg(folder)
         .output()?;

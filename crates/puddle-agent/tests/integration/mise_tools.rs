@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: `puddle-agent mise-tools` as the host runs it. The workspace's mise is a
-//! script that appends a line to `config.toml` for `config set` and removes it for `unuse`, so the
+//! script that appends a line to the file it is given for `config set` and removes it for `unuse`, so the
 //! subcommand's output, exit codes and edits come from the real binary without a network.
 #![cfg(unix)]
 #![expect(
@@ -26,7 +26,7 @@ fn workspace() -> tempfile::TempDir {
     puddle_test_kit::write_executable(
         &root.path().join(".puddle/mise/bin/mise"),
         &format!(
-            "#!/bin/sh\ncase \"$1\" in\n  ls) echo '{{\"node\":[{{\"requested_version\":\"22\",\"installed\":true,\"source\":{{\"path\":\"{dir}/mise.toml\"}}}}]}}' ;;\n  config) echo \"$5=$6\" >> \"{dir}/mise.toml\" ;;\n  unuse) grep -vF \"tools.\\\"$5\\\"\" \"{dir}/mise.toml\" > \"{dir}/tmp\"; cat \"{dir}/tmp\" > \"{dir}/mise.toml\" ;;\n  registry) echo '[{{\"short\":\"node\",\"description\":\"JS\"}}]' ;;\n  ls-remote) [ \"$2\" = silent ] && exit 3; [ \"$2\" = broken ] && {{ echo 'mise ERROR no route to mise-versions.jdx.dev' >&2; exit 1; }}; printf '20.0.0\\n22.0.0\\n' ;;\nesac\n"
+            "#!/bin/sh\ncase \"$1\" in\n  ls) echo '{{\"node\":[{{\"requested_version\":\"22\",\"installed\":true,\"source\":{{\"path\":\"{dir}/mise.toml\"}}}}]}}' ;;\n  config) echo \"$5=$6\" >> \"$4\" ;;\n  unuse) grep -vF \"tools.\\\"$5\\\"\" \"$4\" > \"{dir}/tmp\"; cat \"{dir}/tmp\" > \"$4\" ;;\n  registry) echo '[{{\"short\":\"node\",\"description\":\"JS\"}}]' ;;\n  ls-remote) [ \"$2\" = silent ] && exit 3; [ \"$2\" = broken ] && {{ echo 'mise ERROR no route to mise-versions.jdx.dev' >&2; exit 1; }}; printf '20.0.0\\n22.0.0\\n' ;;\nesac\n"
         ),
     );
     root

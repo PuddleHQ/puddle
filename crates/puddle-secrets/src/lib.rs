@@ -4,8 +4,9 @@
 //! Three sources behind one interface, [`Fetch`]:
 //!
 //! - **`gh`**: the token of a named, signed-in GitHub CLI account.
-//! - **Git credential**: one HTTPS URL with its path, asked of Git Credential Manager (or whatever
-//!   credential helper Git is set up with) through `git credential fill`.
+//! - **Git credential**: one HTTPS host and the account (or, without one, the URL path) that picks
+//!   the entry, asked of Git Credential Manager (or whatever credential helper Git is set up with)
+//!   through `git credential fill`.
 //! - **Stored**: a token the user pasted, kept in the OS credential store under Puddle's own name.
 //!
 //! The list is closed ([`SourceSpec`]): no variant carries a command line, and every name that

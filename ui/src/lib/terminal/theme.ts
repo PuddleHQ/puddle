@@ -57,11 +57,13 @@ export interface TerminalLook {
 
 /** Reads the look from the tokens as `probe` (an element in the page) resolves them now. */
 export function readLook(probe: HTMLElement): TerminalLook {
-  const style = globalThis.getComputedStyle(probe);
+  // A fresh computed style after every assignment: the installed app's WebView2 gave a declaration
+  // fetched earlier the inherited colour for each token (the terminal drew with the wrong colours).
+  const style = () => globalThis.getComputedStyle(probe);
   const color = (token: string, fallback: string): Rgb | string => {
     probe.style.color = "";
     probe.style.color = `var(${token})`;
-    return parseRgb(style.color) ?? fallback;
+    return parseRgb(style().color) ?? fallback;
   };
   const css = (value: Rgb | string): string =>
     typeof value === "string" ? value : hex(value);
@@ -76,7 +78,7 @@ export function readLook(probe: HTMLElement): TerminalLook {
   const selection = color("--color-accent-subtle", "#133746");
   probe.style.color = "";
   probe.style.fontFamily = "var(--font-mono)";
-  const fontFamily = style.fontFamily || "monospace";
+  const fontFamily = style().fontFamily || "monospace";
   probe.style.fontFamily = "";
   return {
     fontFamily,

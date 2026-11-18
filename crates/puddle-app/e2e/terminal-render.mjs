@@ -124,10 +124,6 @@ export async function inspectTerminal(port) {
     await page.send("Log.enable");
     await page.send("Page.enable");
     const read = await page.evaluate(READ);
-    // DIAGNOSTIC (remove): a root attribute change makes the page re-read the theme, as a theme switch does.
-    await page.evaluate(`document.documentElement.setAttribute("data-diag", "1")`);
-    await new Promise((r) => setTimeout(r, 1500));
-    read.afterRootChange = await page.evaluate(READ);
     read.cspHeader = await page.evaluate(`fetch(location.href).then((r) => r.headers.get("content-security-policy"))`).catch((e) => String(e));
     // A real drag over the red word, with real mouse events: the emulator selects it.
     let selection = { cells: 0, width: 0, copied: "" };

@@ -116,10 +116,10 @@ impl Runtime for SlowPull {
         &self,
         image: &ImageRef,
     ) -> Result<ImageConfig, puddle_compute::ComputeError> {
-        // Simulated slow image pull.
         if self.2.slow.load(Ordering::SeqCst) {
             self.2.in_flight.fetch_add(1, Ordering::SeqCst);
             let _counted = InFlight(self.2.in_flight.clone());
+            // flake-ok: simulated latency of an image pull; the tests end it or never wait it out
             tokio::time::sleep(self.1).await;
         }
         self.0.pull_image(image).await

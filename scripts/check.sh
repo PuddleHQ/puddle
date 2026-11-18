@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, rustdoc, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes spawn test-hooks   (pre-commit hook)
-#   all      = fast quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all      = fast quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e rustdoc doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
 #              the day's advisory databases and not on the change, plus diff-coverage-fast right after the fast gates
@@ -211,7 +211,7 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/check-spdx-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
+        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/check-spdx-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/rustdoc-gate-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/check-az-contract-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh && ci/fetch-real-tools-test.sh && ci/github-rest/check-test.sh &&
             ci/scope-test.sh && ci/cargo-fetch-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
@@ -390,11 +390,16 @@ run_gate() {
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" nextest run --workspace $skip_app --all-features --locked
         ;;
-    doc)
-        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
-        "$cargo" test --doc --workspace $skip_app --all-features --locked --no-fail-fast
+    rustdoc)
+        # The doc build with every rustdoc warning an error (a public item whose docs link to a private one, a broken intra-doc link). It is
+        # its own gate so the cheap half of `doc` runs where the doc tests do not: the pre-flight and the medium pre-check tier.
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
+        ;;
+    doc)
+        # The doc tests; the doc build is the `rustdoc` gate, which comes right before this one in `all`.
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        "$cargo" test --doc --workspace $skip_app --all-features --locked --no-fail-fast
         ;;
     coverage | coverage-ratchet)
         # The tests with coverage (unreadable profile files set aside), the reports, then the ratchet (floors above, baseline committed) and the
@@ -517,7 +522,7 @@ run_gate() {
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
 fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes spawn test-hooks"
-all_gates="$fast_gates quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
+all_gates="$fast_gates quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e rustdoc doc coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"
 for g in $all_gates; do

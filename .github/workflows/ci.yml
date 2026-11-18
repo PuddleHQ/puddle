@@ -607,7 +607,10 @@ jobs:
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
         run: scripts/check.sh openapi
-      - name: doc tests and rustdoc
+      - name: rustdoc (-D warnings: a public item's docs linking to a private one, a broken link)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh rustdoc
+      - name: doc tests
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
       # Off the light mode (worked out again from the event, not from `scope`) the gate must have run.

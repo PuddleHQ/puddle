@@ -89,7 +89,7 @@ fn without(m: &Markers, lines: &[&str]) -> (String, usize, bool) {
     let mut rest = String::new();
     let mut at = None;
     let mut blocks = 0;
-    let mut lone = 0;
+    let mut lone = false;
     let mut i = 0;
     while let Some(line) = lines.get(i) {
         match kinds.get(i).copied().flatten() {
@@ -106,19 +106,19 @@ fn without(m: &Markers, lines: &[&str]) -> (String, usize, bool) {
                         i = end + 1;
                     }
                     _ => {
-                        lone += 1;
+                        lone = true;
                         i += 1;
                     }
                 }
             }
             Some(Marker::End) => {
                 at.get_or_insert(rest.len());
-                lone += 1;
+                lone = true;
                 i += 1;
             }
         }
     }
-    let in_place = blocks == 1 && lone == 0;
+    let in_place = blocks == 1 && !lone;
     let at = at.unwrap_or(rest.len());
     (rest, at, in_place)
 }

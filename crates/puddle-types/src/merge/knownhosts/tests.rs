@@ -111,6 +111,11 @@ fn damaged_markers_are_repaired_by_dropping_puddles_lines_and_writing_the_block_
         ),
         // a duplicated block: both blocks go, the line between them is the user's
         (two, "a ssh-rsa A\nbetween ssh-rsa M\nz ssh-rsa Z\n"),
+        // a whole block and a lone end marker: the block is not "in place", it moves to the end
+        (
+            format!("{}user ssh-rsa U\n{END}\n", ours("old ssh-rsa C")),
+            "user ssh-rsa U\n",
+        ),
         // a marker inside its own block
         (format!("{BEGIN}\n{BEGIN}\nold ssh-rsa C\n{END}\n"), ""),
     ] {

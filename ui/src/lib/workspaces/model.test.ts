@@ -31,6 +31,7 @@ import {
   operationLabel,
   parseMemoryGib,
   repoUrlProblem,
+  resolveRepoAddress,
   sshAsHttps,
   sortWorkspaces,
   canRename,
@@ -313,6 +314,103 @@ describe("repository URLs", () => {
 
   it("does not take a Windows drive letter for an SSH host", () => {
     expect(repoUrlProblem("C:/repos/x")).toBe("Use an https:// URL.");
+  });
+});
+
+describe("the repository field", () => {
+  const credentials =
+    "Remove the user name and password from the URL; Puddle supplies credentials itself.";
+  const shorthand =
+    "Give owner/repo for a GitHub repository, or the repository's full address.";
+  const dots = "The address can't have . or .. as a name in its path.";
+  const trailingDot = "Leave out the dot at the end of the host name.";
+
+  it.each([
+    // A full https:// address is kept; a bare user name of a known host is dropped.
+    ["https://github.com/sharkdp/fd", "https://github.com/sharkdp/fd"],
+    ["  https://gitlab.com/a/b.git  ", "https://gitlab.com/a/b.git"],
+    [
+      "https://git.example.com:8443/acme/x.git",
+      "https://git.example.com:8443/acme/x.git",
+    ],
+    [
+      "https://org@dev.azure.com/org/p/_git/r",
+      "https://dev.azure.com/org/p/_git/r",
+    ],
+    // No scheme: https is meant.
+    ["github.com/sharkdp/fd", "https://github.com/sharkdp/fd"],
+    [
+      "gitlab.com/group/sub/project.git",
+      "https://gitlab.com/group/sub/project.git",
+    ],
+    ["git.example.com/acme/x", "https://git.example.com/acme/x"],
+    ["dev.azure.com/org/p/_git/r", "https://dev.azure.com/org/p/_git/r"],
+    // owner/repo alone: a GitHub repository.
+    ["sharkdp/fd", "https://github.com/sharkdp/fd"],
+    [" sharkdp/fd.git ", "https://github.com/sharkdp/fd.git"],
+    ["sharkdp/fd/", "https://github.com/sharkdp/fd"],
+    ["my-org/repo.name", "https://github.com/my-org/repo.name"],
+    // An SSH address of a Git host is cloned over HTTPS.
+    [
+      "git@github.com:sharkdp/hyperfine.git",
+      "https://github.com/sharkdp/hyperfine.git",
+    ],
+    ["ssh://git@gitlab.com/a/b.git", "https://gitlab.com/a/b.git"],
+  ])("resolves %j to %j", (typed, url) => {
+    expect(resolveRepoAddress(typed)).toEqual({ url });
+  });
+
+  it.each([
+    [
+      "",
+      "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
+    ],
+    [
+      "   ",
+      "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.",
+    ],
+    // Credentials are refused however the address is written.
+    ["https://user:pw@github.com/x/y", credentials],
+    ["user:pw@github.com/x/y", credentials],
+    ["token@example.com/x/y", credentials],
+    ["https://token@example.com/x/y", credentials],
+    // Another scheme than https.
+    ["http://github.com/x/y", "Use an https:// URL."],
+    ["ftp://x/y", "Use an https:// URL."],
+    // Not owner/repo and no host.
+    ["fd", shorthand],
+    ["sharkdp/fd/extra", shorthand],
+    ["/sharkdp/fd", shorthand],
+    ["C:/repos/x", shorthand],
+    // Dot names and a trailing dot on the host name the same repository in another spelling.
+    ["./fd", dots],
+    ["../fd", dots],
+    ["sharkdp/..", dots],
+    ["github.com/./fd", dots],
+    ["https://github.com/../web", dots],
+    ["https://github.com/acme/./web", dots],
+    ["github.com./acme/web", trailingDot],
+    ["https://github.com./acme/web", trailingDot],
+    // SSH: only the four Git hosts.
+    [
+      "git@git.example.com:acme/x.git",
+      "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.",
+    ],
+    ["sharkdp/f d", "The URL must not contain spaces."],
+  ])("refuses %j with %j", (typed, message) => {
+    expect(resolveRepoAddress(typed)).toEqual({ message });
+  });
+
+  it("gives an address the strict check takes for everything it resolves", () => {
+    for (const typed of [
+      "sharkdp/fd",
+      "github.com/sharkdp/fd",
+      "git@github.com:a/b.git",
+    ]) {
+      const resolved = resolveRepoAddress(typed);
+      if (!("url" in resolved)) throw new Error(`${typed} did not resolve`);
+      expect(repoUrlProblem(resolved.url)).toBeNull();
+    }
   });
 });
 

@@ -173,6 +173,16 @@ impl Slot {
     }
 }
 
+/// A list being read in the background. Dropping it says the read is over, also when its task
+/// panicked or was dropped, so the list is renewed again next time.
+struct Renewing(Arc<Slot>);
+
+impl Drop for Renewing {
+    fn drop(&mut self) {
+        self.0.entry().revalidating = false;
+    }
+}
+
 /// Which API a host is.
 enum Kind {
     GitHub(github::Endpoint),
@@ -218,8 +228,16 @@ fn source_organisation(source: &SourceSpec) -> Option<String> {
         SourceSpec::GitCredential { path, .. } => {
             path.as_str().split('/').next().map(str::to_ascii_lowercase)
         }
-        _ => None,
+        SourceSpec::Gh { .. } => None,
     }
+}
+
+/// The credential's own organisation and the other one `target` reads, when it reads an
+/// organisation other than its own (one its coverage adds).
+fn elsewhere(target: &Target) -> Option<(String, &str)> {
+    let organisation = target.organisation.as_deref()?;
+    let own = source_organisation(&target.source)?;
+    (own != organisation).then_some((own, organisation))
 }
 
 /// The Azure DevOps organisations a credential names: the one its source is for and, unless it is a
@@ -459,10 +477,13 @@ impl Repos {
             }
             entry.revalidating = true;
         }
-        let (inner, slot) = (Arc::clone(&self.inner), Arc::clone(slot));
+        let (inner, renewing) = (Arc::clone(&self.inner), Renewing(Arc::clone(slot)));
         tokio::spawn(async move {
-            inner.refresh(&slot, Freshness::Cached, Announce::Yes).await;
-            slot.entry().revalidating = false;
+            inner
+                .refresh(&renewing.0, Freshness::Cached, Announce::Yes)
+                .await;
+            // Also dropped, and the mark cleared, when the read panics or the task is dropped.
+            drop(renewing);
         });
         true
     }
@@ -594,10 +615,30 @@ impl Inner {
                 azure::list(&exchange, &organisation, &authorization).await
             }
         };
-        if matches!(&result, Err(p) if p.kind == ProblemKind::TokenRejected) && !stored {
-            // The host says the token is bad: the cached copy must not be served again.
-            self.secrets.invalidate(&target.source);
-        }
+        let result = match result {
+            // A signed-in account reaches the organisations it is a member of: one that refuses
+            // it says nothing about the token, which still works for its own.
+            Err(problem) if problem.kind == ProblemKind::TokenRejected => {
+                if let Some((own, organisation)) = elsewhere(target) {
+                    Err(Problem::new(
+                        ProblemKind::NotFound,
+                        format!(
+                            "Azure DevOps did not accept this credential for organisation \
+                             {organisation}: it is for {own} and does not reach {organisation}; \
+                             check that the account is a member of {organisation}, or take \
+                             {organisation} out of what the credential covers"
+                        ),
+                    ))
+                } else {
+                    if !stored {
+                        // The host says the token is bad: the cached copy must not be served again.
+                        self.secrets.invalidate(&target.source);
+                    }
+                    Err(problem)
+                }
+            }
+            other => other,
+        };
         let mut listed = result?;
         listed.notes.extend(standing_notes(&target.source, &kind));
         Ok(listed)

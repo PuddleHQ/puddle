@@ -46,13 +46,38 @@ fn run(cmd: &mut Command) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Whether Forgejo is configured, or why a required one is not: any value of
+/// `PUDDLE_REQUIRE_FORGEJO` makes a missing `PUDDLE_FORGEJO_BIN` fail at once, naming it.
+fn forgejo_configured(set: &dyn Fn(&str) -> bool) -> Result<bool, String> {
+    let configured = set("PUDDLE_FORGEJO_BIN");
+    if set("PUDDLE_REQUIRE_FORGEJO") && !configured {
+        return Err("PUDDLE_REQUIRE_FORGEJO is set but PUDDLE_FORGEJO_BIN is not".to_owned());
+    }
+    Ok(configured)
+}
+
+#[test]
+fn a_required_forgejo_that_is_not_configured_fails_naming_the_variable() {
+    let err = forgejo_configured(&|name| name == "PUDDLE_REQUIRE_FORGEJO").unwrap_err();
+    assert!(err.contains("PUDDLE_FORGEJO_BIN"), "{err}");
+}
+
+#[test]
+fn forgejo_not_required_and_not_configured_skips_and_configured_runs() {
+    assert_eq!(forgejo_configured(&|_| false), Ok(false));
+    assert_eq!(
+        forgejo_configured(&|name| name == "PUDDLE_FORGEJO_BIN"),
+        Ok(true)
+    );
+}
+
 #[test]
 fn the_program_serves_ssh_and_its_info_file_lets_git_clone_with_the_key_and_check_the_host_key() {
-    let configured = std::env::var_os("PUDDLE_FORGEJO_BIN").is_some();
-    let required = std::env::var_os("PUDDLE_REQUIRE_FORGEJO").is_some_and(|v| v == "1");
+    let set = |name: &str| std::env::var_os(name).is_some();
     // skip-ok: the program exits at once without PUDDLE_FORGEJO_BIN, and the lab workflow sets
     // PUDDLE_REQUIRE_FORGEJO so a missing Forgejo fails there.
-    if !configured && !required {
+    if !forgejo_configured(&set).unwrap() {
+        eprintln!("skipped: set PUDDLE_FORGEJO_BIN");
         return;
     }
     let dir = tempfile::tempdir().unwrap();

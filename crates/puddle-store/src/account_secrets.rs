@@ -12,8 +12,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::clock::Clock;
 use crate::error::StoreError;
-use crate::store::{lock, sql_ts};
-use crate::users::{DeviceId, DeviceSession, UserId};
+use crate::store::{insert_device, lock, sql_ts, write_tx};
+use crate::users::{Device, DeviceId, DeviceSession, UserId};
 
 /// The shortest invite digest accepted, in bytes.
 pub const MIN_INVITE_DIGEST_BYTES: usize = 16;
@@ -30,28 +30,114 @@ impl std::fmt::Debug for AccountSecrets {
     }
 }
 
+/// A password a check accepted: what [`AccountSecrets::add_device`] and
+/// [`AccountSecrets::replace_password`] make their step depend on, so a reset, a change or a
+/// deletion that lands after the check wins. It holds the stored hash it was made from, never
+/// shows it, and only this module reads it.
+pub struct CheckedPassword {
+    user: UserId,
+    hash: String,
+}
+
+impl CheckedPassword {
+    /// The user whose password this is.
+    #[must_use]
+    pub fn user(&self) -> UserId {
+        self.user
+    }
+}
+
+impl std::fmt::Debug for CheckedPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckedPassword")
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Whether `user` still has the password `hash` and is not being deleted.
+fn still_has(conn: &Connection, user: UserId, hash: &str) -> Result<bool, StoreError> {
+    Ok(conn.query_row(
+        "SELECT count(*) > 0 FROM account_passwords p JOIN users u ON u.id = p.user_id
+          WHERE p.user_id = ?1 AND p.hash = ?2 AND u.deleting_at IS NULL",
+        params![user.get(), hash],
+        |r| r.get(0),
+    )?)
+}
+
 impl AccountSecrets {
     pub(crate) fn new(conn: Arc<Mutex<Connection>>, clock: Arc<dyn Clock>) -> Self {
         Self { conn, clock }
     }
 
     /// Stores `hash` (a self-describing password hash string) as `user`'s password, replacing the
-    /// one before.
+    /// one before. A user whose deletion has begun gets none.
     ///
     /// # Errors
-    /// [`StoreError::UnknownUser`], or a database error.
-    pub fn set_password_hash(&self, user: UserId, hash: &str) -> Result<(), StoreError> {
+    /// [`StoreError::UnknownUser`] (also for a user being deleted), or a database error.
+    pub fn set_password_hash(
+        &self,
+        user: UserId,
+        hash: &str,
+    ) -> Result<CheckedPassword, StoreError> {
         let conn = lock(&self.conn);
         let written = conn.execute(
             "INSERT INTO account_passwords (user_id, hash, changed_at)
-                 SELECT id, ?2, ?3 FROM users WHERE id = ?1
+                 SELECT id, ?2, ?3 FROM users WHERE id = ?1 AND deleting_at IS NULL
              ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, changed_at = excluded.changed_at",
             params![user.get(), hash, sql_ts(self.clock.now_ms())],
         )?;
         if written == 0 {
             return Err(StoreError::UnknownUser(user));
         }
-        Ok(())
+        Ok(CheckedPassword {
+            user,
+            hash: hash.to_owned(),
+        })
+    }
+
+    /// Replaces the password `checked` with `hash`, unless it changed, went away or its user's
+    /// deletion began since it was checked: then nothing is written and the answer is `false`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn replace_password(
+        &self,
+        checked: &CheckedPassword,
+        hash: &str,
+    ) -> Result<bool, StoreError> {
+        let mut conn = lock(&self.conn);
+        let tx = write_tx(&mut conn)?;
+        if !still_has(&tx, checked.user, &checked.hash)? {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE account_passwords SET hash = ?2, changed_at = ?3 WHERE user_id = ?1",
+            params![checked.user.get(), hash, sql_ts(self.clock.now_ms())],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// A new device for the user of `checked`, valid until `expires_at` (epoch ms), unless their
+    /// password changed, went away or their deletion began since it was checked (then `None`).
+    ///
+    /// # Errors
+    /// [`StoreError::DeviceName`], or a database error.
+    pub fn add_device(
+        &self,
+        checked: &CheckedPassword,
+        name: &str,
+        expires_at: u64,
+    ) -> Result<Option<Device>, StoreError> {
+        let mut conn = lock(&self.conn);
+        let tx = write_tx(&mut conn)?;
+        if !still_has(&tx, checked.user, &checked.hash)? {
+            return Ok(None);
+        }
+        let device = insert_device(&tx, checked.user, name, self.clock.now_ms(), expires_at)?;
+        tx.commit()?;
+        Ok(device)
     }
 
     /// Whether `user` has a password and `verify` accepts its stored hash. The hash goes to
@@ -64,6 +150,20 @@ impl AccountSecrets {
         user: UserId,
         verify: impl FnOnce(&str) -> bool,
     ) -> Result<bool, StoreError> {
+        Ok(self.verify_password(user, verify)?.is_some())
+    }
+
+    /// [`check_password`](Self::check_password) that hands back what it accepted, for a step
+    /// that must not happen if the password changes in the meantime. The check runs without the
+    /// database held.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn verify_password(
+        &self,
+        user: UserId,
+        verify: impl FnOnce(&str) -> bool,
+    ) -> Result<Option<CheckedPassword>, StoreError> {
         let hash: Option<String> = lock(&self.conn)
             .query_row(
                 "SELECT p.hash FROM account_passwords p JOIN users u ON u.id = p.user_id
@@ -72,7 +172,9 @@ impl AccountSecrets {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(hash.is_some_and(|hash| verify(&hash)))
+        Ok(hash
+            .filter(|hash| verify(hash))
+            .map(|hash| CheckedPassword { user, hash }))
     }
 
     /// Whether `user` has a password.
@@ -102,7 +204,11 @@ impl AccountSecrets {
     /// # Errors
     /// [`StoreError::SetupDone`] when the owner account is already made,
     /// [`StoreError::UserName`] when another user has the name, or a database error.
-    pub fn create_owner(&self, name: &crate::UserName, hash: &str) -> Result<(), StoreError> {
+    pub fn create_owner(
+        &self,
+        name: &crate::UserName,
+        hash: &str,
+    ) -> Result<CheckedPassword, StoreError> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let now = sql_ts(self.clock.now_ms());
@@ -131,7 +237,10 @@ impl AccountSecrets {
             params![UserId::OWNER.get(), hash, now],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(CheckedPassword {
+            user: UserId::OWNER,
+            hash: hash.to_owned(),
+        })
     }
 
     /// Gives `device` the refresh token with this `digest` (a hash of the token, never the
@@ -197,8 +306,8 @@ impl AccountSecrets {
     /// the secret), valid until `expires_at` (epoch ms). It replaces any invite before.
     ///
     /// # Errors
-    /// [`StoreError::UnknownUser`], [`StoreError::InviteInvalid`] for a digest shorter than
-    /// [`MIN_INVITE_DIGEST_BYTES`], or a database error.
+    /// [`StoreError::UnknownUser`] (also for a user being deleted), [`StoreError::InviteInvalid`]
+    /// for a digest shorter than [`MIN_INVITE_DIGEST_BYTES`], or a database error.
     pub fn put_invite(
         &self,
         user: UserId,
@@ -210,7 +319,7 @@ impl AccountSecrets {
         }
         let written = lock(&self.conn).execute(
             "INSERT INTO account_invites (user_id, digest, expires_at)
-                 SELECT id, ?2, ?3 FROM users WHERE id = ?1
+                 SELECT id, ?2, ?3 FROM users WHERE id = ?1 AND deleting_at IS NULL
              ON CONFLICT (user_id) DO UPDATE SET digest = excluded.digest, expires_at = excluded.expires_at",
             params![user.get(), digest, sql_ts(expires_at)],
         )?;
@@ -230,6 +339,23 @@ impl AccountSecrets {
             [user.get()],
         )?;
         Ok(())
+    }
+
+    /// The user the invite `digest` is for, while it has not expired, without using it up.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn invite_holder(&self, digest: &[u8]) -> Result<Option<UserId>, StoreError> {
+        let now = sql_ts(self.clock.now_ms());
+        let found: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT user_id FROM account_invites WHERE digest = ?1 AND expires_at > ?2
+                   AND user_id IN (SELECT id FROM users WHERE deleting_at IS NULL)",
+                params![digest, now],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.map(UserId::from_stored))
     }
 
     /// Uses up the invite `digest`: the user it was for, if it exists, has not expired and its

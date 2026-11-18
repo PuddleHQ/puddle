@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Contract tests of Puddle's host-side tools against the real thing, with credentials made up for the test (no
+# account, no secret):
+#   windows           the real GitHub CLI and Git Credential Manager (pinned in ci/real-tools.sha256) on a Windows
+#                     runner: `gh` signs in to a stand-in GitHub Enterprise Server on localhost, Git Credential
+#                     Manager holds github.com credentials in Windows Credential Manager, and Puddle's discovery
+#                     and sign-in read what the two tools print (crates/puddle-secrets/tests/integration/real_tools).
+#   rest-description  the readers of puddle-repos against GitHub's own description of its REST API
+#                     (ci/github-rest): the checked-in slice is what the pinned description gives, and on the
+#                     nightly GitHub's current description still says the same about the operations Puddle reads
+#                     (the tests that use the slice run in every gate).
+# On a pull request only when a path that can change them does; nightly on develop and by hand. A red nightly opens
+# "Nightly red: real-tools" through nightly-signal.yml. Not a required check: the tools and GitHub are third parties.
+name: real-tools
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  pull_request:
+    branches: [develop]
+    paths:
+      - ".github/workflows/real-tools.yml"
+      - "ci/real-tools.sha256"
+      - "ci/fetch-real-tools*"
+      - "ci/github-rest/**"
+      - "crates/puddle-secrets/**"
+      - "crates/puddle-repos/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-tools-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  windows:
+    name: real gh and Git Credential Manager (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.146
+      # The pinned tools first on PATH, and homes of their own: the runner's gh and Git for Windows keep
+      # theirs, and nothing the test writes is outside this job's folders (the test refuses to run without them).
+      - name: The pinned gh and Git Credential Manager, with config folders of their own
+        shell: bash
+        run: |
+          tools="$RUNNER_TEMP/real-tools"
+          ci/fetch-real-tools.sh "$tools" windows >> "$GITHUB_ENV"
+          gcm=$(cygpath -m "$tools/gcm/git-credential-manager.exe")
+          mkdir -p "$RUNNER_TEMP/gh-config"
+          printf '[credential]\n\thelper = %s\n' "$gcm" > "$RUNNER_TEMP/gitconfig"
+          {
+            echo "GH_CONFIG_DIR=$(cygpath -w "$RUNNER_TEMP/gh-config")"
+            echo "GIT_CONFIG_GLOBAL=$(cygpath -w "$RUNNER_TEMP/gitconfig")"
+            echo "GIT_CONFIG_NOSYSTEM=1"
+            echo "PUDDLE_REAL_TOOLS_CONTRACT=1"
+          } >> "$GITHUB_ENV"
+          cygpath -w "$tools/gh" >> "$GITHUB_PATH"
+          # `git credential-manager` runs the first `git-credential-manager` that Git finds: its own exec path
+          # comes before PATH, and Git for Windows bundles an older one on PATH ahead of ours (the first run
+          # of this job ran 2.9.1). The pinned build goes into the exec path, which this runner's job may write.
+          exec_path=$(git --exec-path)
+          cp -f "$tools/gcm/"* "$exec_path/"
+      - name: Which tools the test will run
+        shell: bash
+        run: |
+          which -a gh git-credential-manager || true
+          gh --version
+          git credential-manager --version
+          git config --global --list
+      - name: real_tools, the contract of Puddle's discovery and sign-in with the real tools
+        shell: bash
+        run: cargo nextest run --locked -p puddle-secrets --test integration -E 'test(real_tools)' --run-ignored only --no-capture
+
+  rest-description:
+    name: puddle-repos readers against GitHub's REST description
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            ci
+            crates/puddle-repos/tests/data
+      - name: the slice is what the pinned description gives
+        run: ci/github-rest/check.sh
+      - name: GitHub's current description says the same about the operations (nightly and by hand)
+        if: github.event_name != 'pull_request'
+        run: ci/github-rest/check.sh --latest

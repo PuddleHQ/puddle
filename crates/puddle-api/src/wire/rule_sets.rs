@@ -279,7 +279,8 @@ pub struct RuleSetSwitchRequest {
     #[serde(default)]
     pub workspace: Option<WorkspaceId>,
     /// On or off; `null` removes the switch, so the next level decides (the global switch, then
-    /// the set's default).
+    /// the set's default). Required, so an empty body never removes a switch.
+    #[serde(deserialize_with = "Option::deserialize")]
     #[schema(required = true)]
     pub enabled: Option<bool>,
 }

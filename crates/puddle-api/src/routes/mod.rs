@@ -65,6 +65,7 @@ mod ssh_agent;
 mod start_folder;
 mod terminals;
 mod tools;
+mod ui_errors;
 mod workspaces;
 
 /// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
@@ -99,6 +100,8 @@ pub(crate) struct AppState {
     /// What each user's clients last reported, for picking who a new request is told to.
     pub(crate) presence: Arc<crate::presence::Presence>,
     pub(crate) problems: Arc<puddle_types::Problems>,
+    /// The errors the app's pages reported, and each user's rate.
+    pub(crate) ui_errors: Arc<crate::ui_errors::UiErrors>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
     pub(crate) network_health: Arc<dyn NetworkHealthService>,
@@ -129,6 +132,45 @@ pub(crate) struct AppState {
     pub(crate) ui_build_id: Option<String>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
+    /// The terminal sockets that took a connection over. Axum would run them on a detached task
+    /// that outlives the server, so they run here and `RunningApi::shutdown` waits for them.
+    pub(crate) sockets: Sockets,
+}
+
+/// Tasks that outlive their connection (an upgraded socket) and still hold what the API holds.
+#[derive(Clone, Default)]
+pub(crate) struct Sockets(Arc<std::sync::Mutex<tokio::task::JoinSet<()>>>);
+
+impl Sockets {
+    /// Runs `work` until it ends or the set is drained or dropped.
+    pub(crate) fn spawn(&self, work: impl Future<Output = ()> + Send + 'static) {
+        let mut set = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Reap the ended ones so the set does not grow with every terminal ever opened.
+        while set.try_join_next().is_some() {}
+        set.spawn(work);
+    }
+
+    /// Waits until every task spawned so far has ended.
+    pub(crate) async fn drain(&self) {
+        let mut set = std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        while set.join_next().await.is_some() {}
+    }
+
+    /// Ends every task now.
+    pub(crate) fn abort_all(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .abort_all();
+    }
 }
 
 /// Every documented route.
@@ -137,7 +179,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(meta::health))
         .routes(routes!(problems::list_problems))
         .routes(routes!(events::events))
-        .routes(routes!(presence::report))
+        .merge(client_router())
         .routes(routes!(network_health::network_health))
         .routes(routes!(
             proxy_sign_in::list_proxy_sign_ins,
@@ -233,6 +275,17 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         ))
 }
 
+/// What the app's pages report of themselves: their presence and the errors they hit.
+#[inline(never)]
+fn client_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(presence::report))
+        .routes(routes!(
+            ui_errors::list_ui_errors,
+            ui_errors::report_ui_error
+        ))
+}
+
 /// Browser sign-in, devices and the sign-in methods, in a router of their own like the rules.
 #[inline(never)]
 fn auth_router() -> OpenApiRouter<AppState> {
@@ -285,7 +338,8 @@ fn terminals_router() -> OpenApiRouter<AppState> {
 fn rules_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(rules::list_rules, rules::create_rule))
-        .routes(routes!(rules::delete_rule))
+        .routes(routes!(rules::update_rule, rules::delete_rule))
+        .routes(routes!(rules::undo_decision))
         .routes(routes!(rules::set_rule_expiry))
         .routes(routes!(rules::set_rule_enabled))
         .routes(routes!(

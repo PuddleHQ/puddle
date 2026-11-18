@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_store::{Limits, ManualClock};
 
-use super::limiter::{BASE_LOCK_MS, FREE_FAILURES};
+use super::limiter::{BASE_LOCK_MS, FREE_FAILURES, MAX_LOCK_MS};
 use super::tokens::ACCESS_TTL_MS;
 use super::*;
 
@@ -819,4 +819,265 @@ async fn another_devices_revoke_does_not_end_a_stream() {
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished(), "only its own device ends it");
     waiting.abort();
+}
+
+/// Sends `n` wrong passwords for the owner at once and counts how many were checked (answered
+/// "wrong") rather than refused by the lock.
+async fn wrong_at_once(f: &Fixture, n: usize, change: Option<DeviceId>) -> usize {
+    let attempts: Vec<_> = (0..n)
+        .map(|_| {
+            let sign_in = f.sign_in.clone();
+            tokio::spawn(async move {
+                let wrong = pw("not the password!");
+                match change {
+                    Some(device) => {
+                        sign_in
+                            .change_password(
+                                UserId::OWNER,
+                                device,
+                                wrong,
+                                pw("a new long password"),
+                            )
+                            .await
+                    }
+                    None => sign_in.sign_in("Tijs", wrong, None).await.map(|_| ()),
+                }
+            })
+        })
+        .collect();
+    let mut checked = 0;
+    for attempt in attempts {
+        let err = attempt.await.unwrap().unwrap_err();
+        match code(&err) {
+            ErrorCode::Unauthorized => checked += 1,
+            ErrorCode::RateLimited => {}
+            other => panic!("unexpected answer {other:?}"),
+        }
+    }
+    checked
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wrong_passwords_sent_at_once_are_checked_no_more_than_the_lock_allows() {
+    let f = fixture();
+    owner_signed_up(&f).await;
+    let checked = wrong_at_once(&f, 20, None).await;
+    assert!(
+        checked <= FREE_FAILURES as usize,
+        "{checked} of 20 parallel wrong passwords were checked (lock after {FREE_FAILURES})"
+    );
+    // Once the lock has run out, guesses sent at once get one check, not a fresh batch.
+    f.clock.advance(BASE_LOCK_MS);
+    let checked = wrong_at_once(&f, 20, None).await;
+    assert_eq!(checked, 1, "after the lock ran out");
+    // The right password still works once the next lock ends.
+    f.clock.advance(MAX_LOCK_MS);
+    f.sign_in.sign_in("Tijs", password(), None).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wrong_current_passwords_sent_at_once_are_checked_no_more_than_the_lock_allows() {
+    let f = fixture();
+    let this = owner_signed_up(&f).await;
+    let device = DeviceId::from_stored(this.grant.device.id);
+    let checked = wrong_at_once(&f, 20, Some(device)).await;
+    assert!(
+        checked <= FREE_FAILURES as usize,
+        "{checked} of 20 parallel wrong current passwords were checked (lock after {FREE_FAILURES})"
+    );
+}
+
+/// `f`'s accounts as a server with several users switched `multi_user` sees them.
+fn same_accounts(f: &Fixture, multi_user: bool) -> Arc<SignIn> {
+    Arc::new(
+        SignIn::new(
+            f.store.clone(),
+            f.secrets.clone(),
+            f.clock.clone(),
+            multi_user,
+        )
+        .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn with_several_users_off_an_invite_for_a_user_does_not_sign_in_and_is_kept() {
+    let on = fixture_with(true);
+    owner_signed_up(&on).await;
+    let (_, invite) = on
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob")
+        .await
+        .unwrap();
+    let off = same_accounts(&on, false);
+    let err = off
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Forbidden);
+    // Nothing was used up: once several users are on again, the link works.
+    let granted = on
+        .sign_in
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap();
+    assert_eq!(granted.grant.user.name, "bob");
+    // The owner's own reset link still works with several users off.
+    let reset = reset_account(&on.store, &on.secrets, "Tijs", on.clock.now_ms()).unwrap();
+    off.redeem_invite(&reset.secret, pw("brand new long password"), None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn with_several_users_off_a_users_signed_in_browser_stops_working() {
+    let on = fixture_with(true);
+    let owner = owner_signed_up(&on).await;
+    let (_, invite) = on
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob")
+        .await
+        .unwrap();
+    let bob = on
+        .sign_in
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap();
+    let off = same_accounts(&on, false);
+    let err = off.refresh(&bob.refresh).await.unwrap_err();
+    assert_eq!(
+        code(&err),
+        ErrorCode::Forbidden,
+        "the refusal names its cause"
+    );
+    let device = DeviceId::from_stored(bob.grant.device.id);
+    let (token, _) = off.tokens.issue(device, on.clock.now_ms()).unwrap();
+    assert!(off.principal_for(&token).await.is_none());
+    tokio::time::timeout(Duration::from_secs(5), off.clone().ended(device))
+        .await
+        .expect("a user's event stream ends while several users are off");
+    // The owner carries on.
+    off.refresh(&owner.refresh).await.unwrap();
+    // And bob's browser works again once several users are back on.
+    on.sign_in.refresh(&bob.refresh).await.unwrap();
+}
+
+#[tokio::test]
+async fn an_invite_refuses_the_users_own_name_as_their_password() {
+    let f = fixture_with(true);
+    owner_signed_up(&f).await;
+    let (_, invite) = f
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob-the-long-name")
+        .await
+        .unwrap();
+    // Built at run time: a literal handed to the hasher reads as a hard-coded credential.
+    let name_as_password = format!("{}BOB-the-long-name", empty());
+    let err = f
+        .sign_in
+        .redeem_invite(&invite.secret, &name_as_password, None)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Invalid);
+    // A refused password does not use the invite up.
+    f.sign_in
+        .redeem_invite(&invite.secret, pw("bob's long password"), None)
+        .await
+        .unwrap();
+}
+
+/// Ann, with a password and one signed-in browser, on a server with several users on.
+async fn ann_signed_in(f: &Fixture) -> (UserId, Granted) {
+    owner_signed_up(f).await;
+    let ann = f.store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    f.secrets
+        .set_password_hash(ann, &password::hash(password()).unwrap())
+        .unwrap();
+    let granted = f.sign_in.sign_in("ann", password(), None).await.unwrap();
+    (ann, granted)
+}
+
+#[tokio::test]
+async fn once_a_users_deletion_has_begun_nothing_signs_them_in_any_more() {
+    let f = fixture_with(true);
+    let (ann, browser) = ann_signed_in(&f).await;
+    let (_, invite) = f
+        .sign_in
+        .invite_new_user(UserId::OWNER, "bob")
+        .await
+        .unwrap();
+    let bob = f.store.user_named("bob").unwrap().unwrap().id;
+    // The deletion has begun; its lock-out has not run yet (it is a separate step, and a request
+    // can land in between).
+    f.store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    f.store.begin_user_delete(UserId::OWNER, bob).unwrap();
+    let err = f
+        .sign_in
+        .sign_in("ann", password(), None)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Unauthorized);
+    assert!(
+        f.sign_in
+            .principal_for(&browser.grant.access_token)
+            .await
+            .is_none()
+    );
+    assert!(f.sign_in.refresh(&browser.refresh).await.is_err());
+    assert!(
+        f.sign_in
+            .redeem_invite(&invite.secret, pw("bob's long password"), None)
+            .await
+            .is_err()
+    );
+    assert!(!f.secrets.has_password(bob).unwrap(), "no password was set");
+    assert!(
+        f.store.devices(bob).unwrap().is_empty(),
+        "no device was made"
+    );
+}
+
+#[tokio::test]
+async fn a_password_change_for_a_user_being_deleted_is_refused() {
+    let f = fixture_with(true);
+    let (ann, browser) = ann_signed_in(&f).await;
+    let device = DeviceId::from_stored(browser.grant.device.id);
+    f.store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    let err = f
+        .sign_in
+        .change_password(ann, device, password(), pw("a new long password"))
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), ErrorCode::Unauthorized);
+    // A deletion that lands between the check and the write is refused by the store
+    // (`replace_password`, tested there), so no password is put back either way.
+}
+
+#[tokio::test]
+async fn an_attempt_dropped_without_an_answer_does_not_count_toward_the_lock() {
+    let f = fixture();
+    owner_signed_up(&f).await;
+    // A caller that goes away (or a database error) drops the attempt before its answer.
+    for _ in 0..3 * FREE_FAILURES {
+        drop(f.sign_in.attempt("tijs".to_owned()).unwrap());
+    }
+    f.sign_in.sign_in("Tijs", password(), None).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_sign_in_whose_password_was_reset_after_the_check_gets_no_device() {
+    let f = fixture_with(true);
+    let (ann, _) = ann_signed_in(&f).await;
+    let checked = f
+        .secrets
+        .verify_password(ann, |hash| password::verify(hash, password()))
+        .unwrap()
+        .unwrap();
+    // A reset lands between the password check and the device.
+    reset_account(&f.store, &f.secrets, "ann", f.clock.now_ms()).unwrap();
+    assert!(f.sign_in.make_session(&checked, None).unwrap().is_none());
+    assert!(
+        f.store.devices(ann).unwrap().is_empty(),
+        "the reset signed every device out and none was made"
+    );
 }

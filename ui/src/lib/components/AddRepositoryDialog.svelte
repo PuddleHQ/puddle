@@ -12,7 +12,10 @@
     type IdentitiesStore,
   } from "#lib/stores/identities.svelte.ts";
   import type { AddRepository } from "#lib/stores/checkouts.svelte.ts";
-  import { cleanRepoUrl, repoUrlProblem } from "#lib/workspaces/model.ts";
+  import {
+    isIncompleteAddress,
+    resolveRepoAddress,
+  } from "#lib/workspaces/model.ts";
   import {
     directoryFor,
     directoryProblem,
@@ -58,6 +61,8 @@
   let pull = $state(true);
   let push = $state(true);
   let touched = $state(false);
+  /** The address field was left: its refusal shows before Clone is pressed. */
+  let urlLeft = $state(false);
   let refusal = $state<string | null>(null);
   let busy = $state(false);
 
@@ -71,17 +76,26 @@
       pull = true;
       push = true;
       touched = false;
+      urlLeft = false;
       refusal = null;
       void identities.ensureLoaded();
     }
     wasOpen = open;
   });
 
+  const resolved = $derived(resolveRepoAddress(url));
+  /** The https:// address the field means, or what was typed while it names none. */
+  const address = $derived("url" in resolved ? resolved.url : url.trim());
+  const willClone = $derived(
+    "url" in resolved && resolved.url !== url.trim()
+      ? `Will clone ${resolved.url}`
+      : null,
+  );
   const offered = $derived<Identity[]>(
-    matchingUrl(identities.identities, url, listedBy),
+    matchingUrl(identities.identities, address, listedBy),
   );
   const chosenForYou = $derived.by(() => {
-    const parsed = parseRepoUrl(url);
+    const parsed = parseRepoUrl(address);
     if (!parsed.ok || offered.length === 0) return null;
     const listed = offered.find((i) => i.id === listedBy);
     return (listed ?? covering(offered, parsed.host, parsed.owner))?.id ?? null;
@@ -90,8 +104,7 @@
 
   const target = $derived(directoryFor({ url, directory }));
   const urlProblem = $derived.by(() => {
-    const bad = repoUrlProblem(url);
-    if (bad) return bad;
+    if ("message" in resolved) return resolved.message;
     const key = sameRepositoryKey(url);
     const same = entries.find((e) => sameRepositoryKey(e.url) === key);
     return same
@@ -108,7 +121,14 @@
       return `${target} already exists in the workspace. Puddle never clones into a folder that holds anything: use another directory, or use "Manage this" on the checkout that is there.`;
     return null;
   });
-  const shownUrl = $derived(touched ? urlProblem : null);
+  // A definite refusal shows as it is typed; the half-typed shorthand waits until the field is left.
+  const shownUrl = $derived(
+    touched ||
+      (url.trim() !== "" &&
+        (urlLeft || !(urlProblem && isIncompleteAddress(urlProblem))))
+      ? urlProblem
+      : null,
+  );
   const shownDirectory = $derived(touched ? directoryError : null);
 
   function picked(repo: { url: string }, by: number | null) {
@@ -132,7 +152,7 @@
       const typed = directory.trim();
       refusal = await onSubmit({
         kind: "clone",
-        url: cleanRepoUrl(url),
+        url: address,
         ...(typed === "" ? {} : { directory: typed }),
         ...(selected === "" ? {} : { identity_id: Number(selected) }),
         pull,
@@ -166,15 +186,16 @@
           identity = null;
           refusal = null;
         }}
+        onblur={() => (urlLeft = true)}
         aria-invalid={shownUrl ? "true" : undefined}
         aria-describedby={shownUrl ? `${id}-url-error` : `${id}-url-hint`}
       />
       {#if shownUrl}
         <p class="error" id="{id}-url-error" role="alert">{shownUrl}</p>
       {:else}
-        <p class="hint" id="{id}-url-hint">
-          An HTTPS URL, or an SSH address of GitHub, GitLab, Bitbucket or Azure
-          DevOps; the repository is cloned over HTTPS.
+        <p class="hint" id="{id}-url-hint" aria-live="polite">
+          {willClone ??
+            "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps; the repository is cloned over HTTPS."}
         </p>
       {/if}
     </div>
@@ -184,7 +205,7 @@
       onPick={(repo, by) => picked(repo, by)}
     />
 
-    {#if tableCannotHold(url)}
+    {#if tableCannotHold(address)}
       <p class="hint warn" data-testid="table-cannot-hold">
         {TABLE_CANNOT_HOLD}
       </p>
@@ -283,7 +304,7 @@
 
     <!-- Below the buttons, so its late answer cannot move the button under a press. -->
     <RepositoryHostsNotice
-      urls={[url]}
+      urls={[address]}
       {workspace}
       {...hostCheck ? { check: hostCheck } : {}}
       onBlocked={(b) => (hostBlocked = b)}

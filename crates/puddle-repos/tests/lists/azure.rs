@@ -219,6 +219,65 @@ async fn a_credential_covering_several_organisations_has_a_list_for_each() {
 }
 
 #[tokio::test]
+async fn a_signed_in_credential_another_organisation_refuses_is_not_dropped_for_its_own() {
+    let rig = Rig::new();
+    rig.api
+        .reply("dev.azure.com", LIST, json("azure_repositories.json"));
+    rig.api.reply(
+        "dev.azure.com",
+        "/contoso/_apis/git/repositories?api-version=7.1",
+        ApiReply::new(203, data("azure_sign_in.html")).with_header("content-type", "text/html"),
+    );
+    let source = gcm("dev.azure.com", "acme");
+    rig.tokens
+        .set(&source, "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl");
+    let ids = identities(vec![(
+        "Work",
+        vec![binding("dev.azure.com", source, &["contoso"], false)],
+    )]);
+
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+
+    assert_eq!(lists[0].state, ListState::Ok);
+    let refused = lists[1].problem.as_ref().unwrap();
+    assert_eq!(lists[1].organisation.as_deref(), Some("contoso"));
+    assert_eq!(refused.kind, ProblemKind::NotFound);
+    assert!(!refused.needs_sign_in, "{}", refused.message);
+    assert_eq!(
+        refused.message,
+        "Azure DevOps did not accept this credential for organisation contoso: it is for acme \
+         and does not reach contoso; check that the account is a member of contoso, or take \
+         contoso out of what the credential covers"
+    );
+    assert!(
+        rig.tokens.invalidated().is_empty(),
+        "the token works for acme, so it is not dropped from the cache"
+    );
+}
+
+#[tokio::test]
+async fn a_signed_in_credential_its_own_organisation_refuses_is_dropped_from_the_cache() {
+    let rig = Rig::new();
+    rig.api.reply(
+        "dev.azure.com",
+        LIST,
+        ApiReply::new(203, data("azure_sign_in.html")).with_header("content-type", "text/html"),
+    );
+    let source = gcm("dev.azure.com", "acme");
+    rig.tokens
+        .set(&source, "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl");
+    let ids = identities(vec![(
+        "Work",
+        vec![binding("dev.azure.com", source.clone(), &["acme"], false)],
+    )]);
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+    let problem = lists[0].problem.as_ref().unwrap();
+    assert_eq!(problem.kind, ProblemKind::TokenRejected);
+    assert!(problem.needs_sign_in);
+    assert_eq!(rig.tokens.invalidated(), [source]);
+}
+
+#[tokio::test]
 async fn a_pasted_token_for_one_organisation_lists_only_that_one() {
     let rig = Rig::new();
     rig.api

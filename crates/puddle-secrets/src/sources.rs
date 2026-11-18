@@ -131,7 +131,7 @@ impl Sources {
         })
     }
 
-    /// Asks Git for the credential of one URL with its path, with every prompt off.
+    /// Asks Git for the credential of one source, with every prompt off.
     async fn git_credential(
         &self,
         host: &HostName,
@@ -139,21 +139,12 @@ impl Sources {
         username: Option<&AccountName>,
     ) -> Result<Fetched, SourceError> {
         let program = self.tools.get(Tool::Git)?;
-        // `useHttpPath` makes Git keep `path` in the request; without it Git drops the path and the
-        // helper may answer from another organisation's entry.
-        let args = ["-c", "credential.useHttpPath=true", "credential", "fill"];
-        let mut input = format!("protocol=https\nhost={host}\npath={path}\n");
-        if let Some(user) = username {
-            input.push_str("username=");
-            input.push_str(user.as_str());
-            input.push('\n');
-        }
-        input.push('\n');
+        let query = GitQuery::new(host, path, username);
         let out = run(
             Tool::Git,
             program,
-            &args,
-            Some(input.as_bytes()),
+            &query.args("fill"),
+            Some(query.input().as_bytes()),
             self.timeout,
         )
         .await?;
@@ -162,7 +153,7 @@ impl Sources {
         }
         let text = std::str::from_utf8(&out.stdout)
             .map_err(|_| SourceError::Refused(Refusal::Unreadable))?;
-        parse_fill(text, host, path, username)
+        query.answer(text)
     }
 
     async fn stored(&self, id: &StoredId) -> Result<Fetched, SourceError> {
@@ -341,13 +332,74 @@ pub fn pasted_token(text: &str) -> Result<Secret, SourceError> {
     Ok(Secret::new(arc.expose().to_owned()))
 }
 
-/// Reads `git credential fill` output. The answer is used only when it names the host and path
-/// that were asked for (and the account, when one was): a helper that answered for another entry
+/// One question to Git for the credential of a [`SourceSpec::GitCredential`]: what is sent, with
+/// which setting, and which answer counts.
+///
+/// A source that names an account asks for the host and that account, and no path. Git Credential
+/// Manager keeps a GitHub sign-in for the whole host under the account's name (target
+/// `git:https://github.com`, or `git:https://<account>@github.com` beside another account's), and
+/// Git asks for it that way on every clone. Asked with a path, the manager looks for an entry made
+/// for that path only, finds none, and needs a sign-in it may not start. The account is what picks
+/// the entry, and the answer must name it.
+///
+/// A source without an account asks with its path (`credential.useHttpPath`, which Git otherwise
+/// drops before the helper sees it): a helper with one entry per organisation (Azure DevOps) then
+/// answers from that organisation's entry, and the answer must name the same path.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GitQuery<'a> {
+    host: &'a HostName,
+    path: Option<&'a UrlPath>,
+    username: Option<&'a AccountName>,
+}
+
+impl<'a> GitQuery<'a> {
+    pub(crate) fn new(
+        host: &'a HostName,
+        path: &'a UrlPath,
+        username: Option<&'a AccountName>,
+    ) -> Self {
+        Self {
+            host,
+            path: username.is_none().then_some(path),
+            username,
+        }
+    }
+
+    /// The arguments of `git credential <verb>` (`fill` or `approve`); an approve keeps the answer
+    /// under the same entry the fill asks for.
+    pub(crate) fn args(&self, verb: &'static str) -> Vec<&'static str> {
+        let mut args = Vec::with_capacity(4);
+        if self.path.is_some() {
+            args.extend(["-c", "credential.useHttpPath=true"]);
+        }
+        args.extend(["credential", verb]);
+        args
+    }
+
+    /// The request on standard input, ended by the blank line.
+    pub(crate) fn input(&self) -> String {
+        let path = self
+            .path
+            .map_or_else(String::new, |p| format!("path={p}\n"));
+        let user = self
+            .username
+            .map_or_else(String::new, |u| format!("username={u}\n"));
+        format!("protocol=https\nhost={}\n{path}{user}\n", self.host)
+    }
+
+    /// Reads the answer; see [`parse_fill`].
+    pub(crate) fn answer(&self, text: &str) -> Result<Fetched, SourceError> {
+        parse_fill(text, self.host, self.path, self.username)
+    }
+}
+
+/// Reads `git credential fill` output. The answer is used only when it names the host, the path
+/// when one was asked for, and the account when one was: a helper that answered for another entry
 /// is the failure this guards against.
 pub(crate) fn parse_fill(
     text: &str,
     host: &HostName,
-    path: &UrlPath,
+    path: Option<&UrlPath>,
     username: Option<&AccountName>,
 ) -> Result<Fetched, SourceError> {
     let (mut got_host, mut got_path, mut got_user) = (None, None, None);
@@ -373,7 +425,9 @@ pub(crate) fn parse_fill(
     if !got_host.is_some_and(|h| h.eq_ignore_ascii_case(host.as_str())) {
         return Err(wrong);
     }
-    if !got_path.is_some_and(|p| p.trim_matches('/').eq_ignore_ascii_case(path.as_str())) {
+    if let Some(asked) = path
+        && !got_path.is_some_and(|p| p.trim_matches('/').eq_ignore_ascii_case(asked.as_str()))
+    {
         return Err(wrong);
     }
     if let Some(asked) = username

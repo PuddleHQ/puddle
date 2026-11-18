@@ -3,8 +3,10 @@
 """List the tests that failed and then passed on a retry, from a nextest junit.xml.
 
 Usage: flaky-report.py <junit.xml>. Prints a Markdown section (appended to the job summary by the
-caller), emits one ::warning:: per flaky test, and always exits 0: a flake is reported, never red.
-Genuine failures (no pass on the retry) stay the test step's own failure.
+caller), emits one ::error:: per flaky test, and exits 1 when there is one: a test that fails and then
+passes is a flake, and a retry that hid it would let it stay (docs/STANDARDS.md, "Flaky tests"). The
+nightly's red step files the "Nightly red" issue (ci/nightly-issue.sh). A missing report exits 0, because
+the run never reached its tests. Genuine failures (no pass on the retry) stay the test step's own failure.
 
 Stress mode, for the nightly stress job (ci/stress.sh): flaky-report.py --stress <rust|vitest|playwright>
 <report>. Every test that failed in any repeat is listed with how many of its runs failed (a test that
@@ -88,8 +90,8 @@ def main() -> int:
         print("None.")
     for name in sorted(flaky):
         print(f"- `{name}`")
-        print(f"::warning title=flaky test::{name} failed and passed on retry", file=sys.stderr)
-    return 0
+        print(f"::error title=flaky test::{name} failed and passed on retry", file=sys.stderr)
+    return 1 if flaky else 0
 
 
 if __name__ == "__main__":

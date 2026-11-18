@@ -657,6 +657,48 @@ async fn the_mise_tools_set_is_hidden_while_the_global_tools_switch_is_off() {
     api.running.shutdown().await;
 }
 
+/// The dormancy check: while the build leaves the mise layer out (the v0.1 build, no `mise`
+/// cargo feature), nothing of it shows in the rule list or the settings, and no stored switch turns
+/// it on. With the layer built in, the same test says it is offered.
+#[tokio::test]
+async fn nothing_of_the_mise_layer_shows_in_a_build_without_it() {
+    let api = start().await;
+    let layer = puddle_settings::Tools::AVAILABLE;
+    let settings = api.get("/api/settings").await.json();
+    assert_eq!(settings["mise_available"], layer);
+    // A stored "on" must not wake a dormant layer.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let list = api.get("/api/rule-sets").await.json();
+    let sets = list["sets"].as_array().unwrap();
+    assert_eq!(
+        sets.iter().any(|s| s["id"] == "builtin:mise-tools"),
+        layer,
+        "the built-in mise rule set is listed exactly when the layer is built in"
+    );
+    if !layer {
+        let text = list.to_string().to_lowercase();
+        assert!(!text.contains("mise"), "the rule list names mise: {text}");
+        assert!(!decide(&api, "box", "nodejs.org").is_allow());
+        assert!(!decide(&api, "box", "mise.jdx.dev").is_allow());
+        let reply = api
+            .send(
+                "PUT",
+                "/api/rule-sets/builtin:mise-tools/switch",
+                Some(&json!({"enabled": true})),
+            )
+            .await;
+        assert_eq!(reply.status, 409, "{}", reply.body);
+    }
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_group_holds_a_default_precedence_for_the_rules_added_to_it() {
     let api = start().await;

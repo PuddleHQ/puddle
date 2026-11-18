@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
+use puddle_store::UserId;
 
 fn target(path: &str, file: bool) -> DesktopTarget {
     DesktopTarget {
@@ -76,6 +77,7 @@ mod commands {
     fn record() -> WorkspaceRecord {
         WorkspaceRecord::new(
             puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
+            UserId::OWNER,
             puddle_api::DisplayName::parse("web").unwrap(),
             Vec::new(),
         )
@@ -176,6 +178,7 @@ mod batch_file {
     fn record() -> WorkspaceRecord {
         WorkspaceRecord::new(
             puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
+            UserId::OWNER,
             puddle_api::DisplayName::parse("web").unwrap(),
             Vec::new(),
         )

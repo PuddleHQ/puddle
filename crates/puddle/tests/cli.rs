@@ -7,11 +7,14 @@
 
 use std::process::Command;
 
+/// Runs the binary with no `PUDDLE_` variable of the test run's environment.
 fn puddle(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_puddle"))
-        .args(args)
-        .output()
-        .expect("the Puddle binary runs")
+    let mut command = Command::new(env!("CARGO_BIN_EXE_puddle"));
+    command.args(args);
+    for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("PUDDLE_")) {
+        command.env_remove(name);
+    }
+    command.output().expect("the Puddle binary runs")
 }
 
 #[test]
@@ -52,6 +55,7 @@ fn serve_without_a_bundled_runtime_exits_1_and_says_why() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.starts_with("puddle: "), "{stderr}");
+    assert!(stderr.contains("bundled runtime is missing"), "{stderr}");
 }
 
 #[test]
@@ -266,6 +270,30 @@ fn user_reset_still_reads_the_whole_option_table() {
             .unwrap()
             .contains("PUDDLE_PORT")
     );
+}
+
+#[test]
+fn recovery_commands_ignore_a_bad_value_of_an_option_they_never_read() {
+    let data = tempfile::tempdir().unwrap();
+    for args in [
+        &["audit", "status"][..],
+        &["secrets", "status"][..],
+        &["user", "list"][..],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_puddle"))
+            .args(args)
+            .arg("--data-dir")
+            .arg(data.path())
+            .env("PUDDLE_PORT", "not-a-port")
+            .env("PUDDLE_REMOTE", "true")
+            .output()
+            .expect("the Puddle binary runs");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            !stderr.contains("PUDDLE_PORT") && !stderr.contains("remote serving"),
+            "{args:?}: {stderr}"
+        );
+    }
 }
 
 #[test]

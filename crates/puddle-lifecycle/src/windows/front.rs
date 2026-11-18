@@ -3,15 +3,13 @@
 //! console events into a shutdown request on the worker's stdin.
 
 use std::io::Write as _;
-use std::os::windows::process::CommandExt as _;
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Stdio};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use windows_sys::Win32::System::Console::{
     CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
 };
-use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use super::sys;
 use crate::supervise::ROLE_VAR;
@@ -37,13 +35,12 @@ fn worker_error(op: &'static str) -> impl FnOnce(std::io::Error) -> LifecycleErr
 pub(crate) fn run() -> Result<Role, LifecycleError> {
     crate::job::contain_this_process()?;
     let exe = std::env::current_exe().map_err(worker_error("find own executable"))?;
-    let mut child = Command::new(exe)
+    // A console of its own that has no window (the helper's flags): Windows ends every process
+    // on a closed console about 5 s later, and stopping the VMs takes longer. The worker must not
+    // be on the user's console, so it outlives the front.
+    let mut child = puddle_process::command(exe)
         .args(std::env::args_os().skip(1))
         .env(ROLE_VAR, "worker")
-        // A console of its own that has no window: Windows ends every process on a closed
-        // console about 5 s later, and stopping the VMs takes longer. The worker must not be
-        // on the user's console, so it outlives the front.
-        .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -92,6 +89,13 @@ fn cause(ctrl_type: u32) -> Option<ShutdownCause> {
     }
 }
 
+/// Whether the front lets the default handler end it: a repeated interrupt or break once the
+/// shutdown was requested (a hung shutdown can be cut short). A deadline event (the console
+/// closes, the user logs off, the system shuts down) never does: the front must stay to wait.
+fn ends_front_by_default(cause: ShutdownCause, requested_before: bool) -> bool {
+    requested_before && !cause.is_deadline()
+}
+
 /// The console handler's work (on a thread Windows creates for it). Returns whether the event
 /// was handled; `false` lets the default handler end the front.
 pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
@@ -111,11 +115,17 @@ pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
+    let requested_before = control.is_none();
     if let Some(mut control) = control {
         // Closing the pipe right after is the request too, so a failed write changes nothing.
         let _ = writeln!(control, "{cause}");
         drop(control);
         tracing::info!(%cause, "front: shutdown requested");
+    }
+    if ends_front_by_default(cause, requested_before) {
+        // A second Ctrl-C of a shutdown that hangs: the default handler ends the front, and the
+        // kill-on-close job ends the worker.
+        return false;
     }
     if cause.is_deadline() {
         let exited = front.exited.lock().unwrap_or_else(PoisonError::into_inner);

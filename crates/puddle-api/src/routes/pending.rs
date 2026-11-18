@@ -53,7 +53,10 @@ fn company_signal(host: &Host, signals: &dyn CompanySignals) -> Option<&'static 
 /// Maps rows to wire requests, naming for each open one the local-destination toggle that blocks
 /// its approval. Settings are read only if some open row is to a local destination; a workspace
 /// whose settings can't be read counts as unblocked (the decision itself never depends on this).
-async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingRequest>, ApiError> {
+pub(super) async fn present(
+    state: &AppState,
+    rows: Vec<PendingRow>,
+) -> Result<Vec<PendingRequest>, ApiError> {
     let signals = state.company_signals.as_ref();
     let wanted = rows
         .iter()

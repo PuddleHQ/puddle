@@ -254,11 +254,14 @@ async fn a_guest_cannot_dial_the_front_even_with_every_local_toggle_on() {
             "{authority}: never approvable: {headers:?}"
         );
     }
-    // Absence window: a late connection to the editor would show only after the refusals, and nothing signals one that never comes.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // A second outside request is the marker: the editor server accepts in the order connections
+    // reach it, so when the marker has been served any refused connection that got through would
+    // already be counted before it.
+    let again = from_outside(&front, &rig.workspace).await;
+    assert!(again.starts_with("HTTP/1.1 200"), "{again}");
     assert_eq!(
         rig.accepted.load(Ordering::SeqCst),
-        1,
+        2,
         "a refused guest connection still reached the editor server through the front"
     );
 }

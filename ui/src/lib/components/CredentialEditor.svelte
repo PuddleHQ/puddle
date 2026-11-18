@@ -26,6 +26,7 @@
     type Source,
   } from "#lib/identities/model.ts";
   import type { IdentitiesStore } from "#lib/stores/identities.svelte.ts";
+  import { session } from "#lib/session/session.svelte.ts";
   import "#lib/theme/controls.css";
 
   // Adds one credential to an identity: an account already signed in on this computer, a token
@@ -49,7 +50,12 @@
   } = $props();
 
   const id = $props.id();
-  let mode = $state<"found" | "paste" | "az">("found");
+  // The accounts signed in on the computer and the Azure CLI are the owner's alone: the service
+  // refuses them for anyone else, so another user starts at, and keeps, a pasted token.
+  const computerAccounts = session.mayUseComputerAccounts;
+  let mode = $state<"found" | "paste" | "az">(
+    computerAccounts ? "found" : "paste",
+  );
   let tenant = $state("");
   let azOrg = $state("");
   let azCheck = $state<Check | null>(null);
@@ -143,7 +149,7 @@
   }
 
   onMount(() => {
-    if (store.found === null) void store.loadFound();
+    if (computerAccounts && store.found === null) void store.loadFound();
   });
 
   function choose(account: FoundAccount, index: number) {
@@ -274,16 +280,18 @@
 >
   <fieldset>
     <legend>Where does the credential come from?</legend>
-    <label class="choice">
-      <input
-        type="radio"
-        name="{id}-mode"
-        checked={mode === "found"}
-        onchange={() => switchMode("found")}
-      />
-      Found on this computer
-    </label>
-    {#if mode === "found"}
+    {#if computerAccounts}
+      <label class="choice">
+        <input
+          type="radio"
+          name="{id}-mode"
+          checked={mode === "found"}
+          onchange={() => switchMode("found")}
+        />
+        Found on this computer
+      </label>
+    {/if}
+    {#if computerAccounts && mode === "found"}
       <div class="found" id="{id}-found" tabindex="-1">
         {#if store.foundStatus === "loading"}
           <p class="hint">Looking for signed-in accounts&hellip;</p>
@@ -329,15 +337,17 @@
       />
       Paste a token
     </label>
-    <label class="choice">
-      <input
-        type="radio"
-        name="{id}-mode"
-        checked={mode === "az"}
-        onchange={() => switchMode("az")}
-      />
-      Use the Azure CLI (Azure DevOps)
-    </label>
+    {#if computerAccounts}
+      <label class="choice">
+        <input
+          type="radio"
+          name="{id}-mode"
+          checked={mode === "az"}
+          onchange={() => switchMode("az")}
+        />
+        Use the Azure CLI (Azure DevOps)
+      </label>
+    {/if}
   </fieldset>
 
   {#if mode === "az"}
@@ -592,19 +602,7 @@
     align-items: center;
     gap: var(--space-2);
   }
-  input[type="text"],
-  input[type="password"] {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  input[aria-invalid="true"] {
-    border-color: var(--color-danger);
-  }
+
   .hint {
     margin: 0;
     color: var(--color-text-muted);

@@ -51,6 +51,7 @@
   <p class="desc" id="{id}-hint">{hint}</p>
   <textarea
     id="{id}-names"
+    class="names"
     rows="4"
     spellcheck="false"
     autocomplete="off"
@@ -58,7 +59,9 @@
     bind:value={text}
     oninput={() => (saved = false)}></textarea>
   <div class="row">
-    <button type="submit" disabled={working || unchanged}>Keep names</button>
+    <button type="submit" class="btn" disabled={working || unchanged}
+      >Keep names</button
+    >
     <span aria-live="polite">
       {#if saved}<span class="saved">Saved.</span>{/if}
       {#if failure}<span class="error" role="alert">{failure}</span>{/if}
@@ -79,23 +82,15 @@
     color: var(--color-text-muted);
     font-size: var(--text-sm);
   }
-  textarea {
+  .names {
     width: 100%;
     max-width: 32rem;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
     font-family: var(--font-mono, monospace);
   }
   .row {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-  }
-  button {
-    min-height: var(--control-size);
   }
   .saved {
     color: var(--color-success);

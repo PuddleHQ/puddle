@@ -379,9 +379,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
     const WS: Target = T::Workspace("id");
     let (action, target) = match (method.as_str(), path) {
         ("GET", "/api/health" | "/api/openapi.json") => (A::ReadService, T::Service),
-        ("GET", "/api/events" | "/api/problems") | ("POST", "/api/presence") => {
-            (A::ReadService, T::Own)
-        }
+        ("GET", "/api/events" | "/api/problems" | "/api/ui-errors")
+        | ("POST", "/api/presence" | "/api/ui-errors") => (A::ReadService, T::Own),
         ("GET", "/api/auth/status")
         | (
             "POST",
@@ -514,7 +513,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         }
         ("GET", "/api/rules" | "/api/request-rules") => (A::ReadRules, T::Own),
         ("POST", "/api/rules" | "/api/request-rules") => (A::ChangeRules, T::Own),
-        ("DELETE", "/api/rules/{id}")
+        ("POST", "/api/rules/{id}/undo") => (A::DecideRequests, T::Rule),
+        ("DELETE" | "PUT", "/api/rules/{id}")
         | ("PUT", "/api/rules/{id}/expiry" | "/api/rules/{id}/enabled") => {
             (A::ChangeRules, T::Rule)
         }

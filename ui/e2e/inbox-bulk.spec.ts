@@ -94,16 +94,10 @@ test.describe("500 open requests", () => {
 
 test("a 500-row inbox is still driven by the keyboard", async ({
   page,
-  request,
   backend,
 }) => {
+  // The J and K keys work by default; nothing is switched on first.
   await openSpread({ backend, page });
-  // The J and K keys are a Settings switch, off by default.
-  const reply = await request.put("/api/settings", {
-    headers: { Authorization: `Bearer ${backend.token}` },
-    data: { ui: { inbox_shortcuts: true } },
-  });
-  expect(reply.ok()).toBe(true);
   await page.goto("/inbox");
   await expect(page.locator("li.req")).toHaveCount(501, {
     timeout: TEST_TIMEOUT_MS,

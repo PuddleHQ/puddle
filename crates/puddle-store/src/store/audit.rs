@@ -483,6 +483,29 @@ impl Store {
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| row.get(3))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// How many SQLite virtual-machine steps [`Store::audit_query_every_user`] takes for these
+    /// arguments, rows included. A step count does not move with the machine's load, so a test can
+    /// put a bar on the work a query does (a per-row rescan multiplies it) instead of on a clock.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be read.
+    pub fn audit_query_steps(
+        &self,
+        _: &AllUsers,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<i32, StoreError> {
+        let (sql, args) = audit_query_sql(filter, cursor, limit);
+        let conn = self.audit_read();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(args))?;
+        while rows.next()?.is_some() {}
+        drop(rows);
+        Ok(stmt.get_status(rusqlite::StatementStatus::VmStep))
+    }
 }
 
 /// The SQL and bound values for one audit page; every value is bound, never spliced in.
@@ -596,6 +619,10 @@ pub(super) fn append_for(
     append_by(conn, record, Some(user))
 }
 
+/// The user id of a record whose workspace has no owner row: no user has it, so no user reads the
+/// record, while the every-user reads still see it.
+pub(super) const NOBODY: i64 = 0;
+
 pub(super) fn append_by(
     conn: &Connection,
     record: &AuditRecord,
@@ -607,7 +634,8 @@ pub(super) fn append_by(
                             user_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
                  (SELECT name FROM workspace_names WHERE workspace_id = ?3),
-                 coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3), ?8, 1))",
+                 coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3),
+                          CASE WHEN ?3 IS NULL THEN coalesce(?8, 1) ELSE ?9 END))",
         params![
             sql_ts(record.ts()),
             record.kind(),
@@ -616,7 +644,8 @@ pub(super) fn append_by(
             record.outcome().map(AuditOutcome::as_str),
             line,
             record.search_text(),
-            user.map(UserId::get)
+            user.map(UserId::get),
+            NOBODY
         ],
     )?;
     Ok(())

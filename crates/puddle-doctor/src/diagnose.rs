@@ -16,6 +16,7 @@ use crate::facts::{
 };
 use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth, Unseal};
 
+use crate::explain::explain;
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
 /// The exit code of the probe program the test VM runs.
@@ -65,7 +66,9 @@ pub struct Options {
     pub boot: bool,
     /// Time limit for `msb --version`.
     pub launch_limit: Duration,
-    /// Time limit for the whole run; the test boot gets what is left.
+    /// Time limit for the checks up to the test boot, which gets what is left. The checks after
+    /// it are not counted against it: each has a limit of its own (the SSH agent's
+    /// [`Self::ssh_agent_limit`], the Azure CLI's 10 s, the credential store's 20 s).
     pub budget: Duration,
     /// Free space, in bytes, under which the disk check warns.
     pub disk_warn_below: u64,
@@ -166,6 +169,10 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
     }
+    leave_out_moot(&mut checks);
+    for check in &mut checks {
+        explain(os, check);
+    }
 
     Report {
         schema_version: SCHEMA_VERSION,
@@ -176,6 +183,21 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
         checks,
         elapsed_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
     }
+}
+
+/// Leaves out the lines that only matter when a later check fails, once that check passed: a job
+/// object that might stop the test boot, and an unreadable code integrity state that might stop
+/// the runtime. Shown anyway, they say "nothing to do" to a person who can do nothing.
+fn leave_out_moot(checks: &mut Vec<Check>) {
+    let passed =
+        |id: CheckId, checks: &[Check]| checks.iter().any(|c| c.id == id && c.status == Status::Ok);
+    let booted = passed(CheckId::TestBoot, checks);
+    let launched = passed(CheckId::Launch, checks);
+    checks.retain(|c| match c.id {
+        CheckId::JobObject => !booted,
+        CheckId::CodeIntegrity if c.status != Status::Ok => !launched,
+        _ => true,
+    });
 }
 
 fn skipped(id: CheckId, why: &str) -> Check {
@@ -201,11 +223,14 @@ fn virtualization(os: Os, hv: &HypervisorFacts) -> Check {
                 "this {} runs in a virtual machine ({vendor}); see Hypervisor",
                 os_word(os)
             ),
-        ),
+        )
+        .finding(Finding::RunsInVirtualMachine),
         (Some(false), None) => Check::new(id, Status::Fail, "off in the firmware (UEFI/BIOS)")
             .finding(Finding::FirmwareVirtualizationOff)
             .fix(FIRMWARE_FIX),
-        (None, None) => Check::new(id, Status::Info, "unknown"),
+        (None, None) => {
+            Check::new(id, Status::Info, "unknown").finding(Finding::VirtualizationUnknown)
+        }
     }
 }
 
@@ -358,7 +383,9 @@ fn code_integrity_state(ci: CodeIntegrity) -> Check {
     if ci.test_signing {
         summary.push_str("; test signing on");
     }
-    let check = Check::new(CheckId::CodeIntegrity, Status::Info, summary);
+    // A state, not a finding: when a policy blocks the runtime, "Runtime starts" says so and
+    // names the rule.
+    let check = Check::new(CheckId::CodeIntegrity, Status::Ok, summary);
     if ci.user_mode_enforced {
         check.fix(
             "An App Control (WDAC) policy decides which programs may run. If it blocks Puddle's runtime, \
@@ -480,8 +507,8 @@ The line is the setting \"Warn when free space is under\" in Settings."
 // ---- disk encryption ----
 
 const ENCRYPTION_WHY: &str = "Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), \
-and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk \
-(a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot.";
+and memory can be paged out to swap or written to disk in a crash dump. Anyone who gets this disk (a lost or stolen computer, a disk \
+taken out) can read those pages and the data folder.";
 
 /// What is not encrypted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -495,8 +522,8 @@ fn encryption_fix(os: Os, bad: Unencrypted) -> String {
     let how = match os {
         Os::Windows => {
             "Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: \
-Control Panel, BitLocker Drive Encryption). A page file on a drive you leave unencrypted is encrypted by \
-`fsutil behavior set encryptpagingfile 1` (run as administrator, then restart)."
+Control Panel, BitLocker Drive Encryption). To encrypt the page file as well, run \
+`fsutil behavior set encryptpagingfile 1` as administrator, then restart."
         }
         Os::MacOs => {
             "Turn on FileVault (System Settings, Privacy & Security, FileVault). macOS encrypts its swap by default."
@@ -1286,13 +1313,14 @@ affected."
 
 // ---- Azure CLI ----
 
-/// Warn only: the Azure CLI is optional, needed for the Azure DevOps sources and nothing else.
+/// Never a failure: the Azure CLI is optional, needed for the Azure DevOps sources and nothing
+/// else, so its absence is only info.
 fn az_cli(facts: &AzCliFacts) -> Check {
     let id = CheckId::AzCli;
     match facts {
         AzCliFacts::NotFound => Check::new(
             id,
-            Status::Warn,
+            Status::Info,
             "not found; needed only for Azure DevOps through `az`",
         )
         .finding(Finding::AzCliMissing)
@@ -1303,6 +1331,7 @@ fn az_cli(facts: &AzCliFacts) -> Check {
             Status::Warn,
             format!("found, but its version could not be read: {detail}"),
         )
+        .finding(Finding::AzCliUnreadable)
         .fix("Azure DevOps sources need a working `az`; reinstall the Azure CLI if `az --version` fails."),
     }
 }
@@ -1332,7 +1361,7 @@ fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
                     format!("Puddle's file vault, {}", key_words(tag)),
                 );
                 if tag == KeySourceTag::KeyFile {
-                    check.fix(
+                    check.finding(Finding::CredentialStoreKeyFile).fix(
                         "The key is a file in your config folder, so a copy of that folder opens the vault. systemd 256 or later seals the key to this machine instead.",
                     )
                 } else {
@@ -1342,7 +1371,7 @@ fn credential_store(os: Os, facts: CredentialStoreFacts) -> Check {
             VaultFacts::Sealed { tag, key, tpm } => sealed_vault_key(tag, key, tpm),
             VaultFacts::NoVaultYet => Check::new(
                 id,
-                Status::Info,
+                Status::Ok,
                 "Puddle's file vault: no vault file yet; Puddle makes it at the next start",
             ),
             VaultFacts::Unreadable => Check::new(

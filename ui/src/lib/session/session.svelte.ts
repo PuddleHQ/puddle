@@ -109,6 +109,37 @@ export class SessionStore {
     return this.mode === "signed-in" || this.mode === "local";
   }
 
+  /**
+   * Whether this page runs on another computer than the one Puddle runs on: only a browser that
+   * signed in is, the desktop window and the loopback address are on the host. The service opens
+   * nothing and sends no ssh link to such a client (API-22), so the page offers no ssh entry.
+   */
+  get isRemote(): boolean {
+    return this.mode === "signed-in";
+  }
+
+  /**
+   * Whether this session may start a workspace from a folder on the computer Puddle runs on. The
+   * service refuses it for every signed-in user who is not the owner, so the form does not offer it.
+   * The desktop window and a service with no accounts have no user and are the owner.
+   */
+  get mayUseServerFolders(): boolean {
+    return this.#isOwner;
+  }
+
+  /**
+   * Whether this session may use the accounts signed in on the computer Puddle runs on (the GitHub
+   * CLI's, Git's credential helper's, the Azure CLI's). The service refuses them for every
+   * signed-in user who is not the owner, so the credential form does not offer them.
+   */
+  get mayUseComputerAccounts(): boolean {
+    return this.#isOwner;
+  }
+
+  get #isOwner(): boolean {
+    return this.user === null || this.user.role === "owner";
+  }
+
   /** Finds out how this page is signed in; never throws. */
   async start(): Promise<void> {
     useSessionToken(() => this.#token);

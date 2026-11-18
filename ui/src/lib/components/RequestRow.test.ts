@@ -84,7 +84,7 @@ describe("RequestRow", () => {
     expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
   });
 
-  it("passes the chevron up with its row", async () => {
+  it("passes the more-choices button up with its row", async () => {
     const { onMore } = mount();
     await fireEvent.click(
       screen.getByRole("button", { name: /^More choices/ }),

@@ -5,6 +5,11 @@
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import {
+  INBOX_SHORTCUTS,
+  type InboxShortcut,
+  type InboxShortcutId,
+} from "../src/lib/decision/inbox-shortcuts.ts";
+import {
   axeStops,
   CONVERGE_WAIT_MS,
   RECONNECT_WAIT_MS,
@@ -252,7 +257,7 @@ test.describe("deciding", () => {
     expect((rule?.expires_at ?? 0) - now).toBe(3_600_000);
   });
 
-  test("undo from the toast deletes the rule; the list says so", async ({
+  test("undo from the toast deletes the rule and lists the request again", async ({
     page,
     request,
     backend,
@@ -275,6 +280,10 @@ test.describe("deciding", () => {
         (r) => r.pattern === "undo.example.com",
       ),
     ).toBe(false);
+    // The request is back, and the service lists it too (a reload shows it).
+    await expect(rowFor(page, "undo.example.com")).toHaveCount(1);
+    await page.reload();
+    await expect(rowFor(page, "undo.example.com")).toHaveCount(1);
     await expect(
       page
         .getByRole("region", { name: "Decided just now" })
@@ -513,14 +522,7 @@ test.describe("a name that looks like another", () => {
 });
 
 test.describe("keyboard only", () => {
-  // The single keys are a Settings switch, off by default: these tests turn it on first.
-  test.beforeEach(async ({ request, backend }) => {
-    const reply = await request.put("/api/settings", {
-      headers: auth(backend),
-      data: { ui: { inbox_shortcuts: true } },
-    });
-    expect(reply.ok()).toBe(true);
-  });
+  // The single keys are a Settings switch, on by default: nothing is switched on first.
 
   /** J or K until the row for `host` is the current one. */
   async function moveTo(page: Page, host: string): Promise<void> {
@@ -544,6 +546,148 @@ test.describe("keyboard only", () => {
     await rowFor(page, host).waitFor();
     await page.locator("main").focus();
     await moveTo(page, host);
+  }
+
+  // One proof per line of the shortcuts list, pressed with the real keys in the real browsers. A
+  // line without a proof does not compile; a line whose keys stop doing what it says fails here.
+  const proofs: Record<
+    InboxShortcutId,
+    (
+      s: InboxShortcut,
+      at: {
+        page: Page;
+        request: APIRequestContext;
+        backend: Backend;
+        /** The three requests in the order the page lists them; the first is marked. */
+        hosts: readonly [string, string, string];
+      },
+    ) => Promise<void>
+  > = {
+    allow: async (s, { page, request, backend, hosts }) => {
+      await page.keyboard.press(letter(s));
+      await expect(rowFor(page, hosts[0])).toHaveCount(0);
+      const rule = (await rules(request, backend)).find(
+        (r) => r.pattern === hosts[0],
+      );
+      expect(rule).toMatchObject({
+        effect: "allow",
+        scope: { type: "workspace", workspace: "shop" },
+      });
+    },
+    deny: async (s, { page, request, backend, hosts }) => {
+      await page.keyboard.press(letter(s));
+      await expect(rowFor(page, hosts[0])).toHaveCount(0);
+      const rule = (await rules(request, backend)).find(
+        (r) => r.pattern === hosts[0],
+      );
+      expect(rule).toMatchObject({
+        effect: "deny",
+        scope: { type: "workspace", workspace: "shop" },
+      });
+    },
+    next: async (s, { page, hosts }) => {
+      await page.keyboard.press(letter(s));
+      await expect(rowFor(page, hosts[1])).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      await expect(rowFor(page, hosts[1])).toBeFocused();
+    },
+    previous: async (s, { page, hosts }) => {
+      await page.keyboard.press("j");
+      await page.keyboard.press("j");
+      await page.keyboard.press(letter(s));
+      await expect(rowFor(page, hosts[1])).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      await expect(rowFor(page, hosts[1])).toBeFocused();
+    },
+    more: async (s, { page, request, backend, hosts }) => {
+      const dialog = page.getByRole("dialog", { name: /^Choices for/ });
+      // Focused with J ...
+      await page.keyboard.press("j");
+      await page.keyboard.press(s.keys[0]!);
+      await expect(dialog).toHaveAccessibleName(`Choices for ${hosts[1]}`);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      // ... or with a click on the request.
+      await rowFor(page, hosts[2]).locator(".host").click();
+      await expect(rowFor(page, hosts[2])).toBeFocused();
+      await page.keyboard.press(s.keys[0]!);
+      await expect(dialog).toHaveAccessibleName(`Choices for ${hosts[2]}`);
+      expect(
+        (await rules(request, backend)).filter((r) =>
+          hosts.includes(r.pattern),
+        ),
+      ).toEqual([]);
+    },
+    everywhere: async (s, { page, request, backend, hosts }) => {
+      expect(s.keys).toEqual(["Ctrl", "click"]);
+      for (const [effect, host] of [
+        ["Allow", hosts[0]],
+        ["Deny", hosts[1]],
+      ] as const) {
+        await rowFor(page, host)
+          .getByRole("button", { name: new RegExp(`^${effect} `) })
+          .click({ modifiers: ["ControlOrMeta"] });
+        const confirm = page.getByRole("alertdialog");
+        await expect(confirm).toContainText(
+          `${effect} ${host} for every workspace, permanently`,
+        );
+        await confirm
+          .getByRole("button", { name: `${effect} in every workspace` })
+          .click();
+        await expect(rowFor(page, host)).toHaveCount(0);
+      }
+      const made = (await rules(request, backend))
+        .filter((r) => hosts.includes(r.pattern))
+        .map((r) => [r.effect, r.pattern, r.scope.type]);
+      expect(made.sort()).toEqual(
+        [
+          ["allow", hosts[0], "global"],
+          ["deny", hosts[1], "global"],
+        ].sort(),
+      );
+    },
+  };
+
+  /** The key a single-letter line names, as Playwright presses it. */
+  const letter = (s: InboxShortcut): string => {
+    expect(s.singleKey).toBe(true);
+    expect(s.keys).toHaveLength(1);
+    return s.keys[0]!.toLowerCase();
+  };
+
+  for (const shortcut of INBOX_SHORTCUTS) {
+    test(`the shortcuts list is true: ${shortcut.keys.join("+")}, ${shortcut.does}`, async ({
+      page,
+      request,
+      backend,
+    }) => {
+      for (const host of [
+        "s0.example.com",
+        "s1.example.com",
+        "s2.example.com",
+      ]) {
+        await ask(backend, "shop", host);
+      }
+      await openInbox(page, backend);
+      await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
+      const list = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+      const line = list.locator(`[data-shortcut="${shortcut.id}"]`);
+      await expect(line.locator("dt")).toHaveText(shortcut.keys.join("+"));
+      await expect(line.locator("dd")).toHaveText(shortcut.does);
+      await page.keyboard.press("Escape");
+      await expect(list).toHaveCount(0);
+      const listed = (
+        await page.locator("li.req .host").allTextContents()
+      ).filter((host) => /^s\d\.example\.com$/.test(host));
+      expect(listed).toHaveLength(3);
+      const hosts = listed as unknown as readonly [string, string, string];
+      await reach(page, hosts[0]);
+      await proofs[shortcut.id](shortcut, { page, request, backend, hosts });
+    });
   }
 
   test("J/K move, A allows, D denies; focus lands on the next row", async ({
@@ -575,7 +719,7 @@ test.describe("keyboard only", () => {
     );
   });
 
-  test("Tab reaches Allow, the chevron and Deny of a row in order; the options are a normal form that Escape closes", async ({
+  test("Tab reaches Allow, Deny and the more-choices button of a row in order; the options are a normal form that Escape closes", async ({
     page,
     request,
     backend,
@@ -586,11 +730,10 @@ test.describe("keyboard only", () => {
     await row.waitFor();
     await row.getByRole("button", { name: /^Allow/ }).focus();
     await page.keyboard.press("Tab");
+    await expect(row.getByRole("button", { name: /^Deny/ })).toBeFocused();
+    await page.keyboard.press("Tab");
     const chevron = row.getByRole("button", { name: /^More choices/ });
     await expect(chevron).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(row.getByRole("button", { name: /^Deny/ })).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Enter");
     const dialog = page.getByRole("dialog", { name: /^Choices for/ });
     await expect(dialog).toBeVisible();
@@ -691,6 +834,7 @@ test.describe("accessibility", () => {
   // The states are scanned at most two to a test: a scan costs seconds on a loaded host.
   const stops = axeStops([
     ["list", "options"],
+    ["shortcuts"],
     ["confirm", "toast and decided list"],
     ["empty"],
   ]);
@@ -710,6 +854,13 @@ test.describe("accessibility", () => {
         const row = rowFor(page, "a.axe.example.com");
         await expect(row).toBeVisible();
         await scan(page, "list");
+
+        await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
+        const keys = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+        await expect(keys).toBeVisible();
+        await scan(page, "shortcuts");
+        await page.keyboard.press("Escape");
+        await expect(keys).toHaveCount(0);
 
         const dialog = await openOptions(row, page);
         await dialog.getByRole("radio", { name: /^Every workspace/ }).check();
@@ -744,7 +895,7 @@ test.describe("accessibility", () => {
     }
   }
 
-  test("the options cover the chevrons of the rows beside them completely, not all but a sliver", async ({
+  test("the options cover the more-choices buttons of the rows beside them completely, not all but a sliver", async ({
     page,
     backend,
   }) => {
@@ -770,7 +921,10 @@ test.describe("accessibility", () => {
     const row = rowFor(page, "registry.example.org");
     await expect(row).toBeVisible();
     await expect(row.getByRole("button")).toHaveCount(3);
-    const buttons = await row.getByRole("button").all();
+    const buttons = [
+      ...(await row.getByRole("button").all()),
+      page.getByRole("button", { name: "Keyboard shortcuts" }),
+    ];
     for (const button of buttons) {
       const box = await button.boundingBox();
       expect(box?.width ?? 0).toBeGreaterThanOrEqual(24);

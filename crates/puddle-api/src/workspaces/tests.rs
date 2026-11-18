@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use puddle_store::IdentityId;
+use puddle_store::{IdentityId, UserId};
 
 use super::repositories::draw_entry_id;
 use super::*;
@@ -33,6 +33,7 @@ impl Launcher for NoWindow {
 fn sized(root: Option<(u64, u64)>, volume: Option<u64>) -> WorkspaceRecord {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("demo").unwrap(),
+        UserId::OWNER,
         DisplayName::parse("demo").unwrap(),
         vec![],
     );
@@ -96,7 +97,12 @@ fn a_disk_warns_exactly_at_the_threshold_and_an_unknown_one_never() {
 #[test]
 fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
     let name = DisplayName::parse("demo").unwrap();
-    let record = WorkspaceRecord::new(WorkspaceId::new("demo").unwrap(), name, vec![]);
+    let record = WorkspaceRecord::new(
+        WorkspaceId::new("demo").unwrap(),
+        UserId::OWNER,
+        name,
+        vec![],
+    );
     let desktop = DesktopTarget {
         ssh_host: "puddle-demo".into(),
         path: "/".into(),
@@ -381,7 +387,9 @@ async fn the_empty_service_says_it_is_unavailable() {
 async fn a_service_that_keeps_no_workspace_disks_lists_none_and_restores_none() {
     let id = WorkspaceId::new("w").unwrap();
     assert_eq!(NoWorkspaces.orphan_volumes().await.unwrap(), Vec::new());
-    let restored = NoWorkspaces.restore_orphan(&id, None, &NoGitSetup).await;
+    let restored = NoWorkspaces
+        .restore_orphan(&id, UserId::OWNER, None, &NoGitSetup)
+        .await;
     assert!(
         matches!(restored, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no workspace disks")),
         "{restored:?}"
@@ -455,6 +463,7 @@ fn a_label_is_taken_ignoring_case_and_the_workspace_itself() {
     let mk = |id: &str, shown: &str| {
         WorkspaceRecord::new(
             WorkspaceId::new(id).unwrap(),
+            UserId::OWNER,
             DisplayName::parse(shown).unwrap(),
             Vec::new(),
         )
@@ -462,14 +471,65 @@ fn a_label_is_taken_ignoring_case_and_the_workspace_itself() {
     let all = [mk("alpha", "alpha"), mk("beta", "Web Shop")];
     assert_eq!(all[1].label(), "Web Shop");
     let beta = WorkspaceId::new("beta").unwrap();
-    assert_eq!(label_taken(&all, "web shop", None).unwrap().id, beta);
     assert_eq!(
-        label_taken(&all, "ALPHA", None).unwrap().name.as_str(),
+        label_taken(&all, UserId::OWNER, "web shop", None)
+            .unwrap()
+            .id,
+        beta
+    );
+    assert_eq!(
+        label_taken(&all, UserId::OWNER, "ALPHA", None)
+            .unwrap()
+            .name
+            .as_str(),
         "alpha"
     );
-    assert!(label_taken(&all, "web shop", Some(&beta)).is_none());
+    assert!(label_taken(&all, UserId::OWNER, "web shop", Some(&beta)).is_none());
     // The id is no name: nothing goes by "beta".
-    assert!(label_taken(&all, "beta", None).is_none());
+    assert!(label_taken(&all, UserId::OWNER, "beta", None).is_none());
+}
+
+#[test]
+fn a_label_is_taken_only_among_the_same_owners_workspaces() {
+    let ann = UserId::from_stored(2);
+    let mk = |id: &str, owner: UserId| {
+        WorkspaceRecord::new(
+            WorkspaceId::new(id).unwrap(),
+            owner,
+            DisplayName::parse("shop").unwrap(),
+            Vec::new(),
+        )
+    };
+    let (mine, anns) = (mk("one", UserId::OWNER), mk("two", ann));
+    let all = [&mine, &anns];
+    assert_eq!(
+        label_taken(all, UserId::OWNER, "shop", None).unwrap().id,
+        mine.id
+    );
+    assert_eq!(label_taken(all, ann, "SHOP", None).unwrap().id, anns.id);
+    assert!(label_taken(all, UserId::from_stored(3), "shop", None).is_none());
+    // Renaming Ann's workspace to the name the owner's also has is no clash.
+    let other = mk("three", ann);
+    let other = WorkspaceRecord {
+        name: DisplayName::parse("other").unwrap(),
+        ..other
+    };
+    assert!(
+        check_rename(
+            [&mine, &other],
+            &other.id,
+            &DisplayName::parse("shop").unwrap()
+        )
+        .is_ok()
+    );
+    assert!(
+        check_rename(
+            [&anns, &other],
+            &other.id,
+            &DisplayName::parse("shop").unwrap()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -639,6 +699,7 @@ fn a_lookup_finds_an_id_or_a_name_ignoring_case_and_counts_a_workspace_once() {
     let mk = |id: &str, name: &str| {
         WorkspaceRecord::new(
             WorkspaceId::new(id).unwrap(),
+            UserId::OWNER,
             DisplayName::parse(name).unwrap(),
             Vec::new(),
         )
@@ -673,6 +734,7 @@ fn a_rename_is_refused_while_creating_or_deleting_and_on_a_clash() {
     let mk = |id: &str| {
         WorkspaceRecord::new(
             WorkspaceId::new(id).unwrap(),
+            UserId::OWNER,
             DisplayName::parse(id).unwrap(),
             Vec::new(),
         )
@@ -949,6 +1011,18 @@ fn a_refused_address_is_named_without_its_credentials() {
         "{err}"
     );
     assert!(!err.contains("tok"), "{err}");
+    // Without a scheme the credential is masked too, whatever the address looks like.
+    for typed in [
+        "x-access-token:SECRETVALUE@github.com/org/repo",
+        "SECRETVALUE@github.com/org/repo",
+        "me:SECRETVALUE@git.example.com:org/repo.git",
+    ] {
+        let err = check_repositories(&[draft(typed)], |_| false)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("SECRETVALUE"), "{typed}: {err}");
+        assert!(err.contains("(***@"), "{typed}: {err}");
+    }
     let long = format!("https://github.com/{}", "a".repeat(3000));
     let err = check_repositories(&[draft(&long)], |_| false)
         .unwrap_err()

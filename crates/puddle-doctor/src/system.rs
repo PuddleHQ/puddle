@@ -3,7 +3,6 @@
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use puddle_runtime::{
@@ -279,7 +278,7 @@ impl Probe for SystemProbe {
         let data = self.data_dir.clone().or_else(|| puddle_fs::data_dir().ok());
         credential_store_facts(
             data.as_deref(),
-            puddle_secrets::probe_os_store,
+            || probe_within(puddle_secrets::probe_os_store, STORE_PROBE_WAIT),
             || login_session_in(std::env::var_os("PATH"), Duration::from_secs(2)),
             |tag| {
                 let (config_home, path) = &self.sealed_key_search;
@@ -327,14 +326,39 @@ fn credential_store_facts(
     }
 }
 
+/// How long the doctor waits for the operating system's credential store to take the probe write.
+/// A locked keyring can ask the user to unlock it and wait for the answer; `puddle secrets status`
+/// gives it the same 20 seconds.
+const STORE_PROBE_WAIT: Duration = Duration::from_secs(20);
+
+/// Runs `probe` on a thread of its own and waits `wait` for it. A store that has not answered by
+/// then is reported as [`puddle_secrets::StoreHealth::Locked`] (it is waiting for an unlock); the
+/// thread is left to finish by itself, which ends with this short-lived process at the latest.
+fn probe_within(
+    probe: impl FnOnce() -> puddle_secrets::StoreHealth + Send + 'static,
+    wait: Duration,
+) -> puddle_secrets::StoreHealth {
+    let (send, receive) = std::sync::mpsc::channel();
+    // A thread that cannot start drops `send`, which reads as no answer: locked.
+    let _ = std::thread::Builder::new()
+        .name("store-probe".to_owned())
+        .spawn(move || {
+            // The doctor may have given up waiting; nobody listens then.
+            let _ = send.send(probe());
+        });
+    receive
+        .recv_timeout(wait)
+        .unwrap_or(puddle_secrets::StoreHealth::Locked)
+}
+
 /// How long each `systemd-creds` call of the sealed-key check may run.
 const SEALED_KEY_LIMIT: Duration = Duration::from_secs(5);
 
 /// What the vault's header and the sealed key file say, given a header that names `tag`. A tag of a
 /// key file, or a systemd tag with no sealed file in `config_home` (the service passes the key), is
 /// not examined. The sealed file is opened once through `systemd-creds` found on `path`: the key
-/// comes out on a pipe whose text is dropped without being looked at, and an answer that is not an exit 0 is classified
-/// by the same texts the service uses.
+/// goes to the null device, never into this process, and an answer that is not an exit 0 is
+/// classified by the same texts the service uses.
 fn sealed_key_facts_in(
     tag: puddle_secrets::KeySourceTag,
     config_home: Option<&Path>,
@@ -356,15 +380,21 @@ fn sealed_key_facts_in(
             tpm: None,
         };
     };
-    let ask = |args: &[&std::ffi::OsStr]| launch::run(Command::new(&program).args(args), limit);
+    let ask = |args: &[&std::ffi::OsStr]| {
+        launch::run(puddle_process::command(&program).args(args), limit)
+    };
     let name = format!("--name={}", puddle_secrets::sealed_key_name());
-    let key = match ask(&[
-        "--user".as_ref(),
-        "decrypt".as_ref(),
-        name.as_ref(),
-        sealed.as_os_str(),
-        "-".as_ref(),
-    ]) {
+    let decrypt = launch::run_without_output(
+        puddle_process::command(&program).args([
+            "--user".as_ref(),
+            "decrypt".as_ref(),
+            name.as_ref(),
+            sealed.as_os_str(),
+            std::ffi::OsStr::new("-"),
+        ]),
+        limit,
+    );
+    let key = match decrypt {
         ProcessOutcome::Exited { code: Some(0), .. } => SealedKeyFacts::Opens,
         ProcessOutcome::Exited { stderr_tail, .. } => {
             let old = matches!(
@@ -402,7 +432,8 @@ fn login_session_in(
     ) else {
         return LoginSession::Unknown;
     };
-    let ask = |args: &[&str]| match launch::run(Command::new(&program).args(args), limit) {
+    let ask = |args: &[&str]| match launch::run(puddle_process::command(&program).args(args), limit)
+    {
         ProcessOutcome::Exited {
             code: Some(0),
             stdout_first_line,
@@ -440,7 +471,10 @@ fn az_cli_in(path: Option<std::ffi::OsString>, limit: Duration) -> AzCliFacts {
 
 /// What running `program --version` says about the Azure CLI.
 fn az_cli_facts_at(program: &Path, limit: Duration) -> AzCliFacts {
-    az_cli_facts(launch::run(Command::new(program).arg("--version"), limit))
+    az_cli_facts(launch::run(
+        puddle_process::command(program).arg("--version"),
+        limit,
+    ))
 }
 
 fn az_cli_facts(outcome: ProcessOutcome) -> AzCliFacts {

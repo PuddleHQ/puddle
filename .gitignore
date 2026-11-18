@@ -36,3 +36,4 @@ Thumbs.db
 .scratch/
 .claude/worktrees/
 __pycache__/
+!crates/puddle-store/tests/data/golden-v23.db

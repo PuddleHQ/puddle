@@ -45,6 +45,10 @@ microsandbox	candidate	pick	fix(ssh): start SFTP sessions in the user's home dir
 microsandbox	candidate	pick	fix(ssh): answer zero-length SFTP reads with empty data	generic SFTP bug (a zero-length read fails the transfer)
 microsandbox	candidate	pick	fix(sdk): give the runtime version probe 30 s instead of 2 s	generic SDK bug (a busy host misses the 2 s limit and a create or start fails)
 microsandbox	candidate	pick	fix(image): read and write tar archives with the maintained tar crate	the tar crate it used is unmaintained (RUSTSEC-2026-0440); upstream could take the same port
+microsandbox	candidate	pick	fix(agentd): set USER and LOGNAME for exec next to HOME	generic guest bug (printenv USER is empty in a non-login exec and over SSH)
+microsandbox	candidate	pick	fix(sdk): probe msb without a console window on Windows	generic SDK bug (a launcher without a console flashes a window per probe)
+microsandbox	candidate	pick	feat(sdk): a buffered exec can cap the output it keeps	generic SDK option (a chatty guest command grows the host buffer without bound)
+microsandbox	candidate	pick	fix(agentd): never refuse a bulk purge, so a client disconnect cannot stop the VM	generic guest bug (a client that disconnects during a bulk purge stops the VM)
 microsandbox	permanent	regen	build: version the puddle fork as*	the fork's version commit, regenerated per release
 libkrun	candidate	pick	fix(vsock): return custom stream credit within the guest's window	generic vsock bug; upstream main has since changed the same function
 libkrun	candidate	pick	fix(vsock): forward a guest shutdown only after its buffered bytes	generic vsock bug
@@ -71,6 +75,8 @@ libkrun	permanent	pick	fix(vsock): 2 MiB of buffer per connection instead of 8	a
 libkrun	candidate	pick	fix(vsock): gather a TX packet whose data spans several descriptors	generic vsock bug
 libkrun	candidate	pick	fix(vsock): forward the declared payload length in the TSI send paths	generic vsock bug
 libkrun	candidate	pick	fix(vsock): keep the tail of a short TSI stream send and resume when writable	generic vsock bug
+libkrun	candidate	pick	fix(block): refresh the Windows raw handle's cached length after a live grow	generic Windows bug (a live grow is not seen by the cached length)
+libkrun	permanent	pick	ci:*	the fork's own workflows; upstream has no use for them
 russh	candidate	pick	fix: drop queued data when the peer closes a channel	generic server bug (a peer that closes a channel wedges the session)
 imago	candidate	pick	fix(file): sync file-backed storage with fdatasync	generic latency fix, measured; target is the imago maintainer
 imago	permanent	pick	chore(deps): release imago with shared memory crate update	version and dependency bookkeeping for the fork's release

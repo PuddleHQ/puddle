@@ -197,8 +197,8 @@ impl AccountSecrets {
     /// the secret), valid until `expires_at` (epoch ms). It replaces any invite before.
     ///
     /// # Errors
-    /// [`StoreError::UnknownUser`], [`StoreError::InviteInvalid`] for a digest shorter than
-    /// [`MIN_INVITE_DIGEST_BYTES`], or a database error.
+    /// [`StoreError::UnknownUser`] (also for a user being deleted), [`StoreError::InviteInvalid`]
+    /// for a digest shorter than [`MIN_INVITE_DIGEST_BYTES`], or a database error.
     pub fn put_invite(
         &self,
         user: UserId,
@@ -210,7 +210,7 @@ impl AccountSecrets {
         }
         let written = lock(&self.conn).execute(
             "INSERT INTO account_invites (user_id, digest, expires_at)
-                 SELECT id, ?2, ?3 FROM users WHERE id = ?1
+                 SELECT id, ?2, ?3 FROM users WHERE id = ?1 AND deleting_at IS NULL
              ON CONFLICT (user_id) DO UPDATE SET digest = excluded.digest, expires_at = excluded.expires_at",
             params![user.get(), digest, sql_ts(expires_at)],
         )?;

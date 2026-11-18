@@ -11,9 +11,10 @@ use crate::ApiErrorBody;
 use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
-use crate::routes::AppState;
+use crate::routes::{AppState, pending};
 use crate::wire::{
-    NewRuleRequest, Rule, RuleEnabledRequest, RuleExpiryRequest, RuleList, UpdateRuleRequest,
+    NewRuleRequest, Rule, RuleEnabledRequest, RuleExpiryRequest, RuleList, UndoOutcome,
+    UpdateRuleRequest,
 };
 
 /// Every rule, including expired ones the sweeper hasn't removed yet.
@@ -114,6 +115,32 @@ pub(crate) async fn delete_rule(
 ) -> Result<Json<Rule>, ApiError> {
     let rule = blocking(move || Ok(state.store.delete_rule(RuleId(id), Actor::Api)?)).await?;
     Ok(Json(Rule::from_store(rule)?))
+}
+
+/// Takes back a decision made from the inbox: deletes the rule and puts the requests it closed
+/// back in the inbox, in their old place.
+#[utoipa::path(
+    post,
+    path = "/api/rules/{id}/undo",
+    tag = "rules",
+    params(("id" = i64, Path, description = "rule id")),
+    responses(
+        (status = OK, description = "the deleted rule and the requests that are open again", body = UndoOutcome),
+        (status = NOT_FOUND, description = "no such rule", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn undo_decision(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<UndoOutcome>, ApiError> {
+    let (rule, reopened) = {
+        let state = state.clone();
+        blocking(move || Ok(state.store.undo_decision(RuleId(id), Actor::Api)?)).await?
+    };
+    Ok(Json(UndoOutcome {
+        rule: Rule::from_store(rule)?,
+        reopened: pending::present(&state, reopened).await?,
+    }))
 }
 
 /// Changes a rule's expiry, or makes it permanent with `null`.

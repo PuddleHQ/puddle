@@ -6,7 +6,7 @@
 
   // The emulator of one session, in the page. The emulator belongs to the session (it keeps the
   // scrollback while another tab is in view); this mounts it, keeps it fitted, follows the theme,
-  // and offers the right-click menu (Copy, Select all, Clear) and the address of a hovered link.
+  // and offers the right-click menu (Copy, Paste, Select all, Clear) and the address of a hovered link.
   let {
     session,
     workspaceName,
@@ -87,8 +87,9 @@
     if (refocus) screen.focus();
   }
 
-  function choose(action: "copy" | "all" | "clear") {
+  function choose(action: "copy" | "paste" | "all" | "clear") {
     if (action === "copy") screen.copy();
+    else if (action === "paste") void screen.paste();
     else if (action === "all") screen.selectAll();
     else screen.clear();
     closeMenu();
@@ -142,6 +143,9 @@
         role="menuitem"
         disabled={!canCopy}
         onclick={() => choose("copy")}>Copy</button
+      >
+      <button type="button" role="menuitem" onclick={() => choose("paste")}
+        >Paste</button
       >
       <button type="button" role="menuitem" onclick={() => choose("all")}
         >Select all</button

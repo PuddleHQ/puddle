@@ -257,7 +257,7 @@ test.describe("deciding", () => {
     expect((rule?.expires_at ?? 0) - now).toBe(3_600_000);
   });
 
-  test("undo from the toast deletes the rule; the list says so", async ({
+  test("undo from the toast deletes the rule and lists the request again", async ({
     page,
     request,
     backend,
@@ -280,6 +280,10 @@ test.describe("deciding", () => {
         (r) => r.pattern === "undo.example.com",
       ),
     ).toBe(false);
+    // The request is back, and the service lists it too (a reload shows it).
+    await expect(rowFor(page, "undo.example.com")).toHaveCount(1);
+    await page.reload();
+    await expect(rowFor(page, "undo.example.com")).toHaveCount(1);
     await expect(
       page
         .getByRole("region", { name: "Decided just now" })

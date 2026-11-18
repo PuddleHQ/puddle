@@ -16,6 +16,7 @@ const base: Decided = {
   ruleSet: null,
   expiresAt: null,
   alsoClosed: 0,
+  closed: [],
   at: 0,
 };
 

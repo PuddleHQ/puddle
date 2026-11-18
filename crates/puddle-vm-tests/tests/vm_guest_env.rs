@@ -21,6 +21,7 @@
 //! true.
 #![expect(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::print_stderr,
     reason = "VM test: a failed step fails the test; the probe table goes to stderr"
 )]
@@ -160,16 +161,14 @@ const SETUP_STEPS: &[(&str, &str, &str)] = &[
 /// `~/.cache/puddle-vm-tools`, then one folder for everything the setup downloads, named by a hash of
 /// what it holds (image, versions, install steps) so a change starts a cold one instead of mixing.
 fn tools_cache() -> std::path::PathBuf {
-    use std::hash::{DefaultHasher, Hash, Hasher};
     let root = std::env::var_os("PUDDLE_VM_TOOLS_CACHE")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME")
                 .map(|h| std::path::Path::new(&h).join(".cache/puddle-vm-tools"))
         })
-        .unwrap();
-    let mut hasher = DefaultHasher::new();
-    (
+        .expect("PUDDLE_VM_TOOLS_CACHE or HOME names where the VM tools cache lives");
+    let mut parts = vec![
         TOOLS_IMAGE,
         APT_PACKAGES,
         GRADLE_SHA256,
@@ -177,10 +176,12 @@ fn tools_cache() -> std::path::PathBuf {
         PNPM_SHA512,
         YARN_BERRY,
         YARN_BERRY_SHA512,
-        SETUP_STEPS,
-    )
-        .hash(&mut hasher);
-    let dir = root.join(format!("guestenv-{:016x}", hasher.finish()));
+    ];
+    for (name, network, script) in SETUP_STEPS {
+        parts.extend([name, network, script]);
+    }
+    let key = puddle_vm_tests::cache_key(&parts);
+    let dir = root.join(format!("guestenv-{key}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

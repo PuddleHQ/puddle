@@ -26,7 +26,7 @@ mod wait;
 
 pub use cpu::cpu_time;
 pub use events::{
-    EventSource, next_event_matching, next_event_within, no_event_for, no_event_matching,
+    EventSource, Read, next_event_matching, next_event_within, no_event_for, no_event_matching,
 };
 pub use logs::{CapturedLogs, capture_logs};
 pub use pe::pe_stack_reserve_bytes;

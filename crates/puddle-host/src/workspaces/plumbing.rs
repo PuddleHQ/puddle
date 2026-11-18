@@ -305,8 +305,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.state().closed = true;
     }
 
-    /// Waits until no operation runs, at most `grace`; then ends the ones still running.
-    /// Returns how many had to be ended.
+    /// Waits until no operation runs, at most `grace`; then ends every task the service owns,
+    /// the background ones no operation counts (a tool install, a checkout refresh, an image
+    /// download) as well, so none outlives the host or keeps the store open. Returns how many
+    /// operations still ran and had to be ended.
     pub(crate) async fn finish_operations(&self, grace: Duration) -> usize {
         let mut count = self.inner.running.subscribe();
         // Only whether it went idle: the borrow `wait_for` returns must not live across the
@@ -314,11 +316,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let idle = tokio::time::timeout(grace, count.wait_for(|n| *n == 0))
             .await
             .is_ok();
-        if idle {
-            return 0;
-        }
-        let ended = *self.inner.running.borrow();
-        tracing::warn!(ended, "shutdown: ending workspace operations still running");
+        let ended = if idle {
+            0
+        } else {
+            let ended = *self.inner.running.borrow();
+            tracing::warn!(ended, "shutdown: ending workspace operations still running");
+            ended
+        };
         let mut tasks = std::mem::take(&mut *self.tasks());
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
@@ -490,6 +494,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Spawns `work` on a task the service owns: it runs to its end whatever becomes of the
     /// request that started it, unless shutdown ends it.
     pub(super) fn spawn(&self, work: impl Future<Output = ()> + Send + 'static) {
+        // Shutdown has taken the tasks to end them: work started after it would never be.
+        if self.state().closed {
+            return;
+        }
         let mut tasks = self.tasks();
         while tasks.try_join_next().is_some() {}
         tasks.spawn(work);

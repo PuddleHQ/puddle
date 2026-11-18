@@ -75,7 +75,32 @@ async fn shutdown_runs_the_steps_in_order_and_trims_then_stops_every_sandbox() {
 
 /// A runtime whose image pull takes a while, so an operation is in flight at an await point.
 #[derive(Clone)]
-struct SlowPull(FakeRuntime, Duration);
+struct SlowPull(FakeRuntime, Duration, PullWatch);
+
+/// What a [`SlowPull`] watches: whether pulls are slow now, and how many slow pulls are in
+/// flight (a pull that is ended or finished no longer counts).
+#[derive(Clone)]
+struct PullWatch {
+    slow: Arc<AtomicBool>,
+    in_flight: Arc<AtomicUsize>,
+}
+
+impl PullWatch {
+    fn new(slow: bool) -> Self {
+        Self {
+            slow: Arc::new(AtomicBool::new(slow)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+struct InFlight(Arc<AtomicUsize>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 impl Runtime for SlowPull {
     type Sandbox = <FakeRuntime as Runtime>::Sandbox;
@@ -92,7 +117,11 @@ impl Runtime for SlowPull {
         image: &ImageRef,
     ) -> Result<ImageConfig, puddle_compute::ComputeError> {
         // Simulated slow image pull.
-        tokio::time::sleep(self.1).await;
+        if self.2.slow.load(Ordering::SeqCst) {
+            self.2.in_flight.fetch_add(1, Ordering::SeqCst);
+            let _counted = InFlight(self.2.in_flight.clone());
+            tokio::time::sleep(self.1).await;
+        }
         self.0.pull_image(image).await
     }
 
@@ -228,7 +257,11 @@ async fn shutdown_ends_an_operation_that_outlasts_the_grace_period() {
     let mut config = rig.config();
     config.operations_grace = Duration::from_millis(50);
     let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
-    let slow = SlowPull(rig.runtime.clone(), Duration::from_secs(30));
+    let slow = SlowPull(
+        rig.runtime.clone(),
+        Duration::from_secs(30),
+        PullWatch::new(true),
+    );
     let host = Host::start(prepared, &SlowFactory(slow), hermetic_options())
         .await
         .unwrap();
@@ -270,4 +303,37 @@ async fn operations_are_refused_once_shutdown_has_begun() {
     assert_eq!(refused.status, 503, "{}", refused.body);
     assert!(refused.body.contains("shutting down"), "{}", refused.body);
     host.shutdown().await;
+}
+
+/// The download of the delete check's image runs on a task the service owns and is no operation,
+/// so no count holds shutdown for it. Shutdown still ends it: it must not go on pulling through
+/// the runtime, or keep the service and its store alive, after the host is down.
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_ends_a_background_download_that_no_operation_counts() {
+    let rig = Rig::new();
+    let watch = PullWatch::new(false);
+    let slow = SlowPull(rig.runtime.clone(), Duration::from_secs(60), watch.clone());
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let host = Host::start(prepared, &SlowFactory(slow), hermetic_options())
+        .await
+        .unwrap();
+    let api = api_slow(&host);
+    let mut events = api.events().await;
+    let made = api.post("/api/workspaces", &new_workspace("acme")).await;
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    events.until(ended(&id), Duration::from_secs(20)).await;
+    // A stop has the check's image downloaded for the delete that follows it; that one is slow.
+    watch.slow.store(true, Ordering::SeqCst);
+    api.post(&format!("/api/workspaces/{id}/stop"), "").await;
+    eventually(
+        "the download of the check's image is under way",
+        APPLY,
+        || watch.in_flight.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    events.until(ended(&id), Duration::from_secs(20)).await;
+
+    let down = host.shutdown().await;
+    assert_eq!(down.operations_ended, 0, "{down:?}");
+    assert_eq!(watch.in_flight.load(Ordering::SeqCst), 0);
 }

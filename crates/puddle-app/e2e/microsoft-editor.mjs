@@ -325,7 +325,7 @@ try {
   const installed = await guest(id, setup, 900_000);
   check("the pinned build, the test extension and two checkouts are on the volume", installed.code === 0 && installed.text.includes("pinned-installed"), installed.text.slice(-400));
   for (const step of ["stop", "start"]) {
-    const reply = await api("POST", `/api/workspace/${step}`);
+    const reply = await api("POST", `/api/workspaces/${id}/${step}`);
     check(`the workspace takes ${step}`, reply.status === 202 || reply.status === 200, `${reply.status} ${reply.body.slice(0, 160)}`);
     await until(
       `the workspace to finish ${step}`,
@@ -377,7 +377,7 @@ try {
   again.close();
 
   // Stop the workspace, as the user does at the end (the data folder is a temp one and goes with the runner).
-  await api("POST", `/api/workspace/stop`);
+  await api("POST", `/api/workspaces/${id}/stop`);
 } catch (err) {
   check("the run ran to the end", false, String(err?.stack ?? err));
 } finally {

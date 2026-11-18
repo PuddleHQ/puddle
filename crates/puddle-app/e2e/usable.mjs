@@ -487,7 +487,7 @@ try {
       if (w.status === "running" && !w.busy) return w;
       if (!started && !w.busy && ["created", "stopped"].includes(w.status)) {
         started = true;
-        await api("POST", `/api/workspace/start`);
+        await api("POST", `/api/workspaces/${id}/start`);
       }
       return false;
     },
@@ -598,10 +598,10 @@ try {
   if (company) await checkTheCompanyProxyCarriedTheTraffic(branch);
 
   // Stop and delete, as the user does at the end.
-  await api("POST", `/api/workspace/stop`);
+  await api("POST", `/api/workspaces/${id}/stop`);
   await until("the workspace to be stopped", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id)?.status === "stopped", 180_000, 2000).catch(() => {});
-  const seen = await api("GET", `/api/workspace/delete-check`);
-  const gone = await api("DELETE", `/api/workspace`, { confirm: true, fingerprint: seen.json?.fingerprint });
+  const seen = await api("GET", `/api/workspaces/${id}/delete-check`);
+  const gone = await api("DELETE", `/api/workspaces/${id}`, { confirm: true, fingerprint: seen.json?.fingerprint });
   check("the workspace is deleted", [200, 202, 204].includes(gone.status), `${gone.status} ${gone.body.slice(0, 200)}`);
   await until("the workspace to be gone", async () => !(await api("GET", "/api/workspaces")).json?.workspaces?.some((w) => w.id === id), 180_000, 2000).catch((err) => check("the workspace goes away", false, String(err)));
 } catch (err) {

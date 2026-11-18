@@ -65,6 +65,7 @@ static WRITER_IS_WAITING: AtomicBool = AtomicBool::new(false);
 
 fn note_writer_is_waiting(_attempts: i32) -> bool {
     WRITER_IS_WAITING.store(true, std::sync::atomic::Ordering::SeqCst);
+    // Simulated latency: SQLite calls the handler again at once, so back off between retries.
     std::thread::sleep(Duration::from_millis(1));
     true
 }

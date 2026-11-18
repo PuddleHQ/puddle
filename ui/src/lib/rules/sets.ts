@@ -6,6 +6,7 @@ import type { components } from "#lib/api/schema.d.ts";
 type Schemas = components["schemas"];
 export type RuleSet = Schemas["RuleSetView"];
 export type RuleSetEntry = Schemas["RuleSetEntry"];
+export type EntryPage = Schemas["RuleSetEntryPage"];
 export type SystemHost = Schemas["SystemManagedHost"];
 export type SystemReason = Schemas["SystemReason"];
 

@@ -145,6 +145,11 @@
         {onSwitch}
         {onAddEntry}
         {onDeleteEntry}
+        loadEntries={async (s, q, offset) => {
+          const page = await store.entries(s.id, q, offset);
+          if (!page.ok) throw new Error(page.message);
+          return page.value;
+        }}
         onRename={(s) => {
           dialogMode = "rename";
           renaming = s;

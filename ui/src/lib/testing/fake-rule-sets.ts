@@ -26,11 +26,26 @@ export function builtIn(slug: string, over: Partial<RuleSet> = {}): RuleSet {
         precedence: 0,
       },
     ],
+    entry_count: 1,
     changed_at: null,
     created_at: null,
     default_precedence: null,
     ...over,
   };
+}
+
+/** `n` deny entries `h0.tracker.example` and on, for a set too big to list whole. */
+export function trackerEntries(n: number): RuleSet["entries"] {
+  return Array.from({ length: n }, (_, i) => ({
+    pattern: `h${i}.tracker.example`,
+    pattern_kind: "exact" as const,
+    effect: "deny" as const,
+    note: "",
+    enabled: true,
+    rule_id: null,
+    expires_at: null,
+    precedence: 0,
+  }));
 }
 
 export function mine(id: number, over: Partial<RuleSet> = {}): RuleSet {
@@ -44,6 +59,7 @@ export function mine(id: number, over: Partial<RuleSet> = {}): RuleSet {
     global: null,
     overrides: [],
     entries: [],
+    entry_count: 0,
     changed_at: null,
     created_at: 1_000,
     default_precedence: null,
@@ -98,9 +114,26 @@ export class FakeRuleSets {
     return this.sets.find((s) => s.id === init.params?.path.id);
   }
 
-  GET = async (path: string) => {
+  /** Every entry of a big built-in set, by set id, for the entries endpoint. */
+  full: Record<string, RuleSet["entries"]> = {};
+
+  GET = async (path: string, init?: Init) => {
     this.calls.push(`GET ${path}`);
     if (this.down) throw new TypeError("down");
+    if (path.endsWith("/entries")) {
+      if (this.refuse) return this.reply(this.refuse.status);
+      const query = init?.params as
+        { query?: { q?: string; offset?: number } } | undefined;
+      const q = (query?.query?.q ?? "").toLowerCase();
+      const offset = query?.query?.offset ?? 0;
+      const all = (this.full[init?.params?.path.id ?? ""] ?? []).filter((e) =>
+        e.pattern.toLowerCase().includes(q),
+      );
+      return this.reply(200, {
+        entries: all.slice(offset, offset + 200),
+        total: all.length,
+      });
+    }
     return this.reply(200, { sets: this.sets, system_managed: this.system });
   };
 

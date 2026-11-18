@@ -120,7 +120,7 @@ impl RequestRules {
     /// is a space, `.` and a space in a key are `_`) and also with a `+` in the value kept as
     /// written. A rule on `DELETE` therefore refuses a `POST` that asks to be a `DELETE`.
     ///
-    /// A path longer than [`MAX_JUDGED_PATH`] is not read; every rule on the host and method
+    /// A path longer than `MAX_JUDGED_PATH` (2048 bytes) is not read; every rule on the host and method
     /// refuses it.
     #[must_use]
     pub fn refusing(&self, host: &Host, request: &RequestView<'_>) -> Option<RuleId> {

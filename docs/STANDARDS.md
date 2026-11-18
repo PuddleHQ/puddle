@@ -243,19 +243,24 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Secrets** (credentials, API tokens) are wrapped in a type whose `Debug`/`Display` redact
   (e.g. `secrecy::SecretString`), never logged, never in errors, never in test snapshots.
 - **Secret scanning:** `scripts/check.sh secrets` (pre-push and CI) runs gitleaks with the default
-  rules plus `.gitleaks.toml`. In CI it scans every commit the clone has, on every ref. Locally and
+  rules plus `.gitleaks.toml`. In CI it scans every commit `HEAD` can reach (a pull request's
+  `HEAD` there is its merge with the base, so that is the base's history plus every commit of the
+  pull request) and no other branch: a finding on one pull request's branch fails that pull
+  request only, never the others whose clones fetched it. Locally and
   in the pre-push hook it scans the commits `HEAD` has that its base (`DIFF_BASE`, else
   `origin/develop`) lacks, so a dirty commit on another local branch never fails your push; with no
-  base ref it scans all of `HEAD`'s history. `PUDDLE_SECRETS_SCOPE=all` runs the CI scan locally.
+  base ref it scans all of `HEAD`'s history. `PUDDLE_SECRETS_SCOPE=history` runs the CI scan
+  locally; `PUDDLE_SECRETS_SCOPE=all` audits every ref the clone has.
   Like every gate in the hook it looks at the checked-out `HEAD`: pushing another branch from a
   clean `HEAD` is not scanned, and a secret already in the base is the CI scan's to catch. Test credentials are made-up values, kept
   recognisable (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags
   them. A flagged fake gets an allowlist entry that fits its exact path and value, with the reason in
   the entry; the fixture itself stays as it is. A canary token and its allowlist entry land in one
-  commit: the full scan reads every ref, and a commit that has the token without the entry fails on
+  commit: the CI scan reads the whole history, and a commit that has the token without the entry fails on
   its own (bisect, cherry-picks, a branch cut before the entry). The gate's self-test
   (`scripts/check-secrets.sh --self-test`) proves a real-shaped token fails, a listed fake passes, and
-  each scope sees the commits it should (a dirty side branch fails `all`, passes `head`), and a commit
+  each scope sees the commits it should (a dirty side branch fails `all`, passes `head` and
+  `history`; another pull request's branch with a finding does not fail this one), and a commit
   with only the canary fails while one with both the canary and its entry passes. External scanners (GitGuardian on the public
   repository) may flag fakes the gate doesn't; dismiss those as false positives, don't rewrite the test.
   A real secret that reached a commit is rotated first, then removed.

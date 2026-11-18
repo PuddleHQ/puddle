@@ -118,3 +118,16 @@ fn renders_crates_without_repository() {
     assert!(inv.render("").contains("  - a 1\n"));
     assert!(Inventory::new("t", "{}", BTreeSet::new()).is_err());
 }
+
+#[test]
+fn a_vendored_third_party_crate_is_shipped_not_local() {
+    let tree = "app v0.0.0 (/work/crates/app)\n\
+        tokio-yamux v0.3.20 (/work/vendor/tokio-yamux)\n\
+        win-vendored v1.0.0 (C:\\work\\vendor\\win-vendored) (*)\n";
+    let names: Vec<_> = shipped_packages(tree)
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(names, ["tokio-yamux 0.3.20", "win-vendored 1.0.0"]);
+}

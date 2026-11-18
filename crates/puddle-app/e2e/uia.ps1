@@ -117,6 +117,24 @@ function Handle($req) {
       }
       throw 'the element has no value pattern'
     }
+    'focus' {
+      $e = Pick $req
+      if (-not $e) { return @{ found = $false } }
+      $e.SetFocus()
+      return @{ found = $true; element = (Describe $e) }
+    }
+    'type' {
+      # Real key presses into the element, as a person types: focus it, then the keys. For a control
+      # that reads keys, not a value (the terminal's input).
+      $e = Pick $req
+      if (-not $e) { return @{ found = $false } }
+      $e.SetFocus()
+      Start-Sleep -Milliseconds 300
+      $escaped = ([string]$req.value) -replace '([+^%~(){}\[\]])', '{$1}'
+      if ($req.enter) { $escaped += '{ENTER}' }
+      [System.Windows.Forms.SendKeys]::SendWait($escaped)
+      return @{ found = $true; element = (Describe $e) }
+    }
     'dump' {
       # The names under the windows, for a failure's diagnosis (depth-first, capped).
       $lines = @()

@@ -39,4 +39,20 @@ printf '1 Missing.tar.gz %s\n' "$sum" >"$pins"
 if "$tmp/ci/fetch-gateway.sh" "$tmp/gone" 2>"$tmp/err"; then fail "a download that fails was accepted"; fi
 grep -q '^::error title=fetch-gateway download failed::2 tries failed' "$tmp/err" || fail "the failed download has no annotation"
 
+# The cache (FETCH_CACHE_DIR): filled by a verified download, used with the host down, a bad copy ignored.
+printf '1 Gateway-1.tar.gz %s\n' "$sum" >"$pins"
+FETCH_CACHE_DIR=$tmp/cache "$tmp/ci/fetch-gateway.sh" "$tmp/c1" 2>/dev/null || fail "a cached run did not install"
+cmp -s "$tmp/cache/Gateway-1.tar.gz" "$tmp/site/Gateway-1.tar.gz" || fail "a verified download was not cached"
+FETCH_CACHE_DIR=$tmp/cache GATEWAY_BASE_URL="file://$tmp/down" "$tmp/ci/fetch-gateway.sh" "$tmp/c2" 2>"$tmp/err" ||
+    fail "the cache was not used with the host down: $(cat "$tmp/err")"
+grep -q "using the cached Gateway-1.tar.gz" "$tmp/err" || fail "the cache hit is not printed"
+[ -x "$tmp/c2/bin/gateway.sh" ] || fail "the cached release was not unpacked"
+printf 'stale\n' >"$tmp/cache/Gateway-1.tar.gz"
+FETCH_CACHE_DIR=$tmp/cache "$tmp/ci/fetch-gateway.sh" "$tmp/c3" 2>"$tmp/err" || fail "a bad cached copy stopped the download"
+grep -q "ignoring the cached Gateway-1.tar.gz" "$tmp/err" || fail "the bad cached copy is not named"
+cmp -s "$tmp/cache/Gateway-1.tar.gz" "$tmp/site/Gateway-1.tar.gz" || fail "the bad cached copy was not replaced"
+if FETCH_CACHE_DIR=$tmp/cache2 GATEWAY_BASE_URL="file://$tmp/down" "$tmp/ci/fetch-gateway.sh" "$tmp/c4" 2>/dev/null; then
+    fail "an empty cache with the host down was accepted"
+fi
+
 echo "fetch-gateway-test: ok"

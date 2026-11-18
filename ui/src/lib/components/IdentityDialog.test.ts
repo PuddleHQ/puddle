@@ -94,6 +94,20 @@ describe("adding an identity", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("flags a duplicate name and a bad email while typing, not only at Save", async () => {
+    api.identities = [identity(1, { label: "Work" })];
+    await store.refresh();
+    mount({ mode: "create" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    await type("Identity name", "work");
+    expect(screen.getByRole("alert")).toHaveTextContent("already called work");
+    await type("Identity name", "Home");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await type("Author name", "Ada");
+    await type("Author email", "ada");
+    expect(screen.getByRole("alert")).toHaveTextContent("needs an @");
+  });
+
   it("checks the name and the author first and puts focus on the first problem", async () => {
     api.identities = [identity(1, { label: "Work" })];
     await store.refresh();

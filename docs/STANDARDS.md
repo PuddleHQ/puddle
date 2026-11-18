@@ -46,6 +46,7 @@ different crates and rarely collides.
 | `crates/puddle-appicon` | lib | Puddle's app icons: the built-in duck icons drawn at any size (`tiny-skia`, no unsafe code), and the check and resize of an image the user gives, both ending as a square RGBA icon the shell and the Settings preview show alike |
 | `crates/puddle-no-dump` | lib | Keeps a Puddle process that holds credentials out of core files and crash dumps: `PR_SET_DUMPABLE 0` on Linux, a Windows Error Reporting exclusion on Windows; `PUDDLE_ALLOW_DUMPS=1` switches it off for diagnosis (`unsafe` only on Windows) |
 | `crates/puddle-ssh-agent` | lib | A client for the SSH agent on the host (where it listens, which keys it holds, bounded list and sign requests) and the filtered agent a workspace may be given: signatures only for a login to an allowed host over a session Puddle saw, never for a Git host's key |
+| `crates/puddle-process` | lib | Starts a child process the one way the host does: `command(program)` is `std::process::Command::new` with `CREATE_NO_WINDOW` on Windows, so a console program the desktop app (a GUI program, no console) starts gets a console without a window instead of a terminal window on the user's desktop; tokio callers wrap it with `tokio::process::Command::from`. The `spawn` gate (`scripts/check-spawn.py`) fails any other `Command::new` in host-side production code. `tests/console_window.rs` starts a probe from a process without a console and checks it gets no window (Windows) |
 | `crates/puddle-fd-limit` | lib | The open-file limit: `raise_open_file_limit` lifts the soft `RLIMIT_NOFILE` to the hard limit once at start (the guest agent also tries to lift the hard limit, as root in the guest) and `OpenFileLimit::log` says what the process got, warning when it is below what a busy workspace needs. Safe `rustix` calls on Unix; nothing to do on Windows, which has no per-process descriptor cap. Used by `puddle-agent` and `puddle-host` |
 | `crates/puddle-freshness` | lib + bin | The signed freshness file of the update list: the JSON format (statement of project, sequence, issue and expiry times, signed with Ed25519 over the exact statement text), `verify` (trusted keys, expiry, a cap on the window, a sequence ceiling, no lower sequence than one already seen), `sign` and `refresh` (the next sequence, recovering after an expired file, never restarting over a file it cannot trust), and the `puddle-freshness` command the daily `freshness` workflow runs. Holds no key: the client compiles its public keys in, the workflow reads the seed from a repository secret |
 | `crates/puddle-log` | lib | The log filter of Puddle's programs (`puddle serve`, the desktop app, the guest agent): the level `PUDDLE_LOG` asks for applies to Puddle's own crates, every other crate stays at `info` unless named (`PUDDLE_LOG=trace,hyper=debug`), so a trace log never carries a dependency's internals |
@@ -211,6 +212,13 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   draft, with a task to remove any stopgap. Prefer a maintained crate (licence- and
   `cargo deny`-clean, light tree) over our own per-OS code. Linux and macOS are separate cases:
   `cfg(unix)` is not "Linux".
+- **Child processes:** host code starts a program with `puddle_process::command(program)` (for tokio,
+  `tokio::process::Command::from(puddle_process::command(program))`), never `Command::new`. The desktop app is a Windows
+  GUI program without a console, so a console program it starts plainly opens a terminal window on the user's desktop;
+  the helper sets `CREATE_NO_WINDOW`. A caller that sets its own `creation_flags` must include
+  `puddle_process::CREATION_FLAGS`. The `spawn` gate (`scripts/check-spawn.py`, in `fast`) fails any other process
+  `Command::new` in the production code of the host crates (tests, test harnesses, the guest agent and `xtask` are out of
+  its scope); a site that must differ says why with `// spawn-ok: <reason>`.
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
   `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment, each `let _ =` outside tests a comment on the line or within three lines above (`let _ = name;` is exempt), and each `expect`
@@ -569,7 +577,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips | pre-commit hook |
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks | pre-commit hook |
 | `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 

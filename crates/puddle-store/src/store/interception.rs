@@ -352,9 +352,7 @@ impl Store {
     /// A database error; nothing changes then.
     pub fn add_global_never_decrypt(&self, pattern: &str, max: usize) -> Result<bool, StoreError> {
         self.change(|tx, _now, fx| {
-            let held: i64 = tx.query_row("SELECT COUNT(*) FROM never_decrypt_global", [], |r| {
-                r.get(0)
-            })?;
+            let held: i64 = scalar(tx, COUNT_GLOBAL, [])?;
             let added = tx.execute(
                 "INSERT OR IGNORE INTO never_decrypt_global (pattern) SELECT ?1 WHERE ?2 > ?3",
                 params![pattern, max_names(max), held],

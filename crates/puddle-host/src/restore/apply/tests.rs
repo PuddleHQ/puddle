@@ -209,14 +209,14 @@ fn replace_takes_the_backups_rules_settings_and_workspaces() {
 fn no_stale_wal_survives_beside_the_new_database() {
     let s = setup();
     request(&s.here, &s.staging_id, ApplyMode::Replace, "").unwrap();
-    // A WAL with a committed row in it, as a run that did not shut down cleanly leaves.
-    let conn = rusqlite::Connection::open(s.here.store()).unwrap();
-    conn.pragma_update(None, "journal_mode", "wal").unwrap();
-    conn.execute_batch(&rule("walrus.example.org")).unwrap();
+    // Leftovers of a run that did not shut down cleanly. The store is never open during an
+    // apply (Windows refuses to move an open file), so they are plain files here.
+    fs::write(s.here.data().join("puddle.db-wal"), b"stale wal").unwrap();
+    fs::write(s.here.data().join("puddle.db-shm"), b"stale shm").unwrap();
     let outcome = apply_pending(&s.here).unwrap();
-    drop(conn);
     assert!(outcome.applied, "{}", outcome.message);
     assert_eq!(rules(&s.here), ["a.example.org", "new.example.org"]);
+    assert!(!s.here.data().join("puddle.db-shm").exists());
     assert!(!s.here.data().join("puddle.db-wal").exists());
 }
 

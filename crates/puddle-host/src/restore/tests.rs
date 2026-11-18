@@ -457,6 +457,24 @@ fn staging_never_touches_the_present_data_folder() {
     assert_eq!(before, after);
 }
 
+/// Sets a folder's modified time. Windows opens a folder only with backup semantics, and a
+/// write handle is what `set_modified` needs there; other systems open a folder like a file.
+fn set_folder_modified(folder: &Path, when: std::time::SystemTime) {
+    #[cfg(windows)]
+    let handle = {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(folder)
+            .unwrap()
+    };
+    #[cfg(not(windows))]
+    let handle = File::open(folder).unwrap();
+    handle.set_modified(when).unwrap();
+}
+
 #[test]
 fn old_staging_folders_are_swept_and_fresh_ones_stay() {
     let root = tempfile::tempdir().unwrap();
@@ -465,10 +483,7 @@ fn old_staging_folders_are_swept_and_fresh_ones_stay() {
     fs::create_dir_all(staging.join("stale")).unwrap();
     let day_ago =
         std::time::SystemTime::now() - STAGING_LIFETIME - std::time::Duration::from_secs(60);
-    File::open(staging.join("stale"))
-        .unwrap()
-        .set_modified(day_ago)
-        .unwrap();
+    set_folder_modified(&staging.join("stale"), day_ago);
     assert_eq!(sweep_staging(&staging, STAGING_LIFETIME), 1);
     assert!(staging.join("fresh").is_dir());
     assert!(!staging.join("stale").exists());

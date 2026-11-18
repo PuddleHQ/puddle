@@ -531,3 +531,153 @@ fn an_integrity_answer_other_than_ok_is_a_corruption_error_that_quotes_it() {
         "{err}"
     );
 }
+
+#[test]
+fn a_database_at_this_schema_is_accepted_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    open(&path);
+    let staged = check_staged_database(&path).unwrap().unwrap();
+    assert_eq!(staged.schema_version, SCHEMA_VERSION);
+}
+
+#[test]
+fn migrating_a_database_brings_it_to_this_schema_and_refuses_a_newer_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        schema::migrate_up_to(&mut conn, 20).unwrap();
+    }
+    migrate_database(&path).unwrap();
+    assert_eq!(
+        count(&path, "PRAGMA user_version"),
+        i64::from(SCHEMA_VERSION)
+    );
+    sql(
+        &path,
+        &format!("PRAGMA user_version = {};", SCHEMA_VERSION + 1),
+    );
+    assert!(migrate_database(&path).is_err());
+}
+
+#[test]
+fn a_restore_migrates_an_old_present_database_before_it_copies_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here.db");
+    let there = dir.path().join("there.db");
+    {
+        let mut conn = Connection::open(&here).unwrap();
+        schema::migrate_up_to(&mut conn, 20).unwrap();
+    }
+    open(&there);
+    let dest = dir.path().join("new.db");
+    restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(
+        count(&dest, "PRAGMA user_version"),
+        i64::from(SCHEMA_VERSION)
+    );
+    assert_eq!(
+        count(&here, "PRAGMA user_version"),
+        i64::from(SCHEMA_VERSION)
+    );
+}
+
+#[test]
+fn a_rule_that_came_from_a_pending_request_does_not_point_at_one_that_is_not_restored() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    sql(
+        &there,
+        "UPDATE rules SET source_pending_id = (SELECT id FROM pending LIMIT 1) WHERE pattern = 'new.example.org';",
+    );
+    assert_eq!(
+        count(
+            &there,
+            "SELECT count(*) FROM rules WHERE source_pending_id IS NOT NULL"
+        ),
+        1
+    );
+    let dest = dir.path().join("new.db");
+    restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules WHERE pattern = 'new.example.org' AND source_pending_id IS NULL"
+        ),
+        1
+    );
+}
+
+#[test]
+fn ids_of_the_backup_are_translated_when_this_machine_numbers_its_rows_differently() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    // Rows here that take the ids the backup's users, sets and variables have there.
+    sql(
+        &here,
+        "INSERT INTO users (role, name, created_at) VALUES ('user', 'Zed', 1);
+         INSERT INTO rule_sets (name, description, created_at, created_by, user_id) VALUES ('Other', '', 1, 'cli', 1);
+         INSERT INTO env_vars (workspace_id, name, kind, value, changed_at, user_id)
+             VALUES ('w9', 'OTHER', 'plain', 'v', 1, 1);",
+    );
+    sql(
+        &there,
+        "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at, user_id)
+             VALUES ('w1', 'PLAIN', 'plain', 'v', 1, 1);
+         INSERT INTO env_stand_ins (workspace_id, env_id, stand_in)
+             VALUES ('w1', (SELECT id FROM env_vars WHERE name = 'PLAIN'), 'standin');",
+    );
+    let dest = dir.path().join("new.db");
+    restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules r JOIN users u ON u.id = r.user_id \
+             WHERE r.pattern = 'ann.example.org' AND u.name = 'Ann'"
+        ),
+        1,
+        "a rule of Ann follows Ann to her new id"
+    );
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules r JOIN rule_sets s ON s.id = r.set_id \
+             WHERE r.pattern = 'in-set.example.org' AND s.name = 'Mine'"
+        ),
+        1,
+        "a rule of a set follows the set to its new id"
+    );
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM env_stand_ins s JOIN env_vars e ON e.id = s.env_id \
+             WHERE e.name = 'PLAIN' AND s.stand_in = 'standin'"
+        ),
+        1,
+        "a stand-in follows its variable to its new id"
+    );
+}
+
+#[test]
+fn the_audit_log_rows_get_new_ids_in_the_order_of_the_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    sql(
+        &there,
+        "INSERT INTO audit (id, ts, type, line, user_id) VALUES (40, 1, 'x', '{}', 1);
+         INSERT INTO audit (id, ts, type, line, user_id) VALUES (30, 2, 'y', '{}', 1);",
+    );
+    let dest = dir.path().join("new.db");
+    restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    let conn = Connection::open(&dest).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id || type FROM audit ORDER BY id")
+        .unwrap();
+    let rows: Vec<String> = stmt
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(rows, ["1y", "2x"]);
+}

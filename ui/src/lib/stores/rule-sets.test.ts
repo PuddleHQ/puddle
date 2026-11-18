@@ -191,9 +191,9 @@ describe("a big built-in set", () => {
     const first = await store.entries("builtin:trackers", "", 200);
     expect(first.ok && first.value.total).toBe(450);
     expect(first.ok && first.value.entries[0]?.pattern).toBe(
-      "t200.tracker.example",
+      "h200.tracker.example",
     );
-    const found = await store.entries("builtin:trackers", "t44", 0);
+    const found = await store.entries("builtin:trackers", "h44", 0);
     expect(found.ok && found.value.total).toBe(11);
     expect(api.calls).toContain("GET /api/rule-sets/{id}/entries");
   });

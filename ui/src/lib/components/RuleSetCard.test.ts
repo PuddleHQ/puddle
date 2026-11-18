@@ -223,11 +223,11 @@ describe("a big built-in set", () => {
       props: { ...baseProps(), set: big(), loadEntries },
     } as never);
     await fireEvent.input(screen.getByLabelText("Search entries"), {
-      target: { value: "t1" },
+      target: { value: "h1" },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await screen.findByText("Showing 3 of 3 matches.");
-    expect(loadEntries).toHaveBeenCalledWith(expect.anything(), "t1", 0);
+    expect(loadEntries).toHaveBeenCalledWith(expect.anything(), "h1", 0);
     expect(screen.getAllByText(/tracker\.example/)).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });

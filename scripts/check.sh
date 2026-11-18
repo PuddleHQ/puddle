@@ -142,11 +142,11 @@ ui_install() {
 
 # `npm test` with the whole output kept: ui/vitest-out/vitest.log (every line) and vitest-junit.xml (one entry per
 # failure, with its message and stack). A failing run also leaves ui/vitest-out/vitest-failed-<UTC time>.log, which a
-# rerun never overwrites, and prints its path: a one-off failure (T-1748: the output was lost, so the test that failed is
-# unknown) must stay diagnosable. CI uploads ui/vitest-out (ci.yml, job ui).
+# rerun never overwrites, and prints its path: a one-off failure (a one-off once lost its output, so the test that failed
+# stayed unknown) must stay diagnosable. CI uploads ui/vitest-out (ci.yml, job ui).
 ui_test() {
     mkdir -p ui/vitest-out
-    # The shell's `|` hides npm's status (no pipefail in sh), so the status goes through a file.
+    # The pipe hides npm's status (a plain sh pipeline), so the status goes through a file.
     rm -f ui/vitest-out/vitest.rc
     {
         (cd ui && npm test -- --reporter=default --reporter=junit --outputFile.junit=vitest-out/vitest-junit.xml 2>&1)

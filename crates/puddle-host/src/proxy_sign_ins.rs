@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use puddle_api::wire::StoredSignIn;
 use puddle_api::{ProxySignInError, ProxySignInService};
+use puddle_types::{Problem, Problems};
 use puddle_upstream::{Chain, ProxyAddr};
 
 use crate::{ProxyPasswordError, ProxyPasswords};
@@ -15,11 +16,43 @@ use crate::{ProxyPasswordError, ProxyPasswords};
 pub(crate) struct HostProxySignIns {
     passwords: Arc<ProxyPasswords>,
     chain: Arc<Chain>,
+    problems: Arc<Problems>,
+}
+
+/// Raises the problem that names the proxies whose sign-in the credential store lost, or ends it
+/// when there is none.
+pub(crate) fn report_lost(passwords: &ProxyPasswords, problems: &Problems) {
+    const LOST: &str = "proxy-sign-in-lost";
+    let lost = passwords.lost();
+    if lost.is_empty() {
+        problems.clear(LOST);
+        return;
+    }
+    let names = lost
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    problems.raise(Problem::new(
+        LOST,
+        "Puddle lost a company proxy sign-in",
+        format!(
+            "The credential store no longer holds the sign-in for {names} (a reset or a new vault). Enter it again on the proxy sign-in page, or remove it there."
+        ),
+    ));
 }
 
 impl HostProxySignIns {
-    pub(crate) fn new(passwords: Arc<ProxyPasswords>, chain: Arc<Chain>) -> Self {
-        Self { passwords, chain }
+    pub(crate) fn new(
+        passwords: Arc<ProxyPasswords>,
+        chain: Arc<Chain>,
+        problems: Arc<Problems>,
+    ) -> Self {
+        Self {
+            passwords,
+            chain,
+            problems,
+        }
     }
 }
 
@@ -48,12 +81,14 @@ impl ProxySignInService for HostProxySignIns {
     fn set(&self, proxy: &ProxyAddr, user: &str, password: &str) -> Result<(), ProxySignInError> {
         self.passwords.set(proxy, user, password)?;
         self.chain.forget_basic_headers();
+        report_lost(&self.passwords, &self.problems);
         Ok(())
     }
 
     fn remove(&self, proxy: &ProxyAddr) -> Result<(), ProxySignInError> {
         self.passwords.remove(proxy)?;
         self.chain.forget_basic_headers();
+        report_lost(&self.passwords, &self.problems);
         Ok(())
     }
 }

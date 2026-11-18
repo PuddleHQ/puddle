@@ -8,7 +8,7 @@ INSERT INTO users (id, role, name, created_at) VALUES
     (3, 'user', 'bob', 1700000200);
 INSERT OR REPLACE INTO workspace_owners_adoption (id) VALUES (1);
 INSERT INTO devices (id, user_id, name, created_at, last_seen_at, expires_at, revoked_at) VALUES
-    (1, 2, 'ann laptop', 1700000300, 1700000400, 1800000000, NULL),
+    (1, 2, 'ann desktop', 1700000300, 1700000400, 1800000000, NULL),
     (2, 3, 'bob phone', 1700000310, 1700000410, 1800000010, 1700000500);
 INSERT INTO account_passwords (user_id, hash, changed_at) VALUES (2, '$argon2id$v=19$golden-hash-ann', 1700000320);
 INSERT INTO account_invites (user_id, digest, expires_at) VALUES (3, x'00112233445566778899aabbccddeeff00', 1700009999);

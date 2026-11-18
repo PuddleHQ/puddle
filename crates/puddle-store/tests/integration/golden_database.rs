@@ -152,6 +152,7 @@ fn every_row_of_the_old_database_reads_back_equal_after_the_migration() {
             ));
             continue;
         }
+        // flake-ok: both snapshots read in rowid order, and a migration copies rows in that order
         for (n, (old, new)) in rows_before.iter().zip(rows_after).enumerate() {
             for (column, value) in old {
                 match new.iter().find(|(c, _)| c == column) {

@@ -146,8 +146,11 @@ pub struct RuleSetView {
     pub global: Option<bool>,
     /// Workspaces with a switch of their own.
     pub overrides: Vec<RuleSetOverride>,
-    /// Its entries.
+    /// Its entries. A built-in set lists only its first 200; `entry_count` says how many there are
+    /// and `GET /api/rule-sets/{id}/entries` pages and searches them.
     pub entries: Vec<RuleSetEntry>,
+    /// How many entries the set has in all.
+    pub entry_count: usize,
     /// Built-in sets: epoch ms when a Puddle update last changed the entries; `null` if never.
     #[schema(required = true)]
     pub changed_at: Option<u64>,
@@ -171,6 +174,7 @@ impl RuleSetView {
             global,
             overrides,
             entries,
+            entry_count,
             changed_at,
             created_at,
             default_precedence,
@@ -191,6 +195,7 @@ impl RuleSetView {
                 .map(|(workspace, enabled)| RuleSetOverride { workspace, enabled })
                 .collect(),
             entries: entries.into_iter().map(RuleSetEntry::from_store).collect(),
+            entry_count,
             changed_at,
             created_at,
             default_precedence: default_precedence.map(store::Precedence::get),
@@ -222,6 +227,28 @@ impl RuleSetEntry {
             rule_id: rule_id.map(|id| id.0),
             expires_at,
             precedence,
+        }
+    }
+}
+
+/// One page of a built-in set's entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RuleSetEntryPage {
+    /// The entries of this page, in the order the set lists them.
+    pub entries: Vec<RuleSetEntry>,
+    /// How many entries match the search in all.
+    pub total: usize,
+}
+
+impl RuleSetEntryPage {
+    pub(crate) fn from_store(page: store::EntryPage) -> Self {
+        Self {
+            entries: page
+                .entries
+                .into_iter()
+                .map(RuleSetEntry::from_store)
+                .collect(),
+            total: page.total,
         }
     }
 }

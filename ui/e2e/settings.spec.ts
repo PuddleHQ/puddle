@@ -138,10 +138,11 @@ test("no settings page is longer than two screens at 1440 px", async ({
   for (const where of Object.keys(SECTIONS)) {
     await page.goto(`/settings/${where}`);
     await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
-    const height = await page.evaluate(
-      () => document.documentElement.scrollHeight,
-    );
-    expect(height, `${where} is ${height}px tall`).toBeLessThanOrEqual(1800);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollHeight), {
+        message: `${where} is at most two screens tall`,
+      })
+      .toBeLessThanOrEqual(1800);
   }
 });
 

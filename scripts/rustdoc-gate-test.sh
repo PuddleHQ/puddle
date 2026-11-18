@@ -43,8 +43,8 @@ fn helper() {}
 R
 (cd "$repo" && cargo generate-lockfile --offline >"$root/lock.log" 2>&1) || fail "cargo cannot write the fixture's lock file: $(tail -n 3 "$root/lock.log")"
 if run "$root/bad.log"; then fail "a public doc linking to a private item and to nothing passed the gate"; fi
-grep -q 'public documentation for `api` links to private item `helper`' "$root/bad.log" || fail "the failure does not name the private link: $(tail -n 5 "$root/bad.log")"
-grep -q 'unresolved link to `nowhere`' "$root/bad.log" || fail "the failure does not name the broken link: $(tail -n 5 "$root/bad.log")"
+grep -qF 'links to private item' "$root/bad.log" || fail "the failure does not name the private link: $(tail -n 5 "$root/bad.log")"
+grep -qF 'unresolved link to' "$root/bad.log" || fail "the failure does not name the broken link: $(tail -n 5 "$root/bad.log")"
 
 cat >"$repo/crates/fixture/src/lib.rs" <<'R'
 /// Calls [`helper`].

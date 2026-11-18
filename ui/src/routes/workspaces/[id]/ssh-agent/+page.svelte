@@ -108,7 +108,7 @@
         <label for="{fid}-host">Host</label>
         <input
           id="{fid}-host"
-          class="mono"
+          class="mono input-wide"
           type="text"
           spellcheck="false"
           autocapitalize="off"
@@ -126,7 +126,7 @@
         <label for="{fid}-keys">Only these keys (optional)</label>
         <textarea
           id="{fid}-keys"
-          class="mono"
+          class="mono input-wide"
           rows="3"
           spellcheck="false"
           autocapitalize="off"
@@ -223,23 +223,7 @@
   .field label {
     font-weight: 600;
   }
-  input,
-  textarea {
-    box-sizing: border-box;
-    width: 100%;
-    padding: var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font-size: var(--text-sm);
-  }
-  textarea {
-    resize: vertical;
-  }
-  textarea[aria-invalid="true"] {
-    border-color: var(--color-danger);
-  }
+
   .acts {
     display: flex;
     flex-wrap: wrap;

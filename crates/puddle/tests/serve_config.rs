@@ -12,7 +12,10 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Arc;
 
-use puddle::cmd::serve::{self, ServeArgs, options::Value};
+use puddle::cmd::serve::{
+    self, ServeArgs,
+    options::{Flags, Value},
+};
 use puddle_certs::CorporateRoots;
 use puddle_compute::fake::FakeRuntime;
 use puddle_host::{Host, HostError, HostOptions, Platform, RuntimeFactory, RuntimeInputs, prepare};
@@ -557,5 +560,31 @@ async fn a_listener_certificate_that_cannot_be_kept_stops_the_start_and_says_so(
         err.to_string()
             .contains("the network listener's certificate"),
         "{err}"
+    );
+}
+
+#[test]
+fn a_shipped_build_ignores_the_agent_and_code_server_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = serve::options::resolve(&Flags::new(), &|_| None, dir.path()).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let mut config = serve::config(&options, &exe).unwrap();
+    let (agent, code_server) = (
+        config.guest.agent_binary.clone(),
+        config.guest.code_server.clone(),
+    );
+    let env = |name: &str| match name {
+        serve::AGENT_VAR | serve::CODE_SERVER_VAR => Some("/elsewhere".into()),
+        _ => None,
+    };
+
+    serve::apply_dev_overrides(&mut config, false, &env);
+    assert_eq!(config.guest.agent_binary, agent);
+    assert_eq!(config.guest.code_server, code_server);
+
+    serve::apply_dev_overrides(&mut config, cfg!(debug_assertions), &env);
+    assert_eq!(
+        config.guest.agent_binary == Path::new("/elsewhere"),
+        cfg!(debug_assertions)
     );
 }

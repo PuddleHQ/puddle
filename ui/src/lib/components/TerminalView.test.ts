@@ -135,7 +135,7 @@ describe("TerminalView", () => {
       return made;
     }
 
-    it("offers Copy, Select all and Clear, and focuses the first that works", async () => {
+    it("offers Copy, Paste, Select all and Clear, and focuses the first that works", async () => {
       await open(true);
       const menu = screen.getByRole("menu", { name: "Terminal actions" });
       expect(menu).toBeInTheDocument();
@@ -150,6 +150,14 @@ describe("TerminalView", () => {
       ).toBeInTheDocument();
     });
 
+    it("pastes the clipboard from the menu, also with nothing selected", async () => {
+      const { fake } = await open(false);
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Paste" }));
+      expect(fake.pastes).toBe(1);
+      expect(fake.focused).toBe(1);
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
     it("copies the selection and gives focus back to the terminal", async () => {
       const { fake } = await open(true);
       await fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
@@ -162,9 +170,7 @@ describe("TerminalView", () => {
       const { fake } = await open(false);
       expect(screen.getByRole("menuitem", { name: "Copy" })).toBeDisabled();
       await waitFor(() =>
-        expect(
-          screen.getByRole("menuitem", { name: "Select all" }),
-        ).toHaveFocus(),
+        expect(screen.getByRole("menuitem", { name: "Paste" })).toHaveFocus(),
       );
       await fireEvent.click(
         screen.getByRole("menuitem", { name: "Select all" }),
@@ -183,9 +189,7 @@ describe("TerminalView", () => {
       const copy = screen.getByRole("menuitem", { name: "Copy" });
       await waitFor(() => expect(copy).toHaveFocus());
       await fireEvent.keyDown(menu, { key: "ArrowDown" });
-      expect(
-        screen.getByRole("menuitem", { name: "Select all" }),
-      ).toHaveFocus();
+      expect(screen.getByRole("menuitem", { name: "Paste" })).toHaveFocus();
       await fireEvent.keyDown(menu, { key: "ArrowUp" });
       await fireEvent.keyDown(menu, { key: "ArrowUp" });
       expect(screen.getByRole("menuitem", { name: "Clear" })).toHaveFocus();

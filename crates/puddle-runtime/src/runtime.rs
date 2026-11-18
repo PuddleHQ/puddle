@@ -109,7 +109,7 @@ impl BundledRuntime {
     /// `puddle doctor` and diagnostics; the SDK starts msb itself).
     #[must_use]
     pub fn command(&self) -> Command {
-        let mut command = Command::new(self.layout.msb_path());
+        let mut command = puddle_process::command(self.layout.msb_path());
         self.env().apply_to(&mut command);
         command
     }

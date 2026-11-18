@@ -67,11 +67,33 @@ fn an_invite_works_once_and_not_after_it_expires() {
     // A new invite replaces the one before.
     secrets.put_invite(ann, &[2; 32], 5_000).unwrap();
     assert_eq!(secrets.redeem_invite(&[1; 32]).unwrap(), None);
+    // Looking an invite up does not use it.
+    assert_eq!(secrets.invite_holder(&[2; 32]).unwrap(), Some(ann));
+    assert_eq!(secrets.invite_holder(&[2; 32]).unwrap(), Some(ann));
     assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), Some(ann));
     assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), None, "used up");
+    assert_eq!(secrets.invite_holder(&[2; 32]).unwrap(), None);
     secrets.put_invite(ann, &[3; 32], 5_000).unwrap();
     clock.set(5_000);
+    assert_eq!(secrets.invite_holder(&[3; 32]).unwrap(), None, "expired");
     assert_eq!(secrets.redeem_invite(&[3; 32]).unwrap(), None, "expired");
+}
+
+#[test]
+fn no_invite_is_made_for_a_user_being_deleted_and_none_is_left_behind() {
+    let (store, secrets, _) = setup();
+    let ann = store
+        .admin_add_user(UserId::OWNER, &UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    secrets.put_invite(ann, &[1; 32], 5_000).unwrap();
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    // An owner's reissue that raced the delete: it runs after the first step.
+    assert!(matches!(
+        secrets.put_invite(ann, &[2; 32], 5_000),
+        Err(StoreError::UnknownUser(_))
+    ));
+    assert_eq!(secrets.redeem_invite(&[2; 32]).unwrap(), None);
 }
 
 #[test]
@@ -216,6 +238,106 @@ fn a_failing_database_is_an_error_for_the_owner_steps() {
     store.break_database("ALTER TABLE users RENAME TO users_gone");
     let name = UserName::new("Tijs").unwrap();
     assert!(secrets.create_owner(&name, "$argon2id$x").is_err());
+    // A step made conditional on a checked password fails as an error, not as "changed".
+    let (store, secrets, _) = setup();
+    let checked = secrets
+        .set_password_hash(UserId::OWNER, "$argon2id$x")
+        .unwrap();
+    store.break_database("ALTER TABLE account_passwords RENAME TO passwords_gone");
+    assert!(secrets.add_device(&checked, "desktop", 9_000).is_err());
+    assert!(secrets.replace_password(&checked, "$argon2id$y").is_err());
+}
+
+#[test]
+fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_deletion() {
+    let (store, secrets, _) = setup();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    secrets.set_password_hash(ann, "$argon2id$one").unwrap();
+    let checked = secrets
+        .verify_password(ann, |h| h == "$argon2id$one")
+        .unwrap()
+        .unwrap();
+    assert_eq!(checked.user(), ann);
+    let shown = format!("{checked:?}");
+    // The messages never repeat the print: a failing check must not echo a hash.
+    assert!(shown.starts_with("CheckedPassword"), "names its type");
+    assert!(shown.contains(&format!("{ann:?}")), "names its user");
+    assert!(!shown.contains("argon2id"), "never shows the hash");
+    assert!(secrets.verify_password(ann, |_| false).unwrap().is_none());
+    // Unchanged: both steps go through.
+    assert!(
+        secrets
+            .add_device(&checked, "desktop", 9_000)
+            .unwrap()
+            .is_some()
+    );
+    assert!(secrets.replace_password(&checked, "$argon2id$two").unwrap());
+    // The password changed since the check: neither goes through.
+    assert!(
+        secrets
+            .add_device(&checked, "desktop", 9_000)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !secrets
+            .replace_password(&checked, "$argon2id$three")
+            .unwrap()
+    );
+    // A reset took it away.
+    let checked = secrets.verify_password(ann, |_| true).unwrap().unwrap();
+    secrets.clear_password(ann).unwrap();
+    assert!(
+        secrets
+            .add_device(&checked, "desktop", 9_000)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !secrets
+            .replace_password(&checked, "$argon2id$four")
+            .unwrap()
+    );
+    assert!(!secrets.has_password(ann).unwrap());
+    // The deletion began.
+    let checked = secrets.set_password_hash(ann, "$argon2id$five").unwrap();
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert!(
+        secrets
+            .add_device(&checked, "desktop", 9_000)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!secrets.replace_password(&checked, "$argon2id$six").unwrap());
+    assert!(matches!(
+        secrets.set_password_hash(ann, "$argon2id$seven"),
+        Err(StoreError::UnknownUser(_))
+    ));
+    assert_eq!(
+        store.devices(ann).unwrap().len(),
+        1,
+        "only the first device"
+    );
+}
+
+#[test]
+fn a_user_being_deleted_has_no_session_and_no_invite() {
+    let (store, secrets, _) = setup();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    let device = store.add_device(ann, "desktop", 9_000).unwrap();
+    secrets.put_session(device.id, &[4; 32]).unwrap();
+    secrets.put_invite(ann, &[5; 32], 9_000).unwrap();
+    assert!(secrets.session_for(&[4; 32]).unwrap().is_some());
+    assert!(store.device_session(device.id).unwrap().is_some());
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert!(secrets.session_for(&[4; 32]).unwrap().is_none());
+    assert!(store.device_session(device.id).unwrap().is_none());
+    assert_eq!(secrets.invite_holder(&[5; 32]).unwrap(), None);
+    assert_eq!(secrets.redeem_invite(&[5; 32]).unwrap(), None);
+    assert!(matches!(
+        store.add_device(ann, "phone", 9_000),
+        Err(StoreError::UnknownUser(_))
+    ));
 }
 
 #[test]

@@ -57,6 +57,8 @@ mod restart_and_crash;
 mod restore;
 #[path = "fake_host/root_disk.rs"]
 mod root_disk;
+#[path = "fake_host/rules_after_restart.rs"]
+mod rules_after_restart;
 #[path = "fake_host/sandbox_resources.rs"]
 mod sandbox_resources;
 #[cfg(target_os = "linux")]
@@ -105,9 +107,10 @@ use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
     DiskSpaceLevel, Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId,
+    WorkspaceStatus,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
-use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
+use puddle_workspace::{CLEAR_LOCKS_SH, CLONE_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
 use support::{Api, TestDevCert, ended, hermetic_options, named_id_options};
@@ -319,6 +322,40 @@ struct Guest {
     /// The next listing waits here before it answers, and says so in `listing_waits`.
     listing_hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     listing_waits: AtomicBool,
+    /// The next command of one of these kinds waits here (see [`Guest::hold_next`]).
+    hold: Mutex<Option<(&'static [&'static str], HeldCommand)>>,
+    /// Guest paths a clone has begun to write and not finished: git makes its target folder
+    /// first, so a clone that dies part way leaves it behind.
+    partial: Mutex<Vec<String>>,
+}
+
+/// The guest's side of a hold: it says when it is reached and waits for the test's word.
+struct HeldCommand {
+    reached: std::sync::mpsc::Sender<()>,
+    /// A word on it says the host died at the command.
+    died: std::sync::mpsc::Receiver<()>,
+}
+
+/// The test's side of a hold.
+struct Held {
+    reached: std::sync::mpsc::Receiver<()>,
+    died: std::sync::mpsc::Sender<()>,
+}
+
+impl Held {
+    /// Waits until the held command has started (at most 20 s).
+    fn wait_reached(&self) {
+        tokio::task::block_in_place(|| {
+            let reached = self.reached.recv_timeout(Duration::from_secs(20));
+            assert!(reached.is_ok(), "the held guest command never ran");
+        });
+    }
+
+    /// Ends the host's work at the held command the way a killed process ends: the command and
+    /// the code waiting for it never go on.
+    fn kill(self) {
+        self.died.send(()).unwrap();
+    }
 }
 
 /// One import as the fake guest saw it: its arguments, its source's `HEAD`, whether the working
@@ -342,6 +379,7 @@ impl Guest {
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
             ("/bin/sh", Some("/puddle/boot.sh")) => "boot",
             ("sh", _) if second == Some(PREPARE_SH) => "layout",
+            ("sh", _) if second == Some(CLONE_SH) => "clone",
             ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-start-folder") => {
                 "start-folder"
             }
@@ -352,11 +390,14 @@ impl Guest {
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
             ("sh", _) if second.is_some_and(|s| s.contains("mktemp")) => "shell-init-check",
             ("fstrim", _) => "trim",
-            ("git", _) => "clone",
             ("sync", _) => "sync",
             _ => return None,
         };
         self.record(ctx, kind, r);
+        if kind == "clone" {
+            self.clone_begins(r);
+        }
+        self.wait_if_held(kind);
         if kind == "boot" {
             self.boot_envs.lock().unwrap().push(ctx.env().clone());
             self.plans
@@ -403,30 +444,7 @@ impl Guest {
             "trim" | "shutdown-trim" => {
                 ExecOutput::new(0, "/workspaces/x: 4096 bytes trimmed\n", "")
             }
-            "clone" => {
-                if let Some(list) = self.break_list_on_clone.lock().unwrap().take() {
-                    make_unwritable(&list);
-                }
-                let url = r.args.get(2).cloned().unwrap_or_default();
-                self.clones.lock().unwrap().push(r.args.clone());
-                if let Some(look) = self.at_clone.lock().unwrap().as_ref() {
-                    look(&url);
-                }
-                if self.fail_clone_of.lock().unwrap().as_deref() == Some(url.as_str()) {
-                    ExecOutput::new(
-                        128,
-                        "",
-                        format!("fatal: unable to access '{url}': Could not resolve host"),
-                    )
-                } else {
-                    let dir = r.args.get(3).and_then(|p| p.rsplit('/').next());
-                    self.volume
-                        .lock()
-                        .unwrap()
-                        .push((dir.unwrap_or_default().to_owned(), url));
-                    ExecOutput::new(0, "", "")
-                }
-            }
+            "clone" => self.answer_clone(r),
             "sync" if self.fail_sync.load(Ordering::SeqCst) => {
                 ExecOutput::new(1, "", "sync: I/O error")
             }
@@ -633,7 +651,9 @@ impl Guest {
                     .get(3)
                     .and_then(|p| p.rsplit('/').next())
                     .unwrap_or("");
-                let there = self.volume.lock().unwrap().iter().any(|(d, _)| d == dir);
+                let path = r.args.get(3).map_or("", String::as_str);
+                let there = self.volume.lock().unwrap().iter().any(|(d, _)| d == dir)
+                    || self.partial.lock().unwrap().iter().any(|p| p == path);
                 Some(ExecOutput::new(i32::from(!there), "", ""))
             }
             _ => None,
@@ -698,6 +718,93 @@ impl Guest {
         }
         out.push_str("O\t0\nD\n");
         ExecOutput::new(0, out, "")
+    }
+
+    /// `sh -c CLONE_SH puddle-clone <url> <stage> <checkout>`: kept as the git clone it runs
+    /// into the checkout, with what that leaves on the volume.
+    fn answer_clone(&self, r: &ExecRequest) -> ExecOutput {
+        if let Some(list) = self.break_list_on_clone.lock().unwrap().take() {
+            make_unwritable(&list);
+        }
+        let url = r.args.get(3).cloned().unwrap_or_default();
+        let stage = r.args.get(4).cloned().unwrap_or_default();
+        let checkout = r.args.get(5).cloned().unwrap_or_default();
+        self.clones.lock().unwrap().push(vec![
+            "clone".to_owned(),
+            "--".to_owned(),
+            url.clone(),
+            checkout.clone(),
+        ]);
+        if let Some(look) = self.at_clone.lock().unwrap().as_ref() {
+            look(&url);
+        }
+        // Git removes its folder again when it fails by itself; only a death leaves it.
+        self.partial.lock().unwrap().retain(|p| *p != stage);
+        if self.fail_clone_of.lock().unwrap().as_deref() == Some(url.as_str()) {
+            ExecOutput::new(
+                128,
+                "",
+                format!("fatal: unable to access '{url}': Could not resolve host"),
+            )
+        } else {
+            let dir = checkout.rsplit('/').next();
+            self.volume
+                .lock()
+                .unwrap()
+                .push((dir.unwrap_or_default().to_owned(), url));
+            ExecOutput::new(0, "", "")
+        }
+    }
+
+    /// Holds the next command of one of `kinds` (see [`Guest::answer`]) until the test kills the
+    /// host there (or 20 s pass, and it goes on).
+    fn hold_next(&self, kinds: &'static [&'static str]) -> Held {
+        let (reached_tx, reached) = std::sync::mpsc::channel();
+        let (died, died_rx) = std::sync::mpsc::channel();
+        *self.hold.lock().unwrap() = Some((
+            kinds,
+            HeldCommand {
+                reached: reached_tx,
+                died: died_rx,
+            },
+        ));
+        Held { reached, died }
+    }
+
+    /// Waits at a command of `kind` the test holds; panics (ending the host task that ran it,
+    /// as a killed process ends) when the test says the host died there.
+    fn wait_if_held(&self, kind: &str) {
+        let held = {
+            let mut hold = self.hold.lock().unwrap();
+            if hold
+                .as_ref()
+                .is_some_and(|(kinds, _)| kinds.contains(&kind))
+            {
+                hold.take().map(|(_, held)| held)
+            } else {
+                None
+            }
+        };
+        let Some(held) = held else { return };
+        held.reached.send(()).unwrap();
+        // flake-ok: a fake guest command that blocks until the test gives its word, not a test
+        // waiting for a condition; the 20 s cap is below nextest's kill.
+        let died = tokio::task::block_in_place(|| held.died.recv_timeout(Duration::from_secs(20)));
+        if died.is_ok() {
+            // Unwinds this host task only; the test's own task goes on.
+            std::panic::resume_unwind(Box::new("the host process died at this guest command"));
+        }
+    }
+
+    /// The clone script removes what an earlier clone of the checkout left in its stage, and git
+    /// makes the stage before it fetches anything: from here until the clone ends, the stage holds
+    /// a half-written repository.
+    fn clone_begins(&self, r: &ExecRequest) {
+        if let Some(stage) = r.args.get(4) {
+            let mut partial = self.partial.lock().unwrap();
+            partial.retain(|p| p != stage);
+            partial.push(stage.clone());
+        }
     }
 
     /// A checkout that is on the volume without Puddle having cloned it.
@@ -1134,6 +1241,19 @@ impl Rig {
 
     async fn start(&self) -> Host<FakeRuntime> {
         self.start_with(self.config()).await
+    }
+
+    /// Waits until nothing of a host that died with no shutdown is left: its hold on the data
+    /// folder ends when the last of its tasks is gone, and what those tasks held (a sandbox
+    /// handle, whose drop stops a fake VM) is gone with them. A killed process leaves no such
+    /// late drops, so a test sets what became of the VMs after this.
+    async fn await_dead_host(&self) {
+        puddle_test_kit::eventually_async(
+            "the dead host's hold on the data folder ends",
+            Duration::from_secs(20),
+            || async { prepare(self.config(), &FakePlatform::new(&self.log)).map(drop) },
+        )
+        .await;
     }
 
     async fn start_with(&self, config: HostConfig) -> Host<FakeRuntime> {

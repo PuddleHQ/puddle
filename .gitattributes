@@ -4,3 +4,5 @@
 *.ico binary
 # Fuzz inputs are exact bytes (CRLF, NUL, invalid UTF-8): never converted.
 fuzz/corpus/** binary
+# The golden database is read byte for byte by a test.
+crates/puddle-store/tests/data/golden-v23.db binary

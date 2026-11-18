@@ -92,9 +92,7 @@ test.describe("the app icon", () => {
       mimeType: "image/png",
       buffer: RED_PNG,
     });
-    await expect(
-      page.getByText("Your image is ready. Save to use it."),
-    ).toBeVisible();
+    await expect(page.getByText("Your image is ready.")).toBeVisible();
     const mine = page.getByRole("radio", { name: "Your image" });
     await expect(mine).toBeChecked();
     // Stored as 256 pixels square, whatever it was given as.
@@ -102,9 +100,7 @@ test.describe("the app icon", () => {
     await expect
       .poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth))
       .toBe(256);
-    // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
-    expect(await stored(backend, request)).toBeNull();
-    await save(page);
+    // The image is used at once, with no Save.
     await expect.poll(() => stored(backend, request)).toBe("custom");
     await expect(
       page.getByRole("button", { name: "Remove your image" }),
@@ -112,7 +108,7 @@ test.describe("the app icon", () => {
     await expectNoAxeViolations(page);
 
     await page.getByRole("radio", { name: "Duck", exact: true }).check();
-    await save(page);
+    await expect.poll(() => stored(backend, request)).toBe("duck");
     await page.getByRole("button", { name: "Remove your image" }).click();
     await expect(page.getByText("Your image is removed.")).toBeVisible();
     await expect(mine).toBeDisabled();

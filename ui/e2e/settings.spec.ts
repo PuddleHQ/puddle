@@ -164,8 +164,7 @@ test("every setting is found by the search and the result opens it", async ({
       .fill(entry.label);
     await page
       .getByRole("region", { name: "Search results" })
-      .getByRole("link", { name: entry.label })
-      .first()
+      .locator(`a[href="/settings/${entry.page}#${entry.id}"]`)
       .click();
     await expect(page, entry.id).toHaveURL(
       new RegExp(`/settings/${entry.page}#${entry.id}$`),
@@ -254,8 +253,8 @@ test("each change is stored at once, says Saved, and survives a reload", async (
   await page.getByLabel("Default memory").selectOption("16384");
   await pressSave(page);
   await expect(
-    page.getByText("Applies when a workspace next starts."),
-  ).toHaveCount(2);
+    page.getByRole("status").getByText("Applies when a workspace next starts."),
+  ).toHaveCount(1);
   await page.goto("/settings/network");
   await page.getByLabel("Private networks").check();
   await pressSave(page);
@@ -371,7 +370,7 @@ test.describe("default CPUs", () => {
     const limits = await cpuLimits(request, backend.token);
     // The arrow key below needs one count above the default; a one-core computer has none.
     test.skip(limits.max_cpus <= limits.default_cpus, "a one-core computer");
-    const cpus = page.getByLabel("Default CPUs");
+    const cpus = page.getByLabel("Default CPUs", { exact: true });
     await expect(cpus).toHaveValue(String(limits.default_cpus));
     await expect(cpus.locator("option")).toHaveCount(
       limits.max_cpus - CPUS_MIN + 1,
@@ -382,6 +381,8 @@ test.describe("default CPUs", () => {
     );
 
     await page.getByLabel("Default memory").focus();
+    // The row's "How this works" comes first in the page order, then the control.
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await expect(cpus).toBeFocused();
     await expect
@@ -396,14 +397,18 @@ test.describe("default CPUs", () => {
     const next = limits.default_cpus + 1;
     await expect(cpus).toHaveValue(String(next));
     await expect(
-      page.getByText("Applies when a workspace next starts."),
-    ).toHaveCount(2);
+      page
+        .getByRole("status")
+        .getByText("Applies when a workspace next starts."),
+    ).toHaveCount(1);
     await pressSave(page);
     expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(
       next,
     );
     await page.reload();
-    await expect(page.getByLabel("Default CPUs")).toHaveValue(String(next));
+    await expect(page.getByLabel("Default CPUs", { exact: true })).toHaveValue(
+      String(next),
+    );
   });
 
   test("says a running workspace keeps its count, in a control that is big enough and stays inside its card at phone width", async ({
@@ -412,8 +417,11 @@ test.describe("default CPUs", () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 800 });
     await openSettings(page, backend, "workspaces");
-    const cpus = page.getByLabel("Default CPUs");
-    await page.getByText("How this works for Default CPUs").click();
+    const cpus = page.getByLabel("Default CPUs", { exact: true });
+    await page
+      .locator("summary")
+      .filter({ hasText: "for Default CPUs" })
+      .click();
     await expect(
       page.getByText(/A running workspace keeps the count it started with/),
     ).toBeVisible();
@@ -440,7 +448,9 @@ test("a typed value's Save is big enough and the page has no axe findings with a
 }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
   await openSettings(page, backend, "workspaces");
-  await page.getByLabel("Warn when free space is under (GB)").fill("30");
+  await page
+    .getByLabel("Warn when free space is under (GB)", { exact: true })
+    .fill("30");
   const save = page.getByRole("button", {
     name: "Save Warn when free space is under (GB)",
   });
@@ -457,7 +467,9 @@ test("the disk warning threshold starts at 95, is saved with the other settings 
   request,
 }) => {
   await openSettings(page, backend, "notifications");
-  const field = page.getByLabel("Warn when a disk is this full (%)");
+  const field = page.getByLabel("Warn when a disk is this full (%)", {
+    exact: true,
+  });
   await expect(field).toHaveValue("95");
   await field.fill("120");
   await expect(page.getByRole("alert").filter({ hasText: /50/ })).toBeVisible();
@@ -614,7 +626,9 @@ test("a reconnection grace outside the range is refused before anything is sent"
   request,
 }) => {
   await openSettings(page, backend, "editor-and-git");
-  const grace = page.getByLabel("Reconnection grace (seconds)");
+  const grace = page.getByLabel("Reconnection grace (seconds)", {
+    exact: true,
+  });
   await grace.fill("5");
   await expect(page.getByText(/Use between 30 and 86400/)).toBeVisible();
   await expect(
@@ -755,8 +769,12 @@ test("the disk space lines start at 20 and 5 GB, are checked before saving and s
   request,
 }) => {
   await openSettings(page, backend, "workspaces");
-  const warn = page.getByLabel("Warn when free space is under (GB)");
-  const fail = page.getByLabel("Fail when free space is under (GB)");
+  const warn = page.getByLabel("Warn when free space is under (GB)", {
+    exact: true,
+  });
+  const fail = page.getByLabel("Fail when free space is under (GB)", {
+    exact: true,
+  });
   await expect(warn).toHaveValue("20");
   await expect(fail).toHaveValue("5");
 
@@ -804,7 +822,7 @@ test("the SSH agent pipe is checked before saving, stored trimmed and survives a
   request,
 }) => {
   await openSettings(page, backend, "editor-and-git");
-  const field = page.getByLabel("SSH agent pipe or socket");
+  const field = page.getByLabel("SSH agent pipe or socket", { exact: true });
   await expect(field).toHaveValue("");
 
   await field.fill("/run/a\tb");

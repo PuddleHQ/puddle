@@ -39,7 +39,7 @@
     <SettingRow
       id="set-net-health"
       label="Network health"
-      desc="The proxy Puddle found, how it signs in, and the company certificates workspaces get."
+      desc="The proxy Puddle found and the company certificates it uses."
       plain
     >
       <a class="btn" href="/settings/network-health"

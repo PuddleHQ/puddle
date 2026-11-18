@@ -87,7 +87,9 @@ test("a tab on another build waits while the settings form has unsaved edits, th
   await backend.control.reset("lived-in");
   await backend.signIn(page);
   await page.goto("/settings/workspaces");
-  const line = page.getByLabel("Warn when free space is under (GB)");
+  const line = page.getByLabel("Warn when free space is under (GB)", {
+    exact: true,
+  });
   await expect(line).toBeVisible();
   const before = await line.inputValue();
   await line.fill("33");
@@ -122,6 +124,6 @@ test("a tab on another build waits while the settings form has unsaved edits, th
   await page.clock.fastForward(61_000);
   await expect.poll(() => counts.loads).toBe(loaded + 1);
   await expect(
-    page.getByLabel("Warn when free space is under (GB)"),
+    page.getByLabel("Warn when free space is under (GB)", { exact: true }),
   ).toBeVisible();
 });

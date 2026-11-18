@@ -254,6 +254,7 @@ test.describe("environment", () => {
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(global).toContainText("emacs");
     await page.reload();
+    await page.getByText("Show the variables").click();
     await expect(
       page.getByRole("table", { name: "Environment of every workspace" }),
     ).toContainText("emacs");

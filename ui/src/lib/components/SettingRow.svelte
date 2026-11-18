@@ -86,7 +86,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
     gap: var(--space-2) var(--space-6);
-    padding-block: var(--space-3);
+    padding-block: var(--space-2);
     border-top: 1px solid var(--color-border-subtle);
   }
   .row:first-child {

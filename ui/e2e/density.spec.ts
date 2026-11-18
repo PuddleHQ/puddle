@@ -265,6 +265,8 @@ const LAYOUT = {
   "/settings": {
     h1: 32,
     card: true,
+    cardSelector: ".group",
+    cardGap: false,
     select: true,
     selectWaitsForData: true,
     oneLineButton: true,
@@ -272,6 +274,8 @@ const LAYOUT = {
   "/workspaces": {
     h1: 24,
     card: true,
+    cardSelector: ".card",
+    cardGap: true,
     select: false,
     selectWaitsForData: false,
     oneLineButton: true,
@@ -279,6 +283,8 @@ const LAYOUT = {
   "/rules": {
     h1: 24,
     card: false,
+    cardSelector: ".card",
+    cardGap: false,
     select: true,
     selectWaitsForData: true,
     oneLineButton: true,
@@ -287,6 +293,8 @@ const LAYOUT = {
   "/activity": {
     h1: 24,
     card: false,
+    cardSelector: ".card",
+    cardGap: false,
     select: true,
     selectWaitsForData: false,
     oneLineButton: false,
@@ -449,12 +457,12 @@ test.describe("layout by density", () => {
         }
 
         if (layout.card) {
-          const card = await required(page, ".card");
+          const card = await required(page, layout.cardSelector);
           expect([card.padTop, card.padLeft], "card padding").toEqual([
             t.s4,
             t.s4,
           ]);
-          expect(card.rowGap, "card row gap").toBe(t.s3);
+          if (layout.cardGap) expect(card.rowGap, "card row gap").toBe(t.s3);
         }
       });
     }

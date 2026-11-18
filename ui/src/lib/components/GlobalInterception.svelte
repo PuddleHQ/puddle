@@ -68,7 +68,8 @@
   <SwitchRow
     id="set-interception-learn"
     label="Learn from rejections"
-    desc="{LEARNING_NOTE} It only matters in the modes that decrypt unlisted hosts."
+    desc="Pass a host through for 12 hours when a tool refuses Puddle's certificate."
+    how="{LEARNING_NOTE} It only matters in the modes that decrypt unlisted hosts."
     checked={store.learn}
     onchange={learning}
   />

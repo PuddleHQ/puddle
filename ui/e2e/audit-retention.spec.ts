@@ -6,10 +6,19 @@ import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import { staysEmpty, watchCsp } from "./support";
 
+// The group on the Settings page: a section with the "Activity log" heading.
+function activityLog(page: Page) {
+  return page
+    .locator("section.group")
+    .filter({
+      has: page.getByRole("heading", { level: 2, name: "Activity log" }),
+    });
+}
+
 async function openCard(page: Page, backend: Backend) {
   await backend.signIn(page);
   await page.goto("/settings/this-computer#set-audit");
-  const card = page.getByRole("region", { name: "Activity log" });
+  const card = activityLog(page);
   await expect(card.getByLabel(/Keep the activity log for/)).toBeVisible();
   return card;
 }
@@ -43,9 +52,7 @@ test("saving the days keeps them across a reload", async ({
   await expect(card.getByText("Saved.")).toBeVisible();
   await page.reload();
   await expect(
-    page
-      .getByRole("region", { name: "Activity log" })
-      .getByLabel(/Keep the activity log for/),
+    activityLog(page).getByLabel(/Keep the activity log for/),
   ).toHaveValue("30");
 });
 
@@ -65,9 +72,7 @@ for (const bad of ["0", "3651"]) {
     );
     await page.reload();
     await expect(
-      page
-        .getByRole("region", { name: "Activity log" })
-        .getByLabel(/Keep the activity log for/),
+      activityLog(page).getByLabel(/Keep the activity log for/),
     ).toHaveValue("90");
   });
 }

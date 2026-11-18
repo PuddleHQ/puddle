@@ -124,7 +124,7 @@ impl Serve {
         let pid = child.id();
         let info: Value = eventually_async(
             "puddle serve writes its connection file",
-            Duration::from_secs(120),
+            Duration::from_secs(90),
             || async {
                 assert!(
                     Path::new(&format!("/proc/{pid}")).exists(),
@@ -207,22 +207,80 @@ impl Api {
         body
     }
 
-    /// Waits until workspace `id` runs and is not busy; a failed operation fails the test.
-    async fn until_running(&self, id: &str, within: Duration) {
-        eventually_async("the workspace runs", within, || async {
-            let w = self.workspace(id).await;
-            let status = w["status"].as_str().unwrap_or_default().to_owned();
-            assert!(
-                !matches!(status.as_str(), "crashed" | "volume_missing"),
-                "the workspace is {status}: {w}"
-            );
-            if status == "running" && w["busy"].is_null() {
-                Ok(())
-            } else {
-                Err(format!("{status}, busy {}", w["busy"]))
+    /// Opens the event stream; events from here on are seen.
+    async fn events(&self) -> Events {
+        let mut stream = TcpStream::connect(&self.addr).await.unwrap();
+        let request = format!(
+            "GET /api/events HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
+             Accept: text/event-stream\r\n\r\n",
+            self.addr, self.token
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut events = Events {
+            stream,
+            buf: String::new(),
+        };
+        events
+            .fill(|b| b.contains("\r\n\r\n"), Duration::from_secs(10))
+            .await;
+        assert!(events.buf.starts_with("HTTP/1.1 200"), "{}", events.buf);
+        events.buf = events.buf.split_once("\r\n\r\n").unwrap().1.to_owned();
+        events
+    }
+}
+
+/// The API's server-sent events, read as they arrive.
+struct Events {
+    stream: TcpStream,
+    buf: String,
+}
+
+impl Events {
+    /// Reads until `done` holds for what was read; panics at the deadline.
+    async fn fill(&mut self, done: impl Fn(&str) -> bool, within: Duration) {
+        let deadline = Instant::now() + within;
+        let mut chunk = [0_u8; 4096];
+        while !done(&self.buf) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(left, self.stream.read(&mut chunk)).await {
+                Ok(Ok(0)) => panic!("the event stream ended; buffer: {:?}", self.buf),
+                Ok(Ok(n)) => self.buf.push_str(&String::from_utf8_lossy(&chunk[..n])),
+                Ok(Err(e)) => panic!("event stream: {e}"),
+                Err(elapsed) => panic!(
+                    "nothing more within {within:?} ({elapsed}); buffer: {:?}",
+                    self.buf
+                ),
             }
-        })
-        .await;
+        }
+    }
+
+    /// The `workspace_progress` event that ends workspace `id`'s operation (`done` or `failed`).
+    // flake-ok: reads the server-sent event stream (it consumes input, so a re-run probe cannot
+    // do it); bounded by `within` (an image pull takes minutes, past a probe's limit), and the
+    // panic shows what was read.
+    async fn ended(&mut self, id: &str, within: Duration) -> Value {
+        let deadline = Instant::now() + within;
+        loop {
+            while let Some(end) = self.buf.find("\n\n") {
+                let record: String = self.buf.drain(..end + 2).collect();
+                let data: String = record
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data:"))
+                    .map(str::trim_start)
+                    .collect();
+                if let Ok(e) = serde_json::from_str::<Value>(&data)
+                    && e["type"] == "workspace_progress"
+                    && e["workspace"] == id
+                    && matches!(e["step"].as_str(), Some("done" | "failed"))
+                {
+                    return e;
+                }
+            }
+            let before = self.buf.len();
+            let left = deadline.saturating_duration_since(Instant::now());
+            self.fill(|b| b.len() > before && b.contains("\n\n"), left)
+                .await;
+        }
     }
 }
 
@@ -325,17 +383,34 @@ fn share_image_cache(data: &Path) {
     }
 }
 
+/// The staged file is still staged, or the problems list says that staged changes were lost
+/// (the boot's repair of a broken index, storage ST-18).
+async fn staged_kept_or_told(api: &Api, id: &str, report: &str) {
+    if report.contains("staged lost") {
+        let (code, problems) = api.call("GET", "/api/problems", None).await;
+        assert_eq!(code, 200, "{problems}");
+        let said = problems["problems"].as_array().unwrap().iter().any(|p| {
+            p["workspace"] == id
+                && p["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("no longer staged"))
+        });
+        assert!(
+            said,
+            "the staged file was lost and no problem says so: {problems}"
+        );
+    }
+}
+
 /// Stops and deletes workspace `id` through the API, as a user does, and waits until it is gone.
 async fn delete_workspace(api: &Api, id: &str) {
+    let mut events = api.events().await;
     let (code, body) = api
         .call("POST", &format!("/api/workspaces/{id}/stop"), None)
         .await;
     assert_eq!(code, 202, "{body}");
-    eventually_async("the workspace stops", START_WAIT, || async {
-        let w = api.workspace(id).await;
-        w["status"] == "stopped" && w["busy"].is_null()
-    })
-    .await;
+    let end = events.ended(id, START_WAIT).await;
+    assert_eq!(end["step"], "done", "the stop: {end}");
     let (_, check) = api
         .call("GET", &format!("/api/workspaces/{id}/delete-check"), None)
         .await;
@@ -346,15 +421,9 @@ async fn delete_workspace(api: &Api, id: &str) {
             Some(&json!({"confirm": true, "fingerprint": check["fingerprint"]})),
         )
         .await;
-    assert!(code == 202 || code == 200 || code == 204, "{code} {body}");
-    eventually_async("the workspace is deleted", START_WAIT, || async {
-        let (code, list) = api.call("GET", "/api/workspaces", None).await;
-        code == 200
-            && !list["workspaces"]
-                .as_array()
-                .is_some_and(|l| l.iter().any(|w| w["id"] == id))
-    })
-    .await;
+    assert_eq!(code, 202, "{body}");
+    let end = events.ended(id, START_WAIT).await;
+    assert_eq!(end["step"], "done", "the delete: {end}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -381,6 +450,7 @@ async fn vm_serve_sigkill_keeps_the_commits_and_the_next_start_recovers_the_work
 
     // S1: a workspace with work worth losing.
     let first = Serve::start(&exe, &data).await;
+    let mut events = first.api.events().await;
     let (status, made) = first
         .api
         .call(
@@ -391,7 +461,9 @@ async fn vm_serve_sigkill_keeps_the_commits_and_the_next_start_recovers_the_work
         .await;
     assert_eq!(status, 202, "{made}");
     let id = made["id"].as_str().unwrap().to_owned();
-    first.api.until_running(&id, CREATE_WAIT).await;
+    let end = events.ended(&id, CREATE_WAIT).await;
+    assert_eq!(end["step"], "done", "the create: {end}");
+    drop(events);
     let folder = puddle_workspace::Layout::new(&puddle_types::WorkspaceId::new(&id).unwrap())
         .unwrap()
         .mount()
@@ -437,31 +509,20 @@ async fn vm_serve_sigkill_keeps_the_commits_and_the_next_start_recovers_the_work
         status == "crashed" || status == "stopped",
         "after the kill the workspace shows {status}: {shown}"
     );
+    let mut events = second.api.events().await;
     let (code, body) = second
         .api
         .call("POST", &format!("/api/workspaces/{id}/start"), None)
         .await;
     assert_eq!(code, 202, "{body}");
-    second.api.until_running(&id, START_WAIT).await;
+    let end = events.ended(&id, START_WAIT).await;
+    assert_eq!(end["step"], "done", "the start after the kill: {end}");
+    drop(events);
     let report = in_guest(&runtime_dir, &data, &id, READ_WORK, &folder);
     eprintln!("after the restart:\n{report}");
     assert!(report.contains(&format!("count {COMMITS}\n")), "{report}");
     assert!(report.contains("fsck clean\n"), "{report}");
-    if report.contains("staged lost") {
-        let (code, problems) = second.api.call("GET", "/api/problems", None).await;
-        assert_eq!(code, 200, "{problems}");
-        let said = problems["problems"].as_array().unwrap().iter().any(|p| {
-            p["workspace"] == id.as_str()
-                && p["detail"]
-                    .as_str()
-                    .is_some_and(|d| d.contains("no longer staged"))
-        });
-        assert!(
-            said,
-            "the staged file was lost and no problem says so: {problems}"
-        );
-    }
-
+    staged_kept_or_told(&second.api, &id, &report).await;
     delete_workspace(&second.api, &id).await;
     second.stop();
 }

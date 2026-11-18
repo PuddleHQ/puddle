@@ -222,12 +222,7 @@
     gap: var(--space-3);
     cursor: pointer;
   }
-  .choice input {
-    flex: none;
-    width: 1.5rem;
-    height: 1.5rem;
-    margin: 0;
-  }
+
   .chip {
     padding: 0 var(--space-2);
     border: 1px solid var(--color-border);

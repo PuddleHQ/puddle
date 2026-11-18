@@ -78,39 +78,48 @@
   {/if}
   <form onsubmit={submit} autocomplete="off">
     <div class="row">
-      <label for="{id}-proxy">Proxy</label>
-      <input
-        id="{id}-proxy"
-        type="text"
-        list="{id}-proxies"
-        placeholder="proxy.example.com:8080"
-        bind:value={proxy}
-        oninput={() => (saved = false)}
-        required
-      />
+      <div class="form-field">
+        <label for="{id}-proxy">Proxy</label>
+        <input
+          class="input-medium"
+          id="{id}-proxy"
+          type="text"
+          list="{id}-proxies"
+          placeholder="proxy.example.com:8080"
+          bind:value={proxy}
+          oninput={() => (saved = false)}
+          required
+        />
+      </div>
       <datalist id="{id}-proxies">
         {#each store.suggestions as name (name)}
           <option value={name}></option>
         {/each}
       </datalist>
-      <label for="{id}-user">User name</label>
-      <input
-        id="{id}-user"
-        type="text"
-        autocomplete="off"
-        bind:value={user}
-        oninput={() => (saved = false)}
-        required
-      />
-      <label for="{id}-password">Password</label>
-      <input
-        id="{id}-password"
-        type="password"
-        autocomplete="new-password"
-        bind:value={password}
-        oninput={() => (saved = false)}
-        required
-      />
+      <div class="form-field">
+        <label for="{id}-user">User name</label>
+        <input
+          class="input-medium"
+          id="{id}-user"
+          type="text"
+          autocomplete="off"
+          bind:value={user}
+          oninput={() => (saved = false)}
+          required
+        />
+      </div>
+      <div class="form-field">
+        <label for="{id}-password">Password</label>
+        <input
+          class="input-medium"
+          id="{id}-password"
+          type="password"
+          autocomplete="new-password"
+          bind:value={password}
+          oninput={() => (saved = false)}
+          required
+        />
+      </div>
     </div>
     <div class="row">
       <button type="submit" class="btn primary" disabled={working}
@@ -150,16 +159,6 @@
   }
   label {
     font-weight: 600;
-  }
-  input {
-    width: 12rem;
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
   }
   .desc,
   .muted {

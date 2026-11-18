@@ -79,12 +79,42 @@ try {
     }
     reports.push({ at: Date.now(), visible: body.visible, kind: body.kind });
   });
+  // What the page and the network said, kept for the failure message: a first report that never
+  // comes is otherwise a bare timeout (it happened twice on 2026-11-18 with nothing to read).
+  const trail = [];
+  const note = (line) => trail.push(`${new Date().toISOString()} ${line}`.slice(0, 300));
+  page.on("Runtime.exceptionThrown", ({ exceptionDetails: d }) => note(`exception: ${d.text} ${d.exception?.description ?? ""}`));
+  page.on("Runtime.consoleAPICalled", ({ type, args }) => {
+    if (type === "error" || type === "warning") note(`console.${type}: ${args.map((a) => a.value ?? a.description).join(" ")}`);
+  });
+  page.on("Network.loadingFailed", ({ errorText, requestId }) => note(`request ${requestId} failed: ${errorText}`));
+  page.on("Page.frameNavigated", ({ frame }) => {
+    if (!frame.parentId) note(`navigated to ${frame.url}`);
+  });
+  page.on("Page.loadEventFired", () => note("load event"));
+  await page.send("Runtime.enable");
+  await page.send("Page.enable");
   await page.send("Network.enable");
-  // The reporter starts when the layout mounts, which may be before Network was enabled; a reload
-  // makes the first report certain to be seen, and the next one is the timer's.
+  const describePage = () =>
+    page
+      .evaluate(
+        `JSON.stringify({ url: location.href, readyState: document.readyState, title: document.title, token: typeof window.__PUDDLE__, body: (document.body?.innerText ?? "").slice(0, 200) })`,
+      )
+      .catch((err) => `unreadable: ${err}`);
+  // The window is found while its first navigation may still be in flight (the target list shows the
+  // address being loaded), and a reload then restarts the wrong document. Reloading only after the
+  // first document has loaded leaves nothing to race, and the reload still makes the first report
+  // certain to be seen: the reporter may have run before Network was enabled, and its next one is
+  // the timer's 30 s away.
+  await until("the first document to finish loading", async () => {
+    const now = JSON.parse(await describePage());
+    return now.readyState === "complete" && now.url.startsWith("http:");
+  }, 60_000);
   await page.send("Page.reload");
 
-  await until("the first report", async () => reports.length >= 1, 60_000);
+  await until("the first report", async () => reports.length >= 1, 60_000).catch(async (err) => {
+    throw new Error(`${err.message}; page: ${await describePage()}; ${trail.length} events:\n  ${trail.slice(-20).join("\n  ")}`);
+  });
   check("the desktop window reports as kind desktop", reports[0].kind === "desktop", JSON.stringify(reports[0]));
   const timerSeen = await until("a second report from the timer", async () => reports.length >= 2, 45_000).catch(() => false);
   check("a visible window reports on its 30 s timer", timerSeen && reports[1].at - reports[0].at <= STALE_MS, JSON.stringify(reports));

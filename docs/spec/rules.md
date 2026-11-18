@@ -87,6 +87,14 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
 - **R-12 Pending rows are immutable:** `id`, `workspace_id`, `host`, `port` and
   `first_seen` never change after insert; ids are never reused. Only `last_seen`, `attempts`,
   `state`, `decided_at`, `decided_by` and `rule_id` change, and `state` only along the arrows above.
+- **R-12a Undoing a decision lists the request again.** `POST /api/rules/{id}/undo` deletes the
+  rule and, for every row that rule closed (`rule_id` is the rule, state `allowed` or `denied`),
+  opens a new row with the same workspace, host, port, `first_seen`, `last_seen` and `attempts`, so
+  it sorts where the old one did and carries the same blocked state. The closed rows stay as they
+  were (R-12). A host that already has an open row (its workspace asked again meanwhile) gets no
+  second one. Each new row is a `pending_created` audit record and a `pending_opened` event. Plain
+  `DELETE /api/rules/{id}` stays a delete: it never reopens anything. A connection the proxy held
+  is answered when the decision is made, so the reopened row waits for the workspace's next try.
 - **R-44 Volume never refuses a request.** A request no rule matches is never denied, dropped or
   hidden because its workspace asks about many hosts: no rate limit slows new rows, and nothing is
   written to the audit as "held back". It is recorded and waits like any other.

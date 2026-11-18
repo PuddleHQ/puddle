@@ -44,7 +44,7 @@
     clearTimeout(typing);
     typing = setTimeout(() => {
       void store.load({ identity: identity.id, query: search.trim() }, true);
-    }, 250);
+    }, 150);
   }
 
   const listing = $derived(store.listing);

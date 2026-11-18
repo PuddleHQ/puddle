@@ -1231,6 +1231,8 @@ fn an_upgrade_waits_out_another_process_holding_the_file_longer_than_a_normal_wr
     let holder = Connection::open(&path).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     let release = std::thread::spawn(move || {
+        // Ordering with no signal: the upgrade's wait runs inside SQLite's own busy timeout, which
+        // offers no hook, so the holder must outlast the 50 ms normal timeout by a clear margin.
         std::thread::sleep(std::time::Duration::from_millis(600));
         holder.execute_batch("COMMIT").unwrap();
     });

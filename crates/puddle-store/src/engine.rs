@@ -3,6 +3,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
 
@@ -189,26 +190,91 @@ impl<'a> Hit<'a> {
     }
 }
 
-/// Where a pattern points in the index.
-#[derive(Debug, Clone, Copy)]
-enum Slot {
-    Rule(usize),
-    Entry(usize),
+/// Entries indexed by pattern, for exact and suffix lookup. The built-in part is one of these,
+/// built once and shared by every [`RuleIndex`] (S8); a snapshot adds its own for System managed.
+#[derive(Debug, Default)]
+pub(crate) struct EntryIndex {
+    entries: Vec<SetEntry>,
+    /// Exact patterns and suffix bases (`.example.com` stored under `example.com`) to positions.
+    exact: HashMap<String, Vec<usize>>,
+    suffix: HashMap<String, Vec<usize>>,
+}
+
+impl EntryIndex {
+    pub(crate) fn new(entries: Vec<SetEntry>) -> Self {
+        let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut suffix: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, entry) in entries.iter().enumerate() {
+            index_pattern(&mut exact, &mut suffix, &entry.pattern, index);
+        }
+        Self {
+            entries,
+            exact,
+            suffix,
+        }
+    }
+
+    /// Entries whose pattern matches `host`: its exact entry, then every proper suffix.
+    fn matching<'a>(&'a self, host: &Host) -> impl Iterator<Item = &'a SetEntry> + 'a {
+        positions(&self.exact, &self.suffix, host).filter_map(|index| self.entries.get(index))
+    }
+}
+
+fn index_pattern(
+    exact: &mut HashMap<String, Vec<usize>>,
+    suffix: &mut HashMap<String, Vec<usize>>,
+    pattern: &Pattern,
+    position: usize,
+) {
+    match pattern {
+        Pattern::Exact(host) => exact.entry(host.to_string()).or_default().push(position),
+        Pattern::Suffix(s) => suffix
+            .entry(s.base().as_str().to_owned())
+            .or_default()
+            .push(position),
+    }
+}
+
+/// Positions whose pattern matches `host`: its exact entry, then every proper suffix.
+fn positions<'a>(
+    exact: &'a HashMap<String, Vec<usize>>,
+    suffix: &'a HashMap<String, Vec<usize>>,
+    host: &Host,
+) -> impl Iterator<Item = usize> + 'a {
+    let exact_hits = exact.get(&host.to_string()).into_iter().flatten().copied();
+    let suffixes: Vec<usize> = match host {
+        Host::Name(name) => {
+            let text = name.as_str();
+            text.match_indices('.')
+                .filter_map(|(dot, _)| text.get(dot + 1..))
+                .filter_map(|base| suffix.get(base))
+                .flatten()
+                .copied()
+                .collect()
+        }
+        Host::Ip(_) => Vec::new(),
+    };
+    exact_hits.chain(suffixes)
 }
 
 /// An immutable snapshot of every rule, set entry, switch and workspace user, indexed for
 /// matching. The store replaces it whole after each committed change (R-8), so a decision never
-/// sees half a change.
+/// sees half a change. The built-in entries are not part of what it builds: it shares one
+/// [`EntryIndex`], so a change re-indexes only rules and System managed entries (S8).
 #[derive(Debug, Default)]
 pub(crate) struct RuleIndex {
     rules: Vec<Rule>,
-    entries: Vec<SetEntry>,
+    rule_exact: HashMap<String, Vec<usize>>,
+    rule_suffix: HashMap<String, Vec<usize>>,
+    /// System managed entries (and, in tests, any entries given to [`RuleIndex::new`]).
+    system: EntryIndex,
+    /// The built-in sets' entries, shared by every snapshot.
+    built_in: Arc<EntryIndex>,
+    /// Slugs of built-in sets that are hidden: their shared entries decide nothing.
+    hidden: HashSet<String>,
     switches: Switches,
     /// Each workspace's user. A workspace with none is nobody's: no rule decides for it.
     owners: HashMap<WorkspaceId, UserId>,
-    /// Exact patterns and suffix bases (`.example.com` stored under `example.com`) to slots.
-    exact: HashMap<String, Vec<Slot>>,
-    suffix: HashMap<String, Vec<Slot>>,
 }
 
 /// How the rules that match a request are ranked (R-60): precedence first, then pattern
@@ -243,37 +309,41 @@ fn key(hit: Hit<'_>) -> Key {
 }
 
 impl RuleIndex {
-    /// Indexes rule rows, built-in and System managed entries, the switches and who owns which
-    /// workspace.
+    /// Indexes rule rows, set entries, the switches and who owns which workspace. All `entries`
+    /// are indexed here; the store passes only System managed ones and shares the built-in part
+    /// through [`RuleIndex::with_built_in`].
     pub(crate) fn new(
         rules: Vec<Rule>,
         entries: Vec<SetEntry>,
         switches: Switches,
         owners: HashMap<WorkspaceId, UserId>,
     ) -> Self {
-        let mut exact: HashMap<String, Vec<Slot>> = HashMap::new();
-        let mut suffix: HashMap<String, Vec<Slot>> = HashMap::new();
-        let mut add = |pattern: &Pattern, slot: Slot| match pattern {
-            Pattern::Exact(host) => exact.entry(host.to_string()).or_default().push(slot),
-            Pattern::Suffix(s) => suffix
-                .entry(s.base().as_str().to_owned())
-                .or_default()
-                .push(slot),
-        };
+        let mut rule_exact = HashMap::new();
+        let mut rule_suffix = HashMap::new();
         for (index, rule) in rules.iter().enumerate() {
-            add(&rule.pattern, Slot::Rule(index));
-        }
-        for (index, entry) in entries.iter().enumerate() {
-            add(&entry.pattern, Slot::Entry(index));
+            index_pattern(&mut rule_exact, &mut rule_suffix, &rule.pattern, index);
         }
         Self {
             rules,
-            entries,
+            rule_exact,
+            rule_suffix,
+            system: EntryIndex::new(entries),
+            built_in: Arc::default(),
+            hidden: HashSet::new(),
             switches,
             owners,
-            exact,
-            suffix,
         }
+    }
+
+    /// Shares `built_in` (the entries of every built-in set) and hides the sets named in `hidden`.
+    pub(crate) fn with_built_in(
+        mut self,
+        built_in: Arc<EntryIndex>,
+        hidden: HashSet<String>,
+    ) -> Self {
+        self.built_in = built_in;
+        self.hidden = hidden;
+        self
     }
 
     /// The user `workspace` belongs to, or `None` when it is nobody's.
@@ -310,7 +380,13 @@ impl RuleIndex {
     /// The built-in and System managed entries.
     #[cfg(test)]
     pub(crate) fn entries(&self) -> &[SetEntry] {
-        &self.entries
+        &self.system.entries
+    }
+
+    /// The shared built-in entries.
+    #[cfg(test)]
+    pub(crate) fn built_in(&self) -> &Arc<EntryIndex> {
+        &self.built_in
     }
 
     /// The switches.
@@ -392,35 +468,21 @@ impl RuleIndex {
         best.map(|(_, hit)| hit)
     }
 
-    /// Rows and entries whose pattern matches `host`: its exact entry, then every proper suffix.
+    /// Rows and entries whose pattern matches `host`: its exact entry, then every proper suffix,
+    /// for own rules, then System managed entries, then the shared built-in ones.
     fn candidates<'a>(&'a self, host: &Host) -> impl Iterator<Item = Hit<'a>> + 'a {
-        self.slots(host).filter_map(|slot| match slot {
-            Slot::Rule(index) => self.rules.get(index).map(Hit::Rule),
-            Slot::Entry(index) => self.entries.get(index).map(Hit::Entry),
-        })
-    }
-
-    /// Slots whose pattern matches `host`: its exact entry, then every proper suffix.
-    fn slots<'a>(&'a self, host: &Host) -> impl Iterator<Item = Slot> + 'a {
-        let exact = self
-            .exact
-            .get(&host.to_string())
-            .into_iter()
-            .flatten()
-            .copied();
-        let suffixes: Vec<Slot> = match host {
-            Host::Name(name) => {
-                let text = name.as_str();
-                text.match_indices('.')
-                    .filter_map(|(dot, _)| text.get(dot + 1..))
-                    .filter_map(|base| self.suffix.get(base))
-                    .flatten()
-                    .copied()
-                    .collect()
-            }
-            Host::Ip(_) => Vec::new(),
-        };
-        exact.chain(suffixes)
+        let rules = positions(&self.rule_exact, &self.rule_suffix, host)
+            .filter_map(|index| self.rules.get(index).map(Hit::Rule));
+        let built_in = self
+            .built_in
+            .matching(host)
+            .filter(|entry| {
+                !matches!(entry.set, RuleSetId::BuiltIn(slug) if self.hidden.contains(slug))
+            })
+            .map(Hit::Entry);
+        rules
+            .chain(self.system.matching(host).map(Hit::Entry))
+            .chain(built_in)
     }
 }
 

@@ -123,6 +123,7 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
             "DELETE /api/proxy-sign-ins/{proxy} Install",
             "DELETE /api/rule-sets/{id} Own",
             "GET /api/identities/{id} Own",
+            "GET /api/rule-sets/{id}/entries Own",
             "POST /api/admin/users/{id}/invite Install",
             "POST /api/orphan-volumes/{id}/restore Install",
             "PUT /api/consents/{kind} Install",

@@ -979,6 +979,34 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     host.shutdown().await;
 }
 
+/// A delete that removed every leftover of its workspace says so in the saved list, so the first
+/// start after it does not clean the id up a second time.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_cleaned_everything_is_not_cleaned_again_by_the_next_start() {
+    let rig = Rig::named_ids();
+    *rig.deletes.counted.lock().unwrap() = Some(WorkspaceId::new("acme").unwrap());
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    let book = read_list(&rig);
+    assert_eq!(book["cleaned_ids"], json!(["acme"]), "{book}");
+    let after_delete = rig.deletes.count.load(Ordering::SeqCst);
+    assert!(after_delete > 0, "the delete removed no saved login");
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    assert_eq!(
+        rig.deletes.count.load(Ordering::SeqCst),
+        after_delete,
+        "the first start after the delete cleaned the id up again"
+    );
+}
+
 /// The clean-up of deleted workspaces runs in the background at start: a credential store that
 /// holds it up never holds up a quit, and an id whose leftovers are all gone is not cleaned again
 /// at every later start.

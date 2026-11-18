@@ -919,28 +919,51 @@ async fn hostile_deleting_the_owners_pasted_token_removes_nothing() {
     shut_down(pair).await;
 }
 
-/// The accounts signed in on the computer are the owner's.
+/// The accounts signed in on the computer are the owner's: every kind of source that reads one
+/// (the GitHub CLI, Git's credential helper, the Azure CLI) is refused on every route that takes
+/// a source, and listing them and signing in are refused too. The owner is the control.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hostile_the_accounts_signed_in_on_the_computer_are_the_owners_alone() {
     let pair = pair().await;
-    let (ann, token) = (pair.ann.0, pair.token.as_str());
-    let gh = json!({"kind": "gh", "host": "github.com", "account": "me"});
-    for (method, path, body) in [
-        ("GET", "/api/credentials/found", None),
-        (
-            "POST",
-            "/api/credentials/sign-in",
-            Some(json!({"source": gh})),
-        ),
-        (
-            "POST",
-            "/api/credentials/check",
-            Some(json!({"source": gh})),
-        ),
-        ("POST", "/api/identities", Some(identity_body("Gh", &gh))),
-    ] {
-        let (status, answer) = send(ann, token, method, path, body.as_ref()).await;
-        assert_eq!(status, 403, "{method} {path}: {answer}");
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let sources = [
+        json!({"kind": "gh", "host": "github.com", "account": "me"}),
+        json!({"kind": "git_credential", "host": "github.com", "path": "acme", "username": null}),
+        json!({"kind": "az_cli", "tenant": "contoso.onmicrosoft.com", "org": "contoso"}),
+    ];
+    let (status, answer) = send(ann, token, "GET", "/api/credentials/found", None).await;
+    assert_eq!(status, 403, "GET found: {answer}");
+    for source in &sources {
+        for (method, path, body) in [
+            (
+                "POST",
+                "/api/credentials/sign-in",
+                json!({ "source": source }),
+            ),
+            (
+                "POST",
+                "/api/credentials/check",
+                json!({ "source": source }),
+            ),
+            (
+                "POST",
+                "/api/credentials/profile",
+                json!({ "source": source }),
+            ),
+            ("POST", "/api/identities", {
+                let mut body = identity_body("Own", source);
+                if source["kind"] == "az_cli" {
+                    body["credentials"][0]["host"] = json!("dev.azure.com");
+                    body["credentials"][0]["covers"]["owners"] = json!(["contoso"]);
+                }
+                body
+            }),
+        ] {
+            let (status, answer) = send(ann, token, method, path, Some(&body)).await;
+            assert_eq!(status, 403, "{method} {path} {source}: {answer}");
+            let (status, _) = send(owner, token, method, path, Some(&body)).await;
+            assert_ne!(status, 403, "the owner is refused {method} {path} {source}");
+        }
     }
     shut_down(pair).await;
 }

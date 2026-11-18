@@ -204,6 +204,18 @@ struct Slot {
     /// What `conclude` adds to the audit record of the delete that is running: set when the
     /// workspace's volume was already gone.
     delete_note: Option<&'static str>,
+    /// Set by a delete whose clean-up found every leftover of the id gone: `conclude` then notes
+    /// the retired id as cleaned, so the next start does not do it again.
+    leftovers: Leftovers,
+}
+
+/// What a delete's clean-up found outside the runtime.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Leftovers {
+    /// Not looked at yet, or something stayed: the sweep at the next start tries again.
+    Unknown,
+    /// Every leftover of the id was gone.
+    Gone,
 }
 
 impl Slot {
@@ -214,6 +226,7 @@ impl Slot {
             deleting: false,
             volume_missing: false,
             delete_note: None,
+            leftovers: Leftovers::Unknown,
         }
     }
 }

@@ -17,6 +17,8 @@ trap 'rm -rf "$root"' EXIT
 repo=$root/repo
 mkdir -p "$repo/scripts" "$repo/crates/fixture/src"
 cp "$here/check.sh" "$here/gate-sched.sh" "$repo/scripts/"
+# the repository's toolchain, so rustup has a version to run outside the repository (a host with no default toolchain)
+cp "$here/../rust-toolchain.toml" "$repo/"
 cat >"$repo/Cargo.toml" <<'T'
 [workspace]
 members = ["crates/fixture"]

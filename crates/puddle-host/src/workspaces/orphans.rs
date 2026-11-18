@@ -12,8 +12,8 @@ use puddle_types::VolumeName;
 use puddle_workspace::{CheckoutList, FoundCheckout};
 
 use super::{
-    CheckoutDir, DisplayName, EntryId, GitSetup, HostWorkspaces, Problem, Repository, Runtime,
-    SAVE_HINT, Slot, State, WorkspaceError, WorkspaceId, WorkspaceRecord, WorkspaceStatus,
+    CheckoutDir, DisplayName, EntryId, GitSetup, HostWorkspaces, Leftovers, Problem, Repository,
+    Runtime, SAVE_HINT, Slot, State, WorkspaceError, WorkspaceId, WorkspaceRecord, WorkspaceStatus,
 };
 
 /// The key of the problem that names the unclaimed disks.
@@ -264,6 +264,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     deleting: false,
                     volume_missing: false,
                     delete_note: None,
+                    leftovers: Leftovers::Unknown,
                 },
             );
             if let Err(e) = self.persist(&state) {

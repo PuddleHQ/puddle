@@ -11,7 +11,7 @@ use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
 
 use super::access::Undo;
 use super::boot::BootFor;
-use super::{HostWorkspaces, Live, RuntimeNames, State, problem_key};
+use super::{HostWorkspaces, Leftovers, Live, RuntimeNames, State, problem_key};
 use crate::boot::BootKit;
 use crate::op_error::OpError;
 
@@ -435,10 +435,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        // A step that failed is a notice; the sweep at the next start tries it again.
-        let _ = self
+        // A step that failed is a notice; the sweep at the next start tries it again. When all
+        // went, `conclude` notes the id as cleaned and the next start skips it.
+        let gone = self
             .forget_leftovers(&record.id, record.name.as_str())
             .await;
+        if gone && let Some(slot) = self.state().slots.get_mut(&record.id) {
+            slot.leftovers = Leftovers::Gone;
+        }
         Ok(())
     }
 

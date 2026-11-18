@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, test-hooks, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks   (pre-commit hook)
-#   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all      = fast quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
 #              the day's advisory databases and not on the change, plus diff-coverage-fast right after the fast gates
@@ -192,7 +192,7 @@ run_gate() {
     hooks)
         scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/check-spdx-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/check-az-contract-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh &&
+            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/check-az-contract-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh && ci/fetch-real-tools-test.sh && ci/github-rest/check-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/fake-host-starved-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
             ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh &&
@@ -239,13 +239,21 @@ run_gate() {
     test-hooks) scripts/check-test-hooks.sh --self-test && scripts/check-test-hooks.sh ;;
     secrets)
         # gitleaks with the reviewed allowlist (.gitleaks.toml) over HEAD's commits its base lacks
-        # (every ref when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
+        # (all of HEAD's history when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
         # gitleaks on PATH (ci/fetch-gitleaks.sh). Not in `fast`: it scans commits.
         scripts/check-secrets.sh --self-test && scripts/check-secrets.sh
         ;;
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
+        ;;
+    dormant)
+        # the build that ships (default features, so the `serve` and `mise` cargo features
+        # are off) shows nothing of `puddle serve`, mise or the built-in mise rule set: not in the
+        # CLI help or usage, not in the rule list, and no stored switch turns the layer on. The
+        # `test` gate runs these tests with every feature on, where they check the opposite.
+        "$cargo" test --locked -p puddle --test dormant
+        "$cargo" test --locked -p puddle-api --test api_http nothing_of_the_mise_layer_shows_in_a_build_without_it
         ;;
     clippy-windows)
         # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)
@@ -485,7 +493,7 @@ run_gate() {
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
 fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes test-hooks"
-all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
+all_gates="$fast_gates quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"
 for g in $all_gates; do

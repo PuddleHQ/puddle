@@ -85,3 +85,40 @@ fn a_second_report_in_the_same_millisecond_of_one_process_is_refused_not_overwri
 fn pruning_a_folder_that_is_gone_does_nothing() {
     prune(&tempfile::tempdir().unwrap().path().join("gone"), 1);
 }
+
+#[test]
+fn a_start_up_failure_is_written_where_the_user_can_find_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("not-yet");
+    let path = write_startup_error(&folder, "the backend didn't start: port taken").unwrap();
+    assert_eq!(path, folder.join(STARTUP_ERROR_FILE));
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("Puddle did not start"), "{text}");
+    assert!(
+        text.contains("the backend didn't start: port taken"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_later_start_up_failure_replaces_the_earlier_one() {
+    let dir = tempfile::tempdir().unwrap();
+    write_startup_error(dir.path(), "first").unwrap();
+    let path = write_startup_error(dir.path(), "second").unwrap();
+    let text = fs::read_to_string(path).unwrap();
+    assert!(text.contains("second") && !text.contains("first"), "{text}");
+}
+
+#[test]
+fn the_message_names_the_reason_and_the_file() {
+    let shown = startup_message("port taken", Some(Path::new("/data/startup-error.txt")));
+    assert!(
+        shown.contains("port taken") && shown.contains("/data/startup-error.txt"),
+        "{shown}"
+    );
+    let without = startup_message("port taken", None);
+    assert!(
+        without.contains("port taken") && !without.contains("startup-error"),
+        "{without}"
+    );
+}

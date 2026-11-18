@@ -18,7 +18,8 @@
 //! - a raw TCP connection to port 22 of an unknown name makes a row for `<host>:22` at once.
 //!
 //! The sites are a fake website behind a fake company proxy (`web_internet`), so no result here
-//! depends on a public site.
+//! depends on a public site. The `nc` the last step needs is Debian's, saved from the real mirror
+//! on the first run and served from the fake website after that (`vm_support::PackageKit`).
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -37,6 +38,7 @@ use puddle_test_kit::eventually;
 use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, named_id_options};
+use vm_support::kit::{Flavour, KIT_HOST, PackageKit};
 use vm_support::{VmHost, create_workspace_from, guest_as, start_vm_host_platform, web_internet};
 
 /// The host every step starts from: nothing allows it.
@@ -292,15 +294,40 @@ async fn loopback_listener() -> u16 {
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
-    let sites = [ASKED, BELOW, DENIED, GOOD, BAD, METHODS];
-    let net = web_internet(&sites, WebOptions::default(), named_id_options()).await;
+    // The image ships no `nc`; the test brings Debian's, through the proxy, as any tool would:
+    // from the saved package files on a warm cache, from Debian's mirrors on the first run.
+    let kit = PackageKit::open(
+        Flavour::Apt,
+        puddle_api::DEFAULT_IMAGE,
+        "netcat-openbsd",
+        "deb.debian.org and security.debian.org",
+    );
+    let sites = [ASKED, BELOW, DENIED, GOOD, BAD, METHODS, KIT_HOST];
+    let net = web_internet(
+        &sites,
+        kit.options(WebOptions::default()),
+        named_id_options(),
+    )
+    .await;
     let vm = start_vm_host_platform("rprb", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let extra = || json!({"memory_mib": 512});
     let a = Guest {
-        id: create_workspace_from(&vm, &api, "rpa", &[], extra()).await,
+        id: create_workspace_from(
+            &vm,
+            &api,
+            "rpa",
+            &[KIT_HOST, "deb.debian.org", "security.debian.org"],
+            extra(),
+        )
+        .await,
         label: "A",
     };
+    let installed = kit.install(&vm, &a.id, "command -v nc").await;
+    assert!(
+        installed.trim_end().ends_with("/nc"),
+        "netcat is not usable: {installed}"
+    );
     let b = Guest {
         id: create_workspace_from(&vm, &api, "rpb", &[], extra()).await,
         label: "B",
@@ -319,7 +346,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
         t.check(
             seen.body
                 == format!(
-                    "{ASKED} is waiting for approval in Puddle; approve it there, then retry"
+                    "puddle: {ASKED} is waiting for approval in Puddle; approve it there, then retry"
                 ),
             "S1",
             "the body is the waiting-for-approval text",
@@ -381,7 +408,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
         );
     }
     t.check(
-        plain.body == format!("{DENIED} is denied by a rule (rule {deny_id})"),
+        plain.body == format!("puddle: {DENIED} is denied by a rule (rule {deny_id})"),
         "S6",
         &format!("the body names rule {deny_id}"),
         &plain,
@@ -524,7 +551,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
         &t.vm.runtime,
         &t.a.id,
         "agent",
-        &format!("command -v nc; nc -vz -w 5 {SSH_HOST} 22; echo \"exit=$?\""),
+        &format!("nc -vz -w 5 {SSH_HOST} 22; echo \"exit=$?\""),
         Duration::from_secs(60),
     )
     .await;

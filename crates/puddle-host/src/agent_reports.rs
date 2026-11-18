@@ -100,7 +100,13 @@ pub(crate) fn entrypoint_problem(id: &WorkspaceId, name: &str, failure: &str) ->
     let failure: String = failure
         .chars()
         .take(MAX_FAILURE_CHARS)
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if puddle_agent_proto::is_hostile_text_char(c) {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect();
     Problem::new(
         entrypoint_key(id),

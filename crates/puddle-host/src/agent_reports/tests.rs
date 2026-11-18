@@ -691,3 +691,13 @@ async fn a_stop_arriving_while_a_report_raises_its_problem_ends_it_afterwards() 
     )
     .await;
 }
+
+#[test]
+fn an_entrypoint_tail_cannot_reorder_or_hide_the_problem_text() {
+    let problem = entrypoint_problem(&name("box"), SHOWN, "1: ok\u{202e}exe.txt\u{200b}");
+    assert!(
+        problem.detail.contains("1: ok?exe.txt?."),
+        "{}",
+        problem.detail
+    );
+}

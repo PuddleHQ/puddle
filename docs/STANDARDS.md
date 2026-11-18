@@ -26,7 +26,7 @@ different crates and rarely collides.
 | `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list, and git author rules by remote (`includeIf hasconfig:remote.*.url`, one author file per rule) |
 | `crates/puddle-netpolicy` | lib | The destination guard: strict host-name normalisation (IDNA, LDH, canonical IPs), address classes, the local-destination toggles and wildcard rule, the company-network category (the host's signals decide, through `CompanySignals`; the category is empty until the host supplies them), the registry of Puddle's own endpoints, block messages. Pure policy, no network I/O |
 | `crates/puddle-ca` | lib | The per-workspace CA for credential injection: no name constraint (the decrypt set is the limit), `pathLen 0`, DNS names only, a key that is never exported or serialised, a bounded leaf cache per workspace, the guest trust bundle as a list of CAs. In memory only, no I/O |
-| `crates/puddle-secrets` | lib | Where the host gets a secret: a closed list of sources (signed-in `gh` account, one Git credential URL with its path, a pasted token in the OS store under Puddle's own name) behind one `Fetch` interface, run with every prompt off and a time limit; an in-memory cache with expiry; a fixed list of listing commands that return account names only. A source that needs a login is an error, never a window; only the user's own click can start a sign-in (`SignIns`: `gh auth login --web`, or Git Credential Manager allowed to open its window) |
+| `crates/puddle-secrets` | lib | Where the host gets a secret: a closed list of sources (signed-in `gh` account, one Git credential for a host and an account or URL path, a pasted token in the OS store under Puddle's own name) behind one `Fetch` interface, run with every prompt off and a time limit; an in-memory cache with expiry; a fixed list of listing commands that return account names only. A source that needs a login is an error, never a window; only the user's own click can start a sign-in (`SignIns`: `gh auth login --web`, or Git Credential Manager allowed to open its window) |
 | `crates/puddle-inject` | lib | The credential injector for Git hosts, the proxy's `Injector` hook for a workspace: reads the repository and the kind of access (fetch, push, LFS) from a request path in one canonical spelling and refuses any other, applies the workspace's push and pull lists, and adds the credential of the identity that covers the repository's owner when the request carries no `Authorization` of its own. Reads the identities and the table from the store and the secret from `puddle-secrets` at each request; holds none. A crate of its own because it needs the store, the secrets and the proxy's hook, which do not depend on one another |
 | `crates/puddle-repos` | lib | Which repositories an identity's credentials reach, and who a credential's account is: GitHub's `GET /user/repos` (paged, following `Link` only to the same host and path) and Azure DevOps' organisation-wide list for each organisation a credential names, read on the host with the credential's own token through Puddle's company-proxy route (`HostApi`: no redirect followed, answers capped), kept in memory per credential (current for ten minutes, one read at a time, a host's rate limits honoured with a doubling wait, a list that cannot be refreshed served stale with the reason). `FakeApi` (feature `testing`) scripts a host's answers for tests. A new crate because it is neither a secret source (`puddle-secrets`) nor part of the API |
 | `crates/puddle-logins` | lib | Captured logins: the built-in profiles of Claude Code and GitHub (data: token endpoints, token fields, hosts), the token-exchange rewriter that `puddle-proxy` calls for a login's token endpoint (it keeps the real tokens in the operating system's credential store, one entry for each workspace, profile and role, and gives the workspace stand-ins with the tokens' shape), and the notices when a login cannot be captured, through a trait the host implements |
@@ -46,6 +46,7 @@ different crates and rarely collides.
 | `crates/puddle-appicon` | lib | Puddle's app icons: the built-in duck icons drawn at any size (`tiny-skia`, no unsafe code), and the check and resize of an image the user gives, both ending as a square RGBA icon the shell and the Settings preview show alike |
 | `crates/puddle-no-dump` | lib | Keeps a Puddle process that holds credentials out of core files and crash dumps: `PR_SET_DUMPABLE 0` on Linux, a Windows Error Reporting exclusion on Windows; `PUDDLE_ALLOW_DUMPS=1` switches it off for diagnosis (`unsafe` only on Windows) |
 | `crates/puddle-ssh-agent` | lib | A client for the SSH agent on the host (where it listens, which keys it holds, bounded list and sign requests) and the filtered agent a workspace may be given: signatures only for a login to an allowed host over a session Puddle saw, never for a Git host's key |
+| `crates/puddle-process` | lib | Starts a child process the one way the host does: `command(program)` is `std::process::Command::new` with `CREATE_NO_WINDOW` on Windows, so a console program the desktop app (a GUI program, no console) starts gets a console without a window instead of a terminal window on the user's desktop; tokio callers wrap it with `tokio::process::Command::from`. The `spawn` gate (`scripts/check-spawn.py`) fails any other `Command::new` in host-side production code. `tests/console_window.rs` starts a probe from a process without a console and checks it gets no window (Windows) |
 | `crates/puddle-fd-limit` | lib | The open-file limit: `raise_open_file_limit` lifts the soft `RLIMIT_NOFILE` to the hard limit once at start (the guest agent also tries to lift the hard limit, as root in the guest) and `OpenFileLimit::log` says what the process got, warning when it is below what a busy workspace needs. Safe `rustix` calls on Unix; nothing to do on Windows, which has no per-process descriptor cap. Used by `puddle-agent` and `puddle-host` |
 | `crates/puddle-freshness` | lib + bin | The signed freshness file of the update list: the JSON format (statement of project, sequence, issue and expiry times, signed with Ed25519 over the exact statement text), `verify` (trusted keys, expiry, a cap on the window, a sequence ceiling, no lower sequence than one already seen), `sign` and `refresh` (the next sequence, recovering after an expired file, never restarting over a file it cannot trust), and the `puddle-freshness` command the daily `freshness` workflow runs. Holds no key: the client compiles its public keys in, the workflow reads the seed from a repository secret |
 | `crates/puddle-log` | lib | The log filter of Puddle's programs (`puddle serve`, the desktop app, the guest agent): the level `PUDDLE_LOG` asks for applies to Puddle's own crates, every other crate stays at `info` unless named (`PUDDLE_LOG=trace,hyper=debug`), so a trace log never carries a dependency's internals |
@@ -211,6 +212,13 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   draft, with a task to remove any stopgap. Prefer a maintained crate (licence- and
   `cargo deny`-clean, light tree) over our own per-OS code. Linux and macOS are separate cases:
   `cfg(unix)` is not "Linux".
+- **Child processes:** host code starts a program with `puddle_process::command(program)` (for tokio,
+  `tokio::process::Command::from(puddle_process::command(program))`), never `Command::new`. The desktop app is a Windows
+  GUI program without a console, so a console program it starts plainly opens a terminal window on the user's desktop;
+  the helper sets `CREATE_NO_WINDOW`. A caller that sets its own `creation_flags` must include
+  `puddle_process::CREATION_FLAGS`. The `spawn` gate (`scripts/check-spawn.py`, in `fast`) fails any other process
+  `Command::new` in the production code of the host crates (tests, test harnesses, the guest agent and `xtask` are out of
+  its scope); a site that must differ says why with `// spawn-ok: <reason>`.
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
   `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment, each `let _ =` outside tests a comment on the line or within three lines above (`let _ = name;` is exempt), and each `expect`
@@ -300,7 +308,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch, no CI download without a retry), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | a sibling `<module>/tests.rs`, declared `#[cfg(test)] mod tests;` (see the placement rule below) | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -569,7 +577,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips | pre-commit hook |
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks | pre-commit hook |
 | `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 
@@ -725,6 +733,46 @@ Puddle (`puddle-runtime`'s build script): at start-up `BundledRuntime::open` has
 any other bytes, so a bump of the fork tag needs its lines in `ci/msb-runtime.sha256` or the build has nothing to check
 against (`DigestStatus::Unpinned`). `PUDDLE_DEV_ANY_RUNTIME=1` (development builds) accepts other files and says so in
 `puddle doctor`.
+
+### External downloads in CI
+
+A required check must not go red because a host we do not run is down for an hour. On 2026-11-18 codeberg.org stopped
+resolving, the pinned Forgejo download failed on every pull request and on `develop`, and nothing could merge; a pip
+read timeout and a failed submodule fetch had done the same in smaller ways. So every file a workflow or a `ci/` script
+fetches from outside follows these rules:
+
+1. **Pinned and verified.** A release binary or archive is pinned by SHA-256 in a `ci/<name>.sha256` file and checked by
+   its `ci/fetch-<name>.sh` script, which refuses any other bytes. A Python package is pinned with `--require-hashes`, an
+   npm package by its lockfile, an action by commit SHA. The pin is the only trust: a file from a cache or a mirror is
+   used only when it matches.
+2. **Retried.** Every download retries for minutes, not seconds: `ci/fetch-retry.sh`'s `download` (8 tries, doubling
+   pause up to 60 s), `curl --retry`, `wget --tries`, `pip install --retries 10 --timeout 60`, PowerShell
+   `-MaximumRetryCount`. The `git-pins` gate runs `scripts/check-external-fetch.sh`, which fails a `curl`, `wget`,
+   `pip install` or `Invoke-WebRequest` in `.github/` or `ci/` that has none of these. A probe whose failure is the
+   answer (a speed test, a local server) says `fetch-ok: <reason>` on its line or in the comment right above it.
+3. **Cached.** A pinned file that a required check downloads is kept in an Actions cache keyed on its pin file
+   (`<name>-<os>-<hash of ci/<name>.sha256>`): `actions/cache/restore` before the fetch, `actions/cache/save` right after
+   a miss (not at the end of the job, so a red test still saves it), and the fetch script reads it through
+   `FETCH_CACHE_DIR` (`cache_get` and `cache_put` in `ci/fetch-retry.sh`), hashing the cached copy like a download. Once
+   one run got the file, later runs need no host at all. `ci/cache-gc.sh` keeps the newest entry of each of these groups
+   on `develop` and drops the ones a pin bump left behind.
+4. **Mirrored when the host is not GitHub.** A download from a host other than GitHub (where the runners themselves live)
+   has a second source: `download_from` in `ci/fetch-retry.sh` tries upstream three times, then the copy in a release of
+   [PuddleHQ/ci-mirror](https://github.com/PuddleHQ/ci-mirror) named `<project>-v<version>`, which holds the unmodified
+   upstream asset with its licence text and a pointer to its source. Today that is Forgejo (codeberg.org) and Gitea's
+   Windows build (dl.gitea.com). A licence that allows no redistribution (JetBrains Gateway, desktop VS Code and its
+   Marketplace packages) gets no mirror; the cache of rule 3 carries those jobs. `scripts/check-external-fetch.sh`
+   fails a `ci/fetch-*.sh` script that downloads from a host other than GitHub (in the script or in the pin file it
+   reads) and calls neither `download_from` nor `cache_get`.
+
+**Bumping a pin of a mirrored file:** upload the new asset to a new `ci-mirror` release (`gh release create
+<project>-v<version> -R PuddleHQ/ci-mirror <asset> <asset>.sha256 <licence file> <source file>`, the asset downloaded
+from upstream and checked against the new pin first) in the same change that edits the pin file. Without it the fetch
+still works while upstream is up, and fails as before when it is not.
+
+Package managers that already retry and cache on their own (`npm ci` with the setup-node cache, `cargo` with the rust
+cache, `apt-get` through `ci/apt-retry.sh`) are outside the lint; a new kind of fetch gets a retry and, when a required
+check depends on it, a cache.
 
 ## 11. Licence headers
 

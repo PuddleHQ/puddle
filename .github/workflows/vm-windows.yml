@@ -425,15 +425,32 @@ jobs:
           ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      # Microsoft allows no public mirror: a cache keyed on the pin carries the job through an outage of its download
+      # hosts once one run got the files (the script still checks each cached copy against the pin).
+      - name: VS Code download cache (keyed on the pin)
+        id: vscode-cache
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/vscode-cache
+          key: vscode-${{ runner.os }}-${{ hashFiles('ci/vscode.sha256') }}
       - name: pinned VS Code with Remote-SSH, and Playwright's driver from the UI lockfile
+        id: vscode-fetch
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: |
-          ci/fetch-vscode.sh "$RUNNER_TEMP/vscode"
+          FETCH_CACHE_DIR="$HOME/vscode-cache" ci/fetch-vscode.sh "$RUNNER_TEMP/vscode"
           (cd ui && npm ci --ignore-scripts --no-audit --no-fund)
           echo "PUDDLE_VSCODE_DIR=$(cygpath -w "$RUNNER_TEMP")\\vscode" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_BROWSER_MODULES=$(cygpath -w "$PWD")\\ui\\node_modules" >> "$GITHUB_ENV"
           echo "PUDDLE_VSCODE_OUT=$(cygpath -w "$RUNNER_TEMP")\\vscode-out" >> "$GITHUB_ENV"
+      - name: VS Code download cache (save on a miss)
+        if: steps.vscode-fetch.outcome == 'success' && steps.vscode-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/vscode-cache
+          key: ${{ steps.vscode-cache.outputs.cache-primary-key }}
       - name: the test archive from the build job
         id: archive
         if: steps.whp.outputs.ok == 'true'

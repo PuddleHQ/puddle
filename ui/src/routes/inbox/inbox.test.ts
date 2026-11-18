@@ -445,7 +445,7 @@ describe("deciding with the buttons", () => {
     });
   });
 
-  it("undoes from the toast: the rule is deleted and the page says so", async () => {
+  it("undoes from the toast: the rule is deleted and the request is listed again", async () => {
     seed();
     await ready();
     await fireEvent.click(
@@ -459,6 +459,11 @@ describe("deciding with the buttons", () => {
     expect(
       screen.queryByRole("region", { name: "Decided just now" }),
     ).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: "Allow a.example.com for demo",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("undoes from the Decided just now list", async () => {
@@ -480,7 +485,7 @@ describe("deciding with the buttons", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Allow a.example.com for demo" }),
     );
-    vi.spyOn(inbox, "DELETE").mockResolvedValue({
+    vi.spyOn(inbox, "POST").mockResolvedValue({
       response: { status: 500, ok: false },
     } as never);
     await fireEvent.click(

@@ -474,5 +474,21 @@ fn pid_of_record(recorded: Option<i32>, name: &str) -> Result<u32, HarnessError>
         })
 }
 
+/// A cache folder name for `parts`: the first 16 hex digits of the SHA-256 of their lengths and
+/// bytes. Fixed by definition, unlike `DefaultHasher`, whose algorithm std may change between
+/// releases (which would turn a CI-restored cache cold on a toolchain bump).
+#[must_use]
+pub fn cache_key(parts: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update((part.len() as u64).to_le_bytes());
+        hash.update(part.as_bytes());
+    }
+    let digest = hash.finalize();
+    let head = digest.first_chunk::<8>().copied().unwrap_or_default();
+    format!("{:016x}", u64::from_be_bytes(head))
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

@@ -59,6 +59,14 @@ paths = ['''^crates/puddle-api/src/authz/tests\.rs$''']
 regexTarget = "match"
 regexes = ['''token\W{1,4}ghp_(owners|anns)0123456789''']
 
+# History only: one commit of the app errors end-to-end test held a made-up token as a literal (it is
+# built at run time now). Allowed by that commit and path, so the value is written nowhere else.
+[[allowlists]]
+description = "the made-up token of one commit of the app errors end-to-end test"
+condition = "AND"
+paths = ['''^ui/e2e/app-errors\.spec\.ts$''']
+commits = ["07c5b0af3cea3dafc01fa86681ddf384a826edf4"]
+
 # GitHub's own REST description (the slice of it that puddle-repos tests read) names a repository
 # property `temp_clone_token` with an example value; it is a field name and a sample, not a secret.
 [[allowlists]]
@@ -67,3 +75,12 @@ condition = "AND"
 paths = ['''^crates/puddle-repos/tests/data/github-rest-slice\.json$''']
 regexTarget = "match"
 regexes = ['''temp_clone_token\W{1,4}[A-Za-z0-9_-]*''']
+
+# History only: the RFC 6455 sample nonce a terminal test once held as a literal (it is assembled
+# at run time now; see the log canary entry for why the entry stays).
+[[allowlists]]
+description = "the WebSocket sample nonce of a terminal test"
+condition = "AND"
+paths = ['''^crates/puddle-api/tests/api_http/terminals\.rs$''']
+regexTarget = "match"
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']

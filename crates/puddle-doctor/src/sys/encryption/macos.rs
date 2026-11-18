@@ -3,7 +3,6 @@
 //! data folder, and `sysctl vm.swapusage`, which ends in `(encrypted)` when swap is.
 
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 use crate::facts::{
@@ -32,7 +31,7 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
 }
 
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
-    match launch::run(Command::new(program).args(args), LIMIT) {
+    match launch::run(puddle_process::command(program).args(args), LIMIT) {
         ProcessOutcome::Exited {
             code: Some(0),
             stdout_first_line,

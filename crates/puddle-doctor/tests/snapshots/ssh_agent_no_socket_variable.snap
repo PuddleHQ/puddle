@@ -29,54 +29,65 @@ No problems found. (1.2 s)
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on (the hypervisor uses it)"
+      "summary": "on (the hypervisor uses it)",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
       "status": "ok",
-      "summary": "/dev/kvm is usable"
+      "summary": "/dev/kvm is usable",
+      "impact": "Lets Puddle start workspaces as virtual machines, walled off from this computer and from each other."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)",
+      "impact": "Puddle's runtime may run here: no security software or policy stops it."
     },
     {
       "id": "test_boot",
       "status": "ok",
-      "summary": "a test VM booted and ran a program in 1.1 s"
+      "summary": "a test VM booted and ran a program in 1.1 s",
+      "impact": "Shows that a workspace can start here: a test machine booted and ran a program."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "info",
       "summary": "no agent is named: SSH_AUTH_SOCK is not set in Puddle's session",
       "finding": "ssh_agent_missing",
-      "fix": "SSH to servers other than Git hosts gets no key from Puddle. Start your agent (ssh-agent, gpg-agent, 1Password or Bitwarden) in the session that starts Puddle so that SSH_AUTH_SOCK is set, or name its socket in the settings (`ui.ssh_agent_pipe`). Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected."
+      "fix": "SSH to servers other than Git hosts gets no key from Puddle. Start your agent (ssh-agent, gpg-agent, 1Password or Bitwarden) in the session that starts Puddle so that SSH_AUTH_SOCK is set, or name its socket in the settings (`ui.ssh_agent_pipe`). Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected.",
+      "impact": "Programs in a workspace can't use your SSH keys for servers other than Git hosts. Git over SSH still works.",
+      "remedy": "Start your SSH agent before Puddle, so SSH_AUTH_SOCK is set."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     }
   ],
   "elapsed_ms": 1234

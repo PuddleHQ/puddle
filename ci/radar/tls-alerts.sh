@@ -79,7 +79,7 @@ url="https://localhost:$port/"
 # The tool's command; `host` ones see the server at localhost, containers share the host network.
 run_tool() {
 	case $1 in
-	curl) command -v curl >/dev/null && curl -sS --max-time 20 "$url" ;;
+	curl) command -v curl >/dev/null && curl -sS --max-time 20 "$url" ;; # fetch-ok: a local test server, the failure is the finding
 	node) command -v node >/dev/null && node "$work/probe.js" "$url" ;;
 	python) command -v python3 >/dev/null && python3 "$work/probe.py" "$url" ;;
 	go) docker run --rm --network host -v "$work:/w:ro" -w /tmp golang:1.24-alpine go run /w/probe.go "$url" ;;

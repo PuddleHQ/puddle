@@ -238,6 +238,9 @@
       <button type="submit" class="btn" disabled={busy || !store.running}
         >Forward</button
       >
+      {#if !store.running}
+        <span class="why">Start the workspace to forward a port.</span>
+      {/if}
     </form>
     {#if formProblem}
       <p class="error" id="{fid}-form-error" role="alert">{formProblem}</p>
@@ -314,19 +317,8 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  input[type="text"] {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  input[aria-invalid="true"] {
-    border-color: var(--color-danger);
-  }
-  input.host {
+
+  .host {
     width: 7rem;
   }
   .choice {

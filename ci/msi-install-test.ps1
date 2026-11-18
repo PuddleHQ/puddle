@@ -25,13 +25,21 @@
 #   - after the upgrade the newer build lists the workspace under its id and name, its system check
 #     passes against the older runtime's data (msb's home included), the workspace starts, and its
 #     files are there byte for byte, read through the newer runtime;
+#   - the older build also holds what a user builds up (crates/puddle-app/e2e/upgrade-state.mjs): a global allow
+#     rule, a workspace deny rule, a pending request, an environment variable and a secret, three settings, an
+#     identity and a file in /home/agent, and every GET of the playbook is dumped; after the quit and the upgrade
+#     every dump is equal, the build is not older, the guest sees the variable, the stand-in and the file, approving
+#     the kept request lets the guest's retry return 200, the editor's server answers, and each main screen loads
+#     with no error alert;
 #   - the workspace is deleted and the newer build uninstalled.
 # The steps before the upgrade drive the older build's API, so they use only the calls both have.
 #   - with -UpgradeMsi, an upgrade while the program runs, and again with a workspace running, is
 #     refused (the old install byte for byte as it was, nothing queued for a restart, the message
 #     in the log); once Puddle is quit the upgrade goes through.
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
-#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>]
+#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending]
+# -PlantBreakage damages the older build's data after its quit, as a broken migration would; the run must then
+# fail (the msi workflow's dispatch input plant_breakage runs it so and expects the failure).
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
 # Without -UpgradeMsi the upgrade step is skipped and the first MSI is the one uninstalled.
 # Where the machine has no usable hypervisor, a failing `virtualization` or `hypervisor` check is
@@ -45,6 +53,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$UpgradeMsi = '',
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
+    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending')][string]$PlantBreakage = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -179,6 +188,104 @@ function Invoke-MsiexecRefused([string[]]$Arguments, [string]$LogName) {
     $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList $all -Wait -PassThru
     $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
     [pscustomobject]@{ Code = $p.ExitCode; Log = $text }
+}
+
+# Windows Installer shows a shortcut's or an Add-or-remove-programs entry's icon from a file it
+# writes under the Icon table's name, and picks the file's type from the name's extension: a name
+# without ".ico" or ".exe" (WiX's default is the bare Id) leaves a shortcut with a generic icon.
+# Returns the Icon table's names and each shortcut's icon reference.
+function Get-PackageIcons([string]$Path) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @((Resolve-Path $Path).Path, 0))
+    function Select-Column([string]$Query) {
+        $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @($Query))
+        $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+        while ($true) {
+            $row = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            if ($null -eq $row) { break }
+            $row.GetType().InvokeMember('StringData', 'GetProperty', $null, $row, @(1))
+        }
+        $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+    }
+    [pscustomobject]@{
+        Icons = @(Select-Column 'SELECT `Name` FROM `Icon`')
+        ShortcutIcons = @(Select-Column 'SELECT `Icon_` FROM `Shortcut` WHERE `Icon_` IS NOT NULL')
+        ProductIcon = @(Select-Column "SELECT `Value` FROM `Property` WHERE `Property`='ARPPRODUCTICON'")
+    }
+}
+
+function Assert-PackageIcons([string]$Path) {
+    $icons = Get-PackageIcons $Path
+    Expect ($icons.Icons.Count -ge 1) "$Path has no Icon table entry"
+    foreach ($name in $icons.Icons) {
+        Expect ($name -match '\.(ico|exe)$') "$Path names an icon '$name' without an .ico or .exe extension, so Windows shows the shortcut's icon as a generic one"
+    }
+    Expect ($icons.ShortcutIcons.Count -ge 1) "$Path has a shortcut with no icon"
+    foreach ($name in @($icons.ShortcutIcons) + @($icons.ProductIcon)) {
+        Expect ($icons.Icons -contains $name) "$Path refers to icon '$name', which its Icon table does not hold"
+    }
+}
+
+Add-Type -AssemblyName System.Drawing
+Add-Type -Namespace Puddle -Name Icons -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern uint PrivateExtractIcons(string file, int index, int cx, int cy, System.IntPtr[] icons, uint[] ids, uint count, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool DestroyIcon(System.IntPtr icon);
+'@
+
+# The 256 px image of the icon a file carries (an .exe's first icon resource, or an .ico), as a bitmap.
+function Get-FileIconBitmap([string]$File) {
+    $handles = New-Object 'System.IntPtr[]' 1
+    $ids = New-Object 'uint32[]' 1
+    $got = [Puddle.Icons]::PrivateExtractIcons($File, 0, 256, 256, $handles, $ids, 1, 0)
+    Expect ($got -ge 1) "$File carries no icon"
+    try {
+        $icon = [System.Drawing.Icon]::FromHandle($handles[0])
+        $bitmap = New-Object System.Drawing.Bitmap 256, 256
+        $g = [System.Drawing.Graphics]::FromImage($bitmap)
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $g.DrawIcon($icon, (New-Object System.Drawing.Rectangle 0, 0, 256, 256))
+        $g.Dispose()
+        return $bitmap
+    } finally { [void][Puddle.Icons]::DestroyIcon($handles[0]) }
+}
+
+# Share of pixels that differ clearly (a channel off by more than 24) between two 256 px bitmaps.
+function Get-IconDifference([System.Drawing.Bitmap]$A, [System.Drawing.Bitmap]$B) {
+    $bad = 0
+    for ($y = 0; $y -lt 256; $y += 2) {
+        for ($x = 0; $x -lt 256; $x += 2) {
+            $p = $A.GetPixel($x, $y); $q = $B.GetPixel($x, $y)
+            if ([math]::Abs($p.A - $q.A) -gt 24 -or [math]::Abs($p.R - $q.R) -gt 24 -or
+                [math]::Abs($p.G - $q.G) -gt 24 -or [math]::Abs($p.B - $q.B) -gt 24) { $bad++ }
+        }
+    }
+    $bad / (128 * 128)
+}
+
+# The duck: crates/puddle-app/icons/icon.png, which crates/puddle-appicon/tests/installed_icon.rs
+# pins to the drawing the tray uses.
+function Get-DuckBitmap {
+    $png = Join-Path $PSScriptRoot '..\crates\puddle-app\icons\icon.png'
+    New-Object System.Drawing.Bitmap ((Resolve-Path $png).Path)
+}
+
+function Assert-FileIsDuck([string]$File, [string]$What) {
+    $diff = Get-IconDifference (Get-FileIconBitmap $File) (Get-DuckBitmap)
+    Expect ($diff -lt 0.02) ("{0}'s icon ({1}) is not the duck: {2:P1} of its pixels differ" -f $What, $File, $diff)
+}
+
+# What a user sees of the install: the program's own icon, and the icon file of the Start menu
+# shortcut, are the duck.
+function Assert-InstalledIcon {
+    Assert-FileIsDuck (Join-Path $InstallDir 'puddle-app.exe') 'the installed program'
+    $link = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$ProductName\$ProductName.lnk"
+    Expect (Test-Path -LiteralPath $link) "the Start menu has no $link"
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+    $location = [Environment]::ExpandEnvironmentVariables(($shortcut.IconLocation -replace ',-?\d+$', ''))
+    Expect (Test-Path -LiteralPath $location) "the Start menu shortcut's icon file $location does not exist"
+    Assert-FileIsDuck $location 'the Start menu shortcut'
 }
 
 # Path, size and SHA-256 of every file under the install folder, sorted: two listings are equal
@@ -478,6 +585,132 @@ function Test-WorkspaceLifecycle($Conn) {
     Remove-Workspace $Conn $wsId $name
 }
 
+# The buttons of the notification area (the tray) named after Puddle: what a person sees of a
+# running app beside the clock. Windows 11 puts them in a XAML island (class SystemTray.NormalButton),
+# older shells in a toolbar of Shell_TrayWnd or of the overflow window. A new icon may sit in the
+# hidden-icons overflow, which UI Automation lists only while it is open, so the overflow is opened
+# first (the "Show Hidden Icons" button, as a person would) when the taskbar has one.
+# With -Hover the pointer passes over each icon found (Windows prunes the icon of a program that is
+# gone when the pointer reaches it). Returns the icons found before any hover; the overflow is
+# closed again.
+function Get-PuddleTrayIcons([switch]$Hover) {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $A = [System.Windows.Automation.AutomationElement]
+    $buttons = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $trays = @('Shell_TrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland')
+    $find = {
+        @($A::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.ClassName -in $trays } |
+            ForEach-Object { $_.FindAll('Descendants', $buttons) })
+    }
+    $all = & $find
+    $chevron = @($all | Where-Object { $_.Current.Name -eq 'Show Hidden Icons' }) | Select-Object -First 1
+    if ($chevron) {
+        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Seconds 2
+        $all = & $find
+    }
+    $icons = @($all | Where-Object { $_.Current.Name -match '^Puddle(:|$)' })
+    if ($Hover) {
+        foreach ($icon in $icons) {
+            $r = $icon.Current.BoundingRectangle
+            [void][TrayCursor]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
+            Start-Sleep -Milliseconds 500
+        }
+        [void][TrayCursor]::SetCursorPos(0, 0)
+    }
+    if ($chevron) {
+        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 500
+    }
+    $icons
+}
+
+Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class TrayCursor {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+}
+'@
+
+# Work worth losing: a repository with 21 commits, a staged and
+# an unstaged file, in the workspace's folder, synced to the volume.
+function Get-MakeWorkScript([string]$Folder) {
+    "set -e; cd $Folder; git init -q -b main qa-crash; cd qa-crash; git config user.name 'Puddle Test'; " +
+    "git config user.email test@puddle.invalid; git config commit.gpgsign false; " +
+    "echo 0 > qa.txt; git add qa.txt; git commit -qm 'qa 0'; " +
+    "for i in `$(seq 1 20); do echo `$i >> qa.txt; git add qa.txt; git commit -qm `"qa `$i`"; done; " +
+    "echo staged > staged.txt; git add staged.txt; echo unstaged > unstaged.txt; sync; " +
+    "echo count `$(git rev-list --count HEAD)"
+}
+
+function Get-ReadWorkScript([string]$Folder) {
+    "cd $Folder/qa-crash || exit 3; echo count `$(git rev-list --count HEAD); " +
+    "if git fsck --full >/tmp/fsck.out 2>&1; then echo 'fsck clean'; else echo 'fsck failed'; cat /tmp/fsck.out; fi; " +
+    "if git diff --cached --name-only | grep -qx staged.txt; then echo 'staged kept'; else echo 'staged lost'; fi; " +
+    "if [ -f unstaged.txt ]; then echo 'unstaged kept'; else echo 'unstaged lost'; fi"
+}
+
+# A hard kill of the app, with no person: the installed app (puddle-app.exe) is ended with
+# TerminateProcess (Stop-Process -Force), as Task Manager's End task does, while a workspace with
+# work in it runs. Every runtime process it started (msb and the VMs) is gone within 5 s: the
+# kill-on-close job object ends them. The tray icon goes (Windows prunes a dead program's icon when
+# the pointer passes over it, which is what a person sees, so the test passes the pointer over it).
+# The next start shows the workspace crashed or stopped, a start runs it, and the repository has its
+# 21 commits, a clean fsck, and its staged file still staged or a problem that says it was lost.
+function Test-HardKill {
+    $name = 'qa-crash'
+    $conn = Start-Installed
+    $wsId = New-Workspace $conn $name
+    Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+    $folder = "/workspaces/$wsId"
+    $made = Invoke-InWorkspace $wsId (Get-MakeWorkScript $folder) 'making the work'
+    Expect ($made -match '(?m)^count 21\s*$') "the work was not made: $made"
+    $runtime = @(Get-RuntimeProcesses)
+    Expect ($runtime.Count -gt 0) 'no runtime process runs with the workspace, so the kill below would prove nothing'
+    Expect (@(Get-PuddleTrayIcons).Count -ge 1) 'the running app shows no tray icon, so the check after the kill would prove nothing'
+    $app = @(Get-Process -Name 'puddle-app' -ErrorAction Stop | Sort-Object StartTime)[0]
+
+    Step "TerminateProcess on puddle-app.exe ($($app.Id)) with $($runtime.Count) runtime processes running"
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    Stop-Process -Id $app.Id -Force
+    $ids = @($runtime | ForEach-Object { $_.Id })
+    Wait-Until "runtime processes still run 5 s after the kill: $(($runtime | ForEach-Object { "$($_.Name) $($_.Id)" }) -join ', ')" 5 {
+        @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count -eq 0
+    } -PollMs 100 | Out-Null
+    Write-Host "every runtime process was gone $([math]::Round($clock.Elapsed.TotalSeconds, 1)) s after the kill"
+    Expect (@(Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue).Count -eq 0) 'a puddle-app process is left after the kill'
+    $ghosts = @(Get-PuddleTrayIcons -Hover)
+    if ($ghosts.Count -gt 0) {
+        Write-Host "INFO: $($ghosts.Count) dead tray icon(s) stayed until the pointer passed over them (a Windows habit)"
+    }
+    Wait-Until 'a tray icon of the killed app is left' 10 { @(Get-PuddleTrayIcons).Count -eq 0 } -PollMs 500 | Out-Null
+
+    Step 'the next start shows the workspace crashed or stopped, and a start brings back the work'
+    $conn = Start-Installed
+    try {
+        $after = Get-WorkspaceNow $conn $wsId
+        Expect ($null -ne $after) "the workspace $wsId is not listed after the kill"
+        Expect ($after.status -in @('crashed', 'stopped')) "after the kill the workspace shows $($after.status)"
+        Expect (@(Get-PuddleTrayIcons).Count -eq 1) "the started app shows $(@(Get-PuddleTrayIcons).Count) tray icons, not one"
+        Invoke-PuddleApi $conn 'Post' "/api/workspaces/$wsId/start" | Out-Null
+        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+        $read = Invoke-InWorkspace $wsId (Get-ReadWorkScript $folder) 'reading the work'
+        Write-Host $read
+        Expect ($read -match '(?m)^count 21\s*$') "commits were lost in the kill: $read"
+        Expect ($read -match '(?m)^fsck clean\s*$') "git fsck finds damage after the kill: $read"
+        if ($read -match '(?m)^staged lost\s*$') {
+            $problems = @((Invoke-PuddleApi $conn 'Get' '/api/problems').problems)
+            $said = @($problems | Where-Object { $_.workspace -eq $wsId -and $_.detail -match 'no longer staged' })
+            Expect ($said.Count -gt 0) "the staged file was lost and no problem says so: $($problems | ConvertTo-Json -Compress -Depth 4)"
+        }
+        Stop-Workspace $conn $wsId $name
+        Remove-Workspace $conn $wsId $name
+    } finally {
+        Stop-Installed
+    }
+}
+
 # Makes a workspace from the stock image over the API and returns the id Puddle gave it.
 function New-Workspace($Conn, [string]$Name) {
     $made = Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $Name }
@@ -516,6 +749,22 @@ function Assert-NewerVersion([string]$From, [string]$To) {
     Expect ([version]$To -gt [version]$From) "the upgrade goes from $From to $To, which is not newer"
 }
 
+# Runs crates/puddle-app/e2e/upgrade-state.mjs (the state an upgrade must keep) against the running
+# installed program; fails when any of its checks fails. Its lines are the job's log.
+function Invoke-UpgradeState([string[]]$Arguments, [string]$Phase) {
+    $script = Join-Path $PSScriptRoot '..\crates\puddle-app\e2e\upgrade-state.mjs'
+    Expect (Test-Path -LiteralPath $script) "no $script"
+    Step "upgrade state, $Phase"
+    $app = Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $env:PUDDLE_APP_PID = if ($app) { "$($app.Id)" } else { '' }
+    $env:PUDDLE_INSTALL_DIR = $InstallDir
+    $lines = @(& node $script @Arguments 2>&1 | ForEach-Object { "$_" })
+    $code = $LASTEXITCODE
+    $lines | ForEach-Object { Write-Host $_ }
+    $lines | Set-Content -LiteralPath (Join-Path $LogDir "upgrade-state-$Phase.log")
+    Expect ($code -eq 0) "the upgrade-state $Phase step failed (exit $code): $(($lines | Where-Object { $_ -match '^FAIL' }) -join ' | ')"
+}
+
 # The upgrade a user makes: from the older build $Baseline to $Upgrade, with a workspace that
 # holds files. $Policy is 'run' or 'skip' (no usable hypervisor: nothing here can run).
 function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$Policy) {
@@ -529,6 +778,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
 
     Step 'the older build makes a workspace and writes files to its volume, then stops it'
     $name = 'upgrade-test'
+    $StateDir = Join-Path $LogDir 'upgrade-state'
     $token = [guid]::NewGuid().ToString()
     $conn = Start-Installed
     try {
@@ -538,10 +788,12 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
         Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
         Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
+        Invoke-UpgradeState @('before', $StateDir, $wsId) 'before'
         Stop-Workspace $conn $wsId $name
     } finally {
         Stop-Installed
     }
+    if ($PlantBreakage) { Invoke-UpgradeState @('plant', $PlantBreakage) 'plant' }
 
     Step 'upgrade to this build'
     Invoke-Msiexec @('/i', "`"$Upgrade`"") 'msi-upgrade.log'
@@ -564,6 +816,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
         Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
         Write-Host "the files in $wsId are intact after the upgrade"
+        Invoke-UpgradeState @('after', $StateDir, $wsId) 'after'
         Stop-Workspace $conn $wsId $name
         Remove-Workspace $conn $wsId $name
     } finally {
@@ -657,6 +910,20 @@ if ($SelfTest) {
         $InstallDir = $savedInstallDir
     }
     if ($failures -gt 0) { Fail "$failures self-test checks failed" }
+
+    # The icon checks: the duck passes, a plain yellow disc (what the installer once shipped) does not.
+    $duckIco = (Resolve-Path (Join-Path $PSScriptRoot '..\crates\puddle-app\icons\icon.ico')).Path
+    Check 'the duck icon file is the duck' (-not (Throws { Assert-FileIsDuck $duckIco 'the file' } '.'))
+    $discIco = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName() + '.ico')
+    $disc = New-Object System.Drawing.Bitmap 256, 256
+    $g = [System.Drawing.Graphics]::FromImage($disc)
+    $g.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(246, 196, 49))), 12, 12, 232, 232)
+    $g.Dispose()
+    $stream = [IO.File]::Create($discIco)
+    ([System.Drawing.Icon]::FromHandle($disc.GetHicon())).Save($stream)
+    $stream.Dispose()
+    Check 'a yellow disc is refused as the icon' (Throws { Assert-FileIsDuck $discIco 'the file' } 'is not the duck')
+    [IO.File]::Delete($discIco)
     Write-Host 'self-test ok'
     return
 }
@@ -688,6 +955,8 @@ Step 'the package is per user'
 foreach ($path in @($Msi, $BaselineMsi, $UpgradeMsi) | Where-Object { $_ }) {
     Expect (Test-PerUserPackage $path) "$path is not a per-user package (needs no elevation, no ALLUSERS)"
 }
+Step 'the package names its icon so the shortcut shows it'
+foreach ($path in @($Msi, $UpgradeMsi) | Where-Object { $_ }) { Assert-PackageIcons $path }
 
 Step 'the installer page says what it does in plain words'
 # The older build of -BaselineMsi is a release made before this text; only the MSIs of this commit are held to it.
@@ -707,6 +976,8 @@ if ($BaselineMsi) {
 
 Invoke-Msiexec @('/i', "`"$Msi`"") 'msi-install.log'
 $first = Assert-InstalledLayout
+Step 'the program and its Start menu shortcut carry the duck icon'
+Assert-InstalledIcon
 Write-Host "installed version $($first.Version) in $InstallDir"
 # The program must report the version of the package it came in (the kept MSI is named by it).
 $reported = (& (Join-Path $InstallDir 'puddle.exe') --version) -join ' '
@@ -718,6 +989,12 @@ if ($policy -eq 'run') {
     $conn = Start-Installed
     try {
         Test-WorkspaceLifecycle $conn
+    } finally {
+        Stop-Installed
+    }
+    Step 'a hard kill of the app (TerminateProcess) ends its VMs within 5 s and loses no commit'
+    try {
+        Test-HardKill
     } finally {
         Stop-Installed
     }

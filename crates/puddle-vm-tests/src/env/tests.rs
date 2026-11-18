@@ -454,3 +454,15 @@ async fn within_passes_values_and_names_timeouts() {
     .unwrap_err();
     assert!(matches!(err, HarnessError::Timeout { what: "slow", .. }));
 }
+
+#[test]
+fn a_cache_key_is_the_same_on_every_toolchain() {
+    // Pinned: a change here renames every restored CI cache.
+    assert_eq!(cache_key(&["image", "1.0"]), "feffee6eeeebeb2a");
+}
+
+#[test]
+fn a_cache_key_tells_the_parts_apart() {
+    assert_ne!(cache_key(&["ab", "c"]), cache_key(&["a", "bc"]));
+    assert_ne!(cache_key(&["a"]), cache_key(&["a", ""]));
+}

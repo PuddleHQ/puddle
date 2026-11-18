@@ -136,7 +136,7 @@ fn two_sockets_in_backoff_at_once_count_once() {
     assert_eq!(accrual.total(), Duration::from_millis(60));
 }
 
-/// Writes 1 MiB chunks to `server` for `run` and returns the progress it measured. After each
+/// Writes 1 MiB chunks to `server` for `run` of transfer time and returns the progress it measured. After each
 /// chunk, `after_chunk` gets the time since the first write began.
 async fn send_for<'a>(
     client: &mut TcpStream,
@@ -147,11 +147,16 @@ async fn send_for<'a>(
     let chunk = vec![7u8; CHUNK];
     let mut progress = Progress::new(backoff);
     let start = Instant::now();
-    while start.elapsed() < run {
+    // What the callback takes (a fault planted between writes) is the test's time, not the transfer's:
+    // it counts toward neither `run` nor the time the callback is told, or a slow command that plants
+    // the cut would use up the run and end the transfer before the link ever dropped.
+    let mut planting = Duration::ZERO;
+    while start.elapsed().saturating_sub(planting) < run {
         client.write_all(&chunk).await.unwrap();
         progress.mark();
-        after_chunk(start.elapsed());
-        // What the callback took (a fault planted between writes) is the test's time, not a wait of the transfer.
+        let began = Instant::now();
+        after_chunk(start.elapsed().saturating_sub(planting));
+        planting += began.elapsed();
         progress.skip();
     }
     client.shutdown().await.unwrap();
@@ -291,10 +296,12 @@ fn a_cut_that_fails_is_reported_as_the_cut() {
 }
 
 /// The time the command that plants the cut takes is the test's own, not the transfer's: on a loaded
-/// host `iptables` once took 5.7 s, which the meter read as a 5.7 s gap with no backoff in it.
+/// host `iptables` once took 5.7 s, which the meter read as a 5.7 s gap with no backoff in it. The
+/// stand-in takes longer than the whole run (14 s): a cut planted that slowly once used up the run before
+/// the link dropped, and the case failed with a 4 ms "drop".
 #[test]
 fn a_slow_command_that_plants_the_cut_is_not_a_stall() {
-    let slow = r#"sh -c 'case "$*" in *-A*) sleep 4;; esac; exec iptables "$@"' iptables"#;
+    let slow = r#"sh -c 'case "$*" in *-A*) sleep 16;; esac; exec iptables "$@"' iptables"#;
     let (passed, text) = drop_in_a_namespace(&[(IPTABLES, slow)]).unwrap();
     assert!(passed, "a slow cut was taken for a stall:\n{text}");
 }

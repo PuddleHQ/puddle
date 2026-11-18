@@ -20,6 +20,8 @@ fn canned(boot: bool) -> Report {
             finding: None,
             fix: None,
             detail: None,
+            impact: "i".into(),
+            remedy: None,
         }],
         elapsed_ms: 3,
     }

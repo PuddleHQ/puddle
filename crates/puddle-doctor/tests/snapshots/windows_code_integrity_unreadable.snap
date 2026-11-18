@@ -7,8 +7,11 @@ info  Code integrity        could not be read; whether memory integrity (HVCI) o
             that check names the policy.
       from: NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0xC0000022
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
-ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
-ok    Test boot             a test VM booted and ran a program in 1.1 s
+FAIL  Runtime starts        msb didn't answer within 10.0 s
+      fix:  Security software scanning a program it hasn't seen before is the usual cause. Run
+            puddle doctor again; if it keeps timing out, check your endpoint security's log for
+            msb.
+skip  Test boot             not checked: the runtime doesn't start
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
@@ -16,7 +19,7 @@ ok    Azure CLI (az)        version 2.64.0
 ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed
 
-No problems found. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -24,17 +27,19 @@ No problems found. (1.2 s)
   "puddle_version": "0.1.0",
   "os": "windows",
   "arch": "x86_64",
-  "ok": true,
+  "ok": false,
   "checks": [
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on (the hypervisor uses it)"
+      "summary": "on (the hypervisor uses it)",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
       "status": "ok",
-      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs",
+      "impact": "Lets Puddle start workspaces as virtual machines, walled off from this computer and from each other."
     },
     {
       "id": "code_integrity",
@@ -42,52 +47,67 @@ No problems found. (1.2 s)
       "summary": "could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown",
       "finding": "code_integrity_unreadable",
       "fix": "Puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that check names the policy.",
-      "detail": "NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0xC0000022"
+      "detail": "NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0xC0000022",
+      "impact": "Puddle couldn't read which Windows rules decide what programs may run.",
+      "remedy": "If Runtime starts reports a blocked runtime, follow the steps there."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
-      "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+      "status": "fail",
+      "summary": "msb didn't answer within 10.0 s",
+      "finding": "launch_timed_out",
+      "fix": "Security software scanning a program it hasn't seen before is the usual cause. Run puddle doctor again; if it keeps timing out, check your endpoint security's log for msb.",
+      "impact": "Puddle can't start workspaces yet: its runtime did not answer in time.",
+      "remedy": "Check again. Security software scanning a new program is the usual cause."
     },
     {
       "id": "test_boot",
-      "status": "ok",
-      "summary": "a test VM booted and ran a program in 1.1 s"
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start",
+      "impact": "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
       "id": "global_secure_access",
       "status": "ok",
-      "summary": "client not installed"
+      "summary": "client not installed",
+      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
     }
   ],
   "elapsed_ms": 1234

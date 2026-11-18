@@ -19,6 +19,7 @@ import { throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
 import { loadFactor, MAX_LOAD_FACTOR } from "../scripts/load-budget.ts";
 import { WARM_UP_TIMEOUT_MS, within } from "./warm-up.ts";
+import { guardPrototype } from "./prototype-guard.ts";
 
 export interface Control {
   state(): Promise<{
@@ -110,6 +111,7 @@ export function backendFromFile(connectionFile: string): Backend {
     token,
     control,
     async signIn(page) {
+      await guardPrototype(page);
       await page.addInitScript((t) => {
         (window as unknown as { __PUDDLE__: { token: string } }).__PUDDLE__ = {
           token: t,

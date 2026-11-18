@@ -66,7 +66,9 @@ pub struct Options {
     pub boot: bool,
     /// Time limit for `msb --version`.
     pub launch_limit: Duration,
-    /// Time limit for the whole run; the test boot gets what is left.
+    /// Time limit for the checks up to the test boot, which gets what is left. The checks after
+    /// it are not counted against it: each has a limit of its own (the SSH agent's
+    /// [`Self::ssh_agent_limit`], the Azure CLI's 10 s, the credential store's 20 s).
     pub budget: Duration,
     /// Free space, in bytes, under which the disk check warns.
     pub disk_warn_below: u64,

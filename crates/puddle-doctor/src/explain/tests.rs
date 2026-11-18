@@ -123,5 +123,8 @@ fn a_problem_without_words_gets_the_generic_ones_and_never_an_empty_line() {
     assert_eq!(machine(Finding::DiskSpaceLow), UNWORDED);
     assert_eq!(runtime(Finding::DiskSpaceLow), UNWORDED);
     assert_eq!(storage(Os::Linux, Finding::KvmMissing), UNWORDED);
-    assert_eq!(ssh_azure_and_store(Os::Linux, Finding::KvmMissing), UNWORDED);
+    assert_eq!(
+        ssh_azure_and_store(Os::Linux, Finding::KvmMissing),
+        UNWORDED
+    );
 }

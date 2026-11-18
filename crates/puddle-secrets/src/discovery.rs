@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::error::{SourceError, Tool};
 use crate::name::{AccountName, HostName, OrgName};
-use crate::run::{TOOL_TIMEOUT, ToolPaths, run};
+use crate::run::{TOOL_TIMEOUT, ToolPaths, run_capturing};
 
 /// The listing commands Puddle may run. A closed list: `az account list` joins it with the `az` source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -91,8 +91,16 @@ async fn run_listing(
     listing: Listing,
 ) -> Result<Vec<DiscoveredAccount>, SourceError> {
     let program = tools.get(listing.tool())?;
-    let out = run(listing.tool(), program, listing.args(), None, TOOL_TIMEOUT).await?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let out = run_capturing(listing.tool(), program, listing.args(), TOOL_TIMEOUT).await?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    // Git Credential Manager keeps standard output for the Git credential protocol and prints its
+    // `list` commands on standard error (3.0.2, found by the real-tools contract). Both streams are
+    // read, and the parsers drop what is not a plain name or a binding (a diagnostic with a space
+    // or a colon in it is neither).
+    if listing != Listing::GhAuthStatus && out.success {
+        text.push('\n');
+        text.push_str(&String::from_utf8_lossy(&out.stderr));
+    }
     // `gh auth status` exits non-zero when any account is broken but still prints the JSON.
     let accounts = match listing {
         Listing::GhAuthStatus => parse_gh(&text),

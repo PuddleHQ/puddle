@@ -96,6 +96,7 @@
     <div class="row">
       <label for="{id}-days">Keep the activity log for (days)</label>
       <input
+        class="input-short"
         id="{id}-days"
         type="number"
         min="1"
@@ -150,16 +151,6 @@
   }
   label {
     font-weight: 600;
-  }
-  input {
-    width: 7rem;
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
   }
   .desc,
   .muted {

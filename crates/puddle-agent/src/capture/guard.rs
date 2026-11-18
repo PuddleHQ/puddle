@@ -132,6 +132,15 @@ fn apply(
 /// Runs `tick` on a schedule until the agent stops. Failures are logged, told to the host once
 /// per outage, and retried: a kernel that can't do it today may be able to after a module loads.
 pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
+    keep_with(guard, reports, tick).await;
+}
+
+/// [`keep`] with the pass to run, so a test can make one panic. A pass that panics is a failed
+/// pass: the next one starts from a fresh state and installs the rules again.
+async fn keep_with<T>(guard: Guard, reports: mpsc::Sender<AgentMessage>, pass: T)
+where
+    T: Fn(&Guard, &mut State) -> std::io::Result<Option<Why>> + Clone + Send + 'static,
+{
     let mut state = State::default();
     let mut failures = 0u32;
     // Whether this outage has been told to the host: a queue that is full at boot (nobody reads
@@ -142,8 +151,9 @@ pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
     let mut recovery_owed = false;
     loop {
         let g = guard.clone();
+        let run = pass.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let outcome = tick(&g, &mut state);
+            let outcome = run(&g, &mut state);
             (state, outcome)
         })
         .await;
@@ -153,8 +163,12 @@ pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
                 outcome
             }
             Err(err) => {
-                tracing::error!(error = %err, "capture guard task failed");
-                return;
+                // The rules may be gone or half written, so nothing is trusted from before.
+                tracing::error!(error = %err, "a capture guard pass panicked; starting over");
+                state = State::default();
+                Err(std::io::Error::other(format!(
+                    "the capture guard panicked: {err}"
+                )))
             }
         };
         match outcome {

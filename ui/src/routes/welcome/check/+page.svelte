@@ -21,12 +21,15 @@
   );
   const report = $derived(doctor.report);
   const running = $derived(doctor.status === "running");
+  // In the flow the check waits for the person: it starts a test machine and a few tools, and on
+  // some computers a window flashes open while they run.
+  const notStarted = $derived(doctor.status === "idle" && !fromSettings);
   const blocked = $derived(report !== null && isBlocked(report));
   let copied = $state<"yes" | "no" | null>(null);
 
   onMount(() => {
-    // Back from a later step keeps the result; opened from Settings it always runs afresh.
-    if (doctor.status === "idle" || fromSettings) void doctor.run();
+    // Opened from Settings the person asked for a run; back from a later step keeps the result.
+    if (fromSettings) void doctor.run();
   });
 
   async function copy() {
@@ -46,7 +49,12 @@
 />
 
 <div class="status" aria-live="polite">
-  {#if running}
+  {#if notStarted}
+    <p class="muted">
+      The check starts a small test machine and a few tools. On some computers a
+      window may flash open for a moment while it runs.
+    </p>
+  {:else if running}
     <p class="muted">
       Checking this computer. This takes a few seconds&hellip;
     </p>
@@ -70,22 +78,36 @@
         <div class="what">
           <p class="title">{check.title}</p>
           <p class="muted">{check.summary}</p>
-          {#if check.fix}
-            <p class="fix">
-              <b>{check.status === "fail" ? "Fix:" : "Note:"}</b>
-              {check.fix}
-            </p>
-          {/if}
-          {#if check.detail}
+          <!-- Short texts first, each behind a closed toggle; the long fix and the evidence last. -->
+          <div class="toggles">
             <details>
-              <summary>Technical details</summary>
-              <!-- A scrollable region must be reachable by keyboard. -->
-              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-              <pre
-                tabindex="0"
-                aria-label="Technical details of {check.title}">{check.detail}</pre>
+              <summary>
+                {check.status === "ok" ? "Why it matters" : "Impact"}
+              </summary>
+              <p>{check.impact}</p>
             </details>
-          {/if}
+            {#if check.remedy}
+              <details>
+                <summary>Remediation</summary>
+                <p>{check.remedy}</p>
+              </details>
+            {/if}
+            {#if check.fix || check.detail}
+              <details class="more">
+                <summary>More details</summary>
+                {#if check.fix}
+                  <p class="fix">{check.fix}</p>
+                {/if}
+                {#if check.detail}
+                  <!-- A scrollable region must be reachable by keyboard. -->
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <pre
+                    tabindex="0"
+                    aria-label="Technical details of {check.title}">{check.detail}</pre>
+                {/if}
+              </details>
+            {/if}
+          </div>
         </div>
       </li>
     {/each}
@@ -108,9 +130,15 @@
     <a class="btn" href={around("check").back}>Back</a>
   {/if}
   <span class="grow"></span>
-  <button type="button" class="btn" disabled={running} onclick={again}
-    >Check again</button
-  >
+  {#if notStarted}
+    <button type="button" class="btn primary" onclick={again}
+      >Start system check</button
+    >
+  {:else}
+    <button type="button" class="btn" disabled={running} onclick={again}
+      >Check again</button
+    >
+  {/if}
   {#if report}
     <button type="button" class="btn" onclick={() => void copy()}
       >Copy report</button
@@ -120,8 +148,10 @@
     <a class="btn primary" href="/settings">Back to Settings</a>
   {:else if blocked}
     <a class="btn" href="/workspaces">Leave setup for now</a>
-  {:else if running}
-    <button type="button" class="btn primary" disabled>Continue</button>
+  {:else if running || notStarted}
+    <button type="button" class="btn" class:primary={running} disabled
+      >Continue</button
+    >
   {:else}
     <a class="btn primary" href={around("check").next}>Continue</a>
   {/if}
@@ -174,12 +204,25 @@
     margin: 0;
     font-weight: 600;
   }
-  .fix {
+  .toggles {
+    display: grid;
+    gap: var(--space-1);
+  }
+  summary {
+    width: fit-content;
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  details > p {
     margin: var(--space-1) 0 0;
     padding: var(--space-2) var(--space-3);
     background: var(--color-surface-raised);
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
+  }
+  .fix {
+    white-space: pre-line;
   }
   pre {
     margin: var(--space-1) 0 0;

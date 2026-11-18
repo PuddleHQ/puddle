@@ -16567,7 +16567,9 @@
           "summary",
           "finding",
           "fix",
-          "detail"
+          "detail",
+          "impact",
+          "remedy"
         ],
         "properties": {
           "detail": {
@@ -16594,6 +16596,17 @@
           "id": {
             "type": "string",
             "description": "Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,\n`test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title."
+          },
+          "impact": {
+            "type": "string",
+            "description": "What this means for the person, in one or two short sentences: for an ok check what it\nprotects or makes possible, otherwise what the finding costs them. Never empty."
+          },
+          "remedy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do about it, in one or two short sentences; `null` when the check is ok. `fix`\nholds the long form."
           },
           "status": {
             "$ref": "#/components/schemas/DoctorStatus",

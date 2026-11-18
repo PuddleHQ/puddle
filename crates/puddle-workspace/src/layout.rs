@@ -6,7 +6,8 @@
 //! /workspace/                 the volume root (ext4); never cloned into, it holds .puddle
 //!   ├── lost+found/            only if mkfs made one (msb 0.7.7's doesn't); ignored
 //!   ├── .puddle/               Puddle-owned (code-server data, a later ~/.vscode-server); the
-//!   │                          delete check ignores it
+//!   │   │                      delete check ignores it
+//!   │   └── cloning/<repo>/    a clone in progress, moved to <repo>/ when git ends
 //!   └── <repo>/                a git checkout (one or more), what the IDE opens
 //! ```
 
@@ -36,6 +37,13 @@ pub(crate) const SYNC_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The guest script that makes the volume ready for its session user (`guest/prepare.sh`).
 pub const PREPARE_SH: &str = include_str!("../guest/prepare.sh");
+
+/// The guest script that clones into a stage and moves the finished clone into place
+/// (`guest/clone.sh`).
+pub const CLONE_SH: &str = include_str!("../guest/clone.sh");
+
+/// The folder below [`PUDDLE_DIR`] that clones are written in until git ends.
+const CLONING_DIR: &str = "cloning";
 
 /// How long the preparation may take. It is instant unless the volume changes owner, when every
 /// file on it is given to the new one (once; a large `node_modules` is many files).
@@ -114,9 +122,12 @@ impl Layout {
         .with_timeout(PREPARE_TIMEOUT)
     }
 
-    /// `git clone -- <url> /workspace/<dir>`. Without a shell, so the URL is one argument
-    /// whatever it contains; `--` keeps a URL that starts with `-` from being read as an option.
-    /// Run it as the session user, with the proxy env.
+    /// The clone of `url` into `/workspace/<dir>`: [`CLONE_SH`] with the URL, the stage
+    /// `/workspace/.puddle/cloning/<dir>` and the checkout as its arguments. Git clones into
+    /// the stage (`git clone -- <url> <stage>`: `--` keeps a URL that starts with `-` from being
+    /// read as an option, and the URL stays one argument whatever it holds), and the finished
+    /// clone is renamed into place, so a clone that dies part way never leaves a half-written
+    /// checkout behind. Run it as the session user, with the proxy env.
     ///
     /// # Errors
     ///
@@ -126,11 +137,30 @@ impl Layout {
         url: &str,
         dir: &CheckoutDir,
     ) -> Result<ExecRequest, WorkspaceError> {
-        let dir = self.checkout(dir)?;
+        let checkout = self.checkout(dir)?;
+        let stage = self.clone_stage(dir)?;
         Ok(ExecRequest::new(
-            "git",
-            ["clone", "--", url, dir.as_str()].map(str::to_owned),
+            "sh",
+            [
+                "-c",
+                CLONE_SH,
+                "puddle-clone",
+                url,
+                stage.as_str(),
+                checkout.as_str(),
+            ]
+            .map(str::to_owned),
         ))
+    }
+
+    /// Where the clone of checkout `dir` is written until git ends:
+    /// `/workspace/.puddle/cloning/<dir>`.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Layout`] (never for a valid layout).
+    pub fn clone_stage(&self, dir: &CheckoutDir) -> Result<GuestPath, WorkspaceError> {
+        self.child(&format!("{PUDDLE_DIR}/{CLONING_DIR}/{dir}"))
     }
 
     /// `sync`, as root: flushes everything the guest has cached to the volume. Directory entries

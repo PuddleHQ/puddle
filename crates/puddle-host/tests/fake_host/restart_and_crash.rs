@@ -424,3 +424,65 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
     );
     again.shutdown().await;
 }
+
+/// What became of a workspace's VM when Puddle was killed in the middle of stopping it.
+#[derive(Debug, Clone, Copy)]
+enum VmAfterKill {
+    /// It died with Puddle (the watchdog or the job object ended it).
+    Died,
+    /// It went on running (no watchdog or job object ended it): the next start must stop it.
+    LeftRunning,
+}
+
+/// Puddle is killed (no shutdown) while a stop runs, at the stop's first guest command. Whatever
+/// the VM was left doing, the next start shows the workspace stopped or crashed, never draining,
+/// and a start brings it back.
+#[tokio::test(flavor = "multi_thread")]
+async fn puddle_killed_during_a_stop_leaves_the_workspace_stopped_or_crashed_and_a_start_works() {
+    for vm in [VmAfterKill::Died, VmAfterKill::LeftRunning] {
+        let rig = Rig::named_ids();
+        let host = rig.start().await;
+        let api1 = api(&host);
+        let mut events = api1.events().await;
+        create(&api1, &mut events, "acme").await;
+
+        let held = rig.guest.hold_next(&["trim", "shutdown-trim"]);
+        let reply = api1.post("/api/workspaces/acme/stop", "").await;
+        assert_eq!(reply.status, 202, "{vm:?}: {}", reply.body);
+        held.wait_reached();
+        assert_eq!(
+            status_of(&api1.get("/api/workspaces/acme").await),
+            "draining",
+            "{vm:?}"
+        );
+        drop(events);
+        drop(host);
+        held.kill();
+        rig.await_dead_host().await;
+        let sandbox = SandboxName::new("acme").unwrap();
+        let set = match vm {
+            VmAfterKill::Died => rig.runtime.set_status(&sandbox, WorkspaceStatus::Crashed),
+            VmAfterKill::LeftRunning => rig.runtime.outlive_owner(&sandbox),
+        };
+        assert!(set, "{vm:?}");
+
+        let again = rig.start().await;
+        let api2 = api(&again);
+        let shown = status_of(&api2.get("/api/workspaces/acme").await);
+        assert!(
+            shown == "stopped" || shown == "crashed",
+            "{vm:?}: the workspace shows {shown}"
+        );
+        let mut events = api2.events().await;
+        let reply = api2.post("/api/workspaces/acme/start", "").await;
+        assert_eq!(reply.status, 202, "{vm:?}: {}", reply.body);
+        let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+        assert_eq!(end["step"], "done", "{vm:?}: {end}");
+        assert_eq!(
+            status_of(&api2.get("/api/workspaces/acme").await),
+            "running",
+            "{vm:?}"
+        );
+        again.shutdown().await;
+    }
+}

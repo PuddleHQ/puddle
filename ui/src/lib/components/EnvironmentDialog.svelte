@@ -259,21 +259,8 @@
 </FormDialog>
 
 <style>
-  :global(.form-dialog textarea.wide),
-  :global(.form-dialog input.wide),
-  :global(.form-dialog input.mono[type="text"]) {
+  :global(.form-dialog .wide) {
     box-sizing: border-box;
     width: 100%;
-  }
-  :global(.form-dialog textarea),
-  :global(.form-dialog input[type="password"]) {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font-size: inherit;
-    resize: vertical;
   }
 </style>

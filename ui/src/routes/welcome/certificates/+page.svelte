@@ -74,8 +74,8 @@
   <p class="note" role="status" tabindex="-1" bind:this={noteEl}>{note}</p>
 </div>
 <p class="more">
-  Puddle shows this once. The details are in
-  <a href="/settings/network-health">Settings &rsaquo; Network health</a>.
+  Puddle shows this once. After setup, the details are in Settings &rsaquo;
+  Network health.
 </p>
 
 <div class="actions">

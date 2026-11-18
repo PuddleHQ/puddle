@@ -502,7 +502,7 @@ impl Fetch for Arc<WrongHash> {
         })
     }
 
-    async fn file(&self, _url: &str, dest: &Path) -> io::Result<()> {
+    async fn file(&self, _url: &str, dest: &Path, _max_bytes: u64) -> io::Result<()> {
         tokio::task::yield_now().await; // a download is not instant
         self.downloads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -533,6 +533,55 @@ fn refusing(dir: &Path, auto_update: bool) -> (EditorConfig, Arc<WrongHash>) {
         downloads: std::sync::atomic::AtomicUsize::new(0),
     });
     (config, service)
+}
+
+/// A build folder `commit` that `microsoft` takes for complete.
+fn complete_build(builds: &Path, commit: &str) {
+    let dir = builds.join(commit);
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    std::fs::write(dir.join(microsoft::PROGRAM), b"").unwrap();
+    std::fs::write(dir.join(".puddle-installed"), b"").unwrap();
+}
+
+/// The update loop holds `work` for a whole download (hundreds of MB), and the server's restart
+/// after a failed new build must not wait for it.
+#[tokio::test]
+async fn the_rollback_after_a_failed_new_build_does_not_wait_for_a_running_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = refusing(dir.path(), true);
+    let control = Control::new(&config.server);
+    let (old, new) = ("a".repeat(40), "b".repeat(40));
+    let builds = &control.builds;
+    std::fs::create_dir_all(builds).unwrap();
+    complete_build(builds, &old);
+    complete_build(builds, &new);
+    std::fs::write(builds.join("previous"), &old).unwrap();
+    std::fs::write(builds.join("current"), &new).unwrap();
+    // The folder of the download that is running: a clean-up now would delete it.
+    let partial = builds.join(format!("{}.partial", "c".repeat(40)));
+    std::fs::create_dir(&partial).unwrap();
+
+    let download = control.work.lock().await;
+    // A rollback that waited would block here for good, as the download never ends.
+    settle_trial(&control, &new);
+    assert_eq!(
+        std::fs::read_to_string(builds.join("current")).unwrap(),
+        old,
+        "the previous build runs again"
+    );
+    assert!(
+        partial.exists(),
+        "the running download's folder is not cleaned up"
+    );
+    drop(download);
+
+    // With no download running, the clean-up goes with the rollback as before.
+    std::fs::write(builds.join("previous"), &old).unwrap();
+    std::fs::write(builds.join("current"), &new).unwrap();
+    std::fs::remove_file(builds.join("rejected")).unwrap();
+    settle_trial(&control, &new);
+    assert!(!partial.exists());
+    assert!(!builds.join(&new).exists());
 }
 
 #[tokio::test(start_paused = true)]
@@ -715,11 +764,20 @@ async fn a_restart_request_ends_the_wait_after_a_refused_download() {
     running.abort();
 }
 
+/// Marks a build as the one in use, so that looking for an update has something to update (it
+/// does nothing before the first install).
+fn has_a_current_build(config: &EditorConfig) {
+    let builds = Path::new(&config.server.dir);
+    std::fs::create_dir_all(builds).unwrap();
+    std::fs::write(builds.join("current"), "a".repeat(40)).unwrap();
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_refused_update_is_looked_for_on_a_slowing_schedule_too() {
     use std::sync::atomic::Ordering::SeqCst;
     let dir = tempfile::tempdir().unwrap();
     let (config, service) = refusing(dir.path(), true);
+    has_a_current_build(&config);
     let times = UpdateTimes {
         first: Duration::from_secs(1),
         every: Duration::from_hours(24),
@@ -742,7 +800,7 @@ impl Fetch for Offline {
         Err(io::Error::other("no route to host"))
     }
 
-    async fn file(&self, _url: &str, _dest: &Path) -> io::Result<()> {
+    async fn file(&self, _url: &str, _dest: &Path, _max_bytes: u64) -> io::Result<()> {
         tokio::task::yield_now().await;
         Err(io::Error::other("no route to host"))
     }
@@ -764,6 +822,7 @@ fn update_message(reason: Option<&str>) -> AgentMessage {
 async fn a_refused_newer_build_is_told_as_an_update_problem_until_a_look_works() {
     let dir = tempfile::tempdir().unwrap();
     let (config, service) = refusing(dir.path(), true);
+    has_a_current_build(&config);
     let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
     let (out, mut host) = mpsc::channel(8);
     tokio::spawn(forward_editor_problems(
@@ -789,6 +848,7 @@ async fn a_refused_newer_build_is_told_as_an_update_problem_until_a_look_works()
 async fn looks_that_fail_are_told_only_after_five_in_a_row() {
     let dir = tempfile::tempdir().unwrap();
     let (config, _) = refusing(dir.path(), true);
+    has_a_current_build(&config);
     let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
     let (out, mut host) = mpsc::channel(8);
     tokio::spawn(forward_editor_problems(
@@ -877,14 +937,14 @@ async fn a_build_rolled_back_after_a_bad_start_is_told_and_one_that_stays_is_not
         out,
     ));
     // A build that is not the one on trial is left alone and nothing is said.
-    settle_trial(&control, &old).await;
+    settle_trial(&control, &old);
     puddle_test_kit::no_event_for(
         "a report for no rollback",
         Duration::from_secs(1),
         &mut host,
     )
     .await;
-    settle_trial(&control, &new).await;
+    settle_trial(&control, &new);
     assert_eq!(
         host.recv().await,
         Some(update_message(Some(

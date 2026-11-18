@@ -47,6 +47,7 @@
   <input
     id="set-tab-notify"
     type="checkbox"
+    role="switch"
     aria-describedby="set-tab-notify-desc"
     checked={tabNotifications.active}
     onchange={(e) => void change(e.currentTarget)}

@@ -3836,6 +3836,16 @@ export interface components {
              *     `test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title.
              */
             id: string;
+            /**
+             * @description What this means for the person, in one or two short sentences: for an ok check what it
+             *     protects or makes possible, otherwise what the finding costs them. Never empty.
+             */
+            impact: string;
+            /**
+             * @description What to do about it, in one or two short sentences; `null` when the check is ok. `fix`
+             *     holds the long form.
+             */
+            remedy: string | null;
             /** @description How it came out. */
             status: components["schemas"]["DoctorStatus"];
             /** @description One line: what was found. */

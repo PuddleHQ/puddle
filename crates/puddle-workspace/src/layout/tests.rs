@@ -19,20 +19,26 @@ fn paths_sit_under_the_mount_point() {
 }
 
 #[test]
-fn clone_request_passes_the_url_as_one_argument_after_double_dash() {
+fn clone_request_runs_the_clone_script_with_the_url_as_one_argument_and_a_stage() {
     let dir = CheckoutDir::new("api").unwrap();
     let r = layout()
         .clone_request("-u evil https://h/acme/api.git", &dir)
         .unwrap();
-    assert_eq!(r.program, "git");
+    assert_eq!(r.program, "sh");
     assert_eq!(
         r.args,
         [
-            "clone",
-            "--",
+            "-c",
+            CLONE_SH,
+            "puddle-clone",
             "-u evil https://h/acme/api.git",
+            "/workspace/.puddle/cloning/api",
             "/workspace/api"
         ]
+    );
+    assert!(
+        CLONE_SH.contains(r#"git clone -- "$url" "$stage""#),
+        "the URL goes to git after --"
     );
     assert_eq!(r.user, None);
 }

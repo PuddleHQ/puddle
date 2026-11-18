@@ -13,6 +13,7 @@ use std::time::Duration;
 use puddle_compute::{ExecRequest, Sandbox};
 use puddle_types::{SandboxName, WorkspaceId};
 
+use crate::guest_text::clean;
 use crate::{Layout, WorkspaceError};
 
 /// The check script (POSIX sh, run as root with the mount point as `$1`).
@@ -29,6 +30,8 @@ pub const MAX_REPOS: usize = 100;
 
 /// Longest line kept, in characters.
 const MAX_LINE: usize = 500;
+/// The longest error reason kept (the script's error line and stderr).
+const MAX_REASON: usize = 2000;
 
 /// A bounded list of lines.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -56,7 +59,7 @@ impl Listing {
 
     fn push(&mut self, item: &str) {
         if self.items.len() < MAX_ITEMS {
-            self.items.push(item.chars().take(MAX_LINE).collect());
+            self.items.push(clean(item, MAX_LINE));
         } else {
             self.more = self.more.saturating_add(1);
         }
@@ -244,11 +247,14 @@ pub(crate) async fn run<S: Sandbox>(
             .lines()
             .find_map(|l| l.strip_prefix("E\t"))
             .unwrap_or_default();
-        return Err(fail(format!(
-            "check exited {}: {}{}",
-            out.status.code,
-            first_error.replace('\t', ": "),
-            out.stderr_text().trim()
+        return Err(fail(clean(
+            &format!(
+                "check exited {}: {}{}",
+                out.status.code,
+                first_error.replace('\t', ": "),
+                out.stderr_text().trim()
+            ),
+            MAX_REASON,
         )));
     }
     parse(&out.stdout_text()).map_err(fail)
@@ -273,7 +279,7 @@ pub(crate) fn parse(stdout: &str) -> Result<Findings, String> {
                     return Err(format!("more than {MAX_REPOS} checkouts"));
                 }
                 findings.repos.push(RepoReport {
-                    dir: dir.chars().take(MAX_LINE).collect(),
+                    dir: clean(dir, MAX_LINE),
                     ..RepoReport::default()
                 });
             }
@@ -282,7 +288,7 @@ pub(crate) fn parse(stdout: &str) -> Result<Findings, String> {
                 if findings.errors.len() < MAX_ITEMS {
                     findings
                         .errors
-                        .push(format!("{dir}: {message}").chars().take(MAX_LINE).collect());
+                        .push(clean(&format!("{dir}: {message}"), MAX_LINE));
                 }
             }
             ("M", Some(kind), Some(count)) => {

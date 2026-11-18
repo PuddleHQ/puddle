@@ -6,7 +6,7 @@
 # Usage: ci/fetch-forgejo.sh <dest-dir> [<version> [windows]]    version defaults to the first pinned one for the platform
 # `windows` fetches the pinned Gitea Windows release instead (Forgejo ships none) and installs it as
 # <dest-dir>/forgejo.exe; the lab runs either through the same fixture.
-# Where the file comes from, in order: FORGEJO_CACHE_DIR (a folder CI restores between runs; a cached
+# Where the file comes from, in order: FETCH_CACHE_DIR (a folder CI restores between runs; a cached
 # file is hashed against the pin like a download, a bad one is ignored), the upstream release, then the
 # PuddleHQ/ci-mirror release `<forgejo|gitea>-v<version>` (unmodified upstream binaries, with their
 # licence and source pointer), so a run does not depend on one host being up. The pin is the only
@@ -50,28 +50,14 @@ else
     mirror=$mirror/forgejo-v$version/$asset
     installed=forgejo
 fi
-hash_of() { sha256sum < "$1" | cut -d' ' -f1; }
-cache=${FORGEJO_CACHE_DIR:-}
 cached=
-if [ -n "$cache" ] && [ -f "$cache/$asset" ]; then
-    if [ "$(hash_of "$cache/$asset")" = "$want" ]; then
-        cp "$cache/$asset" "$work/$asset"
-        cached=1
-        echo "fetch-forgejo: using the cached $asset (checksum matches the pin)" >&2
-    else
-        echo "fetch-forgejo: ignoring the cached $asset (checksum differs from the pin), downloading" >&2
-    fi
-fi
-[ -n "$cached" ] || download_from fetch-forgejo "$work/$asset" 600 "$url" "$mirror"
-got=$(hash_of "$work/$asset")
+if cache_get fetch-forgejo "$asset" "$want" "$work/$asset"; then cached=1; else download_from fetch-forgejo "$work/$asset" 600 "$url" "$mirror"; fi
+got=$(sha256sum < "$work/$asset" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then
     echo "fetch-forgejo: checksum mismatch for $asset: got $got, pinned $want" >&2
     exit 1
 fi
-if [ -n "$cache" ] && [ -z "$cached" ]; then
-    mkdir -p "$cache"
-    cp "$work/$asset" "$cache/$asset"
-fi
+[ -n "$cached" ] || cache_put "$asset" "$work/$asset"
 mkdir -p "$dest"
 cp "$work/$asset" "$dest/$installed"
 chmod 755 "$dest/$installed"

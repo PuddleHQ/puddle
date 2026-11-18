@@ -6151,6 +6151,7 @@ dependencies = [
  "puddle-test-kit",
  "puddle-types",
  "puddle-upstream",
+ "rfd",
  "serde_json",
  "tauri",
  "tauri-build",

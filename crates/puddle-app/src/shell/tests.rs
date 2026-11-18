@@ -452,3 +452,28 @@ fn the_editor_windows_take_the_debug_port_after_the_main_window_s() {
     assert_eq!(editor_debug_port(None), None);
     assert_eq!(editor_debug_port(Some(u16::MAX)), None);
 }
+
+#[test]
+fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = Options {
+        data_dir: Some(dir.path().to_owned()),
+        ..Options::default()
+    };
+    let err = ShellError::Containment(LifecycleError::Job {
+        op: "assign",
+        source: std::io::Error::other("denied"),
+    });
+    let message = report_startup_failure(&options, &err);
+    let file = dir.path().join(crash::STARTUP_ERROR_FILE);
+    assert!(
+        message.contains("cannot start: job object: assign failed"),
+        "{message}"
+    );
+    assert!(message.contains(&file.display().to_string()), "{message}");
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(
+        text.contains("cannot start: job object: assign failed"),
+        "{text}"
+    );
+}

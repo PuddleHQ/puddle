@@ -66,6 +66,39 @@ describe("RuleTable", () => {
     expect(onDelete).toHaveBeenCalledWith(rules[0], expect.any(HTMLElement));
   });
 
+  it("offers Edit on each row when it can edit, and names the rule", async () => {
+    const onEdit = vi.fn();
+    render(RuleTable, {
+      props: {
+        rules,
+        sort: DEFAULT_SORT,
+        now: 5_000_000,
+        onExpiry: vi.fn(),
+        onDelete: vi.fn(),
+        onEdit,
+      },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Edit rule: allow b.example.com for every workspace",
+      }),
+    );
+    expect(onEdit).toHaveBeenCalledWith(rules[1], expect.any(HTMLElement));
+  });
+
+  it("has no Edit button without a handler", () => {
+    render(RuleTable, {
+      props: {
+        rules,
+        sort: DEFAULT_SORT,
+        now: 5_000_000,
+        onExpiry: vi.fn(),
+        onDelete: vi.fn(),
+      },
+    });
+    expect(screen.queryByRole("button", { name: /^Edit rule/ })).toBeNull();
+  });
+
   it("has a switch column only when it can switch, and shows an off rule as off", async () => {
     const onEnabled = vi.fn();
     const mixed = [

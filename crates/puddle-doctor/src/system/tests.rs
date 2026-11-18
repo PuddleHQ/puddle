@@ -468,6 +468,27 @@ fn a_sealed_key_systemd_opens_is_ok_and_its_value_is_not_kept() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn the_key_a_sealed_key_check_opens_is_written_to_nowhere() {
+    use puddle_secrets::KeySourceTag::SystemdHostTpm2;
+    // This `systemd-creds` opens the key only when its output goes to the null device, so the
+    // doctor never holds the key in its memory.
+    let creds = fake_systemd_creds(
+        V257,
+        "[ \"$(readlink /proc/$$/fd/1)\" = /dev/null ] || exit 3; echo hunter2-the-vault-key",
+        0,
+    );
+    assert_eq!(
+        sealed_key_with(SystemdHostTpm2, &creds, true),
+        VaultFacts::Sealed {
+            tag: SystemdHostTpm2,
+            key: SealedKeyFacts::Opens,
+            tpm: None
+        }
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn a_tpm_whose_libraries_are_missing_is_read_from_the_exit_of_has_tpm2() {
     use puddle_secrets::KeySourceTag::SystemdHost;
     // `has-tpm2` exits: 0 yes, 16 a TPM with no libraries (Debian 13 cloud image with a vTPM),

@@ -19,7 +19,6 @@ use puddle_store::{
     RequestRuleWire, RequestRuleWireScope, Resolution, RuleDeleteReason, RuleWire,
     RuleWirePatternKind, RuleWireScope, Scope, Store, UserId, UserName,
 };
-use puddle_test_kit::cpu_time;
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Event, Host, PendingEnd, PendingId, PendingOutcome,
@@ -1073,6 +1072,8 @@ fn hostile_filter_text_is_data_not_sql_or_a_pattern() {
 #[expect(clippy::too_many_lines, reason = "one table of query cases")]
 fn a_hundred_thousand_records_answer_every_filter_quickly() {
     const ROWS: u64 = 100_000;
+    // A full scan takes 4 steps a row (400 014 steps measured); a rescan per row takes ROWS times that.
+    const STEP_BAR: u64 = 8 * ROWS;
     let workspaces = ["alpha", "beta", "gamma", "delta"];
     let decisions = [
         ConnectionDecision::Allow,
@@ -1278,31 +1279,26 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             plan.iter().any(|line| line.contains(step)),
             "{name}: expected `{step}` in the plan, got {plan:?}"
         );
-        // Best of three: thread CPU time still inflates on a shared 2-vCPU runner when another
-        // job bursts on the same host (CI run 42824928536: the full scans took 44 ms, then 203 ms,
-        // then 501 ms within one second, against 17 ms on a free machine). A burst that long does
-        // not cover three runs in a row, and a quadratic query is slow in all three.
-        let mut best = Duration::MAX;
-        let mut rows = Vec::new();
         let all = puddle_store::testing::all_users();
-        for _ in 0..3 {
-            let (got, cpu) = cpu_time(|| {
-                store
-                    .audit_query_every_user(&all, &filter, cursor, 100)
-                    .unwrap()
-            });
-            best = best.min(cpu);
-            rows = got;
-        }
-        let cpu = best;
+        let rows = store
+            .audit_query_every_user(&all, &filter, cursor, 100)
+            .unwrap();
         assert!(rows.len() <= 100);
-        eprintln!("audit query {name}: {cpu:?} of CPU");
-        // The bar is on this thread's CPU time, so a loaded machine barely moves it; it catches a
-        // query that went quadratic (a per-row rescan costs seconds). The slowest case (a full
-        // scan) used 17 to 44 ms on Linux and 47 ms on Windows (3 ticks), the indexed ones 0.1 ms.
+        // The bar is on the work the query does, counted in SQLite's virtual-machine steps, which no
+        // other process on the machine changes. It catches a query that went quadratic (a per-row
+        // rescan multiplies the steps by the table size). The slowest case here is a full scan.
+        let steps = store.audit_query_steps(&all, &filter, cursor, 100).unwrap();
+        eprintln!("audit query {name}: {steps} steps");
+        let steps = u64::try_from(steps).unwrap();
+        // Every row returned took at least one step, so a count that does not cover them is no count.
         assert!(
-            cpu < Duration::from_millis(250),
-            "{name} used {cpu:?} of CPU (best of three)"
+            steps > rows.len() as u64,
+            "{name} returned {} rows in {steps} steps",
+            rows.len()
+        );
+        assert!(
+            steps < STEP_BAR,
+            "{name} took {steps} steps over {ROWS} rows"
         );
     }
     // The filtered results are right, not just fast.

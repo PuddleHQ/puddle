@@ -607,7 +607,7 @@ jobs:
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
         run: scripts/check.sh openapi
-      - name: rustdoc (-D warnings: a public item's docs linking to a private one, a broken link)
+      - name: rustdoc (warnings are errors)
         if: ${{ !cancelled() }}
         run: scripts/check.sh rustdoc
       - name: doc tests

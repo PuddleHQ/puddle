@@ -305,7 +305,7 @@ jobs:
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
           python3 -m venv "$RUNNER_TEMP/lab-venv"
-          "$RUNNER_TEMP/lab-venv/bin/pip" install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/bin/pip" install --retries 10 --timeout 60 --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/bin/mitmdump" --version
           echo "PUDDLE_MITMDUMP_BIN=$RUNNER_TEMP/lab-venv/bin/mitmdump" >> "$GITHUB_ENV"
       # The lab's Git host (crates/puddle-e2e/src/lab/forgejo.rs): the pinned Forgejo release, so the fixture and its
@@ -323,7 +323,7 @@ jobs:
         id: forgejo
         if: ${{ !cancelled() }}
         run: |
-          FORGEJO_CACHE_DIR="$HOME/forgejo-cache" ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
+          FETCH_CACHE_DIR="$HOME/forgejo-cache" ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
           "$RUNNER_TEMP/forgejo/forgejo" --version
           echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo" >> "$GITHUB_ENV"
       - name: Forgejo download cache (save on a miss)

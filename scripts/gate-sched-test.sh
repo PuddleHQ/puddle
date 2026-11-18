@@ -5,7 +5,8 @@
 # gates of different streams overlap; each gate's output stays whole under its `==> <gate>` line;
 # any failing stream fails the run with the earliest failed gate's status and log last; a stream
 # stops at its first failure; a gate that needs another waits for it and is skipped when it failed;
-# PUDDLE_CHECK_SERIAL=1 and a single stream run inline in order; the serial prefix stops the run.
+# PUDDLE_CHECK_SERIAL=1 and a single stream run inline in order; the serial prefix stops the run; CHECK_FAIL_FAST=1
+# stops the other streams at the first failure.
 # What it cannot see: real gates (each has its own CI step), the timing of a loaded host (the
 # overlap check is a rendezvous, so it does not depend on speed), a signal reaching the gates' children.
 set -eu
@@ -89,6 +90,11 @@ scenario s5 "fmt typos" fmt typos fmt clippy ui
 mkdir -p "$tmp/s6/spec"
 spec s6 fmt "0 0"; spec s6 hooks "0 0 2"; spec s6 typos "0 0"; spec s6 clippy "0 0 2"
 scenario s6 "fmt typos" fmt hooks typos clippy
+# S7: CHECK_FAIL_FAST=1: quality fails at once; the slow gates of the other streams are stopped, not waited for, and the gate queued
+# behind them never starts. The run's status is quality's.
+mkdir -p "$tmp/s7/spec"
+spec s7 quality "0 6"; spec s7 coverage "60 0"; spec s7 ui "60 0"; spec s7 openapi "0 0"
+CHECK_FAIL_FAST=1 scenario s7 "" quality coverage openapi ui
 wait
 
 rc_of() { cat "$tmp/$1/rc"; }
@@ -157,6 +163,17 @@ done
 [ "$(cat "$tmp/s6/end.typos")" -le "$(cat "$tmp/s6/start.hooks")" ] || fail "s6: hooks started before the prefix gate typos ended"
 [ -e "$tmp/s6/start.hooks" ] && [ -e "$tmp/s6/start.clippy" ] || fail "s6: hooks and clippy did not overlap (rendezvous)"
 grep -q '^-- hooks: ok' "$tmp/s6/out" || fail "s6: hooks was not reported"
+
+# S7
+[ "$(rc_of s7)" = 6 ] || fail "s7: exit $(rc_of s7), expected quality's 6"
+grep -q '^check: fail fast (CHECK_FAIL_FAST=1): quality failed' "$tmp/s7/out" || fail "s7: no fail-fast line"
+for g in coverage ui openapi; do
+    grep -q "^-- $g: STOPPED (fail fast" "$tmp/s7/out" || fail "s7: $g was not reported as stopped"
+    [ ! -e "$tmp/s7/end.$g" ] || fail "s7: $g ran to its end after quality failed"
+done
+[ ! -e "$tmp/s7/start.openapi" ] || fail "s7: openapi started after quality failed"
+[ "$(grep '^==> ' "$tmp/s7/out" | tail -n 1)" = "==> quality" ] || fail "s7: the failed gate's log is not printed last"
+[ "$(($(date +%s) - $(cat "$tmp/s7/start.quality")))" -lt 50 ] || fail "s7: the run waited for the slow gates"
 
 # The notices skip: a scratch repository with this check.sh and a stub cargo and cargo-about.
 n=$tmp/notices

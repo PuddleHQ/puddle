@@ -262,9 +262,13 @@ fn every_never_decrypt_name_of_a_user_is_listed_with_its_workspace() {
 fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
     let (store, seen) = store();
     assert!(store.add_never_decrypt(&ws("a"), "x.example", 2).unwrap());
+    assert_eq!(changes(&seen), 1, "a new name is a change");
     assert!(store.add_never_decrypt(&ws("a"), "x.example", 2).unwrap());
+    assert_eq!(changes(&seen), 1, "a name already held is not");
     assert!(store.add_never_decrypt(&ws("a"), "y.example", 2).unwrap());
+    assert_eq!(changes(&seen), 2);
     assert!(!store.add_never_decrypt(&ws("a"), "z.example", 2).unwrap());
+    assert_eq!(changes(&seen), 2, "a refused name is not a change");
     assert!(
         store.add_never_decrypt(&ws("a"), "y.example", 2).unwrap(),
         "a name already held needs no room"
@@ -276,11 +280,20 @@ fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
             .never_decrypt,
         strings(&["x.example", "y.example"])
     );
+    store.set_workspace_mode(&ws("known"), None).unwrap();
+    let before = changes(&seen);
+    assert!(store.add_global_never_decrypt("g.example", 1).unwrap());
+    let grew = changes(&seen) - before;
+    assert!(grew > 0, "the first add tells the workspaces");
     assert!(store.add_global_never_decrypt("g.example", 1).unwrap());
     assert!(!store.add_global_never_decrypt("h.example", 1).unwrap());
+    assert_eq!(
+        changes(&seen) - before,
+        grew,
+        "only the first add told the workspaces"
+    );
     assert_eq!(
         store.global_never_decrypt().unwrap(),
         strings(&["g.example"])
     );
-    assert!(changes(&seen) > 0);
 }

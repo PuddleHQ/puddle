@@ -56,11 +56,23 @@ fn a_command_forgejo_refuses_fails_the_start_with_its_output() {
     }
 }
 
+/// A Forgejo that logs its failed bind and exits fails the start with its log. Which of the two
+/// causes the start reports first depends on whether the process has finished exiting when the log
+/// line is first read: "exited early" when it has, "failed to start" when it has not. The fast
+/// script lands on either side by scheduling; the slow one always logs first.
 #[test]
 fn forgejo_that_exits_before_it_answers_fails_the_start_with_its_log() {
-    let why = launch_failing("none", "echo 'bind: address already in use'; exit 3");
-    assert!(why.contains("exited early"), "{why}");
-    assert!(why.contains("address already in use"), "{why}");
+    for web in [
+        "echo 'bind: address already in use'; exit 3",
+        "echo 'bind: address already in use'; sleep 0.3; exit 3",
+    ] {
+        let why = launch_failing("none", web);
+        assert!(
+            why.contains("exited early") || why.contains("failed to start"),
+            "{web}: {why}"
+        );
+        assert!(why.contains("address already in use"), "{web}: {why}");
+    }
 }
 
 #[test]

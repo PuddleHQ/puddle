@@ -190,7 +190,7 @@ async function before(dir, workspace) {
 
   // The guest asks for a host nobody allowed: refused at once, and the request waits in the inbox.
   const asked = await curlInGuest(workspace, PENDING_HOST);
-  check("the guest's request to an unknown host is refused as pending", asked.status === 403 && asked.pending, asked.text.slice(0, 300));
+  check("the guest's request to an unknown host is refused as pending (a 403 to the proxy tunnel)", asked.pending && /\b403\b/.test(asked.text), asked.text.slice(0, 300));
   const open = await until(
     "the pending request in the inbox",
     async () => (await api("GET", "/api/pending")).json?.requests?.find((r) => r.state === "requested" && r.host === PENDING_HOST && r.workspace === workspace),

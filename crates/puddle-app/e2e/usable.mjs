@@ -478,8 +478,8 @@ async function checkTheCompanyProxyCarriedTheTraffic(branch) {
 const desktopScript = join(here, "desktop.ps1");
 /** The Start menu shortcut's AppUserModelID, which the app's notifications carry. */
 const appUserModelId = JSON.parse(readFileSync(join(here, "..", "tauri.conf.json"), "utf8")).identifier;
-/** The main window's title: "Puddle", with the waiting count when the badge shows one. */
-const MAIN_TITLE = "^Puddle( \\(.+\\))?$";
+/** The main window's title: "Puddle", with the waiting count when the badge shows one (a page's name before it, in older builds); not the editor's. */
+const MAIN_TITLE = `^(?!${WORKSPACE} - )(.+ - )?Puddle( \\(.+\\))?$`;
 
 /** One desktop.ps1 action; its output, trimmed. */
 function desktop(action, ...args) {
@@ -744,7 +744,7 @@ try {
   // Windows asks once to trust the app's own localhost certificate (the editor's origin), whenever the
   // app first needs it; the user answers Yes, so a poll does, for the whole run.
   const certificate = setInterval(() => {
-    uia.call({ action: "click", window: "^Security Warning$", role: "pane", name: "Yes" }).then((r) => {
+    uia?.call({ action: "click", window: "^Security Warning$", role: "pane", name: "Yes" }).then((r) => {
       if (r.found) note("the Windows certificate dialog for localhost: answered Yes");
     }, () => {});
   }, 2000);

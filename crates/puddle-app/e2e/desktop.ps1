@@ -68,7 +68,7 @@ switch ($Action) {
     foreach ($t in [Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory($Rest[0])) {
       $texts = @()
       foreach ($node in $t.Content.GetElementsByTagName('text')) { $texts += [string]$node.InnerText }
-      $items += [ordered]@{ title = $(if ($texts.Count -gt 0) { $texts[0] } else { '' }); body = (@($texts | Select-Object -Skip 1) -join "`n") }
+      $items += [ordered]@{ title = $(if ($texts.Count -gt 0) { $texts[0] } else { '' }); body = (@($texts | Select-Object -Skip 1 | Where-Object { $_ }) -join "`n") }
     }
     ConvertTo-Json -InputObject @($items) -Compress -Depth 4
   }

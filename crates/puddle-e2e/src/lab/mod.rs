@@ -403,6 +403,7 @@ fn try_answers(
             // so a program that is still there gets a moment to go before it counts as up and
             // broken.
             let grace = Instant::now() + EXIT_GRACE;
+            // flake-ok: the grace is a bound on a program that may stay; running out of it is the answer, not a failure of the wait.
             while child.is_some() && Instant::now() < grace {
                 if let Some(why) = exited_early(&mut child) {
                     return Err(why);

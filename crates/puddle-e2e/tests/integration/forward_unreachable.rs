@@ -181,11 +181,18 @@ async fn a_guest_cannot_dial_a_forward_of_its_own_workspace_even_with_every_loca
             "{authority}: never approvable: {headers:?}"
         );
     }
-    // Nothing came through the forward: the guest server was not reached again.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Nothing came through the forward: a second outside connection is the marker. The guest server
+    // accepts in the order connections reach it, so when the marker has been served any refused
+    // connection that got through would already be counted before it.
+    let mut marker = TcpStream::connect(("127.0.0.1", host_port)).await.unwrap();
+    let mut greeting = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), marker.read_to_end(&mut greeting))
+        .await
+        .expect("the forward did not answer the marker connection")
+        .unwrap();
     assert_eq!(
         rig.accepted.load(Ordering::SeqCst),
-        1,
+        2,
         "a refused guest connection still reached the guest server through the forward"
     );
 }

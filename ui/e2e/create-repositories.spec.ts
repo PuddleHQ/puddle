@@ -506,9 +506,7 @@ test.describe("the row", () => {
     backend,
   }) => {
     await openList(page, backend);
-    await expect(card(page, "web-shop")).toContainText(
-      "acme/web-shop",
-    );
+    await expect(card(page, "web-shop")).toContainText("acme/web-shop");
     await expect(card(page, "web-shop")).not.toContainText("more");
     const dialog = await openCreate(page);
     await addrOf(page, 1).fill(API);

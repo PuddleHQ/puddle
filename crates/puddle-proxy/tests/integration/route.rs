@@ -407,6 +407,49 @@ async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
     assert_eq!(rig.policy.pending().len(), 1, "no new pending item");
 }
 
+/// The count a reader waits on to know the audit is complete: open while the tunnel lives, zero
+/// only after the connection's record is written.
+#[tokio::test]
+async fn a_connection_is_open_until_its_record_is_written() {
+    let echo = echo_server().await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("echo.test", &[LOCAL]),
+    );
+    rig.policy.allow(&host("echo.test"));
+    assert_eq!(rig.proxy.open_guest_streams(), 0);
+
+    let mut guest = rig.guest().await;
+    let (code, mut reader) = guest
+        .connect_to(&format!("echo.test:{}", echo.port()))
+        .await;
+    assert_eq!(code, 200);
+    reader.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    reader.read_exact(&mut back).await.unwrap();
+    assert_eq!(rig.proxy.open_guest_streams(), 1, "the tunnel is open");
+    assert!(
+        rig.log.events().is_empty(),
+        "nothing is recorded while it is"
+    );
+
+    reader.get_mut().shutdown().await.unwrap();
+    puddle_test_kit::eventually(
+        "the connection is closed and recorded",
+        Duration::from_secs(10),
+        || match rig.proxy.open_guest_streams() {
+            0 => Ok(()),
+            open => Err(format!("{open} still open")),
+        },
+    )
+    .await;
+    assert_eq!(
+        rig.log.events().len(),
+        1,
+        "at zero open connections the record is already written"
+    );
+}
+
 #[tokio::test]
 async fn refusals_carry_decision_headers_and_end_cleanly() {
     let rig = Rig::new(&ProxyConfig::default());

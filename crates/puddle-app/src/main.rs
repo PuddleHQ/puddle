@@ -11,11 +11,28 @@ use std::process::ExitCode;
     reason = "the process is ending: this is the one place a start-up failure can be reported"
 )]
 fn main() -> ExitCode {
-    match puddle_app::run(&puddle_app::Options::from_env()) {
+    let options = puddle_app::Options::from_env();
+    match puddle_app::run(&options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("puddle-app: {err}");
+            let message = puddle_app::report_startup_failure(&options, &err);
+            eprintln!("puddle-app: {message}");
+            show_failure(&message);
             ExitCode::FAILURE
         }
     }
 }
+
+/// A release build on Windows has no console, so the reason goes in a message box.
+#[cfg(all(windows, not(debug_assertions)))]
+fn show_failure(message: &str) {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Puddle")
+        .set_description(message)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+}
+
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn show_failure(_message: &str) {}

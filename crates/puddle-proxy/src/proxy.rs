@@ -83,6 +83,8 @@ pub struct Proxy {
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
     pub(crate) config: ProxyConfig,
+    /// How many guest connections are being served right now, the audit record of each included.
+    open_guest_streams: Arc<std::sync::atomic::AtomicUsize>,
     /// How many upstream connections have ended; tests wait on it (feature `testing`).
     #[cfg(feature = "testing")]
     pub(crate) upstream_ended: Arc<std::sync::atomic::AtomicU64>,
@@ -121,9 +123,19 @@ impl Proxy {
             sink,
             reports: None,
             config: ProxyConfig::default(),
+            open_guest_streams: Arc::default(),
             #[cfg(feature = "testing")]
             upstream_ended: Arc::default(),
         }
+    }
+
+    /// How many guest connections are open: from the moment the proxy took the stream until its
+    /// audit record is written. Zero means every connection that ended has its record, so a reader
+    /// that wants the whole audit of a flow waits for it instead of for a quiet period.
+    #[must_use]
+    pub fn open_guest_streams(&self) -> usize {
+        self.open_guest_streams
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many connections to real servers have ended so far (feature `testing`): a test that
@@ -618,8 +630,25 @@ impl WorkspaceHandler {
     }
 }
 
+/// Counts one guest connection in [`Proxy::open_guest_streams`] until it is dropped.
+struct OpenStream(Arc<std::sync::atomic::AtomicUsize>);
+
+impl OpenStream {
+    fn new(count: &Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(Arc::clone(count))
+    }
+}
+
+impl Drop for OpenStream {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
     let proxy = &handler.proxy;
+    let _open = OpenStream::new(&proxy.open_guest_streams);
     let (stream, counts) = Counted::new(stream);
     let mut reader = BufReader::new(stream);
     let Ok(_permit) = Arc::clone(&handler.streams).try_acquire_owned() else {

@@ -24,10 +24,17 @@ const DRAIN: Duration = Duration::from_secs(2);
 
 /// Runs `command` (stdin closed, output captured) and kills it after `limit`.
 pub(crate) fn run(command: &mut Command, limit: Duration) -> ProcessOutcome {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    run_with(command.stdout(Stdio::piped()), limit)
+}
+
+/// The same with the standard output sent to the null device, for a program whose output is a
+/// secret: it is never read into this process. `stdout_first_line` is empty.
+pub(crate) fn run_without_output(command: &mut Command, limit: Duration) -> ProcessOutcome {
+    run_with(command.stdout(Stdio::null()), limit)
+}
+
+fn run_with(command: &mut Command, limit: Duration) -> ProcessOutcome {
+    command.stdin(Stdio::null()).stderr(Stdio::piped());
     let start = Instant::now();
     let mut child = match command.spawn() {
         Ok(child) => child,

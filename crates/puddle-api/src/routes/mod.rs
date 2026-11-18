@@ -285,7 +285,7 @@ fn terminals_router() -> OpenApiRouter<AppState> {
 fn rules_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(rules::list_rules, rules::create_rule))
-        .routes(routes!(rules::delete_rule))
+        .routes(routes!(rules::update_rule, rules::delete_rule))
         .routes(routes!(rules::set_rule_expiry))
         .routes(routes!(rules::set_rule_enabled))
         .routes(routes!(

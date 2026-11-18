@@ -219,6 +219,20 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
   await backend.control.reset("lived-in");
   await openSettings(page, backend);
   const global = page.getByLabel("Manage tools with mise in workspaces");
+  const view0 = await request.get("/api/settings", { headers: auth(backend) });
+  if (!((await view0.json()) as { mise_available: boolean }).mise_available) {
+    // The v0.1 build leaves the mise layer out: no switch here, no Tools section on a workspace.
+    await expect(global).toHaveCount(0);
+    await page.goto("/workspaces/web-shop/settings");
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Clipboard" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tools" })).toHaveCount(0);
+    await expect(
+      page.getByLabel("Manage this workspace's tools with mise"),
+    ).toHaveCount(0);
+    return;
+  }
   await expect(global).toBeChecked();
   expect((await stored(request, backend)).tools.mise).toBeNull();
 
@@ -486,7 +500,7 @@ test("with the confirmation switched off, a decision for every workspace goes th
   ).toMatchObject({ scope: { type: "global" } });
 });
 
-test("the inbox keys do nothing until the switch is on, then A decides the current request", async ({
+test("the inbox keys are on by default; switched off from the shortcuts list they do nothing until switched on again", async ({
   page,
   backend,
   request,
@@ -495,11 +509,23 @@ test("the inbox keys do nothing until the switch is on, then A decides the curre
   await page.goto("/inbox");
   const row = page.locator("li.req").first();
   await expect(row).toBeVisible();
-  const hint = page.getByRole("link", {
-    name: /Turn on the A, D, J and K keys in Settings/,
-  });
-  await expect(hint).toBeVisible();
-  await expectNoAxeViolations(page, "inbox with the keys off");
+  const keysButton = page.getByRole("button", { name: "Keyboard shortcuts" });
+  const keys = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await keysButton.click();
+  await expect(keys.locator('[data-shortcut="allow"]')).toBeVisible();
+  await keys
+    .getByRole("link", { name: "Turn the single keys off in Settings" })
+    .click();
+  await expect(page).toHaveURL(/\/settings#s-inbox$/);
+  const box = page.getByLabel("Keyboard shortcuts in the inbox");
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  await pressSave(page);
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: /^Inbox/ })
+    .click();
+  await expect(row).toBeVisible();
   await page.locator("main").focus();
   await page.keyboard.press("a");
   await expect(row).toBeVisible();
@@ -512,16 +538,18 @@ test("the inbox keys do nothing until the switch is on, then A decides the curre
   // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
   expect(await open()).toBe(0);
 
-  await hint.click();
+  await keysButton.click();
+  await expect(keys.locator('[data-shortcut="allow"]')).toHaveCount(0);
+  await expectNoAxeViolations(page, "inbox shortcuts list with the keys off");
+  await keys.getByRole("link", { name: "Turn them on in Settings" }).click();
   await expect(page).toHaveURL(/\/settings#s-inbox$/);
-  await page.getByLabel("Keyboard shortcuts in the inbox").check();
+  await box.check();
   await pressSave(page);
   await page
     .getByRole("navigation", { name: "Main" })
     .getByRole("link", { name: /^Inbox/ })
     .click();
   await expect(page.locator("li.req").first()).toBeVisible();
-  await expect(page.getByText("allow ·")).toBeVisible();
   await page.locator("main").focus();
   await page.keyboard.press("a");
   await expect(page.locator("li.req")).toHaveCount(0);

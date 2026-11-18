@@ -562,7 +562,7 @@
     font-weight: 600;
   }
   tr.group th {
-    padding-top: var(--space-5);
+    padding-top: var(--space-6);
     border-top: 0;
     border-bottom: 2px solid var(--color-border);
     font-size: var(--text-md);

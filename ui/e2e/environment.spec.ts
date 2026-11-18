@@ -430,7 +430,7 @@ test("the delete check says what Puddle itself removes", async ({
 }) => {
   await backend.control.reset("environment");
   await backend.signIn(page);
-  await page.goto("/workspaces/docs-site");
+  await page.goto("/workspaces/docs-site/settings");
   await page.getByRole("button", { name: "Delete workspace…" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Delete docs-site?" });
   await expect(dialog).toContainText(

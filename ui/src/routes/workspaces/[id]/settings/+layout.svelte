@@ -36,7 +36,7 @@
   .settings {
     display: grid;
     grid-template-columns: 11rem minmax(0, 1fr);
-    gap: var(--space-5);
+    gap: var(--space-6);
     align-items: start;
   }
   ul {

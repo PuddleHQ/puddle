@@ -221,7 +221,9 @@ describe("identities on a workspace", () => {
     expect(
       await screen.findByText(/No identity here covers dev.azure.com\/contoso/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/No identity is on this workspace/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No identity is on this workspace/),
+    ).toBeInTheDocument();
   });
 
   it("warns once for each listed repository no identity covers, and names it", async () => {

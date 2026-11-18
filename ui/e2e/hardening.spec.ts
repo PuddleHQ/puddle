@@ -138,9 +138,12 @@ test.describe("target size", () => {
       const names = await page
         .getByRole("button", { name: /^(Add|New|Create|Edit|Rename|Delete)/ })
         .evaluateAll((els) =>
-          els.map((el) =>
-            (el.getAttribute("aria-label") ?? el.textContent ?? "").trim(),
-          ),
+          els
+            // A greyed button opens nothing (Delete workspace on a running workspace).
+            .filter((el) => !(el as HTMLButtonElement).disabled)
+            .map((el) =>
+              (el.getAttribute("aria-label") ?? el.textContent ?? "").trim(),
+            ),
         );
       for (const name of new Set(names)) {
         await page

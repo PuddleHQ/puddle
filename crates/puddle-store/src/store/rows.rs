@@ -6,7 +6,9 @@ use puddle_types::{
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
-use crate::audit::{AuditRecord, PendingExpiryReason, PendingWire, RuleWire};
+use crate::audit::{
+    AuditRecord, PendingExpiryReason, PendingWire, RuleDeleteReason, RuleWire, actor_str,
+};
 use crate::engine::Hit;
 use crate::error::StoreError;
 use crate::pattern::registrable_domain;
@@ -154,6 +156,29 @@ pub(super) fn close_decided_rows(
     Ok(closed)
 }
 
+/// The open rows of one workspace, host and port: 0 or 1 (R-11).
+const OPEN_ROW_COUNT: &str = "SELECT count(*) FROM pending
+     WHERE workspace_id = ?1 AND host = ?2 AND port = ?3 AND state = 'requested'";
+
+/// Deletes a rule and records that (the caller emits the change).
+pub(super) fn delete_rule_row(
+    tx: &Transaction<'_>,
+    id: RuleId,
+    now: u64,
+    actor: Actor,
+) -> Result<Rule, StoreError> {
+    let rule = load_rule(tx, id)?;
+    tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
+    let record = AuditRecord::RuleDeleted {
+        ts: now,
+        rule: RuleWire::from(&rule),
+        reason: RuleDeleteReason::User,
+        actor: actor_str(actor),
+    };
+    append_for(tx, &record, rule.user)?;
+    Ok(rule)
+}
+
 /// The rows `rule` closed with an allow or a deny, each with its `exact_only` flag, oldest id first.
 pub(super) fn closed_by_rule(
     tx: &Transaction<'_>,
@@ -183,12 +208,8 @@ pub(super) fn reopen_rows(
 ) -> Result<Vec<PendingRow>, StoreError> {
     let mut reopened = Vec::new();
     for (old, exact_only) in closed {
-        let taken: i64 = tx.query_row(
-            "SELECT count(*) FROM pending
-             WHERE workspace_id = ?1 AND host = ?2 AND port = ?3 AND state = 'requested'",
-            params![old.workspace.as_str(), old.host.to_string(), old.port],
-            |row| row.get(0),
-        )?;
+        let key = params![old.workspace.as_str(), old.host.to_string(), old.port];
+        let taken: i64 = tx.query_row(OPEN_ROW_COUNT, key, |row| row.get(0))?;
         if taken > 0 {
             continue;
         }
@@ -206,13 +227,11 @@ pub(super) fn reopen_rows(
             ],
         )?;
         let row = load_pending(tx, PendingId(tx.last_insert_rowid()))?;
-        append(
-            tx,
-            &AuditRecord::PendingCreated {
-                ts: now,
-                pending: PendingWire::from(&row),
-            },
-        )?;
+        let record = AuditRecord::PendingCreated {
+            ts: now,
+            pending: PendingWire::from(&row),
+        };
+        append(tx, &record)?;
         fx.push(Event::PendingOpened {
             request: PendingSummary {
                 id: row.id.0,

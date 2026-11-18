@@ -20,8 +20,8 @@ use rusqlite::{
 };
 
 use crate::audit::{
-    AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleDeleteReason, RuleSwitchKind,
-    RuleWire, WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
+    AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleSwitchKind, RuleWire,
+    WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
 };
 use crate::clock::Clock;
 use crate::engine::{Hit, RuleIndex};
@@ -57,8 +57,8 @@ pub(crate) mod users;
 use audit::{append, append_for, appended_since, audit_head};
 use rows::{
     PENDING_COLUMNS, close_decided_rows, closed_by_rule, corrupt, decide_row, decide_row_by,
-    insert_rule, load_pending, load_rule, load_rules, pending_from_raw, raw_pending, reopen_rows,
-    stored_ts,
+    delete_rule_row, insert_rule, load_pending, load_rule, load_rules, pending_from_raw,
+    raw_pending, reopen_rows, stored_ts,
 };
 
 pub use audit_retention::{
@@ -681,18 +681,7 @@ impl Store {
     /// [`StoreError::UnknownRule`] or a database error.
     pub fn delete_rule(&self, id: RuleId, actor: Actor) -> Result<Rule, StoreError> {
         let rule = self.change(|tx, now, fx| {
-            let rule = load_rule(tx, id)?;
-            tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
-            append_for(
-                tx,
-                &AuditRecord::RuleDeleted {
-                    ts: now,
-                    rule: RuleWire::from(&rule),
-                    reason: RuleDeleteReason::User,
-                    actor: actor_str(actor),
-                },
-                rule.user,
-            )?;
+            let rule = delete_rule_row(tx, id, now, actor)?;
             fx.push(Event::RulesChanged {});
             Ok(rule)
         })?;
@@ -714,19 +703,8 @@ impl Store {
         actor: Actor,
     ) -> Result<(Rule, Vec<PendingRow>), StoreError> {
         let (rule, reopened) = self.change(|tx, now, fx| {
-            let rule = load_rule(tx, id)?;
             let closed = closed_by_rule(tx, id)?;
-            tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
-            append_for(
-                tx,
-                &AuditRecord::RuleDeleted {
-                    ts: now,
-                    rule: RuleWire::from(&rule),
-                    reason: RuleDeleteReason::User,
-                    actor: actor_str(actor),
-                },
-                rule.user,
-            )?;
+            let rule = delete_rule_row(tx, id, now, actor)?;
             let reopened = reopen_rows(tx, closed, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok((rule, reopened))

@@ -20,6 +20,9 @@
 # gate finishes, followed by `-- <gate>: ok, N s`. A failed gate prints `-- <gate>: FAILED` at once
 # and its whole log at the end, in reverse run order, so the earliest failure in run order is the
 # last `==> ` line, as it was when the run stopped there. The exit status is that gate's.
+# CHECK_FAIL_FAST=1: the first failed gate ends the run. The gates still running or waiting are stopped and reported as
+# `-- <gate>: STOPPED (fail fast, not a verdict)`; the failed gate's log and exit status are reported as above. For a
+# machine that other runs wait for: the run is red either way, and a fix round then reruns all.
 # CHECK_GATE_DONE_DIR=DIR: every gate that ends leaves an empty file DIR/<gate> (gate_mark).
 # On INT, TERM or HUP it stops every stream and all that they started (a process tree walk with ps).
 
@@ -202,6 +205,15 @@ run_gates() {
             if [ -e "$run_tmp/$g.rc" ]; then gate_report "$g"; else still="$still $g"; fi
         done
         remaining=$still
+        if [ -n "$gate_failed" ] && [ -n "$remaining" ] && [ "${CHECK_FAIL_FAST:-}" = 1 ]; then
+            # Fail fast: the run is red once a gate failed, so the gates still running only hold the machine. Stop them and report now.
+            echo "check: fail fast (CHECK_FAIL_FAST=1):$gate_failed failed; stopping the gates still running or waiting:$remaining"
+            victims="$(gate_descendants "$gate_pids") $gate_pids"
+            # shellcheck disable=SC2086 # a list of pids
+            kill -TERM $victims 2>/dev/null || true
+            for g in $remaining; do echo "-- $g: STOPPED (fail fast, not a verdict)"; done
+            remaining=
+        fi
         [ -z "$remaining" ] || sleep 1
     done
     for p in $gate_pids; do wait "$p" || true; done

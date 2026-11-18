@@ -958,7 +958,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.on_own_task(job).await
     }
 
-    /// Creates a sandbox on workspace `record`'s volume and boots it through the hook.
+    /// Marks the workspace as one whose disk is gone.
     pub(super) fn mark_volume_missing(&self, id: &WorkspaceId) {
         if let Some(slot) = self.state().slots.get_mut(id) {
             slot.volume_missing = true;

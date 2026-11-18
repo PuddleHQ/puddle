@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Rules: list, create, delete, change expiry, switch on or off (docs/spec/rules.md §1–2, R-65).
+//! Rules: list, create, edit, delete, change expiry, switch on or off (docs/spec/rules.md §1–2, R-65).
 
 use axum::Json;
 use axum::extract::State;
@@ -12,7 +12,9 @@ use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{NewRuleRequest, Rule, RuleEnabledRequest, RuleExpiryRequest, RuleList};
+use crate::wire::{
+    NewRuleRequest, Rule, RuleEnabledRequest, RuleExpiryRequest, RuleList, UpdateRuleRequest,
+};
 
 /// Every rule, including expired ones the sweeper hasn't removed yet.
 #[utoipa::path(
@@ -63,6 +65,36 @@ pub(crate) async fn create_rule(
     })
     .await?;
     Ok((StatusCode::CREATED, Json(Rule::from_store(rule)?)))
+}
+
+/// Edits a rule in place: its host pattern, effect, scope and expiry (and its precedence when the
+/// body names one). The rule keeps its id, creator, creation time and switch. Open requests it
+/// now decides are closed the same way as for a new rule.
+#[utoipa::path(
+    put,
+    path = "/api/rules/{id}",
+    tag = "rules",
+    params(("id" = i64, Path, description = "rule id")),
+    request_body = UpdateRuleRequest,
+    responses(
+        (status = OK, description = "the edited rule", body = Rule),
+        (status = NOT_FOUND, description = "no such rule, workspace or rule set", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "invalid pattern, expiry or precedence", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn update_rule(
+    State(state): State<AppState>,
+    principal: Principal,
+    Path(id): Path<i64>,
+    crate::extract::Json(body): crate::extract::Json<UpdateRuleRequest>,
+) -> Result<Json<Rule>, ApiError> {
+    let edit = body.into_edit()?;
+    // The route's own check covered the rule as it is; the scope it moves to needs its own.
+    let (action, resource) = authz::rule_scope(edit.scope.workspace());
+    authz::check(&state, principal, action, resource).await?;
+    let rule =
+        blocking(move || Ok(state.store.update_rule(RuleId(id), &edit, Actor::Api)?)).await?;
+    Ok(Json(Rule::from_store(rule)?))
 }
 
 /// Deletes a rule.

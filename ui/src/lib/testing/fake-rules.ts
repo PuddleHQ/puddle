@@ -80,6 +80,15 @@ export class FakeRules {
     if (!found) return this.reply(404);
     if (path.endsWith("/enabled")) {
       found.enabled = init.body["enabled"] as boolean;
+    } else if (path === "/api/rules/{id}") {
+      const pattern = String(init.body["pattern"]).replace(/^\*/, "");
+      found.pattern = pattern;
+      found.pattern_kind = pattern.startsWith(".") ? "suffix" : "exact";
+      found.effect = init.body["effect"] as Rule["effect"];
+      found.scope = init.body["scope"] as Rule["scope"];
+      found.expires_at = init.body["expires_at"] as number | null;
+      found.precedence =
+        (init.body["precedence"] as number | undefined) ?? found.precedence;
     } else {
       found.expires_at = init.body["expires_at"] as number | null;
     }

@@ -194,28 +194,29 @@ fn hosts_since(vm: &VmHost, before: usize) -> BTreeSet<(String, String)> {
         .collect()
 }
 
-/// How long the audit must stay unchanged before a flow counts as over.
-const QUIET: Duration = Duration::from_secs(5);
+/// How long a tool's connections may take to close after the tool exited.
+const CLOSE_WITHIN: Duration = Duration::from_secs(60);
 
-/// Waits until the audit has written no connection record for `QUIET` and returns how many there are.
+/// Waits until the proxy has no guest connection open and returns how many connection records the
+/// audit holds then.
 ///
 /// A record is written when its connection ends, and a tool can leave connections behind it: the
 /// proxy sees them close a moment after the tool exited (2026-11-08: a claude refresh's last
-/// `api.anthropic.com` record landed in the window of the `gh` flow that followed). Starting the
-/// next flow only after the audit is quiet keeps each flow's records in its own window.
+/// `api.anthropic.com` record landed in the window of the `gh` flow that followed). The proxy counts
+/// a connection as open until its record is written, so zero open connections means every record of
+/// the flow is in the audit, whatever the machine's speed; starting the next flow then keeps each
+/// flow's records in its own window.
 async fn settled(vm: &VmHost) -> usize {
-    let mut count = connections(&vm.host).len();
-    let mut quiet_since = tokio::time::Instant::now();
-    // flake-ok: waits for the absence of new records over a fixed quiet period, which `eventually` (a probe that turns true) cannot express.
-    while quiet_since.elapsed() < QUIET {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        let now = connections(&vm.host).len();
-        if now != count {
-            count = now;
-            quiet_since = tokio::time::Instant::now();
-        }
-    }
-    count
+    eventually(
+        "every guest connection closed and recorded",
+        CLOSE_WITHIN,
+        || match vm.host.open_guest_streams() {
+            0 => Ok(()),
+            open => Err(format!("{open} guest connection(s) still open")),
+        },
+    )
+    .await;
+    connections(&vm.host).len()
 }
 
 /// Whether the profile named `profile` has `host` among the hosts it swaps stand-ins toward.

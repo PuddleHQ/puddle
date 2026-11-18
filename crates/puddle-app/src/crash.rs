@@ -94,6 +94,43 @@ pub fn write(dir: &Path, report: &Report, now: SystemTime) -> io::Result<PathBuf
     Ok(path)
 }
 
+/// The file a failed start-up leaves in the data folder (one file, replaced by the next failure).
+pub const STARTUP_ERROR_FILE: &str = "startup-error.txt";
+
+/// Writes why the program did not start into `dir` (created if needed) as [`STARTUP_ERROR_FILE`].
+/// A release build on Windows has no console, so this file and the message box are where the
+/// reason shows.
+///
+/// # Errors
+///
+/// Whatever the file system reports.
+pub fn write_startup_error(dir: &Path, reason: &str) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(STARTUP_ERROR_FILE);
+    let text = format!(
+        "Puddle did not start. This file stays on this computer; nothing was sent anywhere.\n\n\
+         version:  {}\nplatform: {} {}\nreason:   {reason}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    fs::write(&path, text)?;
+    Ok(path)
+}
+
+/// What the user is told when the program does not start: the reason and, when it was written,
+/// the file that holds it.
+#[must_use]
+pub fn startup_message(reason: &str, file: Option<&Path>) -> String {
+    match file {
+        Some(file) => format!(
+            "Puddle did not start: {reason}\n\nDetails: {}",
+            file.display()
+        ),
+        None => format!("Puddle did not start: {reason}"),
+    }
+}
+
 /// Deletes the oldest `crash-*.txt` files in `dir` until `keep` remain. Names sort by time.
 fn prune(dir: &Path, keep: usize) {
     let Ok(entries) = fs::read_dir(dir) else {

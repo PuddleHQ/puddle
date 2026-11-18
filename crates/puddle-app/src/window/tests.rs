@@ -20,12 +20,9 @@ fn the_script_sets_a_frozen_token_for_the_api_origin_only() {
 }
 
 #[test]
-fn the_script_freezes_the_prototype_before_anything_else() {
+fn the_script_locks_the_prototype_before_anything_else() {
     let script = init_script("http://127.0.0.1:4711", "abc123");
-    assert!(
-        script.starts_with("Object.freeze(Object.prototype);"),
-        "{script}"
-    );
+    assert!(script.starts_with(PROTOTYPE_GUARD), "{script}");
 }
 
 #[test]

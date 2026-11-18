@@ -5,18 +5,24 @@
 # ci/gitleaks.sha256; install it with ci/fetch-gitleaks.sh <dir-on-PATH>.
 # Usage: scripts/check-secrets.sh [--self-test]
 #
-# Scope (PUDDLE_SECRETS_SCOPE=all|head; unset means all when CI is set, else head):
-#   head  HEAD's commits that its base does not have yet, which is what a push adds. The base is
-#         $DIFF_BASE if it resolves (the same variable the diff-coverage gate uses), else
-#         origin/develop; with neither, all of HEAD's history. A dirty commit on some other
-#         local branch (another task's unlanded work) never matters.
-#   all   every ref the clone has, gitleaks' own default. CI runs this, so a secret anywhere in
-#         the full history, a removed one included, still fails there.
+# Scope (PUDDLE_SECRETS_SCOPE=history|head|all; unset means history when CI is set, else head):
+#   head     HEAD's commits that its base does not have yet, which is what a push adds. The base is
+#            $DIFF_BASE if it resolves (the same variable the diff-coverage gate uses), else
+#            origin/develop; with neither, all of HEAD's history. A dirty commit on some other
+#            local branch (another task's unlanded work) never matters.
+#   history  every commit HEAD can reach, and nothing else. CI runs this, so a secret anywhere in
+#            the history being checked, a removed one included, still fails there, while a finding
+#            on another branch of the clone (another pull request's) fails only that branch's own
+#            run. A pull request's HEAD in CI is its merge with the base, so its history is the
+#            base's plus every commit of the pull request.
+#   all      every ref the clone has, gitleaks' own default: an audit of the whole repository. A
+#            CI clone fetches every branch, so in CI this would fail every pull request on any one
+#            branch's finding; nothing runs it by default.
 #
 # --self-test proves the gate works, on throwaway repositories with the real configuration: a
 # real-shaped token fails, a listed fake fixture passes, a real-shaped token in the fixture's
 # own file still fails, a canary outside the listed paths fails, and each scope sees exactly the
-# commits it should (a dirty side branch fails `all` and passes `head`).
+# commits it should (a dirty side branch fails `all` and passes `head` and `history`).
 #
 # Rule: a canary token and its allowlist entry in .gitleaks.toml land in one commit. A commit
 # that adds the token without the entry fails a scan of that commit under its own config, so it
@@ -44,10 +50,10 @@ fi
 # default_scope <PUDDLE_SECRETS_SCOPE value> <CI value>: the scope to use; a bad value exits 2.
 default_scope() {
     case ${1:-} in
-    all | head) echo "$1" ;;
-    "") if [ -n "${2:-}" ]; then echo all; else echo head; fi ;;
+    all | head | history) echo "$1" ;;
+    "") if [ -n "${2:-}" ]; then echo history; else echo head; fi ;;
     *)
-        echo "secrets gate: PUDDLE_SECRETS_SCOPE must be all or head, not '$1'" >&2
+        echo "secrets gate: PUDDLE_SECRETS_SCOPE must be history, head or all, not '$1'" >&2
         exit 2
         ;;
     esac
@@ -66,7 +72,13 @@ base_of() {
 # log_opts <repo dir> <scope> <diff base>: the `git log` arguments that select the commits to
 # scan, empty for all refs. No spaces inside an argument: gitleaks splits the string on them.
 log_opts() {
-    [ "$2" = head ] || return 0
+    case $2 in
+    all) return 0 ;;
+    history)
+        echo "--full-history HEAD"
+        return 0
+        ;;
+    esac
     from=$(base_of "$1" "${3:-}")
     if [ -n "$from" ]; then
         echo "--full-history $from..HEAD"
@@ -93,6 +105,9 @@ scan_commit() {
 
 if [ "${1:-}" != "--self-test" ]; then
     scope=$(default_scope "${PUDDLE_SECRETS_SCOPE:-}" "${CI:-}")
+    if [ "$scope" = history ]; then
+        echo "secrets: scanning every commit HEAD can reach, not other branches (PUDDLE_SECRETS_SCOPE=all scans every ref)" >&2
+    fi
     if [ "$scope" = head ]; then
         from=$(base_of . "${DIFF_BASE:-}")
         if [ -n "${DIFF_BASE:-}" ] && [ "$from" != "$DIFF_BASE" ]; then
@@ -191,10 +206,14 @@ git -C "$tmp/side" checkout -q -
 commit_file side src/lib.rs '// clean'
 check pass side-branch-dirty-head-clean-scope-head side head
 check fail side-branch-dirty-scope-all side all
+# The CI scope: another branch's finding (another pull request's) must not fail this one.
+check pass side-branch-dirty-head-clean-scope-history side history
 git -C "$tmp/side" checkout -q dirty
 check fail dirty-commit-in-heads-range side head
+check fail dirty-commit-in-heads-history side history
 commit_file side src/app.rs '// the token is gone'
 check fail removed-token-still-in-heads-range side head
+check fail removed-token-still-in-heads-history side history
 dbase=$(git -C "$tmp/side" rev-parse HEAD)
 commit_file side src/lib.rs '// clean again'
 check pass diff-base-after-the-dirty-commit side head "$dbase"
@@ -205,6 +224,7 @@ same base-of-unknown-diff-base origin/develop "$(base_of "$tmp/side" 00000000000
 git -C "$tmp/side" update-ref refs/remotes/origin/develop HEAD
 check pass dirty-commit-already-on-the-base side head
 check fail dirty-commit-already-on-the-base-scope-all side all
+check fail dirty-commit-already-on-the-base-scope-history side history
 # No origin/develop to subtract: all of HEAD's history, still nothing from other branches.
 git init -q "$tmp/nobase"
 commit_file nobase README.md 'clean'
@@ -216,7 +236,28 @@ check pass no-base-side-branch-dirty nobase head
 same base-of-no-base-ref '' "$(base_of "$tmp/nobase" '')"
 git -C "$tmp/nobase" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false merge -q --no-edit dirty
 check fail no-base-dirty-commit-in-history nobase head
-same scope-ci-default all "$(default_scope '' true)"
+# A CI clone of a pull request: every branch of the repository is fetched, HEAD is the pull
+# request merged into its base, and another pull request's branch holds a finding. The CI scope
+# passes this pull request and still fails the other one's own run.
+make_repo prs README.md 'clean base'
+git -C "$tmp/prs" update-ref refs/remotes/origin/develop HEAD
+git -C "$tmp/prs" checkout -q -b other
+commit_file prs src/app.rs "const T: &str = \"$token\";"
+git -C "$tmp/prs" update-ref refs/remotes/origin/task/other HEAD
+git -C "$tmp/prs" checkout -q origin/develop 2>/dev/null
+git -C "$tmp/prs" checkout -q -b mine
+commit_file prs src/lib.rs '// clean change'
+git -C "$tmp/prs" update-ref refs/remotes/origin/task/mine HEAD
+git -C "$tmp/prs" checkout -q --detach origin/develop
+commit_file prs README.md 'base moved on'
+git -C "$tmp/prs" update-ref refs/remotes/origin/develop HEAD
+git -C "$tmp/prs" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false merge -q --no-edit origin/task/mine
+check pass ci-pull-request-ignores-other-pull-requests-branch prs "$(default_scope '' true)"
+check fail ci-pull-request-scope-all-sees-other-branch prs all
+git -C "$tmp/prs" checkout -q --detach origin/develop
+git -C "$tmp/prs" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false merge -q --no-edit origin/task/other
+check fail ci-pull-request-with-the-finding-fails prs "$(default_scope '' true)"
+same scope-ci-default history "$(default_scope '' true)"
 same scope-local-default head "$(default_scope '' '')"
 same scope-explicit-wins head "$(default_scope head true)"
 exit "$fail"

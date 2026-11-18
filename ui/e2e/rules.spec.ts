@@ -333,6 +333,83 @@ test.describe("adding", () => {
   });
 });
 
+test.describe("editing a rule in place", () => {
+  async function addRule(page: Page, host: string): Promise<Locator> {
+    await page.getByRole("button", { name: "Add rule" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add a rule" });
+    await dialog.getByLabel("Host").fill(host);
+    await dialog.getByRole("radio", { name: "Deny" }).check();
+    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog.getByRole("button", { name: "Add rule" }).click();
+    await expect(dialog).toHaveCount(0);
+    return rowFor(page, host);
+  }
+
+  test("changes the same rule, and closes the waiting request it now decides", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await backend.control.step({
+      do: "request",
+      workspace: "web-shop",
+      host: "waiting.example.org",
+    });
+    await openRules(page, backend);
+    const badge = page.getByTestId("pending-badge");
+    await expect(badge).toBeVisible();
+    const count = Number(
+      ((await badge.textContent()) ?? "").trim().split(/\s/)[0],
+    );
+    const before = await addRule(page, "edit-me.example.org");
+    await expect(before).toBeVisible();
+    const id = (await rules(request, backend)).find(
+      (r) => r.pattern === "edit-me.example.org",
+    )?.id;
+    await before.getByRole("button", { name: /^Edit rule/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit rule" });
+    await expect(dialog.getByLabel("Host")).toHaveValue("edit-me.example.org");
+    await expect(dialog.getByRole("radio", { name: "Deny" })).toBeChecked();
+    await dialog.getByLabel("Host").fill("waiting.example.org");
+    await dialog.getByRole("button", { name: "Save rule" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText(
+      "Saved: deny waiting.example.org for workspace web-shop.",
+    );
+    await expect(rowFor(page, "waiting.example.org")).toBeVisible();
+    await expect(rowFor(page, "edit-me.example.org")).toHaveCount(0);
+    const after = (await rules(request, backend)).filter(
+      (r) => r.pattern === "waiting.example.org",
+    );
+    expect(after.map((r) => r.id)).toEqual([id]);
+    await expect(async () => {
+      const text = (await badge.textContent()) ?? "";
+      expect(Number(text.trim().split(/\s/)[0])).toBe(count - 1);
+    }).toPass();
+  });
+
+  test("a public suffix is refused at the host field and the rule stays as it was", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openRules(page, backend);
+    const row = await addRule(page, "stays.example.org");
+    await row.getByRole("button", { name: /^Edit rule/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit rule" });
+    await dialog.getByLabel("Host").fill("*.com");
+    await dialog.getByRole("button", { name: "Save rule" }).click();
+    await expect(dialog.getByRole("alert")).toContainText(/public suffix/i);
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(rowFor(page, "stays.example.org")).toBeVisible();
+    expect(
+      (await rules(request, backend)).some(
+        (r) => r.pattern === "stays.example.org",
+      ),
+    ).toBe(true);
+  });
+});
+
 test.describe("changing the expiry", () => {
   test("makes an expiring rule permanent, and a permanent rule expire", async ({
     page,
@@ -638,7 +715,7 @@ test.describe("accessibility", () => {
       .first()
       .getByRole("button")
       .all();
-    expect(buttons).toHaveLength(2);
+    expect(buttons).toHaveLength(3);
     for (const button of [
       ...buttons,
       ...(await page.getByRole("button", { name: /^Sort by/ }).all()),

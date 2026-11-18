@@ -69,6 +69,16 @@ ignore = [
     # build graph calls it. tauri 2 stays on gtk-rs 0.18 (the fix is glib 0.20 or later) until tauri 3
     # (alpha). Review at each tauri bump, by 2027-01-06.
     { id = "RUSTSEC-2024-0429", reason = "glib VariantStrIter unsound; unused API, transitive via tauri's gtk-rs 0.18 on Linux" },
+    # chrono 0.4.45 is unmaintained (every version; no fixed release; the advisory points to jiff or
+    # time). The maintainer wound the crate down in 2026 and invited a successor; the newest release is
+    # 0.4.45 of 2026-06-04. Not vulnerable: no advisory names a flaw. Puddle's own crates do not depend
+    # on it. It comes in only through the msb fork's crates (microsandbox, -image, -metrics,
+    # -protocol, -runtime, -types), sqlx 0.9, sea-orm 2.0 and sea-query 1.0 (timestamp columns),
+    # oci-client 0.18, russh-sftp 2.4 and the russh fork's russh-util. No bump removes it: each of
+    # those releases still requires chrono. Removal: when those crates move to jiff or time (the msb
+    # fork, sqlx, sea-orm and oci-client), or when chrono finds a maintainer; drop the entry then.
+    # Review at each fork bump, by 2027-01-06.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no patched version; transitive via the msb fork, sqlx, sea-orm, oci-client and russh-sftp, none of Puddle's own crates; removal: when those move to jiff or time, or chrono gets a maintainer" },
 ]
 
 [licenses]

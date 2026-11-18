@@ -349,8 +349,12 @@ pub(crate) async fn profile(
             None,
         ))
         .await?;
+    // The login names the author's address; a login GitHub would refuse (a server that is wrong
+    // or hostile) gives no author at all.
     let user: UserJson = serde_json::from_slice(&reply.body)
-        .map_err(|_| Problem::bad_answer("the account is not what GitHub documents"))?;
+        .ok()
+        .filter(|user: &UserJson| name_ok(&user.login))
+        .ok_or_else(|| Problem::bad_answer("the account is not what GitHub documents"))?;
     let host_name = endpoint
         .web_host
         .split_once(':')
@@ -362,7 +366,8 @@ pub(crate) async fn profile(
         )),
         name: Some(
             user.name
-                .filter(|n| !n.trim().is_empty())
+                .map(|name| name.chars().filter(|c| !c.is_control()).collect::<String>())
+                .filter(|name| !name.trim().is_empty())
                 .unwrap_or_else(|| user.login.clone()),
         ),
         account: Some(user.login),

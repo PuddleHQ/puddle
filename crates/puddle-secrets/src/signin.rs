@@ -188,6 +188,10 @@ impl SignIns {
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some((_, rest)) = line.split_once("one-time code:") {
                     code = valid_code(rest);
+                } else if let Some((_, rest)) = line.split_once("ne-time code (") {
+                    // `gh` on a computer with a clipboard: "! One-time code (ABCD-1234) copied to clipboard"
+                    // (the real-tools contract saw it on Windows)
+                    code = rest.split_once(')').and_then(|(code, _)| valid_code(code));
                 } else if let Some((_, rest)) = line.split_once("web browser:") {
                     url = valid_url(rest, host);
                 }

@@ -442,6 +442,69 @@ fn r11_request_after_the_row_ended_opens_a_new_row() {
 }
 
 #[test]
+fn r11_undoing_a_decision_deletes_its_rule_and_reopens_the_requests_it_closed() {
+    let (clock, store) = fixture();
+    let first = new_pending(decide(&store, "a", "one.example.com"));
+    clock.advance(1_000);
+    let second = new_pending(decide(&store, "a", "two.example.com"));
+    decide(&store, "a", "one.example.com");
+    let mut wide = Resolution::deny();
+    wide.pattern = PatternChoice::Suffix("example.com".into());
+    let decided = store.resolve_pending(first, &wide, Actor::Ui).unwrap();
+    assert_eq!(decided.also_closed, vec![second]);
+
+    let (rule, reopened) = store.undo_decision(decided.rule.id, Actor::Ui).unwrap();
+    assert_eq!(rule.id, decided.rule.id);
+    assert_eq!(store.rules(puddle_store::UserId::OWNER).len(), 0);
+    // Each comes back as a new row in its old place: same times, same attempt count, open again.
+    let mut back: Vec<_> = reopened
+        .iter()
+        .map(|r| {
+            (
+                r.host.to_string(),
+                r.first_seen,
+                r.attempts,
+                r.state == PendingState::Requested,
+            )
+        })
+        .collect();
+    back.sort();
+    assert_eq!(
+        back,
+        vec![
+            ("one.example.com".to_string(), T0, 2, true),
+            ("two.example.com".to_string(), T0 + 1_000, 1, true),
+        ]
+    );
+    assert!(reopened.iter().all(|r| r.id > second));
+    // The closed rows stay as they were (R-12); the host is undecided again.
+    assert_eq!(store.pending(first).unwrap().state, PendingState::Denied);
+    assert!(matches!(
+        decide(&store, "a", "one.example.com"),
+        Decision::Pending(PendingOutcome::Repeat(_))
+    ));
+}
+
+#[test]
+fn r11_undoing_does_not_repeat_a_request_that_was_asked_again_meanwhile() {
+    let (clock, store) = fixture();
+    let first = new_pending(decide(&store, "a", "example.com"));
+    let mut temporary = Resolution::allow();
+    temporary.expires_in = Some(Duration::from_secs(60));
+    let decided = store.resolve_pending(first, &temporary, Actor::Ui).unwrap();
+    clock.advance(60_000);
+    // The rule lapsed and the workspace asked again, so an open row exists for the host.
+    let open = new_pending(decide(&store, "a", "example.com"));
+    let (_, reopened) = store.undo_decision(decided.rule.id, Actor::Ui).unwrap();
+    assert_eq!(reopened.len(), 0);
+    assert_eq!(store.pending(open).unwrap().state, PendingState::Requested);
+    assert!(matches!(
+        store.undo_decision(decided.rule.id, Actor::Ui),
+        Err(StoreError::UnknownRule(_))
+    ));
+}
+
+#[test]
 fn r12_pending_rows_are_immutable_and_ids_never_reused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");

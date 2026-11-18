@@ -691,7 +691,7 @@ describe("notification and inbox switches", () => {
       "confirm_global_rules",
       true,
     ],
-    ["Keyboard shortcuts in the inbox", "inbox_shortcuts", false],
+    ["Keyboard shortcuts in the inbox", "inbox_shortcuts", true],
     ["Start Puddle when I sign in", "start_at_login", false],
     ["Minimizing hides Puddle in the tray", "minimize_to_tray", false],
   ];

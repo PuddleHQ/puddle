@@ -6,6 +6,7 @@
   import { page } from "$app/state";
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
+  import InboxShortcuts from "#lib/components/InboxShortcuts.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
   import SshAgentAsks from "#lib/components/SshAgentAsks.svelte";
   import Toast from "#lib/components/Toast.svelte";
@@ -33,8 +34,8 @@
   // then the rest a slice per frame, each after the paint of the one before. Every frame costs a style, layout and paint pass besides the
   // rows themselves, so the later slices are big: 500 rows draw in three frames, none over 150 ms.
   let limit = $state(slices.first);
-  /** The A, D, J and K keys: a Settings switch, off until the user turns it on. */
-  const shortcuts = $derived(globalSettings.view?.ui.inbox_shortcuts ?? false);
+  /** The A, D, J and K keys: a Settings switch, on until the user turns it off. */
+  const shortcuts = $derived(globalSettings.view?.ui.inbox_shortcuts ?? true);
   const shownGroups = $derived(limitGroups(pending.groups, limit));
   const flat = $derived(shownGroups.flatMap((g) => g.rows));
   const activeId = $derived(
@@ -160,7 +161,7 @@
     if (target?.closest("input, textarea, select, [contenteditable='true']"))
       return;
     if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
-    // The single letters are a Settings switch, off by default; Enter on a row is plain keyboard use.
+    // The single letters are a Settings switch, on by default; Enter on a row is plain keyboard use.
     if (event.key !== "Enter" && !shortcuts) return;
     switch (event.key) {
       case "a":
@@ -206,25 +207,14 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="head">
-  <h1 tabindex="-1" bind:this={heading}>Inbox</h1>
+  <div class="title">
+    <h1 tabindex="-1" bind:this={heading}>Inbox</h1>
+    <InboxShortcuts singleKeys={shortcuts} />
+  </div>
   <p class="sub">
     Requests that matched no rule. Each stays here until you decide. Meanwhile
     the tool that asked is told the host is waiting for approval, and can retry.
   </p>
-  {#if shortcuts}
-    <p class="keys">
-      <span class="kbd">A</span> allow · <span class="kbd">D</span> deny ·
-      <span class="kbd">J</span>/<span class="kbd">K</span> move ·
-      <span class="kbd">Enter</span> more choices
-    </p>
-  {:else}
-    <p class="keys">
-      Tab to a request and press <span class="kbd">Enter</span> for more
-      choices.
-      <a href="/settings#s-inbox">Turn on the A, D, J and K keys in Settings</a
-      >.
-    </p>
-  {/if}
 </div>
 
 {#each pending.full as workspace (workspace)}
@@ -326,6 +316,13 @@
     gap: var(--space-1);
     margin-bottom: var(--space-4);
   }
+  .title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    max-width: 64rem;
+  }
   h1 {
     font-size: var(--text-xl);
   }
@@ -333,13 +330,9 @@
     outline: none;
   }
   .sub,
-  .keys,
   .muted {
     margin: 0;
     color: var(--color-text-muted);
-  }
-  .keys {
-    font-size: var(--text-sm);
   }
   .full {
     margin: 0 0 var(--space-3);

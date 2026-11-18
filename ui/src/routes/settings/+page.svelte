@@ -711,8 +711,8 @@
           "inbox_shortcuts",
           "set-inbox-keys",
           "Keyboard shortcuts in the inbox",
-          "A allows, D denies, J and K move between requests. Off by default so a stray key press decides nothing; Tab, Enter and Space always work.",
-          false,
+          "A allows, D denies, J and K move between requests. Turn this off if a stray key press could decide a request; Tab, Enter and Space always work.",
+          true,
         )}
       </section>
 

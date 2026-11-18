@@ -6577,7 +6577,7 @@ export interface components {
              *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
              */
             disk_warning_percent: number | null;
-            /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
+            /** @description The inbox's single-key shortcuts A, D, J and K (default on). */
             inbox_shortcuts: boolean | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;

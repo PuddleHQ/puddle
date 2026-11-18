@@ -15,8 +15,9 @@
   import SetChip from "./SetChip.svelte";
   import "#lib/theme/controls.css";
 
-  // The "more choices": every workspace, subdomains, duration. One instance serves the whole
-  // list, anchored to the chevron of the row it was opened from (500 rows, one popover).
+  // The "more choices": every workspace, subdomains, duration, then Allow or Deny with them. One
+  // instance serves the whole list, anchored to the more-choices button of the row it was opened
+  // from (500 rows, one popover). That button is neither Allow nor Deny, so both end it.
   let {
     open = $bindable(false),
     target,
@@ -30,7 +31,7 @@
     open?: boolean;
     target: Target;
     workspace: string;
-    /** The chevron button it hangs from, and gives focus back to. */
+    /** The more-choices button it hangs from, and gives focus back to. */
     anchor: HTMLElement | null;
     /** Local destinations: only an exact rule counts (R-14), so no subdomain choice. */
     exactOnly?: boolean;
@@ -80,10 +81,10 @@
   }}
 >
   <Popover.Portal>
-    <!-- It hangs over the rows beside it. Its right edge sits 4px past the chevron column, in the
-         gap before Deny: flush with the chevrons it would leave a sub-pixel strip of the chevron
-         of the row above or below uncovered (the browser rounds the two edges differently), and
-         that strip counts as a target under 24px (WCAG 2.5.8). -->
+    <!-- It hangs over the rows beside it. Its right edge sits 4px past the more-choices column, in
+         the row's padding: flush with those buttons it would leave a sub-pixel strip of the one of
+         the row above or below uncovered (the browser rounds the two edges differently), and that
+         strip counts as a target under 24px (WCAG 2.5.8). -->
     <Popover.Content
       class="options"
       role="dialog"
@@ -93,7 +94,7 @@
       customAnchor={anchor}
       aria-label="Choices for {target.host}"
       onInteractOutside={(event) => {
-        // A click on the chevron toggles; it must not close here and reopen there.
+        // A click on the more-choices button toggles; it must not close here and reopen there.
         if (event.target instanceof Node && anchor?.contains(event.target)) {
           event.preventDefault();
         }
@@ -102,7 +103,7 @@
         event.preventDefault();
         // bits-ui also runs this while the popover stays open: opened again, it sets up its focus
         // trap a second time once the opening transition ends, a frame later. Focus goes back to
-        // the chevron only on a real close; otherwise a choice focused in that frame is lost.
+        // the more-choices button only on a real close; otherwise a choice focused in that frame is lost.
         if (!open && anchor?.isConnected) anchor.focus();
       }}
     >

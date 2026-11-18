@@ -86,9 +86,11 @@ fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
     let holder = Connection::open(&path).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     let release = std::thread::spawn(move || {
-        while !WRITER_IS_WAITING.load(Ordering::SeqCst) {
-            std::thread::yield_now();
-        }
+        puddle_test_kit::eventually_blocking(
+            "the write to be blocked",
+            Duration::from_secs(30),
+            || WRITER_IS_WAITING.load(Ordering::SeqCst),
+        );
         holder.execute_batch("COMMIT").unwrap();
     });
     let made = store.create_rule_set(UserId::OWNER, "Waits", "", None, Actor::Ui);

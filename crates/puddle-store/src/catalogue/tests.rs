@@ -198,3 +198,85 @@ fn r36_a_built_in_sets_entries_all_carry_its_effect() {
         );
     }
 }
+
+/// Hosts that only collect usage data. A System managed reason allows what the editor needs to
+/// run, never its telemetry (the user's choice to allow an editor is not a choice to be tracked).
+const TELEMETRY_DENY_LIST: &[&str] = &[
+    "*.events.data.microsoft.com",
+    "dc.services.visualstudio.com",
+    "vortex.data.microsoft.com",
+    "*.applicationinsights.azure.com",
+];
+
+fn telemetry_hosts_matched(entries: &[(&'static str, &'static [CatalogueEntry])]) -> Vec<String> {
+    let base = |text: &str| text.strip_prefix("*.").unwrap_or(text).to_owned();
+    let reaches = |pattern: &str, host: &str| {
+        Pattern::parse(pattern)
+            .unwrap()
+            .matches(&puddle_types::Host::parse_normalised(host).unwrap())
+    };
+    let mut hits = Vec::new();
+    for (list, items) in entries {
+        for entry in *items {
+            for denied in TELEMETRY_DENY_LIST {
+                // Either side covers a host the other names (a name below a wildcard counts).
+                let (a, d) = (base(entry.pattern), base(denied));
+                if reaches(denied, &a)
+                    || reaches(denied, &format!("x.{a}"))
+                    || reaches(entry.pattern, &d)
+                    || reaches(entry.pattern, &format!("x.{d}"))
+                {
+                    hits.push(format!("{list}: {}", entry.pattern));
+                    break;
+                }
+            }
+        }
+    }
+    hits
+}
+
+#[test]
+fn no_system_managed_host_matches_a_telemetry_deny_list() {
+    let system: Vec<_> = SystemReason::ALL
+        .map(|r| (r.as_str(), r.hosts()))
+        .into_iter()
+        .collect();
+    assert_eq!(telemetry_hosts_matched(&system), Vec::<String>::new());
+}
+
+#[test]
+fn the_telemetry_check_catches_a_telemetry_host_in_a_list() {
+    const BAD: &[CatalogueEntry] = &[
+        entry!("update.code.visualstudio.com", "fine"),
+        entry!("vortex.data.microsoft.com", "telemetry"),
+        entry!("*.applicationinsights.azure.com", "telemetry"),
+        entry!("eu.events.data.microsoft.com", "telemetry"),
+    ];
+    assert_eq!(
+        telemetry_hosts_matched(&[("bad", BAD)]),
+        vec![
+            "bad: vortex.data.microsoft.com".to_owned(),
+            "bad: *.applicationinsights.azure.com".to_owned(),
+            "bad: eu.events.data.microsoft.com".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn the_package_registries_set_holds_the_hosts_of_the_big_ecosystems() {
+    let set = built_in("package-registries").unwrap();
+    let hosts: Vec<_> = set.entries.iter().map(|e| e.pattern).collect();
+    for needed in [
+        "pypi.org",
+        "files.pythonhosted.org",
+        "crates.io",
+        "static.crates.io",
+        "index.crates.io",
+        "registry.npmjs.org",
+        "repo.maven.apache.org",
+    ] {
+        assert!(hosts.contains(&needed), "{needed} missing from {hosts:?}");
+    }
+    assert_eq!(set.effect, Effect::Allow);
+    assert!(!set.default_on);
+}

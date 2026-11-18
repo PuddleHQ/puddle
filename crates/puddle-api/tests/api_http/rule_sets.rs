@@ -171,6 +171,45 @@ async fn one_entry_of_a_built_in_set_switches_off_and_on() {
 }
 
 #[tokio::test]
+async fn the_entries_of_a_built_in_set_are_paged_and_searched() {
+    let api = start().await;
+    let list = api.get("/api/rule-sets").await.json();
+    let github = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "builtin:github")
+        .unwrap()
+        .clone();
+    let count = github["entry_count"].as_u64().unwrap();
+    assert_eq!(count as usize, github["entries"].as_array().unwrap().len());
+    let page = api.get("/api/rule-sets/builtin:github/entries").await;
+    assert_eq!(page.status, 200, "{}", page.body);
+    assert_eq!(page.json()["total"], count);
+    let one = api
+        .get("/api/rule-sets/builtin:github/entries?q=CODELOAD&limit=1&offset=0")
+        .await
+        .json();
+    assert_eq!(one["total"], 1);
+    assert_eq!(one["entries"][0]["pattern"], "codeload.github.com");
+    let past = api
+        .get("/api/rule-sets/builtin:github/entries?q=github&offset=1000")
+        .await
+        .json();
+    assert_eq!(past["entries"].as_array().unwrap().len(), 0);
+    assert!(past["total"].as_u64().unwrap() >= 1);
+    for (path, status) in [
+        ("/api/rule-sets/builtin:nope/entries", 404),
+        ("/api/rule-sets/user:1/entries", 404),
+        ("/api/rule-sets/builtin:github/entries?limit=x", 400),
+    ] {
+        let reply = api.get(path).await;
+        assert_eq!(reply.status, status, "{path}: {}", reply.body);
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn built_in_sets_switch_per_workspace_and_stay_read_only() {
     let api = start().await;
     let list = api.get("/api/rule-sets").await.json();

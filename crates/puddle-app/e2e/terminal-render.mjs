@@ -72,6 +72,8 @@ export const READ = `(() => {
     viewportBackground: style(q(".xterm-viewport"))?.backgroundColor,
     redInlineStyle: red?.getAttribute("style"),
     rowsHead: [...document.querySelectorAll(".xterm-rows > div")].slice(0, 6).map((d) => d.innerHTML.slice(0, 300)),
+    styleElements: [...document.querySelectorAll("style")].map((e) => ({ owner: e.parentElement?.tagName, chars: e.textContent.length, rules: e.sheet?.cssRules.length ?? null, head: e.textContent.slice(0, 200), nonce: e.nonce })),
+    xtermClasses: xterm?.className,
     colorScheme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
     forcedColors: matchMedia("(forced-colors: active)").matches,
     tokens: Object.fromEntries(["--color-surface", "--color-text", "--color-accent", "--color-danger", "--color-success", "--color-warning", "--color-accent-subtle"].map((t) => {
@@ -106,6 +108,7 @@ export async function inspectTerminal(port) {
     await page.send("Log.enable");
     await page.send("Page.enable");
     const read = await page.evaluate(READ);
+    read.cspHeader = await page.evaluate(`fetch(location.href).then((r) => r.headers.get("content-security-policy"))`).catch((e) => String(e));
     // A real drag over the red word, with real mouse events: the emulator selects it.
     let selection = { cells: 0, width: 0, copied: "" };
     if (read.redBox) {

@@ -314,6 +314,37 @@ describe("the detail layout", () => {
     );
   });
 
+  it("stops the workspace and opens the connect step from the buttons in the header", async () => {
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Connect to demo" }),
+    );
+    expect(workspaceActions.connectOpen).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Stop demo" }));
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("POST /api/workspaces/{id}/stop"),
+    );
+  });
+
+  it("dismisses the line of a step that failed", async () => {
+    await load();
+    workspaces.progress = {
+      "w-demo": {
+        step: "failed",
+        detail: "the disk is full",
+        repository: null,
+        operation: "starting",
+        failed: true,
+      },
+    };
+    render(DetailLayout, { children: (() => {}) as never });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Dismiss" }),
+    );
+    expect(workspaces.progress["w-demo"]).toBeUndefined();
+  });
+
   it("says which clone of how many is running, from the workspace's repositories", async () => {
     api.list = [
       workspace("demo", {
@@ -581,6 +612,7 @@ describe("the overview", () => {
       );
       await load();
       render(Overview);
+      render(Network);
       await screen.findByText("a.example.com");
       const before = document.querySelector("li.req time")?.textContent;
       await vi.advanceTimersByTimeAsync(31 * 60_000);
@@ -590,6 +622,60 @@ describe("the overview", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("lists what listens in a running workspace, with where it is forwarded", async () => {
+    const real = api.GET;
+    api.GET = (async (...args: Parameters<typeof real>) => {
+      if (args[0] === "/api/workspaces/{id}/ports") {
+        return {
+          data: {
+            running: true,
+            ports: [
+              {
+                guest_port: 3000,
+                host_port: 3000,
+                forwarded: true,
+                pinned: false,
+                listening: true,
+                problem: null,
+              },
+              {
+                guest_port: 5432,
+                host_port: null,
+                forwarded: false,
+                pinned: false,
+                listening: false,
+                problem: null,
+              },
+            ],
+          },
+        };
+      }
+      return real(...args);
+    }) as typeof real;
+    try {
+      await load();
+      render(Overview);
+      const section = (
+        await screen.findByRole("heading", { name: "Serving now" })
+      ).closest("section") as HTMLElement;
+      expect(section).toHaveTextContent(":3000");
+      expect(section).toHaveTextContent("Open on 127.0.0.1:3000");
+      expect(section).not.toHaveTextContent("5432");
+      expect(
+        within(section).getByRole("link", { name: "Forward a port" }),
+      ).toHaveAttribute("href", "/workspaces/w-demo/settings/ports");
+    } finally {
+      api.GET = real;
+    }
+  });
+
+  it("shows no serving list for a workspace that listens on nothing", async () => {
+    await load();
+    render(Overview);
+    await screen.findByText("Get in");
+    expect(screen.queryByRole("heading", { name: "Serving now" })).toBeNull();
   });
 
   it("says nothing waits for the workspace when it is so", async () => {
@@ -1519,6 +1605,27 @@ describe("the settings tab", () => {
     await vi.waitFor(() =>
       expect(api.interception["w-demo"]?.mode).toBe("inherit"),
     );
+  });
+
+  it("keeps the workspace's own interception mode and says why when following the global mode again is refused", async () => {
+    await open();
+    const select = (await screen.findByRole("combobox", {
+      name: "Which hosts to decrypt",
+    })) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "all" } });
+    await screen.findByText("Interception mode saved.");
+    api.refuse.set("PUT /api/workspaces/{id}/interception", {
+      status: 500,
+      message: "disk full",
+    });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Which hosts to decrypt",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
+    expect(select.value).toBe("all");
+    expect(api.interception["w-demo"]?.mode).toBe("all");
   });
 
   it("names the global never-decrypt list read-only, and puts the mode back when the save is refused", async () => {

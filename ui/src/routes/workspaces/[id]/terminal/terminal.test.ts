@@ -125,6 +125,18 @@ describe("a workspace that is not running", () => {
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
   });
 
+  it("greys the button and says why while something else is happening to the workspace", async () => {
+    workspaces.list = [
+      workspace(docs, { status: "stopped", busy: "removing" }),
+    ];
+    url.id = `w-${docs}`;
+    render(Page);
+    expect(
+      await screen.findByRole("button", { name: "Start and open a terminal" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/cannot start right now/)).toBeInTheDocument();
+  });
+
   it("opens the terminal by itself once the start has made the workspace usable", async () => {
     url.id = `w-${docs}`;
     render(Page);

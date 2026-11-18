@@ -357,8 +357,8 @@ const SEALED_KEY_LIMIT: Duration = Duration::from_secs(5);
 /// What the vault's header and the sealed key file say, given a header that names `tag`. A tag of a
 /// key file, or a systemd tag with no sealed file in `config_home` (the service passes the key), is
 /// not examined. The sealed file is opened once through `systemd-creds` found on `path`: the key
-/// comes out on a pipe whose text is dropped without being looked at, and an answer that is not an exit 0 is classified
-/// by the same texts the service uses.
+/// goes to the null device, never into this process, and an answer that is not an exit 0 is
+/// classified by the same texts the service uses.
 fn sealed_key_facts_in(
     tag: puddle_secrets::KeySourceTag,
     config_home: Option<&Path>,
@@ -384,13 +384,17 @@ fn sealed_key_facts_in(
         launch::run(puddle_process::command(&program).args(args), limit)
     };
     let name = format!("--name={}", puddle_secrets::sealed_key_name());
-    let key = match ask(&[
-        "--user".as_ref(),
-        "decrypt".as_ref(),
-        name.as_ref(),
-        sealed.as_os_str(),
-        "-".as_ref(),
-    ]) {
+    let decrypt = launch::run_without_output(
+        Command::new(&program).args([
+            "--user".as_ref(),
+            "decrypt".as_ref(),
+            name.as_ref(),
+            sealed.as_os_str(),
+            std::ffi::OsStr::new("-"),
+        ]),
+        limit,
+    );
+    let key = match decrypt {
         ProcessOutcome::Exited { code: Some(0), .. } => SealedKeyFacts::Opens,
         ProcessOutcome::Exited { stderr_tail, .. } => {
             let old = matches!(

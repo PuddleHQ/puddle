@@ -229,3 +229,19 @@ pub struct NewRule {
     /// Who creates it. [`Actor::System`] is refused.
     pub created_by: Actor,
 }
+
+/// What an edit of a rule says it should be now. Everything it leaves out stays: the rule's id,
+/// its creator and creation time, whether it is on, and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleEdit {
+    /// Global, one workspace, or a rule set of the rule's user.
+    pub scope: Scope,
+    /// Exact host or suffix.
+    pub pattern: Pattern,
+    /// Allow or deny.
+    pub effect: Effect,
+    /// Epoch ms; `None` is permanent.
+    pub expires_at: Option<u64>,
+    /// `None` keeps the rule's precedence.
+    pub precedence: Option<Precedence>,
+}

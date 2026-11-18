@@ -18,3 +18,18 @@ fn every_console_event_is_a_shutdown_cause() {
 fn without_a_front_events_go_to_the_default_handler() {
     assert!(!on_console_event(CTRL_C_EVENT));
 }
+
+#[test]
+fn a_repeated_interrupt_ends_the_front_but_a_repeated_deadline_event_does_not() {
+    for cause in [ShutdownCause::Interrupt, ShutdownCause::Break] {
+        assert!(!ends_front_by_default(cause, false), "{cause}: first");
+        assert!(ends_front_by_default(cause, true), "{cause}: repeated");
+    }
+    for cause in [
+        ShutdownCause::ConsoleClose,
+        ShutdownCause::Logoff,
+        ShutdownCause::SystemShutdown,
+    ] {
+        assert!(!ends_front_by_default(cause, true), "{cause}: repeated");
+    }
+}

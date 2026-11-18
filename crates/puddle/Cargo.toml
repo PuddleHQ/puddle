@@ -13,6 +13,11 @@ publish.workspace = true
 [features]
 # Serve the built single-page app from the binary (needs `ui/build`; see puddle-api).
 embedded-ui = ["puddle-host/embedded-ui"]
+# The `puddle serve` subcommand (dormant in v0.1). Without it the command is unknown and
+# the usage text does not mention it; the code stays compiled and nothing was deleted.
+serve = []
+# The managed mise layer, see puddle-settings.
+mise = ["puddle-settings/mise"]
 
 [dependencies]
 puddle-api = { workspace = true }

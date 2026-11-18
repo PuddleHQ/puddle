@@ -627,3 +627,24 @@ fn built_in_entries_refuse_a_set_that_is_not_built_in() {
         Err(StoreError::UnknownRuleSet(_))
     ));
 }
+
+#[test]
+fn the_entries_of_a_hidden_built_in_set_are_not_served() {
+    let (_, store) = store();
+    let github = puddle_types::RuleSetId::BuiltIn("github");
+    assert!(
+        store
+            .built_in_entries(UserId::OWNER, github, "", 0, 10)
+            .is_ok()
+    );
+    store
+        .set_system_managed(&SystemPlan {
+            hidden_sets: ["github"].into(),
+            ..SystemPlan::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, github, "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+}

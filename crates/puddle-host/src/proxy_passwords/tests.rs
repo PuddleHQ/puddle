@@ -306,3 +306,36 @@ fn reading_the_sign_ins_never_waits_for_a_slow_credential_store() {
     );
     assert_eq!(passwords.proxies(), [(proxy(), "alice".to_owned())]);
 }
+
+#[test]
+fn a_vault_that_comes_back_empty_leaves_the_signed_in_proxies_named_as_lost_until_entered_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let known = dir.path().join("proxy-sign-ins");
+    let first = ProxyPasswords::with_known_file(vault(), known.clone());
+    first.set(&proxy(), "alice", &secret()).unwrap();
+    let other = ProxyAddr::new("other.corp", 3128);
+    first.set(&other, "bob", &fixture::password("two")).unwrap();
+
+    // A reset: a new, empty vault; the known file stays.
+    let reset = ProxyPasswords::with_known_file(vault(), known.clone());
+    assert_eq!(reset.load().unwrap(), 0);
+    assert_eq!(reset.lost(), [proxy(), other.clone()]);
+    assert_eq!(reset.proxies(), []);
+
+    // Entering one again takes it off; removing the other takes it off too.
+    reset.set(&proxy(), "alice", &secret()).unwrap();
+    reset.remove(&other).unwrap();
+    assert_eq!(reset.lost(), []);
+    let again = ProxyPasswords::with_known_file(reset.vault.clone(), known);
+    assert_eq!(again.load().unwrap(), 1);
+    assert_eq!(again.lost(), []);
+}
+
+#[test]
+fn a_known_file_that_cannot_be_written_does_not_stop_a_sign_in_being_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("no-such-folder").join("proxy-sign-ins");
+    let passwords = ProxyPasswords::with_known_file(vault(), missing);
+    passwords.set(&proxy(), "alice", &secret()).unwrap();
+    assert_eq!(passwords.proxies(), [(proxy(), "alice".to_owned())]);
+}

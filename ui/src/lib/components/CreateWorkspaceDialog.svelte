@@ -36,6 +36,7 @@
   import {
     nameProblem,
     parseMemoryGib,
+    isIncompleteAddress,
     resolveRepoAddress,
     suggestName,
     type Workspace,
@@ -135,32 +136,25 @@
     return "url" in resolved ? resolved.url : row.url.trim();
   }
 
-  // An address is checked once the typing stops or the field is left, not at every key.
-  const SETTLE_MS = 700;
-  /** What each row's address field held when it last settled, by row key. */
-  let settled = $state<Record<number, string>>({});
-  // One timer: only the field being typed in is waiting, and leaving it settles it at once.
-  let settleTimer: ReturnType<typeof setTimeout> | undefined;
-  function settle(row: RowDraft) {
-    clearTimeout(settleTimer);
-    settled = { ...settled, [row.key]: row.url };
-  }
-  function settleLater(row: RowDraft) {
-    clearTimeout(settleTimer);
-    settleTimer = setTimeout(() => settle(row), SETTLE_MS);
-  }
-  /** The refusal of a settled, non-empty address; an empty one waits for Create. */
-  function settledProblem(row: RowDraft): string | undefined {
-    if (settled[row.key] !== row.url || row.url.trim() === "") return undefined;
+  // A definite refusal shows at the keystroke that causes it, with no timer and no host call. Only
+  // the half-typed shorthand ("sharkdp" on the way to "sharkdp/fd") waits until the field is left.
+  /** The rows whose address field was left, by row key. */
+  let left = $state<Record<number, boolean>>({});
+  /** The refusal of a non-empty address; an empty one waits for Create. */
+  function addressProblem(row: RowDraft): string | undefined {
+    if (row.url.trim() === "") return undefined;
     const resolved = resolveRepoAddress(row.url);
-    return "message" in resolved ? resolved.message : undefined;
+    if (!("message" in resolved)) return undefined;
+    if (isIncompleteAddress(resolved.message) && !left[row.key])
+      return undefined;
+    return resolved.message;
   }
 
   // What two rows share is flagged as you type, before any submit.
   const live = $derived(clashes(rows));
   const problem = (row: RowDraft, field: keyof RowProblems) =>
     rowErrors[row.key]?.[field] ??
-    (field === "url" ? settledProblem(row) : undefined) ??
+    (field === "url" ? addressProblem(row) : undefined) ??
     live.get(row.key)?.[field];
 
   /** "Will clone ..." when the field means another address than the one typed. */
@@ -238,8 +232,7 @@
     moreOpen = false;
     errors = {};
     rowErrors = {};
-    clearTimeout(settleTimer);
-    settled = {};
+    left = {};
     working = false;
     taken = null;
   }
@@ -544,9 +537,9 @@
               row.listedBy = null;
               row.identity = null;
               rowErrors = { ...rowErrors, [row.key]: {} };
-              settleLater(row);
+              left = { ...left, [row.key]: false };
             }}
-            onblur={() => settle(row)}
+            onblur={() => (left = { ...left, [row.key]: true })}
             aria-invalid={urlError ? "true" : undefined}
             aria-describedby={urlError
               ? rowId(row, "url-error")

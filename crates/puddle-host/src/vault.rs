@@ -191,12 +191,8 @@ fn warn_without_headless_flag(session: LoginSession, health: StoreHealth) {
     }
     let graphical_session = session != LoginSession::NotGraphical;
     let store_works = health == StoreHealth::Working;
-    tracing::warn!(
-        graphical_session,
-        store_works,
-        "{}",
-        headless_advice(puddle_doctor::SERVE_BUILT_IN)
-    );
+    let advice = headless_advice(puddle_doctor::SERVE_BUILT_IN);
+    tracing::warn!(graphical_session, store_works, "{advice}");
 }
 
 /// The warning's text. A build without the `puddle serve` command (`serve`) cannot be told to

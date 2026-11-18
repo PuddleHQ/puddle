@@ -35,7 +35,7 @@ for f in "$root"/ci/*.sh "$root"/.github/workflows/*.yml "$root"/mise.toml "$roo
     fi
 done
 if [ "$found" -ne 0 ]; then
-    echo "check-dormant-release: the shipped build must not enable the serve or mise features (D-344, docs/serve.md)" >&2
+    echo "check-dormant-release: the shipped build must not enable the serve or mise features (docs/serve.md)" >&2
     exit 1
 fi
 echo "check-dormant-release: no release build enables the serve or mise features"

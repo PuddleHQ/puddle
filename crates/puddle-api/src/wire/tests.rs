@@ -281,7 +281,7 @@ fn global_request_sets_vscode_options() {
             disk_warning_percent: Some(90),
             notify_unexpected_stop: Some(false),
             confirm_global_rules: Some(false),
-            inbox_shortcuts: Some(true),
+            inbox_shortcuts: Some(false),
             start_at_login: Some(true),
             notify_low_disk_space: Some(false),
             disk_warn_free_gb: Some(50),
@@ -316,7 +316,7 @@ fn global_request_sets_vscode_options() {
     assert_eq!(g.ui.disk_warning_percent().get(), 90);
     assert!(!g.ui.notify_unexpected_stop());
     assert!(!g.ui.confirm_global_rules());
-    assert!(g.ui.inbox_shortcuts());
+    assert!(!g.ui.inbox_shortcuts());
     assert!(g.ui.start_at_login());
     assert!(!g.ui.notify_low_disk_space());
     let lines = g.ui.disk_limits();

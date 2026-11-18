@@ -515,7 +515,7 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub confirm_global_rules: Option<bool>,
-    /// The inbox's single-key shortcuts A, D, J and K (default off).
+    /// The inbox's single-key shortcuts A, D, J and K (default on).
     #[serde(default)]
     #[schema(required = true)]
     pub inbox_shortcuts: Option<bool>,

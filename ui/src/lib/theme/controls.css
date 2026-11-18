@@ -154,6 +154,11 @@
    Segoe UI a taller line, which made its selects one pixel higher than the token. */
 :where(select) {
   height: var(--control-size);
+  /* A dropdown as wide as its longest option can push a narrow screen sideways. */
+  max-width: 18rem;
+}
+:where(input[type="range"]) {
+  min-height: var(--control-size);
 }
 :where(textarea) {
   resize: vertical;

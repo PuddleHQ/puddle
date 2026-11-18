@@ -22,6 +22,8 @@ function check(status: DoctorCheck["status"], id = "runtime"): DoctorCheck {
     finding: null,
     fix: null,
     detail: null,
+    impact: "i",
+    remedy: status === "ok" ? null : "r",
   };
 }
 

@@ -2,14 +2,17 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
-info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 info  Job object            could not be read; whether Puddle runs in a job object that blocks child processes from leaving it is unknown
       note: Only matters if "Test boot" fails with access denied; if it does, run puddle doctor
             from a plain terminal outside a CI runner or IDE.
       from: QueryInformationJobObject failed: os error 87
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
-ok    Test boot             a test VM booted and ran a program in 1.1 s
+FAIL  Test boot             the test VM didn't finish within 25.0 s
+      fix:  Security software scanning a program it hasn't seen before is the usual cause. Run
+            puddle doctor again; if it keeps timing out, check your endpoint security's log for
+            msb.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
@@ -17,7 +20,7 @@ ok    Azure CLI (az)        version 2.64.0
 ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed
 
-No problems found. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -25,22 +28,25 @@ No problems found. (1.2 s)
   "puddle_version": "0.1.0",
   "os": "windows",
   "arch": "x86_64",
-  "ok": true,
+  "ok": false,
   "checks": [
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on (the hypervisor uses it)"
+      "summary": "on (the hypervisor uses it)",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
       "status": "ok",
-      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs",
+      "impact": "Lets Puddle start workspaces as virtual machines, walled off from this computer and from each other."
     },
     {
       "id": "code_integrity",
-      "status": "info",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+      "status": "ok",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
       "id": "job_object",
@@ -48,52 +54,66 @@ No problems found. (1.2 s)
       "summary": "could not be read; whether Puddle runs in a job object that blocks child processes from leaving it is unknown",
       "finding": "job_unreadable",
       "fix": "Only matters if \"Test boot\" fails with access denied; if it does, run puddle doctor from a plain terminal outside a CI runner or IDE.",
-      "detail": "QueryInformationJobObject failed: os error 87"
+      "detail": "QueryInformationJobObject failed: os error 87",
+      "impact": "Puddle couldn't read whether the program that started it limits its processes.",
+      "remedy": "If workspaces fail to start, start Puddle from the Start menu or a normal terminal."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)",
+      "impact": "Puddle's runtime may run here: no security software or policy stops it."
     },
     {
       "id": "test_boot",
-      "status": "ok",
-      "summary": "a test VM booted and ran a program in 1.1 s"
+      "status": "fail",
+      "summary": "the test VM didn't finish within 25.0 s",
+      "finding": "boot_timed_out",
+      "fix": "Security software scanning a program it hasn't seen before is the usual cause. Run puddle doctor again; if it keeps timing out, check your endpoint security's log for msb.",
+      "impact": "Workspaces may not start: the test machine did not finish in time.",
+      "remedy": "Check again. If it keeps timing out, look for msb in your security software's log."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
       "id": "global_secure_access",
       "status": "ok",
-      "summary": "client not installed"
+      "summary": "client not installed",
+      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
     }
   ],
   "elapsed_ms": 1234

@@ -138,6 +138,10 @@ pub enum Finding {
     ProcessCreationDenied,
     /// A library msb needs is missing.
     DllMissing,
+    /// This computer is a virtual machine and the hypervisor isn't usable.
+    RunsInVirtualMachine,
+    /// Whether CPU virtualization is on couldn't be read.
+    VirtualizationUnknown,
     /// msb couldn't be started for another reason.
     LaunchFailed,
     /// msb exited with an error before answering.
@@ -194,6 +198,8 @@ pub enum Finding {
     SshAgentUnusable,
     /// No Azure CLI (`az`) is on the search path.
     AzCliMissing,
+    /// An Azure CLI (`az`) is there, but `az --version` gave no version.
+    AzCliUnreadable,
     /// No credential store answers where Puddle keeps its secrets.
     CredentialStoreMissing,
     /// The credential store answers and refuses a write: it is locked.
@@ -211,6 +217,8 @@ pub enum Finding {
     /// The sealed vault key does not open for another reason (no `systemd-creds`, systemd before
     /// 256, a wrong name, a service that does not answer).
     CredentialStoreKeyUnopenable,
+    /// The file vault's key is a plain file in the config folder.
+    CredentialStoreKeyFile,
     /// The key was sealed without the TPM2 although a TPM2 device is there: its libraries are
     /// missing.
     CredentialStoreTpmLibrariesMissing,
@@ -234,6 +242,13 @@ pub struct Check {
     /// Raw evidence: an OS error, msb's last output lines.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// What this means for the person, in one or two short sentences: for an ok check what it
+    /// protects or makes possible, otherwise what the finding costs them.
+    pub impact: String,
+    /// What to do about it, in one or two short sentences; `None` when the check is ok. The long
+    /// form, with commands and where to look, is the `fix` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<String>,
 }
 
 impl Check {
@@ -245,6 +260,8 @@ impl Check {
             finding: None,
             fix: None,
             detail: None,
+            impact: String::new(),
+            remedy: None,
         }
     }
 

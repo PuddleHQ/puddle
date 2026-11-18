@@ -57,6 +57,13 @@ pub struct DoctorCheck {
     /// Raw evidence: an OS error, the runtime's last output lines; `null` when there is none.
     #[schema(required = true)]
     pub detail: Option<String>,
+    /// What this means for the person, in one or two short sentences: for an ok check what it
+    /// protects or makes possible, otherwise what the finding costs them. Never empty.
+    pub impact: String,
+    /// What to do about it, in one or two short sentences; `null` when the check is ok. `fix`
+    /// holds the long form.
+    #[schema(required = true)]
+    pub remedy: Option<String>,
 }
 
 /// What the system check found on this computer.
@@ -97,6 +104,8 @@ impl From<&puddle_doctor::Check> for DoctorCheck {
             finding: check.finding.as_ref().map(code),
             fix: check.fix.clone(),
             detail: check.detail.clone(),
+            impact: check.impact.clone(),
+            remedy: check.remedy.clone(),
         }
     }
 }

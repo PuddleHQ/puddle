@@ -198,7 +198,7 @@ impl Fetch for &'static Service {
             .ok_or_else(|| io::Error::other(format!("404 {url}")))
     }
 
-    async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
+    async fn file(&self, url: &str, dest: &Path, _max_bytes: u64) -> io::Result<()> {
         tokio::task::yield_now().await; // a download is not instant
         self.asked.lock().unwrap().push(url.to_owned());
         self.downloads.fetch_add(1, Ordering::SeqCst);
@@ -518,7 +518,7 @@ async fn the_downloader_runs_curl_with_https_only_and_wget_when_there_is_no_curl
 
     let target = dir.path().join("download");
     downloader
-        .file("https://update.test/file", &target)
+        .file("https://update.test/file", &target, 1 << 20)
         .await
         .unwrap();
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "body");
@@ -592,6 +592,52 @@ async fn an_oversized_answer_stops_the_read_at_the_bound() {
     let downloader = Downloader::with_programs(&exact, dir.path().join("no-wget"));
     let body = downloader.text("https://update.test/ok").await.unwrap();
     assert_eq!(body.len(), 65536);
+}
+
+#[tokio::test]
+async fn a_download_that_outgrows_its_limit_is_stopped_and_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("log");
+    // Writes to `--output` (at about 6 MB/s) without end and ignores `--max-filesize`, like a chunked body would.
+    let curl = script(
+        dir.path(),
+        "curl",
+        &format!(
+            "printf '%s\\n' \"$@\" >{}\nwhile [ $# -gt 0 ]; do [ \"$1\" = --output ] && out=$2; shift; done\nwhile :; do head -c 65536 /dev/zero; sleep 0.01; done > \"$out\"",
+            log.display()
+        ),
+    );
+    let downloader = Downloader::with_programs(&curl, dir.path().join("no-wget"));
+    let target = dir.path().join("download");
+    let err = tokio::time::timeout(
+        Duration::from_secs(20),
+        downloader.file("https://update.test/big", &target, 1_000_000),
+    )
+    .await
+    .expect("the download was stopped instead of filling the volume")
+    .unwrap_err();
+    assert!(err.to_string().contains("1000000"), "{err}");
+    assert!(
+        std::fs::metadata(&target).unwrap().len() < 20_000_000,
+        "the file stopped growing soon after the limit"
+    );
+    // curl is also told the limit, which refuses a body that announces more.
+    let args = std::fs::read_to_string(&log).unwrap();
+    assert!(args.contains("--max-filesize\n1000000"), "{args}");
+
+    // A body that is over the limit already when the program ends is refused too, even though the
+    // program said it succeeded.
+    let quick = script(
+        dir.path(),
+        "quick",
+        "while [ $# -gt 0 ]; do [ \"$1\" = --output ] && out=$2; shift; done\nhead -c 200000 /dev/zero > \"$out\"",
+    );
+    let downloader = Downloader::with_programs(&quick, dir.path().join("no-wget"));
+    let err = downloader
+        .file("https://update.test/quick", &target, 100_000)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("100000"), "{err}");
 }
 
 // The agent's own loop, with a fake server in a real tarball.
@@ -966,6 +1012,19 @@ async fn installed(dir: &tempfile::TempDir) -> (PathBuf, &'static Service) {
 }
 
 #[tokio::test]
+async fn looking_for_updates_without_a_current_build_asks_nothing_and_stages_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = leak(Service::honest(good_tarball()));
+    let builds = builds(&dir);
+    assert_eq!(
+        stage_update(&service, PLATFORM, &builds).await.unwrap(),
+        Update::UpToDate
+    );
+    assert_eq!(service.requests(), 0);
+    assert!(!builds.exists() || names(&builds).is_empty());
+}
+
+#[tokio::test]
 async fn looking_for_updates_downloads_only_a_build_that_is_neither_current_nor_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let (builds, service) = installed(&dir).await;
@@ -1037,7 +1096,7 @@ async fn the_first_build_has_nothing_to_go_back_to_and_a_confirmed_build_is_neve
     let (builds, service) = installed(&dir).await;
     // The first install: no previous build, so no trial and no rollback.
     assert!(!on_trial(&builds));
-    assert!(!roll_back(&builds, COMMIT).unwrap());
+    assert!(!roll_back(&builds, COMMIT, true).unwrap());
     confirm(&builds, COMMIT).unwrap();
     service.publish(NEWER, NEWER_RELEASE, good_tarball());
     stage_update(&service, PLATFORM, &builds).await.unwrap();
@@ -1047,12 +1106,12 @@ async fn the_first_build_has_nothing_to_go_back_to_and_a_confirmed_build_is_neve
     // nothing: it is not the current build any more, and it is still kept.
     confirm(&builds, COMMIT).unwrap();
     assert!(on_trial(&builds));
-    assert!(!roll_back(&builds, COMMIT).unwrap());
+    assert!(!roll_back(&builds, COMMIT, true).unwrap());
     assert!(builds.join(COMMIT).is_dir());
     // Confirmed: the trial is over and the old build is gone.
     confirm(&builds, NEWER).unwrap();
     assert!(!on_trial(&builds));
-    assert!(!roll_back(&builds, NEWER).unwrap());
+    assert!(!roll_back(&builds, NEWER, true).unwrap());
     assert_eq!(names(&builds), [NEWER, "confirmed", "current"]);
     // With nothing current at all, confirming is a no-op.
     let empty = dir.path().join("empty");

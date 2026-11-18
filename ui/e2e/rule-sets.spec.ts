@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Rule sets and System managed against the real API on the fixture backend (rules spec §7): the
 // Rules screen's sections, a set's switches, and an inbox decision into a set. Every test starts
-// from the `rule-sets` scenario (one pending request, demo -> registry.example.org).
+// from the `rule-sets` scenario file (one pending request, demo -> registry.example.org).
+import { fileURLToPath } from "node:url";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import { SWATCHES } from "../src/lib/rules/fill.ts";
@@ -38,8 +39,14 @@ async function openRules(page: Page, backend: Backend): Promise<void> {
   ).toBeVisible();
 }
 
+// The default scenario plus a seeded workspace, so the workspace dropdowns have one to pick; a scenario
+// may be given as a file path.
+const RULE_SETS_SCENARIO = fileURLToPath(
+  new URL("./fixtures/rule-sets.json", import.meta.url),
+);
+
 test.beforeEach(async ({ backend }) => {
-  await backend.control.reset("rule-sets");
+  await backend.control.reset(RULE_SETS_SCENARIO);
 });
 
 test("System managed lists what Puddle allows for the editor, with the reason", async ({

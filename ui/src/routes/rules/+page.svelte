@@ -41,6 +41,7 @@
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
   import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
+  import { workspaces as workspaceList } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   const SCOPE_FILTER = [
@@ -101,12 +102,15 @@
     }
     const stop = store.start();
     const stopSets = ruleSets.start();
+    // The dropdowns and the names in the table read the live workspace list.
+    const stopWorkspaces = workspaceList.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stop();
       stopSets();
+      stopWorkspaces();
       clearInterval(clock);
     };
   });

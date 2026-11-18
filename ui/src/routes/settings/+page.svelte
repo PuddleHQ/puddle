@@ -1051,6 +1051,18 @@
             >Run the system check again</a
           >
         </div>
+        <h3>App errors</h3>
+        <div class="setting">
+          <div class="grow">
+            <p class="desc">
+              Errors Puddle's pages hit that no code expected, as Puddle's log
+              has them.
+            </p>
+          </div>
+          <a class="btn" href="/settings/app-errors"
+            >Details<span class="visually-hidden"> about app errors</span></a
+          >
+        </div>
         <h3 id="local-destinations">Local destinations</h3>
         <p class="desc">
           Off by default. Turning one on makes those destinations
@@ -1437,7 +1449,7 @@
   .layout {
     display: grid;
     grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
-    gap: var(--space-5);
+    gap: var(--space-6);
     align-items: start;
   }
   nav {
@@ -1475,7 +1487,7 @@
   }
   h3 {
     margin: 0;
-    font-size: var(--text-base, 1rem);
+    font-size: var(--text-md);
   }
   .card p {
     margin: 0;

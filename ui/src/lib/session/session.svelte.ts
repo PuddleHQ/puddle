@@ -110,6 +110,15 @@ export class SessionStore {
   }
 
   /**
+   * Whether this page runs on another computer than the one Puddle runs on: only a browser that
+   * signed in is, the desktop window and the loopback address are on the host. The service opens
+   * nothing and sends no ssh link to such a client (API-22), so the page offers no ssh entry.
+   */
+  get isRemote(): boolean {
+    return this.mode === "signed-in";
+  }
+
+  /**
    * Whether this session may start a workspace from a folder on the computer Puddle runs on. The
    * service refuses it for every signed-in user who is not the owner, so the form does not offer it.
    * The desktop window and a service with no accounts have no user and are the owner.

@@ -33,6 +33,11 @@ fn a_url_keeps_its_scheme_host_path_and_place_but_loses_its_user_info_query_and_
         scrub_line("at f (http://localhost:5173/src/x.ts?t=1700000000:4:5)"),
         "at f (http://localhost:5173/src/x.ts:4:5)"
     );
+    // A query that ends in a colon and no number keeps nothing of it.
+    assert_eq!(
+        scrub_line("x (https://h.example/a.js?k=a:b)"),
+        "x (https://h.example/a.js)"
+    );
     assert_eq!(
         scrub_line("see wss://u:p@h.example/ws?ticket=abc"),
         "see wss://h.example/ws"

@@ -13,6 +13,9 @@ use crate::routes::AppState;
 use crate::ui_errors::{Outcome, PER_WINDOW, WINDOW_MS};
 use crate::wire::{UiErrorList, UiErrorReport};
 
+/// The rate's window in seconds, for the log line.
+const WINDOW_S: u64 = WINDOW_MS / 1000;
+
 /// A page's report of an error no code expected: one that showed the error page, one thrown
 /// outside the page's own handling, or a promise nothing handled. The server takes the user
 /// info, query and fragment out of every URL and removes what looks like a token, bounds each
@@ -38,12 +41,15 @@ pub(crate) async fn report_ui_error(
         .report(principal.user, &report, state.clock.now_ms())
     {
         Outcome::Kept(error) => {
+            let route = error.route.as_deref().unwrap_or("-");
+            let build = error.build.as_deref().unwrap_or("-");
+            let stack = error.stack.as_deref().unwrap_or("");
             tracing::warn!(
                 kind = ?error.kind,
-                route = %error.route.as_deref().unwrap_or("-"),
-                build = %error.build.as_deref().unwrap_or("-"),
+                route = %route,
+                build = %build,
                 error = ?error.message,
-                stack = ?error.stack.as_deref().unwrap_or(""),
+                stack = ?stack,
                 "a page hit an unexpected error"
             );
             Ok(StatusCode::NO_CONTENT)
@@ -55,7 +61,7 @@ pub(crate) async fn report_ui_error(
             if first {
                 tracing::warn!(
                     limit = PER_WINDOW,
-                    window_s = WINDOW_MS / 1000,
+                    window_s = WINDOW_S,
                     "pages reported too many errors; the next ones are dropped until the rate allows"
                 );
             }

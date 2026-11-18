@@ -75,11 +75,10 @@
     applyError = null;
   }
 
-  async function confirm() {
-    if (!preview) return;
+  async function confirm(shown: RestorePreview) {
     applying = true;
     applyError = null;
-    const done = await applyRestore(preview.staging_id, mode);
+    const done = await applyRestore(shown.staging_id, mode);
     applying = false;
     if (done.ok) {
       confirming = false;
@@ -93,9 +92,8 @@
     if (done.ok) result = null;
   }
 
-  async function remove() {
-    if (!deleting) return;
-    const done = await deleteSafetyCopy(deleting.name);
+  async function remove(copy: SafetyCopy) {
+    const done = await deleteSafetyCopy(copy.name);
     if (done.ok) {
       deleting = null;
       deleteError = null;
@@ -103,11 +101,9 @@
     } else deleteError = done.reason;
   }
 
-  const replaceSummary = $derived(
-    preview
-      ? `Replace: ${differing(preview.parts)} entries here are replaced and ${droppedByReplace(preview.parts)} that are not in the file are dropped.`
-      : "",
-  );
+  function replaceSummary(shown: RestorePreview): string {
+    return `Replace: ${differing(shown.parts)} entries here are replaced and ${droppedByReplace(shown.parts)} that are not in the file are dropped.`;
+  }
 </script>
 
 <div class="restore">
@@ -300,38 +296,42 @@
   {/if}
 </div>
 
-<ConfirmDialog
-  bind:open={confirming}
-  title="Restore from this file?"
-  summary={mode === "add"
-    ? "Add what is missing from the file."
-    : "Replace what you have with the file."}
-  detail={mode === "add"
-    ? "Nothing you have is changed or removed. Puddle restarts to apply it."
-    : `${replaceSummary} Puddle restarts to apply it.`}
-  confirmLabel={mode === "add" ? "Add and restart" : "Replace and restart"}
-  tone={mode === "add" ? "allow" : "deny"}
-  working={applying}
-  error={applyError}
-  holdOpen
-  onConfirm={() => void confirm()}
-  onCancel={() => (applyError = null)}
-/>
+{#if preview}
+  {@const shown = preview}
+  <ConfirmDialog
+    bind:open={confirming}
+    title="Restore from this file?"
+    summary={mode === "add"
+      ? "Add what is missing from the file."
+      : "Replace what you have with the file."}
+    detail={mode === "add"
+      ? "Nothing you have is changed or removed. Puddle restarts to apply it."
+      : `${replaceSummary(shown)} Puddle restarts to apply it.`}
+    confirmLabel={mode === "add" ? "Add and restart" : "Replace and restart"}
+    tone={mode === "add" ? "allow" : "deny"}
+    working={applying}
+    error={applyError}
+    holdOpen
+    onConfirm={() => void confirm(shown)}
+    onCancel={() => (applyError = null)}
+  />
+{/if}
 
-<ConfirmDialog
-  open={deleting !== null}
-  title="Delete this safety copy?"
-  summary={deleting
-    ? `The copy of ${safetyCopyTime(deleting.name)} (${sizeText(deleting.size_bytes)}) is deleted.`
-    : ""}
-  detail="Once it is gone, that restore cannot be undone from it."
-  confirmLabel="Delete the copy"
-  tone="deny"
-  error={deleteError}
-  holdOpen
-  onConfirm={() => void remove()}
-  onCancel={() => (deleting = null)}
-/>
+{#if deleting}
+  {@const copy = deleting}
+  <ConfirmDialog
+    open
+    title="Delete this safety copy?"
+    summary={`The copy of ${safetyCopyTime(copy.name)} (${sizeText(copy.size_bytes)}) is deleted.`}
+    detail="Once it is gone, that restore cannot be undone from it."
+    confirmLabel="Delete the copy"
+    tone="deny"
+    error={deleteError}
+    holdOpen
+    onConfirm={() => void remove(copy)}
+    onCancel={() => (deleting = null)}
+  />
+{/if}
 
 <style>
   .restore {

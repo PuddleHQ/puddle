@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -232,5 +233,136 @@ describe("RestoreCard", () => {
       expect(svc.remove).toHaveBeenCalledWith("20261115T225500Z"),
     );
     expect(await screen.findByTestId("safety-copies-empty")).toBeTruthy();
+  });
+});
+
+describe("RestoreCard, the rest of its states", () => {
+  it("says why the safety copies or the last result cannot be read", async () => {
+    svc.result.mockResolvedValue({ ok: false, reason: "down" });
+    svc.copies.mockResolvedValue({ ok: false, reason: "The list is down." });
+    render(RestoreCard);
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The list is down.",
+    );
+    expect(screen.queryByTestId("restore-result")).toBeNull();
+  });
+
+  it("does nothing when the file chooser closes without a file", async () => {
+    render(RestoreCard);
+    await fireEvent.change(screen.getByTestId("restore-file"), {
+      target: { files: [] },
+    });
+    expect(svc.preview).not.toHaveBeenCalled();
+  });
+
+  it("the button opens the file chooser", async () => {
+    render(RestoreCard);
+    const click = vi.spyOn(
+      screen.getByTestId("restore-file") as HTMLInputElement,
+      "click",
+    );
+    await fireEvent.click(screen.getByTestId("restore-choose"));
+    expect(click).toHaveBeenCalled();
+  });
+
+  it("a successful restore result is a status, and a failed dismiss keeps it", async () => {
+    svc.result.mockResolvedValue({
+      ok: true,
+      value: {
+        applied: true,
+        mode: "add",
+        safety_copy: "20261115T225500Z",
+        at_ms: 1,
+        message: "Restored.",
+      },
+    });
+    svc.dismiss.mockResolvedValue({ ok: false, reason: "down" });
+    render(RestoreCard);
+    const banner = await screen.findByTestId("restore-result");
+    expect(banner.getAttribute("role")).toBe("status");
+    await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(svc.dismiss).toHaveBeenCalled());
+    expect(screen.getByTestId("restore-result")).toBeTruthy();
+  });
+
+  it("a preview without a manifest, secrets or running workspaces says so quietly and singular", async () => {
+    svc.preview.mockResolvedValue({
+      ok: true,
+      value: {
+        ...preview,
+        puddle_version: null,
+        created_at_ms: null,
+        secrets_needing_value: [],
+        running_workspaces: 1,
+        workspaces: [],
+      },
+    });
+    await choose();
+    expect(await screen.findByTestId("restore-preview")).toBeTruthy();
+    expect(screen.getByText(/version not recorded/)).toBeTruthy();
+    expect(screen.queryByTestId("restore-secrets")).toBeNull();
+    expect(screen.queryByTestId("restore-missing-disks")).toBeNull();
+    expect(screen.getByTestId("restore-running").textContent).toContain(
+      "1 workspace running",
+    );
+  });
+
+  it("cancelling the confirm dialog drops its error, and cancelling a delete keeps the copy", async () => {
+    svc.preview.mockResolvedValue({ ok: true, value: preview });
+    svc.apply.mockResolvedValue({ ok: false, reason: "no space" });
+    svc.copies.mockResolvedValue({
+      ok: true,
+      value: [{ name: "20261115T225500Z", size_bytes: 1 }],
+    });
+    svc.remove.mockResolvedValue({ ok: false, reason: "cannot delete" });
+    await choose();
+    await fireEvent.click(await screen.findByTestId("restore-continue"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Add and restart" }),
+    );
+    expect((await screen.findAllByRole("alert"))[0]?.textContent).toContain(
+      "no space",
+    );
+    await fireEvent.click(
+      within(
+        screen.getAllByRole("alertdialog").at(-1) as HTMLElement,
+      ).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Delete" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Delete the copy" }),
+    );
+    expect((await screen.findAllByRole("alert"))[0]?.textContent).toContain(
+      "cannot delete",
+    );
+    await fireEvent.click(
+      within(
+        screen.getAllByRole("alertdialog").at(-1) as HTMLElement,
+      ).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+    expect(screen.getByTestId("safety-copy-20261115T225500Z")).toBeTruthy();
+  });
+
+  it("shows no running notice when nothing runs, and switching back to Add works", async () => {
+    svc.preview.mockResolvedValue({
+      ok: true,
+      value: { ...preview, running_workspaces: 0 },
+    });
+    await choose();
+    await screen.findByTestId("restore-preview");
+    expect(screen.queryByTestId("restore-running")).toBeNull();
+    await fireEvent.click(screen.getByLabelText(/^Replace/));
+    await fireEvent.click(screen.getByLabelText(/Add what is missing/));
+    expect(
+      (screen.getByLabelText(/Add what is missing/) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
   });
 });

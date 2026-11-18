@@ -44,6 +44,12 @@ crates/puddle-app/src/desktop.rs | window.hide_menu()?; | the application menu (
 crates/puddle-app/src/desktop.rs | window.hide_menu()?;\n} | closing lines of the excluded real-window routing and application menu above
 crates/puddle-app/src/desktop.rs | window.hide_menu()?;\n}\nOk(()) | the end of `install_quit_shortcut`, which needs the real window system
 crates/puddle-app/src/desktop.rs | window.hide_menu()?;\n}\nOk(())\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/main.rs | eprintln!("puddle-app: {message}"); | the program's entry point: it runs the whole app, which a unit test cannot start; the failure report it calls is tested in `shell::tests`, and the Windows message box is shown only by a release build
+crates/puddle-app/src/main.rs | fn show_failure(_message: &str) {} | the program's entry point: it runs the whole app, which a unit test cannot start; the failure report it calls is tested in `shell::tests`, and the Windows message box is shown only by a release build
+crates/puddle-app/src/main.rs | let message = puddle_app::report_startup_failure(&options, &err); | the program's entry point: it runs the whole app, which a unit test cannot start; the failure report it calls is tested in `shell::tests`, and the Windows message box is shown only by a release build
+crates/puddle-app/src/main.rs | let options = puddle_app::Options::from_env(); | the program's entry point: it runs the whole app, which a unit test cannot start; the failure report it calls is tested in `shell::tests`, and the Windows message box is shown only by a release build
+crates/puddle-app/src/main.rs | match puddle_app::run(&options) { | the program's entry point: it runs the whole app, which a unit test cannot start; the failure report it calls is tested in `shell::tests`, and the Windows message box is shown only by a release build
+crates/puddle-app/src/main.rs | show_failure(&message); | the program's entry point: it runs the whole app, which a unit test cannot start; the failure report it calls is tested in `shell::tests`, and the Windows message box is shown only by a release build
 crates/puddle-app/src/notify.rs | .body(&notice.body); | the same notification service call
 crates/puddle-app/src/notify.rs | .notification()\n.builder() | the same notification service call
 crates/puddle-app/src/notify.rs | .title(&notice.title) | the same notification service call

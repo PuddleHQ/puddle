@@ -83,7 +83,9 @@ rust)
     count=${STRESS_COUNT:-20}
     filter=${STRESS_FILTER:-'binary(fake_host) | package(puddle-proxy) | (package(puddle-agent) & test(capture))'}
     cd "$root"
-    args=(--profile ci -p puddle-host -p puddle-proxy -p puddle-agent -E "$filter")
+    # puddle-settings/mise: the managed tools layer is a feature, on in the pull request gate (--all-features) and
+    # off in a bare -p build, where every tools_* and mise test of fake_host failed 20 of 20 ("tools are off").
+    args=(--profile ci -p puddle-host -p puddle-proxy -p puddle-agent --features puddle-settings/mise -E "$filter")
     # STRESS_PARTITION=1/6 runs a sixth of the tests (a job per sixth, each on its own runner; see stress.yml for the
     # timing arithmetic).
     [ -z "${STRESS_PARTITION:-}" ] || args+=(--partition "count:$STRESS_PARTITION")

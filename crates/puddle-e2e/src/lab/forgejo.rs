@@ -66,6 +66,7 @@ pub struct Forgejo {
     root: CertificateDer<'static>,
     root_pem: PathBuf,
     token: String,
+    password: String,
     started: StartCost,
 }
 
@@ -195,7 +196,9 @@ struct Endpoint<'a> {
     root_pem: &'a Path,
     name: &'a str,
     port: u16,
-    token: &'a str,
+    /// The `Authorization` header's value: `token <token>`, or `Basic <base64>` for the calls
+    /// Forgejo answers only to the account's password.
+    authorization: &'a str,
 }
 
 /// One call to the HTTP API of the instance on `port` as [`OWNER`]: the status and the body. `Err`
@@ -224,7 +227,7 @@ fn call(
         .arg(format!("{}:{}:{LOCAL}", at.name, at.port))
         .args(["--request", method])
         .args(["--header", "Content-Type: application/json"])
-        .args(["--header", &format!("Authorization: token {}", at.token)])
+        .args(["--header", &format!("Authorization: {}", at.authorization)])
         .args(["--write-out", "\n%{http_code}"]);
     if let Some(body) = body {
         curl.args(["--data", body]);
@@ -273,11 +276,12 @@ fn await_up(
 ) -> Result<(), String> {
     let log_text = || read(log);
     let http_up = || {
+        let authorization = format!("token {token}");
         let at = Endpoint {
             root_pem,
             name,
             port: ports.http,
-            token,
+            authorization: &authorization,
         };
         call(&at, "GET", "/version", None, 2).is_ok_and(|(status, _)| status == 200)
     };
@@ -321,6 +325,17 @@ fn write_private(path: &Path, bytes: &[u8]) {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     options.open(path).unwrap().write_all(bytes).unwrap();
+}
+
+/// 32 random hex digits from the operating system: the account's password, made for the run.
+fn random_hex() -> String {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).unwrap();
+    bytes.iter().fold(String::new(), |mut out, b| {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Checks that the API answered `201 Created` to `what`.
@@ -445,6 +460,7 @@ impl Forgejo {
         )
         .unwrap();
         forgejo(bin, root_dir, &["migrate"])?;
+        let password = random_hex();
         forgejo(
             bin,
             root_dir,
@@ -455,7 +471,8 @@ impl Forgejo {
                 "--admin",
                 "--username",
                 OWNER,
-                "--random-password",
+                "--password",
+                &password,
                 "--email",
                 "acme@example.org",
                 "--must-change-password=false",
@@ -512,6 +529,7 @@ impl Forgejo {
             http_port,
             ssh_port,
             token,
+            password,
             started,
         })
     }
@@ -566,13 +584,32 @@ impl Forgejo {
     /// When `curl` cannot run or its answer has no status.
     #[must_use]
     pub fn api(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
-        // The command line holds the token, so a failure names the path and not the command.
+        self.call_as(&format!("token {}", self.token), method, path, body)
+    }
+
+    /// [`Self::api`] signed in with the account's password, which Forgejo asks for to make or
+    /// delete a token.
+    fn api_with_password(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+        use base64::Engine as _;
+        let pair = format!("{OWNER}:{}", self.password);
+        let basic = base64::engine::general_purpose::STANDARD.encode(pair);
+        self.call_as(&format!("Basic {basic}"), method, path, body)
+    }
+
+    fn call_as(
+        &self,
+        authorization: &str,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+    ) -> (u16, String) {
+        // The command line holds the credential, so a failure names the path and not the command.
         call(
             &Endpoint {
                 root_pem: &self.root_pem,
                 name: &self.name,
                 port: self.http_port,
-                token: &self.token,
+                authorization,
             },
             method,
             path,
@@ -580,6 +617,37 @@ impl Forgejo {
             60,
         )
         .unwrap_or_else(|why| panic!("curl {method} {path}: {why}"))
+    }
+
+    /// Makes another access token of [`OWNER`] named `name`, with the same reach as
+    /// [`Self::token`], through the API the way a person does on the forge's settings page. A
+    /// caller that revokes it ([`Self::revoke_token`]) leaves [`Self::token`] and the fixture's own
+    /// calls working.
+    ///
+    /// # Panics
+    /// When Forgejo refuses (a name already taken).
+    #[must_use]
+    pub fn add_token(&self, name: &str) -> String {
+        let body = serde_json::json!({"name": name, "scopes": ["all"]}).to_string();
+        let (status, answer) =
+            self.api_with_password("POST", &format!("/users/{OWNER}/tokens"), Some(&body));
+        expect_created(status, &answer, &format!("make token {name}"));
+        let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
+        json.get("sha1")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("make token {name}: no sha1 in {answer}"))
+            .to_owned()
+    }
+
+    /// Deletes the token `name` of [`OWNER`] through the API: from then on Forgejo answers a
+    /// request carrying it as one with a wrong password.
+    ///
+    /// # Panics
+    /// When Forgejo refuses (no such token).
+    pub fn revoke_token(&self, name: &str) {
+        let (status, answer) =
+            self.api_with_password("DELETE", &format!("/users/{OWNER}/tokens/{name}"), None);
+        assert_eq!(status, 204, "revoke token {name}: {answer}");
     }
 
     /// Makes the repository `owner/name` of [`OWNER`] (`owner` must be [`OWNER`]) on branch `main`

@@ -139,6 +139,7 @@ fn unreachable_fixture() -> Forgejo {
         ssh_port: quiet_port(),
         root: CertificateDer::from(Vec::new()),
         token: "secret-token".to_owned(),
+        password: "secret-password".to_owned(),
         started: StartCost::default(),
     }
 }

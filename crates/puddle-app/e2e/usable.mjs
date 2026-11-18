@@ -22,7 +22,7 @@
 //   9. a new request makes no notification while the window is in front, and exactly one, naming the
 //      workspace and the host, while it is minimized;
 //  10. Activity's "Export JSON lines" saves a .jsonl file in Downloads, one valid JSON record a line;
-//  11. the tray's "Quit Puddle" with the workspace running leaves no puddle-app, puddle or msb process
+//  11. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
 //      within 90 s, and a new start lists the workspace as stopped.
 // Steps 7 to 11 run in the direct run only (below): the shell does not change behind a proxy.
 //
@@ -721,7 +721,7 @@ async function quitFromTheTray(id) {
     2000,
   ).catch(() => JSON.parse(desktop("processes", "puddle-app", "puddle", "msb")));
   check(
-    "the tray's Quit Puddle with the workspace running leaves no puddle-app, puddle or msb process within 90 s",
+    "the tray's Quit Puddle with the workspace running leaves no puddle-app.exe, puddle.exe or msb.exe process within 90 s",
     chosen === "quit chosen" && left.length === 0,
     `${chosen}; after ${Math.round((Date.now() - started) / 1000)} s: ${left.map((p) => `${p.name} ${p.id}`).join(", ") || "none"}`,
   );

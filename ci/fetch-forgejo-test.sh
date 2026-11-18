@@ -81,14 +81,14 @@ grep -q "^::error title=fetch-forgejo download failed::every host failed: file:/
 
 # The cache: a verified download is kept; the next run uses it with every host down; a bad copy is ignored.
 cache=$tmp/cache
-FORGEJO_CACHE_DIR=$cache "$tmp/ci/fetch-forgejo.sh" "$tmp/c1" 2>/dev/null || fail "a cached run did not install"
+FETCH_CACHE_DIR=$cache "$tmp/ci/fetch-forgejo.sh" "$tmp/c1" 2>/dev/null || fail "a cached run did not install"
 [ "$(hash_of_file "$cache/$asset")" = "$sum" ] || fail "a verified download was not cached"
-FORGEJO_CACHE_DIR=$cache FORGEJO_BASE_URL="file://$tmp/down" FORGEJO_MIRROR_URL="file://$tmp/down2" "$tmp/ci/fetch-forgejo.sh" "$tmp/c2" 2>"$tmp/err" ||
+FETCH_CACHE_DIR=$cache FORGEJO_BASE_URL="file://$tmp/down" FORGEJO_MIRROR_URL="file://$tmp/down2" "$tmp/ci/fetch-forgejo.sh" "$tmp/c2" 2>"$tmp/err" ||
     fail "the cache was not used with every host down: $(cat "$tmp/err")"
 grep -q "using the cached $asset" "$tmp/err" || fail "the cache hit is not printed"
 [ "$("$tmp/c2/forgejo")" = forgejo ] || fail "the cached file was not installed"
 printf 'stale\n' >"$cache/$asset"
-FORGEJO_CACHE_DIR=$cache "$tmp/ci/fetch-forgejo.sh" "$tmp/c3" 2>"$tmp/err" || fail "a bad cached copy stopped the download"
+FETCH_CACHE_DIR=$cache "$tmp/ci/fetch-forgejo.sh" "$tmp/c3" 2>"$tmp/err" || fail "a bad cached copy stopped the download"
 grep -q "ignoring the cached $asset" "$tmp/err" || fail "the bad cached copy is not named"
 [ "$(hash_of_file "$cache/$asset")" = "$sum" ] || fail "the bad cached copy was not replaced by the verified download"
 unset FETCH_RETRY_BASE_S

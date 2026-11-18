@@ -6,6 +6,8 @@
 # extensions folders.
 # Usage: ci/fetch-vscode.sh <dest-dir>
 # FETCH_ATTEMPTS and FETCH_RETRY_BASE_S set the retry window (ci/fetch-retry.sh). Works in Linux sh and Git Bash.
+# FETCH_CACHE_DIR (CI restores it from an Actions cache keyed on the pin) is used first, each file checked against the
+# pin like a download; Microsoft's licence allows no public mirror, so the cache is what carries a run through an outage.
 # Network failures are retried (infrastructure) and each retry is printed; a checksum mismatch never is.
 set -eu
 
@@ -35,12 +37,17 @@ trap 'rm -rf "$work"' EXIT
 # fetch <name> <file>: downloads the pinned file to $work/<file> and checks it.
 fetch() {
     pin "$1"
-    download fetch-vscode "$url" "$work/$2.raw" 900
-    # The Marketplace answers with Content-Encoding: gzip, which curl (no --compressed) saves as it came.
-    if [ "$(head -c 2 "$work/$2.raw" | od -An -tx1 | tr -d ' \n')" = 1f8b ]; then
-        gzip -dc <"$work/$2.raw" >"$work/$2"
+    cached=
+    if cache_get fetch-vscode "$1-$version-$2" "$want" "$work/$2"; then
+        cached=1
     else
-        mv "$work/$2.raw" "$work/$2"
+        download fetch-vscode "$url" "$work/$2.raw" 900
+        # The Marketplace answers with Content-Encoding: gzip, which curl (no --compressed) saves as it came.
+        if [ "$(head -c 2 "$work/$2.raw" | od -An -tx1 | tr -d ' \n')" = 1f8b ]; then
+            gzip -dc <"$work/$2.raw" >"$work/$2"
+        else
+            mv "$work/$2.raw" "$work/$2"
+        fi
     fi
     # Hash from stdin: for a path with backslashes, Git Bash's sha256sum puts a backslash before the hash.
     got=$(sha256sum <"$work/$2" | cut -d' ' -f1)
@@ -48,6 +55,7 @@ fetch() {
         echo "fetch-vscode: checksum mismatch for $1 $version: got $got, pinned $want" >&2
         exit 1
     fi
+    [ -n "$cached" ] || cache_put "$1-$version-$2" "$work/$2"
 }
 
 # unpack <zip> <dir>: unzip where there is one, PowerShell's Expand-Archive on a Windows runner without it.

@@ -79,7 +79,7 @@ test("Replace says what is dropped, and a restore that cannot start says why and
       "the safety copy of the present state could not be made, so the restore did not start",
   });
   await page.getByTestId("restore-file").setInputFiles(backupFile);
-  await page.getByLabel(/^Replace/).check();
+  await page.getByRole("radio", { name: /Replace/ }).check();
   await page.getByTestId("restore-continue").click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText(

@@ -127,7 +127,7 @@ describe("a workspace that is not running", () => {
 
   it("greys the button and says why while something else is happening to the workspace", async () => {
     workspaces.list = [
-      workspace(docs, { status: "stopped", busy: "removing" }),
+      workspace(docs, { status: "stopped", busy: "deleting" }),
     ];
     url.id = `w-${docs}`;
     render(Page);

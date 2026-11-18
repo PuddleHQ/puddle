@@ -45,6 +45,8 @@ export interface Screen {
   focus(): void;
   /** Copies the selection as plain text; `false` with nothing selected. */
   copy(): boolean;
+  /** Types the clipboard's text into the shell, as a paste does; reads it only on this user action. */
+  paste(): Promise<void>;
   selectAll(): void;
   clear(): void;
   hasSelection(): boolean;
@@ -158,6 +160,17 @@ export class XtermScreen implements Screen {
   copy(): boolean {
     if (!this.term.hasSelection()) return false;
     return document.execCommand("copy");
+  }
+
+  async paste(): Promise<void> {
+    // The right-click menu is a user gesture, so the webview may read the clipboard. A refusal
+    // (no permission, an empty clipboard) leaves the screen as it was; Ctrl+Shift+V still pastes.
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text !== "") this.term.paste(text);
+    } catch {
+      // nothing to paste
+    }
   }
 
   selectAll(): void {

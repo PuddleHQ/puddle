@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rule and pending rows: their SQL and the decoding of what the database stores.
 
-use puddle_types::{Event, Host, PendingEnd, PendingId, RuleId, SuffixAllows, WorkspaceId};
+use puddle_types::{
+    Event, Host, PendingEnd, PendingId, PendingSummary, RuleId, SuffixAllows, WorkspaceId,
+};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
-use crate::audit::{AuditRecord, PendingExpiryReason, PendingWire, RuleWire};
+use crate::audit::{
+    AuditRecord, PendingExpiryReason, PendingWire, RuleDeleteReason, RuleWire, actor_str,
+};
 use crate::engine::Hit;
 use crate::error::StoreError;
+use crate::pattern::registrable_domain;
 use crate::pattern::{Pattern, SuffixPattern};
 use crate::pending::{PendingRow, PendingState};
 use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
@@ -149,6 +154,99 @@ pub(super) fn close_decided_rows(
         }
     }
     Ok(closed)
+}
+
+/// The open rows of one workspace, host and port: 0 or 1 (R-11).
+const OPEN_ROW_COUNT: &str = "SELECT count(*) FROM pending
+     WHERE workspace_id = ?1 AND host = ?2 AND port = ?3 AND state = 'requested'";
+
+/// Deletes a rule and records that (the caller emits the change).
+pub(super) fn delete_rule_row(
+    tx: &Transaction<'_>,
+    id: RuleId,
+    now: u64,
+    actor: Actor,
+) -> Result<Rule, StoreError> {
+    let rule = load_rule(tx, id)?;
+    tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
+    let record = AuditRecord::RuleDeleted {
+        ts: now,
+        rule: RuleWire::from(&rule),
+        reason: RuleDeleteReason::User,
+        actor: actor_str(actor),
+    };
+    append_for(tx, &record, rule.user)?;
+    Ok(rule)
+}
+
+/// The rows `rule` closed with an allow or a deny, each with its `exact_only` flag, oldest id first.
+pub(super) fn closed_by_rule(
+    tx: &Transaction<'_>,
+    rule: RuleId,
+) -> Result<Vec<(PendingRow, bool)>, StoreError> {
+    let mut stmt = tx.prepare(&format!(
+        "SELECT {PENDING_COLUMNS}, exact_only FROM pending
+         WHERE rule_id = ?1 AND state IN ('allowed', 'denied') ORDER BY id"
+    ))?;
+    stmt.query_map([rule.0], |row| {
+        Ok((raw_pending(row)?, row.get::<_, bool>(PENDING_COLUMN_COUNT)?))
+    })?
+    .map(|found| {
+        let (raw, exact_only) = found?;
+        Ok((pending_from_raw(&raw)?, exact_only))
+    })
+    .collect()
+}
+
+/// Opens a new row for each of `closed` that keeps its workspace, host, port, times and attempt
+/// count, so it sorts where it did. A key that already has an open row is skipped.
+pub(super) fn reopen_rows(
+    tx: &Transaction<'_>,
+    closed: Vec<(PendingRow, bool)>,
+    now: u64,
+    fx: &mut Vec<Event>,
+) -> Result<Vec<PendingRow>, StoreError> {
+    let mut reopened = Vec::new();
+    for (old, exact_only) in closed {
+        let key = params![old.workspace.as_str(), old.host.to_string(), old.port];
+        let taken: i64 = tx.query_row(OPEN_ROW_COUNT, key, |row| row.get(0))?;
+        if taken > 0 {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, attempts, exact_only)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                old.workspace.as_str(),
+                old.host.to_string(),
+                old.port,
+                sql_ts(old.first_seen),
+                sql_ts(old.last_seen),
+                sql_ts(old.attempts),
+                exact_only
+            ],
+        )?;
+        let row = load_pending(tx, PendingId(tx.last_insert_rowid()))?;
+        let record = AuditRecord::PendingCreated {
+            ts: now,
+            pending: PendingWire::from(&row),
+        };
+        append(tx, &record)?;
+        fx.push(Event::PendingOpened {
+            request: PendingSummary {
+                id: row.id.0,
+                workspace: row.workspace.clone(),
+                host: row.host.to_string(),
+                registrable_domain: registrable_domain(&row.host),
+                port: row.port,
+                first_seen: row.first_seen,
+                last_seen: row.last_seen,
+                attempts: row.attempts,
+            },
+        });
+        reopened.push(row);
+    }
+    Ok(reopened)
 }
 
 /// The open rows of `workspace` (of every workspace for `None`), each with the kind of allow it

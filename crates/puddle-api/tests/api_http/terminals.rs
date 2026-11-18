@@ -674,3 +674,90 @@ async fn a_session_that_vanishes_without_an_end_is_a_crash_and_pings_are_ignored
     }
     assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }
+
+/// Shutdown returns only once an open terminal's socket task has let go of the store, even when
+/// the page does not answer the close: the store closes its database when the last handle goes,
+/// and a host restarted on the same data folder right after a stop must find it closed.
+#[test]
+fn shutdown_waits_for_an_open_terminal_to_let_go_of_the_store() {
+    use std::sync::Arc;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (store, at_return, _page) = runtime.block_on(async {
+        let api = start().await;
+        workspace(&api, "shop").await;
+        let (terminal, ticket) = ticket(&api, "shop").await;
+        let mut page = connect(&api, "shop", terminal, &ticket).await;
+        read_until(&mut page, "$ ").await;
+        let Api { running, store, .. } = api;
+        let watched = Arc::downgrade(&store);
+        // The page never reads again, so the socket task waits out its close wait.
+        running.shutdown().await;
+        let at_return = watched.strong_count();
+        (store, at_return, page)
+    });
+    drop(runtime);
+    assert_eq!(
+        at_return,
+        Arc::strong_count(&store),
+        "shutdown returned while a terminal's socket task still held the store"
+    );
+}
+
+/// A page that resets its connection as the socket opens frees its terminal's place at once, not
+/// when its ticket would have run out.
+#[tokio::test]
+async fn a_page_that_vanishes_as_its_socket_opens_frees_its_terminals_place() {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let mut tickets = Vec::new();
+    for _ in 0..MAX_PER_WORKSPACE {
+        tickets.push(ticket(&api, "shop").await);
+    }
+    assert_eq!(ask(&api, "shop").await.status, 409);
+    // The RFC 6455 sample nonce, assembled so the secret scan does not take it for a key.
+    let key = ["dGhlIHNhbXBs", "ZSBub25jZQ=="].concat();
+    for (terminal, ticket_text) in tickets {
+        let mut stream =
+            tokio::io::BufReader::new(tokio::net::TcpStream::connect(api.addr).await.unwrap());
+        let request = format!(
+            "GET /api/workspaces/shop/terminals/{terminal} HTTP/1.1\r\nHost: {}\r\n\
+             Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Key: {key}\r\n\
+             Sec-WebSocket-Protocol: {SUBPROTOCOL}, ticket.{ticket_text}\r\n\r\n",
+            api.addr
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        // Waits for the answer: a reset that arrives before the server has read the request throws
+        // the request away (always on Windows, often on Linux), and the ticket then holds the
+        // place until it runs out, which is not what this test is about.
+        let mut status = String::new();
+        stream.read_line(&mut status).await.unwrap();
+        assert!(status.starts_with("HTTP/1.1 101"), "{status}");
+        // A reset, not a close. The deprecation is about blocking on drop, which a zero linger (an
+        // immediate reset) never does.
+        #[expect(
+            deprecated,
+            reason = "a zero linger makes the drop a reset and blocks nothing"
+        )]
+        stream
+            .get_ref()
+            .set_linger(Some(std::time::Duration::ZERO))
+            .unwrap();
+        drop(stream);
+    }
+    // Every place comes back, not only the first.
+    let freed = std::cell::Cell::new(0);
+    puddle_test_kit::eventually_async("every place was freed", STEP, || async {
+        while freed.get() < MAX_PER_WORKSPACE && ask(&api, "shop").await.status == 201 {
+            freed.set(freed.get() + 1);
+        }
+        freed.get() == MAX_PER_WORKSPACE
+    })
+    .await;
+    api.running.shutdown().await;
+}

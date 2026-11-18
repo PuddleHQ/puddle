@@ -57,6 +57,8 @@ mod restart_and_crash;
 mod restore;
 #[path = "fake_host/root_disk.rs"]
 mod root_disk;
+#[path = "fake_host/rules_after_restart.rs"]
+mod rules_after_restart;
 #[path = "fake_host/sandbox_resources.rs"]
 mod sandbox_resources;
 #[cfg(target_os = "linux")]

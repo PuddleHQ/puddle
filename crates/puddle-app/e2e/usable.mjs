@@ -12,7 +12,23 @@
 //   4. a real `apt-get install nodejs npm` (approved in the inbox) and a real `npm run build` and
 //      `npm test` run in the workspace's checkout;
 //   5. `git push` from the workspace reaches the forge with the credential Puddle injects, the author
-//      is the identity's, and the guest, the audit log and the API never hold the token.
+//      is the identity's, and the guest, the audit log and the API never hold the token;
+//   6. the first run's "Copy report" puts the system check's report on the Windows clipboard;
+//   7. the workspace's Terminal tab opens a shell: `whoami; pwd; sudo -n true && echo sudo-ok`, typed
+//      with real keys, reads `agent`, the start folder and `sudo-ok`, and no error page shows;
+//   8. the close button hides the window in the tray, with exactly one Windows notification however
+//      often it is pressed, and a heartbeat the guest writes every half second has no gap over 2 s
+//      while the window is hidden;
+//   9. a new request makes no notification while the window is in front, and exactly one, naming the
+//      workspace and the host, while it is minimized;
+//  10. Activity's "Export JSON lines" saves a .jsonl file in Downloads, one valid JSON record a line;
+//  11. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
+//      within 90 s, and a new start lists the workspace as stopped.
+// Steps 7 to 11 run in the direct run only (below): the shell does not change behind a proxy.
+//
+// Windows notifications are read from the Action Center's history for the app's AppUserModelID (the
+// Start menu shortcut's, the `identifier` in tauri.conf.json), and the window's buttons are pressed with
+// the messages its title bar sends (desktop.ps1).
 //
 // Why UI Automation (uia.mjs) and not the DevTools Protocol like smoke.mjs: a release build has no
 // debugging port (the shell honours PUDDLE_APP_DEBUG_PORT in debug builds only, and WebView2 ignores its
@@ -40,14 +56,16 @@
 // USABLE_FORGE_NAME (a name the hosts file points at this machine), PUDDLE_INSTALL_DIR (default
 // %LOCALAPPDATA%\Programs\Puddle), USABLE_OUT (a folder for screenshots and logs; default a temp one).
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
 
+const here = dirname(fileURLToPath(import.meta.url));
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
 const installDir = process.env.PUDDLE_INSTALL_DIR ?? join(local, "Programs", "Puddle");
@@ -173,20 +191,46 @@ if (company) {
 }
 
 const connectionFile = join(dataDir, "api.json");
-const app = spawn(join(installDir, "puddle-app.exe"), [], { stdio: ["ignore", "inherit", "pipe"] });
+const appExe = join(installDir, "puddle-app.exe");
+let app;
 let appLog = "";
-app.stderr.on("data", (chunk) => {
-  appLog += chunk;
-  process.stderr.write(chunk);
-});
 let appExited = false;
-onChildEnd(app, (code) => {
-  appExited = true;
-  console.log(`puddle-app exited (${code})`);
-});
+/** Starts the installed app, as the Start menu does; its log joins `appLog`. */
+function launchApp() {
+  const child = spawn(appExe, [], { stdio: ["ignore", "inherit", "pipe"] });
+  child.stderr.on("data", (chunk) => {
+    appLog += chunk;
+    process.stderr.write(chunk);
+  });
+  onChildEnd(child, (code) => {
+    if (child === app) appExited = true;
+    console.log(`puddle-app ${child.pid} exited (${code})`);
+  });
+  app = child;
+  appExited = false;
+}
+launchApp();
 
 let conn;
 let uia;
+
+/** Reads the connection file the app writes at start until its API answers; `exited` says when to stop waiting. */
+async function connectToApp() {
+  conn = undefined;
+  await until(
+    "the installed app's connection file",
+    async () => {
+      if (appExited) throw new GiveUp("puddle-app exited before it wrote its connection file");
+      const read = JSON.parse(readFileSync(connectionFile, "utf8"));
+      if (!read?.url || !read?.token) return false;
+      conn = read;
+      return (await api("GET", "/api/health")).status === 200;
+    },
+    180_000,
+    1000,
+  );
+}
+
 /** The app's REST API, as its screens call it. */
 async function api(method, path, body) {
   const response = await fetch(`${conn.url}${path}`, {
@@ -372,6 +416,8 @@ async function firstRunToCreateForm() {
   await uia.click("Get started", inMain("link", "Get started"));
   const pages = ["System check", "Certificates", "How do you want to connect?", "Which hosts should Puddle decrypt?", "Look", "Your first workspace"];
   await uia.waitFor(`the "${pages[0]}" heading`, heading(pages[0]));
+  // 6. Its report, copied to the Windows clipboard.
+  await copyTheReport();
   for (const page of pages.slice(1)) {
     if (page === "Look") {
       // The interception step saves its choice with a button, not a link: the person keeps the recommended mode.
@@ -427,26 +473,281 @@ async function checkTheCompanyProxyCarriedTheTraffic(branch) {
   check("the company proxy carried the package archive's requests (plain HTTP, signed in)", archive.length > 0, `${archive.length} answered requests`);
 }
 
+// ---- the Windows shell around the window (desktop.ps1) ---------------------------------------------
+
+const desktopScript = join(here, "desktop.ps1");
+/** The Start menu shortcut's AppUserModelID, which the app's notifications carry. */
+const appUserModelId = JSON.parse(readFileSync(join(here, "..", "tauri.conf.json"), "utf8")).identifier;
+/** The main window's title: "Puddle", with the waiting count when the badge shows one (a page's name before it, in older builds); not the editor's. */
+const MAIN_TITLE = `^(?!${WORKSPACE} - )(.+ - )?Puddle( \\(.+\\))?$`;
+
+/** One desktop.ps1 action; its output, trimmed. */
+function desktop(action, ...args) {
+  const run = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", desktopScript, action, ...args], { encoding: "utf8", timeout: 120_000 });
+  if (run.status !== 0) throw new Error(`desktop.ps1 ${action} failed (${run.status}): ${(run.stderr || run.stdout || String(run.error)).slice(0, 400)}`);
+  return run.stdout.trim();
+}
+/** The app's notifications in the Action Center, oldest first: [{ title, body }]. */
+const toasts = () => [].concat(JSON.parse(desktop("toasts", appUserModelId) || "[]"));
+/** The main window: `state`, or press `front`, `minimize` or `close`; returns { found, visible, minimized, foreground }. */
+const mainWindow = (op = "state") => JSON.parse(desktop("window", String(app.pid), MAIN_TITLE, op));
+/** Empties the app's notifications in the Action Center, so a phase counts only its own. */
+const clearToasts = () => desktop("toasts-clear", appUserModelId);
+/** The notifications in `now` that `before` did not have (the Action Center keeps a bounded, unordered list). */
+function newSince(before, now) {
+  const seen = before.map((t) => `${t.title}\n${t.body}`);
+  return now.filter((t) => {
+    const at = seen.indexOf(`${t.title}\n${t.body}`);
+    if (at === -1) return true;
+    seen.splice(at, 1);
+    return false;
+  });
+}
+const describeToasts = (list) => list.map((t) => `"${t.title}" / "${t.body}"`).join("; ") || "none";
+
+/** A regular expression that matches `text` literally (JavaScript and .NET read it the same). */
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The first run's System check: "Copy report" puts the report, as JSON, on the Windows clipboard. */
+async function copyTheReport() {
+  const placeholder = `not the report ${Date.now()}`;
+  try {
+    desktop("clipboard-set", placeholder);
+    mainWindow("front");
+    await uia.click("Copy report", inMain("button", "Copy report"), 120_000);
+    const said = await uia
+      .waitFor("what the page says about the copy", { window: MAIN, nameRegex: "^(Report copied\\.|The browser didn't let Puddle copy)" }, 20_000)
+      .catch(() => undefined);
+    const text = JSON.parse(desktop("clipboard-get"));
+    let report;
+    try {
+      report = JSON.parse(text);
+    } catch {
+      report = undefined;
+    }
+    check(
+      "Copy report puts the system check's report, as JSON, on the Windows clipboard",
+      report?.schema_version !== undefined && Array.isArray(report.checks) && report.checks.length > 0,
+      `the page said "${said?.name ?? "nothing"}"; the clipboard holds ${text === placeholder ? "what it held before" : JSON.stringify(text.slice(0, 160))}`,
+    );
+  } catch (err) {
+    check("Copy report puts the system check's report, as JSON, on the Windows clipboard", false, err.message);
+  }
+}
+
+/** The names of the terminal's lines in the window (screen reader mode lists each line). */
+async function terminalLines() {
+  return (await uia.find({ window: MAIN, role: "listitem" }).catch(() => [])).map((e) => e.name);
+}
+
+/** The workspace's Terminal tab: a shell as the session user in the start folder, with sudo, and no error page. */
+async function terminalTab(startFolder) {
+  const whatShows = await step("the workspace's Terminal tab opens", async () => {
+    mainWindow("front");
+    await uia.click("the Workspaces link", { window: MAIN, role: "link", nameRegex: "^Workspaces" });
+    await uia.click(`the ${WORKSPACE} workspace`, inMain("link", WORKSPACE));
+    await uia.click("the Terminal tab", inMain("link", "Terminal"));
+    return uia.waitFor("the Terminal page or an error page", { window: MAIN, localized: "heading", nameRegex: "^(Terminal|Something went wrong)$" }, 60_000);
+  });
+  // The route's code runs as the page renders: its New terminal button, or the error page instead.
+  await uia.waitFor("the New terminal button or an error page", { window: MAIN, nameRegex: "^(New terminal|Something went wrong)$" }, 60_000).catch(() => undefined);
+  const errorPage = await uia.find({ window: MAIN, localized: "heading", name: "Something went wrong" });
+  const texts = errorPage.length > 0 ? (await uia.dump(MAIN).catch(() => [])).filter((l) => /\| /.test(l)).slice(0, 40).join(" ¦ ") : "";
+  check("the Terminal tab shows the terminal, no error page", whatShows.name === "Terminal" && errorPage.length === 0, errorPage.length > 0 ? `the error page: ${texts}` : whatShows.name);
+  if (errorPage.length > 0) {
+    screenshot("terminal-error-page");
+    check("the terminal reads agent, the start folder and sudo-ok", false, "no terminal: the tab shows an error page");
+    return;
+  }
+  await step("a new terminal opens, its lines listed for a screen reader", async () => {
+    const modeSwitch = { window: MAIN, role: "checkbox", name: "Screen reader mode" };
+    const mode = await uia.waitFor("the Screen reader mode switch", modeSwitch);
+    if (mode.checked !== true) await uia.click("Screen reader mode", modeSwitch);
+    await until("Screen reader mode to be on", async () => (await uia.find(modeSwitch))[0]?.checked === true, 10_000, 500);
+    await uia.click("New terminal", inMain("button", "New terminal"));
+    await uia.waitFor("the shell's prompt", { window: MAIN, role: "listitem", nameRegex: "[$#]\\s*$" }, 120_000);
+  });
+  const command = "whoami; pwd; sudo -n true && echo sudo-ok";
+  await step("the command is typed into the terminal", () => {
+    // The keys go to the window in front: make sure that is this one.
+    if (!mainWindow("front").foreground) throw new Error("the main window did not come to the front");
+    return uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+  });
+  const shows = (text) =>
+    uia.waitFor(`the terminal line "${text}"`, { window: MAIN, role: "listitem", nameRegex: `^\\s*${literally(text)}\\s*$` }, 60_000).then(
+      () => true,
+      () => false,
+    );
+  const [user, folder, sudo] = [await shows("agent"), await shows(startFolder), await shows("sudo-ok")];
+  screenshot("terminal");
+  const lines = (await terminalLines()).filter((l) => l.trim()).slice(-12).join(" ¦ ");
+  check("the terminal reads agent, the start folder and sudo-ok", user && folder && sudo, `whoami ${user}, pwd ${startFolder} ${folder}, sudo ${sudo}; lines: ${lines}`);
+}
+
+/** The guest's clock, in seconds. */
+async function guestNow(id) {
+  const r = await guest(id, "date +%s.%N", { root: true, within: 60_000 });
+  return Number.parseFloat(r.text.trim().split("\n").pop());
+}
+
+/** Waits until the main window is shown or hidden; its state. */
+const windowBecomes = (what, wanted) => until(what, () => {
+  const s = mainWindow();
+  return s.found && wanted(s) ? s : false;
+}, 30_000, 500);
+
+/** A second start of the program, as from the Start menu: it brings the running app's window back. */
+async function reopen() {
+  spawnSync(appExe, [], { stdio: "ignore", timeout: 60_000 });
+  return windowBecomes("the window to come back", (s) => s.visible && !s.minimized);
+}
+
+/** The close button hides the window in the tray, tells so once, and the workspace runs on meanwhile. */
+async function closeToTray(id) {
+  const NOTICE = "Puddle is still running";
+  clearToasts();
+  const before = toasts();
+  const beat = await guest(id, "rm -f /tmp/heartbeat; setsid sh -c 'while :; do date +%s.%N >> /tmp/heartbeat; sleep 0.5; done' </dev/null >/dev/null 2>&1 & echo $! > /tmp/heartbeat.pid; sleep 2; wc -l < /tmp/heartbeat", { root: true, within: 60_000 });
+  note(`the guest's heartbeat started: ${beat.text.trim()} beats so far`);
+  const from = await guestNow(id);
+  mainWindow("front");
+  const hidden = [];
+  for (const round of [1, 2]) {
+    mainWindow("close");
+    const s = await windowBecomes(`the window to hide (close ${round})`, (w) => !w.visible).catch(() => mainWindow());
+    hidden.push(!s.visible && !appExited);
+    // Hidden long enough for a build to notice: half a minute the first time.
+    await sleep(round === 1 ? 30_000 : 10_000);
+    await reopen().catch(() => {});
+  }
+  const to = await guestNow(id);
+  check("the close button hides the window in the tray and Puddle keeps running", hidden.every(Boolean), `hidden after each close: ${hidden.join(", ")}; exited: ${appExited}`);
+  const told = newSince(before, toasts()).filter((t) => t.title === NOTICE);
+  check("closing twice makes exactly one 'Puddle is still running' Windows notification", told.length === 1, `${told.length}: ${describeToasts(told)}`);
+  const beats = (await guest(id, "kill $(cat /tmp/heartbeat.pid); cat /tmp/heartbeat", { root: true, within: 60_000 })).text
+    .split("\n")
+    .map(Number.parseFloat)
+    .filter((t) => Number.isFinite(t) && t >= from - 1 && t <= to + 1);
+  const marks = [from, ...beats, to].sort((a, b) => a - b);
+  const gap = Math.max(...marks.slice(1).map((t, i) => t - marks[i]));
+  check(
+    "the guest's heartbeat has no gap over 2 s while the window is hidden",
+    Number.isFinite(from) && Number.isFinite(to) && beats.length > 0 && gap <= 2,
+    `${beats.length} beats over ${(to - from).toFixed(1)} s, longest gap ${gap.toFixed(2)} s`,
+  );
+}
+
+/** A guest request to a host nobody allowed; waits until the inbox lists it. */
+async function newRequest(id, host) {
+  await guest(id, `curl -s -o /dev/null --max-time 20 https://${host}/ || git ls-remote https://${host}/ >/dev/null 2>&1 || true`, { within: 90_000 });
+  return until(`the request for ${host} in the inbox`, async () => (await api("GET", "/api/pending")).json?.requests?.find((r) => r.host === host && r.state === "requested"), 60_000, 1000).catch(() => undefined);
+}
+
+/** A new request notifies only while the window is not in front, once, naming the workspace and the host. */
+async function requestNotifications(id) {
+  const front = mainWindow("front");
+  clearToasts();
+  const before = toasts();
+  const inFront = await newRequest(id, "example.com");
+  // Longer than the ten seconds a group of requests is held, so a late summary shows too.
+  await sleep(15_000);
+  const stillFront = mainWindow();
+  const whileFront = newSince(before, toasts());
+  check(
+    "a new request makes no Windows notification while the window is in front",
+    inFront !== undefined && front.foreground && stillFront.foreground && whileFront.length === 0,
+    `request ${inFront ? "listed" : "not listed"}; in front before ${front.foreground}, after ${stillFront.foreground}; new: ${describeToasts(whileFront)}`,
+  );
+  const minimized = mainWindow("minimize");
+  const middle = toasts();
+  const away = await newRequest(id, "example.org");
+  const first = await until("a notification for the request", () => newSince(middle, toasts()).length > 0, 30_000, 1000).catch(() => false);
+  await sleep(15_000);
+  const whileAway = newSince(middle, toasts());
+  const names = whileAway.length === 1 && whileAway[0].title.startsWith(`${WORKSPACE} `) && /^example\.org:\d+ /.test(whileAway[0].body);
+  check(
+    "a new request while the window is minimized makes exactly one Windows notification, naming the workspace and the host",
+    away !== undefined && minimized.minimized && first && whileAway.length === 1 && names,
+    `request ${away ? "listed" : "not listed"}; minimized ${minimized.minimized}; new: ${describeToasts(whileAway)}`,
+  );
+  mainWindow("front");
+}
+
+/** Activity's "Export JSON lines" saves the records as a .jsonl file in Downloads. */
+async function exportActivity() {
+  const downloads = join(homedir(), "Downloads");
+  const earlier = new Set(existsSync(downloads) ? readdirSync(downloads) : []);
+  const saved = await step("Activity's Export JSON lines is pressed", async () => {
+    mainWindow("front");
+    await uia.click("the Activity link", { window: MAIN, role: "link", nameRegex: "^Activity" });
+    await uia.waitFor("the Activity heading", heading("Activity"));
+    await uia.call({ action: "focus", ...inMain("button", "Export JSON lines") });
+    await uia.click("Export JSON lines", inMain("button", "Export JSON lines"));
+    return uia.waitFor("the page's word on the export", { window: MAIN, nameRegex: "^(Saved [\\d,.\\s]+ records? as puddle-activity-.+\\.jsonl\\.|Nothing to export|Export cancelled)" }, 120_000);
+  }).catch((err) => ({ name: `nothing: ${err.message}` }));
+  const said = /^Saved ([\d,.\s]+) records? as (puddle-activity-.+\.jsonl)\.$/.exec(saved.name ?? "");
+  const file = await until(
+    "the export in Downloads",
+    () => readdirSync(downloads).find((f) => !earlier.has(f) && /^puddle-activity-.*\.jsonl$/.test(f)),
+    60_000,
+    1000,
+  ).catch(() => undefined);
+  const lines = file ? readFileSync(join(downloads, file), "utf8").split("\n").filter((l) => l.trim()) : [];
+  const valid = lines.every((l) => {
+    try {
+      const record = JSON.parse(l);
+      return record !== null && typeof record === "object" && !Array.isArray(record);
+    } catch {
+      return false;
+    }
+  });
+  const count = said ? Number(said[1].replace(/\D/g, "")) : undefined;
+  check(
+    "Export JSON lines saves the records in Downloads, one JSON object a line, as many as the page says",
+    file !== undefined && lines.length > 0 && valid && said?.[2] === file && count === lines.length,
+    `page: "${saved.name}"; file: ${file ?? "none"} with ${lines.length} lines, all JSON ${valid}; new in Downloads: ${readdirSync(downloads).filter((f) => !earlier.has(f)).join(", ") || "nothing"}`,
+  );
+  check("the export holds no token", lines.length > 0 && !lines.some((l) => l.includes(info.token)), `${lines.length} lines`);
+}
+
+/** The tray's "Quit Puddle" with the workspace running ends every process of Puddle, and the next start lists the workspace as stopped. */
+async function quitFromTheTray(id) {
+  const started = Date.now();
+  const chosen = desktop("tray-quit");
+  const left = await until(
+    "no Puddle process left",
+    () => {
+      const now = JSON.parse(desktop("processes", "puddle-app", "puddle", "msb"));
+      return now.length === 0 ? [] : false;
+    },
+    90_000,
+    2000,
+  ).catch(() => JSON.parse(desktop("processes", "puddle-app", "puddle", "msb")));
+  check(
+    "the tray's Quit Puddle with the workspace running leaves no puddle-app.exe, puddle.exe or msb.exe process within 90 s",
+    chosen === "quit chosen" && left.length === 0,
+    `${chosen}; after ${Math.round((Date.now() - started) / 1000)} s: ${left.map((p) => `${p.name} ${p.id}`).join(", ") || "none"}`,
+  );
+  // Whatever is left would hold the data folder: end it before the next start.
+  for (const p of left) spawnSync("taskkill", ["/PID", String(p.id), "/T", "/F"], { stdio: "ignore" });
+  uia?.close();
+  uia = undefined;
+  launchApp();
+  await connectToApp();
+  const w = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.id === id);
+  check("a new start lists the workspace as stopped", w?.status === "stopped", JSON.stringify(w ?? null).slice(0, 300));
+}
+
 // ---- the run ---------------------------------------------------------------------------------------
 
 try {
-  await until(
-    "the installed app's connection file",
-    () => {
-      if (appExited) throw new GiveUp("puddle-app exited before it wrote its connection file");
-      conn = JSON.parse(readFileSync(connectionFile, "utf8"));
-      return conn?.url && conn?.token;
-    },
-    180_000,
-    1000,
-  );
-  await until("the API", async () => (await api("GET", "/api/health")).status === 200, 60_000);
+  await connectToApp();
   check("the installed app starts and answers its API", true, conn.url);
   uia = await Uia.start(app.pid);
   // Windows asks once to trust the app's own localhost certificate (the editor's origin), whenever the
   // app first needs it; the user answers Yes, so a poll does, for the whole run.
   const certificate = setInterval(() => {
-    uia.call({ action: "click", window: "^Security Warning$", role: "pane", name: "Yes" }).then((r) => {
+    uia?.call({ action: "click", window: "^Security Warning$", role: "pane", name: "Yes" }).then((r) => {
       if (r.found) note("the Windows certificate dialog for localhost: answered Yes");
     }, () => {});
   }, 2000);
@@ -596,6 +897,18 @@ try {
   check("requests were approved in the inbox", approved.length > 0, approved.join("; "));
 
   if (company) await checkTheCompanyProxyCarriedTheTraffic(branch);
+
+  // 7 to 11. The app's shell around its window, with the workspace running. The direct run only: the
+  // company run is about the network, and the shell does not change behind a proxy.
+  if (!company) {
+    const listed = (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id);
+    const phase = (what, run) => run().catch((err) => check(`${what} ran to the end`, false, String(err?.message ?? err)));
+    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? `/workspaces/${id}`));
+    await phase("the close button", () => closeToTray(id));
+    await phase("the request notifications", () => requestNotifications(id));
+    await phase("the Activity export", exportActivity);
+    await phase("the tray's Quit", () => quitFromTheTray(id));
+  }
 
   // Stop and delete, as the user does at the end.
   await api("POST", `/api/workspaces/${id}/stop`);

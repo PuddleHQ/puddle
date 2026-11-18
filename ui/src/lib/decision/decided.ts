@@ -4,6 +4,14 @@ import type { components } from "#lib/api/schema.d.ts";
 
 type Rule = components["schemas"]["Rule"];
 
+export interface ClosedRequest {
+  workspace: string;
+  host: string;
+  port: number;
+  /** The inbox group it sat in. */
+  domain: string;
+}
+
 export interface Decided {
   ruleId: number;
   effect: Rule["effect"];
@@ -15,6 +23,8 @@ export interface Decided {
   ruleSet: string | null;
   expiresAt: number | null;
   alsoClosed: number;
+  /** The requests this decision closed (the one decided and the others), so an undo can list them again. */
+  closed: ClosedRequest[];
   at: number;
 }
 

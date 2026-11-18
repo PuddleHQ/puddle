@@ -283,7 +283,19 @@ async fn a_stopped_host_has_closed_its_database_so_a_restart_never_waits_on_it()
         drop(host);
         assert!(
             !wal.exists(),
-            "the database was still open after the host was dropped"
+            "the database was still open after the host was dropped; handles on it: {:?}",
+            handles_on_the_database(rig.dir.path())
         );
     }
+}
+
+/// The files of `dir` this process still has open (`/proc/self/fd`), so a log left behind names
+/// what held the database. Nothing is listed where the OS has no such view.
+fn handles_on_the_database(dir: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(fds) = std::fs::read_dir("/proc/self/fd") else {
+        return Vec::new();
+    };
+    fds.filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok())
+        .filter(|target| target.starts_with(dir))
+        .collect()
 }

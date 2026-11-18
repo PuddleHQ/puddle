@@ -22,6 +22,10 @@
 # secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
 # editor opens in its own window, a real `npm run build` and `npm test` run in the workspace, and `git push`
 # reaches Forgejo with the injected credential while no token is in the guest, the audit log or the API.
+# Then the shell around the window, with the workspace running (desktop.ps1): the Terminal tab runs a command
+# typed with real keys, the close button hides to the tray with one Windows notification while the guest runs
+# on, a new request notifies only while the window is not in front, Activity's export lands in Downloads, the
+# first run's "Copy report" reaches the Windows clipboard, and the tray's Quit ends every Puddle process.
 # The same job runs a second time behind the lab's company network (matrix `network: company`, the "also on the
 # corporate lab network" half of the bar): the machine's only way out is the lab company proxy from `puddle-lab`
 # (crates/puddle-e2e/src/lab/standing.rs), set up as a company sets up a Windows computer: a PAC file as the user's
@@ -54,6 +58,7 @@ on:
       - crates/puddle-app/e2e/usable.mjs
       - crates/puddle-app/e2e/uia.mjs
       - crates/puddle-app/e2e/uia.ps1
+      - crates/puddle-app/e2e/desktop.ps1
       - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
@@ -306,7 +311,7 @@ jobs:
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
           python3 -m venv "$RUNNER_TEMP/lab-venv"
-          "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --retries 10 --timeout 60 --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe" --version
           cargo build --locked -p puddle-e2e --bin puddle-lab
           {

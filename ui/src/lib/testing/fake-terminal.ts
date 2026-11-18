@@ -128,6 +128,11 @@ export class FakeScreen implements Screen {
     this.copies += 1;
     return this.selection;
   }
+  pastes = 0;
+  paste(): Promise<void> {
+    this.pastes += 1;
+    return Promise.resolve();
+  }
   selectAll(): void {
     this.selectedAll += 1;
   }

@@ -109,12 +109,10 @@ describe("the Add repository dialog", () => {
     });
   });
 
-  it("refuses an address with credentials when the field is left, before Clone", async () => {
+  it("refuses an address with credentials at the keystroke, before Clone", async () => {
     const onSubmit = open();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "user:pw@github.com/acme/web");
-    expect(screen.queryByRole("alert")).toBeNull();
-    await fireEvent.blur(field("Git repository (HTTPS)"));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Remove the user name and password from the URL; Puddle supplies credentials itself.",
     );

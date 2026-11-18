@@ -42,8 +42,9 @@ pub(super) struct ToolRuns {
     waiting: Mutex<BTreeMap<WorkspaceId, BTreeSet<i64>>>,
     /// The last listing of each workspace's tools in this run, for a stopped workspace to show.
     listed: Mutex<BTreeMap<WorkspaceId, edit::Listed>>,
-    /// The registry the pinned mise lists, once the first call has read it.
-    registry: Mutex<Option<Vec<puddle_api::wire::RegistryTool>>>,
+    /// The registry each workspace's own mise listed, once its first call has read it: a guest
+    /// controls its mise, so one workspace's answer is never shown for another.
+    registry: Mutex<BTreeMap<WorkspaceId, Vec<puddle_api::wire::RegistryTool>>>,
 }
 
 impl ToolRuns {
@@ -63,15 +64,14 @@ impl ToolRuns {
         listed.remove(name);
     }
 
-    fn registry(&self) -> Option<Vec<puddle_api::wire::RegistryTool>> {
-        self.registry
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    fn registry(&self, name: &WorkspaceId) -> Option<Vec<puddle_api::wire::RegistryTool>> {
+        let registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        registry.get(name).cloned()
     }
 
-    fn keep_registry(&self, tools: Vec<puddle_api::wire::RegistryTool>) {
-        *self.registry.lock().unwrap_or_else(PoisonError::into_inner) = Some(tools);
+    fn keep_registry(&self, name: &WorkspaceId, tools: Vec<puddle_api::wire::RegistryTool>) {
+        let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        registry.insert(name.clone(), tools);
     }
 
     /// The lock of `name`'s runs. Locks no run holds or waits for are dropped on the way, so a

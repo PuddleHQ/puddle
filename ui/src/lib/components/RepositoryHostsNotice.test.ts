@@ -48,6 +48,31 @@ describe("RepositoryHostsNotice", () => {
     );
   });
 
+  it("asks 120 ms after the typing stops and says it is checking until the answer", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer: (h: RepositoryHost[]) => void = () => undefined;
+      const check = vi.fn(
+        () => new Promise<RepositoryHost[]>((r) => (answer = r)),
+      );
+      render(RepositoryHostsNotice, {
+        props: { urls: ["https://github.com/acme/web.git"], check },
+      } as never);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByTestId("hosts-pending")).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(119);
+      expect(check).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(check).toHaveBeenCalledTimes(1);
+      answer([host("github.com", "new")]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.queryByTestId("hosts-pending")).toBeNull();
+      expect(screen.getByTestId("hosts-new")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says nothing without an address or when the service cannot answer", async () => {
     const none = show([host("github.com", "new")], ["", "ssh://x"]);
     await new Promise((r) => setTimeout(r, 20));

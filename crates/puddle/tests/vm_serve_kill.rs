@@ -441,11 +441,12 @@ async fn vm_serve_sigkill_keeps_the_commits_and_the_next_start_recovers_the_work
     let pair = settings.prepare().expect("msb runtime pair");
     let runtime_dir = pair.msb.parent().unwrap().to_path_buf();
     let root = settings
-        .claim_scratch_home("servekill", &test_owner())
+        // Short names: msb derives Unix socket paths (under 108 bytes) from `<data>/msb`.
+        .claim_scratch_home("sk", &test_owner())
         .expect("one scratch home tag per test");
     std::fs::create_dir_all(&root).unwrap();
     let exe = program_folder(&root, &runtime_dir);
-    let data = root.join("data");
+    let data = root.join("d");
     share_image_cache(&data);
 
     // S1: a workspace with work worth losing.

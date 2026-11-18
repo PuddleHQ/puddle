@@ -214,10 +214,10 @@ pub(crate) async fn terminal_socket(
     let (handed, socket) = tokio::sync::oneshot::channel();
     let sockets = state.sockets.clone();
     sockets.spawn(async move {
-        // Without an upgrade there is no socket; the terminal's place is freed all the same.
-        if let Ok(socket) = socket.await {
-            run(socket, &state, &workspace, size, shutdown, ended).await;
-        }
+        when_handed(socket, |socket| {
+            run(socket, &state, &workspace, size, shutdown, ended)
+        })
+        .await;
         state.terminals.release(terminal);
     });
     Ok(upgrade
@@ -227,6 +227,17 @@ pub(crate) async fn terminal_socket(
             // The task is already tracked; it only waits for the socket.
             let _ = handed.send(socket);
         }))
+}
+
+/// Runs `serve` on the socket the upgrade hands over. A failed upgrade drops the sender: there is
+/// no socket, and this returns at once so the caller frees the terminal's place all the same.
+async fn when_handed<S, F: Future<Output = ()>>(
+    socket: tokio::sync::oneshot::Receiver<S>,
+    serve: impl FnOnce(S) -> F,
+) {
+    if let Ok(socket) = socket.await {
+        serve(socket).await;
+    }
 }
 
 async fn run(

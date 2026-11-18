@@ -158,7 +158,8 @@ impl GitHub {
         });
         let url = format!("{}/{path}", self.api);
         let mut wait = self.backoff;
-        for attempt in 1..=API_TRIES {
+        let mut attempt = 1;
+        loop {
             let mut cmd = self.curl_with(false);
             cmd.args(["--include", "--config", "-", "-H", accept, &url]);
             let out = run_with_stdin(&mut cmd, config.as_bytes())?;
@@ -168,6 +169,7 @@ impl GitHub {
                 403 | 429 if attempt < API_TRIES => {
                     std::thread::sleep(reply.wait(wait));
                     wait *= 2;
+                    attempt += 1;
                 }
                 status => {
                     return Err(XtaskError::Tool {
@@ -177,7 +179,6 @@ impl GitHub {
                 }
             }
         }
-        unreachable!("the last try returns")
     }
 
     /// Release asset `name` of `repo`'s release `tag`, saved into `dir`; returns its path.

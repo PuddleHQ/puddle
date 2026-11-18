@@ -220,10 +220,17 @@ impl SshSetup {
         // `ssh` from connecting. The same endpoint is the same sandbox: its key stays, so every
         // later attach is checked against it.
         let endpoint_changed = before.as_ref().map(|e| e.endpoint.as_path()) != Some(endpoint);
+        // The pinned key goes only with a write that can take the new endpoint: a write that
+        // fails puts it back, so `ssh` never trusts whatever answers next.
+        let mut forgotten_key = None;
         let written = render(&entries, &context).and_then(|text| {
             if endpoint_changed {
-                match std::fs::remove_file(&known_hosts) {
-                    Ok(()) => {}
+                match std::fs::read(&known_hosts) {
+                    Ok(key) => {
+                        std::fs::remove_file(&known_hosts)
+                            .map_err(SshConfigError::ForgetHostKey)?;
+                        forgotten_key = Some(key);
+                    }
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                     Err(e) => return Err(SshConfigError::ForgetHostKey(e)),
                 }
@@ -238,6 +245,10 @@ impl SshSetup {
                 })
         });
         if let Err(e) = written {
+            if let Some(key) = forgotten_key {
+                // Best effort: the write error is what the caller gets.
+                let _ = puddle_fs::private::write_atomic(&known_hosts, &key);
+            }
             // Nothing was written: the file still matches what was there before.
             match before {
                 Some(old) => entries.insert(workspace.clone(), old),

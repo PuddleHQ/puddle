@@ -465,10 +465,7 @@ async fn vm_serve_sigkill_keeps_the_commits_and_the_next_start_recovers_the_work
     let end = events.ended(&id, CREATE_WAIT).await;
     assert_eq!(end["step"], "done", "the create: {end}");
     drop(events);
-    let folder = puddle_workspace::Layout::new()
-        .unwrap()
-        .mount()
-        .to_string();
+    let folder = puddle_workspace::Layout::new().unwrap().mount().to_string();
     let made_count = in_guest(&runtime_dir, &data, &id, MAKE_WORK, &folder);
     assert!(
         made_count.trim_end().ends_with(&COMMITS.to_string()),

@@ -441,9 +441,7 @@ impl Guest {
                 ExecOutput::new(0, "R\tapi\nU\t?? notes.txt\nD\n", "")
             }
             "check" => ExecOutput::new(0, "R\tapi\nD\n", ""),
-            "trim" | "shutdown-trim" => {
-                ExecOutput::new(0, "/workspace: 4096 bytes trimmed\n", "")
-            }
+            "trim" | "shutdown-trim" => ExecOutput::new(0, "/workspace: 4096 bytes trimmed\n", ""),
             "clone" => self.answer_clone(r),
             "sync" if self.fail_sync.load(Ordering::SeqCst) => {
                 ExecOutput::new(1, "", "sync: I/O error")

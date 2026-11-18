@@ -2,7 +2,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
-info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        App Control for Business (WDAC) or Smart App Control blocks msb
       fix:  A code integrity policy doesn't allow
@@ -33,22 +33,26 @@ ok    Global Secure Access  client not installed
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on (the hypervisor uses it)"
+      "summary": "on (the hypervisor uses it)",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
       "status": "ok",
-      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs",
+      "impact": "Lets Puddle start workspaces as virtual machines, walled off from this computer and from each other."
     },
     {
       "id": "code_integrity",
-      "status": "info",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+      "status": "ok",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
@@ -56,42 +60,52 @@ ok    Global Secure Access  client not installed
       "summary": "App Control for Business (WDAC) or Smart App Control blocks msb",
       "finding": "blocked_by_app_control",
       "fix": "A code integrity policy doesn't allow C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe. Allow Puddle's files or signer in that policy; Event Viewer > Applications and Services Logs > Microsoft > Windows > CodeIntegrity > Operational names the rule. Smart App Control has no exceptions: it can only be turned off (Windows Security > App & browser control > Smart App Control).",
-      "detail": "An Application Control policy has blocked this file. (os error 4580)"
+      "detail": "An Application Control policy has blocked this file. (os error 4580)",
+      "impact": "Puddle can't start any workspace: App Control or Smart App Control blocks its runtime.",
+      "remedy": "Ask whoever manages this PC to allow Puddle. Smart App Control can only be turned off."
     },
     {
       "id": "test_boot",
       "status": "skipped",
-      "summary": "not checked: the runtime doesn't start"
+      "summary": "not checked: the runtime doesn't start",
+      "impact": "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
       "id": "global_secure_access",
       "status": "ok",
-      "summary": "client not installed"
+      "summary": "client not installed",
+      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
     }
   ],
   "elapsed_ms": 1234

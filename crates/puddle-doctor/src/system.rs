@@ -385,7 +385,7 @@ fn sealed_key_facts_in(
     };
     let name = format!("--name={}", puddle_secrets::sealed_key_name());
     let decrypt = launch::run_without_output(
-        Command::new(&program).args([
+        puddle_process::command(&program).args([
             "--user".as_ref(),
             "decrypt".as_ref(),
             name.as_ref(),

@@ -52,7 +52,7 @@ describe("the global interception setting", () => {
     await fireEvent.change(select, { target: { value: "all_except_curated" } });
     await screen.findByText("Saved.");
     await fireEvent.click(screen.getByLabelText("Learn from rejections"));
-    await screen.findByText("Saved.");
+    await waitFor(() => expect(screen.getAllByText("Saved.")).toHaveLength(2));
     expect(api.bodies).toEqual([
       { mode: "all_except_curated" },
       { learn_from_rejections: false },
@@ -65,7 +65,7 @@ describe("the global interception setting", () => {
     api.refuse = true;
     await fireEvent.change(select, { target: { value: "all" } });
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
-    expect(select).toHaveValue("known_only");
+    await waitFor(() => expect(select).toHaveValue("known_only"));
   });
 
   it("says why the setting could not be read, and shows no controls", async () => {
@@ -83,7 +83,7 @@ describe("the global interception setting", () => {
     api.refuse = true;
     await fireEvent.click(box);
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
-    expect(box).toBeChecked();
+    await waitFor(() => expect(box).toBeChecked());
   });
 
   it("says the service did not answer when it is down", async () => {

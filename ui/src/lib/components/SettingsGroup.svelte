@@ -18,7 +18,7 @@
   } = $props();
 </script>
 
-<section class="group" {id} aria-label={title}>
+<section class="group" {id}>
   <h2>{title}</h2>
   {#if intro}<p class="intro">{intro}</p>{/if}
   {@render children()}

@@ -15,7 +15,9 @@ afterEach(cleanup);
 const box = () =>
   screen.getByRole("textbox", { name: "Never decrypt" }) as HTMLTextAreaElement;
 const saveButton = () =>
-  screen.getByRole("button", { name: "Save Never decrypt" }) as HTMLButtonElement;
+  screen.getByRole("button", {
+    name: "Save Never decrypt",
+  }) as HTMLButtonElement;
 
 type Save = (names: string[]) => Promise<SaveResult>;
 

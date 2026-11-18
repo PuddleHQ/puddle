@@ -6,7 +6,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -41,7 +40,7 @@ afterEach(cleanup);
 
 async function open() {
   render(SettingsHost, { props: { pages: [Appearance] } });
-  await screen.findByRole("heading", { level: 2, name: "App icon" });
+  await screen.findAllByText("App icon");
   await screen.findByRole("radio", { name: "Duck on a pond" });
 }
 
@@ -57,13 +56,13 @@ const png = (bytes = 8) =>
   new File([new Uint8Array(bytes).fill(1)], "mine.png", { type: "image/png" });
 
 describe("the App icon section", () => {
-  it("has its own place in the list of sections, after Appearance", async () => {
+  it("sits on the Appearance page, with the other looks of the app", async () => {
     await open();
-    const nav = screen.getByRole("navigation", { name: "Settings sections" });
-    const names = within(nav)
-      .getAllByRole("link")
-      .map((a) => a.textContent);
-    expect(names.indexOf("App icon")).toBe(names.indexOf("Appearance") + 1);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Appearance" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Theme")).toBeInTheDocument();
+    expect(screen.getAllByText("App icon").length).toBeGreaterThan(0);
   });
 
   it("offers the four ducks, the duck chosen, and your own image off until there is one", async () => {

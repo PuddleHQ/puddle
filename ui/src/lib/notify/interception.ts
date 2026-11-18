@@ -43,7 +43,10 @@ export class InterceptionChoiceNotice {
         "New: you can let Puddle decrypt every HTTPS host, not only the ones it has a reason to read.",
       detail:
         "Today it decrypts only those, which limits what a rule on another host can do. Nothing changes until you choose.",
-      link: { href: "/settings/network#set-interception-mode", label: "Choose in Settings" },
+      link: {
+        href: "/settings/network#set-interception-mode",
+        label: "Choose in Settings",
+      },
       action: { label: "Keep it as it is", run: () => this.#keep() },
     });
   }

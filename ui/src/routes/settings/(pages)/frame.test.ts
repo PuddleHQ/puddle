@@ -138,6 +138,8 @@ describe("every setting is reachable by search", () => {
   it("has each searchable setting on its page, under the id the search links to", async () => {
     const pages = Object.values(BY_PAGE);
     await open(pages);
+    // These rows come from their own request.
+    await screen.findByLabelText("Which hosts to decrypt");
     // Shown only while Microsoft's server is chosen, or once it was accepted.
     const conditional = new Set(["set-ms-telemetry"]);
     const missing = SETTINGS.filter(

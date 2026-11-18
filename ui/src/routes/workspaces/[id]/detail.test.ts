@@ -1361,7 +1361,11 @@ describe("the settings tab", () => {
     await fireEvent.input(names, {
       target: { value: "Bank.example\n*.corp.test" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Save Never decrypt in this workspace" }));
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Save Never decrypt in this workspace",
+      }),
+    );
     await screen.findByText("Saved.");
     expect(api.interception["w-demo"]?.never_decrypt).toEqual([
       "*.corp.test",

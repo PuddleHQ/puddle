@@ -9,9 +9,7 @@
 </script>
 
 <Frame>
-  {#snippet children()}
-    {#each pages as Page, index (index)}
-      <Page />
-    {/each}
-  {/snippet}
+  {#each pages as Page, index (index)}
+    <Page />
+  {/each}
 </Frame>

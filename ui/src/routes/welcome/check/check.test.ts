@@ -290,7 +290,10 @@ describe("system check step", () => {
     render(Page);
     await waitFor(() => expect(runs()).toBe(2));
     await screen.findByText("No problems found.");
-    expect(link("Back to Settings")).toHaveAttribute("href", "/settings/this-computer");
+    expect(link("Back to Settings")).toHaveAttribute(
+      "href",
+      "/settings/this-computer",
+    );
     expect(link("Back")).toBeNull();
     expect(link("Continue")).toBeNull();
   });

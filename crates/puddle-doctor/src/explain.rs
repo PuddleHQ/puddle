@@ -146,7 +146,7 @@ fn finding_text(os: Os, finding: Finding) -> (&'static str, &'static str) {
         | F::CredentialStoreKeyRejected
         | F::CredentialStoreKeyUnopenable
         | F::CredentialStoreKeyFile
-        | F::CredentialStoreTpmLibrariesMissing => accounts(os, finding),
+        | F::CredentialStoreTpmLibrariesMissing => ssh_azure_and_store(os, finding),
     }
 }
 
@@ -365,7 +365,7 @@ fn storage(os: Os, finding: Finding) -> (&'static str, &'static str) {
 }
 
 /// SSH keys, the Azure CLI and the credential store.
-fn accounts(os: Os, finding: Finding) -> (&'static str, &'static str) {
+fn ssh_azure_and_store(os: Os, finding: Finding) -> (&'static str, &'static str) {
     use Finding as F;
     match finding {
         F::SshAgentMissing => (

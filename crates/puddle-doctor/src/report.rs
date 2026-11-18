@@ -246,7 +246,7 @@ pub struct Check {
     /// protects or makes possible, otherwise what the finding costs them.
     pub impact: String,
     /// What to do about it, in one or two short sentences; `None` when the check is ok. The long
-    /// form, with commands and where to look, is [`Check::fix`].
+    /// form, with commands and where to look, is the `fix` field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remedy: Option<String>,
 }

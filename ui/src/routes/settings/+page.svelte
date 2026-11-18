@@ -1447,7 +1447,7 @@
   .layout {
     display: grid;
     grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
-    gap: var(--space-5);
+    gap: var(--space-6);
     align-items: start;
   }
   nav {
@@ -1485,7 +1485,7 @@
   }
   h3 {
     margin: 0;
-    font-size: var(--text-base, 1rem);
+    font-size: var(--text-md);
   }
   .card p {
     margin: 0;

@@ -116,7 +116,7 @@
             value="workspace"
             bind:group={who}
           />
-          Only <b class="mono">{workspace}</b>
+          <span class="text">Only <b class="mono">{workspace}</b></span>
         </label>
         <label>
           <input
@@ -125,7 +125,9 @@
             value="global"
             bind:group={who}
           />
-          Every workspace <span class="hint">(asks to confirm)</span>
+          <span class="text"
+            >Every workspace <span class="hint">(asks to confirm)</span></span
+          >
         </label>
         {#each sets as set (set.id)}
           <label>
@@ -135,9 +137,12 @@
               value="set:{set.id}"
               bind:group={who}
             />
-            Into rule set <b><SetChip name={set.name} fill={set.fill} /></b>
-            {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
-              >{/if}
+            <span class="text"
+              >Into rule set
+              <b><SetChip name={set.name} fill={set.fill} /></b>
+              {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
+                >{/if}</span
+            >
           </label>
         {/each}
       </fieldset>
@@ -150,7 +155,7 @@
             value="exact"
             bind:group={match}
           />
-          Only <span class="mono">{target.host}</span>
+          <span class="text">Only <span class="mono">{target.host}</span></span>
         </label>
         {#if suffix}
           <label>
@@ -160,7 +165,10 @@
               value="suffix"
               bind:group={match}
             />
-            Everything under <span class="mono">{suffix.slice(1)}</span>
+            <span class="text"
+              >Everything under
+              <span class="mono">{suffix.slice(1)}</span></span
+            >
           </label>
         {/if}
       </fieldset>
@@ -217,6 +225,13 @@
     align-items: center;
     gap: var(--space-2);
     min-height: 1.5rem;
+  }
+  /* One flex item per choice: words stay whole, only a host name may break. */
+  :global(.options label .text) {
+    min-width: 0;
+    overflow-wrap: normal;
+  }
+  :global(.options label .mono) {
     overflow-wrap: anywhere;
   }
   :global(.options .field) {

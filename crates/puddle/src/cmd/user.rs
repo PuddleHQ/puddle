@@ -150,13 +150,12 @@ fn write_result(out: &mut impl Write, result: &str) -> ExitCode {
 fn execute(args: &UserArgs) -> Result<Output, String> {
     // Only `add` and `reset` need the whole option table (the invite origin); `list` and `remove`
     // read the data folder alone, so a bad value of another option does not stop them.
-    let origin_of_server = || {
-        let options = effective(&ServeArgs {
+    let server_options = || {
+        effective(&ServeArgs {
             flags: args.flags.clone(),
             print_config: false,
         })
-        .map_err(|e| e.to_string())?;
-        invite_origin(&options)
+        .map_err(|e| e.to_string())
     };
     let data = match data_folder::configured_here(&args.flags).map_err(|e| e.to_string())? {
         Some(dir) => dir,
@@ -165,7 +164,7 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
     let paths = HostPaths::new(data);
     match &args.action {
         Action::Reset(name) => {
-            let origin = origin_of_server()?;
+            let origin = invite_origin(&server_options()?)?;
             let invite = puddle_host::reset_user(&paths, name).map_err(|e| e.to_string())?;
             Ok(Output {
                 notice: format!(
@@ -177,7 +176,14 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
             })
         }
         Action::Add(name) => {
-            let origin = origin_of_server()?;
+            let options = server_options()?;
+            let origin = invite_origin(&options)?;
+            if options.switch("multi_user") != Some(true) {
+                return Err(format!(
+                    "several users are off (multi_user), so only the owner can sign in and \
+                     {name} could not use an invite; switch multi_user on first"
+                ));
+            }
             let invite = puddle_host::add_user(&paths, name).map_err(|e| e.to_string())?;
             Ok(Output {
                 notice: format!(

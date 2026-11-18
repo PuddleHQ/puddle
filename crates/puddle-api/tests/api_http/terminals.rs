@@ -178,6 +178,20 @@ async fn a_terminal_echoes_follows_a_resize_and_ends_with_the_shells_status() {
     assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }
 
+#[tokio::test]
+async fn the_stand_in_shell_prints_colour_escapes_on_request() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    socket
+        .send(Message::Binary(b"colors\r".to_vec().into()))
+        .await
+        .unwrap();
+    read_until(&mut socket, "\u{1b}[38;2;12;200;250mtrue-cyan\u{1b}[0m").await;
+}
+
 /// A page that keeps acknowledging output while the shell ends (it does not know yet) must still be
 /// told how the shell ended: closing a socket with unread data from the peer resets the connection,
 /// and the reset throws away the end message the page has not read yet.

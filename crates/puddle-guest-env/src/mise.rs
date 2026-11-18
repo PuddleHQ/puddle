@@ -33,7 +33,7 @@ const GENERATED: &str = "Written by Puddle at every boot; changes here are overw
 /// use puddle_types::GuestPath;
 /// let settings = MiseSettings {
 ///     dir: GuestPath::new("/workspace/.puddle/mise").unwrap(),
-///     ceiling: GuestPath::new("/workspaces").unwrap(),
+///     ceiling: GuestPath::new("/").unwrap(),
 ///     trusted: None,
 ///     image_path: None,
 /// };

@@ -473,7 +473,7 @@ mod attach {
         let found = guest(
             &s.runtime,
             &s.sandbox,
-            "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspaces /opt /var 2>/dev/null; echo done",
+            "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspace /opt /var 2>/dev/null; echo done",
         )
         .await;
         assert_eq!(

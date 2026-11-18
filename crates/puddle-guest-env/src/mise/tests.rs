@@ -4,7 +4,7 @@ use super::*;
 fn settings(trusted: bool, image_path: Option<&str>) -> MiseSettings {
     MiseSettings {
         dir: GuestPath::new("/workspace/.puddle/mise").unwrap(),
-        ceiling: GuestPath::new("/workspaces").unwrap(),
+        ceiling: GuestPath::new("/").unwrap(),
         trusted: trusted.then(|| GuestPath::new("/workspace").unwrap()),
         image_path: image_path.map(str::to_owned),
     }
@@ -22,7 +22,7 @@ fn trusted_workspace_gets_every_variable() {
         env,
         [
             ("MISE_CACHE_DIR", "/workspace/.puddle/mise/cache"),
-            ("MISE_CEILING_PATHS", "/workspaces"),
+            ("MISE_CEILING_PATHS", "/"),
             ("MISE_DATA_DIR", "/workspace/.puddle/mise/data"),
             ("MISE_DISABLE_UPDATE_WARNING", "1"),
             ("MISE_STATE_DIR", "/workspace/.puddle/mise/state"),
@@ -41,7 +41,7 @@ fn without_trust_no_trusted_path_is_set() {
     let config = mise_config(&settings(false, None)).unwrap();
     assert_eq!(config.env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
     assert!(!text(&config).contains("TRUSTED"));
-    assert_eq!(config.env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(config.env.get("MISE_CEILING_PATHS"), Some("/"));
 }
 
 #[test]

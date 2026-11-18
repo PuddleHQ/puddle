@@ -84,7 +84,8 @@ rust)
     filter=${STRESS_FILTER:-'binary(fake_host) | package(puddle-proxy) | (package(puddle-agent) & test(capture))'}
     cd "$root"
     args=(--profile ci -p puddle-host -p puddle-proxy -p puddle-agent -E "$filter")
-    # STRESS_PARTITION=1/2 runs half of the tests (a job per half, each on its own runner).
+    # STRESS_PARTITION=1/6 runs a sixth of the tests (a job per sixth, each on its own runner; see stress.yml for the
+    # timing arithmetic).
     [ -z "${STRESS_PARTITION:-}" ] || args+=(--partition "count:$STRESS_PARTITION")
     cargo nextest run "${args[@]}" --no-run
     # Nextest 0.9.146 writes one junit.xml per profile; the path is below.

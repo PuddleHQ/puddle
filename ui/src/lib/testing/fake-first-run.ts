@@ -17,6 +17,8 @@ export function check(
     finding: null,
     fix: null,
     detail: null,
+    impact: `${title} lets Puddle run workspaces.`,
+    remedy: null,
     ...over,
   };
 }
@@ -46,10 +48,15 @@ export function brokenReport(): DoctorReport {
     finding: "kvm_missing",
     fix: "Turn on virtualization in your UEFI setup.",
     detail: "No such file or directory (os error 2)",
+    impact: "Puddle can't start any workspace: KVM isn't available.",
+    remedy: "Load KVM for your CPU.",
   });
   report.checks[2] = check("test_boot", "Test boot", {
     status: "skipped",
     summary: "not checked: no usable hypervisor",
+    impact:
+      "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+    remedy: "Fix any problem above, then check again.",
   });
   return report;
 }

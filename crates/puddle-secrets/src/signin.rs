@@ -20,7 +20,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::error::{SourceError, Tool};
 use crate::name::{AccountName, HostName, UrlPath};
 use crate::run::{Prompts, ToolPaths, command, run_with, spawn_error};
-use crate::sources::parse_fill;
+use crate::sources::GitQuery;
 use crate::spec::SourceSpec;
 
 /// How long a sign-in may stay open before Puddle ends it.
@@ -240,23 +240,16 @@ impl SignIns {
         let program = self.tools.get(Tool::Git)?.to_owned();
         let (host, path, username) = (host.clone(), path.clone(), username.cloned());
         let window = self.window;
-        let mut input = format!("protocol=https\nhost={host}\npath={path}\n");
-        if let Some(user) = &username {
-            input.push_str("username=");
-            input.push_str(user.as_str());
-            input.push('\n');
-        }
-        input.push('\n');
         let start = SignInStart::default();
         let (tell, told) = tokio::sync::oneshot::channel::<Result<(), String>>();
         self.open_while(spec, &start, async move {
-            let args = ["-c", "credential.useHttpPath=true", "credential", "fill"];
+            let query = GitQuery::new(&host, &path, username.as_ref());
             let answer = run_with(
                 Prompts::UserPresent,
                 Tool::Git,
                 &program,
-                &args,
-                Some(input.as_bytes()),
+                &query.args("fill"),
+                Some(query.input().as_bytes()),
                 window,
             )
             .await;
@@ -264,9 +257,8 @@ impl SignIns {
                 Err(err) => Err(err.to_string()),
                 Ok(answer) if !answer.success => Err(String::new()),
                 Ok(answer) => {
-                    let right_target = std::str::from_utf8(&answer.stdout).is_ok_and(|text| {
-                        parse_fill(text, &host, &path, username.as_ref()).is_ok()
-                    });
+                    let right_target = std::str::from_utf8(&answer.stdout)
+                        .is_ok_and(|text| query.answer(text).is_ok());
                     if right_target {
                         Ok(())
                     } else {
@@ -279,13 +271,13 @@ impl SignIns {
             let _ = tell.send(outcome);
             if let (true, Ok(answer)) = (signed_in, &answer) {
                 // telling git to store the answer is best effort; the sign-in itself already succeeded.
-                // `useHttpPath` as for the fill: without it Git drops `path` before the helper
-                // sees it, and the helper keeps a host-wide entry the path-scoped fill never finds.
+                // Asked as the fill was, so the helper keeps it under the entry the next read asks for:
+                // the account's own entry for the host, or the path's.
                 let _ = run_with(
                     Prompts::Never,
                     Tool::Git,
                     &program,
-                    &["-c", "credential.useHttpPath=true", "credential", "approve"],
+                    &query.args("approve"),
                     Some(&answer.stdout),
                     Duration::from_secs(10),
                 )

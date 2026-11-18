@@ -481,6 +481,7 @@
             <label for={rowId(row, "localPath")}>Folder of the checkout</label>
             <div class="with-action">
               <input
+                class="input-fill"
                 id={rowId(row, "localPath")}
                 type="text"
                 autocomplete="off"
@@ -793,6 +794,7 @@
           <label for="new-ws-cpus">CPUs</label>
           <div class="slider">
             <input
+              class="input-fill"
               id="new-ws-cpus"
               type="range"
               min="1"
@@ -871,10 +873,6 @@
     align-items: center;
     gap: var(--space-3);
   }
-  .slider input {
-    flex: 1;
-    min-height: var(--control-size);
-  }
   .slider output {
     min-width: 2.5ch;
     font-variant-numeric: tabular-nums;
@@ -901,10 +899,6 @@
     display: flex;
     gap: var(--space-2);
     align-items: stretch;
-  }
-  .with-action input {
-    flex: 1;
-    min-width: 0;
   }
   .boxes .choice {
     min-height: var(--control-size);

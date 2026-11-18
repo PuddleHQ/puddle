@@ -126,16 +126,7 @@
   .saved {
     color: var(--color-success);
   }
-  select {
-    min-height: var(--control-size);
-    max-width: 18rem;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
+
   @media (max-width: 760px) {
     .setting {
       flex-direction: column;

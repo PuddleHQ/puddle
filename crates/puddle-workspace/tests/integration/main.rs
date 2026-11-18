@@ -7,6 +7,7 @@ mod git_env;
 
 mod checkouts_sh;
 mod clear_locks_sh;
+mod clone_sh;
 mod delete_check_sh;
 mod git_hook_env;
 mod prepare_sh;

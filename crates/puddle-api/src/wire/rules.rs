@@ -427,6 +427,15 @@ impl DecisionOutcome {
     }
 }
 
+/// What taking back a decision did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct UndoOutcome {
+    /// The rule that was deleted.
+    pub rule: Rule,
+    /// The requests that are open again, each as a new row in its old place.
+    pub reopened: Vec<PendingRequest>,
+}
+
 /// A rule to create directly (not from a pending request).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

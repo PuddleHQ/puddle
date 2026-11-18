@@ -581,27 +581,70 @@ describe("decide", () => {
 });
 
 describe("undo", () => {
-  it("deletes the rule and drops the entry; a rule already gone counts as undone", async () => {
+  it("deletes the rule and puts the request back in its old place; a rule already gone counts as undone", async () => {
     const { store, inbox } = setup();
     inbox.add(request(1));
     inbox.add(request(2));
+    inbox.add(request(3));
     await store.refresh();
     const first = await store.decide(
-      rowOf(store, 1),
-      narrowest("allow"),
-      false,
-    );
-    const second = await store.decide(
       rowOf(store, 2),
       narrowest("allow"),
       false,
     );
+    const second = await store.decide(
+      rowOf(store, 3),
+      narrowest("deny"),
+      false,
+    );
     if (!first.ok || !second.ok) throw new Error("decide failed");
+    expect(store.count).toBe(1);
     expect(await store.undo(first.decided)).toEqual({ ok: true });
     expect(inbox.rules).toHaveLength(1);
+    // Back in the list with its first-seen time, so it sorts where it did, and the decision
+    // entry is gone.
+    expect(store.rows.map((r) => r.request.host)).toContain("h2.example.com");
+    expect(
+      store.rows.find((r) => r.request.host === "h2.example.com"),
+    ).toMatchObject({
+      domain: "example.com",
+      request: { state: "requested", first_seen: 1_000_002 },
+    });
+    expect(store.decided).toHaveLength(1);
+    expect(store.groups[0]?.rows.map((r) => r.request.host)).toEqual([
+      "h2.example.com",
+      "h1.example.com",
+    ]);
+    // A rule that is already gone: nothing to put back, still undone.
     inbox.rules = [];
     expect(await store.undo(second.decided)).toEqual({ ok: true });
     expect(store.decided).toEqual([]);
+    expect(store.count).toBe(2);
+  });
+
+  it("restores every request the decision closed, with the blocked state the service reports", async () => {
+    const { store, inbox } = setup();
+    inbox.add(request(1, { host: "a.example.com" }));
+    inbox.add(request(2, { host: "b.example.com" }));
+    inbox.add(request(3, { host: "c.other.com" }));
+    await store.refresh();
+    const wide = await store.decide(
+      rowOf(store, 1),
+      {
+        effect: "deny",
+        scope: "global",
+        ruleSet: null,
+        match: "suffix",
+        durationSecs: null,
+      },
+      true,
+    );
+    if (!wide.ok) throw new Error("decide failed");
+    expect(wide.decided.alsoClosed).toBeGreaterThan(0);
+    expect(store.count).toBe(1);
+    expect(await store.undo(wide.decided)).toEqual({ ok: true });
+    expect(store.count).toBe(1 + 1 + wide.decided.alsoClosed);
+    expect(inbox.rules).toHaveLength(0);
   });
 
   it("keeps the entry and says so when the service refuses or is down", async () => {
@@ -610,7 +653,7 @@ describe("undo", () => {
     await store.refresh();
     const r = await store.decide(rowOf(store, 1), narrowest("allow"), false);
     if (!r.ok) throw new Error("decide failed");
-    vi.spyOn(inbox, "DELETE").mockImplementation((async () => ({
+    vi.spyOn(inbox, "POST").mockImplementation((async () => ({
       response: { status: 500, ok: false },
     })) as never);
     expect(await store.undo(r.decided)).toEqual({
@@ -618,7 +661,7 @@ describe("undo", () => {
       message: "Puddle couldn't undo that.",
     });
     inbox.down = true;
-    vi.spyOn(inbox, "DELETE").mockImplementation((async () => {
+    vi.spyOn(inbox, "POST").mockImplementation((async () => {
       throw new TypeError("down");
     }) as never);
     expect(await store.undo(r.decided)).toMatchObject({ ok: false });

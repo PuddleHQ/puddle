@@ -56,8 +56,9 @@ pub(crate) mod users;
 
 use audit::{append, append_for, appended_since, audit_head};
 use rows::{
-    PENDING_COLUMNS, close_decided_rows, corrupt, decide_row, decide_row_by, insert_rule,
-    load_pending, load_rule, load_rules, pending_from_raw, raw_pending, stored_ts,
+    PENDING_COLUMNS, close_decided_rows, closed_by_rule, corrupt, decide_row, decide_row_by,
+    insert_rule, load_pending, load_rule, load_rules, pending_from_raw, raw_pending, reopen_rows,
+    stored_ts,
 };
 
 pub use audit_retention::{
@@ -697,6 +698,41 @@ impl Store {
         })?;
         tracing::info!(rule = %id, "rule deleted");
         Ok(rule)
+    }
+
+    /// Takes back a decision made in the inbox: deletes the rule and puts the requests it closed
+    /// back in the inbox (R-12 keeps the closed rows as they are, so each comes back as a new row
+    /// with the same workspace, host, port, first and last time and attempt count, which puts it in
+    /// its old place in the list). A request whose workspace asked for the host again meanwhile
+    /// already has an open row and is not repeated. Returns the rule and the reopened rows.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRule`] or a database error.
+    pub fn undo_decision(
+        &self,
+        id: RuleId,
+        actor: Actor,
+    ) -> Result<(Rule, Vec<PendingRow>), StoreError> {
+        let (rule, reopened) = self.change(|tx, now, fx| {
+            let rule = load_rule(tx, id)?;
+            let closed = closed_by_rule(tx, id)?;
+            tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
+            append_for(
+                tx,
+                &AuditRecord::RuleDeleted {
+                    ts: now,
+                    rule: RuleWire::from(&rule),
+                    reason: RuleDeleteReason::User,
+                    actor: actor_str(actor),
+                },
+                rule.user,
+            )?;
+            let reopened = reopen_rows(tx, closed, now, fx)?;
+            fx.push(Event::RulesChanged {});
+            Ok((rule, reopened))
+        })?;
+        tracing::info!(rule = %id, reopened = reopened.len(), "decision undone");
+        Ok((rule, reopened))
     }
 
     /// Changes a rule's expiry (`None` makes it permanent).

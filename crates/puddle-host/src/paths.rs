@@ -49,6 +49,13 @@ impl HostPaths {
         self.data.join("quit-trims.json")
     }
 
+    /// The proxies (addresses, never user names or passwords) that have had a company-proxy
+    /// sign-in, kept outside the credential store so a store that comes back empty is noticed.
+    #[must_use]
+    pub fn proxy_sign_in_names(&self) -> PathBuf {
+        self.data.join("proxy-sign-ins")
+    }
+
     /// The markers that say which services have a login kept for a workspace (one small file for
     /// each), so a start with capture off need not ask the credential store.
     #[must_use]

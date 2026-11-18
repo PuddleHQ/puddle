@@ -23,7 +23,7 @@ use puddle_settings::MiseMode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash, WorkspaceId, WorkspaceStatus};
 use puddle_workspace::WORKSPACES_ROOT;
 
-use super::HostWorkspaces;
+use super::{HostWorkspaces, last_stderr_line};
 use crate::workspaces::not_found;
 
 /// How long a listing may take: mise resolves versions on the way, and may ask the network.
@@ -169,16 +169,8 @@ fn read<T>(
         return Err(Failed::Changed);
     }
     if out.status.code != 0 {
-        let reason = out
-            .stderr_text()
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .map_or_else(
-                || format!("mise ended with exit code {}", out.status.code),
-                str::to_owned,
-            );
+        let reason = last_stderr_line(&out)
+            .unwrap_or_else(|| format!("mise ended with exit code {}", out.status.code));
         return Err(Failed::Reason(reason));
     }
     parse(&out.stdout_text())

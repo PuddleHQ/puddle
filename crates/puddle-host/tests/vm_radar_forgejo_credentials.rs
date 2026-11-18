@@ -226,7 +226,10 @@ async fn vm_radar_forgejo_credential_changes_apply_to_the_running_workspace_and_
         .clone();
     let detail = clone_problem["detail"].as_str().unwrap();
     assert!(
-        detail.contains("git exited 128") && detail.contains(&format!("'https://{NAME}")),
+        detail.contains("git exited 128")
+            && detail.contains(&format!(
+                "fatal: could not read Username for 'https://{NAME}'"
+            )),
         "the problem holds git's reason: {detail}"
     );
     let anonymous = forge_connections(&api, &name, 0, |rows| !rows.is_empty()).await;

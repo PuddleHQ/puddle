@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { workspace } from "#lib/testing/fake-workspaces.ts";
+import FirstWorkspaceForm from "./FirstWorkspaceForm.svelte";
+
+afterEach(cleanup);
+
+function mount(create = vi.fn()) {
+  const onMore = vi.fn();
+  render(FirstWorkspaceForm, {
+    props: { store: { create, list: [] }, onMore },
+  });
+  return { create, onMore };
+}
+
+const type = (value: string) =>
+  fireEvent.input(screen.getByRole("textbox", { name: "Repository address" }), {
+    target: { value },
+  });
+
+describe("FirstWorkspaceForm", () => {
+  it("creates a workspace named after the repository from the address alone", async () => {
+    const { create } = mount(
+      vi.fn().mockResolvedValue({ ok: true, value: workspace("api") }),
+    );
+    await type("https://github.com/acme/api.git");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create workspace" }),
+    );
+    expect(create).toHaveBeenCalledWith({
+      name: "api",
+      repositories: [{ url: "https://github.com/acme/api.git" }],
+    });
+  });
+
+  it("says which address it will clone when the shorthand differs", async () => {
+    mount();
+    await type("acme/api");
+    expect(
+      screen.getByText("Will clone https://github.com/acme/api"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the service's refusal at the field and keeps what was typed", async () => {
+    mount(vi.fn().mockResolvedValue({ ok: false, message: "name taken" }));
+    await type("https://github.com/acme/api.git");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create workspace" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("name taken");
+    expect(
+      screen.getByRole("textbox", { name: "Repository address" }),
+    ).toHaveValue("https://github.com/acme/api.git");
+  });
+
+  it("opens the full form from More options", async () => {
+    const { onMore } = mount();
+    await fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    expect(onMore).toHaveBeenCalledOnce();
+  });
+});

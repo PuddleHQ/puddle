@@ -1,4 +1,10 @@
 {
-  "comment": "Reviewed npm advisories we accept, each with a reason and a review-by date (YYYY-MM-DD); an expired one fails the gate again. Empty today.",
-  "exceptions": []
+  "comment": "Reviewed npm advisories we accept, each with a reason and a review-by date (YYYY-MM-DD); an expired one fails the gate again.",
+  "exceptions": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "review_by": "2027-01-16",
+      "reason": "picomatch ReDoS (CVE-2026-112366) on single-branch repeated extglobs; no patched release exists (npm's newest is 4.0.7, the affected range is <= 4.0.7, the upstream fix is an open pull request). Reached only through vite, svelte-check, fdir and tinyglobby, which are build and dev-server tooling fed our own globs; checked 2026-11-17: after `npm run build`, `grep -rl picomatch build` finds no file, so the shipped UI has none. Removal: delete this entry when picomatch above 4.0.7 ships and the lockfile takes it (the unused-exception notice then names it)."
+    }
+  ]
 }

@@ -690,7 +690,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 62, "routes that name a resource");
+    assert_eq!(checked, 63, "routes that name a resource");
     shut_down(pair).await;
 }
 
@@ -1074,6 +1074,43 @@ async fn hostile_lists_hold_only_their_callers_things() {
         let (_, body) = send(owner, token, "GET", path, None).await;
         assert!(body.contains(&box_id), "{path}: {body}");
     }
+    shut_down(pair).await;
+}
+
+/// An edit that moves Ann's own rule into the owner's workspace or the owner's rule set is
+/// refused as one that names a workspace or set nobody has, and the rule stays as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_an_edit_cannot_move_a_rule_into_the_owners_workspace_or_set() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
+    let rule = ann_makes_a_global_rule(&pair).await.as_i64().unwrap();
+    let set = things
+        .rule_set
+        .trim_start_matches("user:")
+        .parse::<i64>()
+        .unwrap();
+    let path = format!("/api/rules/{rule}");
+    for (theirs, nobodys) in [
+        (
+            json!({"type": "workspace", "workspace": things.workspace}),
+            json!({"type": "workspace", "workspace": "nobody00"}),
+        ),
+        (
+            json!({"type": "set", "set": set}),
+            json!({"type": "set", "set": 999_999}),
+        ),
+    ] {
+        let edit = |scope: &Value| json!({"scope": scope, "pattern": "anns.example", "effect": "deny", "expires_at": null});
+        let theirs = send(ann, token, "PUT", &path, Some(&edit(&theirs))).await;
+        let nobodys = send(ann, token, "PUT", &path, Some(&edit(&nobodys))).await;
+        assert_eq!(theirs.0, 404, "{}", theirs.1);
+        assert_eq!(theirs.0, nobodys.0);
+    }
+    let (_, rules) = send(ann, token, "GET", "/api/rules", None).await;
+    assert!(
+        rules.contains(r#""effect":"allow""#) && !rules.contains("deny"),
+        "{rules}"
+    );
     shut_down(pair).await;
 }
 

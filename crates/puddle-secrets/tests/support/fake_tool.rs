@@ -161,7 +161,7 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
                 })
                 .collect();
             if let [[_, user, secret]] = matching.as_slice() {
-                println!("username={user}\npassword={secret}");
+                answer(user, secret);
                 return 0;
             }
             if std::env::var("GCM_INTERACTIVE").is_ok_and(|v| v == "never") {
@@ -170,7 +170,7 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
             }
             match sign_in.and_then(|s| s.split_once(':')) {
                 Some((user, token)) => {
-                    println!("username={user}\npassword={token}");
+                    answer(user, token);
                     0
                 }
                 None => 1,
@@ -202,6 +202,14 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
         }
         _ => 0,
     }
+}
+
+/// A credential helper's answer to `get`: the protocol's output on standard output, written as
+/// bytes rather than through `println!`, which is for messages to a person.
+fn answer(user: &str, password: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(format!("username={user}\npassword={password}\n").as_bytes());
+    let _ = out.flush();
 }
 
 /// Whether a store target (`git:https://[user@]host[/path]`) names the service's scheme, host and

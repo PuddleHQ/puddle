@@ -121,6 +121,7 @@ export class FakeRuleSets {
     this.calls.push(`GET ${path}`);
     if (this.down) throw new TypeError("down");
     if (path.endsWith("/entries")) {
+      if (this.refuse) return this.reply(this.refuse.status);
       const query = init?.params as
         { query?: { q?: string; offset?: number } } | undefined;
       const q = (query?.query?.q ?? "").toLowerCase();

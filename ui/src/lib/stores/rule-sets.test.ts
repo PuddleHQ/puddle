@@ -198,6 +198,15 @@ describe("a big built-in set", () => {
     expect(api.calls).toContain("GET /api/rule-sets/{id}/entries");
   });
 
+  it("says when Puddle refused a page", async () => {
+    api.refuse = { status: 422, message: "no such set" };
+    const result = await make().entries("builtin:nope", "", 0);
+    expect(result).toEqual({
+      ok: false,
+      message: "Puddle couldn't read the entries.",
+    });
+  });
+
   it("says so when the service is down", async () => {
     api.down = true;
     const store = make();

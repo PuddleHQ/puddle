@@ -37,7 +37,7 @@
     onDelete: (set: RuleSet) => void;
     onDeleteEntry: (set: RuleSet, entry: RuleSetEntry) => void;
     /** Reads a page of a big built-in set's entries, optionally searched. */
-    loadEntries?: (
+    loadEntries: (
       set: RuleSet,
       query: string,
       offset: number,
@@ -71,7 +71,6 @@
   const total = $derived(matches ?? set.entry_count);
 
   async function load(more: boolean) {
-    if (!loadEntries) return;
     loadProblem = null;
     const text = query.trim();
     if (!more && text === "") {
@@ -200,7 +199,7 @@
       >{set.entry_count}
       {set.entry_count === 1 ? "entry" : "entries"}</summary
     >
-    {#if paged && loadEntries}
+    {#if paged}
       <form
         class="row"
         role="search"
@@ -250,7 +249,7 @@
         {/each}
       </ul>
     {/if}
-    {#if paged && loadEntries}
+    {#if paged}
       <p class="muted" aria-live="polite">
         Showing {shown.length} of {total}{matches !== null ? " matches" : ""}.
       </p>

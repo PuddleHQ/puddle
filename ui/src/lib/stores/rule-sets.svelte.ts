@@ -81,21 +81,16 @@ export class RuleSetsStore {
     offset: number,
   ): Promise<Result<EntryPage>> {
     try {
-      const { data, error } = await this.#api.GET(
-        "/api/rule-sets/{id}/entries",
-        {
-          params: {
-            path: { id },
-            query: query === "" ? { offset } : { q: query, offset },
-          },
+      const { data } = await this.#api.GET("/api/rule-sets/{id}/entries", {
+        params: {
+          path: { id },
+          query: query === "" ? { offset } : { q: query, offset },
         },
-      );
+      });
       if (!data) {
         return {
           ok: false,
-          message: sentence(
-            error?.message ?? "Puddle couldn't read the entries",
-          ),
+          message: "Puddle couldn't read the entries.",
         };
       }
       return { ok: true, value: data };

@@ -232,6 +232,37 @@ describe("a big built-in set", () => {
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 
+  it("says when no entry matches", async () => {
+    const loadEntries = vi.fn(async () => ({ entries: [], total: 0 }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.input(screen.getByLabelText("Search entries"), {
+      target: { value: "zzz" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("No entry matches.")).toBeInTheDocument();
+    expect(screen.getByText("Showing 0 of 0 matches.")).toBeInTheDocument();
+  });
+
+  it("goes back to the first entries when the search is emptied", async () => {
+    const loadEntries = vi.fn(async () => ({
+      entries: trackerEntries(3),
+      total: 3,
+    }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    const box = screen.getByLabelText("Search entries");
+    await fireEvent.input(box, { target: { value: "h1" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Showing 3 of 3 matches.");
+    await fireEvent.input(box, { target: { value: " " } });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Showing 200 of 450.");
+    expect(loadEntries).toHaveBeenCalledTimes(1);
+  });
+
   it("shows more from where the list ends", async () => {
     const loadEntries = vi.fn(async () => ({
       entries: trackerEntries(250).slice(200),

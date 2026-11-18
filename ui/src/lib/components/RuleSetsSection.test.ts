@@ -8,7 +8,12 @@ import {
   within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FakeRuleSets, builtIn, mine } from "#lib/testing/fake-rule-sets.ts";
+import {
+  FakeRuleSets,
+  builtIn,
+  mine,
+  trackerEntries,
+} from "#lib/testing/fake-rule-sets.ts";
 import { RuleSetsStore } from "#lib/stores/rule-sets.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import RuleSetsSection from "./RuleSetsSection.svelte";
@@ -276,5 +281,27 @@ describe("loading", () => {
     expect(
       await screen.findByText(/Couldn't refresh the rule sets/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("a big built-in set", () => {
+  it("reads more entries through the store, and says when that fails", async () => {
+    api.full["builtin:trackers"] = trackerEntries(450);
+    api.sets = [
+      builtIn("trackers", {
+        name: "Trackers",
+        entries: trackerEntries(200),
+        entry_count: 450,
+      }),
+    ];
+    await store.refresh();
+    mount();
+    await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Showing 400 of 450 matches.");
+    api.refuse = { status: 422, message: "gone" };
+    await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Puddle couldn't read the entries.",
+    );
   });
 });

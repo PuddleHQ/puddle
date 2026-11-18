@@ -221,4 +221,12 @@ describe("the App icon section", () => {
     expect(alert.textContent).toContain("Internal error");
     await waitFor(() => expect(screen.getByLabelText("Theme")).toBeTruthy());
   });
+
+  it("chooses your own image from its radio once there is one", async () => {
+    api.customIcon = "own-png";
+    await open();
+    await fireEvent.click(radio("Your image"));
+    await screen.findByText("Saved.");
+    expect(api.ui.app_icon).toBe("custom");
+  });
 });

@@ -112,4 +112,20 @@ describe("the global interception setting", () => {
     await screen.findByText("Saved.");
     expect(notices.items).toEqual([]);
   });
+
+  it("puts a mode and the learning switch back from the row's Undo", async () => {
+    show();
+    const select = await screen.findByLabelText("Which hosts to decrypt");
+    await fireEvent.change(select, { target: { value: "all" } });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Undo.*Which hosts/ }),
+    );
+    await waitFor(() => expect(select).toHaveValue("known_only"));
+    const box = screen.getByLabelText("Learn from rejections");
+    await fireEvent.click(box);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Undo.*Learn from/ }),
+    );
+    await waitFor(() => expect(box).toBeChecked());
+  });
 });

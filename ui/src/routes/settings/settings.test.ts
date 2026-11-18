@@ -527,6 +527,69 @@ describe("notification and inbox switches", () => {
 });
 
 describe("workspace defaults and the network", () => {
+  it("sets the default CPU count from 1 up to the computer's cores and says a running workspace keeps its own", async () => {
+    await open();
+    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
+    expect(cpus).toHaveValue("4");
+    expect([...cpus.options].map((o) => o.value)).toEqual(
+      Array.from({ length: 16 }, (_, i) => String(i + 1)),
+    );
+    expect(cpus.options[0]?.text).toBe("1 CPU");
+    expect(
+      screen.getByText(/A running workspace keeps the count it started with/),
+    ).toBeInTheDocument();
+    await choose("Default CPUs", "6");
+    await save();
+    expect(api.layer.cpus).toBe(6);
+    expect(screen.getByLabelText("Default CPUs")).toHaveValue("6");
+  });
+
+  it("takes the CPU maximum from the setting, not from a fixed 32, and saves a new one", async () => {
+    api.hostCpus = 64;
+    await open();
+    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
+    expect(cpus.options).toHaveLength(64);
+    const max = screen.getByLabelText(
+      "Most CPUs a workspace may have",
+    ) as HTMLInputElement;
+    expect(max.value).toBe("");
+    expect(max.placeholder).toBe("64");
+    await fireEvent.input(max, { target: { value: "6" } });
+    await save();
+    expect(api.limits.max_cpus).toBe(6);
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Default CPUs") as HTMLSelectElement).options,
+      ).toHaveLength(6),
+    );
+    await fireEvent.input(max, { target: { value: "" } });
+    await save();
+    expect(api.limits.max_cpus).toBeNull();
+  });
+
+  it("refuses a CPU maximum that is not a whole number from 1 to 255", async () => {
+    await open();
+    const max = screen.getByLabelText("Most CPUs a workspace may have");
+    await fireEvent.input(max, { target: { value: "300" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Use a whole number from 1 to 255.",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Save Most CPUs a workspace may have",
+      }),
+    ).toBeDisabled();
+    expect(putBodies()).toHaveLength(0);
+  });
+
+  it("keeps the CPU maximum when another setting is saved", async () => {
+    api.limits = { max_cpus: 9 };
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await save();
+    expect(api.limits.max_cpus).toBe(9);
+  });
+
   it("changes the default memory", async () => {
     await open();
     await choose("Default memory", "16384");

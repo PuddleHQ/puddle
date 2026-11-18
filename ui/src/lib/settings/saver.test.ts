@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
-import { SettingsSaver } from "./saver.svelte.ts";
+import { SettingsSaver, tracked } from "./saver.svelte.ts";
 
 type Outcome = { ok: true } | { ok: false; message: string };
 
@@ -64,5 +64,21 @@ describe("the settings saver", () => {
     const saver = new SettingsSaver({ view: null, save: vi.fn() } as never);
     expect(await saver.apply("set-sound", { ui: { sound: true } })).toBe(false);
     expect(saver.rows["set-sound"]).toMatchObject({ kind: "failed" });
+  });
+
+  it("forgets what a row said", async () => {
+    const { saver } = make();
+    await saver.apply("set-sound", { ui: { sound: true } });
+    saver.clear("set-sound");
+    expect(saver.rows["set-sound"]).toBeUndefined();
+  });
+
+  it("runs a change outside Settings, where there is no row to report on", async () => {
+    expect(await tracked(undefined, "x", async () => ({ ok: true }))).toBe(
+      true,
+    );
+    expect(
+      await tracked(undefined, "x", async () => ({ ok: false, message: "no" })),
+    ).toBe(false);
   });
 });

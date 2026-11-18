@@ -693,9 +693,11 @@ fn shutdown_waits_for_an_open_terminal_to_let_go_of_the_store() {
     );
 }
 
+/// A page that resets its connection as the socket opens frees its terminal's place at once, not
+/// when its ticket would have run out.
 #[tokio::test]
-async fn a_page_that_vanishes_before_the_upgrade_frees_its_terminals_place() {
-    use tokio::io::AsyncWriteExt as _;
+async fn a_page_that_vanishes_as_its_socket_opens_frees_its_terminals_place() {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
     let api = start().await;
     workspace(&api, "shop").await;
     let mut tickets = Vec::new();
@@ -706,7 +708,8 @@ async fn a_page_that_vanishes_before_the_upgrade_frees_its_terminals_place() {
     // The RFC 6455 sample nonce, assembled so the secret scan does not take it for a key.
     let key = ["dGhlIHNhbXBs", "ZSBub25jZQ=="].concat();
     for (terminal, ticket_text) in tickets {
-        let mut stream = tokio::net::TcpStream::connect(api.addr).await.unwrap();
+        let mut stream =
+            tokio::io::BufReader::new(tokio::net::TcpStream::connect(api.addr).await.unwrap());
         let request = format!(
             "GET /api/workspaces/shop/terminals/{terminal} HTTP/1.1\r\nHost: {}\r\n\
              Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
@@ -715,17 +718,31 @@ async fn a_page_that_vanishes_before_the_upgrade_frees_its_terminals_place() {
             api.addr
         );
         stream.write_all(request.as_bytes()).await.unwrap();
-        // A reset, not a close: the server's answer never reaches the page. The deprecation is
-        // about blocking on drop, which a zero linger (an immediate reset) never does.
+        // Waits for the answer: a reset that arrives before the server has read the request throws
+        // the request away (always on Windows, often on Linux), and the ticket then holds the
+        // place until it runs out, which is not what this test is about.
+        let mut status = String::new();
+        stream.read_line(&mut status).await.unwrap();
+        assert!(status.starts_with("HTTP/1.1 101"), "{status}");
+        // A reset, not a close. The deprecation is about blocking on drop, which a zero linger (an
+        // immediate reset) never does.
         #[expect(
             deprecated,
             reason = "a zero linger makes the drop a reset and blocks nothing"
         )]
-        stream.set_linger(Some(std::time::Duration::ZERO)).unwrap();
+        stream
+            .get_ref()
+            .set_linger(Some(std::time::Duration::ZERO))
+            .unwrap();
         drop(stream);
     }
+    // Every place comes back, not only the first.
+    let freed = std::cell::Cell::new(0);
     puddle_test_kit::eventually_async("every place was freed", STEP, || async {
-        ask(&api, "shop").await.status == 201
+        while freed.get() < MAX_PER_WORKSPACE && ask(&api, "shop").await.status == 201 {
+            freed.set(freed.get() + 1);
+        }
+        freed.get() == MAX_PER_WORKSPACE
     })
     .await;
     api.running.shutdown().await;

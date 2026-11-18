@@ -343,7 +343,7 @@
     margin: 0;
   }
   h3 {
-    font-size: var(--text-base);
+    font-size: var(--text-md);
   }
   .desc {
     font-size: var(--text-sm);

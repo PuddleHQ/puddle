@@ -180,6 +180,8 @@ impl Marker {
                 std::fs::write(&part, text)
                     .and_then(|()| std::fs::rename(&part, path))
                     .inspect_err(|_| {
+                        // The write's own error is the one logged below; a part file that cannot
+                        // be removed as well only costs a few bytes.
                         let _ = std::fs::remove_file(&part);
                     })
             });

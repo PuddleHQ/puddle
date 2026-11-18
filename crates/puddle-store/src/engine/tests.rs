@@ -1070,7 +1070,7 @@ proptest! {
         }
         let alone = RuleIndex::new(
             index.rules().iter().filter(|r| Some(r.user) == user).cloned().collect(),
-            index.entries.clone(),
+            index.entries().to_vec(),
             switches,
             index.owners.clone(),
         );
@@ -1161,4 +1161,68 @@ fn a_built_in_entry_that_is_off_is_skipped_for_that_user_only() {
         RuleSetId::System,
         &Pattern::parse("api.github.com").unwrap()
     ));
+}
+
+/// A built-in deny list of `n` hosts, as the shared index holds it.
+fn big_built_in(n: usize) -> Arc<EntryIndex> {
+    Arc::new(EntryIndex::new(
+        (0..n)
+            .map(|i| SetEntry {
+                set: RuleSetId::BuiltIn("trackers"),
+                pattern: Pattern::parse(&format!("t{i}.tracker.example")).unwrap(),
+                workspace: None,
+                effect: Effect::Deny,
+            })
+            .collect(),
+    ))
+}
+
+#[test]
+fn snapshots_share_one_big_built_in_index_and_decide_by_it() {
+    let shared = big_built_in(50_000);
+    let trackers = RuleSetId::BuiltIn("trackers");
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, trackers, None, true);
+    let make = |rules: Vec<Rule>| {
+        RuleIndex::new(rules, Vec::new(), switches.clone(), owners_own(&["a"]))
+            .with_built_in(Arc::clone(&shared), HashSet::new())
+    };
+    let one = make(Vec::new());
+    let two = make(vec![rule(1, None, "t7.tracker.example", Effect::Allow)]);
+    assert!(Arc::ptr_eq(one.built_in(), two.built_in()));
+    let hit = |index: &RuleIndex, h: &str| {
+        index
+            .decide(&sb("a"), &host(h), 1_000, SuffixAllows::Count)
+            .map(Hit::decision)
+    };
+    assert!(matches!(
+        hit(&one, "t49999.tracker.example"),
+        Some(Decision::SetDeny { .. })
+    ));
+    assert_eq!(hit(&one, "other.example"), None);
+    // The user's own rule outranks the built-in entry of the same host.
+    assert!(matches!(
+        hit(&two, "t7.tracker.example"),
+        Some(Decision::Allow { .. })
+    ));
+}
+
+#[test]
+fn a_hidden_built_in_set_decides_nothing_even_when_its_entries_are_shared() {
+    let trackers = RuleSetId::BuiltIn("trackers");
+    let mut switches = Switches::default();
+    switches.insert(UserId::OWNER, trackers, None, true);
+    let hidden: HashSet<String> = ["trackers".to_owned()].into();
+    let index = RuleIndex::new(Vec::new(), Vec::new(), switches, owners_own(&["a"]))
+        .with_built_in(big_built_in(10), hidden);
+    assert!(
+        index
+            .decide(
+                &sb("a"),
+                &host("t3.tracker.example"),
+                1_000,
+                SuffixAllows::Count
+            )
+            .is_none()
+    );
 }

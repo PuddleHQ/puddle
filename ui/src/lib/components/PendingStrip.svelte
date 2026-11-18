@@ -20,7 +20,8 @@
     <p>
       <b>{count} {count === 1 ? "request" : "requests"} waiting.</b>
       {#if latest}
-        Latest: <span class="mono">{workspaces.labelOf(latest.workspace)}</span> wants
+        Latest: <span class="mono">{workspaces.labelOf(latest.workspace)}</span>
+        wants
         <span class="mono">{latest.host}:{latest.port}</span>.
       {/if}
     </p>

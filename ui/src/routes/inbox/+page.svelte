@@ -224,7 +224,8 @@
 {#each pending.full as workspace (workspace)}
   <p class="full" role="status">
     <b
-      ><span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit} waiting requests</b
+      ><span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
+      waiting requests</b
     >, the most Puddle lists. If it asks about more hosts, they are listed once
     you answer some. Allowing or denying a domain with its subdomains clears
     many at once.

@@ -6,6 +6,7 @@
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
+import { staysEmpty } from "./support";
 
 const SLOWDOWN = slowdown();
 
@@ -130,9 +131,11 @@ test.describe("Allow and Deny, and the keys they name", () => {
       await ask(backend, "shop", host);
     }
     await openInbox(page, backend);
+    await expect(page.locator("li.req")).toHaveCount(3);
     const hosts = (await page.locator("li.req .host").allTextContents()).filter(
       (h) => /^t\d\.example\.com$/.test(h),
     );
+    // flake-ok: the three rows were counted by the web-first assertion above
     expect(hosts).toHaveLength(3);
 
     /** The key a button's first title line names in brackets: "... permanently (A)". */
@@ -286,10 +289,14 @@ test.describe("five workspaces whose id differs from the name, 50 waiting reques
         }),
       ).toHaveCount(10);
     }
-    const text = await shown(page);
-    for (const { id } of spaces) {
-      expect(text, `the id ${id} is not shown`).not.toContain(id);
-    }
+    await staysEmpty(
+      page,
+      async () => {
+        const text = await shown(page);
+        return spaces.filter(({ id }) => text.includes(id)).map(({ id }) => id);
+      },
+      "ids shown in the page's text, names or tooltips",
+    );
     // Title, nav badge and rows agree.
     await expect(page).toHaveTitle("Inbox (50) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("50 pending");

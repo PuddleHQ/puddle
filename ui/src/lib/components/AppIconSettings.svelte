@@ -78,7 +78,6 @@
       return;
     }
     if (icons) icons = { ...icons, custom_png_base64: null };
-    if (choice === "custom") onchoose(stored);
     note = "Your image is removed.";
   }
 </script>

@@ -195,3 +195,11 @@ describe("before the settings load", () => {
     ).toHaveTextContent("workspace_defaults.memry, color");
   });
 });
+
+describe("a page outside the frame", () => {
+  it("refuses to render, because its rows could not report what they saved", () => {
+    expect(() => render(Notifications)).toThrow(
+      "This page must be shown inside Settings.",
+    );
+  });
+});

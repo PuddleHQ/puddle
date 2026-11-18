@@ -11,6 +11,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { saverContext } from "#lib/settings/context.ts";
+import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 import { SettingsSaver } from "#lib/settings/saver.svelte.ts";
 import SelectRow from "./SelectRow.svelte";
 import SwitchRow from "./SwitchRow.svelte";
@@ -185,5 +186,26 @@ describe("a typed value", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Save Grace" }));
     expect(await screen.findByText("Refused.")).toBeInTheDocument();
     expect(field.value).toBe("90");
+  });
+
+  it("holds an automatic reload while text waits for Save, and lets it go once it matches again", async () => {
+    const { saver } = saverWith();
+    show(saver, async () => true);
+    const field = screen.getByLabelText("Grace");
+    expect(hasUnsavedEdits()).toBe(false);
+    await fireEvent.input(field, { target: { value: "90" } });
+    expect(hasUnsavedEdits()).toBe(true);
+    await fireEvent.input(field, { target: { value: "60" } });
+    expect(hasUnsavedEdits()).toBe(false);
+  });
+
+  it("sends nothing when Enter is pressed with nothing changed", async () => {
+    const { saver } = saverWith();
+    const onsave = vi.fn(async () => true);
+    show(saver, onsave);
+    await fireEvent.submit(
+      screen.getByLabelText("Grace").closest("form") as HTMLFormElement,
+    );
+    expect(onsave).not.toHaveBeenCalled();
   });
 });

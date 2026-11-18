@@ -182,7 +182,7 @@ async fn the_entries_of_a_built_in_set_are_paged_and_searched() {
         .unwrap()
         .clone();
     let count = github["entry_count"].as_u64().unwrap();
-    assert_eq!(count as usize, github["entries"].as_array().unwrap().len());
+    assert_eq!(github["entries"].as_array().unwrap().len() as u64, count);
     let page = api.get("/api/rule-sets/builtin:github/entries").await;
     assert_eq!(page.status, 200, "{}", page.body);
     assert_eq!(page.json()["total"], count);

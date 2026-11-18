@@ -565,3 +565,86 @@ fn closing_a_store_that_read_the_audit_leaves_no_write_ahead_log() {
     drop(store);
     assert!(!dir.path().join("puddle.db-wal").exists());
 }
+
+#[test]
+fn a_rule_change_shares_the_built_in_entries_instead_of_rebuilding_them() {
+    let (_, store) = store();
+    let before = store.snapshot();
+    let w = WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &w);
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(w),
+            pattern: Pattern::parse("x.example").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let after = store.snapshot();
+    assert!(!Arc::ptr_eq(&before, &after), "the snapshot is replaced");
+    assert!(Arc::ptr_eq(before.built_in(), after.built_in()));
+}
+
+#[test]
+fn a_page_of_built_in_entries_is_searched_offset_and_counted() {
+    let (_, store) = store();
+    let github = puddle_types::RuleSetId::BuiltIn("github");
+    let all = store
+        .built_in_entries(UserId::OWNER, github, "", 0, 1000)
+        .unwrap();
+    assert!(all.total >= 2 && all.entries.len() == all.total);
+    let info = store.rule_set(UserId::OWNER, github).unwrap();
+    assert_eq!(info.entry_count, all.total);
+    let first = all.entries[0].pattern.clone();
+    let one = store
+        .built_in_entries(UserId::OWNER, github, &first.to_ascii_uppercase(), 0, 1)
+        .unwrap();
+    assert_eq!(one.entries.len(), 1);
+    assert_eq!(one.entries[0].pattern, first);
+    assert!(one.total >= 1 && one.total <= all.total);
+    let rest = store
+        .built_in_entries(UserId::OWNER, github, "", 1, 1000)
+        .unwrap();
+    assert_eq!(rest.entries, all.entries[1..]);
+    assert_eq!(rest.total, all.total);
+    let none = store
+        .built_in_entries(UserId::OWNER, github, "no-such-host.invalid", 0, 10)
+        .unwrap();
+    assert_eq!((none.total, none.entries.len()), (0, 0));
+}
+
+#[test]
+fn built_in_entries_refuse_a_set_that_is_not_built_in() {
+    let (_, store) = store();
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, puddle_types::RuleSetId::User(1), "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, puddle_types::RuleSetId::System, "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+}
+
+#[test]
+fn the_entries_of_a_hidden_built_in_set_are_not_served() {
+    let (_, store) = store();
+    let github = puddle_types::RuleSetId::BuiltIn("github");
+    assert!(
+        store
+            .built_in_entries(UserId::OWNER, github, "", 0, 10)
+            .is_ok()
+    );
+    store
+        .set_system_managed(&SystemPlan {
+            hidden_sets: ["github"].into(),
+            ..SystemPlan::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, github, "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+}

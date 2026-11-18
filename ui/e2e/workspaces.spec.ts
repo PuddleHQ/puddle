@@ -1302,9 +1302,9 @@ test.describe("the network tab", () => {
   }) => {
     await openDetail(page, backend, "web-shop");
     const rows = page.locator("li.req");
-    await expect(rows.first()).toBeVisible();
-    const mine = await rows.count();
-    expect(mine).toBeGreaterThan(1);
+    // web-shop has three requests waiting in the default scenario.
+    const mine = 3;
+    await expect(rows).toHaveCount(mine);
     const total = await pendingCount(request, backend);
     await page.getByRole("button", { name: "Allow all" }).click();
     const dialog = page.getByRole("alertdialog");
@@ -1326,8 +1326,8 @@ test.describe("the network tab", () => {
   }) => {
     await openDetail(page, backend, "web-shop");
     const rows = page.locator("li.req");
-    await expect(rows.first()).toBeVisible();
-    const mine = await rows.count();
+    const mine = 3;
+    await expect(rows).toHaveCount(mine);
     const total = await pendingCount(request, backend);
     await page.getByRole("button", { name: "Deny all" }).click();
     await page

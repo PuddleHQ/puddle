@@ -85,7 +85,9 @@ describe("FirstWorkspaceForm", () => {
     mount(
       vi.fn().mockResolvedValue({
         ok: true,
-        value: workspace("api", { allowed_hosts: [{ host: "github.com" }] }),
+        value: workspace("api", {
+          allowed_hosts: [{ host: "github.com", rule_id: 1 }],
+        }),
       }),
     );
     await type("https://github.com/acme/api.git");

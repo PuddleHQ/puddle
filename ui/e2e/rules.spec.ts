@@ -193,7 +193,9 @@ test.describe("adding", () => {
     const dialog = await openAdd(page);
     await dialog.getByLabel("Host").fill("tracker.example.org");
     await dialog.getByRole("radio", { name: "Deny" }).check();
-    await dialog.getByLabel("Workspace name").fill("docs-site");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "docs-site" });
     await dialog.getByLabel("Expires").selectOption({ label: "In 1 hour" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog).toHaveCount(0);
@@ -221,7 +223,9 @@ test.describe("adding", () => {
     await openRules(page, backend);
     const dialog = await openAdd(page);
     await dialog.getByLabel("Host").fill("*.cdn.example.org");
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(rowFor(page, "*.cdn.example.org")).toContainText(
       "and subdomains",
@@ -241,7 +245,9 @@ test.describe("adding", () => {
     const before = (await rules(request, backend)).length;
     const dialog = await openAdd(page);
     await dialog.getByLabel("Host").fill("*.com");
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     const error = dialog.getByRole("alert");
     await expect(error).toContainText(/public suffix/i);
@@ -267,7 +273,9 @@ test.describe("adding", () => {
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog.getByRole("alert")).toHaveCount(2);
     await dialog.getByLabel("Host").fill("not a host");
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog.getByRole("alert")).toHaveCount(1);
     await expect(dialog).toBeVisible();
@@ -323,7 +331,9 @@ test.describe("adding", () => {
     );
     const dialog = await openAdd(page);
     await dialog.getByLabel("Host").fill("closes.example.org");
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(async () => {
@@ -339,7 +349,9 @@ test.describe("editing a rule in place", () => {
     const dialog = page.getByRole("dialog", { name: "Add a rule" });
     await dialog.getByLabel("Host").fill(host);
     await dialog.getByRole("radio", { name: "Deny" }).check();
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog).toHaveCount(0);
     return rowFor(page, host);
@@ -610,7 +622,9 @@ test.describe("keyboard only", () => {
     // The workspace field offers the known workspaces as a datalist. When the typed name matches
     // a suggestion, WebKit's Enter accepts that suggestion instead of submitting, so submit from the
     // button, which is the same keyboard path and does not depend on the suggestion popup.
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).focus();
     await page.keyboard.press("Enter");
     await expect(dialog).toHaveCount(0);

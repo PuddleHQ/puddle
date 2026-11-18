@@ -103,4 +103,15 @@ describe("FirstWorkspaceForm", () => {
       screen.getByRole("textbox", { name: "Repository address" }),
     ).toHaveValue("");
   });
+
+  it("sends one request when Create is pressed twice while it works", async () => {
+    const { create } = mount(vi.fn().mockReturnValue(new Promise(() => {})));
+    await type("https://github.com/acme/api.git");
+    const form = screen
+      .getByRole("button", { name: "Create workspace" })
+      .closest("form")!;
+    await fireEvent.submit(form);
+    await fireEvent.submit(form);
+    expect(create).toHaveBeenCalledOnce();
+  });
 });

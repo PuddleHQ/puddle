@@ -487,7 +487,7 @@ try {
       if (w.status === "running" && !w.busy) return w;
       if (!started && !w.busy && ["created", "stopped"].includes(w.status)) {
         started = true;
-        await api("POST", `/api/workspaces/${id}/start`);
+        await api("POST", `/api/workspace/start`);
       }
       return false;
     },
@@ -497,7 +497,7 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create allowed the forge itself before the first clone, so nobody approves it and nobody
   // clones again: the checkout is there and the rule says who made it.
-  const checkout = `/workspaces/${id}/app/package.json`;
+  const checkout = `/workspace/app/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
   const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
   check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
@@ -549,8 +549,8 @@ try {
     { root: true, within: 900_000, ok: (r) => /apt=0/.test(r.text) },
   );
   check("nodejs and npm install from the distribution's archive after the approvals", /apt=0/.test(aptDone.text), `after ${aptDone.attempts} tries: ${aptDone.text.slice(-300)}`);
-  const rootDir = (await guest(id, "find /workspaces -maxdepth 3 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
-  check("the checkout is in the workspace", rootDir.startsWith("/workspaces/"), rootDir);
+  const rootDir = (await guest(id, "find /workspace -maxdepth 2 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
+  check("the checkout is in the workspace", rootDir.startsWith("/workspace/"), rootDir);
   const build = await guest(id, `cd ${rootDir} && node --version && npm --version && npm install --no-audit --no-fund 2>&1 | tail -2 && npm run build 2>&1 && npm test 2>&1 | tail -8 && node dist/app.js`);
   check("npm run build and npm test pass in the workspace", build.code === 0 && /build ok/.test(build.text) && /hello from usable/.test(build.text), build.text.slice(-500));
 
@@ -598,10 +598,10 @@ try {
   if (company) await checkTheCompanyProxyCarriedTheTraffic(branch);
 
   // Stop and delete, as the user does at the end.
-  await api("POST", `/api/workspaces/${id}/stop`);
+  await api("POST", `/api/workspace/stop`);
   await until("the workspace to be stopped", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id)?.status === "stopped", 180_000, 2000).catch(() => {});
-  const seen = await api("GET", `/api/workspaces/${id}/delete-check`);
-  const gone = await api("DELETE", `/api/workspaces/${id}`, { confirm: true, fingerprint: seen.json?.fingerprint });
+  const seen = await api("GET", `/api/workspace/delete-check`);
+  const gone = await api("DELETE", `/api/workspace`, { confirm: true, fingerprint: seen.json?.fingerprint });
   check("the workspace is deleted", [200, 202, 204].includes(gone.status), `${gone.status} ${gone.body.slice(0, 200)}`);
   await until("the workspace to be gone", async () => !(await api("GET", "/api/workspaces")).json?.workspaces?.some((w) => w.id === id), 180_000, 2000).catch((err) => check("the workspace goes away", false, String(err)));
 } catch (err) {

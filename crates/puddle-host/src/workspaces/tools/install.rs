@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
 use puddle_types::{Event, Problem, ToolsState, WorkspaceId};
-use puddle_workspace::WORKSPACES_ROOT;
+use puddle_workspace::WORKSPACE_DIR;
 
 use super::{HostWorkspaces, tools_key};
 
@@ -256,10 +256,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         report_only: bool,
         timeout: Duration,
     ) -> Option<Result<ExecOutput, ComputeError>> {
-        let mut args = vec![
-            "mise-install".to_owned(),
-            format!("{WORKSPACES_ROOT}/{name}"),
-        ];
+        let mut args = vec!["mise-install".to_owned(), WORKSPACE_DIR.to_owned()];
         if report_only {
             args.push("--missing".to_owned());
         }

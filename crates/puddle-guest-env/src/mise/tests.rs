@@ -3,9 +3,9 @@ use super::*;
 
 fn settings(trusted: bool, image_path: Option<&str>) -> MiseSettings {
     MiseSettings {
-        dir: GuestPath::new("/workspaces/w1/.puddle/mise").unwrap(),
+        dir: GuestPath::new("/workspace/.puddle/mise").unwrap(),
         ceiling: GuestPath::new("/workspaces").unwrap(),
-        trusted: trusted.then(|| GuestPath::new("/workspaces/w1").unwrap()),
+        trusted: trusted.then(|| GuestPath::new("/workspace").unwrap()),
         image_path: image_path.map(str::to_owned),
     }
 }
@@ -21,16 +21,16 @@ fn trusted_workspace_gets_every_variable() {
     assert_eq!(
         env,
         [
-            ("MISE_CACHE_DIR", "/workspaces/w1/.puddle/mise/cache"),
+            ("MISE_CACHE_DIR", "/workspace/.puddle/mise/cache"),
             ("MISE_CEILING_PATHS", "/workspaces"),
-            ("MISE_DATA_DIR", "/workspaces/w1/.puddle/mise/data"),
+            ("MISE_DATA_DIR", "/workspace/.puddle/mise/data"),
             ("MISE_DISABLE_UPDATE_WARNING", "1"),
-            ("MISE_STATE_DIR", "/workspaces/w1/.puddle/mise/state"),
-            ("MISE_TRUSTED_CONFIG_PATHS", "/workspaces/w1"),
+            ("MISE_STATE_DIR", "/workspace/.puddle/mise/state"),
+            ("MISE_TRUSTED_CONFIG_PATHS", "/workspace"),
             ("MISE_USE_VERSIONS_HOST_TRACK", "0"),
             (
                 "PATH",
-                "/workspaces/w1/.puddle/mise/data/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/workspaces/w1/.puddle/mise/bin"
+                "/workspace/.puddle/mise/data/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/workspace/.puddle/mise/bin"
             ),
         ]
     );
@@ -52,11 +52,11 @@ fn without_trust_mise_keeps_its_state_apart_from_the_trusted_runs() {
     let off = mise_config(&settings(false, None)).unwrap();
     assert_eq!(
         on.env.get("MISE_STATE_DIR"),
-        Some("/workspaces/w1/.puddle/mise/state")
+        Some("/workspace/.puddle/mise/state")
     );
     assert_eq!(
         off.env.get("MISE_STATE_DIR"),
-        Some("/workspaces/w1/.puddle/mise/state-untrusted")
+        Some("/workspace/.puddle/mise/state-untrusted")
     );
 }
 
@@ -66,7 +66,7 @@ fn the_image_path_sits_between_the_shims_and_the_binary() {
     assert_eq!(
         config.env.get("PATH"),
         Some(
-            "/workspaces/w1/.puddle/mise/data/shims:/usr/local/cargo/bin:/opt/x:/workspaces/w1/.puddle/mise/bin"
+            "/workspace/.puddle/mise/data/shims:/usr/local/cargo/bin:/opt/x:/workspace/.puddle/mise/bin"
         )
     );
 }

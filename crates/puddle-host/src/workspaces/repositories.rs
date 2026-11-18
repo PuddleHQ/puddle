@@ -371,8 +371,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 format!(
                     "{reason}. {made}The repository stays on the list: use Clone again to try \
                      once more, or Remove from the list. To get it yourself, clone it in a \
-                     terminal in the workspace: git clone {} /workspaces/{}/{}",
-                    repository.url, record.id, repository.directory
+                     terminal in the workspace: git clone {} /workspace/{}",
+                    repository.url, repository.directory
                 ),
             )
             .about(record.id.clone()),

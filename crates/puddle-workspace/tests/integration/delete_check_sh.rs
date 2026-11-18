@@ -76,7 +76,7 @@ fn run_on_host(rt: &FakeRuntime, shell: &'static str, host_root: PathBuf) {
         if r.program != "sh" || r.args.get(1).map(String::as_str) != Some(DELETE_CHECK_SH) {
             return None;
         }
-        assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
+        assert_eq!(r.args.get(3).map(String::as_str), Some("/workspace"));
         // A blocking call in the fake's handler: fine for a test, the script takes milliseconds.
         let out = shell_command(shell)
             .args(["-c", DELETE_CHECK_SH, "puddle-delete-check"])

@@ -75,7 +75,7 @@ pub(crate) async fn run<S: Sandbox>(
     sandbox: &S,
     id: &WorkspaceId,
 ) -> Result<LockReport, WorkspaceError> {
-    let layout = Layout::new(id)?;
+    let layout = Layout::new()?;
     let out = sandbox
         .exec(request(&layout))
         .await

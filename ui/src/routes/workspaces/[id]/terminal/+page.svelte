@@ -40,6 +40,13 @@
     if (wid) setForwards(wid, ports.ports);
   });
 
+  let visited = "";
+  $effect(() => {
+    if (!wid || workspace?.status !== "running" || visited === wid) return;
+    visited = wid;
+    if (sessions.length === 0 && limit === null) add();
+  });
+
   function add() {
     if (!wid) return;
     focusNew = terminals.add(wid) !== null;

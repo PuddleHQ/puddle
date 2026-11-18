@@ -75,7 +75,7 @@ pub enum Operation {
 /// What the host sends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
-    /// The workspace folder (`/workspaces/<id>`).
+    /// The workspace folder (`/workspace`).
     pub root: PathBuf,
     /// What to do there.
     pub operation: Operation,

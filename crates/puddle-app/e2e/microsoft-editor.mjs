@@ -262,7 +262,7 @@ try {
   check("the workspace is running", running.status === "running", `${running.status}, image ${running.image}, id ${id}`);
 
   // The product's own install of the newest build comes first; wait for it so it cannot overwrite the pinned build later.
-  const builds = `/workspaces/${id}/.puddle/vscode-server/servers`;
+  const builds = `/workspace/.puddle/vscode-server/servers`;
   const own = await until(
     "the editor's own install of Microsoft's newest build",
     async () => {
@@ -279,7 +279,7 @@ try {
 
   // Pinned build, the test extension and two checkouts, put on the volume as root; then a restart starts the pinned build.
   const files = ["package.json", "extension.js"].map((name) => [name, readFileSync(join(here, "fixtures", "canary-secret", name)).toString("base64")]);
-  const data = `/workspaces/${id}/.puddle/vscode-server`;
+  const data = `/workspace/.puddle/vscode-server`;
   const extension = `${data}/extensions/puddle-test.canary-secret-0.0.1`;
   const registry = JSON.stringify([
     {
@@ -308,7 +308,7 @@ try {
     ...files.map(([name, b64]) => `printf '%s' '${b64}' | base64 -d > ${extension}/${name}`),
     // The server lists the extensions of its default profile in extensions.json; a folder alone is not read as installed.
     `printf '%s' '${registry}' > ${data}/extensions/extensions.json`,
-    `cd /workspaces/${id}`,
+    `cd /workspace`,
     "[ -d api/.git ] || git init -q api",
     "[ -d web/.git ] || git init -q web",
     `if id agent >/dev/null 2>&1; then chown -R agent:agent ${data}/extensions api web; fi`,
@@ -318,7 +318,7 @@ try {
   const installed = await guest(id, setup, 900_000);
   check("the pinned build, the test extension and two checkouts are on the volume", installed.code === 0 && installed.text.includes("pinned-installed"), installed.text.slice(-400));
   for (const step of ["stop", "start"]) {
-    const reply = await api("POST", `/api/workspaces/${id}/${step}`);
+    const reply = await api("POST", `/api/workspace/${step}`);
     check(`the workspace takes ${step}`, reply.status === 202 || reply.status === 200, `${reply.status} ${reply.body.slice(0, 160)}`);
     await until(
       `the workspace to finish ${step}`,
@@ -370,7 +370,7 @@ try {
   again.close();
 
   // Stop the workspace, as the user does at the end (the data folder is a temp one and goes with the runner).
-  await api("POST", `/api/workspaces/${id}/stop`);
+  await api("POST", `/api/workspace/stop`);
 } catch (err) {
   check("the run ran to the end", false, String(err?.stack ?? err));
 } finally {
@@ -378,7 +378,7 @@ try {
   if (id) {
     const logs = await guest(
       id,
-      "tail -n 60 /run/puddle/agent.log; grep -rn -i canary /workspaces/*/.puddle/vscode-server/server-data/data/logs 2>/dev/null | tail -n 20 | cut -c1-300; ls -la /workspaces/*/.puddle/vscode-server/extensions; for f in $(find /workspaces/*/.puddle/vscode-server/server-data -name '*.log' 2>/dev/null | sort | tail -n 8); do echo \"== $f\"; tail -n 30 \"$f\"; done; echo == canary; cat /tmp/canary-secret.log 2>/dev/null; true",
+      "tail -n 60 /run/puddle/agent.log; grep -rn -i canary /workspace/.puddle/vscode-server/server-data/data/logs 2>/dev/null | tail -n 20 | cut -c1-300; ls -la /workspace/.puddle/vscode-server/extensions; for f in $(find /workspace/.puddle/vscode-server/server-data -name '*.log' 2>/dev/null | sort | tail -n 8); do echo \"== $f\"; tail -n 30 \"$f\"; done; echo == canary; cat /tmp/canary-secret.log 2>/dev/null; true",
       60_000,
     ).catch(() => ({ text: "" }));
     writeFileSync(join(out, "guest-logs.txt"), logs.text);

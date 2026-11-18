@@ -2,19 +2,19 @@
 use super::*;
 
 fn layout() -> Layout {
-    Layout::new(&WorkspaceId::new("acme").unwrap()).unwrap()
+    Layout::new().unwrap()
 }
 
 #[test]
 fn paths_sit_under_the_mount_point() {
     let l = layout();
-    assert_eq!(l.mount().as_str(), "/workspaces/acme");
-    assert_eq!(l.puddle_dir().unwrap().as_str(), "/workspaces/acme/.puddle");
+    assert_eq!(l.mount().as_str(), "/workspace");
+    assert_eq!(l.puddle_dir().unwrap().as_str(), "/workspace/.puddle");
     assert_eq!(
         l.checkout(&CheckoutDir::new("api").unwrap())
             .unwrap()
             .as_str(),
-        "/workspaces/acme/api"
+        "/workspace/api"
     );
 }
 
@@ -31,7 +31,7 @@ fn clone_request_passes_the_url_as_one_argument_after_double_dash() {
             "clone",
             "--",
             "-u evil https://h/acme/api.git",
-            "/workspaces/acme/api"
+            "/workspace/api"
         ]
     );
     assert_eq!(r.user, None);
@@ -57,7 +57,7 @@ fn prepare_request_runs_the_script_as_root_for_the_session_user() {
                 "-c",
                 PREPARE_SH,
                 "puddle-prepare",
-                "/workspaces/acme",
+                "/workspace",
                 user.name()
             ]
         );
@@ -70,6 +70,6 @@ fn prepare_request_runs_the_script_as_root_for_the_session_user() {
 fn the_managed_tools_live_in_a_folder_of_the_puddle_directory() {
     assert_eq!(
         layout().mise_dir().unwrap().as_str(),
-        "/workspaces/acme/.puddle/mise"
+        "/workspace/.puddle/mise"
     );
 }

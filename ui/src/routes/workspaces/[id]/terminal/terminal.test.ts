@@ -7,9 +7,21 @@ import {
   waitFor,
   within,
 } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const url = vi.hoisted(() => ({ id: "w-web" }));
+const url = await vi.hoisted(async () => {
+  const { SvelteMap } = await import("svelte/reactivity");
+  const state = new SvelteMap([["id", "w-web"]]);
+  return {
+    get id() {
+      return state.get("id") as string;
+    },
+    set id(value: string) {
+      state.set("id", value);
+    },
+  };
+});
 vi.mock("$app/state", () => ({
   page: {
     get params() {
@@ -124,7 +136,6 @@ describe("a workspace that is not running", () => {
 
   it("keeps a stopped workspace's ended terminals, with New terminal off", async () => {
     render(Page);
-    await fireEvent.click(newTerminal());
     await waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]?.open();
     workspaces.list = [workspace(web, { status: "stopped" })];
@@ -144,8 +155,6 @@ describe("a workspace that is not running", () => {
 describe("opening and closing", () => {
   it("opens a terminal, connects it at the measured size and labels the sub-tab", async () => {
     render(Page);
-    expect(screen.getByText(/No terminal is open/)).toBeInTheDocument();
-    await fireEvent.click(newTerminal());
     const tab = await screen.findByRole("tab", { name: "Terminal 1" });
     expect(tab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toBeInTheDocument();
@@ -159,7 +168,7 @@ describe("opening and closing", () => {
 
   it("shows several sub-tabs, one in view, and closes one", async () => {
     render(Page);
-    await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
     await fireEvent.click(newTerminal());
     const tabs = await screen.findAllByRole("tab");
     expect(tabs).toHaveLength(2);
@@ -182,7 +191,8 @@ describe("opening and closing", () => {
 
   it("moves between sub-tabs with the arrow keys, Home and End", async () => {
     render(Page);
-    for (let i = 0; i < 3; i += 1) await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
+    for (let i = 0; i < 2; i += 1) await fireEvent.click(newTerminal());
     const [one, two, three] = await screen.findAllByRole("tab");
     three?.focus();
     await fireEvent.keyDown(three as HTMLElement, { key: "ArrowRight" });
@@ -202,7 +212,8 @@ describe("opening and closing", () => {
 
   it("turns New terminal off at the limit and says which one holds", async () => {
     render(Page);
-    for (let i = 0; i < 8; i += 1) await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
+    for (let i = 0; i < 7; i += 1) await fireEvent.click(newTerminal());
     await waitFor(() => expect(newTerminal()).toBeDisabled());
     expect(
       screen.getByText(/This workspace has 8 terminals open/),
@@ -215,7 +226,6 @@ describe("opening and closing", () => {
       error: { error: "conflict", message: "this workspace is not running" },
     });
     render(Page);
-    await fireEvent.click(newTerminal());
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "This workspace is not running.",
     );
@@ -243,7 +253,6 @@ describe("opening and closing", () => {
 describe("the sub-tab", () => {
   async function open() {
     render(Page);
-    await fireEvent.click(newTerminal());
     await waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0] as FakeSocket;
     socket.open();
@@ -341,6 +350,73 @@ describe("the sub-tab", () => {
     await waitFor(() =>
       expect((session.screen as FakeScreen).reader).toBe(true),
     );
+  });
+});
+
+describe("a terminal that opens by itself", () => {
+  it("opens and connects Terminal 1 in a running workspace without a click", async () => {
+    render(Page);
+    expect(
+      await screen.findByRole("tab", { name: "Terminal 1" }),
+    ).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+  });
+
+  it("does not open another when the last one is closed", async () => {
+    render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Close Terminal 1" }),
+    );
+    expect(screen.getByText(/No terminal is open/)).toBeInTheDocument();
+    await tick();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(api.posts).toHaveLength(1);
+  });
+
+  it("opens one per visit: another workspace, or a fresh mount, starts a new visit", async () => {
+    workspaces.list = [
+      workspace(web, { status: "running" }),
+      workspace(docs, { status: "running" }),
+    ];
+    const first = render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Close Terminal 1" }),
+    );
+    first.unmount();
+    render(Page);
+    expect(
+      await screen.findByRole("tab", { name: /Terminal \d/ }),
+    ).toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: /Close Terminal \d/ }),
+    );
+    url.id = `w-${docs}`;
+    expect(
+      await screen.findByRole("tab", { name: /Terminal \d/ }),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["stopped", () => docs],
+    ["starting", () => boot],
+  ])("opens nothing by itself in a %s workspace", async (_status, pick) => {
+    url.id = `w-${pick()}`;
+    render(Page);
+    await tick();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(api.posts).toHaveLength(0);
+  });
+
+  it("opens one once a starting workspace turns running", async () => {
+    url.id = `w-${boot}`;
+    render(Page);
+    await tick();
+    expect(screen.queryByRole("tab")).toBeNull();
+    workspaces.list = [workspace(boot, { status: "running" })];
+    expect(
+      await screen.findByRole("tab", { name: "Terminal 1" }),
+    ).toBeInTheDocument();
   });
 });
 

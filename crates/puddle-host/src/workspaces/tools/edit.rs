@@ -21,7 +21,7 @@ use puddle_api::wire::{
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
 use puddle_settings::MiseMode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash, WorkspaceId, WorkspaceStatus};
-use puddle_workspace::WORKSPACES_ROOT;
+use puddle_workspace::WORKSPACE_DIR;
 
 use super::HostWorkspaces;
 use crate::workspaces::not_found;
@@ -253,7 +253,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         words: &[&str],
         timeout: Duration,
     ) -> Option<Result<ExecOutput, ComputeError>> {
-        let mut args = vec!["mise-tools".to_owned(), format!("{WORKSPACES_ROOT}/{name}")];
+        let mut args = vec!["mise-tools".to_owned(), WORKSPACE_DIR.to_owned()];
         args.extend(words.iter().map(|w| (*w).to_owned()));
         self.exec_agent(name, args, timeout).await
     }

@@ -423,7 +423,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             &runtime,
             &sandbox,
             &format!(
-                "cd /workspaces/{name} && git init -q api && git init -q web && chown -R agent: api web 2>/dev/null; true"
+                "cd /workspace && git init -q api && git init -q web && chown -R agent: api web 2>/dev/null; true"
             ),
         )
         .await;
@@ -449,7 +449,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         let alias = format!("puddle-{name}");
         assert_eq!(args[0], "--file-uri", "{args:?}");
         assert!(
-            args[1].starts_with(&format!("vscode-remote://ssh-remote+{alias}/workspaces/"))
+            args[1].starts_with(&format!("vscode-remote://ssh-remote+{alias}/workspace"))
                 && args[1].ends_with(".code-workspace"),
             "{args:?}"
         );

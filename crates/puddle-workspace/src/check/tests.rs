@@ -99,17 +99,12 @@ fn hostile_output_stays_bounded() {
 
 #[test]
 fn the_request_runs_the_script_as_root_on_the_mount_point() {
-    let l = Layout::new(&WorkspaceId::new("a").unwrap()).unwrap();
+    let l = Layout::new().unwrap();
     let r = request(&l);
     assert_eq!(r.program, "sh");
     assert_eq!(
         r.args,
-        [
-            "-c",
-            DELETE_CHECK_SH,
-            "puddle-delete-check",
-            "/workspaces/a"
-        ]
+        ["-c", DELETE_CHECK_SH, "puddle-delete-check", "/workspace"]
     );
     assert_eq!(r.user.as_deref(), Some("root"));
 }

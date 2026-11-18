@@ -27,7 +27,6 @@ const newTerminal = (page: Page) =>
   page.getByRole("button", { name: "New terminal" });
 
 async function start(page: Page) {
-  await newTerminal(page).click();
   await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
   await expect(screen(page)).toContainText("$");
   await input(page).focus();
@@ -85,7 +84,6 @@ test("is the second tab of the workspace page and offers a terminal in a running
     "aria-current",
     "page",
   );
-  await expect(page.getByText(/No terminal is open/)).toBeVisible();
   await start(page);
   await expect(page.getByRole("tab", { name: "Terminal 1" })).toHaveAttribute(
     "aria-selected",
@@ -407,7 +405,8 @@ test("New terminal turns off at 8 terminals and says why", async ({
   backend,
 }) => {
   await open(page, backend);
-  for (let i = 0; i < 8; i += 1) await newTerminal(page).click();
+  await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
+  for (let i = 0; i < 7; i += 1) await newTerminal(page).click();
   await expect(newTerminal(page)).toBeDisabled();
   await expect(
     page.getByText(/This workspace has 8 terminals open/),

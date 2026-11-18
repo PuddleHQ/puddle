@@ -15,7 +15,7 @@ use puddle_compute::{ComputeError, ExecOutput, Runtime};
 use puddle_settings::MiseMode;
 use puddle_store::UserId;
 use puddle_types::{Decision, Host, Problem, RuleId, WorkspaceId};
-use puddle_workspace::{PUDDLE_DIR, WORKSPACES_ROOT};
+use puddle_workspace::{PUDDLE_DIR, WORKSPACE_DIR};
 
 use super::{HostWorkspaces, problem_key};
 
@@ -176,7 +176,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Runs `puddle-agent mise-fetch` in the guest as the session user. `None` when the workspace
     /// is not running, at the start or when the command ended.
     async fn run_mise_fetch(&self, name: &WorkspaceId) -> Option<Result<ExecOutput, ComputeError>> {
-        let dir = format!("{WORKSPACES_ROOT}/{name}/{PUDDLE_DIR}/mise");
+        let dir = format!("{WORKSPACE_DIR}/{PUDDLE_DIR}/mise");
         self.exec_agent(name, vec!["mise-fetch".to_owned(), dir], FETCH_TIMEOUT)
             .await
     }

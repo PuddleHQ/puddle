@@ -150,6 +150,7 @@ function reset() {
   api.overrides = {};
   api.tools = {};
   api.globalMise = null;
+  api.miseAvailable = true;
   api.unknown = {};
   api.kept = {};
   api.interception = {};
@@ -1283,6 +1284,13 @@ describe("the settings tab", () => {
     ).toBeNull();
     expect(screen.queryByRole("heading", { name: "Tools" })).toBeNull();
     expect(api.tools["w-demo"]).toEqual({ mise: false, repo_code: false });
+  });
+
+  it("shows no tools section in a build without the mise layer (v0.1)", async () => {
+    api.miseAvailable = false;
+    await open();
+    expect(screen.queryByRole("heading", { name: "Tools" })).toBeNull();
+    expect(screen.queryByText(/mise/i)).toBeNull();
   });
 
   it("keeps logins by default, turns capture off or back to the global default, and says the next start applies it", async () => {

@@ -22,12 +22,18 @@ pub type OpenExternal = Arc<dyn Fn(&Url) + Send + Sync>;
 /// Tells the user a link was refused (see [`crate::links`]). Tests pass a recorder.
 pub type Refused = Arc<dyn Fn(&Url) + Send + Sync>;
 
+/// Locks `Object.prototype` against pollution and keeps plain objects free to define their own
+/// `toString` and the like; the main window runs it before anything else. The UI's end-to-end tests
+/// load the same file, so the pages are tested under it.
+pub const PROTOTYPE_GUARD: &str = include_str!("window/prototype_guard.js");
+
 /// The script that runs before the page's own scripts, in the main window's top-level frame only.
 ///
-/// It freezes `Object.prototype`: the SPA is Puddle's own bundle and writes to no built-in, so a
-/// polluted prototype can only come from a bug. Tauri's `freezePrototype` setting is off because it is one
-/// switch for every webview of the app, and the workspace editor windows need a writable prototype (VS
-/// Code assigns `toString` on plain objects). Then it sets `window.__PUDDLE__ = { token }`, the one way
+/// It first runs [`PROTOTYPE_GUARD`], which locks `Object.prototype`: the SPA is Puddle's own bundle and
+/// writes to no built-in, so a polluted prototype can only come from a bug. Tauri's `freezePrototype`
+/// setting is off because it is one switch for every webview of the app, and a plain freeze also stops
+/// code from giving its own objects a `toString` (the terminal emulator does; so does VS Code in the
+/// workspace editor windows, which get no guard at all). Then it sets `window.__PUDDLE__ = { token }`, the one way
 /// the SPA learns the API token (see `ui/src/lib/api/connection.ts`). The
 /// property can't be reassigned or deleted by the page. The script does nothing unless the page's
 /// origin is the API's, so a navigation that somehow got elsewhere would see no token.
@@ -38,7 +44,7 @@ pub fn init_script(origin: &str, token: &str) -> String {
     let origin = serde_json::Value::from(origin);
     let token = serde_json::Value::from(token);
     format!(
-        "Object.freeze(Object.prototype);\n\
+        "{PROTOTYPE_GUARD}\n\
          (function () {{\n\
          \x20 if (window.location.origin !== {origin}) return;\n\
          \x20 Object.defineProperty(window, \"__PUDDLE__\", {{\n\

@@ -23,8 +23,8 @@
 # group's diff touches a path that can break them (ci/scope.sh `escalates`: crates/puddle-app, any
 # path with `windows` in its name, this workflow). The result job accepts the skip and its summary
 # says the check is not a test result for them. The test jobs stay in the queue, where each partition's nextest stops at its first failure (--max-fail 1).
-# The nightly also reruns each failed test once and lists the ones that pass only on retry
-# (ci/flaky-report.py); it never turns the run red. The nightly gate (ci/should-run.sh --events) counts
+# The nightly also reruns each failed test once so that one run lists every test that passes only on
+# retry; each such test turns the run red (ci/flaky-report.py), so the nightly issue names it. The nightly gate (ci/should-run.sh --events) counts
 # only nightly and manual runs as "already green" for every job, so a merge queue run on develop's
 # commit never stops the flake report, the release build, clippy or the UI job. A pull request run
 # never counts either.
@@ -294,7 +294,7 @@ jobs:
         if: needs.test-build.outputs.run == 'true'
         shell: bash
         env:
-          # The nightly retries a failed test once, only to report flakes (below). The profile
+          # The nightly retries a failed test once, only to name flakes (below), which fail the run. The profile
           # keeps retries at 0 for every other run (docs/STANDARDS.md, "Flaky tests").
           RETRIES: ${{ github.event_name == 'schedule' && '1' || '0' }}
           PARTITION: ${{ matrix.partition }}
@@ -368,7 +368,7 @@ jobs:
             Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $since } -MaxEvents 200 -ErrorAction SilentlyContinue |
               ForEach-Object { '{0:s} {1} {2} {3}' -f $_.TimeCreated, $_.Id, $_.LevelDisplayName, (($_.Message -replace '\s+', ' ')[0..300] -join '') }
           }
-      - name: flaky tests (nightly report)
+      - name: flaky tests (nightly, red when one passed only on retry)
         if: ${{ github.event_name == 'schedule' && needs.test-build.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: python3 ci/flaky-report.py target/nextest/ci/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"

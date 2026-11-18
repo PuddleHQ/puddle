@@ -15,8 +15,8 @@ use proptest::prelude::*;
 use puddle_store::testing::own;
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, AuditRecord, Effect, Limits, ManualClock, NewRule, Pattern,
-    PatternChoice, PatternError, PendingState, Precedence, Resolution, Scope, ScopeChoice, Store,
-    StoreError, Sweeper,
+    PatternChoice, PatternError, PendingState, Precedence, Resolution, RuleEdit, Scope,
+    ScopeChoice, Store, StoreError, Sweeper,
 };
 use puddle_test_kit::{cpu_time, eventually};
 use puddle_types::{
@@ -1815,4 +1815,159 @@ fn a_precedence_outside_one_to_nine_is_refused() {
             Err(StoreError::PrecedenceOutOfRange(n)) if n == i64::from(bad)
         ));
     }
+}
+
+// §1 Editing a rule in place (R-65 and the rule list's S3)
+
+/// What an edit that keeps everything but the pattern, effect and scope says.
+fn edit_of(rule: &puddle_store::Rule) -> RuleEdit {
+    RuleEdit {
+        scope: rule.scope.clone(),
+        pattern: rule.pattern.clone(),
+        effect: rule.effect,
+        expires_at: rule.expires_at,
+        precedence: None,
+    }
+}
+
+fn stored(store: &Store, id: RuleId) -> puddle_store::Rule {
+    store
+        .rules(puddle_store::UserId::OWNER)
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap()
+}
+
+#[test]
+fn an_edited_rule_keeps_its_identity_and_decides_from_the_next_request() {
+    let (clock, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    store.set_rule_enabled(id, false, Actor::Cli).unwrap();
+    clock.advance(1000);
+    let before = stored(&store, id);
+    let mut edit = edit_of(&before);
+    edit.pattern = Pattern::parse(".example.org").unwrap();
+    edit.effect = Effect::Deny;
+    edit.scope = Scope::Global;
+    edit.expires_at = Some(T0 + DAY);
+    let after = store.update_rule(id, &edit, Actor::Ui).unwrap();
+    assert_eq!(after.id, id);
+    assert_eq!(after.pattern.to_string(), ".example.org");
+    assert_eq!(after.effect, Effect::Deny);
+    assert_eq!(after.scope, Scope::Global);
+    assert_eq!(after.expires_at, Some(T0 + DAY));
+    // What an edit never touches.
+    assert_eq!(after.created_at, before.created_at);
+    assert_eq!(after.created_by, before.created_by);
+    assert_eq!(after.user, before.user);
+    assert!(!after.enabled, "an off rule stays off");
+    assert_eq!(after.precedence, before.precedence);
+    assert_eq!(stored(&store, id), after);
+    // The old host no longer matches; the new one is denied for every workspace.
+    assert!(matches!(
+        decide(&store, "a", "example.com"),
+        Decision::Pending(_)
+    ));
+    store.set_rule_enabled(id, true, Actor::Cli).unwrap();
+    assert!(matches!(
+        decide(&store, "b", "www.example.org"),
+        Decision::Deny { .. }
+    ));
+}
+
+#[test]
+fn an_edit_writes_one_rule_updated_record_with_before_and_after_and_none_when_nothing_changed() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    let same = edit_of(&stored(&store, id));
+    store.update_rule(id, &same, Actor::Ui).unwrap();
+    assert_eq!(audit_of(&store, "rule_updated").len(), 0, "a no-op edit");
+    let mut edit = same;
+    edit.effect = Effect::Deny;
+    store.update_rule(id, &edit, Actor::Ui).unwrap();
+    let records = audit_of(&store, "rule_updated");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["actor"], "ui");
+    assert_eq!(records[0]["before"]["effect"], "allow");
+    assert_eq!(records[0]["rule"]["effect"], "deny");
+    assert_eq!(records[0]["rule"]["id"], id.0);
+}
+
+#[test]
+fn an_edit_closes_the_waiting_requests_it_now_decides_and_leaves_the_others() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "kept.example.com", Effect::Allow);
+    let waiting = new_pending(decide(&store, "a", "new.example.org"));
+    let other_workspace = new_pending(decide(&store, "b", "new.example.org"));
+    let unrelated = new_pending(decide(&store, "a", "unrelated.test"));
+    let mut edit = edit_of(&stored(&store, id));
+    edit.pattern = Pattern::parse(".example.org").unwrap();
+    edit.effect = Effect::Deny;
+    store.update_rule(id, &edit, Actor::Ui).unwrap();
+    let state = |pending: PendingId| store.pending(pending).unwrap().state;
+    assert_eq!(state(waiting), PendingState::Denied);
+    assert_eq!(state(other_workspace), PendingState::Requested);
+    assert_eq!(state(unrelated), PendingState::Requested);
+}
+
+#[test]
+fn an_edit_moves_a_rule_into_a_rule_set_and_takes_its_default_precedence_only_when_named() {
+    let (_, store) = fixture();
+    let owner = puddle_store::UserId::OWNER;
+    let set = match store
+        .create_rule_set(owner, "Docs", "", None, Actor::Ui)
+        .unwrap()
+        .id
+    {
+        puddle_types::RuleSetId::User(id) => id,
+        other => panic!("{other:?}"),
+    };
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    let mut edit = edit_of(&stored(&store, id));
+    edit.scope = Scope::Set(set);
+    let moved = store.update_rule(id, &edit, Actor::Ui).unwrap();
+    assert_eq!(moved.scope, Scope::Set(set));
+    assert_eq!(moved.precedence, Precedence::default(), "left out keeps it");
+    edit.precedence = Some(Precedence::new(8).unwrap());
+    assert_eq!(
+        store.update_rule(id, &edit, Actor::Ui).unwrap().precedence,
+        Precedence::new(8).unwrap()
+    );
+}
+
+#[test]
+fn an_edit_that_names_something_that_is_not_there_or_not_allowed_changes_nothing() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    let before = stored(&store, id);
+    let base = edit_of(&before);
+    let refused = |edit: &RuleEdit, actor| store.update_rule(id, edit, actor);
+    let mut past = base.clone();
+    past.expires_at = Some(T0);
+    assert!(matches!(
+        refused(&past, Actor::Ui),
+        Err(StoreError::ExpiryNotInFuture)
+    ));
+    let mut stranger = base.clone();
+    stranger.scope = Scope::Workspace(sb("nobody"));
+    assert!(matches!(
+        refused(&stranger, Actor::Ui),
+        Err(StoreError::UnknownWorkspace(_))
+    ));
+    let mut no_set = base.clone();
+    no_set.scope = Scope::Set(404);
+    assert!(matches!(
+        refused(&no_set, Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        refused(&base, Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+    assert!(matches!(
+        store.update_rule(RuleId(999), &base, Actor::Ui),
+        Err(StoreError::UnknownRule(RuleId(999)))
+    ));
+    assert_eq!(stored(&store, id), before);
+    assert_eq!(audit_of(&store, "rule_updated").len(), 0);
 }

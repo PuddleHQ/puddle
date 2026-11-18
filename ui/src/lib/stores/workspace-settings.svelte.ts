@@ -61,7 +61,8 @@ export class WorkspaceSettings {
       if (mine.data && global.data) {
         this.overrides = mine.data.overrides;
         this.tools = mine.data.tools;
-        this.globalMise = global.data.tools.mise ?? true;
+        this.globalMise =
+          global.data.mise_available && (global.data.tools.mise ?? true);
         this.maxCpus = global.data.effective_limits.max_cpus;
         this.effective = mine.data.effective;
         this.unknownFields = mine.data.unknown_fields;

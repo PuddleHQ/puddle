@@ -38,7 +38,7 @@
   } = $props();
 
   // The options popover is one instance for the whole list; `shown` keeps its row and anchor
-  // through the close, so focus can return to the chevron.
+  // through the close, so focus can return to the more-choices button.
   let shown = $state<{ id: number; anchor: HTMLElement } | null>(null);
   let optionsOpen = $state(false);
   let confirming = $state<{ row: Row; choice: Choice } | null>(null);
@@ -121,7 +121,7 @@
     );
   }
 
-  /** Opens the more-choices popover on a row's chevron, or closes it if it is open there. */
+  /** Opens the more-choices popover on a row's more-choices button, or closes it if it is open there. */
   export function more(row: Row, anchor: HTMLElement) {
     if (optionsOpen && shown?.id === row.request.id) {
       optionsOpen = false;

@@ -575,7 +575,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
                 "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_disk_full": false, "disk_warning_percent": 90, "notify_unexpected_stop": false,
-                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10, "ssh_agent_pipe": " /run/agent.sock "}
+                "confirm_global_rules": false, "inbox_shortcuts": false, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10, "ssh_agent_pipe": " /run/agent.sock "}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -598,7 +598,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         assert_eq!(view["ui"][key], false, "{key}");
     }
     assert_eq!(view["ui"]["disk_warning_percent"], 90);
-    assert_eq!(view["ui"]["inbox_shortcuts"], true);
+    assert_eq!(view["ui"]["inbox_shortcuts"], false);
     assert_eq!(view["ui"]["start_at_login"], true);
     assert_eq!(view["ui"]["notify_low_disk_space"], false);
     assert_eq!(view["ui"]["disk_warn_free_gb"], 50);

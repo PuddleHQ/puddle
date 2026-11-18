@@ -75,6 +75,8 @@ export class FakeSettings {
   };
   ui: S["UiPrefs"] = noUi();
   tools: S["GlobalTools"] = { mise: null };
+  /** Whether this build has the mise layer (false is the v0.1 build). */
+  miseAvailable = true;
   limits: S["Limits"] = { max_cpus: null };
   /** The computer's logical cores, which the maximum defaults to. */
   hostCpus = 16;
@@ -189,6 +191,7 @@ export class FakeSettings {
       vscode_server: this.vscode,
       ui: this.ui,
       tools: this.tools,
+      mise_available: this.miseAvailable,
       limits: this.limits,
       effective_limits: {
         max_cpus: this.limits.max_cpus ?? this.hostCpus,

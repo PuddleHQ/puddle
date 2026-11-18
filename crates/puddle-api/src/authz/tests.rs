@@ -693,7 +693,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 62, "routes that name a resource");
+    assert_eq!(checked, 63, "routes that name a resource");
     shut_down(pair).await;
 }
 
@@ -922,28 +922,51 @@ async fn hostile_deleting_the_owners_pasted_token_removes_nothing() {
     shut_down(pair).await;
 }
 
-/// The accounts signed in on the computer are the owner's.
+/// The accounts signed in on the computer are the owner's: every kind of source that reads one
+/// (the GitHub CLI, Git's credential helper, the Azure CLI) is refused on every route that takes
+/// a source, and listing them and signing in are refused too. The owner is the control.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hostile_the_accounts_signed_in_on_the_computer_are_the_owners_alone() {
     let pair = pair().await;
-    let (ann, token) = (pair.ann.0, pair.token.as_str());
-    let gh = json!({"kind": "gh", "host": "github.com", "account": "me"});
-    for (method, path, body) in [
-        ("GET", "/api/credentials/found", None),
-        (
-            "POST",
-            "/api/credentials/sign-in",
-            Some(json!({"source": gh})),
-        ),
-        (
-            "POST",
-            "/api/credentials/check",
-            Some(json!({"source": gh})),
-        ),
-        ("POST", "/api/identities", Some(identity_body("Gh", &gh))),
-    ] {
-        let (status, answer) = send(ann, token, method, path, body.as_ref()).await;
-        assert_eq!(status, 403, "{method} {path}: {answer}");
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let sources = [
+        json!({"kind": "gh", "host": "github.com", "account": "me"}),
+        json!({"kind": "git_credential", "host": "github.com", "path": "acme", "username": null}),
+        json!({"kind": "az_cli", "tenant": "contoso.onmicrosoft.com", "org": "contoso"}),
+    ];
+    let (status, answer) = send(ann, token, "GET", "/api/credentials/found", None).await;
+    assert_eq!(status, 403, "GET found: {answer}");
+    for source in &sources {
+        for (method, path, body) in [
+            (
+                "POST",
+                "/api/credentials/sign-in",
+                json!({ "source": source }),
+            ),
+            (
+                "POST",
+                "/api/credentials/check",
+                json!({ "source": source }),
+            ),
+            (
+                "POST",
+                "/api/credentials/profile",
+                json!({ "source": source }),
+            ),
+            ("POST", "/api/identities", {
+                let mut body = identity_body("Own", source);
+                if source["kind"] == "az_cli" {
+                    body["credentials"][0]["host"] = json!("dev.azure.com");
+                    body["credentials"][0]["covers"]["owners"] = json!(["contoso"]);
+                }
+                body
+            }),
+        ] {
+            let (status, answer) = send(ann, token, method, path, Some(&body)).await;
+            assert_eq!(status, 403, "{method} {path} {source}: {answer}");
+            let (status, _) = send(owner, token, method, path, Some(&body)).await;
+            assert_ne!(status, 403, "the owner is refused {method} {path} {source}");
+        }
     }
     shut_down(pair).await;
 }
@@ -1054,6 +1077,43 @@ async fn hostile_lists_hold_only_their_callers_things() {
         let (_, body) = send(owner, token, "GET", path, None).await;
         assert!(body.contains(&box_id), "{path}: {body}");
     }
+    shut_down(pair).await;
+}
+
+/// An edit that moves Ann's own rule into the owner's workspace or the owner's rule set is
+/// refused as one that names a workspace or set nobody has, and the rule stays as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_an_edit_cannot_move_a_rule_into_the_owners_workspace_or_set() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
+    let rule = ann_makes_a_global_rule(&pair).await.as_i64().unwrap();
+    let set = things
+        .rule_set
+        .trim_start_matches("user:")
+        .parse::<i64>()
+        .unwrap();
+    let path = format!("/api/rules/{rule}");
+    for (theirs, nobodys) in [
+        (
+            json!({"type": "workspace", "workspace": things.workspace}),
+            json!({"type": "workspace", "workspace": "nobody00"}),
+        ),
+        (
+            json!({"type": "set", "set": set}),
+            json!({"type": "set", "set": 999_999}),
+        ),
+    ] {
+        let edit = |scope: &Value| json!({"scope": scope, "pattern": "anns.example", "effect": "deny", "expires_at": null});
+        let theirs = send(ann, token, "PUT", &path, Some(&edit(&theirs))).await;
+        let nobodys = send(ann, token, "PUT", &path, Some(&edit(&nobodys))).await;
+        assert_eq!(theirs.0, 404, "{}", theirs.1);
+        assert_eq!(theirs.0, nobodys.0);
+    }
+    let (_, rules) = send(ann, token, "GET", "/api/rules", None).await;
+    assert!(
+        rules.contains(r#""effect":"allow""#) && !rules.contains("deny"),
+        "{rules}"
+    );
     shut_down(pair).await;
 }
 

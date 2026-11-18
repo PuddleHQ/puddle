@@ -203,6 +203,39 @@ test.describe("the list of repositories", () => {
     }
   });
 
+  test("the address field reads owner/repo and a missing scheme, says what it will clone, and refuses a credential when it is left", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    const address = addrOf(page, 1);
+    await address.fill("user:pw@github.com/acme/web");
+    await expect(rowOf(page, 1).getByRole("alert")).toHaveCount(0);
+    await address.press("Tab");
+    await expect(rowOf(page, 1).getByRole("alert")).toHaveText(
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
+    );
+    await expect(address).toHaveAttribute("aria-invalid", "true");
+
+    await address.fill("acme/web");
+    await expect(rowOf(page, 1).getByRole("alert")).toHaveCount(0);
+    await expect(address).toHaveAccessibleDescription(
+      "Will clone https://github.com/acme/web",
+    );
+    await address.fill("github.com/acme/web");
+    await expect(address).toHaveAccessibleDescription(
+      "Will clone https://github.com/acme/web",
+    );
+    await expect(dialog.getByLabel("Name")).toHaveValue("web");
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(listed(await workspace(request, backend, "web"))).toEqual([
+      { url: "https://github.com/acme/web", directory: "web" },
+    ]);
+  });
+
   test("an empty list makes an ordinary workspace, and the card says so", async ({
     page,
     request,

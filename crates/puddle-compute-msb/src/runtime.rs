@@ -434,8 +434,11 @@ impl Runtime for MsbRuntime {
                 .await?;
             self.pull_image(&spec.image).await?;
             // Checked again right before msb opens them: a pull can take minutes, and a checkout
-            // is a folder the user's own programs may change meanwhile.
+            // is a folder the user's own programs may change meanwhile, and another sandbox may
+            // have taken a volume (msb would only refuse that at boot, without naming the holder).
             self.check_mounts(&spec)?;
+            self.check_volumes(name.as_str(), &spec_mounts(&spec))
+                .await?;
             let created = self.sdk(spec::builder(&spec).create()).await;
             match created {
                 Ok(sdk) => self.handle_for(&name, sdk).await,

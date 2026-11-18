@@ -293,6 +293,7 @@ pub struct Host<R: Runtime + Clone> {
     /// stay in the file.
     carried: BTreeMap<WorkspaceId, String>,
     proxy_passwords: Arc<ProxyPasswords>,
+    proxy: Arc<puddle_proxy::Proxy>,
     store: Arc<Store>,
     settings: Arc<dyn SettingsRepo>,
     endpoints: PuddleEndpoints,
@@ -446,6 +447,7 @@ impl<R: Runtime + Clone> Host<R> {
             quit_trims: reconciled.quit_trims,
             carried: reconciled.carried,
             proxy_passwords: credentials.proxy_passwords,
+            proxy: outbound.egress.proxy.clone(),
             store,
             settings,
             endpoints,
@@ -515,6 +517,14 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn proxy_passwords(&self) -> &Arc<ProxyPasswords> {
         &self.proxy_passwords
+    }
+
+    /// How many guest connections the proxy is serving right now, each one until its audit record
+    /// is written (see [`puddle_proxy::Proxy::open_guest_streams`]). At zero the audit holds a
+    /// record for every connection that has ended.
+    #[must_use]
+    pub fn open_guest_streams(&self) -> usize {
+        self.proxy.open_guest_streams()
     }
 
     /// The database.

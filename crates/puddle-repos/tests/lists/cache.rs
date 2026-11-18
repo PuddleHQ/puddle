@@ -748,6 +748,43 @@ async fn a_renewal_that_failed_is_announced_and_the_old_list_stays_on_show_as_st
 }
 
 #[tokio::test]
+async fn a_renewal_whose_task_died_does_not_stop_the_next_one() {
+    let rig = rig_signed_in();
+    let told = Arc::new(AtomicUsize::new(0));
+    let counter = told.clone();
+    rig.repos.on_change(Arc::new(move || {
+        assert!(
+            counter.fetch_add(1, Ordering::SeqCst) > 0,
+            "the listener fails the first time it is told"
+        );
+    }));
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    // The renewal finds a change, and the listener it tells takes the renewal's task down.
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api
+        .reply("api.github.com", REPOS_PATH, ApiReply::new(200, "[]"));
+    rig.lists(&ids, Freshness::Cached).await;
+    settle().await;
+    assert_eq!((rig.api.count(), told.load(Ordering::SeqCst)), (2, 1));
+
+    // The next old list is renewed behind the caller's back as before.
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api.reply(
+        "api.github.com",
+        REPOS_PATH,
+        ok_json("github_user_repos_page2.json"),
+    );
+    rig.lists(&ids, Freshness::Cached).await;
+    settle().await;
+    assert_eq!(rig.api.count(), 3, "the list was never read again");
+    assert_eq!(told.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn screens_asking_while_a_list_renews_cause_no_second_read() {
     let rig = rig_signed_in();
     let _told = listening(&rig);

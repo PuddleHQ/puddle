@@ -171,6 +171,16 @@ fn data_folder(options: &Options) -> Option<PathBuf> {
         .or_else(|| puddle_fs::data_dir().ok())
 }
 
+/// Records why `run` failed in the data folder and returns what to tell the user (the reason and
+/// the file's path, or the reason alone when no file could be written).
+#[must_use]
+pub fn report_startup_failure(options: &Options, err: &ShellError) -> String {
+    let reason = err.to_string();
+    let file =
+        data_folder(options).and_then(|folder| crash::write_startup_error(&folder, &reason).ok());
+    crash::startup_message(&reason, file.as_deref())
+}
+
 /// Tauri's context for the app: `tauri.conf.json`, the capabilities and the ACL manifest.
 #[must_use]
 pub fn context<R: Runtime>() -> tauri::Context<R> {

@@ -712,8 +712,8 @@
           "inbox_shortcuts",
           "set-inbox-keys",
           "Keyboard shortcuts in the inbox",
-          "A allows, D denies, J and K move between requests. Off by default so a stray key press decides nothing; Tab, Enter and Space always work.",
-          false,
+          "A allows, D denies, J and K move between requests. Turn this off if a stray key press could decide a request; Tab, Enter and Space always work.",
+          true,
         )}
       </section>
 
@@ -796,32 +796,34 @@
             }}
           />
         </div>
-        <div class="setting">
-          <div class="grow">
-            <label for="set-mise">Manage tools with mise in workspaces</label>
-            <p class="desc" id="set-mise-desc">
-              Turning this off leaves every workspace's tools and mise.toml as
-              they are; running workspaces drop mise from PATH at their next
-              start. It applies to every workspace and no workspace can turn it
-              back on. On by default.
-            </p>
+        {#if view.mise_available}
+          <div class="setting">
+            <div class="grow">
+              <label for="set-mise">Manage tools with mise in workspaces</label>
+              <p class="desc" id="set-mise-desc">
+                Turning this off leaves every workspace's tools and mise.toml as
+                they are; running workspaces drop mise from PATH at their next
+                start. It applies to every workspace and no workspace can turn
+                it back on. On by default.
+              </p>
+            </div>
+            <input
+              id="set-mise"
+              type="checkbox"
+              aria-describedby="set-mise-desc"
+              checked={miseShown}
+              onchange={(e) =>
+                edit(
+                  setTools(
+                    draft,
+                    "mise",
+                    e.currentTarget.checked,
+                    store.view ? miseManaged(store.view) : true,
+                  ),
+                )}
+            />
           </div>
-          <input
-            id="set-mise"
-            type="checkbox"
-            aria-describedby="set-mise-desc"
-            checked={miseShown}
-            onchange={(e) =>
-              edit(
-                setTools(
-                  draft,
-                  "mise",
-                  e.currentTarget.checked,
-                  store.view ? miseManaged(store.view) : true,
-                ),
-              )}
-          />
-        </div>
+        {/if}
         <div class="setting">
           <div class="grow">
             <label for="set-direct-ssh"

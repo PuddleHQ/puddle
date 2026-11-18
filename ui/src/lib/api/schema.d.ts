@@ -1447,7 +1447,12 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Edits a rule in place: its host pattern, effect, scope and expiry (and its precedence when the
+         *     body names one). The rule keeps its id, creator, creation time and switch. Open requests it
+         *     now decides are closed the same way as for a new rule.
+         */
+        put: operations["update_rule"];
         post?: never;
         /** Deletes a rule. */
         delete: operations["delete_rule"];
@@ -4557,6 +4562,11 @@ export interface components {
             /** @description The limits the user set (global only). */
             limits: components["schemas"]["Limits"];
             /**
+             * @description Whether this build has the managed mise layer at all. When false (the v0.1 build)
+             *     the window shows no mise setting and the layer is off whatever `tools.mise` holds.
+             */
+            mise_available: boolean;
+            /**
              * @description Names the values above that a save replaces. Send it back as `revision` in the save: if
              *     another client changed them in between, the save is refused (409 `settings_changed`).
              */
@@ -6829,7 +6839,7 @@ export interface components {
              *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
              */
             disk_warning_percent: number | null;
-            /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
+            /** @description The inbox's single-key shortcuts A, D, J and K (default on). */
             inbox_shortcuts: boolean | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
@@ -6867,6 +6877,32 @@ export interface components {
          * @enum {string}
          */
         UnknownTokenKind: "github_token" | "github_fine_grained_token" | "gitlab_token" | "npm_token" | "azure_devops_token" | "anthropic_key" | "openai_key" | "jwt_with_refresh_token";
+        /**
+         * @description What a rule says after an edit: the whole of it, so a body that leaves a field out is refused
+         *     and never reads as a change. The rule keeps its id, creator, creation time and switch.
+         */
+        UpdateRuleRequest: {
+            /** @description Allow or deny. */
+            effect: components["schemas"]["Effect"];
+            /**
+             * Format: int64
+             * @description Epoch ms in the future from which the rule no longer matches; `null` is permanent.
+             *     Required, so an empty body never makes a rule permanent.
+             */
+            expires_at: number | null;
+            /**
+             * @description `example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is
+             *     refused).
+             */
+            pattern: string;
+            /**
+             * Format: int32
+             * @description 1 to 9, higher wins. Left out: the rule keeps its precedence.
+             */
+            precedence?: number | null;
+            /** @description Global, one workspace, or a rule set of yours. */
+            scope: components["schemas"]["RuleScope"];
+        };
         /** @description Whose session it is. */
         UserView: {
             /**
@@ -13369,6 +13405,87 @@ export interface operations {
                 };
             };
             /** @description invalid pattern or expiry */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    update_rule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description the edited rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rule"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule, workspace or rule set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description invalid pattern, expiry or precedence */
             422: {
                 headers: {
                     [name: string]: unknown;

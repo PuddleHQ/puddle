@@ -67,7 +67,7 @@ pub use restore::{
     DatabasePreview, DatabaseRefusal, PartCounts, RestoreMode, RestoredDatabase, SecretEnv,
     StagedDatabase, check_staged_database, migrate_database, preview_merge, restore_database,
 };
-pub use rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
+pub use rule::{Actor, Effect, NewRule, Precedence, Rule, RuleEdit, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use ssh_address::{SshAddressError, looks_like_ssh, ssh_address_as_https};

@@ -3,7 +3,6 @@
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use puddle_runtime::{
@@ -381,10 +380,12 @@ fn sealed_key_facts_in(
             tpm: None,
         };
     };
-    let ask = |args: &[&std::ffi::OsStr]| launch::run(Command::new(&program).args(args), limit);
+    let ask = |args: &[&std::ffi::OsStr]| {
+        launch::run(puddle_process::command(&program).args(args), limit)
+    };
     let name = format!("--name={}", puddle_secrets::sealed_key_name());
     let decrypt = launch::run_without_output(
-        Command::new(&program).args([
+        puddle_process::command(&program).args([
             "--user".as_ref(),
             "decrypt".as_ref(),
             name.as_ref(),
@@ -431,7 +432,8 @@ fn login_session_in(
     ) else {
         return LoginSession::Unknown;
     };
-    let ask = |args: &[&str]| match launch::run(Command::new(&program).args(args), limit) {
+    let ask = |args: &[&str]| match launch::run(puddle_process::command(&program).args(args), limit)
+    {
         ProcessOutcome::Exited {
             code: Some(0),
             stdout_first_line,
@@ -469,7 +471,10 @@ fn az_cli_in(path: Option<std::ffi::OsString>, limit: Duration) -> AzCliFacts {
 
 /// What running `program --version` says about the Azure CLI.
 fn az_cli_facts_at(program: &Path, limit: Duration) -> AzCliFacts {
-    az_cli_facts(launch::run(Command::new(program).arg("--version"), limit))
+    az_cli_facts(launch::run(
+        puddle_process::command(program).arg("--version"),
+        limit,
+    ))
 }
 
 fn az_cli_facts(outcome: ProcessOutcome) -> AzCliFacts {

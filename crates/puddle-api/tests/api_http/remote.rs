@@ -187,13 +187,19 @@ async fn with_remote_serving_on_the_app_loads_under_a_public_name_with_the_opene
         "alt.example.org",
         "alt.example.org:443",
         "other.example.org",
-        "ws.puddle.example.org",
         "puddle.example.org.evil.example",
         "puddle.example.org:80",
     ] {
         let reply = api.get("/", &[("Host", host)]).await;
         assert_eq!(reply.status, 421, "{host}: {reply:?}");
     }
+    // A name one label below is a workspace editor's address, never the app.
+    let below = api.get("/", &[("Host", "ws.puddle.example.org")]).await;
+    assert_eq!(below.status, 403, "{below:?}");
+    assert!(
+        below.header("cross-origin-opener-policy").is_none(),
+        "{below:?}"
+    );
     api.running.shutdown().await;
 }
 
@@ -541,16 +547,13 @@ async fn an_allowed_proxy_reaches_the_api_over_tls_under_a_public_name() {
 #[tokio::test]
 async fn a_workspace_name_goes_to_the_editor_entry_on_both_listeners() {
     let proxy = proxied(&[IpAddr::V4(Ipv4Addr::LOCALHOST)]).await;
-    // No workspace has this id, so the editor's entry, not the API's guard, refuses it.
+    // No workspace has this id, and still the editor's entry, not the API's guard, answers.
     let host = [("Host", "abcdefgh.puddle.example.org")];
     let over_tls = proxy.tls_get("/api/health", &host).await;
     let on_loopback = proxy.api.get("/api/health", &host).await;
     for reply in [over_tls, on_loopback] {
-        assert_eq!(reply.status, 421, "{reply:?}");
-        assert!(
-            reply.body.contains("not the address of a Puddle workspace"),
-            "{reply:?}"
-        );
+        assert_eq!(reply.status, 403, "{reply:?}");
+        assert!(reply.body.contains("from Puddle"), "{reply:?}");
     }
     proxy.api.running.shutdown().await;
 }

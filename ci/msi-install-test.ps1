@@ -25,13 +25,21 @@
 #   - after the upgrade the newer build lists the workspace under its id and name, its system check
 #     passes against the older runtime's data (msb's home included), the workspace starts, and its
 #     files are there byte for byte, read through the newer runtime;
+#   - the older build also holds what a user builds up (crates/puddle-app/e2e/upgrade-state.mjs): a global allow
+#     rule, a workspace deny rule, a pending request, an environment variable and a secret, three settings, an
+#     identity and a file in /home/agent, and every GET of the playbook is dumped; after the quit and the upgrade
+#     every dump is equal, the build is not older, the guest sees the variable, the stand-in and the file, approving
+#     the kept request lets the guest's retry return 200, the editor's server answers, and each main screen loads
+#     with no error alert;
 #   - the workspace is deleted and the newer build uninstalled.
 # The steps before the upgrade drive the older build's API, so they use only the calls both have.
 #   - with -UpgradeMsi, an upgrade while the program runs, and again with a workspace running, is
 #     refused (the old install byte for byte as it was, nothing queued for a restart, the message
 #     in the log); once Puddle is quit the upgrade goes through.
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
-#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>]
+#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending]
+# -PlantBreakage damages the older build's data after its quit, as a broken migration would; the run must then
+# fail (the msi workflow's dispatch input plant_breakage runs it so and expects the failure).
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
 # Without -UpgradeMsi the upgrade step is skipped and the first MSI is the one uninstalled.
 # Where the machine has no usable hypervisor, a failing `virtualization` or `hypervisor` check is
@@ -45,6 +53,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$UpgradeMsi = '',
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
+    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending')][string]$PlantBreakage = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -614,6 +623,22 @@ function Assert-NewerVersion([string]$From, [string]$To) {
     Expect ([version]$To -gt [version]$From) "the upgrade goes from $From to $To, which is not newer"
 }
 
+# Runs crates/puddle-app/e2e/upgrade-state.mjs (the state an upgrade must keep) against the running
+# installed program; fails when any of its checks fails. Its lines are the job's log.
+function Invoke-UpgradeState([string[]]$Arguments, [string]$Phase) {
+    $script = Join-Path $PSScriptRoot '..\crates\puddle-app\e2e\upgrade-state.mjs'
+    Expect (Test-Path -LiteralPath $script) "no $script"
+    Step "upgrade state, $Phase"
+    $app = Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $env:PUDDLE_APP_PID = if ($app) { "$($app.Id)" } else { '' }
+    $env:PUDDLE_INSTALL_DIR = $InstallDir
+    $lines = @(& node $script @Arguments 2>&1 | ForEach-Object { "$_" })
+    $code = $LASTEXITCODE
+    $lines | ForEach-Object { Write-Host $_ }
+    $lines | Set-Content -LiteralPath (Join-Path $LogDir "upgrade-state-$Phase.log")
+    Expect ($code -eq 0) "the upgrade-state $Phase step failed (exit $code): $(($lines | Where-Object { $_ -match '^FAIL' }) -join ' | ')"
+}
+
 # The upgrade a user makes: from the older build $Baseline to $Upgrade, with a workspace that
 # holds files. $Policy is 'run' or 'skip' (no usable hypervisor: nothing here can run).
 function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$Policy) {
@@ -627,6 +652,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
 
     Step 'the older build makes a workspace and writes files to its volume, then stops it'
     $name = 'upgrade-test'
+    $StateDir = Join-Path $LogDir 'upgrade-state'
     $token = [guid]::NewGuid().ToString()
     $conn = Start-Installed
     try {
@@ -639,10 +665,12 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
         Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
         Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
+        Invoke-UpgradeState @('before', $StateDir, $wsId) 'before'
         Stop-Workspace $conn $wsId $name
     } finally {
         Stop-Installed
     }
+    if ($PlantBreakage) { Invoke-UpgradeState @('plant', $PlantBreakage) 'plant' }
 
     Step 'upgrade to this build'
     Invoke-Msiexec @('/i', "`"$Upgrade`"") 'msi-upgrade.log'
@@ -665,6 +693,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
         Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
         Write-Host "the files in $wsId are intact after the upgrade"
+        Invoke-UpgradeState @('after', $StateDir, $wsId) 'after'
         Stop-Workspace $conn $wsId $name
         Remove-Workspace $conn $wsId $name
     } finally {

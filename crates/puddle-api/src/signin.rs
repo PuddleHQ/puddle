@@ -28,7 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_store::{
-    AccountSecrets, Clock, DeviceId, Role, SignInMethod, Store, StoreError, UserId, UserName,
+    AccountSecrets, CheckedPassword, Clock, DeviceId, DeviceSession, Role, SignInMethod, Store,
+    StoreError, UserId, UserName,
 };
 use tokio::sync::broadcast;
 use zeroize::Zeroizing;
@@ -103,6 +104,15 @@ fn wrong_credentials() -> ApiError {
     )
 }
 
+/// A user other than the owner, while several users are off: the cause and the way out.
+fn owner_only() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::FORBIDDEN,
+        ErrorCode::Forbidden,
+        "only the owner may sign in while several users are off; the owner can switch them on",
+    )
+}
+
 fn weak(err: PasswordError) -> ApiError {
     match err {
         PasswordError::Weak(why) => ApiError::invalid(why),
@@ -140,30 +150,46 @@ impl SignIn {
         self.clock.now_ms()
     }
 
-    fn admit(&self, key: Option<&str>) -> Result<(), ApiError> {
-        let now = self.now();
-        let mut limiter = self
-            .limiter
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match key {
-            Some(key) => limiter.admit(key, now),
-            None => limiter.admit_any(now),
-        }
-        .map_err(|later| ApiError::rate_limited(later.seconds()))
+    /// Whether a user with `role` may sign in or stay signed in: the owner always, others only
+    /// while several users are on.
+    fn may_sign_in(&self, role: Role) -> bool {
+        self.multi_user || role == Role::Owner
     }
 
-    fn record(&self, key: &str, right: bool) {
-        let now = self.now();
-        let mut limiter = self
-            .limiter
+    /// `device`'s session while it works and its user may be signed in.
+    fn live_session(&self, device: DeviceId) -> Result<Option<DeviceSession>, ApiError> {
+        Ok(self
+            .store
+            .device_session(device)?
+            .filter(|s| self.may_sign_in(s.role)))
+    }
+
+    fn limiter(&self) -> std::sync::MutexGuard<'_, Limiter> {
+        self.limiter
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if right {
-            limiter.succeeded(key);
-        } else {
-            limiter.failed(key, now);
-        }
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The per-minute limit alone, for an attempt with no account to blame.
+    fn admit_any(&self) -> Result<(), ApiError> {
+        let now = self.now();
+        self.limiter()
+            .admit_any(now)
+            .map_err(|later| ApiError::rate_limited(later.seconds()))
+    }
+
+    /// Opens a password attempt on the account `key`. It counts toward the lock from now on,
+    /// so attempts sent at once cannot all be checked before the first failure is recorded.
+    fn attempt(&self, key: String) -> Result<Attempt<'_>, ApiError> {
+        let now = self.now();
+        self.limiter()
+            .admit(&key, now)
+            .map_err(|later| ApiError::rate_limited(later.seconds()))?;
+        Ok(Attempt {
+            sign_in: self,
+            key,
+            open: true,
+        })
     }
 
     async fn password_login_on(self: &Arc<Self>) -> Result<bool, ApiError> {
@@ -211,7 +237,7 @@ impl SignIn {
         let name = UserName::new(name)?;
         password::check_policy(password, name.as_str()).map_err(weak)?;
         self.require_password_login().await?;
-        self.admit(None)?;
+        self.admit_any()?;
         let this = self.clone();
         let password = Zeroizing::new(password.to_owned());
         let device_name = device_name.map(str::to_owned);
@@ -220,9 +246,10 @@ impl SignIn {
                 return Err(StoreError::SetupDone.into());
             }
             let hash = password::hash(&password).map_err(weak)?;
-            this.secrets.create_owner(&name, &hash)?;
+            let checked = this.secrets.create_owner(&name, &hash)?;
             tracing::info!("the owner account was made");
-            this.make_session(UserId::OWNER, device_name.as_deref())
+            this.make_session(&checked, device_name.as_deref())?
+                .ok_or_else(wrong_credentials)
         })
         .await
     }
@@ -235,39 +262,41 @@ impl SignIn {
         device_name: Option<&str>,
     ) -> Result<Granted, ApiError> {
         self.require_password_login().await?;
-        let key = name.to_ascii_lowercase();
-        self.admit(Some(&key))?;
+        let attempt = self.attempt(name.to_ascii_lowercase())?;
         let this = self.clone();
         let name = name.to_owned();
         let password = Zeroizing::new(password.to_owned());
         let device_name = device_name.map(str::to_owned);
-        let user = blocking(move || {
+        let checked = blocking(move || {
             // A name that is not an account, or an account that may not sign in (users other
             // than the owner while several users are off), is checked against the decoy: the same
             // work, the same answer.
             let user = this
                 .store
                 .user_named(&name)?
-                .filter(|u| this.multi_user || u.role == Role::Owner);
-            let right = if let Some(user) = &user {
-                let right = this
+                .filter(|u| this.may_sign_in(u.role));
+            let checked = if let Some(user) = &user {
+                let checked = this
                     .secrets
-                    .check_password(user.id, |hash| password::verify(hash, &password))?;
-                if !right && !this.secrets.has_password(user.id)? {
+                    .verify_password(user.id, |hash| password::verify(hash, &password))?;
+                if checked.is_none() && !this.secrets.has_password(user.id)? {
                     password::verify(&this.decoy, &password);
                 }
-                right
+                checked
             } else {
                 password::verify(&this.decoy, &password);
-                false
+                None
             };
-            Ok(user.filter(|_| right).map(|u| u.id))
+            Ok(checked)
         })
         .await?;
-        self.record(&key, user.is_some());
-        let user = user.ok_or_else(wrong_credentials)?;
+        attempt.answered(checked.is_some());
+        let checked = checked.ok_or_else(wrong_credentials)?;
         let this = self.clone();
-        blocking(move || this.make_session(user, device_name.as_deref())).await
+        // A reset, password change or deletion that landed after the check wins: no device.
+        blocking(move || this.make_session(&checked, device_name.as_deref()))
+            .await?
+            .ok_or_else(wrong_credentials)
     }
 
     /// Sets a password with the secret of an invite link (made on the server) and signs in.
@@ -278,43 +307,63 @@ impl SignIn {
         device_name: Option<&str>,
     ) -> Result<Granted, ApiError> {
         self.require_password_login().await?;
-        // The name is not known before the invite is used up, so the policy is the name-free part.
+        // The name-free part of the policy first; the name is checked once the invite is found.
         password::check_policy(password, "").map_err(weak)?;
-        self.admit(None)?;
+        self.admit_any()?;
         let this = self.clone();
         let digest = digest(secret);
         let password = Zeroizing::new(password.to_owned());
         let device_name = device_name.map(str::to_owned);
         let (granted, ended) = blocking(move || {
-            let user = this.secrets.redeem_invite(&digest)?.ok_or_else(|| {
+            let not_valid = || {
                 ApiError::new(
                     axum::http::StatusCode::UNAUTHORIZED,
                     ErrorCode::Unauthorized,
                     "this invite link is not valid any more",
                 )
-            })?;
+            };
+            // A user's invite waits, unused, while several users are off.
+            let holder = this.secrets.invite_holder(&digest)?.ok_or_else(not_valid)?;
+            let holder = this.store.user(holder)?;
+            // A refused password leaves the invite as it was.
+            password::check_policy(&password, &holder.name).map_err(weak)?;
+            if !this.may_sign_in(holder.role) {
+                return Err(owner_only());
+            }
+            let user = this.secrets.redeem_invite(&digest)?.ok_or_else(not_valid)?;
             let hash = password::hash(&password).map_err(weak)?;
-            this.secrets.set_password_hash(user, &hash)?;
+            let checked = this.secrets.set_password_hash(user, &hash)?;
             let ended = this.store.revoke_devices_of(user, None)?;
-            Ok((this.make_session(user, device_name.as_deref())?, ended))
+            let granted = this
+                .make_session(&checked, device_name.as_deref())?
+                .ok_or_else(not_valid)?;
+            Ok((granted, ended))
         })
         .await?;
         self.end_devices(&ended);
         Ok(granted)
     }
 
-    /// A new device for `user` with its refresh token and first access token.
-    fn make_session(&self, user: UserId, device_name: Option<&str>) -> Result<Granted, ApiError> {
+    /// A new device for the user of `checked`, with its refresh token and first access token;
+    /// `None` when that password changed, went away or the user's deletion began since.
+    fn make_session(
+        &self,
+        checked: &CheckedPassword,
+        device_name: Option<&str>,
+    ) -> Result<Option<Granted>, ApiError> {
         let now = self.now();
-        let device = self.store.add_device(
-            user,
+        let Some(device) = self.secrets.add_device(
+            checked,
             device_name.unwrap_or(DEFAULT_DEVICE_NAME),
             now.saturating_add(DEVICE_TTL_MS),
-        )?;
+        )?
+        else {
+            return Ok(None);
+        };
         let refresh = random_secret().map_err(|e| internal(&e))?;
         self.secrets.put_session(device.id, &digest(&refresh))?;
-        let grant = self.grant(user, &device)?;
-        Ok(Granted { grant, refresh })
+        let grant = self.grant(checked.user(), &device)?;
+        Ok(Some(Granted { grant, refresh }))
     }
 
     fn grant(&self, user: UserId, device: &puddle_store::Device) -> Result<SessionGrant, ApiError> {
@@ -348,6 +397,9 @@ impl SignIn {
                     "this browser is not signed in",
                 )
             })?;
+            if !this.may_sign_in(session.role) {
+                return Err(owner_only());
+            }
             this.store
                 .touch_device(session.device, this.now().saturating_add(DEVICE_TTL_MS))?;
             let device = this
@@ -395,26 +447,26 @@ impl SignIn {
         .await?;
         password::check_policy(new, &who.name).map_err(weak)?;
         self.require_password_login().await?;
-        let key = who.name.to_ascii_lowercase();
-        self.admit(Some(&key))?;
+        let attempt = self.attempt(who.name.to_ascii_lowercase())?;
         let current = Zeroizing::new(current.to_owned());
         let new = Zeroizing::new(new.to_owned());
-        let verified = blocking({
+        let checked = blocking({
             let this = this.clone();
             move || {
                 Ok(this
                     .secrets
-                    .check_password(user, |hash| password::verify(hash, &current))?)
+                    .verify_password(user, |hash| password::verify(hash, &current))?)
             }
         })
         .await?;
-        self.record(&key, verified);
-        if !verified {
-            return Err(wrong_credentials());
-        }
+        attempt.answered(checked.is_some());
+        let checked = checked.ok_or_else(wrong_credentials)?;
         let ended = blocking(move || {
             let hash = password::hash(&new).map_err(weak)?;
-            this.secrets.set_password_hash(user, &hash)?;
+            // A reset or deletion that landed after the check wins: no password is put back.
+            if !this.secrets.replace_password(&checked, &hash)? {
+                return Err(wrong_credentials());
+            }
             Ok(this.store.revoke_devices_of(user, Some(device))?)
         })
         .await?;
@@ -485,9 +537,7 @@ impl SignIn {
     pub(crate) async fn principal_for(self: &Arc<Self>, token: &str) -> Option<Principal> {
         let device = self.tokens.device_of(token, self.now())?;
         let this = self.clone();
-        let session = blocking(move || Ok(this.store.device_session(device)?))
-            .await
-            .ok()??;
+        let session = blocking(move || this.live_session(device)).await.ok()??;
         Some(Principal {
             user: session.user,
             role: session.role,
@@ -598,11 +648,42 @@ impl SignIn {
     async fn still_works(self: &Arc<Self>, device: DeviceId) -> bool {
         let this = self.clone();
         // A database that cannot answer ends the stream: it must not outlive a revoke it cannot see.
-        blocking(move || Ok(this.store.device_session(device)?))
+        blocking(move || this.live_session(device))
             .await
             .ok()
             .flatten()
             .is_some()
+    }
+}
+
+/// A password attempt let in by the per-account limit. Until it is answered it holds one of the
+/// account's open attempts; dropped unanswered (an error, a caller that went away), it gives the
+/// slot back without counting either way.
+struct Attempt<'a> {
+    sign_in: &'a SignIn,
+    key: String,
+    open: bool,
+}
+
+impl Attempt<'_> {
+    /// Records the answer: `right` forgives the account's failures, a wrong one counts.
+    fn answered(mut self, right: bool) {
+        let now = self.sign_in.now();
+        let mut limiter = self.sign_in.limiter();
+        if right {
+            limiter.succeeded(&self.key);
+        } else {
+            limiter.failed(&self.key, now);
+        }
+        self.open = false;
+    }
+}
+
+impl Drop for Attempt<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            self.sign_in.limiter().abandoned(&self.key);
+        }
     }
 }
 

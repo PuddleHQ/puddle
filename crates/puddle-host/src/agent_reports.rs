@@ -398,7 +398,7 @@ impl Run {
     }
 }
 
-/// Takes the reports of every workspace and keeps the two problems they can raise. The workspaces
+/// Takes the reports of every workspace and keeps the problems they can raise. The workspaces
 /// service tells it when a run begins and ends.
 pub(crate) struct ReportDesk {
     problems: Arc<Problems>,
@@ -460,7 +460,7 @@ impl ReportDesk {
         self.problems.clear(&agent_protocol_key(id));
     }
 
-    /// `id` was deleted: both problems end.
+    /// `id` was deleted: every problem the desk keeps for it ends.
     pub(crate) fn forget(&self, id: &WorkspaceId) {
         self.end(id);
         self.problems.clear(&entrypoint_key(id));

@@ -26,7 +26,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
-/// How long a failed sign-in waits for the server to say why it refused.
 /// What the runtime's SSH server is asked to run: it starts a plain `/bin/sh` in `/` for a shell
 /// request, and only an interactive login shell that starts in the home directory is moved to the
 /// start folder (and reads the workspace's environment and shell init). So go home, then become
@@ -34,6 +33,7 @@ use tokio::task::JoinHandle;
 const LOGIN_SHELL: &str =
     "cd 2>/dev/null; s=$(getent passwd \"$(id -un)\" | cut -d: -f7); exec \"${s:-/bin/sh}\" -l";
 
+/// How long a failed sign-in waits for the server to say why it refused.
 const REFUSAL_WAIT: Duration = Duration::from_millis(500);
 
 /// What the host signs in with: the login key of direct SSH, read into memory.

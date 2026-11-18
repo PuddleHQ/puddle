@@ -364,6 +364,9 @@ fn try_ready(
     )
 }
 
+/// How long a program that logged a failed start has to exit before it counts as up and broken.
+const EXIT_GRACE: Duration = Duration::from_millis(500);
+
 /// Like [`try_ready`], with the caller's own `answers`: whether the program (and not a stranger on
 /// its port) is serving. A program that exits first is a failure, even when `answers` says yes,
 /// and so is one that `failed` says is alive but broken (a program that logs its failed bind and
@@ -395,8 +398,17 @@ fn try_answers(
             return Err(why);
         }
         if failed() {
-            // A program that logs its failed bind and then exits may do both between the two
-            // checks above: the exit is the better word for it, whichever the loop saw first.
+            // A program that logs its failed bind and then exits does both close together, and
+            // the log line can be read before the exit lands: the exit is the better word for it,
+            // so a program that is still there gets a moment to go before it counts as up and
+            // broken.
+            let grace = Instant::now() + EXIT_GRACE;
+            while child.is_some() && Instant::now() < grace {
+                if let Some(why) = exited_early(&mut child) {
+                    return Err(why);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             return Err(exited_early(&mut child)
                 .unwrap_or_else(|| format!("the fixture failed to start\n{}", diagnostics())));
         }

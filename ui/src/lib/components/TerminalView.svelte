@@ -139,15 +139,22 @@
     >
       <button
         type="button"
+        class="menu-item"
         role="menuitem"
         disabled={!canCopy}
         onclick={() => choose("copy")}>Copy</button
       >
-      <button type="button" role="menuitem" onclick={() => choose("all")}
-        >Select all</button
+      <button
+        type="button"
+        class="menu-item"
+        role="menuitem"
+        onclick={() => choose("all")}>Select all</button
       >
-      <button type="button" role="menuitem" onclick={() => choose("clear")}
-        >Clear</button
+      <button
+        type="button"
+        class="menu-item"
+        role="menuitem"
+        onclick={() => choose("clear")}>Clear</button
       >
     </div>
   {/if}
@@ -190,7 +197,7 @@
     border-radius: var(--radius-md);
     background: var(--color-surface-raised);
   }
-  .menu button {
+  .menu-item {
     min-height: var(--control-size);
     padding: var(--space-1) var(--space-3);
     border: 0;
@@ -201,11 +208,11 @@
     text-align: start;
     cursor: pointer;
   }
-  .menu button:hover:not(:disabled),
-  .menu button:focus-visible {
+  .menu-item:hover:not(:disabled),
+  .menu-item:focus-visible {
     background: var(--color-accent-subtle);
   }
-  .menu button:disabled {
+  .menu-item:disabled {
     color: var(--color-text-muted);
     cursor: default;
   }

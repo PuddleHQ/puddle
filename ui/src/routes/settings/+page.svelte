@@ -477,6 +477,7 @@
     <input
       {id}
       type="checkbox"
+      role="switch"
       aria-describedby="{id}-desc"
       {disabled}
       checked={uiValue(key, fallback)}
@@ -1218,6 +1219,7 @@
           <input
             id="set-zoom"
             type="checkbox"
+            role="switch"
             checked={layerValue("zoom_hotkeys", eff.zoom_hotkeys.value)}
             onchange={(e) =>
               editLayer(
@@ -1490,26 +1492,7 @@
   label {
     font-weight: 600;
   }
-  input[type="checkbox"] {
-    width: 1.5rem;
-    height: 1.5rem;
-    flex: none;
-  }
-  select,
-  input[type="number"],
-  input[type="text"] {
-    min-height: var(--control-size);
-    max-width: 18rem;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  input[aria-invalid="true"] {
-    border-color: var(--color-danger);
-  }
+
   .narrow {
     width: 6rem;
   }

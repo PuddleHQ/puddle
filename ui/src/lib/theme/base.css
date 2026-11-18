@@ -27,6 +27,12 @@ h3 {
   margin: 0;
 }
 
+/* One size per heading level: the browser's own h3 size made "Proxy sign-in" larger than the "Network"
+   section it sits in (U-32). Screens that want another size set it on a class. */
+h3 {
+  font-size: var(--text-md);
+}
+
 a {
   color: var(--color-accent);
 }
@@ -46,23 +52,6 @@ a {
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
-}
-
-/* A select is as tall as the control size, not as tall as its font's line: Edge on Windows gives
-   Segoe UI a taller line, which made its selects one pixel higher than the token. */
-select {
-  box-sizing: border-box;
-  height: var(--control-size);
-}
-
-/* A checkbox or radio is a 24 px target (WCAG 2.5.8): the native 13 px box is too small to hit, and
-   some sit apart from their text. */
-input[type="checkbox"],
-input[type="radio"] {
-  width: 1.5rem;
-  height: 1.5rem;
-  /* A flex row must not squeeze the box below 24 px. */
-  flex: none;
 }
 
 summary {

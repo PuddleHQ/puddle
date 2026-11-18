@@ -55,26 +55,32 @@
       1024 hosts.
     </p>
     <div class="row">
-      <label for="{id}-minutes">Leave a host alone for (minutes)</label>
-      <input
-        id="{id}-minutes"
-        type="number"
-        min="1"
-        max="43200"
-        step="1"
-        bind:value={minutes}
-        oninput={() => (saved = false)}
-      />
-      <label for="{id}-cap">Hosts remembered per workspace</label>
-      <input
-        id="{id}-cap"
-        type="number"
-        min="1"
-        max="10000"
-        step="1"
-        bind:value={cap}
-        oninput={() => (saved = false)}
-      />
+      <div class="form-field">
+        <label for="{id}-minutes">Leave a host alone for (minutes)</label>
+        <input
+          class="input-short"
+          id="{id}-minutes"
+          type="number"
+          min="1"
+          max="43200"
+          step="1"
+          bind:value={minutes}
+          oninput={() => (saved = false)}
+        />
+      </div>
+      <div class="form-field">
+        <label for="{id}-cap">Hosts remembered per workspace</label>
+        <input
+          class="input-short"
+          id="{id}-cap"
+          type="number"
+          min="1"
+          max="10000"
+          step="1"
+          bind:value={cap}
+          oninput={() => (saved = false)}
+        />
+      </div>
     </div>
     <div class="row">
       <button type="submit" class="btn primary" disabled={working}
@@ -101,16 +107,6 @@
   }
   label {
     font-weight: 600;
-  }
-  input {
-    width: 7rem;
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
   }
   .desc,
   .muted {

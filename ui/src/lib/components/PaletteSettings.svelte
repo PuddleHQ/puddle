@@ -136,24 +136,7 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  select {
-    min-height: var(--control-size);
-    max-width: 18rem;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  input[type="color"] {
-    width: 3rem;
-    height: var(--control-size);
-    padding: 0;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-  }
+
   .warning {
     padding: var(--space-3);
     border: 1px solid var(--color-warning);

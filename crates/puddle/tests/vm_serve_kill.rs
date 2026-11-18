@@ -87,7 +87,8 @@ fn program_folder(root: &Path, runtime_dir: &Path) -> PathBuf {
     let folder = root.join("program");
     std::fs::create_dir_all(&folder).unwrap();
     let exe = folder.join("puddle");
-    std::fs::copy(puddle_bin(), &exe).expect("copy the built `puddle` program into the program folder");
+    std::fs::copy(puddle_bin(), &exe)
+        .expect("copy the built `puddle` program into the program folder");
     std::os::unix::fs::symlink(runtime_dir, folder.join("runtime")).unwrap();
     exe
 }

@@ -87,6 +87,31 @@ gone() {
     [ "${state%% *}" = Z ]
 }
 
+# restart_agent <supervisor pid>: stops the agent the supervisor runs, so the supervisor starts it
+# again with the settings of this boot (it reads them before every start). Waits until the old one
+# has gone, so the listening check below sees the new agent, not the old one's socket.
+restart_agent() {
+    for st in /proc/[0-9]*/stat; do
+        stat=$(cat "$st" 2>/dev/null) || continue
+        rest=${stat##*) }
+        rest=${rest#* }
+        [ "${rest%% *}" = "$1" ] || continue
+        child=${st#/proc/}
+        child=${child%/stat}
+        kill "$child" 2>/dev/null || continue
+        i=0
+        until gone "$child"; do
+            i=$((i + 1))
+            if [ "$i" -gt $((5 * TICKS_PER_S)) ]; then
+                kill -9 "$child" 2>/dev/null
+                break
+            fi
+            sleep "$TICK"
+        done
+    done
+    say "agent settings changed; agent restarted with them"
+}
+
 say "start (boot $boot_id)"
 
 # --- 1. The plan ------------------------------------------------------------------------------
@@ -335,6 +360,11 @@ merge_result() { # merge_result <path> <tool output>
 # The agent's settings: the supervisor reads this file before every start of the agent, so a
 # restarted agent has them; replaced whole, so a restart between two boots never sees half of it.
 printf 'PUDDLE_AGENT_CAPTURE=%s\n' "$CAPTURE" >>"$RUN/agent.env.new"
+# Whether they differ from the last boot's, which an agent that is already running started with.
+AGENT_ENV_CHANGED=
+if [ -f "$RUN/agent.env" ] && [ "$(cat "$RUN/agent.env.new")" != "$(cat "$RUN/agent.env")" ]; then
+    AGENT_ENV_CHANGED=1
+fi
 mv -f "$RUN/agent.env.new" "$RUN/agent.env" || die "cannot record the agent's settings"
 
 # Files an earlier plan wrote whole that this one doesn't: remove them (a provider was switched
@@ -434,6 +464,9 @@ if [ -n "$AGENT" ]; then
     [ -x "$ROOT$AGENT" ] || die "the agent $AGENT is missing or not executable"
     if alive "$RUN/supervisor.pid" agent-supervise; then
         say "agent supervisor already running"
+        if [ -n "$AGENT_ENV_CHANGED" ]; then
+            restart_agent "$(cut -d' ' -f2 "$RUN/supervisor.pid")"
+        fi
     else
         # Its own session and no inherited stdout/stderr, so the exec that started us can end.
         if command -v setsid >/dev/null 2>&1; then

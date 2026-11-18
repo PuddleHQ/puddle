@@ -573,8 +573,8 @@ impl BootPlanBuilder {
     }
 
     /// Starts the agent with the setting `name` (`PUDDLE_AGENT_*`), for example the browser
-    /// editor's server. Applied when the agent next starts: the supervisor reads the latest boot's
-    /// settings before each start. Needs an agent in the plan.
+    /// editor's server. Applied in this boot: an agent that already runs with other settings (a
+    /// re-adopted sandbox) is restarted with these. Needs an agent in the plan.
     pub fn agent_env(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.agent_env.push((name.into(), value.into()));
         self
@@ -589,7 +589,8 @@ impl BootPlanBuilder {
     }
 
     /// Turns transparent capture off (on by default): the agent starts without it and the
-    /// resolver stays as the guest had it.
+    /// resolver stays as the guest had it. A switch either way on a running sandbox restarts its
+    /// agent, as any change of [`Self::agent_env`] does.
     pub fn no_capture(mut self) -> Self {
         self.capture = false;
         self

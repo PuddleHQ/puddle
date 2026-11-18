@@ -180,6 +180,7 @@ pub(super) fn load_proxy_passwords(passwords: Arc<ProxyPasswords>, problems: Arc
         Ok(count) => {
             tracing::debug!(count, "proxy sign-ins loaded");
             problems.clear(PROBLEM);
+            crate::proxy_sign_ins::report_lost(&passwords, &problems);
         }
         Err(_) => problems.raise(Problem::new(
             PROBLEM,

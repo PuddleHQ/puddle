@@ -810,6 +810,7 @@ fn build_outbound(
     let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
         proxy_passwords.clone(),
         egress.chain.clone(),
+        problems.clone(),
     ));
     let network_health = network_health_of(
         &egress.chain,
@@ -883,7 +884,8 @@ async fn open_credentials(
     };
     let marks = config.paths.login_markers();
     let injecting = Injecting::build(options, &vault, store, events, roots, marks, settings)?;
-    let proxy_passwords = ProxyPasswords::new(vault.clone());
+    let proxy_passwords =
+        ProxyPasswords::with_known_file(vault.clone(), config.paths.proxy_sign_in_names());
     load_proxy_passwords(proxy_passwords.clone(), problems.clone());
     Ok(Credentials {
         vault,

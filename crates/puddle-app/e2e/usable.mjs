@@ -416,6 +416,8 @@ async function firstRunToCreateForm() {
   await uia.click("Get started", inMain("link", "Get started"));
   const pages = ["System check", "Certificates", "How do you want to connect?", "Which hosts should Puddle decrypt?", "Look", "Your first workspace"];
   await uia.waitFor(`the "${pages[0]}" heading`, heading(pages[0]));
+  // The check waits for the person to press Start (Continue stays disabled until the run is done).
+  await uia.click("Start system check", inMain("button", "Start system check"));
   // 6. Its report, copied to the Windows clipboard.
   await copyTheReport();
   for (const page of pages.slice(1)) {

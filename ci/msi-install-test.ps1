@@ -27,7 +27,7 @@
 #     files are there byte for byte, read through the newer runtime;
 #   - the older build also holds what a user builds up (crates/puddle-app/e2e/upgrade-state.mjs): a global allow
 #     rule, a workspace deny rule, a pending request, an environment variable and a secret, three settings, an
-#     identity and a file in /home/agent, and every GET of the playbook is dumped; after the quit and the upgrade
+#     identity and a file in the workspace folder, and every GET of the playbook is dumped; after the quit and the upgrade
 #     every dump is equal, the build is not older, the guest sees the variable, the stand-in and the file, approving
 #     the kept request lets the guest's retry return 200, the editor's server answers, and each main screen loads
 #     with no error alert;

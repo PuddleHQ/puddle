@@ -738,16 +738,13 @@ impl Logins {
     ) -> Result<(), Problem> {
         // One write per slot, with its last field's token, as the registry gets the last one too.
         let mut writes: Vec<(Slot, &Zeroizing<String>, &String)> = Vec::new();
-        for (field, real, stand_in, _) in planned {
-            if field.keep != Keep::Stored {
-                continue;
-            }
-            let write = (field.slot(), real, stand_in);
-            match writes.iter_mut().find(|(slot, ..)| *slot == write.0) {
-                Some(earlier) => *earlier = write,
-                None => writes.push(write),
+        for (field, real, stand_in, _) in planned.iter().rev() {
+            if field.keep == Keep::Stored && !writes.iter().any(|(slot, ..)| *slot == field.slot())
+            {
+                writes.push((field.slot(), real, stand_in));
             }
         }
+        writes.reverse();
         let slots: Vec<Slot> = writes.iter().map(|(slot, ..)| *slot).collect();
         // An answer with several tokens is kept whole or not at all: what the store held before
         // goes back when a later token cannot be written, so it never holds a pair that did not

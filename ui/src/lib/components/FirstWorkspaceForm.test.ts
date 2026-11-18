@@ -2,14 +2,15 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { workspace } from "#lib/testing/fake-workspaces.ts";
+import { toasts } from "#lib/stores/toasts.svelte.ts";
 import FirstWorkspaceForm from "./FirstWorkspaceForm.svelte";
 
 afterEach(cleanup);
 
-function mount(create = vi.fn()) {
+function mount(create = vi.fn(), list: unknown[] = []) {
   const onMore = vi.fn();
   render(FirstWorkspaceForm, {
-    props: { store: { create, list: [] }, onMore },
+    props: { store: { create, list: list as never }, onMore },
   });
   return { create, onMore };
 }
@@ -58,5 +59,46 @@ describe("FirstWorkspaceForm", () => {
     const { onMore } = mount();
     await fireEvent.click(screen.getByRole("button", { name: "More options" }));
     expect(onMore).toHaveBeenCalledOnce();
+  });
+
+  it("waits to call a half-typed owner an error until the field is left", async () => {
+    mount();
+    await type("sharkdp");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await fireEvent.blur(
+      screen.getByRole("textbox", { name: "Repository address" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/owner\/repo/);
+  });
+
+  it("refuses a name another workspace has, without asking the service", async () => {
+    const { create } = mount(vi.fn(), [workspace("api")]);
+    await type("https://github.com/acme/api.git");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create workspace" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/already/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("says which hosts it allowed for the clone, and clears the field", async () => {
+    mount(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        value: workspace("api", { allowed_hosts: [{ host: "github.com" }] }),
+      }),
+    );
+    await type("https://github.com/acme/api.git");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create workspace" }),
+    );
+    await vi.waitFor(() =>
+      expect(toasts.items.map((t) => t.message).join(" ")).toContain(
+        "Puddle allowed github.com",
+      ),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Repository address" }),
+    ).toHaveValue("");
   });
 });

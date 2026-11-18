@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { workspace } from "#lib/testing/fake-workspaces.ts";
 import WorkspaceRow from "./WorkspaceRow.svelte";
 
+vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
+
 afterEach(cleanup);
 
 const NOW = 10_000_000;
@@ -89,6 +91,19 @@ describe("WorkspaceRow", () => {
     expect(screen.queryByRole("button", { name: /^Start/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Connect to demo" }));
     expect(calls.connect).toHaveBeenCalledOnce();
+  });
+
+  it("opens the workspace's page from the menu", async () => {
+    const { goto } = await import("$app/navigation");
+    mount();
+    await fireEvent.keyDown(
+      screen.getByRole("button", { name: "More about demo" }),
+      { key: "Enter" },
+    );
+    await fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Open details" }),
+    );
+    expect(goto).toHaveBeenCalledWith("/workspaces/w-demo");
   });
 
   it("keeps Stop in the menu of a running workspace, and not of a stopped one", async () => {

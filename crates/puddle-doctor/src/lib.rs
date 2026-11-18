@@ -63,3 +63,7 @@ pub use puddle_runtime::RuntimeError;
 pub use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
 pub use report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 pub use system::SystemProbe;
+
+/// Whether this build has the `puddle serve` command. Advice that names the command is worded
+/// differently, or left out, when it is false: a command the build refuses is no fix.
+pub const SERVE_BUILT_IN: bool = cfg!(feature = "serve");

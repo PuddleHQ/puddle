@@ -647,6 +647,50 @@ describe("undo", () => {
     expect(inbox.rules).toHaveLength(0);
   });
 
+  it("asks the service for the group of a reopened request this page did not decide, and lists one the stream already showed only once", async () => {
+    const { store, inbox, source } = setup();
+    inbox.add(request(1));
+    await store.refresh();
+    const decided = await store.decide(
+      rowOf(store, 1),
+      narrowest("allow"),
+      false,
+    );
+    if (!decided.ok) throw new Error("decide failed");
+    // The stream's pending_opened for the new row reaches the page before the reply does.
+    const real = inbox.POST;
+    vi.spyOn(inbox, "POST").mockImplementation((async (
+      ...args: Parameters<typeof real>
+    ) => {
+      const reply = await real(...args);
+      const [request] = (reply.data as { reopened: Row["request"][] }).reopened;
+      source.emit({
+        type: "pending_opened",
+        request,
+        registrable_domain: "example.com",
+      });
+      return reply;
+    }) as never);
+    expect(await store.undo(decided.decided)).toEqual({ ok: true });
+    expect(store.rows.map((r) => r.request.host)).toEqual(["h1.example.com"]);
+
+    // A decision this page does not know the group of (it was not in `closed`): the service says.
+    vi.restoreAllMocks();
+    const other = await store.decide(
+      rowOf(store, 1000),
+      narrowest("deny"),
+      false,
+    );
+    if (!other.ok) throw new Error("decide failed");
+    expect(await store.undo({ ...other.decided, closed: [] })).toEqual({
+      ok: true,
+    });
+    await vi.waitFor(() =>
+      expect(store.rows.map((r) => r.request.host)).toEqual(["h1.example.com"]),
+    );
+    expect(store.groups[0]?.domain).toBe("example.com");
+  });
+
   it("keeps the entry and says so when the service refuses or is down", async () => {
     const { store, inbox } = setup();
     inbox.add(request(1));

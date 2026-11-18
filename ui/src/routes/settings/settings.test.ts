@@ -114,6 +114,16 @@ describe("the mise switch", () => {
     ).toBe(false);
   });
 
+  it("is not shown at all in a build without the mise layer (v0.1)", async () => {
+    api.miseAvailable = false;
+    await open();
+    expect(
+      screen.queryByLabelText("Manage tools with mise in workspaces"),
+    ).toBeNull();
+    expect(screen.queryByText(/mise/i)).toBeNull();
+    api.miseAvailable = true;
+  });
+
   it("sends nothing for a switch put back to what is stored", async () => {
     await open();
     const box = screen.getByLabelText("Manage tools with mise in workspaces");

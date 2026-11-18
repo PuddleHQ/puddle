@@ -4474,6 +4474,11 @@ export interface components {
             /** @description The limits the user set (global only). */
             limits: components["schemas"]["Limits"];
             /**
+             * @description Whether this build has the managed mise layer at all. When false (the v0.1 build)
+             *     the window shows no mise setting and the layer is off whatever `tools.mise` holds.
+             */
+            mise_available: boolean;
+            /**
              * @description Names the values above that a save replaces. Send it back as `revision` in the save: if
              *     another client changed them in between, the save is refused (409 `settings_changed`).
              */

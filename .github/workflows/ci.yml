@@ -820,6 +820,7 @@ jobs:
             ui/test-results
             ui/coverage/lcov.info
             ui/coverage/coverage-summary.json
+            ui/vitest-out
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group

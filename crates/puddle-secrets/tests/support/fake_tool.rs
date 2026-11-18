@@ -127,7 +127,7 @@ fn main() {
 /// - `store` updates the entry `git:<service>` when it holds the same account, else writes it, or
 ///   `git:https://<account>@<host><path>` when it holds another account.
 ///
-/// The store file has one entry per line: target, user and secret, separated by tabs.
+/// The store file has one entry per line: target, user and value, separated by tabs.
 fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
     let field = |key: &str| {
         request
@@ -160,8 +160,8 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
                     account.is_none_or(|a| a == user) && gcm_target_matches(&service, target)
                 })
                 .collect();
-            if let [[_, user, secret]] = matching.as_slice() {
-                answer(user, secret);
+            if let [[_, user, value]] = matching.as_slice() {
+                answer(user, value);
                 return 0;
             }
             if std::env::var("GCM_INTERACTIVE").is_ok_and(|v| v == "never") {
@@ -169,15 +169,15 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
                 return 1;
             }
             match sign_in.and_then(|s| s.split_once(':')) {
-                Some((user, token)) => {
-                    answer(user, token);
+                Some((user, value)) => {
+                    answer(user, value);
                     0
                 }
                 None => 1,
             }
         }
         "store" => {
-            let (Some(user), Some(secret)) = (account, field("password")) else {
+            let (Some(user), Some(value)) = (account, field("password")) else {
                 return 0;
             };
             let plain = format!("git:{service}");
@@ -189,7 +189,7 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
                 _ => plain,
             };
             entries.retain(|[t, _, _]| *t != target);
-            entries.push([target, user.to_owned(), secret.to_owned()]);
+            entries.push([target, user.to_owned(), value.to_owned()]);
             let mut lines = String::new();
             for [t, u, s] in &entries {
                 for (part, end) in [(t, '\t'), (u, '\t'), (s, '\n')] {
@@ -206,9 +206,9 @@ fn gcm(verb: &str, request: &str, store: &str, sign_in: Option<&str>) -> i32 {
 
 /// A credential helper's answer to `get`: the protocol's output on standard output, written as
 /// bytes rather than through `println!`, which is for messages to a person.
-fn answer(user: &str, password: &str) {
+fn answer(user: &str, value: &str) {
     let mut out = std::io::stdout().lock();
-    let _ = out.write_all(format!("username={user}\npassword={password}\n").as_bytes());
+    let _ = out.write_all(format!("username={user}\npassword={value}\n").as_bytes());
     let _ = out.flush();
 }
 

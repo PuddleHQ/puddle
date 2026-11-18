@@ -37,9 +37,12 @@ pub(crate) fn named_volumes(config: &SandboxConfig) -> Vec<String> {
         .collect()
 }
 
-/// Where `config` mounts its named volumes in the guest; a path that is not a valid guest path is
-/// left out.
-pub(crate) fn named_mount_points(config: &SandboxConfig) -> Vec<GuestPath> {
+/// Where `config` mounts its named volumes in the guest; none when the configuration cannot be
+/// read, and a path that is not a valid guest path is left out.
+pub(crate) fn named_mount_points<E>(config: Result<SandboxConfig, E>) -> Vec<GuestPath> {
+    let Ok(config) = config else {
+        return Vec::new();
+    };
     config
         .spec
         .mounts

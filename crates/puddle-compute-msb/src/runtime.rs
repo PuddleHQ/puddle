@@ -624,9 +624,7 @@ impl Runtime for MsbRuntime {
                                 .collect()
                         },
                     ),
-                    volume_mounts: h
-                        .config()
-                        .map_or_else(|_| Vec::new(), |c| crate::volume::named_mount_points(&c)),
+                    volume_mounts: crate::volume::named_mount_points(h.config()),
                     // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)

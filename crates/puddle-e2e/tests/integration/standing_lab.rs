@@ -18,23 +18,37 @@ fn lab() -> Command {
     Command::new(env!("CARGO_BIN_EXE_puddle-lab"))
 }
 
-/// Whether Squid and mitmproxy are configured; a CI job that provides them sets the flags, and a
+/// Whether Squid and mitmproxy are configured; a CI job that provides either sets its flag, and a
 /// missing program is then a failure.
 fn programs() -> bool {
-    let squid = std::env::var_os("PUDDLE_SQUID_BIN").is_some()
-        || std::env::var_os("PUDDLE_SQUID_DOCKER").is_some();
-    let mitm = std::env::var_os("PUDDLE_MITMDUMP_BIN").is_some();
-    let required = std::env::var_os("PUDDLE_REQUIRE_SQUID").is_some()
-        && std::env::var_os("PUDDLE_REQUIRE_MITMPROXY").is_some();
-    assert!(
-        (squid && mitm) || !required,
-        "PUDDLE_REQUIRE_SQUID and PUDDLE_REQUIRE_MITMPROXY are set but a lab program is not configured"
-    );
-    if !(squid && mitm) {
+    let set = |name: &str| std::env::var_os(name).is_some();
+    let both = check_programs(&set).unwrap();
+    if !both {
+        // skip-ok: check_programs above already failed when a PUDDLE_REQUIRE_* flag is set and its program is missing.
         eprintln!("skipped: set PUDDLE_SQUID_BIN (or PUDDLE_SQUID_DOCKER) and PUDDLE_MITMDUMP_BIN");
     }
-    squid && mitm
+    both
 }
+
+/// Whether both programs are configured, or why a required one is not. Each flag requires its own
+/// program: a job that requires only mitmproxy still fails when mitmproxy is missing.
+fn check_programs(set: &dyn Fn(&str) -> bool) -> Result<bool, String> {
+    let squid = set("PUDDLE_SQUID_BIN") || set("PUDDLE_SQUID_DOCKER");
+    let mitm = set("PUDDLE_MITMDUMP_BIN");
+    if set("PUDDLE_REQUIRE_SQUID") && !squid {
+        return Err(
+            "PUDDLE_REQUIRE_SQUID is set but neither PUDDLE_SQUID_BIN nor PUDDLE_SQUID_DOCKER is"
+                .to_owned(),
+        );
+    }
+    if set("PUDDLE_REQUIRE_MITMPROXY") && !mitm {
+        return Err("PUDDLE_REQUIRE_MITMPROXY is set but PUDDLE_MITMDUMP_BIN is not".to_owned());
+    }
+    Ok(squid && mitm)
+}
+
+#[cfg(test)]
+mod check_programs_tests;
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
@@ -76,6 +90,7 @@ fn no_pieces_is_a_usage_error() {
 
 #[test]
 fn the_self_test_checks_that_every_piece_answers() {
+    // skip-ok: programs() fails first when a PUDDLE_REQUIRE_* flag is set and its program is missing.
     if !programs() {
         return;
     }
@@ -244,6 +259,7 @@ fn the_self_test_of_the_signing_in_interceptor_checks_the_demand_and_the_root() 
 
 #[test]
 fn the_self_test_of_an_open_squid_alone_checks_that_it_forwards() {
+    // skip-ok: programs() fails first when a PUDDLE_REQUIRE_* flag is set and its program is missing.
     if !programs() {
         return;
     }
@@ -280,6 +296,7 @@ fn a_missing_program_fails_the_self_test_and_names_the_variable() {
 
 #[test]
 fn a_standing_run_lists_its_pieces_and_stops_every_one_on_the_stop_file() {
+    // skip-ok: programs() fails first when a PUDDLE_REQUIRE_* flag is set and its program is missing.
     if !programs() {
         return;
     }
@@ -328,6 +345,7 @@ fn a_standing_run_lists_its_pieces_and_stops_every_one_on_the_stop_file() {
 #[cfg(unix)]
 #[test]
 fn a_termination_signal_stops_the_lab_cleanly() {
+    // skip-ok: programs() fails first when a PUDDLE_REQUIRE_* flag is set and its program is missing.
     if !programs() {
         return;
     }

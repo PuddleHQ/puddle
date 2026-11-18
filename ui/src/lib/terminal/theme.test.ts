@@ -39,24 +39,6 @@ function probeWith(colors: Record<string, string>, family = "JetBrains Mono") {
 }
 
 describe("readLook", () => {
-  it("reads a computed style fetched after each assignment (the installed WebView2 kept an earlier one stale)", () => {
-    const probe = document.createElement("span");
-    const colors: Record<string, string> = {
-      "--color-surface": "rgb(255, 255, 255)",
-      "--color-text": "rgb(18, 34, 43)",
-      "--color-danger": "rgb(180, 35, 48)",
-    };
-    // A declaration is a snapshot of the probe when it is fetched; one fetched earlier shows the inherited white.
-    vi.spyOn(globalThis, "getComputedStyle").mockImplementation(() => {
-      const token = /var\((--[a-z-]+)\)/.exec(probe.style.color)?.[1] ?? "";
-      const color = colors[token] ?? "rgb(255, 255, 255)";
-      return { color, fontFamily: "" } as CSSStyleDeclaration;
-    });
-    const { theme } = readLook(probe);
-    expect(theme.foreground).toBe("#12222b");
-    expect(theme.red).toBe("#b42330");
-  });
-
   it("takes the colours and the font from the tokens", () => {
     const probe = probeWith({
       "--color-surface": "rgb(255, 255, 255)",

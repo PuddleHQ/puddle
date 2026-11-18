@@ -27,7 +27,6 @@
   } = $props();
 
   let host: HTMLDivElement | undefined = $state();
-  let probe: HTMLSpanElement | undefined = $state();
   let hovered = $state<string | null>(null);
   let menu = $state<{ x: number; y: number } | null>(null);
   let canCopy = $state(false);
@@ -38,7 +37,15 @@
 
   onMount(() => {
     const target = host as HTMLDivElement;
-    const look = () => screen.applyLook(probe as HTMLSpanElement);
+    // The probe that resolves the UI tokens lives directly under <body>, not inside this view: in the
+    // installed app's WebView2 a probe inside the view kept the inherited text colour whatever
+    // `color` it was given, so every token read as the same colour and the terminal drew grey.
+    const probe = document.createElement("span");
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText =
+      "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none";
+    document.body.append(probe);
+    const look = () => screen.applyLook(probe);
     screen.onHover = (text) => (hovered = text);
     screen.onLeave = onLeave;
     look();
@@ -54,6 +61,7 @@
     const scheme = globalThis.matchMedia("(prefers-color-scheme: dark)");
     scheme.addEventListener("change", look);
     return () => {
+      probe.remove();
       resized.disconnect();
       restyled.disconnect();
       scheme.removeEventListener("change", look);
@@ -123,7 +131,6 @@
     aria-label={name}
     oncontextmenu={openMenu}
   ></div>
-  <span class="probe" bind:this={probe} aria-hidden="true"></span>
   {#if menu}
     <div
       class="menu"
@@ -176,12 +183,6 @@
   }
   .screen :global(.xterm) {
     height: 100%;
-  }
-  .probe {
-    position: absolute;
-    width: 0;
-    height: 0;
-    overflow: hidden;
   }
   .menu {
     position: absolute;

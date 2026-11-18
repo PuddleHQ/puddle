@@ -5,6 +5,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import { cpuLabel, CPUS_MIN } from "../src/lib/settings/cpus.ts";
+import { SETTINGS } from "../src/lib/settings/pages.ts";
 import {
   cpuLimits,
   watchCsp,
@@ -49,56 +50,127 @@ async function consent(
     .vscode_server;
 }
 
-async function openSettings(page: Page, backend: Backend) {
+type Where =
+  | "appearance"
+  | "notifications"
+  | "workspaces"
+  | "network"
+  | "editor-and-git"
+  | "this-computer";
+
+async function openSettings(
+  page: Page,
+  backend: Backend,
+  where: Where = "appearance",
+) {
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto(`/settings/${where}`);
   await expect(
-    page.getByRole("heading", { level: 2, name: "Appearance" }),
+    page.getByRole("heading", { level: 1, name: "Settings" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Settings pages" }),
   ).toBeVisible();
 }
 
-/** Waits for a settings save to reach the API. */
-const saved = (page: Page) =>
-  page.waitForResponse(
-    (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
-  );
-
-/** Presses Save and waits until the API has stored the change. */
+/** Waits until a change has been stored: every setting says "Saved." beside itself. */
 async function pressSave(page: Page) {
-  const done = saved(page);
-  await page.getByRole("button", { name: "Save" }).click();
-  await done;
-  await expect(page.getByText(/Settings saved/)).toBeVisible();
+  await expect(page.getByText("Saved.").first()).toBeVisible();
 }
 
-test("shows every section with Puddle's defaults, no CSP violations", async ({
+/** Presses the Save beside a typed value and waits until it is stored. */
+async function saveField(page: Page, label: string) {
+  await page
+    .getByRole("button", { name: `Save ${label}`, exact: true })
+    .click();
+  await pressSave(page);
+}
+
+const SECTIONS: Record<Where, string[]> = {
+  appearance: ["Appearance"],
+  notifications: ["Notifications", "Also notify when", "Inbox"],
+  workspaces: ["Workspaces", "Disk space", "Environment"],
+  network: ["Proxy", "Local destinations", "Decrypting traffic"],
+  "editor-and-git": ["Browser VS Code", "Git and SSH"],
+  "this-computer": [
+    "Startup and window",
+    "Devices and sign-in",
+    "Back up",
+    "Activity log",
+    "Checks and errors",
+    "Privacy and about",
+  ],
+};
+
+test("shows every page with Puddle's defaults, no CSP violations", async ({
   page,
   backend,
 }) => {
   const csp = await watchCsp(page);
   await openSettings(page, backend);
-  for (const name of [
-    "Startup",
-    "Notifications",
-    "Workspaces",
-    "Network",
-    "Browser VS Code",
-    "Git and credentials",
-    "Privacy",
-    "About",
-  ]) {
-    await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
+  for (const [where, names] of Object.entries(SECTIONS)) {
+    await page.goto(`/settings/${where}`);
+    for (const name of names) {
+      await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
+    }
   }
+  await page.goto("/settings/workspaces");
   await expect(page.getByLabel("Default memory")).toHaveValue("8192");
+  await page.goto("/settings/this-computer");
   await expect(
     page.getByLabel("Start Puddle when I sign in"),
   ).not.toBeChecked();
+  await expect(page.getByText(/sends nothing about you/)).toBeVisible();
+  await page.goto("/settings/editor-and-git");
   await expect(page.getByLabel("Server", { exact: true })).toHaveValue(
     "code_server",
   );
   await expect(page.getByText(/Open VSX/)).toBeVisible();
-  await expect(page.getByText(/sends nothing about you/)).toBeVisible();
   await staysEmpty(page, csp);
+});
+
+test("no settings page is longer than two screens at 1440 px", async ({
+  page,
+  backend,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSettings(page, backend);
+  for (const where of Object.keys(SECTIONS)) {
+    await page.goto(`/settings/${where}`);
+    await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
+    const height = await page.evaluate(
+      () => document.documentElement.scrollHeight,
+    );
+    expect(height, `${where} is ${height}px tall`).toBeLessThanOrEqual(1800);
+  }
+});
+
+test("every setting is found by the search and the result opens it", async ({
+  page,
+  backend,
+}) => {
+  await openSettings(page, backend);
+  const mise = (await (
+    await page.request.get("/api/settings", { headers: auth(backend) })
+  ).json()) as { mise_available: boolean };
+  for (const entry of SETTINGS) {
+    if (entry.id === "set-mise" && !mise.mise_available) continue;
+    if (entry.id === "set-ms-telemetry") continue; // only while Microsoft's server is chosen
+    if (entry.id === "set-withdraw") continue;
+    await page.goto("/settings/appearance");
+    await page
+      .getByRole("searchbox", { name: "Search settings" })
+      .fill(entry.label);
+    await page
+      .getByRole("region", { name: "Search results" })
+      .getByRole("link", { name: entry.label })
+      .first()
+      .click();
+    await expect(page, entry.id).toHaveURL(
+      new RegExp(`/settings/${entry.page}#${entry.id}$`),
+    );
+    await expect(page.locator(`#${entry.id}`), entry.id).toBeVisible();
+  }
 });
 
 for (const scheme of ["light", "dark"] as const) {
@@ -107,7 +179,7 @@ for (const scheme of ["light", "dark"] as const) {
     backend,
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
-    await openSettings(page, backend);
+    await openSettings(page, backend, "editor-and-git");
     await expectNoAxeViolations(page, "screen");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     await expect(page.getByRole("dialog")).toBeVisible();
@@ -119,8 +191,8 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
   page,
   backend,
 }) => {
-  await openSettings(page, backend);
-  const box = page.getByRole("checkbox", {
+  await openSettings(page, backend, "workspaces");
+  const box = page.getByRole("switch", {
     name: "Allow direct SSH for new workspaces",
   });
   await expect(box).not.toBeChecked();
@@ -134,8 +206,8 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
   await expect(box).not.toBeChecked();
   await box.click();
   await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
-  await expect(box).toBeChecked();
   await pressSave(page);
+  await expect(box).toBeChecked();
   await page.reload();
   await expect(box).toBeChecked();
 });
@@ -144,7 +216,7 @@ test("the licences open on request and are scrollable by keyboard", async ({
   page,
   backend,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "this-computer");
   await page.getByText("Third-party licences").click();
   const text = page.getByLabel("Third-party licences", { exact: true });
   await expect(text).toContainText("Third-party software shipped");
@@ -160,9 +232,8 @@ test("the theme is kept by Puddle: it comes back after the page forgets everythi
 }) => {
   await openSettings(page, backend);
   await page.getByLabel("Theme", { exact: true }).selectOption("dark");
-  // The theme shows at once and is stored only when Save is pressed.
+  // The theme shows at once and is stored at once.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  expect((await stored(request, backend)).ui["theme"]).toBeNull();
   await pressSave(page);
   expect((await stored(request, backend)).ui["theme"]).toBe("dark");
 
@@ -173,29 +244,27 @@ test("the theme is kept by Puddle: it comes back after the page forgets everythi
   await expect(page.getByLabel("Theme", { exact: true })).toHaveValue("dark");
 });
 
-test("changes wait for Save, are sent together and survive a reload", async ({
+test("each change is stored at once, says Saved, and survives a reload", async ({
   page,
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
-  const save = page.getByRole("button", { name: "Save" });
-  await expect(save).toBeDisabled();
+  await openSettings(page, backend, "workspaces");
   await page.getByLabel("Default memory").selectOption("16384");
-  await page.getByLabel("Private networks").check();
-  await page.getByLabel("Sound").check();
-  await page.getByLabel("Closing the window").selectOption("quit");
-  await expect(page.getByText(/You have unsaved changes/)).toBeVisible();
-  // Nothing is stored before Save.
-  const before = await stored(request, backend);
-  expect(before.workspace_defaults.memory).toBeNull();
-  expect(before.ui["sound"]).toBeNull();
-
   await pressSave(page);
   await expect(
-    page.getByText(/Default memory apply when a workspace next starts/),
-  ).toBeVisible();
-  await expect(save).toBeDisabled();
+    page.getByText("Applies when a workspace next starts."),
+  ).toHaveCount(2);
+  await page.goto("/settings/network");
+  await page.getByLabel("Private networks").check();
+  await pressSave(page);
+  await page.goto("/settings/notifications");
+  await page.getByLabel("Sound").check();
+  await pressSave(page);
+  await page.goto("/settings/this-computer");
+  await page.getByLabel("Closing the window").selectOption("quit");
+  await pressSave(page);
+
   const now = await stored(request, backend);
   expect(now.workspace_defaults.memory).toBe(16_384);
   expect(now.workspace_defaults.local_toggles["private"]).toBe(true);
@@ -204,10 +273,22 @@ test("changes wait for Save, are sent together and survive a reload", async ({
   expect(now.ui["close_behaviour"]).toBe("quit");
 
   await page.reload();
-  await expect(page.getByLabel("Default memory")).toHaveValue("16384");
-  await expect(page.getByLabel("Private networks")).toBeChecked();
-  await expect(page.getByLabel("Sound")).toBeChecked();
   await expect(page.getByLabel("Closing the window")).toHaveValue("quit");
+  await page.goto("/settings/workspaces");
+  await expect(page.getByLabel("Default memory")).toHaveValue("16384");
+});
+
+test("a change can be undone from the row", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend, "notifications");
+  await page.getByLabel("Sound").check();
+  await page.getByRole("button", { name: /^Undo/ }).click();
+  await expect(page.getByText("Undone.")).toBeVisible();
+  await expect(page.getByLabel("Sound")).not.toBeChecked();
+  expect((await stored(request, backend)).ui["sound"]).toBe(false);
 });
 
 test("the global mise switch is on, is kept after Save, and takes the tool switches off every workspace's Settings tab", async ({
@@ -217,7 +298,7 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
 }) => {
   // The default scenario has no workspace; this one has web-shop.
   await backend.control.reset("lived-in");
-  await openSettings(page, backend);
+  await openSettings(page, backend, "workspaces");
   const global = page.getByLabel("Manage tools with mise in workspaces");
   const view0 = await request.get("/api/settings", { headers: auth(backend) });
   if (!((await view0.json()) as { mise_available: boolean }).mise_available) {
@@ -246,7 +327,7 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
   await code.uncheck();
   await expect(page.getByText("Running repository code saved.")).toBeVisible();
 
-  await page.goto("/settings");
+  await page.goto("/settings/workspaces");
   await expect(global).toBeChecked();
   await global.uncheck();
   await pressSave(page);
@@ -271,7 +352,7 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
   ).toEqual({ mise: null, repo_code: false });
 
   // Back on: the switches return as they were.
-  await page.goto("/settings");
+  await page.goto("/settings/workspaces");
   await global.check();
   await pressSave(page);
   await page.goto("/workspaces/web-shop/settings");
@@ -285,7 +366,7 @@ test.describe("default CPUs", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend);
+    await openSettings(page, backend, "workspaces");
     const limits = await cpuLimits(request, backend.token);
     // The arrow key below needs one count above the default; a one-core computer has none.
     test.skip(limits.max_cpus <= limits.default_cpus, "a one-core computer");
@@ -314,13 +395,8 @@ test.describe("default CPUs", () => {
     const next = limits.default_cpus + 1;
     await expect(cpus).toHaveValue(String(next));
     await expect(
-      page.getByText(/Default CPUs apply when a workspace next starts/),
-    ).toBeVisible();
-    // Nothing is stored before Save.
-    expect(
-      (await stored(request, backend)).workspace_defaults["cpus"],
-    ).toBeNull();
-
+      page.getByText("Applies when a workspace next starts."),
+    ).toHaveCount(2);
     await pressSave(page);
     expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(
       next,
@@ -334,13 +410,14 @@ test.describe("default CPUs", () => {
     backend,
   }) => {
     await page.setViewportSize({ width: 390, height: 800 });
-    await openSettings(page, backend);
+    await openSettings(page, backend, "workspaces");
     const cpus = page.getByLabel("Default CPUs");
+    await page.getByText("How this works for Default CPUs").click();
     await expect(
       page.getByText(/A running workspace keeps the count it started with/),
     ).toBeVisible();
     const layout = await cpus.evaluate((el) => {
-      const card = el.closest(".card") as HTMLElement;
+      const card = el.closest(".group") as HTMLElement;
       const box = el.getBoundingClientRect();
       const inside = card.getBoundingClientRect();
       return {
@@ -356,46 +433,20 @@ test.describe("default CPUs", () => {
   });
 });
 
-test("Discard drops the edits, and leaving with edits is held back", async ({
-  page,
-  backend,
-  request,
-}) => {
-  await openSettings(page, backend);
-  await page.getByLabel("Sound").check();
-  await page
-    .getByRole("navigation", { name: "Main" })
-    .getByRole("link", { name: /^Rules/ })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Save or discard them first",
-  );
-  await expect(page).toHaveURL(/\/settings$/);
-  await page.getByRole("button", { name: "Discard" }).click();
-  await expect(page.getByLabel("Sound")).not.toBeChecked();
-  expect((await stored(request, backend)).ui["sound"]).toBeNull();
-  await page
-    .getByRole("navigation", { name: "Main" })
-    .getByRole("link", { name: /^Rules/ })
-    .click();
-  await expect(page).toHaveURL(/\/rules$/);
-});
-
-test("the Save bar stays on screen, its buttons are big enough, and the screen has no axe findings with unsaved edits", async ({
+test("a typed value's Save is big enough and the page has no axe findings with a value waiting", async ({
   page,
   backend,
 }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
-  await openSettings(page, backend);
-  await page.getByLabel("Sound").check();
-  const save = page.getByRole("button", { name: "Save" });
-  // Scrolled to the top of a long page, the bar is still inside the window.
-  await expect(save).toBeInViewport();
-  for (const name of ["Save", "Discard"]) {
-    const box = await page.getByRole("button", { name }).boundingBox();
-    expect(box?.height ?? 0, `${name} height`).toBeGreaterThanOrEqual(24);
-    expect(box?.width ?? 0, `${name} width`).toBeGreaterThanOrEqual(24);
-  }
+  await openSettings(page, backend, "workspaces");
+  await page.getByLabel("Warn when free space is under (GB)").fill("30");
+  const save = page.getByRole("button", {
+    name: "Save Warn when free space is under (GB)",
+  });
+  await expect(save).toBeVisible();
+  const box = await save.boundingBox();
+  expect(box?.height ?? 0, "Save height").toBeGreaterThanOrEqual(24);
+  expect(box?.width ?? 0, "Save width").toBeGreaterThanOrEqual(24);
   await expectNoAxeViolations(page);
 });
 
@@ -404,26 +455,24 @@ test("the disk warning threshold starts at 95, is saved with the other settings 
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "notifications");
   const field = page.getByLabel("Warn when a disk is this full (%)");
   await expect(field).toHaveValue("95");
   await field.fill("120");
-  await field.blur();
   await expect(page.getByRole("alert").filter({ hasText: /50/ })).toBeVisible();
   await field.fill("80");
-  await field.blur();
-  await pressSave(page);
+  await saveField(page, "Warn when a disk is this full (%)");
   expect((await stored(request, backend)).ui.disk_warning_percent).toBe(80);
   await page.reload();
   await expect(field).toHaveValue("80");
 });
 
-test("the notification and inbox switches start at Puddle's defaults, are saved together and survive a reload", async ({
+test("the notification and inbox switches start at Puddle's defaults, are each saved and survive a reload", async ({
   page,
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "notifications");
   const labels = {
     notify_only_unfocused: "Only when Puddle is not the window in front",
     badge: "Show the number of waiting requests",
@@ -436,9 +485,11 @@ test("the notification and inbox switches start at Puddle's defaults, are saved 
     await expect(page.getByLabel(label)).toBeChecked();
     await page.getByLabel(label).uncheck();
   }
-  await pressSave(page);
-  const now = (await stored(request, backend)).ui;
-  for (const key of Object.keys(labels)) expect(now[key], key).toBe(false);
+  for (const key of Object.keys(labels)) {
+    await expect
+      .poll(async () => (await stored(request, backend)).ui[key], key)
+      .toBe(false);
+  }
   await page.reload();
   for (const label of Object.values(labels)) {
     await expect(page.getByLabel(label)).not.toBeChecked();
@@ -453,7 +504,7 @@ test("the start-at-sign-in switch is off at first, is saved and survives a reloa
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "this-computer");
   const box = page.getByLabel("Start Puddle when I sign in");
   await expect(box).not.toBeChecked();
   await box.check();
@@ -471,7 +522,7 @@ test("with the confirmation switched off, a decision for every workspace goes th
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "notifications");
   await page
     .getByLabel("Confirm before a rule affects every workspace")
     .uncheck();
@@ -516,7 +567,7 @@ test("the inbox keys are on by default; switched off from the shortcuts list the
   await keys
     .getByRole("link", { name: "Turn the single keys off in Settings" })
     .click();
-  await expect(page).toHaveURL(/\/settings#s-inbox$/);
+  await expect(page).toHaveURL(/\/settings\/notifications#set-confirm-global$/);
   const box = page.getByLabel("Keyboard shortcuts in the inbox");
   await expect(box).toBeChecked();
   await box.uncheck();
@@ -542,7 +593,7 @@ test("the inbox keys are on by default; switched off from the shortcuts list the
   await expect(keys.locator('[data-shortcut="allow"]')).toHaveCount(0);
   await expectNoAxeViolations(page, "inbox shortcuts list with the keys off");
   await keys.getByRole("link", { name: "Turn them on in Settings" }).click();
-  await expect(page).toHaveURL(/\/settings#s-inbox$/);
+  await expect(page).toHaveURL(/\/settings\/notifications#set-confirm-global$/);
   await box.check();
   await pressSave(page);
   await page
@@ -561,17 +612,18 @@ test("a reconnection grace outside the range is refused before anything is sent"
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "editor-and-git");
   const grace = page.getByLabel("Reconnection grace (seconds)");
   await grace.fill("5");
-  await grace.blur();
   await expect(page.getByText(/Use between 30 and 86400/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save Reconnection grace (seconds)" }),
+  ).toBeDisabled();
   expect(
     (await stored(request, backend)).workspace_defaults["reconnection_grace"],
   ).toBeNull();
   await grace.fill("900");
-  await grace.blur();
-  await pressSave(page);
+  await saveField(page, "Reconnection grace (seconds)");
   expect(
     (await stored(request, backend)).workspace_defaults["reconnection_grace"],
   ).toBe(900);
@@ -583,7 +635,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend);
+    await openSettings(page, backend, "editor-and-git");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText(
@@ -609,7 +661,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend);
+    await openSettings(page, backend, "editor-and-git");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -626,7 +678,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend);
+    await openSettings(page, backend, "editor-and-git");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await dialog
@@ -670,7 +722,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend);
+    await openSettings(page, backend, "editor-and-git");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await dialog
@@ -701,43 +753,48 @@ test("the disk space lines start at 20 and 5 GB, are checked before saving and s
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "workspaces");
   const warn = page.getByLabel("Warn when free space is under (GB)");
   const fail = page.getByLabel("Fail when free space is under (GB)");
-  const notice = page.getByLabel(
-    "The drive that holds Puddle's data runs low on space",
-  );
   await expect(warn).toHaveValue("20");
   await expect(fail).toHaveValue("5");
-  await expect(notice).toBeChecked();
 
   // A failure line above the warning line cannot be saved.
   await fail.fill("30");
-  await fail.blur();
   await expect(
     page.getByText(
       "The failure line (30 GB) cannot be above the warning line (20 GB).",
     ),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", {
+      name: "Save Fail when free space is under (GB)",
+    }),
+  ).toBeDisabled();
   await warn.fill("0");
-  await warn.blur();
   await expect(page.getByText("Use between 1 and 10000 GB.")).toBeVisible();
 
   await warn.fill("60");
-  await warn.blur();
+  await saveField(page, "Warn when free space is under (GB)");
   await fail.fill("12");
-  await fail.blur();
+  await saveField(page, "Fail when free space is under (GB)");
+  await page.goto("/settings/notifications");
+  const notice = page.getByLabel(
+    "The drive that holds Puddle's data runs low on space",
+  );
+  await expect(notice).toBeChecked();
   await notice.uncheck();
-  await pressSave(page);
+  await expect
+    .poll(async () => (await stored(request, backend)).ui.notify_low_disk_space)
+    .toBe(false);
   const ui = (await stored(request, backend)).ui;
   expect(ui.disk_warn_free_gb).toBe(60);
   expect(ui.disk_fail_free_gb).toBe(12);
-  expect(ui.notify_low_disk_space).toBe(false);
   await page.reload();
+  await expect(notice).not.toBeChecked();
+  await page.goto("/settings/workspaces");
   await expect(warn).toHaveValue("60");
   await expect(fail).toHaveValue("12");
-  await expect(notice).not.toBeChecked();
 });
 
 test("the SSH agent pipe is checked before saving, stored trimmed and survives a reload", async ({
@@ -745,20 +802,20 @@ test("the SSH agent pipe is checked before saving, stored trimmed and survives a
   backend,
   request,
 }) => {
-  await openSettings(page, backend);
+  await openSettings(page, backend, "editor-and-git");
   const field = page.getByLabel("SSH agent pipe or socket");
   await expect(field).toHaveValue("");
 
   await field.fill("/run/a\tb");
-  await field.blur();
   await expect(
     page.getByText("A pipe or socket path cannot hold a control character."),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Save SSH agent pipe or socket" }),
+  ).toBeDisabled();
 
   await field.fill(String.raw`  \\.\pipe\pageant.alice  `);
-  await field.blur();
-  await pressSave(page);
+  await saveField(page, "SSH agent pipe or socket");
   expect((await stored(request, backend)).ui.ssh_agent_pipe).toBe(
     String.raw`\\.\pipe\pageant.alice`,
   );
@@ -766,7 +823,6 @@ test("the SSH agent pipe is checked before saving, stored trimmed and survives a
   await expect(field).toHaveValue(String.raw`\\.\pipe\pageant.alice`);
 
   await field.fill("");
-  await field.blur();
-  await pressSave(page);
+  await saveField(page, "SSH agent pipe or socket");
   expect((await stored(request, backend)).ui.ssh_agent_pipe).toBeNull();
 });

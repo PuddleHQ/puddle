@@ -8,7 +8,7 @@ import { staysEmpty, watchCsp } from "./support";
 
 async function openCard(page: Page, backend: Backend) {
   await backend.signIn(page);
-  await page.goto("/settings#s-audit");
+  await page.goto("/settings/this-computer#set-audit");
   const card = page.getByRole("region", { name: "Activity log" });
   await expect(card.getByLabel(/Keep the activity log for/)).toBeVisible();
   return card;
@@ -37,7 +37,9 @@ test("saving the days keeps them across a reload", async ({
   const card = await openCard(page, backend);
   const days = card.getByLabel(/Keep the activity log for/);
   await days.fill("30");
-  await card.getByRole("button", { name: "Keep for this long" }).click();
+  await card
+    .getByRole("button", { name: "Save how long the activity log is kept" })
+    .click();
   await expect(card.getByText("Saved.")).toBeVisible();
   await page.reload();
   await expect(
@@ -55,7 +57,9 @@ for (const bad of ["0", "3651"]) {
     const card = await openCard(page, backend);
     const days = card.getByLabel(/Keep the activity log for/);
     await days.fill(bad);
-    await card.getByRole("button", { name: "Keep for this long" }).click();
+    await card
+      .getByRole("button", { name: "Save how long the activity log is kept" })
+      .click();
     await expect(card.getByRole("alert")).toContainText(
       `The log is kept for 1 to 3650 days (${bad} given).`,
     );

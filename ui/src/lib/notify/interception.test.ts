@@ -50,7 +50,7 @@ describe("the interception choice notice", () => {
     expect(t.raised[0]).toMatchObject({
       key: INTERCEPTION_NOTICE_KEY,
       tone: "info",
-      link: { href: "/settings#s-net" },
+      link: { href: "/settings/network#set-interception-mode" },
     });
   });
 

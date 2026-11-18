@@ -52,7 +52,7 @@
       <p class="desc" id="connect-browser-desc">
         Keeps the workspace isolated from this computer.
         {#if server}{serverNote(server)}{/if}
-        <a href="/settings#s-vsc" onclick={() => (open = false)}
+        <a href="/settings/editor-and-git#set-server" onclick={() => (open = false)}
           >Change the server in Settings</a
         >.
       </p>

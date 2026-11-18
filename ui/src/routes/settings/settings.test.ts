@@ -14,26 +14,40 @@ const api = await vi.hoisted(async () => {
   return new mod.FakeSettings();
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
-const nav = vi.hoisted(() => ({
-  hooks: [] as ((n: { cancel: () => void; willUnload: boolean }) => void)[],
-}));
-vi.mock("$app/navigation", () => ({
-  beforeNavigate: (hook: (typeof nav.hooks)[number]) => nav.hooks.push(hook),
+vi.mock("$app/state", () => ({
+  page: {
+    url: new URL("http://127.0.0.1/settings/appearance"),
+    status: 200,
+    error: null,
+  },
 }));
 
 import { report } from "#lib/testing/fake-network.ts";
+import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
-import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
-import Page from "./+page.svelte";
+import Appearance from "./(pages)/appearance/+page.svelte";
+import EditorAndGit from "./(pages)/editor-and-git/+page.svelte";
+import Network from "./(pages)/network/+page.svelte";
+import Notifications from "./(pages)/notifications/+page.svelte";
+import ThisComputer from "./(pages)/this-computer/+page.svelte";
+import Workspaces from "./(pages)/workspaces/+page.svelte";
+
+const ALL = [
+  Appearance,
+  Notifications,
+  Workspaces,
+  Network,
+  EditorAndGit,
+  ThisComputer,
+];
 
 beforeEach(() => {
-  nav.hooks = [];
   api.reset();
   globalSettings.view = null;
   globalSettings.consents = null;
@@ -52,26 +66,26 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** Every page of Settings at once, in the real frame, so a test reaches any setting by its label. */
+const Page = ALL[0] as never;
+function show() {
+  return render(SettingsHost, { props: { pages: ALL } });
+}
+
 async function open() {
-  render(Page);
+  show();
   await screen.findByRole("heading", { level: 2, name: "Appearance" });
 }
 
 // The licence test is the first to open "Third-party licences", which needs jsdom's queued `toggle`
 // event, vitest's first load of the notices file and the first render of its text. Under load
 // those cold steps outlasted that test's one-second wait, so open it once here, before the tests.
-// The waits are long on purpose: nothing is asserted about speed, and a slow warm-up must not
-// fail the whole file at collection.
 {
   const slow = { timeout: 30_000 };
-  render(Page);
-  await screen.findByRole("heading", { level: 2, name: "About" }, slow);
+  show();
+  await screen.findByRole("heading", { level: 2, name: "Privacy and about" }, slow);
   await fireEvent.click(screen.getByText("Third-party licences"));
-  await screen.findByLabelText(
-    "Third-party licences",
-    { selector: "pre" },
-    slow,
-  );
+  await screen.findByLabelText("Third-party licences", { selector: "pre" }, slow);
   cleanup();
   api.reset();
 }
@@ -82,16 +96,21 @@ async function choose(label: string | RegExp, value: string) {
   await fireEvent.change(select);
 }
 
-/** Presses Save and waits for the answer. */
-async function save(says: string | RegExp = "Settings saved.") {
-  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await screen.findByText(says);
-}
-
 const putBodies = () =>
   api.calls
     .map((c, i) => [c, api.bodies[i]] as const)
     .filter(([c]) => c === "PUT /api/settings");
+
+/**
+ * Lets every change in flight finish: presses the Save button of a typed value when one shows (the
+ * Save button of a field, never a bar), then waits until no row says "Saving".
+ */
+async function save(says?: string | RegExp) {
+  const typed = screen.queryAllByRole("button", { name: /^Save / });
+  for (const button of typed) await fireEvent.click(button);
+  await waitFor(() => expect(screen.queryByText(/^Saving/)).toBeNull());
+  if (says) await screen.findByText(says);
+}
 
 describe("the mise switch", () => {
   it("is on by default and a save sends it as the global tools switch", async () => {
@@ -266,225 +285,7 @@ describe("the screen", () => {
   });
 });
 
-describe("explicit Save", () => {
-  it("starts clean: Save and Discard are off and nothing is sent until Save", async () => {
-    await open();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
-    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await choose("Default memory", "16384");
-    expect(screen.getByText(/You have unsaved changes/)).toBeInTheDocument();
-    expect(putBodies()).toHaveLength(0);
-    expect(api.ui.sound).toBeNull();
-  });
-
-  it("holds an automatic reload while the draft has edits, and lets it go after Discard or unmount", async () => {
-    await open();
-    expect(hasUnsavedEdits()).toBe(false);
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(hasUnsavedEdits()).toBe(false));
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
-    cleanup();
-    expect(hasUnsavedEdits()).toBe(false);
-  });
-
-  it("shows the company network switch right under private networks, off, with its words", async () => {
-    await open();
-    const boxes = screen
-      .getAllByRole("checkbox")
-      .filter((b) => b.id.startsWith("set-local-"))
-      .map((b) => b.id);
-    expect(boxes).toEqual([
-      "set-local-loopback",
-      "set-local-private",
-      "set-local-company_network",
-      "set-local-link_local",
-      "set-local-metadata",
-      "set-local-special",
-    ]);
-    expect(screen.getByLabelText("Company network")).not.toBeChecked();
-    expect(
-      screen.getByText(
-        /VPN, private-access client or DNS suffixes mark as internal/,
-      ),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByLabelText("Company network"));
-    await save();
-    expect(api.layer.local_toggles.company_network).toBe(true);
-    expect(api.layer.local_toggles.private).toBeNull();
-  });
-
-  it("sends every edit as one change", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await fireEvent.click(screen.getByLabelText("Private networks"));
-    await choose("Closing the window", "quit");
-    await save();
-    expect(putBodies()).toHaveLength(1);
-    expect(api.ui.sound).toBe(true);
-    expect(api.ui.close_behaviour).toBe("quit");
-    expect(api.layer.local_toggles.private).toBe(true);
-    expect(api.layer.local_toggles.loopback).toBeNull();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    // With nothing left in the draft, the controls show what was stored.
-    expect(screen.getByLabelText("Sound")).toBeChecked();
-    expect(screen.getByLabelText("Private networks")).toBeChecked();
-    expect(screen.getByLabelText("Closing the window")).toHaveValue("quit");
-  });
-
-  it("names the saved settings that apply at the next start", async () => {
-    await open();
-    expect(
-      screen.getAllByText("Applies when a workspace next starts."),
-    ).toHaveLength(3);
-    await choose("Default memory", "16384");
-    expect(
-      screen.getByText(/Default memory apply when a workspace next starts/),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await save(
-      "Settings saved. Default memory apply when a workspace next starts.",
-    );
-    expect(api.layer.memory).toBe(16_384);
-  });
-
-  it("sets the default CPU count from 1 up to the computer's cores and says a running workspace keeps its own", async () => {
-    await open();
-    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
-    expect(cpus).toHaveValue("4");
-    expect([...cpus.options].map((o) => o.value)).toEqual(
-      Array.from({ length: 16 }, (_, i) => String(i + 1)),
-    );
-    expect(cpus.options[0]?.text).toBe("1 CPU");
-    expect(cpus.options[3]?.text).toBe("4 CPUs");
-    expect(
-      screen.getByText(/A running workspace keeps the count it started with/),
-    ).toBeInTheDocument();
-    await choose("Default CPUs", "6");
-    expect(
-      screen.getByText(/Default CPUs apply when a workspace next starts/),
-    ).toBeInTheDocument();
-    await save(
-      "Settings saved. Default CPUs apply when a workspace next starts.",
-    );
-    expect(api.layer.cpus).toBe(6);
-    expect(screen.getByLabelText("Default CPUs")).toHaveValue("6");
-  });
-
-  it("takes the CPU maximum from the setting, not from a fixed 32, and saves a new one", async () => {
-    api.hostCpus = 64;
-    await open();
-    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
-    expect(cpus.options).toHaveLength(64);
-    const max = screen.getByLabelText(
-      "Most CPUs a workspace may have",
-    ) as HTMLInputElement;
-    expect(max.value).toBe("");
-    expect(max.placeholder).toBe("64");
-    await fireEvent.change(max, { target: { value: "6" } });
-    await save("Settings saved.");
-    expect(api.limits.max_cpus).toBe(6);
-    expect(
-      (screen.getByLabelText("Default CPUs") as HTMLSelectElement).options,
-    ).toHaveLength(6);
-    await fireEvent.change(max, { target: { value: "" } });
-    expect(max.value).toBe("");
-    await save("Settings saved.");
-    expect(api.limits.max_cpus).toBeNull();
-  });
-
-  it("keeps the CPU maximum when another setting is saved", async () => {
-    api.limits = { max_cpus: 9 };
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await save("Settings saved.");
-    expect(api.limits.max_cpus).toBe(9);
-  });
-
-  it("says nothing about a restart for settings that apply at once", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await save("Settings saved.");
-    expect(screen.queryByText(/next starts\.$/, { selector: "p" })).toBeNull();
-  });
-
-  it("drops an edit that puts a value back to what is stored", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  });
-
-  it("Discard puts every control back to what is stored", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await choose("Default memory", "16384");
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(screen.getByLabelText("Sound")).not.toBeChecked();
-    expect(screen.getByLabelText("Default memory")).toHaveValue("8192");
-    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
-    expect(putBodies()).toHaveLength(0);
-  });
-
-  it("keeps the edits and says why when the save is refused", async () => {
-    await open();
-    api.refuse.set("PUT /api/settings", {
-      status: 422,
-      error: "invalid",
-      message: "no thanks",
-    });
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("no thanks");
-    expect(screen.getByLabelText("Sound")).toBeChecked();
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(api.ui.sound).toBeNull();
-  });
-
-  it("keeps the edit when another client changed the settings, shows theirs, and saves the edit on top", async () => {
-    await open();
-    api.ui = { ...api.ui, badge: false };
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "changed somewhere else",
-    );
-    expect(screen.getByLabelText("Sound")).toBeChecked();
-    expect(api.ui.sound).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(api.ui.sound).toBe(true));
-    expect(api.ui.badge).toBe(false);
-  });
-
-  it("blocks leaving with unsaved edits, and lets go once they are saved", async () => {
-    await open();
-    const leave = () => {
-      let cancelled = false;
-      for (const hook of nav.hooks)
-        hook({ cancel: () => (cancelled = true), willUnload: false });
-      return cancelled;
-    };
-    expect(leave()).toBe(false);
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(leave()).toBe(true);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Save or discard them first",
-    );
-    for (const hook of nav.hooks) {
-      let cancelled = false;
-      hook({ cancel: () => (cancelled = true), willUnload: true });
-      expect(cancelled).toBe(false);
-    }
-    await save();
-    expect(leave()).toBe(false);
-  });
-});
-
+/*EXPLICIT*/
 describe("appearance and notifications", () => {
   it("previews the theme at once and stores it, with a hint for the first paint, on Save", async () => {
     await open();

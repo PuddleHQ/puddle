@@ -12,11 +12,6 @@ const RED_PNG = Buffer.from(
   "base64",
 );
 
-const saved = (page: Page) =>
-  page.waitForResponse(
-    (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
-  );
-
 async function open(page: Page, backend: Backend) {
   await backend.signIn(page);
   await page.goto("/settings");
@@ -25,10 +20,9 @@ async function open(page: Page, backend: Backend) {
   ).toBeVisible();
 }
 
+/** The icon is stored the moment it is chosen; wait for that. */
 async function save(page: Page) {
-  const done = saved(page);
-  await page.getByRole("button", { name: "Save" }).click();
-  await done;
+  await expect(page.getByText("Saved.").first()).toBeVisible();
 }
 
 const stored = async (

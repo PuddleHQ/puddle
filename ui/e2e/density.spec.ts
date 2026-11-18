@@ -14,20 +14,10 @@ const SCREENS = [
   { path: "/activity", heading: "Activity" },
 ];
 
-const saved = (page: Page) =>
-  page.waitForResponse(
-    (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
-  );
-
 async function setDensity(page: Page, value: string) {
   await page.getByLabel("Density", { exact: true }).selectOption(value);
-  // Choosing what is already stored changes nothing, and Save stays off.
-  const save = page.getByRole("button", { name: "Save" });
-  if (await save.isEnabled()) {
-    const done = saved(page);
-    await save.click();
-    await done;
-  }
+  // The choice is stored the moment it is made.
+  await expect(page.getByLabel("Density", { exact: true })).toHaveValue(value);
 }
 
 async function open(page: Page, backend: Backend, path: string) {
@@ -183,9 +173,6 @@ test.describe("the density setting", () => {
       .poll(() => answered, { message: "reads answered" })
       .toBe(reads);
 
-    const done = saved(page);
-    await page.getByRole("button", { name: "Save" }).click();
-    await done;
     await expect(page.locator("html")).toHaveAttribute(
       "data-density",
       "compact",

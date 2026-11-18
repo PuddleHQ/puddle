@@ -122,8 +122,11 @@
       </div>
     </div>
     <div class="row">
-      <button type="submit" class="btn primary" disabled={working}
-        >Keep sign-in</button
+      <button
+        type="submit"
+        class="btn primary"
+        aria-label="Save proxy sign-in"
+        disabled={working}>Save</button
       >
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}

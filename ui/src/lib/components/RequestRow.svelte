@@ -84,7 +84,7 @@
       approved yet.
       <a
         class="btn"
-        href="/workspaces/{request.workspace}/settings#local-destinations"
+        href="/workspaces/{request.workspace}/settings/network#local-destinations"
         >Open the company network switch</a
       >
       Turning it on only makes it approvable; it will still need your approval after
@@ -94,7 +94,7 @@
     <p class="blocked">
       <b>{LOCAL_LABELS[blockedBy]}</b> destinations are switched off, so this
       can't be approved yet. Turn on
-      <a href="/settings#local-destinations">{LOCAL_LABELS[blockedBy]}</a>
+      <a href="/settings/network#local-destinations">{LOCAL_LABELS[blockedBy]}</a>
       in Settings to make it approvable; it will still need your approval after that.
     </p>
   {/if}

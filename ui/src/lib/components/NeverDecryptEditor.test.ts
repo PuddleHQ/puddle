@@ -15,7 +15,7 @@ afterEach(cleanup);
 const box = () =>
   screen.getByRole("textbox", { name: "Never decrypt" }) as HTMLTextAreaElement;
 const saveButton = () =>
-  screen.getByRole("button", { name: "Keep names" }) as HTMLButtonElement;
+  screen.getByRole("button", { name: "Save Never decrypt" }) as HTMLButtonElement;
 
 type Save = (names: string[]) => Promise<SaveResult>;
 
@@ -33,10 +33,12 @@ function mount(
 }
 
 describe("NeverDecryptEditor", () => {
-  it("shows the stored names one to a line and has nothing to save yet", () => {
+  it("shows the stored names one to a line and offers no Save until the text differs", async () => {
     mount(["a.io", "*.b.io"]);
     expect(box().value).toBe("a.io\n*.b.io");
-    expect(saveButton().disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
+    await fireEvent.input(box(), { target: { value: "a.io" } });
+    expect(saveButton().disabled).toBe(false);
   });
 
   it("saves the parsed names and says so", async () => {

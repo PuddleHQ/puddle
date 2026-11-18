@@ -29,7 +29,7 @@ describe("free space on the drive that holds Puddle's data", () => {
       key: "disk-space",
       tone: "warning",
       title: "Disk space is running low.",
-      link: { href: "/settings#s-disk", label: "Disk space settings" },
+      link: { href: "/settings/workspaces#set-disk-warn", label: "Disk space settings" },
     });
     expect(center.items[0]!.detail).toMatch(/^15 GB are left on the drive/);
   });

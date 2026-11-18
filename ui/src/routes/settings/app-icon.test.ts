@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The App icon section of Settings: built-in choices, the user's own image, and Save.
+// The App icon section of Settings: built-in choices, the user's own image, and how a choice applies at once.
 import {
   cleanup,
   fireEvent,
@@ -15,11 +15,19 @@ const api = await vi.hoisted(async () => {
   return new mod.FakeSettings();
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
+vi.mock("$app/state", () => ({
+  page: {
+    url: new URL("http://127.0.0.1/settings/appearance"),
+    status: 200,
+    error: null,
+  },
+}));
 vi.mock("$app/navigation", () => ({ beforeNavigate: () => undefined }));
 
 import { MAX_ICON_BYTES } from "#lib/settings/app-icon.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
-import Page from "./+page.svelte";
+import SettingsHost from "#lib/testing/SettingsHost.svelte";
+import Appearance from "./(pages)/appearance/+page.svelte";
 
 beforeEach(() => {
   api.reset();
@@ -32,7 +40,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 async function open() {
-  render(Page);
+  render(SettingsHost, { props: { pages: [Appearance] } });
   await screen.findByRole("heading", { level: 2, name: "App icon" });
   await screen.findByRole("radio", { name: "Duck on a pond" });
 }
@@ -80,26 +88,14 @@ describe("the App icon section", () => {
     ).toBeNull();
   });
 
-  it("holds the choice until Save, then stores it", async () => {
+  it("stores the choice the moment it is made, says Saved and can be undone", async () => {
     await open();
     await fireEvent.click(radio("Duck at night"));
-    expect(radio("Duck at night").checked).toBe(true);
-    expect(api.ui.app_icon).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Settings saved.");
+    await screen.findByText("Saved.");
     expect(api.ui.app_icon).toBe("duck_night");
-  });
-
-  it("drops the edit when the duck is chosen back, and on Discard", async () => {
-    await open();
-    await fireEvent.click(radio("Duck in the sun"));
-    await fireEvent.click(radio("Duck"));
-    expect(
-      (screen.getByRole("button", { name: "Save" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-    await fireEvent.click(radio("Duck on a pond"));
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await screen.findByText("Undone.");
     expect(radio("Duck").checked).toBe(true);
   });
 
@@ -113,20 +109,18 @@ describe("the App icon section", () => {
     expect(opened).toHaveBeenCalledOnce();
   });
 
-  it("stores a picked image at once, chooses it as an unsaved edit and keeps it on Save", async () => {
+  it("stores a picked image at once and chooses it", async () => {
     await open();
     await give(png());
-    await screen.findByText("Your image is ready. Save to use it.");
+    await screen.findByText("Your image is ready.");
     expect(api.customIcon).toBe("own-png");
+    await screen.findByText("Saved.");
     expect(radio("Your image").checked).toBe(true);
     expect(radio("Your image").disabled).toBe(false);
-    expect(api.ui.app_icon).toBeNull();
+    expect(api.ui.app_icon).toBe("custom");
     expect(
       screen.getByRole("button", { name: "Replace your image…" }),
     ).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Settings saved.");
-    expect(api.ui.app_icon).toBe("custom");
   });
 
   it("says why the service refused an image, and chooses nothing", async () => {
@@ -171,7 +165,6 @@ describe("the App icon section", () => {
   it("removes your image once nothing saved uses it, and goes back to the saved icon", async () => {
     api.customIcon = "own-png";
     await open();
-    await fireEvent.click(radio("Your image"));
     await fireEvent.click(
       screen.getByRole("button", { name: "Remove your image" }),
     );
@@ -191,7 +184,7 @@ describe("the App icon section", () => {
     }) as HTMLButtonElement;
     expect(remove.disabled).toBe(true);
     expect(
-      screen.getByText(/choose another icon and save before removing it/),
+      screen.getByText(/choose another icon before removing it/),
     ).toBeTruthy();
   });
 
@@ -224,7 +217,7 @@ describe("the App icon section", () => {
       error: "internal",
       message: "internal error; see Puddle's log",
     });
-    render(Page);
+    render(SettingsHost, { props: { pages: [Appearance] } });
     const alert = await screen.findByText(/The icons could not be loaded/);
     expect(alert.textContent).toContain("Internal error");
     await waitFor(() => expect(screen.getByLabelText("Theme")).toBeTruthy());

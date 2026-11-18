@@ -16,35 +16,43 @@ vi.mock("#lib/api/client.ts", () => ({ api }));
 
 import { INTERCEPTION_NOTICE_KEY } from "#lib/notify/interception.ts";
 import { notices } from "#lib/notify/notices.svelte.ts";
+import { saverContext } from "#lib/settings/context.ts";
+import { SettingsSaver } from "#lib/settings/saver.svelte.ts";
 import GlobalInterception from "./GlobalInterception.svelte";
+
+/** The component inside Settings, where each row reports what happened to its change. */
+const show = () =>
+  render(GlobalInterception, {
+    context: saverContext(new SettingsSaver()),
+  });
 
 beforeEach(() => api.reset());
 afterEach(cleanup);
 
 describe("the global interception setting", () => {
   it("shows the mode in force, says it has not been chosen and shows the empty curated list", async () => {
-    render(GlobalInterception);
+    show();
     const select = await screen.findByLabelText("Which hosts to decrypt");
     expect(select).toHaveValue("known_only");
     expect(screen.getByText(/You haven't chosen yet/)).toBeInTheDocument();
-    expect(screen.getByText("System managed")).toBeInTheDocument();
+    expect(screen.getByText(/Passed through in/)).toBeInTheDocument();
     expect(screen.getByText(/The list is empty for now/)).toBeInTheDocument();
   });
 
   it("lists the curated names read-only", async () => {
     api.view = { ...api.view, curated: ["pinned.example", "other.example"] };
-    render(GlobalInterception);
+    show();
     await screen.findByText("pinned.example");
     expect(screen.getByText("other.example")).toBeInTheDocument();
   });
 
   it("saves a mode and the learning switch at once", async () => {
-    render(GlobalInterception);
+    show();
     const select = await screen.findByLabelText("Which hosts to decrypt");
     await fireEvent.change(select, { target: { value: "all_except_curated" } });
-    await screen.findByText("Interception mode saved.");
+    await screen.findByText("Saved.");
     await fireEvent.click(screen.getByLabelText("Learn from rejections"));
-    await screen.findByText("Learning from rejections saved.");
+    await screen.findByText("Saved.");
     expect(api.bodies).toEqual([
       { mode: "all_except_curated" },
       { learn_from_rejections: false },
@@ -52,7 +60,7 @@ describe("the global interception setting", () => {
   });
 
   it("puts the select back and says why when the save fails", async () => {
-    render(GlobalInterception);
+    show();
     const select = await screen.findByLabelText("Which hosts to decrypt");
     api.refuse = true;
     await fireEvent.change(select, { target: { value: "all" } });
@@ -62,7 +70,7 @@ describe("the global interception setting", () => {
 
   it("says why the setting could not be read, and shows no controls", async () => {
     api.refuse = true;
-    render(GlobalInterception);
+    show();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Couldn't read the interception setting.",
     );
@@ -70,7 +78,7 @@ describe("the global interception setting", () => {
   });
 
   it("puts the learning switch back and says why when it could not be saved", async () => {
-    render(GlobalInterception);
+    show();
     const box = await screen.findByLabelText("Learn from rejections");
     api.refuse = true;
     await fireEvent.click(box);
@@ -79,7 +87,7 @@ describe("the global interception setting", () => {
   });
 
   it("says the service did not answer when it is down", async () => {
-    render(GlobalInterception);
+    show();
     const select = await screen.findByLabelText("Which hosts to decrypt");
     api.down = true;
     await fireEvent.change(select, { target: { value: "all" } });
@@ -90,7 +98,7 @@ describe("the global interception setting", () => {
 
   it("shows nothing when the service is down at the start", async () => {
     api.down = true;
-    render(GlobalInterception);
+    show();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByLabelText("Which hosts to decrypt")).toBeNull();
     expect(screen.queryByLabelText("Learn from rejections")).toBeNull();
@@ -98,10 +106,10 @@ describe("the global interception setting", () => {
 
   it("settles the one-time notice when a mode is chosen", async () => {
     notices.add({ key: INTERCEPTION_NOTICE_KEY, tone: "info", title: "New" });
-    render(GlobalInterception);
+    show();
     const select = await screen.findByLabelText("Which hosts to decrypt");
     await fireEvent.change(select, { target: { value: "all" } });
-    await screen.findByText("Interception mode saved.");
+    await screen.findByText("Saved.");
     expect(notices.items).toEqual([]);
   });
 });

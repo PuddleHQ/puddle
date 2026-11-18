@@ -422,9 +422,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         shell(
             &runtime,
             &sandbox,
-            &format!(
-                "cd /workspace && git init -q api && git init -q web && chown -R agent: api web 2>/dev/null; true"
-            ),
+            "cd /workspace && git init -q api && git init -q web && chown -R agent: api web 2>/dev/null; true",
         )
         .await;
         let reply = api

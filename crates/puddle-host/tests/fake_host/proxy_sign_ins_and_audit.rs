@@ -513,3 +513,52 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
     assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
     host.shutdown().await;
 }
+
+/// A guest connection counts as open from the moment the proxy took its stream, and stops counting
+/// when the stream is gone: the signal a reader waits on to know the audit holds every record.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_connection_counts_as_open_until_it_is_gone() {
+    use futures_util::StreamExt as _;
+    use puddle_agent_proto::tokio_yamux::Session;
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(host.open_guest_streams(), 0);
+
+    let sandbox = WorkspaceId::new("acme").unwrap().sandbox_name();
+    let routes = rig.runtime.routes(&sandbox);
+    let conn = puddle_ipc::connect(&routes.first().unwrap().host)
+        .await
+        .unwrap();
+    let mut session = Session::new_client(conn, puddle_agent_proto::yamux::client_config());
+    let mut control = session.control();
+    let driver = tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });
+    let mut stream = control.open_stream().await.unwrap();
+    // A head that never completes: the proxy holds the stream while it waits for the rest.
+    tokio::io::AsyncWriteExt::write_all(&mut stream, b"CONNECT slow.example.test:443 HTTP/1.1\r\n")
+        .await
+        .unwrap();
+    eventually(
+        "the proxy serves the stream",
+        Duration::from_secs(10),
+        || match host.open_guest_streams() {
+            1 => Ok(()),
+            open => Err(format!("{open} open")),
+        },
+    )
+    .await;
+
+    drop(stream);
+    driver.abort();
+    eventually(
+        "the stream is gone",
+        Duration::from_secs(10),
+        || match host.open_guest_streams() {
+            0 => Ok(()),
+            open => Err(format!("{open} open")),
+        },
+    )
+    .await;
+}

@@ -100,7 +100,7 @@ fn ui_prefs_and_server_choice_default_and_round_trip() {
     assert!(ui.notify_oom());
     assert!(ui.notify_unexpected_stop());
     assert!(ui.confirm_global_rules());
-    assert!(!ui.inbox_shortcuts());
+    assert!(ui.inbox_shortcuts());
     assert!(!ui.start_at_login());
     assert_eq!(ui.app_icon(), AppIconChoice::Duck);
 
@@ -109,7 +109,7 @@ fn ui_prefs_and_server_choice_default_and_round_trip() {
         "vscode_server": { "server": "microsoft" },
         "ui": { "theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0a6a85", "notifications": false, "sound": true, "close_behaviour": "quit", "minimize_to_tray": true,
                  "notify_only_unfocused": false, "badge": false, "notify_oom": false,
-                 "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true,
+                 "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": false,
                  "start_at_login": true, "app_icon": "duck_night" },
     });
     let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
@@ -140,7 +140,7 @@ fn ui_prefs_and_server_choice_default_and_round_trip() {
     assert!(!ui.notify_oom());
     assert!(!ui.notify_unexpected_stop());
     assert!(!ui.confirm_global_rules());
-    assert!(ui.inbox_shortcuts());
+    assert!(!ui.inbox_shortcuts());
     assert!(ui.start_at_login());
     assert_eq!(ui.app_icon(), AppIconChoice::DuckNight);
     assert_eq!(loaded.settings.to_document().unwrap(), doc);

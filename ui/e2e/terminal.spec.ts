@@ -95,6 +95,27 @@ test("is the second tab of the workspace page and offers a terminal in a running
   await staysEmpty(page, csp);
 });
 
+test("the tab opens from the workspace's Overview under the app's prototype guard, as a user reaches it", async ({
+  page,
+  backend,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await backend.control.reset("lived-in");
+  await backend.signIn(page);
+  await page.goto("/workspaces");
+  await page.getByRole("link", { name: "web-shop" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Workspace sections" })
+    .getByRole("link", { name: "Terminal" })
+    .click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Terminal" }),
+  ).toBeVisible();
+  await expect(page.getByText(/No terminal is open/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("a stopped workspace says to start it", async ({ page, backend }) => {
   await open(page, backend, "docs-site");
   await expect(

@@ -9,6 +9,7 @@ import {
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { slowdown, throttleCpu } from "./cpu-throttle.ts";
+import { guardPrototype } from "./prototype-guard.ts";
 
 function connection(): { url: string; token: string } {
   const file = process.env["PUDDLE_E2E_CONNECTION"];
@@ -36,6 +37,7 @@ export async function cpuLimits(
 
 export async function signIn(page: Page): Promise<void> {
   const { token } = connection();
+  await guardPrototype(page);
   await page.addInitScript((t) => {
     (window as unknown as { __PUDDLE__: { token: string } }).__PUDDLE__ = {
       token: t,

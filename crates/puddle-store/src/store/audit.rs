@@ -483,6 +483,29 @@ impl Store {
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| row.get(3))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// How many SQLite virtual-machine steps [`Store::audit_query_every_user`] takes for these
+    /// arguments, rows included. A step count does not move with the machine's load, so a test can
+    /// put a bar on the work a query does (a per-row rescan multiplies it) instead of on a clock.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be read.
+    pub fn audit_query_steps(
+        &self,
+        _: &AllUsers,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<i32, StoreError> {
+        let (sql, args) = audit_query_sql(filter, cursor, limit);
+        let conn = self.audit_read();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(args))?;
+        while rows.next()?.is_some() {}
+        drop(rows);
+        Ok(stmt.get_status(rusqlite::StatementStatus::VmStep))
+    }
 }
 
 /// The SQL and bound values for one audit page; every value is bound, never spliced in.

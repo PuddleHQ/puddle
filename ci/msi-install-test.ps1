@@ -116,6 +116,52 @@ function Test-PerUserPackage([string]$Path) {
     return ((($words -band 8) -eq 8) -and -not $allUsers)
 }
 
+# The rows of the MSI's ActionText table that still hold a raw placeholder such as "[1]" in the
+# text or the template of the "Installing" page (Windows Installer fills those per item; WixUI's
+# templates showed "File: [1], Directory: [9], Size: [6]" as written). Each row is named
+# "Action: text | template".
+function Find-PlaceholderRows($Rows) {
+    foreach ($row in $Rows) {
+        if ("$($row.Description)$($row.Template)" -match '\[[0-9A-Za-z_%#!$]*\]') {
+            "$($row.Action): $($row.Description) | $($row.Template)"
+        }
+    }
+}
+
+# The actions this installer runs whose built-in text carries a per-item placeholder. Each needs its
+# own plain text in the package (crates/puddle-app/wix/main.wxs), or Windows Installer shows its
+# built-in "Folder: [1]" style text for it.
+$ActionsWithText = @('InstallFiles', 'CreateFolders', 'RemoveFolders', 'RemoveFiles', 'CreateShortcuts', 'RemoveShortcuts',
+    'WriteRegistryValues', 'RemoveRegistryValues', 'RegisterProduct', 'PublishProduct', 'PublishFeatures', 'UnpublishFeatures',
+    'RemoveExistingProducts', 'ProcessComponents', 'FindRelatedProducts', 'AppSearch', 'MigrateFeatureStates', 'RollbackCleanup',
+    'InstallAdminPackage')
+
+# The actions of $ActionsWithText that have no row, then every row with a raw placeholder.
+function Find-InstallerTextProblems($Rows) {
+    foreach ($action in $ActionsWithText) {
+        if (-not (@($Rows) | Where-Object { $_.Action -eq $action })) { "$action has no plain text (the built-in raw text is shown)" }
+    }
+    foreach ($raw in Find-PlaceholderRows $Rows) { "raw placeholder: $raw" }
+}
+
+# Every row of the MSI's ActionText table as Action, Description, Template.
+function Get-ActionTextRows([string]$Path) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @((Resolve-Path $Path).Path, 0))
+    # A package that sets no text has no ActionText table at all, and then shows the built-in raw texts.
+    try {
+        $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @('SELECT Action, Description, Template FROM ActionText'))
+    } catch { return }
+    $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+    while ($true) {
+        $row = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+        if ($null -eq $row) { break }
+        $field = { param($i) $row.GetType().InvokeMember('StringData', 'GetProperty', $null, $row, @($i)) }
+        [pscustomobject]@{ Action = (& $field 1); Description = (& $field 2); Template = (& $field 3) }
+    }
+    $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+}
+
 function Invoke-Msiexec([string[]]$Arguments, [string]$LogName) {
     $log = Join-Path $LogDir $LogName
     $all = $Arguments + @('/qn', '/norestart', '/l*v', "`"$log`"")
@@ -561,6 +607,11 @@ if ($SelfTest) {
     Check 'a slow boot fails the bar' (Throws { Assert-DoctorGreen (Report 'ok' 'booted in 30.1 s') 't' $true } 'over the 30 s bar')
     Check 'a skipped boot passes when no boot is required' (-not (Throws { Assert-DoctorGreen (Report 'skip' '--no-boot') 't' $false } '.'))
     Check 'a skipped boot fails when one is required' (Throws { Assert-DoctorGreen (Report 'skip' '--no-boot') 't' $true } "is 'skip'")
+    Check 'a raw template is found' (@(Find-PlaceholderRows @([pscustomobject]@{ Action = 'InstallFiles'; Description = 'Copying new files'; Template = 'File: [1],  Directory: [9],  Size: [6]' })).Count -eq 1)
+    Check 'a placeholder in the text is found' (@(Find-PlaceholderRows @([pscustomobject]@{ Action = 'X'; Description = 'Folder: [1]'; Template = '' })).Count -eq 1)
+    Check 'plain text with no template passes' (@(Find-PlaceholderRows @([pscustomobject]@{ Action = 'InstallFiles'; Description = "Copying Puddle's files"; Template = '' })).Count -eq 0)
+    Check 'a package with no text is named' (@(Find-InstallerTextProblems @()).Count -eq $ActionsWithText.Count)
+    Check 'a package with every text and no template passes' (@(Find-InstallerTextProblems @($ActionsWithText | ForEach-Object { [pscustomobject]@{ Action = $_; Description = 'Plain'; Template = '' } })).Count -eq 0)
     Check 'Wait-Until returns what the probe found' ((Wait-Until 'x' 5 { 'found' } 10) -eq 'found')
     $calls = 0
     Check 'Wait-Until polls until the probe succeeds' ((Wait-Until 'x' 5 { $script:calls++; $script:calls -ge 3 } 10) -eq $true -and $calls -eq 3)
@@ -639,6 +690,16 @@ if ($policy -eq 'skip') {
 Step 'the package is per user'
 foreach ($path in @($Msi, $BaselineMsi, $UpgradeMsi) | Where-Object { $_ }) {
     Expect (Test-PerUserPackage $path) "$path is not a per-user package (needs no elevation, no ALLUSERS)"
+}
+
+Step 'the installer page says what it does in plain words'
+# The older build of -BaselineMsi is a release made before this text; only the MSIs of this commit are held to it.
+foreach ($path in @($Msi, $UpgradeMsi) | Where-Object { $_ }) {
+    $rows = @(Get-ActionTextRows $path)
+    $problems = @(Find-InstallerTextProblems $rows)
+    Expect ($problems.Count -eq 0) "$path does not say what it does in plain words on the Installing page: $($problems -join '; ')"
+    $copy = @($rows | Where-Object { $_.Action -eq 'InstallFiles' })
+    Expect ($copy.Count -eq 1 -and $copy[0].Description -match "^Copying Puddle's files") "$path : InstallFiles says '$($copy.Description)', not the plain text"
 }
 
 if ($BaselineMsi) {

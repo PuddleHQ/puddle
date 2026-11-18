@@ -21,7 +21,7 @@ async function lint(style: string) {
     { filePath: resolve(import.meta.dirname, "../src/probe.svelte") },
   );
   return (result?.messages ?? []).filter(
-    (m) => m.ruleId === "puddle/no-bare-controls",
+    (m) => m.ruleId === "forms/no-bare-controls",
   );
 }
 

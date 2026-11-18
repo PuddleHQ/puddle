@@ -74,6 +74,6 @@ const rule = {
 /** @type {import("eslint").Linter.Config} */
 export const noBareControls = {
   files: ["**/*.svelte"],
-  plugins: { puddle: { rules: { "no-bare-controls": rule } } },
-  rules: { "puddle/no-bare-controls": "error" },
+  plugins: { forms: { rules: { "no-bare-controls": rule } } },
+  rules: { "forms/no-bare-controls": "error" },
 };

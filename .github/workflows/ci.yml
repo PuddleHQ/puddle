@@ -658,6 +658,10 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
           restore-keys: cargo-xwin-
+      # The cold cargo home fetches the microsandbox git dependency and its `skills` submodule here, with
+      # retries, so a TLS error on one fetch ends in a retry and not in a red job (ci/cargo-fetch.sh).
+      - name: Crate sources (with retries)
+        run: ci/cargo-fetch.sh
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows

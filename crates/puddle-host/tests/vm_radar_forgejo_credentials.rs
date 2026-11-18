@@ -80,34 +80,35 @@ async fn audit_mark(api: &Api, workspace: &str) -> i64 {
     page["next_after"].as_i64().unwrap()
 }
 
-/// The connection records of `workspace` to the forge after `mark`, oldest first, read until
-/// `enough` holds for them or a minute passes (the proxy writes them when a connection ends).
+/// The connection records of `workspace` to the forge after `mark`, oldest first, once `enough`
+/// holds for them (the proxy writes a record when its connection ends).
 async fn forge_connections(
     api: &Api,
     workspace: &str,
     mark: i64,
     enough: impl Fn(&[Value]) -> bool,
 ) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let page = api
-            .get(&format!(
-                "/api/audit?workspace={workspace}&type=connection&after={mark}&limit=200"
-            ))
-            .await
-            .json();
-        let rows: Vec<Value> = page["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|entry| entry["record"].clone())
-            .filter(|record| record["host"] == NAME)
-            .collect();
-        if enough(&rows) || Instant::now() > deadline {
-            return rows;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    let path = format!("/api/audit?workspace={workspace}&type=connection&after={mark}&limit=200");
+    puddle_test_kit::eventually_async(
+        "the forge's connection records",
+        Duration::from_secs(60),
+        || async {
+            let page = api.get(&path).await.json();
+            let rows: Vec<Value> = page["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["record"].clone())
+                .filter(|record| record["host"] == NAME)
+                .collect();
+            if enough(&rows) {
+                Ok(rows)
+            } else {
+                Err(format!("{rows:#?}"))
+            }
+        },
+    )
+    .await
 }
 
 /// How many events that `pred` holds for arrive within `window`, those already waiting in the

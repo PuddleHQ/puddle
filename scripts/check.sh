@@ -140,6 +140,27 @@ ui_install() {
     ui_installed=1
 }
 
+# `npm test` with the whole output kept: ui/vitest-out/vitest.log (every line) and vitest-junit.xml (one entry per
+# failure, with its message and stack). A failing run also leaves ui/vitest-out/vitest-failed-<UTC time>.log, which a
+# rerun never overwrites, and prints its path: a one-off failure (T-1748: the output was lost, so the test that failed is
+# unknown) must stay diagnosable. CI uploads ui/vitest-out (ci.yml, job ui).
+ui_test() {
+    mkdir -p ui/vitest-out
+    # The shell's `|` hides npm's status (no pipefail in sh), so the status goes through a file.
+    rm -f ui/vitest-out/vitest.rc
+    {
+        (cd ui && npm test -- --reporter=default --reporter=junit --outputFile.junit=vitest-out/vitest-junit.xml 2>&1)
+        echo $? >ui/vitest-out/vitest.rc
+    } | tee ui/vitest-out/vitest.log
+    ui_test_rc=$(cat ui/vitest-out/vitest.rc)
+    if [ "$ui_test_rc" != 0 ]; then
+        ui_test_kept=ui/vitest-out/vitest-failed-$(date -u +%Y%m%dT%H%M%SZ).log
+        cp ui/vitest-out/vitest.log "$ui_test_kept"
+        echo "vitest failed (rc $ui_test_rc); the full output is kept in $ui_test_kept and the failures in ui/vitest-out/vitest-junit.xml" >&2
+        return 1
+    fi
+}
+
 # The production build, which also lists the packages in the bundle for ui-licences. Built once per
 # run: `ui`, `ui-licences` and `ui-e2e` read the same build of the same tree, and a second build
 # would empty ui/build under a gate that is reading it. (Gates run in their own subshells when they
@@ -317,7 +338,8 @@ run_gate() {
         # format, lint, types (Svelte's a11y warnings fail), unit and component tests with the
         # coverage thresholds in ui/vite.config.ts, then the production build and its size budget.
         ui_install
-        (cd ui && npm run format:check && npm run lint && npm run check && npm test)
+        (cd ui && npm run format:check && npm run lint && npm run check)
+        ui_test
         # The UI's own ratchet: the thresholds are ui/coverage-baseline.json; a local run raises it, CI only compares.
         base=$(diff_base)
         lower_ok "$base"

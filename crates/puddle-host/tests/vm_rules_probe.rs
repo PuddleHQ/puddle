@@ -46,7 +46,7 @@ const ASKED: &str = "asked.invalid";
 /// The domain of the suffix approval, a name below it, and a look-alike that only contains it.
 const SUFFIX: &str = "sfx.invalid";
 const BELOW: &str = "www.sfx.invalid";
-const LOOK_ALIKE: &str = "x.sfx.invalid.evil.example";
+const LOOK_ALIKE: &str = "x.sfx.invalid.evil.invalid";
 /// The host one workspace denies.
 const DENIED: &str = "denied.invalid";
 /// The domain of the global suffix allow, a name below it, and the name a workspace denies.

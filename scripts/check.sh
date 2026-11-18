@@ -239,7 +239,7 @@ run_gate() {
     test-hooks) scripts/check-test-hooks.sh --self-test && scripts/check-test-hooks.sh ;;
     secrets)
         # gitleaks with the reviewed allowlist (.gitleaks.toml) over HEAD's commits its base lacks
-        # (every ref when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
+        # (all of HEAD's history when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
         # gitleaks on PATH (ci/fetch-gitleaks.sh). Not in `fast`: it scans commits.
         scripts/check-secrets.sh --self-test && scripts/check-secrets.sh
         ;;

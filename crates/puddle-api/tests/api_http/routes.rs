@@ -124,6 +124,49 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
 }
 
 #[tokio::test]
+async fn undoing_a_decision_deletes_its_rule_and_lists_the_request_again() {
+    let api = start().await;
+    api.own("box");
+    let id = api.request("box", "api.example.com");
+    let decided = api
+        .send("POST", &format!("/api/pending/{id}/deny"), Some(&json!({})))
+        .await
+        .json();
+    let rule_id = decided["rule"]["id"].as_i64().unwrap();
+    assert_eq!(api.get("/api/pending").await.json()["requests"], json!([]));
+
+    let undone = api
+        .send("POST", &format!("/api/rules/{rule_id}/undo"), None)
+        .await;
+    assert_eq!(undone.status, 200, "{}", undone.body);
+    let outcome = undone.json();
+    assert_eq!(outcome["rule"]["id"], rule_id);
+    let reopened = outcome["reopened"].as_array().unwrap();
+    assert_eq!(reopened.len(), 1);
+    assert_eq!(reopened[0]["host"], "api.example.com");
+    assert_eq!(reopened[0]["state"], "requested");
+    assert_eq!(reopened[0]["first_seen"], START_MS);
+    assert_ne!(reopened[0]["id"], id);
+    assert_eq!(api.get("/api/rules").await.json()["rules"], json!([]));
+    let open = api.get("/api/pending").await.json();
+    assert_eq!(open["requests"][0]["id"], reopened[0]["id"]);
+
+    // The same request can be decided again, and an unknown rule is 404.
+    let new_id = reopened[0]["id"].as_i64().unwrap();
+    let again = api
+        .send(
+            "POST",
+            &format!("/api/pending/{new_id}/approve"),
+            Some(&json!({})),
+        )
+        .await;
+    assert_eq!(again.status, 200, "{}", again.body);
+    let gone = api.send("POST", "/api/rules/999/undo", None).await;
+    assert_eq!(gone.status, 404);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn deny_with_wider_choices_covers_the_suffix_everywhere() {
     let api = start().await;
     let a = api.request("box", "cdn.tracker.example");

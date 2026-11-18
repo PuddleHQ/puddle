@@ -7391,6 +7391,89 @@
         }
       }
     },
+    "/api/rules/{id}/undo": {
+      "post": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Takes back a decision made from the inbox: deletes the rule and puts the requests it closed\nback in the inbox, in their old place.",
+        "operationId": "undo_decision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the deleted rule and the requests that are open again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoOutcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings": {
       "get": {
         "tags": [
@@ -23211,6 +23294,27 @@
           }
         },
         "additionalProperties": false
+      },
+      "UndoOutcome": {
+        "type": "object",
+        "description": "What taking back a decision did.",
+        "required": [
+          "rule",
+          "reopened"
+        ],
+        "properties": {
+          "reopened": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingRequest"
+            },
+            "description": "The requests that are open again, each as a new row in its old place."
+          },
+          "rule": {
+            "$ref": "#/components/schemas/Rule",
+            "description": "The rule that was deleted."
+          }
+        }
       },
       "UnknownTokenKind": {
         "type": "string",

@@ -1428,6 +1428,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rules/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Takes back a decision made from the inbox: deletes the rule and puts the requests it closed
+         *     back in the inbox, in their old place.
+         */
+        post: operations["undo_decision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -6684,6 +6704,13 @@ export interface components {
             /** @description Start Puddle when the user signs in to the computer (default off). */
             start_at_login: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;
+        };
+        /** @description What taking back a decision did. */
+        UndoOutcome: {
+            /** @description The requests that are open again, each as a new row in its old place. */
+            reopened: components["schemas"]["PendingRequest"][];
+            /** @description The rule that was deleted. */
+            rule: components["schemas"]["Rule"];
         };
         /**
          * @description What Puddle can tell about a token in an answer that it does not hold: by its bytes alone
@@ -13246,6 +13273,74 @@ export interface operations {
             };
             /** @description expiry not in the future */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    undo_decision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the deleted rule and the requests that are open again */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoOutcome"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };

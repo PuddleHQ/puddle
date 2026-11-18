@@ -513,6 +513,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         }
         ("GET", "/api/rules" | "/api/request-rules") => (A::ReadRules, T::Own),
         ("POST", "/api/rules" | "/api/request-rules") => (A::ChangeRules, T::Own),
+        ("POST", "/api/rules/{id}/undo") => (A::DecideRequests, T::Rule),
         ("DELETE" | "PUT", "/api/rules/{id}")
         | ("PUT", "/api/rules/{id}/expiry" | "/api/rules/{id}/enabled") => {
             (A::ChangeRules, T::Rule)

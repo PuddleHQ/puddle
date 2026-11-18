@@ -120,7 +120,7 @@ pub(crate) use rules::checked_precedence;
 pub use rules::{
     Actor, DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, NewRuleRequest,
     PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleEnabledRequest,
-    RuleExpiryRequest, RuleList, RuleScope, ScopeChoice, UpdateRuleRequest,
+    RuleExpiryRequest, RuleList, RuleScope, ScopeChoice, UndoOutcome, UpdateRuleRequest,
 };
 pub use settings_view::{
     ClipboardRead, CloseBehaviour, DensityChoice, EffectiveLimits, EffectiveSettings,

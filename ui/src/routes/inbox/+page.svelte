@@ -52,6 +52,9 @@
     const stop = pending.start();
     const stopSets = ruleSets.start();
     const stopAsks = sshAgentAsks.start();
+    // The requests name workspaces by id; the page says their names, so it needs the list on a
+    // first load too, not only after the Workspaces page has read it.
+    const stopWorkspaces = workspaces.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
@@ -59,6 +62,7 @@
       stop();
       stopSets();
       stopAsks();
+      stopWorkspaces();
       clearInterval(clock);
     };
   });
@@ -220,7 +224,7 @@
 {#each pending.full as workspace (workspace)}
   <p class="full" role="status">
     <b
-      ><span class="mono">{workspace}</span> has {pending.openLimit} waiting requests</b
+      ><span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit} waiting requests</b
     >, the most Puddle lists. If it asks about more hosts, they are listed once
     you answer some. Allowing or denying a domain with its subdomains clears
     many at once.

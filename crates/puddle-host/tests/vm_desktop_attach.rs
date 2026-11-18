@@ -399,13 +399,14 @@ mod attach {
             "-F",
             &s.cfg,
             &s.alias,
-            "id -un; echo \"$HOME\"; sudo -n id -un; echo from-the-guest",
+            "id -un; echo \"$HOME\"; sudo -n id -un; printenv USER; printenv LOGNAME; echo from-the-guest",
         ])
         .await;
         assert!(login.status.success(), "{}", text(&login));
         let said = String::from_utf8_lossy(&login.stdout).into_owned();
         assert!(
-            said.starts_with("agent\n/home/agent\nroot\n") && said.contains("from-the-guest"),
+            said.starts_with("agent\n/home/agent\nroot\nagent\nagent\n")
+                && said.contains("from-the-guest"),
             "{said}"
         );
         let uc = s.user_config.to_str().unwrap();

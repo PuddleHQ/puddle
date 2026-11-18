@@ -14,6 +14,10 @@
 # (default 3: a host that is down costs 15 s, not the whole window), the last gets FETCH_ATTEMPTS; a
 # move to the next host is printed, and only the last failure is an `::error::`. The caller's checksum
 # check is what makes any host acceptable, so a mirror adds no trust.
+# cache_get <label> <name> <sha256> <out>: when FETCH_CACHE_DIR holds <name> and it hashes to <sha256>, copies it to
+# <out> and returns 0; a copy that does not match is named and ignored (return 1, download as usual). CI restores
+# that folder from an Actions cache keyed on the pin file, so a run needs no host at all once one run got the file.
+# cache_put <name> <file>: keeps a file the caller has just verified in FETCH_CACHE_DIR (nothing when it is unset).
 
 download() {
     _label=$1 _url=$2 _out=$3 _max=$4
@@ -52,6 +56,7 @@ _try() {
     while :; do
         # $_http is empty or one flag, so it is meant to split.
         # shellcheck disable=SC2086
+        # fetch-ok: this loop is the retry.
         if _msg=$(curl -fsSL $_http --connect-timeout 20 --max-time "$_max" -o "$_out" "$_url" 2>&1); then
             return 0
         else
@@ -66,4 +71,21 @@ _try() {
         [ "$_pause" -le 60 ] || _pause=60
         _attempt=$((_attempt + 1))
     done
+}
+
+cache_get() {
+    [ -n "${FETCH_CACHE_DIR:-}" ] && [ -f "$FETCH_CACHE_DIR/$2" ] || return 1
+    if [ "$(sha256sum <"$FETCH_CACHE_DIR/$2" | cut -d' ' -f1)" = "$3" ]; then
+        cp "$FETCH_CACHE_DIR/$2" "$4"
+        echo "$1: using the cached $2 (checksum matches the pin)" >&2
+        return 0
+    fi
+    echo "$1: ignoring the cached $2 (checksum differs from the pin), downloading" >&2
+    return 1
+}
+
+cache_put() {
+    [ -n "${FETCH_CACHE_DIR:-}" ] || return 0
+    mkdir -p "$FETCH_CACHE_DIR"
+    cp "$2" "$FETCH_CACHE_DIR/$1"
 }

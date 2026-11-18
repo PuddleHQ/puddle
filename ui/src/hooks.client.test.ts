@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleError, init, reporter } from "./hooks.client.ts";
+import {
+  handleError,
+  init,
+  pagePath,
+  reporter,
+  sendReport,
+} from "./hooks.client.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -53,5 +59,47 @@ describe("init", () => {
       new ErrorEvent("error", { error, message: error.message }),
     );
     expect(report).toHaveBeenCalledWith("uncaught", error);
+  });
+});
+
+describe("sendReport", () => {
+  const body = {
+    kind: "page" as const,
+    message: "Error: x",
+    stack: null,
+    route: "/",
+    build: "b",
+  };
+
+  it("posts the report and reads the server's Retry-After", async () => {
+    const POST = vi.fn(async () => ({
+      response: new Response(null, {
+        status: 429,
+        headers: { "retry-after": "30" },
+      }),
+    }));
+    expect(await sendReport({ POST } as never, body)).toEqual({
+      status: 429,
+      retryAfterS: 30,
+    });
+    expect(POST).toHaveBeenCalledWith("/api/ui-errors", { body });
+  });
+
+  it("leaves the wait out when the server names none", async () => {
+    const POST = vi.fn(async () => ({
+      response: new Response(null, { status: 204 }),
+    }));
+    expect(await sendReport({ POST } as never, body)).toEqual({ status: 204 });
+  });
+});
+
+describe("pagePath", () => {
+  it("is the page's path alone", () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/workspaces/abc/terminal?ticket=t#x",
+    );
+    expect(pagePath()).toBe("/workspaces/abc/terminal");
   });
 });

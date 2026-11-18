@@ -80,6 +80,21 @@ describe("app errors page", () => {
     );
   });
 
+  it("says how to copy by hand when the clipboard refuses", async () => {
+    answer([error()]);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: vi.fn(async () => Promise.reject(new Error("denied"))),
+      },
+      configurable: true,
+    });
+    render(Page);
+    await fireEvent.click(await screen.findByRole("button", { name: /^Copy/ }));
+    expect(
+      await screen.findByText(/Couldn't copy it. Select the text/),
+    ).toBeInTheDocument();
+  });
+
   it("copies an error as text and reads the list again on Refresh", async () => {
     answer([error()]);
     const writeText = vi.fn(async () => undefined);

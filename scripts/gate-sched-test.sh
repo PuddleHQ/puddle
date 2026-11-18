@@ -20,6 +20,8 @@ fail() {
 # A hook (git-env's victim variables) must not steer the git commands below.
 # shellcheck disable=SC2046 # the list is words by design
 unset $(git rev-parse --local-env-vars)
+# A run under CHECK_FAIL_FAST=1 (a check machine) would stop the scenarios below at their first failure; only S7 asks for it.
+unset CHECK_FAIL_FAST
 
 # scenario <name> <serial gates> <gate>...: runs the scheduler with stub gates in the background.
 # A gate's behaviour is the file $tmp/<name>/spec/<gate>: "<seconds> <exit status> [<rendezvous>]". The

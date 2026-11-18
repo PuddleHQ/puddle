@@ -21,9 +21,9 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use super::{
-    EndExtensionHostsError, HostWorkspaces, Inner, Live, MAINTENANCE_WAIT, Parts, Running,
-    SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError, Ticket,
-    Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
+    EndExtensionHostsError, HostWorkspaces, Inner, Leftovers, Live, MAINTENANCE_WAIT, Parts,
+    Running, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError,
+    Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
 };
 use crate::HostError;
 use crate::files::Stored;
@@ -668,6 +668,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         slot.record.busy = None;
         slot.deleting = false;
         let delete_note = slot.delete_note.take();
+        let leftovers = std::mem::replace(&mut slot.leftovers, Leftovers::Unknown);
         let name = slot.record.id.clone();
         let mut status_changed = false;
         // A failed create, and a delete either way, leave the list different from what is saved:
@@ -689,6 +690,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             (Ok(()), Operation::Deleting) => {
                 state.slots.remove(id);
                 state.retired.insert(id.clone());
+                if leftovers == Leftovers::Gone {
+                    state.cleaned.insert(id.clone());
+                }
             }
             (Err(_), Operation::Starting) => {
                 slot.record.status = if std::mem::take(&mut slot.volume_missing) {

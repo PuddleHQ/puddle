@@ -203,3 +203,24 @@ describe("what the preview says", () => {
     expect(safetyCopyTime("odd")).toBe("odd");
   });
 });
+
+describe("every call says so when the service cannot be reached or refuses", () => {
+  const calls: [string, () => Promise<{ ok: boolean }>][] = [
+    ["confirming", () => applyRestore("0".repeat(32), "add")],
+    ["reading the result", () => loadResult()],
+    ["clearing the result", () => dismissResult()],
+    ["listing the safety copies", () => loadSafetyCopies()],
+    ["deleting a safety copy", () => deleteSafetyCopy("x")],
+  ];
+  it.each(calls)("%s: down", async (_name, call) => {
+    expect(await call()).toEqual({
+      ok: false,
+      reason: "Puddle's service isn't answering.",
+    });
+  });
+  it.each(calls)("%s: refused with a reason", async (_name, call) => {
+    wire.handler = async () =>
+      json({ error: "internal", message: "disk is full" }, 500);
+    expect(await call()).toEqual({ ok: false, reason: "Disk is full." });
+  });
+});

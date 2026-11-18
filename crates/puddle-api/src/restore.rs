@@ -46,7 +46,7 @@ pub struct SecretRef {
     pub secret_id: String,
 }
 
-/// What the service knows about a staged file; the route adds the rest to make a [`RestorePreview`].
+/// What the service knows about a staged file; the route adds the rest to make a [`crate::wire::RestorePreview`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreFacts {
     /// The staging id.
@@ -84,6 +84,7 @@ pub trait RestoreService: Send + Sync {
         staging_id: &'a str,
         mode: RestoreMode,
     ) -> BoxFuture<'a, Result<RestoreApplied, RestoreServiceError>> {
+        // A service with no restore has no use for the request.
         let _ = (staging_id, mode);
         unavailable()
     }
@@ -108,6 +109,7 @@ pub trait RestoreService: Send + Sync {
         &'a self,
         name: &'a str,
     ) -> BoxFuture<'a, Result<(), RestoreServiceError>> {
+        // A service with no restore has no use for the name.
         let _ = name;
         unavailable()
     }
@@ -136,7 +138,7 @@ impl RestoreService for NoRestore {
 }
 
 /// An in-memory [`RestoreService`] for tests and the UI fixture: it accepts a body that starts with
-/// [`FAKE_BACKUP_BYTES`]'s first word, refuses anything else as a file that is not a backup, and
+/// the fake backup's first word, refuses anything else as a file that is not a backup, and
 /// answers with the facts set with [`FakeRestore::set_facts`].
 #[derive(Debug)]
 pub struct FakeRestore {

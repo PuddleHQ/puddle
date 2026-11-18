@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { builtIn, mine } from "#lib/testing/fake-rule-sets.ts";
+import { builtIn, mine, trackerEntries } from "#lib/testing/fake-rule-sets.ts";
 import type { RuleSet } from "#lib/rules/sets.ts";
 import RuleSetCard from "./RuleSetCard.svelte";
 
@@ -195,3 +195,84 @@ describe("what a set does", () => {
     expect(screen.queryByText(/^Allows|^Blocks/)).toBeNull();
   });
 });
+
+describe("a big built-in set", () => {
+  function big(extra: Partial<RuleSet> = {}) {
+    return builtIn("trackers", {
+      entries: trackerEntries(200),
+      entry_count: 450,
+      ...extra,
+    });
+  }
+
+  it("lists the first entries and says how many there are", () => {
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries: vi.fn() },
+    } as never);
+    expect(screen.getByText("450 entries")).toBeInTheDocument();
+    expect(screen.getAllByText(/tracker\.example/)).toHaveLength(200);
+    expect(screen.getByText("Showing 200 of 450.")).toBeInTheDocument();
+  });
+
+  it("searches and shows only the matches", async () => {
+    const loadEntries = vi.fn(async () => ({
+      entries: trackerEntries(3),
+      total: 3,
+    }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.input(screen.getByLabelText("Search entries"), {
+      target: { value: "t1" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Showing 3 of 3 matches.");
+    expect(loadEntries).toHaveBeenCalledWith(expect.anything(), "t1", 0);
+    expect(screen.getAllByText(/tracker\.example/)).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("shows more from where the list ends", async () => {
+    const loadEntries = vi.fn(async () => ({
+      entries: trackerEntries(250).slice(200),
+      total: 450,
+    }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Showing 250 of 450 matches.");
+    expect(loadEntries).toHaveBeenCalledWith(expect.anything(), "", 200);
+  });
+
+  it("says when the entries can't be read", async () => {
+    const loadEntries = vi.fn(async () => {
+      throw new Error("down");
+    });
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Puddle couldn't read the entries.",
+    );
+  });
+
+  it("has no search on a small set", () => {
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: builtIn("github"), loadEntries: vi.fn() },
+    } as never);
+    expect(screen.queryByLabelText("Search entries")).toBeNull();
+  });
+});
+
+function baseProps() {
+  return {
+    workspaces: [],
+    onSwitch: vi.fn(),
+    onAddEntry: vi.fn(),
+    onRename: vi.fn(),
+    onDelete: vi.fn(),
+    onDeleteEntry: vi.fn(),
+  };
+}

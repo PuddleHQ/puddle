@@ -1218,3 +1218,26 @@ fn v32_reads_every_existing_pending_row_as_not_needing_an_exact_allow() {
             .is_err()
     );
 }
+
+/// Writes `tests/data/golden-v23.db`, the checked-in database the `golden_database` integration
+/// test migrates: the migrations up to version 23, then `tests/data/golden-v23-rows.sql`.
+/// Run it only to change the rows: `cargo test -p puddle-store --lib write_golden_database -- --ignored`.
+#[test]
+#[ignore = "rewrites a checked-in file; run by hand to change the golden database"]
+fn write_golden_database() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+    let file = dir.join("golden-v23.db");
+    for extra in ["", "-journal", "-wal", "-shm"] {
+        let mut name = file.as_os_str().to_owned();
+        name.push(extra);
+        let _ = std::fs::remove_file(name);
+    }
+    let mut conn = Connection::open(&file).unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    migrate_up_to(&mut conn, 23).unwrap();
+    conn.execute_batch(include_str!("../../tests/data/golden-v23-rows.sql"))
+        .unwrap();
+    conn.execute_batch("VACUUM").unwrap();
+    assert_eq!(violations(&conn).unwrap(), []);
+    assert_eq!(version(&conn), 23);
+}

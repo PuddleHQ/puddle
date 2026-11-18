@@ -5,9 +5,7 @@
 //! source was found that does not. Asked of `PowerShell`, because the COM calls behind it would be unsafe code that cannot be tried on a
 //! machine without `BitLocker` here. No unsafe code.
 
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use super::windows_parse::{drive_letter, parse};
@@ -16,9 +14,6 @@ use crate::launch;
 
 /// `PowerShell` takes about a second to start; a machine that needs more than this is not asked.
 const LIMIT: Duration = Duration::from_secs(8);
-
-/// `CREATE_NO_WINDOW`: no console flashes up when a GUI host runs the check.
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Prints one line: the data drive's state, whether page files are encrypted by the file system
 /// setting, and each page file's drive with its state (`x` when the shell gave none).
@@ -86,11 +81,10 @@ fn powershell() -> PathBuf {
 }
 
 fn run(letter: char) -> Result<String, String> {
-    let mut command = Command::new(powershell());
+    let mut command = puddle_process::command(powershell());
     command
         .args(["-NoProfile", "-NonInteractive", "-Command"])
-        .arg(format!("& {{ {SCRIPT} }} {letter}"))
-        .creation_flags(CREATE_NO_WINDOW);
+        .arg(format!("& {{ {SCRIPT} }} {letter}"));
     match launch::run(&mut command, LIMIT) {
         ProcessOutcome::Exited {
             code: Some(0),

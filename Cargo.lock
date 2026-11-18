@@ -6289,6 +6289,7 @@ version = "0.0.0"
 dependencies = [
  "object 0.41.0",
  "puddle-fs",
+ "puddle-process",
  "puddle-runtime",
  "puddle-secrets",
  "puddle-ssh-agent",
@@ -6453,6 +6454,7 @@ dependencies = [
  "puddle-logins",
  "puddle-netpolicy",
  "puddle-ports",
+ "puddle-process",
  "puddle-proxy",
  "puddle-repos",
  "puddle-runtime",
@@ -6523,6 +6525,7 @@ dependencies = [
  "microsandbox",
  "puddle-compute",
  "puddle-compute-msb",
+ "puddle-process",
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
@@ -6600,6 +6603,14 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "puddle-process"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6712,6 +6723,7 @@ version = "0.0.0"
 dependencies = [
  "object 0.41.0",
  "puddle-fs",
+ "puddle-process",
  "puddle-test-kit",
  "serde_json",
  "sha2 0.11.1",
@@ -6728,6 +6740,7 @@ dependencies = [
  "getrandom 0.4.3",
  "keyring-core",
  "puddle-fs",
+ "puddle-process",
  "puddle-test-kit",
  "rcgen",
  "rustls",

@@ -222,12 +222,7 @@
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-  .choice input {
-    justify-self: start;
-    width: 1.5rem;
-    height: 1.5rem;
-    margin: 0;
-  }
+
   .blank {
     display: grid;
     place-items: center;

@@ -602,19 +602,7 @@
     align-items: center;
     gap: var(--space-2);
   }
-  input[type="text"],
-  input[type="password"] {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  input[aria-invalid="true"] {
-    border-color: var(--color-danger);
-  }
+
   .hint {
     margin: 0;
     color: var(--color-text-muted);

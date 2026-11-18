@@ -28,12 +28,14 @@ ok    Credential store    the operating system's credential store: a test write 
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on (the hypervisor uses it)"
+      "summary": "on (the hypervisor uses it)",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
       "status": "ok",
-      "summary": "/dev/kvm is usable"
+      "summary": "/dev/kvm is usable",
+      "impact": "Lets Puddle start workspaces as virtual machines, walled off from this computer and from each other."
     },
     {
       "id": "runtime",
@@ -41,42 +43,53 @@ ok    Credential store    the operating system's credential store: a test write 
       "summary": "you aren't allowed to read or run /opt/puddle/runtime/msb",
       "finding": "runtime_permissions",
       "fix": "Make it readable and executable again:\n  chmod a+rx \"/opt/puddle/runtime/msb\"\nor reinstall Puddle.",
-      "detail": "not executable"
+      "detail": "not executable",
+      "impact": "Puddle can't start any workspace: your account may not run its runtime.",
+      "remedy": "Reset the permissions of the runtime file, or reinstall Puddle."
     },
     {
       "id": "launch",
       "status": "skipped",
-      "summary": "not checked: the bundled runtime isn't usable"
+      "summary": "not checked: the bundled runtime isn't usable",
+      "impact": "Not checked, so Puddle can't tell yet whether its runtime may run here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "test_boot",
       "status": "skipped",
-      "summary": "not checked: the runtime doesn't start"
+      "summary": "not checked: the runtime doesn't start",
+      "impact": "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     }
   ],
   "elapsed_ms": 1234

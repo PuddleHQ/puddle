@@ -243,20 +243,7 @@
     font-weight: 600;
     color: var(--color-text-muted);
   }
-  :global(.options select) {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    font: inherit;
-    color: var(--color-text);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-  }
-  :global(.options input[type="radio"]) {
-    width: 1.25rem;
-    height: 1.25rem;
-    margin: 0;
-  }
+
   :global(.options .hint) {
     color: var(--color-text-muted);
   }

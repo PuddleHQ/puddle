@@ -817,10 +817,14 @@ async fn confirm_when_listening(control: Arc<Control>, port: u16, commit: String
 
 /// After a server exited: a build that exited before it ever accepted a connection is dropped
 /// for the build it replaced.
-async fn settle_trial(control: &Control, commit: &str) {
-    let _work = control.work.lock().await;
+///
+/// `work` is only tried: a download of a newer build can hold it for minutes, and the editor must
+/// not stay down meanwhile. The clean-up of the folders no pointer names then waits for the next
+/// one (a confirmation or a rollback), since it would delete the download's folders.
+fn settle_trial(control: &Control, commit: &str) {
+    let work = control.work.try_lock();
     let _pointers = control.pointers_lock();
-    match microsoft::roll_back(&control.builds, commit) {
+    match microsoft::roll_back(&control.builds, commit, work.is_ok()) {
         Ok(true) => {
             tracing::error!(
                 "the new editor server build exited before it started; running the previous one again"
@@ -952,7 +956,7 @@ async fn start_once(
     if let Some((commit, true)) = &launch.build
         && !replaced
     {
-        settle_trial(control, commit).await;
+        settle_trial(control, commit);
     }
     status
 }

@@ -4,6 +4,7 @@ import svelte from "eslint-plugin-svelte";
 import globals from "globals";
 import ts from "typescript-eslint";
 import { e2eExpectAwait } from "./eslint.e2e.js";
+import { noBareControls } from "./eslint.controls.js";
 
 export default ts.config(
   {
@@ -46,6 +47,7 @@ export default ts.config(
     rules: { "svelte/no-navigation-without-resolve": "off" },
   },
   e2eExpectAwait,
+  noBareControls,
   {
     files: ["scripts/**", "tools/**", "*.config.*"],
     rules: { "no-console": "off" },

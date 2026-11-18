@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 const box = () =>
-  screen.getByRole("checkbox", { name: "Notifications in this browser" });
+  screen.getByRole("switch", { name: "Notifications in this browser" });
 
 describe("TabNotificationsSetting", () => {
   it("turns on after the browser's permission, and off again", async () => {

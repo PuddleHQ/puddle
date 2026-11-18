@@ -329,10 +329,7 @@
     align-items: center;
     gap: var(--space-4);
   }
-  .live input {
-    width: 1.5rem;
-    height: 1.5rem;
-  }
+
   .live {
     display: inline-flex;
     align-items: center;
@@ -354,16 +351,7 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  .field input,
-  .field select {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
+
   .status {
     display: flex;
     flex-wrap: wrap;

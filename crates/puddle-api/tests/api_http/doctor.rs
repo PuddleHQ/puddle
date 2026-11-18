@@ -88,6 +88,8 @@ async fn a_failed_check_carries_its_finding_and_fix() {
     broken.checks[1].summary = "KVM is missing".into();
     broken.checks[1].finding = Some("kvm_missing".into());
     broken.checks[1].fix = Some("Turn it on.".into());
+    broken.checks[1].impact = "No workspace starts.".into();
+    broken.checks[1].remedy = Some("Load KVM.".into());
     fake.set(broken);
     let api = start_with_doctor(fake).await;
     let body = api.get("/api/doctor").await.json();
@@ -97,7 +99,8 @@ async fn a_failed_check_carries_its_finding_and_fix() {
         json!({
             "id": "hypervisor", "title": "Hypervisor", "status": "fail",
             "summary": "KVM is missing", "finding": "kvm_missing",
-            "fix": "Turn it on.", "detail": null
+            "fix": "Turn it on.", "detail": null,
+            "impact": "No workspace starts.", "remedy": "Load KVM."
         })
     );
     api.running.shutdown().await;
@@ -118,6 +121,8 @@ async fn the_real_service_serves_what_its_checks_found() {
             finding: Some(Finding::BootFailed),
             fix: Some("Fix it.".into()),
             detail: Some("exit code 1".into()),
+            impact: "No workspace starts.".into(),
+            remedy: Some("Restart.".into()),
         }],
         elapsed_ms: 12,
     });
@@ -130,7 +135,8 @@ async fn the_real_service_serves_what_its_checks_found() {
         json!({
             "id": "test_boot", "title": "Test boot", "status": "fail",
             "summary": "boot asked for: false", "finding": "boot_failed",
-            "fix": "Fix it.", "detail": "exit code 1"
+            "fix": "Fix it.", "detail": "exit code 1",
+            "impact": "No workspace starts.", "remedy": "Restart."
         })
     );
     api.running.shutdown().await;

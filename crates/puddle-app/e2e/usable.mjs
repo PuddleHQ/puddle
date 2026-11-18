@@ -664,7 +664,7 @@ async function requestNotifications(id) {
   const first = await until("a notification for the request", () => newSince(middle, toasts()).length > 0, 30_000, 1000).catch(() => false);
   await sleep(15_000);
   const whileAway = newSince(middle, toasts());
-  const names = whileAway.length === 1 && whileAway[0].title.includes(WORKSPACE) && whileAway[0].body.includes("example.org");
+  const names = whileAway.length === 1 && whileAway[0].title.startsWith(`${WORKSPACE} `) && /^example\.org:\d+ /.test(whileAway[0].body);
   check(
     "a new request while the window is minimized makes exactly one Windows notification, naming the workspace and the host",
     away !== undefined && minimized.minimized && first && whileAway.length === 1 && names,

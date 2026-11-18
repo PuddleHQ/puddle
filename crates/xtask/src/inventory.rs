@@ -109,13 +109,15 @@ pub fn shipped_packages(tree_output: &str) -> Result<BTreeSet<Package>> {
     Ok(packages)
 }
 
-/// Whether the annotations after the version (`(proc-macro)`, `(*)`, a source) name a local
-/// path: `(/...)` or `(C:\\...)`.
+/// Whether the annotations after the version (`(proc-macro)`, `(*)`, a source) name one of our own
+/// local path packages: `(/...)` or `(C:\\...)`. A path under a `vendor` folder is a third-party
+/// crate whose source we carry, so it ships and needs its licence in the notices.
 fn is_local(annotations: &str) -> bool {
-    annotations
-        .split('(')
-        .skip(1)
-        .any(|group| group.starts_with('/') || group.get(1..3) == Some(":\\"))
+    annotations.split('(').skip(1).any(|group| {
+        let path = group.split(')').next().unwrap_or_default();
+        let is_path = group.starts_with('/') || group.get(1..3) == Some(":\\");
+        is_path && !path.split(['/', '\\']).any(|part| part == "vendor")
+    })
 }
 
 impl Inventory {

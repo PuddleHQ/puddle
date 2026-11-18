@@ -463,6 +463,93 @@ fn r39_your_own_rules_decide_before_any_set() {
 }
 
 #[test]
+fn r38_deleting_one_entry_of_a_set_that_is_on_makes_that_host_pending_everywhere_it_is_on() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Two hosts");
+    let entry = |pattern: &str| {
+        store
+            .as_user(OWNER)
+            .add_rule(&new_rule(Scope::Set(set), pattern, Effect::Allow))
+            .unwrap()
+    };
+    let gone = entry("gone.example");
+    let kept = entry("kept.example");
+    let id = RuleSetId::User(set);
+    // On for a and b (the default of a set of your own), off for c.
+    store
+        .switch_rule_set(OWNER, id, Some(&sb("c")), Some(false), Actor::Ui)
+        .unwrap();
+    for ws in ["a", "b"] {
+        for host in ["gone.example", "kept.example"] {
+            assert!(
+                matches!(decide(&store, ws, host), Decision::SetAllow { .. }),
+                "{ws} {host}"
+            );
+        }
+    }
+    store.delete_rule(gone.id, Actor::Ui).unwrap();
+    for ws in ["a", "b"] {
+        assert!(
+            matches!(decide(&store, ws, "gone.example"), Decision::Pending(_)),
+            "{ws}: the deleted entry no longer allows"
+        );
+        assert_eq!(
+            decide(&store, ws, "kept.example"),
+            Decision::SetAllow {
+                set: id,
+                rule_id: Some(kept.id),
+                pattern: PatternKind::Exact
+            },
+            "{ws}: the other entry still allows"
+        );
+    }
+    assert!(matches!(
+        decide(&store, "c", "kept.example"),
+        Decision::Pending(_)
+    ));
+    assert_eq!(store.rule_set(OWNER, id).unwrap().entries.len(), 1);
+}
+
+#[test]
+fn r37_switching_package_registries_on_for_one_workspace_allows_its_hosts_there_only() {
+    let (_, store) = fixture();
+    let registries = RuleSetId::BuiltIn("package-registries");
+    let hosts = [
+        "pypi.org",
+        "files.pythonhosted.org",
+        "crates.io",
+        "static.crates.io",
+        "index.crates.io",
+        "registry.npmjs.org",
+        "repo.maven.apache.org",
+    ];
+    for host in hosts {
+        assert!(
+            matches!(decide(&store, "b", host), Decision::Pending(_)),
+            "{host} asks first while the set is off"
+        );
+    }
+    store
+        .switch_rule_set(OWNER, registries, Some(&sb("b")), Some(true), Actor::Ui)
+        .unwrap();
+    for host in hosts {
+        assert_eq!(
+            decide(&store, "b", host),
+            Decision::SetAllow {
+                set: registries,
+                rule_id: None,
+                pattern: PatternKind::Exact
+            },
+            "{host} in b"
+        );
+        assert!(
+            matches!(decide(&store, "a", host), Decision::Pending(_)),
+            "{host} still asks in a"
+        );
+    }
+}
+
+#[test]
 fn r39_a_set_may_hold_allows_and_denies_and_the_most_specific_entry_wins() {
     let (_, store) = fixture();
     let mixed = user_set(&store, "Mixed");

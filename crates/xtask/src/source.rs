@@ -210,17 +210,39 @@ impl GitHubSource {
         }
     }
 
-    /// The fork's source at the tag, cloned once (shallow).
+    /// The fork's source at the tag, cloned once (shallow). A folder left by an earlier run is
+    /// reused only when its commit is the one the tag names now; otherwise it is cloned again,
+    /// so the licence inventory and firmware facts never come from another state than the
+    /// commit list.
     fn checkout(&self) -> Result<PathBuf> {
         let src = self.work.join(format!("src-{}", self.tag));
-        if !src.join("Cargo.toml").is_file() {
-            std::fs::create_dir_all(&self.work)
-                .map_err(|e| XtaskError::io(format!("creating {}", self.work.display()), e))?;
-            run(git_command()
-                .args(["clone", "--quiet", "--depth", "1", "--branch", &self.tag])
-                .arg(format!("https://github.com/{}.git", self.fork))
-                .arg(&src))?;
+        if src.join("Cargo.toml").is_file() {
+            let path = format!("repos/{}/commits/{}", self.fork, self.tag);
+            let tagged = parse_commit_sha(&self.github.api(&path, false)?)?;
+            let cached = run(git_command()
+                .arg("-C")
+                .arg(&src)
+                .args(["rev-parse", "HEAD"]))
+            .ok();
+            if cached.is_some_and(|head| head.trim() == tagged) {
+                return Ok(src);
+            }
+            std::fs::remove_dir_all(&src)
+                .map_err(|e| XtaskError::io(format!("removing {}", src.display()), e))?;
         }
+        std::fs::create_dir_all(&self.work)
+            .map_err(|e| XtaskError::io(format!("creating {}", self.work.display()), e))?;
+        // A transfer below 1 kB/s for a minute is a stall, not a slow link.
+        run(git_command()
+            .args([
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=60",
+            ])
+            .args(["clone", "--quiet", "--depth", "1", "--branch", &self.tag])
+            .arg(self.github.clone_url(&self.fork))
+            .arg(&src))?;
         Ok(src)
     }
 

@@ -117,3 +117,31 @@ async fn an_event_inside_the_window_fails_and_is_shown() {
     tx.send(9).await.unwrap();
     no_event_for("quiet", Duration::from_secs(1), &mut rx).await;
 }
+
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "quiet: 2 events were dropped before they were read")]
+async fn an_absence_check_fails_when_the_channel_dropped_events() {
+    let (tx, mut rx) = broadcast::channel(2);
+    for n in 1..=4 {
+        tx.send(n).unwrap();
+    }
+    // Events 1 and 2 were overwritten: one of them could have been the unwanted one.
+    no_event_for("quiet", Duration::from_secs(1), &mut rx).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_absence_check_passes_on_a_broadcast_channel_that_kept_everything() {
+    let (tx, mut rx) = broadcast::channel(4);
+    tx.send(1).unwrap();
+    no_event_matching("over one", Duration::from_secs(1), &mut rx, |n| {
+        (n > 1).then_some(n)
+    })
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_closed_broadcast_channel_reads_as_none() {
+    let (tx, mut rx) = broadcast::channel::<u8>(2);
+    drop(tx);
+    assert_eq!(rx.next().await, None);
+}

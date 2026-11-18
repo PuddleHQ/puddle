@@ -308,7 +308,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch, no CI download without a retry), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | a sibling `<module>/tests.rs`, declared `#[cfg(test)] mod tests;` (see the placement rule below) | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -733,6 +733,46 @@ Puddle (`puddle-runtime`'s build script): at start-up `BundledRuntime::open` has
 any other bytes, so a bump of the fork tag needs its lines in `ci/msb-runtime.sha256` or the build has nothing to check
 against (`DigestStatus::Unpinned`). `PUDDLE_DEV_ANY_RUNTIME=1` (development builds) accepts other files and says so in
 `puddle doctor`.
+
+### External downloads in CI
+
+A required check must not go red because a host we do not run is down for an hour. On 2026-11-18 codeberg.org stopped
+resolving, the pinned Forgejo download failed on every pull request and on `develop`, and nothing could merge; a pip
+read timeout and a failed submodule fetch had done the same in smaller ways. So every file a workflow or a `ci/` script
+fetches from outside follows these rules:
+
+1. **Pinned and verified.** A release binary or archive is pinned by SHA-256 in a `ci/<name>.sha256` file and checked by
+   its `ci/fetch-<name>.sh` script, which refuses any other bytes. A Python package is pinned with `--require-hashes`, an
+   npm package by its lockfile, an action by commit SHA. The pin is the only trust: a file from a cache or a mirror is
+   used only when it matches.
+2. **Retried.** Every download retries for minutes, not seconds: `ci/fetch-retry.sh`'s `download` (8 tries, doubling
+   pause up to 60 s), `curl --retry`, `wget --tries`, `pip install --retries 10 --timeout 60`, PowerShell
+   `-MaximumRetryCount`. The `git-pins` gate runs `scripts/check-external-fetch.sh`, which fails a `curl`, `wget`,
+   `pip install` or `Invoke-WebRequest` in `.github/` or `ci/` that has none of these. A probe whose failure is the
+   answer (a speed test, a local server) says `fetch-ok: <reason>` on its line or in the comment right above it.
+3. **Cached.** A pinned file that a required check downloads is kept in an Actions cache keyed on its pin file
+   (`<name>-<os>-<hash of ci/<name>.sha256>`): `actions/cache/restore` before the fetch, `actions/cache/save` right after
+   a miss (not at the end of the job, so a red test still saves it), and the fetch script reads it through
+   `FETCH_CACHE_DIR` (`cache_get` and `cache_put` in `ci/fetch-retry.sh`), hashing the cached copy like a download. Once
+   one run got the file, later runs need no host at all. `ci/cache-gc.sh` keeps the newest entry of each of these groups
+   on `develop` and drops the ones a pin bump left behind.
+4. **Mirrored when the host is not GitHub.** A download from a host other than GitHub (where the runners themselves live)
+   has a second source: `download_from` in `ci/fetch-retry.sh` tries upstream three times, then the copy in a release of
+   [PuddleHQ/ci-mirror](https://github.com/PuddleHQ/ci-mirror) named `<project>-v<version>`, which holds the unmodified
+   upstream asset with its licence text and a pointer to its source. Today that is Forgejo (codeberg.org) and Gitea's
+   Windows build (dl.gitea.com). A licence that allows no redistribution (JetBrains Gateway, desktop VS Code and its
+   Marketplace packages) gets no mirror; the cache of rule 3 carries those jobs. `scripts/check-external-fetch.sh`
+   fails a `ci/fetch-*.sh` script that downloads from a host other than GitHub (in the script or in the pin file it
+   reads) and calls neither `download_from` nor `cache_get`.
+
+**Bumping a pin of a mirrored file:** upload the new asset to a new `ci-mirror` release (`gh release create
+<project>-v<version> -R PuddleHQ/ci-mirror <asset> <asset>.sha256 <licence file> <source file>`, the asset downloaded
+from upstream and checked against the new pin first) in the same change that edits the pin file. Without it the fetch
+still works while upstream is up, and fails as before when it is not.
+
+Package managers that already retry and cache on their own (`npm ci` with the setup-node cache, `cargo` with the rust
+cache, `apt-get` through `ci/apt-retry.sh`) are outside the lint; a new kind of fetch gets a retry and, when a required
+check depends on it, a cache.
 
 ## 11. Licence headers
 

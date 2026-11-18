@@ -58,6 +58,7 @@ speed=0
 if [ "$mode" = probe ] && [ -n "$probe" ]; then
     resolve=()
     [ -n "$ip" ] && [ -z "${APT_PROBE_URL:-}" ] && resolve=(--resolve "$host:80:$ip")
+    # fetch-ok: a speed probe; a failure means "slow mirror", which is the answer.
     got=$(curl -s -o /dev/null --max-time 5 --range 0-2097151 "${resolve[@]}" \
         -w '%{size_download} %{speed_download}' "$probe" 2>/dev/null || true)
     # A server that ignores the range sends the whole file: that is as good as 2 MB.

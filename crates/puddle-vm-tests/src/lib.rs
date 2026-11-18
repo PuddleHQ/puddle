@@ -69,7 +69,7 @@ pub use browser::{
     PageId, PageOutcome, PageRequest,
 };
 pub use bulk::{BulkHost, STALL_AFTER_BYTES};
-pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
+pub use env::{Settings, VmEnv, cache_key, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
 pub use flush_trace::{FlushTrace, Flushes, flushes_between};
 pub use freeze::{FrozenProcess, Gaps, parse_ticks};

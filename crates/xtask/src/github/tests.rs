@@ -104,3 +104,17 @@ fn the_public_client_is_https_only() {
         "{args:?}"
     );
 }
+
+#[test]
+fn every_request_has_a_connect_and_a_total_time_limit() {
+    for client in [GitHub::public(), GitHub::at("http://x", "http://x", "curl")] {
+        let args: Vec<_> = client
+            .curl()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        for flag in ["--connect-timeout", "--max-time"] {
+            assert!(args.iter().any(|a| a == flag), "{flag} missing: {args:?}");
+        }
+    }
+}

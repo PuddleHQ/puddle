@@ -245,6 +245,8 @@ fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::fs::rename(&tmp, path)
     })();
     if result.is_err() {
+        // Best effort: the error that matters is `result`; a leftover temporary file is
+        // overwritten by the next run.
         let _ = std::fs::remove_file(&tmp);
     }
     result

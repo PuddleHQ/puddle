@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Every download in CI survives a host that is down for a while (docs/STANDARDS.md, "External downloads in CI"). This
 # gate flags, in the workflows, the composite actions and ci/, a download command that has no retry of its own:
-#   curl            without --retry (ci/fetch-retry.sh's download and download_from are the usual way)
+#   curl            without --retry N, N at least 1 (ci/fetch-retry.sh's download and download_from are the usual way)
 #   wget            without --tries
 #   pip install     without --retries (pip's default gives up after 5 quick tries, seconds apart)
 #   Invoke-WebRequest / Invoke-RestMethod without -MaximumRetryCount
@@ -27,8 +27,8 @@ scan() {
                 c = cmd
                 if (c !~ /fetch-ok:/ && !marked) {
                     bad = ""
-                    if (c ~ /(^|[^A-Za-z0-9_$.\/-])curl([.]exe)?[ \t]+-/ || c ~ /(^|[^A-Za-z0-9_$.\/-])curl([.]exe)?[ \t]+["$h]/) {
-                        if (c !~ /--retry[ =]/) bad = "curl without --retry"
+                    if (c ~ /(^|[^A-Za-z0-9_$.\/-])curl([.]exe)?[ \t]+-/ || c ~ /(^|[^A-Za-z0-9_$.\/-])curl([.]exe)?[ \t]+["$h\047]/) {
+                        if (c !~ /--retry[ =]+[1-9]/) bad = "curl without --retry (of at least 1)"
                     }
                     if (bad == "" && c ~ /(^|[^A-Za-z0-9_$.\/-])wget[ \t]/ && c !~ /--tries/) bad = "wget without --tries"
                     if (bad == "" && c ~ /pip3?"?[ \t]+install([ \t]|$)/ && c !~ /--retries[ =]/) bad = "pip install without --retries"
@@ -80,6 +80,9 @@ if [ "${1:-}" = --self-test ]; then
         printf '%s\n' "curl -fsSL \\" '  -o x https://example.org/x' >"$tmp/bad-curl-split.sh"
         printf '%s\n' '      - run: |' '          curl -sS "$URL" -o out' >"$tmp/bad-curl.yml"
         printf '%s\n' 'wget -q https://example.org/x' >"$tmp/bad-wget.sh"
+        printf '%s\n' "curl -fsSL 'https://example.org/x' -o x" >"$tmp/bad-curl-quoted.sh"
+        printf '%s\n' 'curl $OPTS -o x https://example.org/x' >"$tmp/bad-curl-var.sh"
+        printf '%s\n' 'curl --retry 0 -o x https://example.org/x' >"$tmp/bad-curl-retry0.sh"
         printf '%s\n' '# fetch-ok: a probe' 'true' 'curl -fsSL -o x https://example.org/x' >"$tmp/bad-curl-stale-mark.sh"
         printf '%s\n' '      - run: pip install -r requirements.txt' >"$tmp/bad-pip.yml"
         printf '%s\n' '          "$RUNNER_TEMP/venv/bin/pip" install --require-hashes -r r.txt' >"$tmp/bad-pip-path.yml"
@@ -96,7 +99,7 @@ if [ "${1:-}" = --self-test ]; then
             'pip install --retries 10 -r r.txt' \
             'Invoke-WebRequest -Uri $u -OutFile $o -MaximumRetryCount 5 -RetryIntervalSec 10' >"$tmp/good.sh"
     }
-    for b in bad-curl.sh bad-curl-stale-mark.sh bad-curl-split.sh bad-curl.yml bad-wget.sh bad-pip.yml bad-pip-path.yml bad-pip-m.yml bad-iwr.ps1 bad-iwr-split.ps1; do
+    for b in bad-curl.sh bad-curl-quoted.sh bad-curl-var.sh bad-curl-retry0.sh bad-curl-stale-mark.sh bad-curl-split.sh bad-curl.yml bad-wget.sh bad-pip.yml bad-pip-path.yml bad-pip-m.yml bad-iwr.ps1 bad-iwr-split.ps1; do
         [ -n "$(echo "$tmp/$b" | scan)" ] || fail "$b was not flagged"
     done
     out=$(echo "$tmp/good.sh" | scan)

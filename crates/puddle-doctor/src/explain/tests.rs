@@ -112,3 +112,16 @@ fn every_finding_is_worded_by_the_function_it_is_sent_to() {
         }
     }
 }
+
+#[test]
+fn a_problem_without_words_gets_the_generic_ones_and_never_an_empty_line() {
+    let mut check = Check::new(CheckId::DiskSpace, Status::Warn, "s");
+    explain(Os::Linux, &mut check);
+    assert_eq!(check.impact, UNWORDED.0);
+    assert_eq!(check.remedy.as_deref(), Some(UNWORDED.1));
+    // Each area function words only its own findings.
+    assert_eq!(machine(Finding::DiskSpaceLow), UNWORDED);
+    assert_eq!(runtime(Finding::DiskSpaceLow), UNWORDED);
+    assert_eq!(storage(Os::Linux, Finding::KvmMissing), UNWORDED);
+    assert_eq!(accounts(Os::Linux, Finding::KvmMissing), UNWORDED);
+}

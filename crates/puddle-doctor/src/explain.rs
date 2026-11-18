@@ -11,15 +11,11 @@ pub(crate) fn explain(os: Os, check: &mut Check) {
     let (impact, remedy) = match (check.status, check.finding) {
         (Status::Ok, _) => (ok_impact(check.id), None),
         (Status::Skipped, _) => (skipped_impact(check.id), Some(SKIPPED_REMEDY)),
-        (_, Some(finding)) => {
-            let (impact, remedy) = finding_text(os, finding);
+        (_, finding) => {
+            // Every check that is not ok names its finding; without one it gets the generic words.
+            let (impact, remedy) = finding.map_or(UNWORDED, |f| finding_text(os, f));
             (impact, Some(remedy))
         }
-        // Every check that is not ok names its finding; this is the wording if one ever doesn't.
-        (_, None) => (
-            "Puddle found something here it has no words for yet.",
-            Some("Copy the report and send it with a bug report."),
-        ),
     };
     impact.clone_into(&mut check.impact);
     check.remedy = remedy.map(str::to_owned);
@@ -154,7 +150,8 @@ fn finding_text(os: Os, finding: Finding) -> (&'static str, &'static str) {
     }
 }
 
-/// Never shown: [`finding_text`] sends each finding to the function that words it.
+/// The words for a problem with no finding, and for a finding sent to a function that does not
+/// word it; neither happens in a report (the tests hold every report and every finding to that).
 const UNWORDED: (&str, &str) = (
     "Puddle found something here it has no words for yet.",
     "Copy the report and send it with a bug report.",

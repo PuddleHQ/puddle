@@ -128,7 +128,7 @@ impl GitHub {
     /// The body of API `path` (`repos/<owner>/<name>/commits/<tag>`); `raw` asks for file contents
     /// as they are rather than JSON.
     ///
-    /// Sends the token when there is one. A 403 or 429 is tried again up to [`API_TRIES`] times,
+    /// Sends the token when there is one. A 403 or 429 is tried again up to `API_TRIES` times,
     /// waiting for `Retry-After` when GitHub sends it, else doubling from the base wait.
     ///
     /// # Errors

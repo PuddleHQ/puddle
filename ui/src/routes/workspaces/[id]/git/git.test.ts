@@ -221,7 +221,7 @@ describe("identities on a workspace", () => {
     expect(
       await screen.findByText(/No identity here covers dev.azure.com\/contoso/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/No identity yet/)).toBeInTheDocument();
+    expect(screen.getByText(/No identity is on this workspace/)).toBeInTheDocument();
   });
 
   it("warns once for each listed repository no identity covers, and names it", async () => {
@@ -285,24 +285,39 @@ describe("identities on a workspace", () => {
     expect(screen.queryByText(/couldn't read the address of c/)).toBeNull();
   });
 
-  it("says when there is nothing to add", async () => {
+  it("says one line and offers one button when no identity exists, with no dead controls", async () => {
     api.identities = [];
+    identities.identities = [];
     await mount();
-    expect(screen.getByLabelText("Add an identity")).toBeDisabled();
-    expect(screen.getByText("No identities yet")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Make an identity" }),
+      screen.getByText(/This workspace can read public repositories only/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Create an identity" }),
     ).toHaveAttribute("href", "/identities");
-    cleanup();
+    expect(screen.queryByLabelText("Add an identity")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add identity" })).toBeNull();
+    expect(screen.queryByText("Make an identity")).toBeNull();
+  });
+
+  it("does not warn about uncovered repositories while no identity exists to cover them", async () => {
+    api.identities = [];
+    identities.identities = [];
+    url.id = "w-docs";
+    render(Page);
+    await screen.findByText(/This workspace can read public repositories only/);
+    expect(screen.queryByText(/No identity here covers/)).toBeNull();
+  });
+
+  it("hides the dropdown when every identity is already on the workspace", async () => {
     api.identities = [identity(1)];
     api.git["w-web-shop"]!.ids = [1];
     identities.identities = [];
     await mount();
     await waitFor(() =>
-      expect(
-        screen.getByText("Every identity is on this workspace"),
-      ).toBeInTheDocument(),
+      expect(screen.queryByLabelText("Add an identity")).toBeNull(),
     );
+    expect(idList().getAllByRole("listitem")).toHaveLength(1);
   });
 });
 

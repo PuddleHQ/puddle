@@ -293,21 +293,38 @@ async function editorOf(wsId, slot) {
   return page(editorPort + 2 * slot, new RegExp(`^https?://${wsId}\\.localhost:\\d+/`), 240_000);
 }
 
-/** Opens the editor's integrated terminal and types one command, as a person does (real key events over the DevTools Protocol). */
+/** Opens the editor's integrated terminal and types one command, as a person does (real input over the DevTools Protocol). */
 async function typeInTerminal(handle, command) {
   await handle.send("Page.bringToFront");
-  const key = (type, extra) => handle.send("Input.dispatchKeyEvent", { type, ...extra });
-  // Ctrl+Shift+` creates a terminal and focuses it.
-  const backquote = { key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 10 };
-  await key("rawKeyDown", backquote);
-  await key("keyUp", backquote);
-  await until("the terminal to be on screen", () => handle.evaluate(`!!document.querySelector('.xterm-helper-textarea')`), 60_000, 500);
+  const key = async (spec) => {
+    await handle.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...spec });
+    if (spec.text) await handle.send("Input.dispatchKeyEvent", { type: "char", ...spec });
+    await handle.send("Input.dispatchKeyEvent", { type: "keyUp", ...spec });
+  };
+  const terminalUp = () => handle.evaluate(`!!document.querySelector('.terminal-wrapper .xterm-helper-textarea, .xterm-helper-textarea')`).catch(() => false);
+  // A click on the editor area gives the workbench the keyboard focus.
+  const click = async (x, y) => {
+    for (const type of ["mousePressed", "mouseReleased"]) await handle.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+  };
+  await click(500, 300);
+  // Ctrl+Shift+` creates a terminal; when the keys do not reach the workbench, the command palette does the same.
+  await key({ key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 10 });
+  let up = await until("the terminal after Ctrl+Shift+`", terminalUp, 15_000, 500).catch(() => false);
+  if (!up) {
+    await key({ key: "F1", code: "F1", windowsVirtualKeyCode: 112 });
+    await sleep(1500);
+    await handle.send("Input.insertText", { text: "Terminal: Create New Terminal" });
+    await sleep(1500);
+    await key({ key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+    up = await until("the terminal after the command palette", terminalUp, 45_000, 500).catch(() => false);
+  }
+  if (!up) {
+    await picture(handle, "no-terminal");
+    throw new Error(`no terminal opened; the window shows ${JSON.stringify(await handle.evaluate(WINDOW_STATE).catch(() => null))}`);
+  }
   await sleep(3000);
   await handle.send("Input.insertText", { text: command });
-  const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" };
-  await key("rawKeyDown", enter);
-  await key("char", enter);
-  await key("keyUp", enter);
+  await key({ key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
 }
 
 /** The msedgewebview2 processes whose command line names the data folder of any of `ids`. */

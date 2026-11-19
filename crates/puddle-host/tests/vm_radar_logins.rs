@@ -34,7 +34,7 @@ use puddle_test_kit::eventually;
 use puddle_types::{Host as HostName, WorkspaceId};
 use serde_json::{Value, json};
 use support::{Api, ended, named_id_options};
-use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
+use vm_support::{VmHost, guest_as, guest_within, start_vm_host_platform, web_internet};
 
 /// The versions CI runs the other login tests against; Dependabot bumps them.
 const PINNED: &str = include_str!("../../../ci/login-tools/package.json");
@@ -344,6 +344,191 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
         }
     }
     assert!(failures.is_empty(), "login hosts moved: {failures:#?}");
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The hosts Claude Code's native installer (`https://claude.ai/install.sh`) uses: the script's own
+/// host and the hosts it downloads the release manifest and binary from. A host outside this list is
+/// an installer that moved: every user then meets an approval the playbook and the docs do not name.
+const NATIVE_INSTALLER_HOSTS: &[&str] = &["claude.ai", "downloads.claude.ai"];
+/// The hosts `apt-get install gh` uses from the guest's Debian sources.
+const APT_GH_HOSTS: &[&str] = &["deb.debian.org"];
+/// More rounds than this means the tool keeps asking for hosts nobody pinned.
+const MAX_ROUNDS: usize = 30;
+
+/// What running a command to the end through approvals took.
+struct Approved {
+    /// How many runs it took (the last one succeeded).
+    rounds: usize,
+    /// The hosts approved, in the order they were asked for.
+    hosts: Vec<String>,
+    /// What the first run printed (the first refusal, when the command needed any host).
+    first_output: String,
+}
+
+/// Runs `script` as `agent` until it exits 0. After each failed run every open row of the workspace
+/// is approved through the API (the same button the Inbox has: this workspace, this exact host) and
+/// the script runs again. A failed run with no open row to approve fails the test.
+async fn run_through_approvals(
+    vm: &VmHost,
+    api: &Api,
+    workspace: &WorkspaceId,
+    script: &str,
+) -> Approved {
+    let mut hosts = Vec::new();
+    let mut first_output = String::new();
+    for round in 1..=MAX_ROUNDS {
+        let (code, out) = guest_as(
+            &vm.runtime,
+            workspace,
+            "agent",
+            script,
+            Duration::from_mins(10),
+        )
+        .await;
+        eprintln!("round {round}: exit {code}: {}", tail(&out));
+        if round == 1 {
+            first_output.clone_from(&out);
+        }
+        if code == 0 {
+            return Approved {
+                rounds: round,
+                hosts,
+                first_output,
+            };
+        }
+        // The row is written when the refusal is, a moment before the tool reports it; a tool that
+        // failed for another reason leaves none, and the wait then ends in the failure below.
+        let listed = api
+            .get(&format!("/api/pending?workspace={workspace}"))
+            .await
+            .json();
+        let rows = listed["requests"].as_array().unwrap().clone();
+        assert!(
+            !rows.is_empty(),
+            "round {round} failed with exit {code} and nothing waits for approval, so the tool failed for another reason: {out}"
+        );
+        for row in rows {
+            let host = row["host"].as_str().unwrap().to_owned();
+            let id = row["id"].as_i64().unwrap();
+            let reply = api.post(&format!("/api/pending/{id}/approve"), "{}").await;
+            assert_eq!(reply.status, 200, "{}", reply.body);
+            eprintln!("round {round}: approved {host}");
+            hosts.push(host);
+        }
+    }
+    panic!("no success after {MAX_ROUNDS} rounds; approved {hosts:?}");
+}
+
+/// The hosts of `approved` that `pinned` does not list.
+fn unpinned(approved: &Approved, pinned: &[&str]) -> Vec<String> {
+    approved
+        .hosts
+        .iter()
+        .filter(|h| !pinned.contains(&h.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// A person's first hour with Claude Code in a workspace: no rule at all, `curl ... | bash` from
+/// claude.ai, each refused host approved the way the Inbox does it, and the tool runs. The hosts the
+/// installer asked for are pinned; one more fails this radar before it fails a user. The same for
+/// `apt-get install gh` (then `gh auth status` says nobody is signed in).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_login_tools_native_installer() {
+    let net = web_internet(&[], WebOptions::default(), named_id_options()).await;
+    let vm = start_vm_host_platform("nativeinst", net.options, &net.platform, |_| {}).await;
+    let name = format!("{}-inst", vm.settings.prefix.as_str());
+    let workspace = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(vm.host.url(), vm.host.token());
+    assert_eq!(api.get("/api/rules").await.json()["rules"], json!([]));
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 3072}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The GitHub CLI from the Debian sources, then no sign-in. It goes first: an installed Claude
+    // Code calls `api.anthropic.com` on its own once it exists (seen 2026-11-19 after `claude
+    // --version`), and that row is not apt's.
+    let gh = run_through_approvals(
+        &vm,
+        &api,
+        &workspace,
+        "sudo apt-get update -qq && sudo apt-get install -y -qq gh",
+    )
+    .await;
+    eprintln!("apt gh: {} round(s), hosts: {:?}", gh.rounds, gh.hosts);
+    let outside = unpinned(&gh, APT_GH_HOSTS);
+    assert!(
+        outside.is_empty(),
+        "apt asked for {outside:?}, which {APT_GH_HOSTS:?} does not hold; it used {:?}",
+        gh.hosts
+    );
+    let (code, status) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "agent",
+        "GH_PROMPT_DISABLED=1 gh auth status 2>&1",
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_ne!(code, 0, "gh auth status: {status}");
+    assert!(
+        status.to_lowercase().contains("not logged in"),
+        "gh auth status does not say nobody is signed in: {status}"
+    );
+
+    // Claude Code's installer. `pipefail`: a refused download must not leave `bash` an empty script
+    // that exits 0.
+    let installer = run_through_approvals(
+        &vm,
+        &api,
+        &workspace,
+        "set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash",
+    )
+    .await;
+    eprintln!(
+        "installer: {} round(s), hosts approved in order: {:?}",
+        installer.rounds, installer.hosts
+    );
+    let outside = unpinned(&installer, NATIVE_INSTALLER_HOSTS);
+    assert!(
+        outside.is_empty(),
+        "the installer asked for {outside:?}, which the pinned list {NATIVE_INSTALLER_HOSTS:?} does not hold; it used {:?} in {} rounds",
+        installer.hosts,
+        installer.rounds
+    );
+    assert!(
+        installer.rounds > 1,
+        "no rule exists, so the first run must have been refused: {}",
+        installer.first_output
+    );
+    assert!(
+        installer.first_output.contains("403"),
+        "the first refusal shows no 403 text: {}",
+        installer.first_output
+    );
+    let (code, version) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "agent",
+        "export PATH=\"$HOME/.local/bin:$PATH\"; claude --version",
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(code, 0, "claude --version: {version}");
+    assert!(version.contains("Claude Code"), "{version}");
 
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

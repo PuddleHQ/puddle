@@ -25,6 +25,15 @@ use vm_support::{VmHost, guest, guest_live, start_vm_host_config};
 /// A small extension that is on Open VSX.
 const EXTENSION: &str = "EditorConfig.EditorConfig";
 
+/// The extensions a Python and a JavaScript developer install first.
+const POPULAR: [&str; 2] = ["ms-python.python", "dbaeumer.vscode-eslint"];
+
+/// The hosts that wait for approval in the Inbox after installing [`POPULAR`] in a fresh workspace:
+/// everything the installs use beyond Open VSX, which System managed already allows. A new host here
+/// is an extension that started to need one more approval (every user's first install meets it); an
+/// empty list that stops being empty fails the same way.
+const POPULAR_PENDING_HOSTS: &[&str] = &[];
+
 /// The hosts an install uses: the registry's API, and its file host (the download redirects there).
 const REGISTRY: &str = "open-vsx.org openvsx.eclipsecontent.org";
 
@@ -55,6 +64,87 @@ echo "install exit=$status"
 ls -1 "$exts"
 exit $status
 "#;
+
+/// A fresh workspace: the editor server up, no rule of the user's own. Returns what the tests need.
+async fn fresh_editor_workspace(tag: &str) -> (VmHost, WorkspaceId, String, Api) {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let vm = start_vm_host_config(tag, named_id_options(), |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    guest(&vm.runtime, &sandbox, EDITOR_UP).await;
+    (vm, sandbox, name, api)
+}
+
+/// The popular extensions install in a fresh workspace and ask for exactly the pinned hosts. The
+/// installs go to the live Open VSX and whatever else each extension downloads, so the test is a
+/// radar (weekly `full-test`, never a merge gate): it discovers an extension that began to need a
+/// host nobody pinned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_editor_extensions_python_and_eslint_ask_only_for_the_pinned_hosts() {
+    let (vm, sandbox, name, api) = fresh_editor_workspace("pop").await;
+    assert_eq!(api.get("/api/rules").await.json()["rules"], json!([]));
+    for extension in POPULAR {
+        let script = format!("EXTENSION={extension}\nexport EXTENSION\n{INSTALL}");
+        let out = guest_live(&vm.runtime, &sandbox, &script, "open-vsx.org").await;
+        eprintln!("{extension}:\n{out}");
+        assert!(
+            out.to_lowercase().contains("successfully installed"),
+            "{extension} did not report success:\n{out}"
+        );
+        let folder = extension.to_lowercase();
+        assert!(
+            out.lines()
+                .any(|l| l.to_lowercase().starts_with(&format!("{folder}-"))),
+            "{extension} is not in the extensions folder:\n{out}"
+        );
+    }
+    // A refusal's row is written when the connection is; let the audit and the inbox settle.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let pending = api
+        .get(&format!("/api/pending?workspace={name}"))
+        .await
+        .json();
+    let mut hosts: Vec<String> = pending["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["host"].as_str().unwrap().to_owned())
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    eprintln!("hosts waiting for approval: {hosts:?}");
+    let mut pinned: Vec<String> = POPULAR_PENDING_HOSTS
+        .iter()
+        .map(|h| (*h).to_owned())
+        .collect();
+    pinned.sort();
+    assert_eq!(
+        hosts, pinned,
+        "the hosts waiting for approval after installing {POPULAR:?} moved"
+    );
+    assert_eq!(api.get("/api/rules").await.json()["rules"], json!([]));
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_editor_installs_an_extension_from_open_vsx_with_no_rule_added() {

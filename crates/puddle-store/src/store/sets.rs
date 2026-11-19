@@ -993,25 +993,22 @@ impl Store {
                 wanted.insert(Some(workspace.clone()), reasons.clone());
             }
         }
-        let current: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> = {
-            let mut map: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
-            let loaded = load_reasons(&lock(&self.conn))?;
-            for (workspace, reason) in loaded {
-                map.entry(workspace).or_default().insert(reason);
-            }
-            map
-        };
-        let hidden_now = load_hidden(&lock(&self.conn))?;
         let hidden_wanted: BTreeSet<String> = plan
             .hidden_sets
             .iter()
             .filter(|slug| catalogue::built_in(slug).is_some())
             .map(ToString::to_string)
             .collect();
-        if current == wanted && hidden_now == hidden_wanted {
-            return Ok(Vec::new());
-        }
         let closed = self.change(|tx, now, fx| {
+            // Read here, under the write lock: another writer's plan must not be recorded twice.
+            let mut current: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> =
+                BTreeMap::new();
+            for (workspace, reason) in load_reasons(tx)? {
+                current.entry(workspace).or_default().insert(reason);
+            }
+            if current == wanted && load_hidden(tx)? == hidden_wanted {
+                return Ok(Vec::new());
+            }
             tx.execute("DELETE FROM hidden_builtin_sets", [])?;
             for slug in &hidden_wanted {
                 tx.execute(

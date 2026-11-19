@@ -290,7 +290,7 @@ async function restart(wsId) {
 
 /** The editor window of workspace `wsId`: its own WebView2 process has its own DevTools port (every second port after the first window's). */
 async function editorOf(wsId, slot) {
-  return page(editorPort + 2 * slot, new RegExp(`^https?://${wsId}\\.localhost:\\d+/`), 240_000);
+  return slot === 0 ? page(editorPort, new RegExp(`^https?://${wsId}\\.localhost:\\d+/`), 240_000) : page(editorPort, /^https?:\/\/[^/]*\.localhost:\d+\//, 240_000);
 }
 
 /** Opens the editor's integrated terminal and types one command, as a person does (real input over the DevTools Protocol). */

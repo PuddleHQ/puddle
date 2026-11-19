@@ -523,4 +523,14 @@ describe("the Azure CLI source", () => {
       "`az login --tenant contoso.onmicrosoft.com`",
     );
   });
+
+  it("leads a rejected pasted token to Edit and a new token, never to a sign-in", () => {
+    const check = signedOutCheck(stored);
+    expect(check).toMatchObject({ state: "problem", needsSignIn: false });
+    expect(check.state === "problem" && check.fixStep).toContain(
+      "Edit this identity and paste a new token",
+    );
+    expect(statusWord(check)).toBe("Problem");
+    expect(canSignIn(stored)).toBe(false);
+  });
 });

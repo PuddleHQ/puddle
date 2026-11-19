@@ -480,6 +480,58 @@ describe("credentials", () => {
     expect(readable).toHaveLength(1);
   });
 
+  it("ends a rejected pasted token's problem when an edit replaces the token, and tells the listeners", async () => {
+    const old = credential({
+      host: "dev.azure.com",
+      source: { kind: "stored", id: "old", host: "dev.azure.com", org: "x" },
+    });
+    api.identities = [identity(1, { credentials: [old] })];
+    const store = make();
+    await store.refresh();
+    const line = describeSource(old.source);
+    store.markSignedOut(line);
+    expect(store.checkOf(old)).toMatchObject({
+      state: "problem",
+      needsSignIn: false,
+    });
+    const readable: string[] = [];
+    store.onReadable((l) => readable.push(l));
+    const fresh = credential({
+      host: "dev.azure.com",
+      source: { kind: "stored", id: "new", host: "dev.azure.com", org: "x" },
+    });
+    const saved = await store.update(1, {
+      label: "One",
+      author: { name: "A", email: "a@example.com" },
+      credentials: [fresh],
+    } as never);
+    expect(saved.ok).toBe(true);
+    expect(store.signedOutLines.size).toBe(0);
+    expect(readable).toEqual([line]);
+    expect(store.checkOf(store.identities[0]!.credentials[0]!).state).toBe(
+      "untested",
+    );
+  });
+
+  it("keeps the problem of a credential an edit left in place", async () => {
+    const kept = credential({ source: ghSource("tijs") });
+    api.identities = [identity(1, { credentials: [kept] })];
+    const store = make();
+    await store.refresh();
+    const line = describeSource(kept.source);
+    store.markSignedOut(line);
+    const readable: string[] = [];
+    store.onReadable((l) => readable.push(l));
+    const saved = await store.update(1, {
+      label: "Renamed",
+      author: { name: "A", email: "a@example.com" },
+      credentials: [kept],
+    } as never);
+    expect(saved.ok).toBe(true);
+    expect([...store.signedOutLines]).toEqual([line]);
+    expect(readable).toEqual([]);
+  });
+
   it("knows a sign-in is needed even before the identities are read", async () => {
     const cred = credential({ source: ghSource("tijs") });
     const store = make();

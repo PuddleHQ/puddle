@@ -109,7 +109,7 @@
         onchange={() => void chooseServer()}
       />
       <span>
-        <b>code-server (bundled)</b>
+        <b>VS Code in the browser (built in)</b>
         <span class="chip">default</span>
         <span class="desc">{CODE_SERVER_NOTE}</span>
       </span>
@@ -123,7 +123,7 @@
         onchange={() => void chooseServer()}
       />
       <span>
-        <b>Microsoft's VS Code server</b>
+        <b>Microsoft's VS Code server (downloaded)</b>
         <span class="desc"
           >{MICROSOFT_NOTE} You accept Microsoft's licence terms.</span
         >

@@ -57,15 +57,51 @@ fn a_squid_that_resolves_with_the_machines_resolver_has_no_name_server_of_its_ow
     assert!(!read(&dir.path().join("squid.conf")).contains("dns_nameservers"));
 }
 
+/// A program that takes Squid's command line, listens on the port its configuration names and
+/// answers like Squid does to the readiness probe.
+const FAKE_SQUID: &str = r#"#!/bin/sh
+port=$(sed -n 's/^http_port 127.0.0.1:\([0-9]*\)$/\1/p' "$2")
+exec python3 -c '
+import socketserver, sys
+class Handler(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.rfile.readline()
+        self.wfile.write(b"HTTP/1.0 503 Service Unavailable\r\nServer: squid\r\n\r\n")
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+' "$port"
+"#;
+
 #[test]
-fn a_paused_squid_has_stopped_and_pausing_again_is_harmless() {
-    let mut squid = stand_in(Command::new("sleep").arg("60"));
-    squid.pause();
-    squid.pause();
-    let Stop::Process(child) = &mut squid.stop else {
-        unreachable!("the stand-in is a process");
+fn a_paused_squid_refuses_connections_and_a_resumed_one_answers_again_on_the_same_port() {
+    let program = tempfile::tempdir().unwrap();
+    let bin = program.path().join("fake-squid");
+    puddle_test_kit::write_executable(&bin, FAKE_SQUID);
+    let dir = tempfile::tempdir().unwrap();
+    let port = free_port();
+    write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), port);
+    let child = spawn_process(bin.as_os_str(), dir.path(), port);
+    let mut squid = Squid {
+        port,
+        prefix: Prefix::new("squid"),
+        dir,
+        stop: Stop::Process(child),
+        started: StartCost::default(),
+        bin: Some(bin.into_os_string()),
     };
-    assert!(child.try_wait().unwrap().is_some(), "the process is gone");
+    squid.wait().unwrap();
+    assert!(squid_answers(port));
+
+    squid.pause();
+    squid.pause();
+    assert!(
+        std::net::TcpStream::connect((LOCAL, port)).is_err(),
+        "a paused Squid refuses connections"
+    );
+
+    squid.resume();
+    assert_eq!(squid.port(), port);
+    assert!(squid_answers(port), "the resumed Squid answers on its port");
 }
 
 #[test]

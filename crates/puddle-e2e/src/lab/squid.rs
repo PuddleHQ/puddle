@@ -403,19 +403,17 @@ impl Squid {
     /// Stops Squid but keeps its port, configuration and logs, as a company proxy that goes
     /// down: connecting to [`Squid::port`] is refused until [`Squid::resume`]. A stopped Squid
     /// is stopped again, harmlessly.
+    ///
+    /// # Panics
+    /// With the Docker mode, which cannot start again on the same port.
     pub fn pause(&mut self) {
-        match &mut self.stop {
-            Stop::Process(child) => {
-                stop(child);
-                remove_shared_memory(&instance_name(self.port));
-            }
-            Stop::Container(name) => {
-                let _ = Command::new("docker")
-                    .args(["kill", name])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
+        assert!(
+            self.bin.is_some(),
+            "pause works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER"
+        );
+        if let Stop::Process(child) = &mut self.stop {
+            stop(child);
+            remove_shared_memory(&instance_name(self.port));
         }
     }
 
@@ -423,28 +421,15 @@ impl Squid {
     /// access log keeps what it had).
     ///
     /// # Panics
-    /// When it does not come up again.
+    /// With the Docker mode, or when it does not come up again.
     pub fn resume(&mut self) {
-        match &self.stop {
-            Stop::Process(_) => {
-                let bin = self
-                    .bin
-                    .clone()
-                    .expect("a process-mode Squid has its program");
-                self.stop = Stop::Process(spawn_process(&bin, self.dir.path(), self.port));
-            }
-            Stop::Container(name) => {
-                let status = Command::new("docker")
-                    .args(["start", name])
-                    .stdout(Stdio::null())
-                    .status()
-                    .unwrap();
-                assert!(status.success(), "docker start failed");
-            }
-        }
-        if let Err(why) = self.wait() {
-            panic!("Squid did not come back on port {}: {why}", self.port);
-        }
+        let bin = self
+            .bin
+            .clone()
+            .expect("resume works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER");
+        self.stop = Stop::Process(spawn_process(&bin, self.dir.path(), self.port));
+        self.wait()
+            .unwrap_or_else(|why| panic!("Squid did not come back on port {}: {why}", self.port));
     }
 
     /// The port Squid listens on (`127.0.0.1`).

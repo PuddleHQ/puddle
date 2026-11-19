@@ -41,6 +41,11 @@ cat >"$tmp/vulnerable.json" <<'JSON'
 {"fields":{"advisory":{"id":"RUSTSEC-2026-0386","package":"tokio","title":"`AsyncFd::new` and related constructors violate I/O safety"},"code":"unsound","graphs":[{"Krate":{"name":"tokio","version":"1.53.2"},"parents":[]}],"labels":[],"message":"`AsyncFd::new` violates I/O safety","notes":["ID: RUSTSEC-2026-0386","Solution: Upgrade to >=1.51.6, <1.52.0 OR >=1.53.3 (try `cargo update -p tokio`)"],"severity":"error"},"type":"diagnostic"}
 {"fields":{"advisories":{"errors":1,"helps":0,"notes":0,"warnings":0}},"type":"summary"}
 JSON
+# Captured from `cargo deny --format json check advisories` 0.20.2 with an `ignore` entry no crate matches.
+cat >"$tmp/stale.json" <<'JSON'
+{"fields":{"code":"advisory-not-detected","graphs":[],"labels":[{"column":13,"line":16,"message":"no crate matched advisory criteria","span":"RUSTSEC-2023-0071"},{"column":43,"line":16,"message":"ignore reason","span":"stale"}],"message":"advisory was not encountered","severity":"warning"},"type":"diagnostic"}
+{"fields":{"advisories":{"errors":0,"helps":0,"notes":42,"warnings":1}},"type":"summary"}
+JSON
 cat >"$tmp/ignored.json" <<'JSON'
 {"fields":{"advisory":{"id":"RUSTSEC-2025-0141","package":"bincode","title":"bincode is unmaintained"},"code":"unmaintained","graphs":[{"Krate":{"name":"bincode","version":"2.0.1"},"parents":[]}],"message":"ignored","notes":[],"severity":"note"},"type":"diagnostic"}
 {"fields":{"advisories":{"errors":0,"helps":0,"notes":1,"warnings":0}},"type":"summary"}
@@ -68,6 +73,10 @@ grep -q 'RUSTSEC-2026-0386' "$tmp/body.md" || fail "body lacks the advisory id"
 grep -q 'tokio 1.53.2' "$tmp/body.md" || fail "body lacks the crate and version"
 grep -q 'OR >=1.53.3' "$tmp/body.md" || fail "body lacks the fix hint"
 grep -q 'actions/runs/42' "$tmp/body.md" || fail "body lacks the run link"
+
+run "stale ignore, no open issue" 1 stale.json 0 '[]'
+grep -qE '^\| \[RUSTSEC-2023-0071\]\(.*\) \| .RUSTSEC-2023-0071. \| advisory-not-detected \|' "$tmp/body.md" || fail "stale row lacks the ignored id: $(cat "$tmp/body.md")"
+grep -q '?' "$tmp/body.md" && fail "stale row still shows a ?"
 
 run "advisory, issue open" 1 vulnerable.json 1 "$open"
 grep -q '^issue edit 7 --body-file ' "$tmp/gh.log" || fail "open issue not rewritten: $(cat "$tmp/gh.log")"

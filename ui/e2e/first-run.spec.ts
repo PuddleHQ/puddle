@@ -86,7 +86,7 @@ test("a fresh install is led through every step and then opens on the workspaces
   // Connect: code-server is preselected, direct SSH is off until the trust text is accepted.
   await expect(heading(page, "How do you want to connect?")).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: /VS Code in the browser \(built in\)/ }),
+    page.getByRole("radio", { name: /Built-in VS Code server/ }),
   ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
     name: /Allow direct SSH for new workspaces/,
@@ -403,7 +403,7 @@ for (const scheme of ["light", "dark"] as const) {
       }
       if (path === "/welcome/connect") {
         await expect(
-          page.getByRole("radio", { name: /VS Code in the browser/ }),
+          page.getByRole("radio", { name: /Built-in VS Code server/ }),
         ).toBeVisible();
       }
       if (path === "/welcome/interception") {

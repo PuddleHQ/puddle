@@ -441,7 +441,9 @@ async function createFromTheForm() {
   await uia.waitFor("the New workspace dialog", { window: MAIN, localized: "dialog", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
-  await uia.click("Create workspace", inMain("button", "Create workspace"));
+  // Enter in the Name field submits the dialog's form: two buttons are called "Create workspace" (the Workspaces
+  // page's own one-line form sits behind the dialog), and a click by name may reach that one.
+  await uia.type("the Name field", { window: MAIN, role: "edit", name: "Name" }, "", { enter: true });
 }
 
 /**

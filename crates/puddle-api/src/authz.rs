@@ -497,12 +497,9 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         | ("PUT" | "DELETE", "/api/workspaces/{id}/ports/{port}") => (A::UseWorkspace, WS),
         ("GET", "/api/workspaces/{id}/terminals/{terminal}") => (A::UseWorkspace, T::Ticket),
         ("GET", "/api/workspaces/{id}/git") => (A::ReadWorkspaceGit, WS),
-        (
-            "PUT" | "POST",
-            "/api/workspaces/{id}/identities"
-            | "/api/workspaces/{id}/git/switches"
-            | "/api/workspaces/{id}/git/repos",
-        )
+        ("PUT" | "POST", "/api/workspaces/{id}/identities")
+        | ("PUT", "/api/workspaces/{id}/git/switches")
+        | ("POST", "/api/workspaces/{id}/git/repos")
         | ("PUT" | "DELETE", "/api/workspaces/{id}/git/repos/{repo}")
         | ("DELETE", "/api/workspaces/{id}/identities/{identity}") => (A::ChangeWorkspaceGit, WS),
         ("GET", "/api/pending" | "/api/inbox" | "/api/ssh-agent-asks") => (A::ReadRequests, T::Own),
@@ -599,6 +596,27 @@ pub(crate) async fn authorize(
         request.method()
     };
     let Some(declared) = declaration(method, path) else {
+        // A route layer runs for a path whose router has no handler for this method, before the
+        // router answers 405. A path declared for other methods is that case: refuse it as the
+        // router would (nothing runs); only a path with no declaration at all is a missing one.
+        let allowed: Vec<&str> = [
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ]
+        .iter()
+        .filter(|m| declaration(m, path).is_some())
+        .map(Method::as_str)
+        .collect();
+        if !allowed.is_empty() {
+            return (
+                StatusCode::METHOD_NOT_ALLOWED,
+                [(axum::http::header::ALLOW, allowed.join(", "))],
+            )
+                .into_response();
+        }
         tracing::error!(method = %request.method(), path, "route has no permission declaration");
         return ApiError::internal(&"route has no permission declaration").into_response();
     };

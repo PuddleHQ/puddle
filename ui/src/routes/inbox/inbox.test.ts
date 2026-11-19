@@ -1097,6 +1097,13 @@ describe("the page measures itself", () => {
 describe("a long list is drawn in slices", () => {
   it("shows the first rows at once, then all of them, and counts every row in the group", async () => {
     shrinkSlices();
+    // Hold the frames, so the next slice cannot be drawn between the heading appearing and the
+    // first count (under load the frame and its timer fired first and 7 rows were there).
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      frames.push(cb);
+      return frames.length;
+    });
     const rows = 9;
     for (let i = 1; i <= rows; i += 1) {
       inbox.add(
@@ -1108,9 +1115,10 @@ describe("a long list is drawn in slices", () => {
     await screen.findByRole("heading", { name: "example.com" });
     expect(screen.getByText(`${rows} waiting`)).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
-    await vi.waitFor(() =>
-      expect(screen.getAllByRole("listitem")).toHaveLength(rows),
-    );
+    await vi.waitFor(() => {
+      frames.splice(0).forEach((cb) => cb(0));
+      expect(screen.getAllByRole("listitem")).toHaveLength(rows);
+    });
   });
 });
 

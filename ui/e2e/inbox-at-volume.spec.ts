@@ -6,6 +6,8 @@
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
+import { availableParallelism, loadavg } from "node:os";
+import { loadFactor } from "../scripts/load-budget.ts";
 import { staysEmpty } from "./support";
 
 const SLOWDOWN = slowdown();
@@ -482,9 +484,13 @@ test.describe("1000 rules", () => {
       type: "rules-1000",
       description: `Rules page, 1000 rules, best of 5: ${best} ms (${loads.join(", ")})`,
     });
-    // WebKit draws the 1000 rows about twice as slowly as Chromium on the shared host (best of
-    // five: 2849 ms against 1.2 s); the bar is 2 s for Chromium and twice that for WebKit.
-    const bar = (browserName === "webkit" ? 4000 : 2000) * SLOWDOWN;
+    // WebKit draws the 1000 rows about twice as slowly as Chromium (2849 ms against 1.2 s on the
+    // shared host), so its bar is twice as long. Both grow with the machine's load the way every
+    // test's time limit does (scripts/load-budget.ts): the best of five loads on the host with every
+    // lane busy took 3337 ms in Chromium with nothing wrong with the page. An idle machine keeps
+    // 2 s (4 s); the load read when the test starts, at most four times that.
+    const load = loadFactor(loadavg()[0] ?? 0, availableParallelism());
+    const bar = (browserName === "webkit" ? 4000 : 2000) * SLOWDOWN * load;
     expect(best, "the page lists 1000 rules in time").toBeLessThan(bar);
 
     // 20 adds through the form, 20 deletes through the rows; the count follows each.

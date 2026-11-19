@@ -1184,6 +1184,11 @@ fn backup_path(db: &Path, version: u32) -> PathBuf {
 /// `VACUUM INTO` keeps growing its file).
 const STALE_PARTIAL: std::time::Duration = std::time::Duration::from_secs(3600);
 
+/// A copy idle for [`STALE_PARTIAL`] or longer is a crash leftover.
+fn partial_copy_is_stale(idle: std::time::Duration) -> bool {
+    idle >= STALE_PARTIAL
+}
+
 /// Deletes the `<file>.pre-v<N>.<pid>-<n>.partial` files a crash during the pre-upgrade copy
 /// left next to `db`. A file written to within [`STALE_PARTIAL`] may be another process's copy in
 /// progress and stays. Failures are logged; the open goes on.
@@ -1206,7 +1211,7 @@ pub(crate) fn remove_stale_partial_copies(db: &Path) {
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|written| written.elapsed().ok());
-        if idle.is_none_or(|idle| idle < STALE_PARTIAL) {
+        if !idle.is_some_and(partial_copy_is_stale) {
             continue;
         }
         if let Err(error) = std::fs::remove_file(entry.path()) {

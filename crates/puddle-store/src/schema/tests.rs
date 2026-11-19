@@ -1247,6 +1247,18 @@ fn an_upgrade_waits_out_another_process_holding_the_file_longer_than_a_normal_wr
 }
 
 #[test]
+fn a_half_made_copy_is_stale_from_exactly_the_cutoff() {
+    let cutoff = STALE_PARTIAL;
+    assert!(!partial_copy_is_stale(
+        cutoff - std::time::Duration::from_secs(1)
+    ));
+    assert!(partial_copy_is_stale(cutoff));
+    assert!(partial_copy_is_stale(
+        cutoff + std::time::Duration::from_secs(1)
+    ));
+}
+
+#[test]
 fn a_stale_half_made_copy_that_cannot_be_deleted_is_logged() {
     let dir = tempfile::tempdir().unwrap();
     let stuck = dir.path().join("puddle.db.pre-v2.1-0.partial");

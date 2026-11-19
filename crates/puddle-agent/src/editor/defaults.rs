@@ -27,11 +27,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use std::process::Stdio;
-use std::time::Duration;
 
-use tokio::process::Command;
-
-use super::{CONFIG, EXTENSIONS, USER_DATA, withheld};
+use super::{CONFIG, EXTENSIONS, Launch, USER_DATA, command};
 use crate::account::Account;
 
 /// Merges the planned defaults before the server starts, hands what it made to `account` and
@@ -60,6 +57,9 @@ pub(super) fn merge_at_start(
 
 /// The state file's name, in the data folder.
 const STATE: &str = "editor-defaults-applied.json";
+
+/// How long one extension may take to install.
+const INSTALL_BUDGET: std::time::Duration = std::time::Duration::from_mins(5);
 
 const THEME: &str = "workbench.colorTheme";
 const AUTO_DETECT: &str = "window.autoDetectColorScheme";
@@ -104,25 +104,26 @@ fn read_applied(path: &Path) -> Applied {
         .unwrap_or_default()
 }
 
-fn write_applied(path: &Path, applied: &Applied) -> io::Result<()> {
-    let text = serde_json::to_string_pretty(applied).map_err(io::Error::other)?;
+/// Writes the record; a record that cannot be written costs only a repeat of work at the next
+/// start, so it is a warning.
+fn write_applied(path: &Path, applied: &Applied) {
+    let text = serde_json::to_string_pretty(applied).unwrap_or_default();
     puddle_fs::private::write_atomic(path, text.as_bytes())
+        .inspect_err(|err| tracing::warn!(%err, "the editor defaults record could not be written"))
+        .ok();
 }
 
-/// The planned defaults; none when the file is missing, and none (with a warning) when it cannot be
-/// read: the editor is not worth a failed start.
+/// The planned defaults; none when the file is missing or cannot be read, and none (with a
+/// warning) when it is not valid: the editor is not worth a failed start.
 fn read_defaults(path: &str) -> EditorDefaults {
-    match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|err| {
-            tracing::warn!(%err, "the editor defaults file is not valid; no defaults are applied");
-            EditorDefaults::default()
-        }),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => EditorDefaults::default(),
-        Err(err) => {
-            tracing::warn!(%err, "the editor defaults file cannot be read; no defaults are applied");
-            EditorDefaults::default()
-        }
-    }
+    std::fs::read_to_string(path).map_or_else(
+        |_| EditorDefaults::default(),
+        |text| {
+            serde_json::from_str(&text)
+                .inspect_err(|err| tracing::warn!(%err, "the editor defaults file is not valid; no defaults are applied"))
+                .unwrap_or_default()
+        },
+    )
 }
 
 /// Merges the planned defaults into the editor's files. Never fails the start: a problem is logged
@@ -134,35 +135,30 @@ pub(super) fn apply(server: &EditorServer) -> Outcome {
     if defaults.is_empty() && before == Applied::default() {
         return Outcome::default();
     }
-    let mut applied = before.clone();
-    let mut outcome = Outcome::default();
+    let mut run = Run {
+        defaults: &defaults,
+        applied: before.clone(),
+        outcome: Outcome::default(),
+    };
     let user = user_dir(server);
-    let result = (|| -> io::Result<()> {
-        merge_settings(
-            &user.join("settings.json"),
-            &defaults,
-            &mut applied,
-            &mut outcome,
-        )?;
-        merge_keybindings(
-            &user.join("keybindings.json"),
-            &defaults,
-            &mut applied,
-            &mut outcome,
-        )?;
-        outcome.install = missing_extensions(server, &defaults, &mut applied);
-        Ok(())
-    })();
-    if let Err(err) = result {
-        tracing::warn!(%err, "the editor defaults could not be applied");
+    run.settings(&user.join("settings.json"))
+        .and_then(|()| run.keybindings(&user.join("keybindings.json")))
+        .inspect_err(|err| tracing::warn!(%err, "the editor defaults could not be applied"))
+        .ok();
+    run.outcome.install = missing_extensions(server, &defaults, &mut run.applied);
+    if run.applied != before {
+        write_applied(&state_file, &run.applied);
+        run.outcome.made.push(state_file);
     }
-    if applied != before {
-        match write_applied(&state_file, &applied) {
-            Ok(()) => outcome.made.push(state_file),
-            Err(err) => tracing::warn!(%err, "the editor defaults record could not be written"),
-        }
-    }
-    outcome
+    run.outcome
+}
+
+/// One merge in progress: what is planned, what Puddle wrote before (updated as keys are
+/// handled) and what was made.
+struct Run<'a> {
+    defaults: &'a EditorDefaults,
+    applied: Applied,
+    outcome: Outcome,
 }
 
 /// What Puddle wants each owned setting to be: `Some(value)` sets it, `None` removes it.
@@ -185,82 +181,178 @@ fn wanted_settings(
     ]
 }
 
-fn merge_settings(
-    file: &Path,
-    defaults: &EditorDefaults,
-    applied: &mut Applied,
-    outcome: &mut Outcome,
-) -> io::Result<()> {
-    let existing = read_optional(file)?;
-    let current = match existing.as_deref() {
-        None => Value::Object(serde_json::Map::new()),
-        Some(bytes) => match parse_merge_file(MergeFormat::Jsonc, bytes) {
-            Ok(Value::Object(map)) => Value::Object(map),
-            Ok(Value::Null) => Value::Object(serde_json::Map::new()),
-            Ok(_) | Err(_) => {
-                tracing::warn!(
-                    "the editor settings file is not a JSON object; the defaults are not merged into it"
-                );
-                return Ok(());
-            }
-        },
+/// `bytes` as a JSON or JSONC value of one kind: `None` for a file that is not valid or holds
+/// another kind (`want` says which); an empty file is an empty one.
+fn read_as(bytes: Option<&[u8]>, want: fn(&Value) -> bool, empty: Value) -> Option<Value> {
+    let Some(bytes) = bytes else {
+        return Some(empty);
     };
-    let mut sets = Vec::new();
-    let mut removes = Vec::new();
-    for (key, wanted) in wanted_settings(defaults, applied) {
-        let now = current.get(key);
-        let last = applied.settings.get(key);
-        // The first-open seed writes the colour scheme following; that is Puddle's own value.
-        let seeded = key == AUTO_DETECT && last.is_none() && now == Some(&json!(true));
-        if now != last && !seeded {
-            continue;
-        }
-        if let Some(value) = wanted {
-            if now != Some(&value) {
-                sets.push(MergeEntry::json(&[key], &value));
-            }
-            applied.settings.insert(key.to_owned(), value);
-        } else {
-            if now.is_some() {
-                removes.push(vec![key.to_owned()]);
-            }
-            applied.settings.remove(key);
-        }
+    match parse_merge_file(MergeFormat::Jsonc, bytes) {
+        Ok(Value::Null) => Some(empty),
+        Ok(value) if want(&value) => Some(value),
+        _ => None,
     }
-    if sets.is_empty() && removes.is_empty() {
-        return Ok(());
-    }
-    let mut text = existing;
-    let refuse = |err: &dyn std::fmt::Display| {
-        tracing::warn!(%err, "the editor settings file is left as it is");
-    };
-    if !sets.is_empty() {
-        let spec = MergeSpec::new(MergeFormat::Jsonc, sets).map_err(io::Error::other)?;
-        match spec.apply(text.as_deref(), &[]) {
-            Ok(Merged::Write(bytes)) => text = Some(bytes),
-            Ok(Merged::Unchanged) => {}
-            Err(err) => {
-                refuse(&err);
-                return Ok(());
+}
+
+impl Run<'_> {
+    /// Merges the owned settings keys into `file`.
+    fn settings(&mut self, file: &Path) -> io::Result<()> {
+        let existing = read_optional(file)?;
+        let Some(current) = read_as(existing.as_deref(), Value::is_object, json!({})) else {
+            tracing::warn!(
+                "the editor settings file is not a JSON object; the defaults are not merged into it"
+            );
+            return Ok(());
+        };
+        let mut sets = Vec::new();
+        let mut removes = Vec::new();
+        for (key, wanted) in wanted_settings(self.defaults, &self.applied) {
+            let now = current.get(key);
+            let last = self.applied.settings.get(key);
+            // The first-open seed writes the colour scheme following; that is Puddle's own value.
+            let seeded = key == AUTO_DETECT && last.is_none() && now == Some(&json!(true));
+            if now != last && !seeded {
+                continue;
             }
-        }
-    }
-    if !removes.is_empty()
-        && let Some(bytes) = text.as_deref()
-    {
-        match unmerge(MergeFormat::Jsonc, bytes, &removes) {
-            Ok(done) => {
-                if let Merged::Write(out) = done.merged {
-                    text = Some(out);
+            if let Some(value) = wanted {
+                if now != Some(&value) {
+                    sets.push(MergeEntry::json(&[key], &value));
                 }
+                self.applied.settings.insert(key.to_owned(), value);
+            } else {
+                if now.is_some() {
+                    removes.push(vec![key.to_owned()]);
+                }
+                self.applied.settings.remove(key);
             }
+        }
+        if sets.is_empty() && removes.is_empty() {
+            return Ok(());
+        }
+        let edited = edit_settings(existing, &sets, &removes);
+        match edited {
+            Ok(text) => self.write_user_file(file, &text),
             Err(err) => {
-                refuse(&err);
-                return Ok(());
+                tracing::warn!(%err, "the editor settings file is left as it is");
+                Ok(())
             }
         }
     }
-    write_user_file(file, text.as_deref(), outcome)
+
+    /// Merges the planned key bindings into `file`.
+    fn keybindings(&mut self, file: &Path) -> io::Result<()> {
+        let wanted = planned_keybindings(self.defaults);
+        if wanted.is_empty() && self.applied.keybindings.is_empty() {
+            return Ok(());
+        }
+        // A file with only blanks is no file.
+        let existing = read_optional(file)?.filter(|bytes| !bytes.trim_ascii().is_empty());
+        let Some(Value::Array(entries)) = read_as(existing.as_deref(), Value::is_array, json!([]))
+        else {
+            tracing::warn!(
+                "the editor key bindings file is not a JSON array; the defaults are not merged into it"
+            );
+            return Ok(());
+        };
+        let in_file = |entry: &Value| entries.iter().any(|e| identity(e) == identity(entry));
+        let was =
+            |list: &[Value], entry: &Value| list.iter().any(|a| identity(a) == identity(entry));
+        let add: Vec<&Value> = wanted
+            .iter()
+            .filter(|w| !in_file(w) && !was(&self.applied.keybindings, w))
+            .collect();
+        // Dropping an entry rewrites the array, which only a file without comments allows.
+        let strict = existing
+            .as_deref()
+            .is_none_or(|bytes| serde_json::from_slice::<Value>(bytes).is_ok());
+        let drop: Vec<&Value> = self
+            .applied
+            .keybindings
+            .iter()
+            .filter(|a| !was(&wanted, a) && in_file(a) && strict)
+            .collect();
+        // What Puddle holds afterwards: the planned entries it added now or before, and the ones it
+        // could not take out.
+        let mut next: Vec<Value> = wanted
+            .iter()
+            .filter(|w| {
+                was(&self.applied.keybindings, w) || add.iter().any(|a| identity(a) == identity(w))
+            })
+            .cloned()
+            .collect();
+        next.extend(
+            self.applied
+                .keybindings
+                .iter()
+                .filter(|a| !was(&wanted, a) && in_file(a) && !strict)
+                .cloned(),
+        );
+        let text = if drop.is_empty() {
+            insert_entries(existing.as_deref(), &add)
+        } else {
+            let mut kept: Vec<&Value> = entries
+                .iter()
+                .filter(|e| !drop.iter().any(|d| identity(d) == identity(e)))
+                .collect();
+            kept.extend(add.iter().copied());
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&kept).unwrap_or_default()
+            )
+        };
+        if add.is_empty() && drop.is_empty() {
+            self.applied.keybindings = next;
+            return Ok(());
+        }
+        // What goes out must read back as the expected list, or the file stays as it is.
+        let expected = entries.len() - drop.len() + add.len();
+        let reads_back = matches!(
+            parse_merge_file(MergeFormat::Jsonc, text.as_bytes()),
+            Ok(Value::Array(list)) if list.len() == expected
+        );
+        if !reads_back {
+            tracing::warn!(
+                "the editor key bindings file is left as it is: the merge did not read back"
+            );
+            return Ok(());
+        }
+        self.applied.keybindings = next;
+        self.write_user_file(file, text.as_bytes())
+    }
+
+    /// Writes `text` to `file` and notes what it made.
+    fn write_user_file(&mut self, file: &Path, text: &[u8]) -> io::Result<()> {
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+            self.outcome.made.push(dir.to_path_buf());
+        }
+        puddle_fs::private::write_atomic(file, text)?;
+        self.outcome.made.push(file.to_path_buf());
+        Ok(())
+    }
+}
+
+/// `existing` with `sets` written and `removes` taken out, or why the file is left alone.
+fn edit_settings(
+    existing: Option<Vec<u8>>,
+    sets: &[MergeEntry],
+    removes: &[Vec<String>],
+) -> Result<Vec<u8>, String> {
+    let mut text = existing.unwrap_or_default();
+    if !sets.is_empty() {
+        let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec()).map_err(|e| e.to_string())?;
+        let existing = (!text.is_empty()).then_some(text.as_slice());
+        if let Merged::Write(out) = spec.apply(existing, &[]).map_err(|e| e.to_string())? {
+            text = out;
+        }
+    }
+    if !removes.is_empty() {
+        let done = unmerge(MergeFormat::Jsonc, &text, removes).map_err(|e| e.to_string())?;
+        if let Merged::Write(out) = done.merged {
+            text = out;
+        }
+    }
+    Ok(text)
 }
 
 /// One key binding's identity: its key, command and `when`.
@@ -281,126 +373,21 @@ fn planned_keybindings(defaults: &EditorDefaults) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-fn merge_keybindings(
-    file: &Path,
-    defaults: &EditorDefaults,
-    applied: &mut Applied,
-    outcome: &mut Outcome,
-) -> io::Result<()> {
-    let wanted = planned_keybindings(defaults);
-    if wanted.is_empty() && applied.keybindings.is_empty() {
-        return Ok(());
-    }
-    let existing = read_optional(file)?;
-    let entries: Vec<Value> = match existing.as_deref() {
-        None => Vec::new(),
-        Some(bytes) => match parse_merge_file(MergeFormat::Jsonc, bytes) {
-            Ok(Value::Array(list)) => list,
-            Ok(Value::Null) => Vec::new(),
-            Ok(_) | Err(_) => {
-                tracing::warn!(
-                    "the editor key bindings file is not a JSON array; the defaults are not merged into it"
-                );
-                return Ok(());
-            }
-        },
+/// `existing` (an array in JSON with comments, or no file) with `add` before its closing bracket.
+fn insert_entries(existing: Option<&[u8]>, add: &[&Value]) -> String {
+    let list: Vec<String> = add.iter().map(|v| format!("    {v}")).collect();
+    let Some(bytes) = existing else {
+        return format!("[\n{}\n]\n", list.join(",\n"));
     };
-    let in_file = |entry: &Value| {
-        let id = identity(entry);
-        id.is_some() && entries.iter().any(|e| identity(e) == id)
-    };
-    let planned = |entry: &Value| wanted.iter().any(|w| identity(w) == identity(entry));
-    let add: Vec<&Value> = wanted
-        .iter()
-        .filter(|w| {
-            !in_file(w)
-                && !applied
-                    .keybindings
-                    .iter()
-                    .any(|a| identity(a) == identity(w))
-        })
-        .collect();
-    let drop: Vec<&Value> = applied
-        .keybindings
-        .iter()
-        .filter(|a| !planned(a) && in_file(a))
-        .collect();
-    // Dropping rewrites the array, which only a file without comments allows.
-    let strict = existing
-        .as_deref()
-        .is_none_or(|bytes| serde_json::from_slice::<Value>(bytes).is_ok());
-    let drop = if strict { drop } else { Vec::new() };
-    let mut next_applied: Vec<Value> = wanted
-        .iter()
-        .filter(|w| {
-            applied
-                .keybindings
-                .iter()
-                .any(|a| identity(a) == identity(w))
-                || add.iter().any(|a| identity(a) == identity(w))
-        })
-        .cloned()
-        .collect();
-    next_applied.extend(
-        applied
-            .keybindings
-            .iter()
-            .filter(|a| !planned(a) && in_file(a) && !strict)
-            .cloned(),
-    );
-    if add.is_empty() && drop.is_empty() {
-        applied.keybindings = next_applied;
-        return Ok(());
-    }
-    let mut kept: Vec<Value> = entries
-        .iter()
-        .filter(|e| !drop.iter().any(|d| identity(d) == identity(e)))
-        .cloned()
-        .collect();
-    let text = if let (Some(bytes), true) = (existing.as_deref(), drop.is_empty()) {
-        // Added in place after the user's own entries, their comments untouched.
-        let Some(out) = insert_entries(bytes, &add) else {
-            tracing::warn!("the editor key bindings file is left as it is");
-            return Ok(());
-        };
-        out
-    } else {
-        kept.extend(add.iter().map(|v| (*v).clone()));
-        let mut out = serde_json::to_string_pretty(&kept).map_err(io::Error::other)?;
-        out.push('\n');
-        out.into_bytes()
-    };
-    // What goes out must read back as the expected list, or the file stays as it is.
-    let expected_len = entries.len() - drop.len() + add.len();
-    match parse_merge_file(MergeFormat::Jsonc, &text) {
-        Ok(Value::Array(list)) if list.len() == expected_len => {}
-        _ => {
-            tracing::warn!(
-                "the editor key bindings file is left as it is: the merge did not read back"
-            );
-            return Ok(());
-        }
-    }
-    applied.keybindings = next_applied;
-    write_user_file(file, Some(&text), outcome)
-}
-
-/// `bytes` (an array in JSON with comments) with `add` before its closing bracket.
-fn insert_entries(bytes: &[u8], add: &[&Value]) -> Option<Vec<u8>> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    let close = text.rfind(']')?;
+    let text = String::from_utf8_lossy(bytes);
+    let close = text.rfind(']').unwrap_or(text.len());
     let before = text[..close].trim_end();
-    let comma = if before.ends_with('[') || before.ends_with(',') {
+    let comma = if before.ends_with(['[', ',']) {
         ""
     } else {
         ","
     };
-    let list: Vec<String> = add
-        .iter()
-        .map(|v| serde_json::to_string(v).map(|s| format!("    {s}")))
-        .collect::<Result<_, _>>()
-        .ok()?;
-    Some(format!("{before}{comma}\n{}\n{}", list.join(",\n"), &text[close..]).into_bytes())
+    format!("{before}{comma}\n{}\n{}", list.join(",\n"), &text[close..])
 }
 
 /// The extension ids to install: wanted, not installed and not seen before. Ids that are no longer
@@ -452,9 +439,7 @@ pub(super) fn record_installed(server: &EditorServer, id: &str) {
     let mut applied = read_applied(&path);
     if !applied.extensions.iter().any(|known| known == id) {
         applied.extensions.push(id.to_owned());
-        if let Err(err) = write_applied(&path, &applied) {
-            tracing::warn!(%err, "the editor defaults record could not be written");
-        }
+        write_applied(&path, &applied);
     }
 }
 
@@ -466,42 +451,35 @@ pub(super) async fn install_extensions(
     program: PathBuf,
     account: Option<Account>,
 ) {
+    let data = Path::new(&server.data);
     for id in ids {
-        let data = Path::new(&server.data);
-        let mut command = Command::new(&program);
-        command
-            .args(["--install-extension", &id, "--user-data-dir"])
-            .arg(data.join(USER_DATA))
-            .arg("--extensions-dir")
-            .arg(data.join(EXTENSIONS))
-            .arg("--config")
-            .arg(data.join(CONFIG))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        for (name, _) in std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v))) {
-            if withheld(&name) {
-                command.env_remove(name);
-            }
-        }
-        if let Some(account) = &account {
-            command.envs(account.env());
-            #[cfg(target_os = "linux")]
-            account.run_as(&mut command);
-        }
-        let ran = match command.spawn() {
-            Ok(mut child) => tokio::time::timeout(Duration::from_mins(5), child.wait())
+        let launch = Launch {
+            program: program.clone(),
+            args: vec![
+                "--install-extension".into(),
+                id.as_str().into(),
+                "--user-data-dir".into(),
+                data.join(USER_DATA).into(),
+                "--extensions-dir".into(),
+                data.join(EXTENSIONS).into(),
+                "--config".into(),
+                data.join(CONFIG).into(),
+            ],
+            password_env: false,
+            build: None,
+        };
+        let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
+        let mut command = command(&launch, "", inherited, account.as_ref());
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let status = match command.spawn() {
+            Ok(mut child) => tokio::time::timeout(INSTALL_BUDGET, child.wait())
                 .await
-                .map_err(|_| "it took more than five minutes".to_owned())
+                .map_err(|_| "it took too long".to_owned())
                 .and_then(|status| status.map_err(|e| e.to_string())),
             Err(err) => Err(err.to_string()),
         };
-        match ran {
-            Ok(status) if status.success() => {
-                tracing::info!(extension = %id, "an editor extension of the defaults is installed");
-                record_installed(&server, &id);
-            }
+        match status {
+            Ok(status) if status.success() => record_installed(&server, &id),
             Ok(status) => {
                 tracing::warn!(extension = %id, %status, "an editor extension of the defaults did not install");
             }
@@ -518,24 +496,6 @@ fn read_optional(file: &Path) -> io::Result<Option<Vec<u8>>> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err),
     }
-}
-
-/// Writes `text` to `file` when it differs from what is there, keeping the mode of an existing
-/// file, and notes what it made.
-fn write_user_file(file: &Path, text: Option<&[u8]>, outcome: &mut Outcome) -> io::Result<()> {
-    let Some(text) = text else {
-        return Ok(());
-    };
-    if read_optional(file)?.as_deref() == Some(text) {
-        return Ok(());
-    }
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir)?;
-        outcome.made.push(dir.to_path_buf());
-    }
-    puddle_fs::private::write_atomic(file, text)?;
-    outcome.made.push(file.to_path_buf());
-    Ok(())
 }
 
 #[cfg(test)]

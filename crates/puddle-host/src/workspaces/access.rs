@@ -197,13 +197,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if defaults.is_empty() {
             return None;
         }
-        match serde_json::to_vec_pretty(&defaults) {
-            Ok(bytes) => Some(GuestFile::new(guest_path!(EDITOR_DEFAULTS_GUEST), bytes)),
-            Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "the editor starts without the defaults");
-                None
-            }
-        }
+        // A struct of strings and numbers always serialises.
+        serde_json::to_vec_pretty(&defaults)
+            .ok()
+            .map(|bytes| GuestFile::new(guest_path!(EDITOR_DEFAULTS_GUEST), bytes))
     }
 
     /// Asks the launcher to open `record`'s editor in a window of its own. A launcher with no

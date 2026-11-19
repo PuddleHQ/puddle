@@ -58,11 +58,14 @@ export class AdminStore {
     const ticket = ++this.#ticket;
     this.reason = null;
     try {
-      const [users, stats, audit] = await Promise.all([
+      // The audit is read after the users: the server writes a finished deletion's audit line in the
+      // same transaction that removes the account, so an audit read that starts once the account
+      // shows as gone always has the line (a parallel read could miss it, and nothing polls again).
+      const [users, stats] = await Promise.all([
         this.#api.GET("/api/admin/users"),
         this.#api.GET("/api/admin/stats"),
-        this.#api.GET("/api/admin/audit"),
       ]);
+      const audit = await this.#api.GET("/api/admin/audit");
       // A newer read started meanwhile: its answer is the one to show.
       if (ticket !== this.#ticket) return;
       if (users.data && stats.data && audit.data) {

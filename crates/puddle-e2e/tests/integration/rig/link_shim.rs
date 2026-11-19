@@ -253,6 +253,7 @@ async fn hold(plan: &Mutex<Plan>, counters: &Counters) {
         wait += stall;
     }
     if !wait.is_zero() {
+        // flake-ok: simulated latency and retransmission stall of the link; the test's script, not a wait for a signal.
         tokio::time::sleep(wait).await;
     }
 }
@@ -323,6 +324,7 @@ async fn carry(
                 sent += n as u64;
                 counters.bytes_down.fetch_add(n as u64, Ordering::SeqCst);
                 if let Some((_, how_long)) = pause {
+                    // flake-ok: the scripted pause of the link; the test checks what the client does through it.
                     tokio::time::sleep(how_long).await;
                 }
             }

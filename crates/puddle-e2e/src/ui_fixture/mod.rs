@@ -63,8 +63,7 @@ pub use scenario::{
     GitSeed, KeptLoginSeed, ProblemSeed, ProfileSeed, ReadBy, RepoItemSeed, RepoListSeed,
     RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed,
     RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnreadableSeed, UnreadableWhy, UnsavedSeed,
-    WorkspaceOperationSeed,
-    WorkspaceSeed,
+    WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.

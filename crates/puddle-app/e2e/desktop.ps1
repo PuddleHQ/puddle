@@ -90,7 +90,7 @@ switch ($Action) {
         if ([Shell]::IsIconic($h)) { [void][Shell]::ShowWindow($h, 9) }
         # A process may take the foreground only after input of its own; an Alt press is that input. A window that is
         # in front already needs none, and the Alt press would reach its page: WebView2 then stops answering UI Automation
-        # (every FindAll times out) once the page has no focused control (T-1961).
+        # (every FindAll times out) once the page has no focused control.
         if ([Shell]::GetForegroundWindow() -ne $h) {
           [Shell]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
           [Shell]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)

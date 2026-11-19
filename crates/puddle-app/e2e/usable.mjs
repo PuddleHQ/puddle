@@ -812,7 +812,7 @@ try {
     await uia.click("the Workspaces link", { window: MAIN, role: "link", nameRegex: "^Workspaces" });
     await uia.click(`Connect to ${WORKSPACE}`, inMain("button", `Connect to ${WORKSPACE}`));
     await uia.waitFor("the Connect step", { window: MAIN, localized: "dialog", name: `Connect to ${WORKSPACE}` });
-    await uia.click("Open in the browser", inMain("button", "Open in the browser"));
+    await uia.click("Open isolated VS Code", inMain("button", "Open isolated VS Code"));
   });
   const title = await until(
     "the editor window, titled with the workspace",

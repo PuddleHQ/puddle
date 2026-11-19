@@ -46,6 +46,13 @@
   const available = $derived(
     identities.identities.filter((i) => !attachedIds.includes(i.id)),
   );
+  // Nothing to attach and nothing attached: the tab says what that means in one line and one
+  // button, and shows no dropdown until there is something to choose.
+  const noIdentity = $derived(
+    identities.status === "ready" &&
+      identities.identities.length === 0 &&
+      (git?.identities.length ?? 0) === 0,
+  );
   // The workspace's own repositories (its list), read as the repository table spells them.
   const listed = $derived(
     (workspace?.repositories ?? []).map((entry) => ({
@@ -177,24 +184,31 @@
       covers the repository's owner. When a repository's remotes match several
       identities, the first one here is the commit author.
     </p>
-    {#each unreadable as { entry, parsed } (entry.directory)}
-      <p class="warn" role="status">
-        Puddle couldn't read the address of {entry.directory}, so it listed no
-        repository and chose no identity. {parsed.message} Add them here.
+    {#if !noIdentity}
+      {#each unreadable as { entry, parsed } (entry.directory)}
+        <p class="warn" role="status">
+          Puddle couldn't read the address of {entry.directory}, so it listed no
+          repository and chose no identity. {parsed.message} Add them here.
+        </p>
+      {/each}
+      {#each uncovered as { entry, parsed } (entry.directory)}
+        <p class="warn" role="status">
+          No identity here covers {parsed.host}/{parsed.owner}, so a private
+          clone or push of {entry.directory} will fail. Add one that covers it, or
+          give an identity on the
+          <a href="/identities">Identities page</a> that coverage.
+        </p>
+      {/each}
+    {/if}
+    {#if noIdentity}
+      <p class="none">
+        This workspace can read public repositories only.
+        <a class="btn" href="/identities">Create an identity</a>
       </p>
-    {/each}
-    {#each uncovered as { entry, parsed } (entry.directory)}
-      <p class="warn" role="status">
-        No identity here covers {parsed.host}/{parsed.owner}, so a private clone
-        or push of {entry.directory} will fail. Add one that covers it, or give an
-        identity on the
-        <a href="/identities">Identities page</a> that coverage.
-      </p>
-    {/each}
-    {#if git.identities.length === 0}
+    {:else if git.identities.length === 0}
       <p class="muted">
-        No identity yet. Git requests go out without a sign-in, which works for
-        public repositories only.
+        No identity is on this workspace. Git requests go out without a sign-in,
+        which works for public repositories only.
       </p>
     {:else}
       <ol class="ids" aria-label="Identities of {workspace.name}, in order">
@@ -242,38 +256,37 @@
         {/each}
       </ol>
     {/if}
-    <form class="attach" onsubmit={attach} novalidate>
-      <div class="field">
-        <label for="{fid}-attach">Add an identity</label>
-        <select
-          id="{fid}-attach"
-          disabled={available.length === 0}
-          onchange={(e) => (attachChoice = e.currentTarget.value)}
-          aria-describedby={identityProblem ? `${fid}-ids-error` : undefined}
+    {#if !noIdentity && available.length > 0}
+      <form class="attach" onsubmit={attach} novalidate>
+        <div class="field">
+          <label for="{fid}-attach">Add an identity</label>
+          <select
+            id="{fid}-attach"
+            disabled={available.length === 0}
+            onchange={(e) => (attachChoice = e.currentTarget.value)}
+            aria-describedby={identityProblem ? `${fid}-ids-error` : undefined}
+          >
+            <option value="" selected={attachChoice === ""}>
+              {available.length === 0
+                ? identities.identities.length === 0
+                  ? "No identities yet"
+                  : "Every identity is on this workspace"
+                : "Choose\u2026"}
+            </option>
+            {#each available as identity (identity.id)}
+              <option
+                value={String(identity.id)}
+                selected={attachChoice === String(identity.id)}
+                >{identity.label}</option
+              >
+            {/each}
+          </select>
+        </div>
+        <button type="submit" class="btn" disabled={available.length === 0}
+          >Add identity</button
         >
-          <option value="" selected={attachChoice === ""}>
-            {available.length === 0
-              ? identities.identities.length === 0
-                ? "No identities yet"
-                : "Every identity is on this workspace"
-              : "Choose\u2026"}
-          </option>
-          {#each available as identity (identity.id)}
-            <option
-              value={String(identity.id)}
-              selected={attachChoice === String(identity.id)}
-              >{identity.label}</option
-            >
-          {/each}
-        </select>
-      </div>
-      <button type="submit" class="btn" disabled={available.length === 0}
-        >Add identity</button
-      >
-      {#if identities.identities.length === 0}
-        <a class="link-block" href="/identities">Make an identity</a>
-      {/if}
-    </form>
+      </form>
+    {/if}
     {#if identityProblem}
       <p class="error" id="{fid}-ids-error" role="alert">{identityProblem}</p>
     {/if}
@@ -454,8 +467,8 @@
     HTTPS, or over SSH to a Git host Puddle serves) as they leave the workspace,
     and the workspace never holds them. Opening the workspace in desktop VS Code
     is different: code in it can then read the editor's own secrets, including a
-    signed-in GitHub token, so only attach workspaces you trust. The browser
-    editor keeps the workspace isolated.
+    signed-in GitHub token, so only attach workspaces you trust. Isolated VS
+    Code keeps the workspace isolated.
   </p>
 {:else if store.status === "failed"}
   <p class="muted">Couldn't read the Git settings yet. Trying again.</p>
@@ -485,6 +498,13 @@
   .note {
     max-width: 60rem;
     font-size: var(--text-sm);
+  }
+  .none {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0;
   }
   .warn {
     padding: var(--space-2) var(--space-3);

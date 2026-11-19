@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  // The app icon picker: the built-in ducks, and the user's own image. Choosing is a draft like
-  // every other setting (`onchoose`); the image is stored as soon as it is picked, because the
+  // The app icon picker: the built-in ducks, and the user's own image. Choosing applies at once
+  // (`onchoose`); the image is stored as soon as it is picked, because the
   // service has to check it before it can be chosen.
   import { onMount } from "svelte";
   import {
@@ -21,7 +21,7 @@
     stored,
     onchoose,
   }: {
-    /** The icon the screen shows as chosen: an unsaved edit over what is saved. */
+    /** The icon that is chosen (and saved). */
     choice: AppIconChoice;
     /** The icon that is saved, which the window uses now. */
     stored: AppIconChoice;
@@ -63,7 +63,7 @@
       return;
     }
     icons = { ...icons, custom_png_base64: result.value };
-    note = "Your image is ready. Save to use it.";
+    note = "Your image is ready.";
     onchoose("custom");
   }
 
@@ -78,15 +78,11 @@
       return;
     }
     if (icons) icons = { ...icons, custom_png_base64: null };
-    if (choice === "custom") onchoose(stored);
     note = "Your image is removed.";
   }
 </script>
 
 <div class="icons">
-  <p class="desc">
-    Shown on Puddle's window, the taskbar and the tray. The duck is the default.
-  </p>
   {#if failure}
     <p class="error" role="alert">The icons could not be loaded: {failure}</p>
   {:else if !icons}
@@ -157,7 +153,7 @@
       PNG, JPEG or WebP, up to 8 MB and at least 32 pixels on each side. A wide
       or tall picture is fitted on a square, not cut.
       {#if custom && !removable}
-        Your image is in use; choose another icon and save before removing it.
+        Your image is in use; choose another icon before removing it.
       {/if}
     </p>
     {#if stored === "custom" && !custom}

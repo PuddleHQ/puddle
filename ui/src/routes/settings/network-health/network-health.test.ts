@@ -71,7 +71,7 @@ describe("network health page", () => {
     expect(card).toHaveTextContent("corp.example, ad.example");
     expect(
       within(card).getByRole("link", { name: /Local destinations/ }),
-    ).toHaveAttribute("href", "/settings#local-destinations");
+    ).toHaveAttribute("href", "/settings/network#local-destinations");
   });
 
   it("says nothing was found when this computer can't be read for the company network", () => {
@@ -224,7 +224,7 @@ describe("network health page", () => {
     ).toBeInTheDocument();
     expect(
       within(none).getByRole("link", { name: /Enter one in Settings/ }),
-    ).toHaveAttribute("href", "/settings#s-net");
+    ).toHaveAttribute("href", "/settings/network");
     unmount();
 
     r.sign_in.stored = [{ proxy: "p:8080", user: "svc-alice" }];

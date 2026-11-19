@@ -113,11 +113,8 @@ pub enum PlanError {
         path: String,
     },
     /// A value from the image can't be passed on.
-    #[error("the image's {what} contains a NUL or newline")]
-    ImageValue {
-        /// `ENV PATH` or `ENTRYPOINT/CMD`.
-        what: &'static str,
-    },
+    #[error("the image's {0}")]
+    ImageValue(ImageValue),
     /// A setting for the agent can't be passed on.
     #[error("agent setting {name}: {reason}")]
     AgentSetting {
@@ -144,6 +141,24 @@ pub enum PlanError {
         /// The step's path.
         path: String,
     },
+}
+
+/// An image value the plan can't pass on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageValue {
+    /// `ENV PATH`: written as one line of a file, so a NUL or a newline can't be in it.
+    Path,
+    /// ENTRYPOINT/CMD: exec arguments, so a NUL can't be in them (a newline can).
+    Command,
+}
+
+impl std::fmt::Display for ImageValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Path => "ENV PATH contains a NUL or newline",
+            Self::Command => "ENTRYPOINT/CMD contains a NUL",
+        })
+    }
 }
 
 /// The git identity Puddle writes into the sandbox (a basic identities feature: the user
@@ -558,8 +573,8 @@ impl BootPlanBuilder {
     }
 
     /// Starts the agent with the setting `name` (`PUDDLE_AGENT_*`), for example the browser
-    /// editor's server. Applied when the agent next starts: the supervisor reads the latest boot's
-    /// settings before each start. Needs an agent in the plan.
+    /// editor's server. Applied in this boot: an agent that already runs with other settings (a
+    /// re-adopted sandbox) is restarted with these. Needs an agent in the plan.
     pub fn agent_env(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.agent_env.push((name.into(), value.into()));
         self
@@ -574,7 +589,8 @@ impl BootPlanBuilder {
     }
 
     /// Turns transparent capture off (on by default): the agent starts without it and the
-    /// resolver stays as the guest had it.
+    /// resolver stays as the guest had it. A switch either way on a running sandbox restarts its
+    /// agent, as any change of [`Self::agent_env`] does.
     pub fn no_capture(mut self) -> Self {
         self.capture = false;
         self
@@ -594,7 +610,8 @@ impl BootPlanBuilder {
     ///   Puddle's own paths);
     /// - [`PlanError::ReservedPath`], [`PlanError::UnsafePath`]: a file path is unusable;
     /// - [`PlanError::ReservedEnv`]: an env name starts with `PUDDLE_`;
-    /// - [`PlanError::ImageValue`]: the image's `PATH` or ENTRYPOINT/CMD holds a NUL or newline;
+    /// - [`PlanError::ImageValue`]: the image's `PATH` holds a NUL or newline, or its
+    ///   ENTRYPOINT/CMD a NUL;
     /// - [`PlanError::StepNotInPlan`]: a step names no file of the plan;
     /// - [`PlanError::GitAuthorRule`]: more than [`MAX_GIT_AUTHOR_RULES`] author rules.
     pub fn build(self) -> Result<BootPlan, PlanError> {
@@ -615,7 +632,7 @@ impl BootPlanBuilder {
         // shells get too: Debian's /etc/profile resets PATH before the profile.d files run.
         if let Some(path) = self.env.get("PATH").or_else(|| self.image.env_var("PATH")) {
             if path.contains(['\0', '\n']) {
-                return Err(PlanError::ImageValue { what: "ENV PATH" });
+                return Err(PlanError::ImageValue(ImageValue::Path));
             }
             files.push(GuestFile::new(
                 guest_path!(PATH_FILE_GUEST),
@@ -681,9 +698,7 @@ impl BootPlanBuilder {
                 .cloned()
                 .collect();
             if all.iter().any(|a| a.contains('\0')) {
-                return Err(PlanError::ImageValue {
-                    what: "ENTRYPOINT/CMD",
-                });
+                return Err(PlanError::ImageValue(ImageValue::Command));
             }
             all
         };

@@ -1,0 +1,11 @@
+{
+  "name": "rule-sets",
+  "workspaces": [
+    {
+      "name": "demo",
+      "status": "running",
+      "ago_ms": 86400000
+    }
+  ],
+  "requests": [{ "workspace": "demo", "host": "registry.example.org" }]
+}

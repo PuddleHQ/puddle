@@ -15,7 +15,7 @@ const sections = [
   { path: "/rules", name: "Rules" },
   { path: "/activity", name: "Activity" },
   { path: "/identities", name: "Identities" },
-  { path: "/settings", name: "Settings" },
+  { path: "/settings/appearance", name: "Settings" },
 ];
 
 test.describe("the app shell, served by the real API", () => {

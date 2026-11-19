@@ -15,6 +15,9 @@
   import SetChip from "./SetChip.svelte";
   import "#lib/theme/controls.css";
 
+  /** Under this window width the buttons sit under the host and the box opens below them. */
+  const BESIDE_MIN_WIDTH = 900;
+
   // The "more choices": every workspace, subdomains, duration, then Allow or Deny with them. One
   // instance serves the whole list, anchored to the more-choices button of the row it was opened
   // from (500 rows, one popover). That button is neither Allow nor Deny, so both end it.
@@ -52,6 +55,11 @@
   const durationSecs = $derived(duration === "0" ? null : Number(duration));
   const id = $props.id();
 
+  // The whole button group of the row, not just the arrow, so the box clears Allow and Deny too.
+  const place = $derived(anchor?.closest<HTMLElement>(".control") ?? anchor);
+  let innerWidth = $state(1280);
+  const sideBeside = $derived(innerWidth >= BESIDE_MIN_WIDTH);
+
   $effect(() => {
     // Every time it opens it starts from the narrowest choice (R-15).
     if (open) {
@@ -74,6 +82,8 @@
   }
 </script>
 
+<svelte:window bind:innerWidth />
+
 <Popover.Root
   bind:open
   onOpenChange={(next) => {
@@ -81,17 +91,16 @@
   }}
 >
   <Popover.Portal>
-    <!-- It hangs over the rows beside it. Its right edge sits 4px past the more-choices column, in
-         the row's padding: flush with those buttons it would leave a sub-pixel strip of the one of
-         the row above or below uncovered (the browser rounds the two edges differently), and that
-         strip counts as a target under 24px (WCAG 2.5.8). -->
+    <!-- Wide window: it opens to the left of the row's Allow, Deny and more-choices buttons, so every
+         row's buttons stay visible and clickable and only host names are covered. Narrow window (the
+         buttons sit under the host, no room beside them): it opens below them. -->
     <Popover.Content
       class="options"
       role="dialog"
-      align="end"
-      sideOffset={6}
-      alignOffset={-4}
-      customAnchor={anchor}
+      side={sideBeside ? "left" : "bottom"}
+      align={sideBeside ? "center" : "end"}
+      sideOffset={8}
+      customAnchor={place}
       aria-label="Choices for {target.host}"
       onInteractOutside={(event) => {
         // A click on the more-choices button toggles; it must not close here and reopen there.

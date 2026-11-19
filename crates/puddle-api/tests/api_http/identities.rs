@@ -255,6 +255,40 @@ async fn an_az_cli_check_names_the_exact_step_and_offers_no_sign_in() {
     api.running.shutdown().await;
 }
 
+/// The real sources, looking `az` up on a `PATH` that holds nothing: the step is the one the
+/// dialog's "Check the Azure CLI" shows, and no sign-in is offered or started.
+#[tokio::test]
+async fn the_real_sources_with_an_empty_path_say_to_install_the_azure_cli_and_offer_no_sign_in() {
+    let store = std::sync::Arc::new(puddle_secrets::MemoryStore::new());
+    let tools = puddle_secrets::ToolPaths::from_search_path(std::ffi::OsStr::new(""));
+    let real = puddle_api::HostCredentials::new(tools, store);
+    let api = crate::common::start_with_credentials(std::sync::Arc::new(real)).await;
+    let source = json!({"kind": "az_cli", "tenant": "fabrikam.com", "org": "fabrikam"});
+    let checked = api
+        .send(
+            "POST",
+            "/api/credentials/check",
+            Some(&json!({"source": source})),
+        )
+        .await;
+    assert_eq!(checked.status, 200, "{}", checked.body);
+    let result = checked.json();
+    assert_eq!(result["readable"], false, "{result}");
+    assert_eq!(result["needs_sign_in"], false, "{result}");
+    let step = result["fix_step"].as_str().unwrap();
+    assert!(step.contains("Install the Azure CLI"), "{step}");
+    assert!(!step.contains("az login"), "{step}");
+    let signed = api
+        .send(
+            "POST",
+            "/api/credentials/sign-in",
+            Some(&json!({"source": source})),
+        )
+        .await;
+    assert_eq!(signed.status, 422, "{}", signed.body);
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_credentials_last_read_is_null_before_any_and_follows_every_use_never_a_value() {
     use puddle_secrets::{AccountName, HostName, ReadUse, SourceError, SourceSpec};

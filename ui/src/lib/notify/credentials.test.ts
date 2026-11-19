@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import {
+  credential,
   FakeIdentities,
   identity,
   repoRow,
@@ -63,6 +64,37 @@ describe("a credential that cannot be read", () => {
     expect(notice.title).toContain("gh account me on github.com");
     expect(notice.action).toBeUndefined();
     expect(store.signedOutLines.has(signIn.source)).toBe(true);
+  });
+
+  it("tells a rejected pasted token apart: the way out is Edit and a new token, not a sign-in", async () => {
+    const source = "stored token tok-9 for dev.azure.com";
+    api.identities = [
+      identity(4, {
+        credentials: [
+          credential({
+            host: "dev.azure.com",
+            source: {
+              kind: "stored",
+              id: "tok-9",
+              host: "dev.azure.com",
+              org: null,
+            },
+          }),
+        ],
+      }),
+    ];
+    await store.refresh();
+    notices.handle({
+      type: "credential_sign_in_needed",
+      host: "dev.azure.com",
+      source,
+    });
+    await vi.waitFor(() => expect(center.items).toHaveLength(1));
+    const notice = only();
+    expect(notice.link).toEqual({ href: "/identities/4", label: "Edit" });
+    expect(notice.title).not.toContain("Sign-in needed");
+    expect(notice.detail).toContain("paste a new token");
+    expect(notice.detail).not.toContain("Sign in from Identities");
   });
 
   it("reads the identities itself when no screen has, so the link is right on any page", async () => {

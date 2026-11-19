@@ -39,7 +39,7 @@ const STEPS = [
   ["/welcome/connect", "How do you want to connect?"],
   ["/welcome/interception", "Which hosts should Puddle decrypt?"],
   ["/welcome/look", "Look"],
-  ["/welcome/workspace", "Your first workspace"],
+  ["/welcome/done", "You're all set"],
 ] as const;
 
 test("a fresh install is led through every step and then opens on the workspaces", async ({
@@ -86,7 +86,7 @@ test("a fresh install is led through every step and then opens on the workspaces
   // Connect: code-server is preselected, direct SSH is off until the trust text is accepted.
   await expect(heading(page, "How do you want to connect?")).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: /code-server \(bundled\)/ }),
+    page.getByRole("radio", { name: /Built-in VS Code server/ }),
   ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
     name: /Allow direct SSH for new workspaces/,
@@ -140,21 +140,11 @@ test("a fresh install is led through every step and then opens on the workspaces
   await expect(page.getByText("Colours saved.")).toBeVisible();
   await page.getByRole("link", { name: "Continue" }).click();
 
-  // First workspace: the usual form, then the workspace list with the workspace on it.
-  await expect(heading(page, "Your first workspace")).toBeVisible();
-  await page.getByRole("button", { name: "Create a workspace" }).click();
-  const form = page.getByRole("dialog", { name: "New workspace" });
-  await form
-    .getByLabel(/Git repository/)
-    .fill("https://github.com/example/shop-api.git");
-  await expect(form.getByLabel("Name")).toHaveValue("shop-api");
-  // The form is settled once the host note is in: it appears 300 ms after the typing stops and
-  // pushes the button down, so a press that began before it can end on something else and
-  // submit nothing.
-  await expect(form.getByTestId("hosts-new")).toContainText("github.com");
-  await form.getByRole("button", { name: "Create workspace" }).click();
+  // Done: says where settings live, then opens the workspace list.
+  await expect(heading(page, "You're all set")).toBeVisible();
+  await expect(page.getByText(/Feedback is very welcome/)).toBeVisible();
+  await page.getByRole("button", { name: "Open Puddle" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
-  await expect(page.getByText("shop-api").first()).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
 
   // It was shown once: the start page now leads to the workspaces, and the choices stuck.
@@ -258,19 +248,6 @@ test("skipping the setup ends it for good", async ({
   await expect(page).toHaveURL(/\/workspaces$/);
 });
 
-test("the first workspace can be skipped", async ({
-  page,
-  backend,
-  request,
-}) => {
-  await freshInstall(page, backend);
-  await page.goto("/welcome/workspace");
-  await page.getByRole("button", { name: "Skip" }).click();
-  await expect(page).toHaveURL(/\/workspaces$/);
-  expect((await firstRun(request, backend)).completed).toBe(true);
-  await expect(page.getByText("shop-api")).toHaveCount(0);
-});
-
 test("the certificates step counts the company roots Puddle will add", async ({
   page,
   backend,
@@ -372,14 +349,14 @@ test("Settings runs the system check again on its own page and leads back", asyn
   backend,
 }) => {
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/this-computer");
   await page.getByRole("link", { name: "Run the system check again" }).click();
   await expect(page).toHaveURL(/\/welcome\/check\?from=settings$/);
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(page.getByRole("list", { name: "Setup steps" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Continue" })).toHaveCount(0);
   await page.getByRole("link", { name: "Back to Settings" }).click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/this-computer$/);
 });
 
 test("no link on a first-run step leads out of the flow", async ({
@@ -426,7 +403,7 @@ for (const scheme of ["light", "dark"] as const) {
       }
       if (path === "/welcome/connect") {
         await expect(
-          page.getByRole("radio", { name: /code-server/ }),
+          page.getByRole("radio", { name: /Built-in VS Code server/ }),
         ).toBeVisible();
       }
       if (path === "/welcome/interception") {
@@ -468,10 +445,7 @@ test("the blocked system check and the form dialog pass the accessibility scan",
   }
   await expectNoAxeViolations(page);
 
-  await page.goto("/welcome/workspace");
-  await page.getByRole("button", { name: "Create a workspace" }).click();
-  await expect(
-    page.getByRole("dialog", { name: "New workspace" }),
-  ).toBeVisible();
+  await page.goto("/welcome/done");
+  await expect(heading(page, "You're all set")).toBeVisible();
   await expectNoAxeViolations(page);
 });

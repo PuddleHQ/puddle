@@ -48,12 +48,14 @@
 >
   <div class="connect">
     <section aria-labelledby="connect-browser-h">
-      <h3 id="connect-browser-h">In the browser</h3>
+      <h3 id="connect-browser-h">Isolated VS Code</h3>
       <p class="desc" id="connect-browser-desc">
-        Keeps the workspace isolated from this computer.
+        Opens a Puddle window with VS Code running inside the workspace, so it
+        stays isolated from this computer. It is not your own VS Code.
         {#if server}{serverNote(server)}{/if}
-        <a href="/settings#s-vsc" onclick={() => (open = false)}
-          >Change the server in Settings</a
+        <a
+          href="/settings/editor-and-git#set-server"
+          onclick={() => (open = false)}>Change the server in Settings</a
         >.
       </p>
       {#if editorProblem}
@@ -70,7 +72,7 @@
           onBrowser(w);
         }}
       >
-        <Globe aria-hidden="true" size={16} />Open in the browser
+        <Globe aria-hidden="true" size={16} />Open isolated VS Code
       </button>
     </section>
 

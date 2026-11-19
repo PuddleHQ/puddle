@@ -965,3 +965,31 @@ fn a_password_file_that_was_wider_is_owner_only_after_the_write() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+#[test]
+fn the_first_open_follows_the_colour_scheme_and_a_later_start_keeps_the_users_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = EditorServer::new(dir.path().to_str().unwrap(), "/f", 300);
+    prepare(&server).unwrap();
+    let file = dir.path().join("user-data/User/settings.json");
+
+    let made = seed_first_settings(&server).unwrap();
+    assert_eq!(
+        made,
+        vec![file.parent().unwrap().to_path_buf(), file.clone()]
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains(r#""window.autoDetectColorScheme": true"#),
+        "{text}"
+    );
+    assert!(text.contains("Default Dark Modern") && text.contains("Default Light Modern"));
+
+    std::fs::write(&file, r#"{"workbench.colorTheme": "Solarized Dark"}"#).unwrap();
+    assert_eq!(seed_first_settings(&server).unwrap(), Vec::<PathBuf>::new());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        r#"{"workbench.colorTheme": "Solarized Dark"}"#,
+        "a later start leaves the user's file alone"
+    );
+}

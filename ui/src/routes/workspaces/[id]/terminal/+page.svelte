@@ -45,6 +45,23 @@
     focusNew = terminals.add(wid) !== null;
   }
 
+  // Opening the tab of a running workspace opens a terminal, once for each visit: closing the last
+  // one leaves the tab empty, with a button, instead of opening another at once.
+  let opened = false;
+  $effect(() => {
+    if (!opened && wid && usable && terminals.of(wid).length === 0) {
+      opened = true;
+      add();
+    }
+  });
+
+  // The effect above opens the terminal as soon as the start makes the workspace usable.
+  function startAndOpen() {
+    if (!workspace) return;
+    opened = false;
+    void actions.start(workspace);
+  }
+
   async function close(session: TerminalSession) {
     const own = terminals.of(session.workspace);
     const at = own.indexOf(session);
@@ -95,16 +112,18 @@
 
 {#if workspace}
   <section aria-labelledby="{fid}-h">
-    <h2 id="{fid}-h">Terminal</h2>
+    <h2 id="{fid}-h" class="visually-hidden">Terminal</h2>
     {#if sessions.length === 0 && !usable}
       <div class="empty">
-        <p>Start the workspace to open a terminal.</p>
         <button
           type="button"
           class="btn primary"
           disabled={!canStart(workspace)}
-          onclick={() => actions.start(workspace)}>Start</button
+          onclick={startAndOpen}>Start and open a terminal</button
         >
+        {#if !canStart(workspace)}
+          <p class="why">{workspace.name} cannot start right now.</p>
+        {/if}
       </div>
     {:else}
       <div class="bar">
@@ -154,16 +173,16 @@
             <X aria-hidden="true" size={16} />Close Terminal {shown.number}
           </button>
         {/if}
-        <label class="switch">
-          <input type="checkbox" bind:checked={terminals.screenReader} />
-          Screen reader mode
-        </label>
+        <details class="options">
+          <summary>Terminal options</summary>
+          <label class="switch">
+            <input type="checkbox" bind:checked={terminals.screenReader} />
+            Screen reader mode
+          </label>
+        </details>
       </div>
       {#if limit}
         <p class="muted" id="{fid}-limit">{limit}</p>
-      {/if}
-      {#if !usable}
-        <p class="muted">Start the workspace to open a terminal.</p>
       {/if}
       {#if terminals.problem}
         <p class="error" role="alert">{terminals.problem}</p>
@@ -292,6 +311,13 @@
   }
   .end p {
     margin: 0;
+  }
+  .options {
+    margin-inline-start: auto;
+    font-size: var(--text-sm);
+  }
+  .options summary {
+    cursor: pointer;
   }
   .empty {
     display: grid;

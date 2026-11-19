@@ -121,7 +121,7 @@ test("with nothing left out the list says so", async ({ page, backend }) => {
 
 test("settings link to the details", async ({ page, backend }) => {
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/network");
   await page.getByRole("link", { name: /about network health/ }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Network health" }),

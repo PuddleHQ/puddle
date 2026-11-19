@@ -467,8 +467,8 @@
     HTTPS, or over SSH to a Git host Puddle serves) as they leave the workspace,
     and the workspace never holds them. Opening the workspace in desktop VS Code
     is different: code in it can then read the editor's own secrets, including a
-    signed-in GitHub token, so only attach workspaces you trust. The browser
-    editor keeps the workspace isolated.
+    signed-in GitHub token, so only attach workspaces you trust. Isolated VS
+    Code keeps the workspace isolated.
   </p>
 {:else if store.status === "failed"}
   <p class="muted">Couldn't read the Git settings yet. Trying again.</p>

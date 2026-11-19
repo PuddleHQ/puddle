@@ -384,7 +384,9 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
 /// and the VM dies with Puddle. The next start lists the workspace, and once it runs again a
 /// second Clone again of the same entry works: what the killed clone left never blocks its own
 /// directory.
-#[tokio::test(flavor = "multi_thread")]
+// Four workers whatever the CPU count: the held guest command blocks a worker (block_in_place) while the test's own
+// requests need one; on the one CPU the nightly stress job pins to, the default of one worker starved them for 20 s.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn puddle_killed_during_clone_again_lists_the_workspace_and_the_next_clone_again_works() {
     const DOCS: &str = "https://example.org/acme/docs.git";
     let rig = Rig::named_ids();

@@ -10,7 +10,10 @@ use std::io;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 
-use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, READ_CONTROL,
+    WRITE_DAC,
+};
 
 use super::{CheckError, Exposed};
 use crate::win;
@@ -64,6 +67,8 @@ pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
     let Err(was) = win::dacl_is_owner_only(&open()?)? else {
         return Ok(None);
     };
+    // By path, not through the handle: only the path form passes the new inheritable entry on to
+    // the files already inside, which the folder's owner-only promise covers.
     win::set_owner_only_acl(dir, true)?;
     win::dacl_is_owner_only(&open()?)?.map_err(io::Error::other)?;
     Ok(Some(Exposed::Acl(was)))
@@ -78,11 +83,24 @@ pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
             "not a regular file",
         ));
     }
-    let Err(was) = win::dacl_is_owner_only(&File::open(path)?)? else {
+    // One handle for the check, the change and the check after it, as the unix twin changes the
+    // mode through its handle: a path swapped after the first look changes nothing. The handle
+    // does not follow a link, and must name a regular file.
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let Err(was) = win::dacl_is_owner_only(&file)? else {
         return Ok(None);
     };
-    win::set_owner_only_acl(path, false)?;
-    win::dacl_is_owner_only(&File::open(path)?)?.map_err(io::Error::other)?;
+    win::set_owner_only_acl_on(&file)?;
+    win::dacl_is_owner_only(&file)?.map_err(io::Error::other)?;
     Ok(Some(Exposed::Acl(was)))
 }
 

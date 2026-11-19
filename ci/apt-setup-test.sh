@@ -132,7 +132,7 @@ printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mi
 APT_FIRST_TRY_S=2 APT_RETRY_S=2 "$here/apt-retry.sh" "$tmp/apt3.sh" >"$tmp/out" 2>&1 ||
     fail "retry: the third mirror was not reached: $(tail -3 "$tmp/out" | tr '\n' '|')"
 [ "$(wc -l <"$tmp/apt3.log")" = 3 ] || fail "retry: not exactly three tries"
-sed -n 2p "$tmp/apt3.log" | grep -q archive.ubuntu.com || fail "retry: the second try was not on Canonical"
+[[ "$(sed -n 2p "$tmp/apt3.log")" == *//archive.ubuntu.com/* ]] || fail "retry: the second try was not on Canonical"
 grep -q "retrying on the kernel mirror" "$tmp/out" || fail "retry: no warning for the kernel step"
 grep -q "ended with status 124 on archive.ubuntu.com" "$tmp/out" || fail "retry: the stalled mirror is not named"
 # A warm cache needs no mirror at all: the fake apt-get reads the archives directory from the conf apt-setup.sh wrote

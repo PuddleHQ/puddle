@@ -98,7 +98,7 @@ async fn delete_stopped(api: &Api, events: &mut Events, id: &str) {
     let (api_ref, path_ref, confirm_ref) = (api, &path, &confirm);
     let gone = eventually_async(
         "the delete is accepted once the check image is downloaded",
-        Duration::from_secs(120),
+        Duration::from_secs(95),
         || async move {
             let reply = api_ref.delete(path_ref, Some(confirm_ref)).await;
             assert_ne!(reply.status, 408, "the request limit ended the delete");

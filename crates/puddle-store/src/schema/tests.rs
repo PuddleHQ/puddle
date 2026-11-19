@@ -1250,7 +1250,9 @@ fn an_upgrade_waits_out_another_process_holding_the_file_longer_than_a_normal_wr
 fn a_half_made_copy_is_stale_from_exactly_the_cutoff() {
     let cutoff = STALE_PARTIAL;
     assert!(!partial_copy_is_stale(
-        cutoff - std::time::Duration::from_secs(1)
+        cutoff
+            .checked_sub(std::time::Duration::from_secs(1))
+            .unwrap()
     ));
     assert!(partial_copy_is_stale(cutoff));
     assert!(partial_copy_is_stale(

@@ -513,6 +513,25 @@ describe("credentials", () => {
     );
   });
 
+  it("keeps the problem of a credential an edit left in place", async () => {
+    const kept = credential({ source: ghSource("tijs") });
+    api.identities = [identity(1, { credentials: [kept] })];
+    const store = make();
+    await store.refresh();
+    const line = describeSource(kept.source);
+    store.markSignedOut(line);
+    const readable: string[] = [];
+    store.onReadable((l) => readable.push(l));
+    const saved = await store.update(1, {
+      label: "Renamed",
+      author: { name: "A", email: "a@example.com" },
+      credentials: [kept],
+    } as never);
+    expect(saved.ok).toBe(true);
+    expect([...store.signedOutLines]).toEqual([line]);
+    expect(readable).toEqual([]);
+  });
+
   it("knows a sign-in is needed even before the identities are read", async () => {
     const cred = credential({ source: ghSource("tijs") });
     const store = make();

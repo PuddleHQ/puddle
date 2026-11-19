@@ -76,8 +76,6 @@ impl LoginKeeper {
         self
     }
 
-    /// The captured logins of `workspace` for this start, swapping from `registry`. With
-    /// `enabled` false nothing is captured and nothing is decrypted for logins.
     /// The marker of `workspace`: none when the keeper was given no folder.
     fn marker(&self, workspace: &WorkspaceId) -> Marker {
         self.markers
@@ -85,6 +83,8 @@ impl LoginKeeper {
             .map_or_else(Marker::none, |dir| Marker::for_workspace(dir, workspace))
     }
 
+    /// The captured logins of `workspace` for this start, swapping from `registry`. With
+    /// `enabled` false nothing is captured and nothing is decrypted for logins.
     pub(crate) fn logins(
         &self,
         workspace: &WorkspaceId,

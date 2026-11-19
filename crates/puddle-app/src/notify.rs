@@ -42,15 +42,34 @@ pub struct Notice {
     pub request: Option<i64>,
 }
 
-/// A name or host from a workspace, made safe to put in a notification: control characters and
-/// the characters notification servers read as markup become `?`, and a long one is cut.
+/// Characters that draw nothing or reorder what is around them (Unicode category Cf, plus the
+/// line and paragraph separators): a host with one could read as another name in a notice.
+fn hides_or_reorders(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{61c}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
+}
+
+/// A name or host from a workspace, made safe to put in a notification: control characters, the
+/// characters that hide or reorder text and the characters notification servers read as markup
+/// become `?`, and a long one is cut.
 #[must_use]
 pub fn clean(text: &str) -> String {
     let mut out: String = text
         .chars()
         .take(MAX_QUOTED_CHARS)
         .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | '&') {
+            if c.is_control() || hides_or_reorders(c) || matches!(c, '<' | '>' | '&') {
                 '?'
             } else {
                 c

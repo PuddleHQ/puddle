@@ -687,6 +687,42 @@ async fn the_only_listed_switches_change_one_at_a_time() {
 }
 
 #[tokio::test]
+async fn changing_the_only_listed_switches_is_in_the_activity_log() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    for body in [
+        json!({"only_pull_listed": true}),
+        json!({"only_push_listed": false, "use_default_pull": true}),
+    ] {
+        let reply = api
+            .send("PUT", "/api/workspaces/shop/git/switches", Some(&body))
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    }
+    let seen: Vec<_> = ops(&api)
+        .await
+        .into_iter()
+        .filter(|(op, ..)| op != "identity_created")
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                "git_switches_changed".to_owned(),
+                json!("shop"),
+                json!("pull: only listed repositories")
+            ),
+            (
+                "git_switches_changed".to_owned(),
+                json!("shop"),
+                json!("push: not only listed repositories, pull: back to the default")
+            ),
+        ]
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_repository_row_is_deleted_once_and_then_is_a_404() {
     let (api, id) = api_with_a_docs_row().await;
     assert_eq!(

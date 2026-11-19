@@ -8,7 +8,7 @@ import { expectNoAxeViolations } from "./support";
 
 async function openRestore(page: Page, backend: Backend) {
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/this-computer");
   await expect(
     page.getByRole("heading", { level: 2, name: "Back up and restore" }),
   ).toBeVisible();

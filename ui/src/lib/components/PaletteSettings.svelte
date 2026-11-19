@@ -15,6 +15,7 @@
   } from "#lib/theme/palette.ts";
   import type { ThemeChoice } from "#lib/theme/theme.ts";
   import { PALETTE_INFO, PALETTE_OPTIONS } from "#lib/theme/palette-options.ts";
+  import SettingRow from "./SettingRow.svelte";
   import "#lib/theme/controls.css";
 
   let {
@@ -22,12 +23,16 @@
     custom,
     theme,
     onchoose,
+    onpreview,
     onpick,
   }: {
     choice: PaletteChoice;
     custom: Custom;
     theme: ThemeChoice;
     onchoose: (choice: PaletteChoice) => void;
+    /** A colour is being dragged: show it, store nothing yet. */
+    onpreview: (colour: CustomColour, value: string) => void;
+    /** A colour was settled (picker closed, or reset with `null`): store it. */
     onpick: (colour: CustomColour, value: string | null) => void;
   } = $props();
 
@@ -55,16 +60,14 @@
   );
 </script>
 
-<div class="setting">
-  <div class="grow">
-    <label for="set-palette">Colours</label>
-    <p class="desc">
-      {PALETTE_INFO[choice].hint}
-      They apply over your light or dark theme.
-    </p>
-  </div>
+<SettingRow
+  id="set-palette"
+  label="Colours"
+  desc="{PALETTE_INFO[choice].hint} They apply over your light or dark theme."
+>
   <select
     id="set-palette"
+    aria-describedby="set-palette-desc"
     value={choice}
     onchange={(e) => {
       onchoose(e.currentTarget.value as PaletteChoice);
@@ -74,29 +77,33 @@
       <option value={option.value}>{option.label}</option>
     {/each}
   </select>
-</div>
+</SettingRow>
 
 {#if choice === "custom"}
   {#each CUSTOM_COLOURS as key (key)}
-    <div class="setting">
-      <div class="grow">
-        <label for="set-colour-{key}">{LABELS[key][0]}</label>
-        <p class="desc">{LABELS[key][1]}</p>
+    <SettingRow
+      id="set-colour-{key}"
+      label={LABELS[key][0]}
+      desc={LABELS[key][1]}
+    >
+      <div class="pick">
+        <input
+          id="set-colour-{key}"
+          type="color"
+          aria-describedby="set-colour-{key}-desc"
+          value={shown[key]()}
+          oninput={(e) => onpreview(key, e.currentTarget.value)}
+          onchange={(e) => onpick(key, e.currentTarget.value)}
+        />
+        <button
+          type="button"
+          class="btn"
+          aria-label="Reset {LABELS[key][0].toLowerCase()}"
+          disabled={custom[key] === null}
+          onclick={() => onpick(key, null)}>Reset</button
+        >
       </div>
-      <input
-        id="set-colour-{key}"
-        type="color"
-        value={shown[key]()}
-        oninput={(e) => onpick(key, e.currentTarget.value)}
-      />
-      <button
-        type="button"
-        class="btn"
-        aria-label="Reset {LABELS[key][0].toLowerCase()}"
-        disabled={custom[key] === null}
-        onclick={() => onpick(key, null)}>Reset</button
-      >
-    </div>
+    </SettingRow>
   {/each}
   {#if problems.length > 0}
     <div class="warning" role="status">
@@ -117,26 +124,14 @@
 {/if}
 
 <style>
-  .setting {
+  .pick {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
-  }
-  .grow {
-    flex: 1;
-    min-width: 0;
-  }
-  label {
-    font-weight: 600;
+    gap: var(--space-2);
   }
   p {
     margin: 0;
   }
-  .desc {
-    font-size: var(--text-sm);
-    color: var(--color-text-muted);
-  }
-
   .warning {
     padding: var(--space-3);
     border: 1px solid var(--color-warning);
@@ -147,11 +142,5 @@
     margin: var(--space-2) 0 0;
     padding-left: var(--space-4);
     font-size: var(--text-sm);
-  }
-  @media (max-width: 760px) {
-    .setting {
-      flex-direction: column;
-      align-items: stretch;
-    }
   }
 </style>

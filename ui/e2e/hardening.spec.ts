@@ -13,10 +13,10 @@ const ROUTES = [
   "/workspaces/web-shop",
   "/workspaces/web-shop/settings",
   "/workspaces/web-shop/network",
-  "/workspaces/web-shop/ports",
+  "/workspaces/web-shop/settings/ports",
   "/workspaces/web-shop/git",
-  "/workspaces/web-shop/environment",
-  "/workspaces/web-shop/shell-init",
+  "/workspaces/web-shop/settings/environment",
+  "/workspaces/web-shop/settings/shell-init",
   "/inbox",
   "/rules",
   "/activity",
@@ -129,7 +129,7 @@ test.describe("target size", () => {
     for (const route of [
       "/workspaces",
       "/workspaces/web-shop/settings",
-      "/workspaces/web-shop/environment",
+      "/workspaces/web-shop/settings/environment",
       "/rules",
       "/identities",
       "/settings",
@@ -138,9 +138,12 @@ test.describe("target size", () => {
       const names = await page
         .getByRole("button", { name: /^(Add|New|Create|Edit|Rename|Delete)/ })
         .evaluateAll((els) =>
-          els.map((el) =>
-            (el.getAttribute("aria-label") ?? el.textContent ?? "").trim(),
-          ),
+          els
+            // A greyed button opens nothing (Delete workspace on a running workspace).
+            .filter((el) => !(el as HTMLButtonElement).disabled)
+            .map((el) =>
+              (el.getAttribute("aria-label") ?? el.textContent ?? "").trim(),
+            ),
         );
       for (const name of new Set(names)) {
         await page

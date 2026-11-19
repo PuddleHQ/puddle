@@ -97,7 +97,7 @@ test("the settings switch asks the browser and tells the service at once", async
   backend,
 }) => {
   await open(page, backend, false);
-  await page.goto("/settings");
+  await page.goto("/settings/notifications");
   const box = page.getByLabel("Notifications in this browser");
   await expect(box).not.toBeChecked();
   const reported = page.waitForRequest(

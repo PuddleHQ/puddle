@@ -37,7 +37,8 @@
 //!
 //! [`VsCodeRelease`], [`VsCodeLaunch`] and [`VsCodeWindow`] start the pinned desktop VS Code on
 //! Remote-SSH and drive it over the DevTools Protocol (module docs in `vscode.rs`); tests that use
-//! them are named `vm_vscode_*`, which `ci/vm-filter.sh` keeps out of the partitions: one job runs them.
+//! them are named `vm_vscode_*`, which `ci/vm-filter.sh` keeps out of the partitions: one job runs them. So does a test
+//! that needs the runner's desktop for real browsers and the Windows trust confirmation: it is named `vm_nightly_*`.
 //!
 //! # Running
 //!

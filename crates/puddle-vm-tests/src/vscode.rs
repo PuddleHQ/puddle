@@ -192,12 +192,23 @@ impl VsCodeLaunch {
     /// [`HarnessError::Io`] when a file can't be written or the command line tool can't run,
     /// [`HarnessError::Browser`] when it refuses the package.
     pub async fn prepare(&self, release: &VsCodeRelease) -> Result<(), HarnessError> {
+        self.write_settings()?;
+        self.install_remote_ssh(release, None).await
+    }
+
+    /// Writes the window's `settings.json` again, for a window that starts later with other
+    /// settings (a phase with `remote.SSH.useLocalServer` on) in the same user-data folder. A window
+    /// reads it at its start; one that is open keeps what it read.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Io`] when the file can't be written.
+    pub fn write_settings(&self) -> Result<(), HarnessError> {
         let user = self.user_data.join("User");
         std::fs::create_dir_all(&user).map_err(|e| HarnessError::io("create", &user, e))?;
         let file = user.join("settings.json");
         std::fs::write(&file, self.settings().to_string())
-            .map_err(|e| HarnessError::io("write", &file, e))?;
-        self.install_remote_ssh(release, None).await
+            .map_err(|e| HarnessError::io("write", &file, e))
     }
 
     /// Gives the named profile what the default profile has: Remote-SSH, which a profile does not

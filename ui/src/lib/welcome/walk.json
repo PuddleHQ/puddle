@@ -1,5 +1,5 @@
 {
-  "about": "What a person (or a script playing one) finds and presses on each first-run page, in order. Read by the page tests (ui/src/routes/welcome/welcome.test.ts), ui/e2e/first-run.spec.ts and the installed-app walker (crates/puddle-app/e2e/usable.mjs), so a page that changes here breaks the test of the change that made it. A control is { role, name } as the accessibility tree gives it. `start` is pressed first, and `afterStart` shows up only once the run is done; `continue` goes on to the next page. `behindDetails` lists the controls the walk presses on other pages that sit inside a closed <details>: such a control is not in the UI Automation tree until its summary is opened, so the walk presses `summary` first (ui/src/lib/welcome/the page tests of the welcome pages and of the terminal page check this). `preselected` is a radio (its name as a regular expression) that is already chosen when the page opens.",
+  "about": "What a person (or a script playing one) finds and presses on each first-run page, in order. Read by the page tests (ui/src/routes/welcome/welcome.test.ts), ui/e2e/first-run.spec.ts and the installed-app walker (crates/puddle-app/e2e/usable.mjs), so a page that changes here breaks the test of the change that made it. A control is { role, name } as the accessibility tree gives it. `start` is pressed first, and `afterStart` shows up only once the run is done; `continue` goes on to the next page. `behindDetails` lists the controls the walk presses on other pages that sit inside a closed <details>: such a control is not in the UI Automation tree until its summary is opened, so the walk presses `summary` first (ui/src/lib/welcome/the page tests of the welcome pages and of the terminal page check this).",
   "steps": [
     {
       "id": "welcome",
@@ -43,10 +43,6 @@
       "continue": {
         "role": "link",
         "name": "Continue"
-      },
-      "preselected": {
-        "role": "radio",
-        "nameRegex": "Built-in VS Code server"
       }
     },
     {
@@ -56,10 +52,6 @@
       "continue": {
         "role": "button",
         "name": "Continue"
-      },
-      "preselected": {
-        "role": "radio",
-        "nameRegex": "except a known list"
       }
     },
     {

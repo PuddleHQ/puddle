@@ -586,7 +586,7 @@ async fn the_rollback_after_a_failed_new_build_does_not_wait_for_a_running_downl
 
 /// An update service whose first answer is held until `open` is notified: a download in flight.
 struct Held {
-    open: Arc<tokio::sync::Notify>,
+    open: Arc<Notify>,
 }
 
 impl Fetch for Held {
@@ -596,6 +596,7 @@ impl Fetch for Held {
     }
 
     async fn file(&self, _url: &str, _dest: &Path, _max_bytes: u64) -> io::Result<()> {
+        self.open.notified().await;
         Err(io::Error::other("no route to host"))
     }
 }
@@ -614,7 +615,7 @@ async fn the_failed_builds_folder_is_removed_when_the_download_that_blocked_its_
     complete_build(builds, &new);
     std::fs::write(builds.join("previous"), &old).unwrap();
     std::fs::write(builds.join("current"), &new).unwrap();
-    let open = Arc::new(tokio::sync::Notify::new());
+    let open = Arc::new(Notify::new());
     let looking = tokio::spawn(update_loop(
         Arc::clone(&control),
         Arc::new(Held {

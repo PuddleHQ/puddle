@@ -90,7 +90,12 @@ pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> Joi
                     }
                     Ok(_) => {}
                     Err(RecvError::Lagged(_)) => {
-                        service.all_git_changed().await;
+                        // Each recovery runs on its own: a guest that is slow to answer holds up
+                        // neither the events that follow nor the other recoveries.
+                        let git = service.clone();
+                        rewrites.spawn(async move {
+                            git.all_git_changed().await;
+                        });
                         let service = service.clone();
                         rewrites.spawn(async move {
                             service.all_environments_changed().await;

@@ -2,7 +2,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { workspace } from "#lib/testing/fake-workspaces.ts";
-import WorkspaceCard from "./WorkspaceCard.svelte";
+import WorkspaceRow from "./WorkspaceRow.svelte";
+
+vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
 afterEach(cleanup);
 
@@ -15,7 +17,7 @@ function mount(over: Record<string, unknown> = {}, w = workspace("demo")) {
     connect: vi.fn(),
     dismiss: vi.fn(),
   };
-  render(WorkspaceCard, {
+  render(WorkspaceRow, {
     props: {
       workspace: w,
       now: NOW,
@@ -29,32 +31,40 @@ function mount(over: Record<string, unknown> = {}, w = workspace("demo")) {
   return calls;
 }
 
-describe("WorkspaceCard", () => {
-  it("is an article named by the workspace, linking to its page", () => {
-    mount({}, workspace("my-site", { id: "my site" }));
+describe("WorkspaceRow", () => {
+  it("is an article named by the workspace, linking to its page by id but showing only the name", () => {
+    mount({}, workspace("my-site", { id: "w-4f9a1c" }));
     expect(
       screen.getByRole("article", { name: "my-site" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "my-site" })).toHaveAttribute(
       "href",
-      "/workspaces/my%20site",
+      "/workspaces/w-4f9a1c",
     );
-    expect(
-      screen.getByRole("link", { name: "Details of my-site" }),
-    ).toHaveAttribute("href", "/workspaces/my%20site");
+    expect(screen.getByRole("article")).not.toHaveTextContent("w-4f9a1c");
   });
 
-  it("shows the repository, state, memory, disk and age", () => {
+  it("shows state once, the short repository and the disk, without memory or age", () => {
     mount({}, workspace("demo", { created_at: NOW - 3_600_000 * 3 }));
-    const card = screen.getByRole("article");
-    expect(card).toHaveTextContent("https://github.com/acme/demo.git");
-    expect(card).toHaveTextContent("Stopped");
-    expect(card).toHaveTextContent("8 GiB memory");
-    expect(card).toHaveTextContent("2 GiB of 32 GiB used");
-    expect(card).toHaveTextContent("3 hours ago");
+    const row = screen.getByRole("article");
+    expect(row).toHaveTextContent("acme/demo");
+    expect(row).not.toHaveTextContent("https://github.com");
+    expect(row).toHaveTextContent("2 GiB / 32 GiB");
+    expect(row.querySelectorAll(".chip")).toHaveLength(1);
+    expect(row).toHaveTextContent("Stopped");
+    expect(row).not.toHaveTextContent("memory");
+    expect(row).not.toHaveTextContent("hours ago");
   });
 
-  it("says in words how full each disk is and flags the ones over the threshold", () => {
+  it("keeps the full repository address as the hover text", () => {
+    mount();
+    expect(screen.getByText("acme/demo")).toHaveAttribute(
+      "title",
+      "https://github.com/acme/demo.git",
+    );
+  });
+
+  it("flags the disks over the threshold in words, and nothing when none is", () => {
     mount(
       {},
       workspace("demo", {
@@ -64,20 +74,56 @@ describe("WorkspaceCard", () => {
         disk_warnings: ["root", "volume"],
       }),
     );
-    const card = screen.getByRole("article");
-    expect(card).toHaveTextContent("Root disk 3.8 GiB of 4 GiB used");
-    expect(card).toHaveTextContent("Root disk 95 % full");
-    expect(card).toHaveTextContent("Volume 97 % full");
+    const row = screen.getByRole("article");
+    expect(row).toHaveTextContent("Root disk 95 % full");
+    expect(row).toHaveTextContent("Volume 97 % full");
+    cleanup();
+    mount({}, workspace("demo"));
+    expect(screen.getByRole("article")).not.toHaveTextContent("% full");
   });
 
-  it("shows no root disk and no flag when the host cannot say", () => {
-    mount(
-      {},
-      workspace("demo", { root_disk_size_mib: null, root_disk_used_mib: null }),
+  it("offers one action: Start while down, Connect while running", () => {
+    mount();
+    expect(screen.getByRole("button", { name: "Start demo" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Connect/ })).toBeNull();
+    cleanup();
+    const calls = mount({}, workspace("demo", { status: "running" }));
+    expect(screen.queryByRole("button", { name: /^Start/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Connect to demo" }));
+    expect(calls.connect).toHaveBeenCalledOnce();
+  });
+
+  it("opens the workspace's page from the menu", async () => {
+    const { goto } = await import("$app/navigation");
+    mount();
+    await fireEvent.keyDown(
+      screen.getByRole("button", { name: "More about demo" }),
+      { key: "Enter" },
     );
-    const card = screen.getByRole("article");
-    expect(card).not.toHaveTextContent("Root disk");
-    expect(card).not.toHaveTextContent("% full");
+    await fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Open details" }),
+    );
+    expect(goto).toHaveBeenCalledWith("/workspaces/w-demo");
+  });
+
+  it("keeps Stop in the menu of a running workspace, and not of a stopped one", async () => {
+    const calls = mount({}, workspace("demo", { status: "running" }));
+    await fireEvent.keyDown(
+      screen.getByRole("button", { name: "More about demo" }),
+      { key: "Enter" },
+    );
+    await fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Stop demo" }),
+    );
+    expect(calls.stop).toHaveBeenCalledOnce();
+    cleanup();
+    mount();
+    await fireEvent.keyDown(
+      screen.getByRole("button", { name: "More about demo" }),
+      { key: "Enter" },
+    );
+    await screen.findByRole("menuitem", { name: "Open details" });
+    expect(screen.queryByRole("menuitem", { name: /^Stop/ })).toBeNull();
   });
 
   it("shows the first repository and how many more, or that there is none", () => {
@@ -96,7 +142,7 @@ describe("WorkspaceCard", () => {
       }),
     );
     expect(screen.getByRole("article")).toHaveTextContent(
-      "https://github.com/acme/api.git and 2 more",
+      "acme/api and 2 more",
     );
     cleanup();
     mount({}, workspace("demo", { repositories: [] }));

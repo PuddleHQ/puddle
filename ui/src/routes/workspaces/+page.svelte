@@ -4,8 +4,8 @@
   import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import OrphanVolumesNotice from "#lib/components/OrphanVolumesNotice.svelte";
-  import PendingStrip from "#lib/components/PendingStrip.svelte";
-  import WorkspaceCard from "#lib/components/WorkspaceCard.svelte";
+  import FirstWorkspaceForm from "#lib/components/FirstWorkspaceForm.svelte";
+  import WorkspaceRow from "#lib/components/WorkspaceRow.svelte";
   import { orphanVolumes } from "#lib/stores/orphan-volumes.svelte.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
@@ -31,35 +31,26 @@
       counts[row.request.workspace] = (counts[row.request.workspace] ?? 0) + 1;
     return counts;
   });
-  const latest = $derived.by(() => {
-    const newest = [...pending.rows].sort(
-      (a, b) => b.request.first_seen - a.request.first_seen,
-    )[0]?.request;
-    return newest
-      ? {
-          workspace: workspaces.labelOf(newest.workspace),
-          host: newest.host,
-          port: newest.port,
-        }
-      : undefined;
-  });
+  const running = $derived(
+    workspaces.list.filter((w) => w.status === "running").length,
+  );
 </script>
-
-<PendingStrip count={pending.count} {latest} />
 
 <div class="head">
   <div>
     <h1>Workspaces</h1>
-    {#if workspaces.status === "ready"}
+    {#if workspaces.status === "ready" && workspaces.list.length > 0}
       <p class="sub">
         {workspaces.list.length}
-        {workspaces.list.length === 1 ? "workspace" : "workspaces"}
+        {workspaces.list.length === 1 ? "workspace" : "workspaces"}, {running} running
       </p>
     {/if}
   </div>
-  <button type="button" class="btn primary" onclick={actions.openCreate}>
-    <Plus aria-hidden="true" size={16} />New workspace
-  </button>
+  {#if workspaces.list.length > 0}
+    <button type="button" class="btn primary" onclick={actions.openCreate}>
+      <Plus aria-hidden="true" size={16} />New workspace
+    </button>
+  {/if}
 </div>
 
 <OrphanVolumesNotice store={orphanVolumes} />
@@ -73,21 +64,16 @@
 {:else if workspaces.status === "failed"}
   <LoadNotice what="the workspaces" message={workspaces.loadError} />
 {:else if workspaces.list.length === 0}
-  <section class="empty">
-    <h2>No workspaces yet</h2>
-    <p>
-      A workspace is an isolated copy of a repository where you and your tools
-      work. Create one to get started.
-    </p>
-    <button type="button" class="btn primary" onclick={actions.openCreate}>
-      <Plus aria-hidden="true" size={16} />New workspace
-    </button>
-  </section>
+  <FirstWorkspaceForm onMore={actions.openCreate} />
 {:else}
-  <ul class="grid" aria-label="Workspaces">
+  <div class="columns" aria-hidden="true">
+    <span>State</span><span>Name</span><span>Repository</span><span>Disk</span
+    ><span class="waiting">Waiting</span><span></span>
+  </div>
+  <ul class="rows" aria-label="Workspaces">
     {#each workspaces.list as workspace (workspace.id)}
       <li>
-        <WorkspaceCard
+        <WorkspaceRow
           {workspace}
           {now}
           waiting={waitingBy[workspace.id] ?? 0}
@@ -120,24 +106,29 @@
     margin: 0;
     color: var(--color-text-muted);
   }
-  .empty {
+  .rows,
+  .columns {
+    --workspace-columns: 8.5rem minmax(7rem, 1fr) minmax(8rem, 1.5fr) 7rem 4rem
+      9.5rem;
+  }
+  .columns {
     display: grid;
+    grid-template-columns: var(--workspace-columns);
     gap: var(--space-3);
-    justify-items: start;
-    max-width: 40rem;
-    padding: var(--space-6);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+    padding: var(--space-1) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
   }
-  .empty h2,
-  .empty p {
-    margin: 0;
+  .columns .waiting {
+    text-align: end;
   }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
-    gap: var(--space-4);
+  @media (max-width: 60rem) {
+    .columns {
+      display: none;
+    }
+  }
+  .rows {
     list-style: none;
     margin: 0;
     padding: 0;

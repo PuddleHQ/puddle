@@ -131,7 +131,7 @@ test.describe("the list of repositories", () => {
 
     const created = card(page, "api");
     await expect(created).toContainText("Creating");
-    await expect(created).toContainText(`${API} and 2 more`);
+    await expect(created).toContainText("acme/api and 2 more");
     // The service names each clone as it goes.
     for (const [n, dir] of [
       [1, "api"],
@@ -500,15 +500,13 @@ test.describe("the host note", () => {
   });
 });
 
-test.describe("the card", () => {
+test.describe("the row", () => {
   test("shows the first repository and how many more, or that there is none", async ({
     page,
     backend,
   }) => {
     await openList(page, backend);
-    await expect(card(page, "web-shop")).toContainText(
-      "https://github.com/acme/web-shop.git",
-    );
+    await expect(card(page, "web-shop")).toContainText("acme/web-shop");
     await expect(card(page, "web-shop")).not.toContainText("more");
     const dialog = await openCreate(page);
     await addrOf(page, 1).fill(API);
@@ -517,7 +515,7 @@ test.describe("the card", () => {
     await addButton(page).click();
     await addrOf(page, 3).fill(CLI);
     await dialog.getByRole("button", { name: "Create workspace" }).click();
-    await expect(card(page, "api")).toContainText(`${API} and 2 more`);
+    await expect(card(page, "api")).toContainText("acme/api and 2 more");
   });
 });
 

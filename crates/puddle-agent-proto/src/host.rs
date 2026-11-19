@@ -738,11 +738,18 @@ async fn on_editor_status<H: StreamHandler>(
         .await;
 }
 
-/// Cuts `s` to `max` characters and replaces control characters, for guest text in logs.
+/// Cuts `s` to `max` characters and replaces control and text-hiding characters, for guest text
+/// in logs.
 fn clean(s: &str, max: usize) -> String {
     s.chars()
         .take(max)
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if crate::is_hostile_text_char(c) {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 

@@ -10,6 +10,7 @@ fn stand_in(command: &mut Command) -> Squid {
         dir: tempfile::tempdir().unwrap(),
         stop: Stop::Process(command.stdout(Stdio::null()).spawn().unwrap()),
         started: StartCost::default(),
+        bin: None,
     }
 }
 
@@ -40,6 +41,31 @@ fn a_squid_with_a_parent_proxy_sends_every_tunnel_to_it() {
     );
     write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
     assert!(!read(&dir.path().join("squid.conf")).contains("cache_peer"));
+}
+
+#[test]
+fn a_squid_that_resolves_with_the_machines_resolver_has_no_name_server_of_its_own_set() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
+    assert!(read(&dir.path().join("squid.conf")).contains("dns_nameservers 127.0.0.2"));
+    write_config(
+        dir.path(),
+        dir.path(),
+        &SquidOptions::open(&[443]).live(),
+        3128,
+    );
+    assert!(!read(&dir.path().join("squid.conf")).contains("dns_nameservers"));
+}
+
+#[test]
+fn a_paused_squid_has_stopped_and_pausing_again_is_harmless() {
+    let mut squid = stand_in(Command::new("sleep").arg("60"));
+    squid.pause();
+    squid.pause();
+    let Stop::Process(child) = &mut squid.stop else {
+        unreachable!("the stand-in is a process");
+    };
+    assert!(child.try_wait().unwrap().is_some(), "the process is gone");
 }
 
 #[test]

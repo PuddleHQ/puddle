@@ -26,11 +26,11 @@ use vm_support::{all_ended, guest, start_vm_host};
 /// How long one workspace operation, or one batch of concurrent ones, may sit without any end.
 const OP: Duration = Duration::from_secs(600);
 
-/// How long one create of an alpine workspace may take, on a loaded shared host.
-const CREATE_BOUND: Duration = Duration::from_secs(90);
+/// How long one create may take before it counts as hung, on a loaded shared host.
+const CREATE_HANG: Duration = Duration::from_secs(300);
 
-/// How many times the first create's time a later one may take.
-const CREATE_SLOWDOWN: u32 = 5;
+/// How many times the first four creates' median time the last four's may take.
+const CREATE_SLOWDOWN: u32 = 3;
 
 /// How long eight workspaces may take to start together (each boots its own 512 MiB machine).
 const START_ALL_BOUND: Duration = Duration::from_secs(300);
@@ -171,7 +171,7 @@ fn assert_all_running(rows: &[(String, String, String, Value)], ids: &[String]) 
     }
 }
 
-/// Eight workspaces through their life: made in a row (none slow, none much slower than the first), four deleted and their names made again in two concurrent pairs (every id new and
+/// Eight workspaces through their life: made in a row (the later ones no slower than the early ones), four deleted and their names made again in two concurrent pairs (every id new and
 /// none retired one), all eight stopped at once and started at once (every one running, none
 /// left busy, within a bound), and a quit and a launch of Puddle (the same eight, each once,
 /// stopped).
@@ -194,17 +194,27 @@ async fn vm_eight_workspaces_are_made_remade_started_together_and_listed_after_a
         ids.push(id);
         took.push(elapsed);
     }
-    // Piling workspaces up does not slow a create down: none takes longer than a bound, and none
-    // longer than a multiple of the first (a shared host's load moves single creates by a few
-    // seconds, a cost that grows with the count shows as the last ones far above the first).
-    let first = took[0];
+    // Piling workspaces up does not slow a create down. One create on a loaded shared host can
+    // take minutes (a single spike), so no single create is held to the ratio: the median of the
+    // last four may not be more than a multiple of the median of the first four, and none may
+    // take longer than a bound that only a hang reaches.
     for (name, elapsed) in names.iter().zip(&took) {
         assert!(
-            *elapsed <= CREATE_BOUND && *elapsed <= first * CREATE_SLOWDOWN,
-            "the create of {name} took {elapsed:?} (first {first:?}, bounds {CREATE_BOUND:?} and \
-             {CREATE_SLOWDOWN} times the first): {took:?}"
+            *elapsed <= CREATE_HANG,
+            "the create of {name} took {elapsed:?}: {took:?}"
         );
     }
+    let median = |part: &[Duration]| {
+        let mut sorted = part.to_vec();
+        sorted.sort();
+        (sorted[1] + sorted[2]) / 2
+    };
+    let (early, late) = (median(&took[..4]), median(&took[4..]));
+    assert!(
+        late <= early * CREATE_SLOWDOWN,
+        "creates five to eight took {late:?} at the median against {early:?} for the first four \
+         (bound: {CREATE_SLOWDOWN} times): {took:?}"
+    );
     assert_eq!(
         ids.iter().collect::<BTreeSet<_>>().len(),
         8,

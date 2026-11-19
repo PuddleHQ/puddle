@@ -221,6 +221,7 @@ export class IdentitiesStore {
       }
       this.#writes += 1;
       this.identities = this.identities.map((i) => (i.id === id ? data : i));
+      this.#dropGoneLines();
       return { ok: true, value: data };
     } catch {
       return { ok: false, message: DOWN };
@@ -241,6 +242,7 @@ export class IdentitiesStore {
       }
       this.#writes += 1;
       this.identities = this.identities.filter((i) => i.id !== id);
+      this.#dropGoneLines();
       return { ok: true, value: data?.detached_from ?? [] };
     } catch {
       return { ok: false, message: DOWN };
@@ -361,6 +363,25 @@ export class IdentitiesStore {
       for (const credential of identity.credentials) {
         await this.check(credential);
       }
+    }
+  }
+
+  /**
+   * A sign-in line whose credential no identity carries any more (an edit replaced a rejected
+   * pasted token, or the identity was deleted) has nothing left to fix: it goes, and so does its notice.
+   */
+  #dropGoneLines(): void {
+    const carried = new Set(
+      this.identities.flatMap((i) =>
+        i.credentials.map((c) => describeSource(c.source)),
+      ),
+    );
+    for (const line of this.signedOutLines) {
+      if (carried.has(line)) continue;
+      const next = new Set(this.signedOutLines);
+      next.delete(line);
+      this.signedOutLines = next;
+      for (const listener of this.#readable) listener(line);
     }
   }
 

@@ -1,0 +1,50 @@
+{
+  "name": "azure-cli-missing",
+  "identities": [
+    {
+      "label": "Contoso",
+      "author": { "name": "Tijs Contoso", "email": "tijs@contoso.example" },
+      "credentials": [
+        {
+          "host": "dev.azure.com",
+          "source": {
+            "kind": "az_cli",
+            "tenant": "contoso.onmicrosoft.com",
+            "org": "contoso"
+          },
+          "covers": { "owners": ["contoso"], "rest_of_host": false }
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "found": [],
+    "missing": [],
+    "unreadable": [
+      {
+        "source": {
+          "kind": "az_cli",
+          "tenant": "contoso.onmicrosoft.com",
+          "org": "contoso"
+        },
+        "why": "az_missing"
+      },
+      {
+        "source": {
+          "kind": "az_cli",
+          "tenant": "fabrikam.com",
+          "org": "fabrikam"
+        },
+        "why": "az_missing"
+      },
+      {
+        "source": {
+          "kind": "az_cli",
+          "tenant": "00000000-0000-0000-0000-000000000000",
+          "org": "fabrikam"
+        },
+        "why": "wrong_tenant"
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // The look of every form control comes from controls.css. A screen that adds a control the shared
@@ -8,6 +8,11 @@ import { describe, expect, it } from "vitest";
 // test reads each component and fails on such a control, naming the file and line.
 const SRC = join(import.meta.dirname, "..", "..");
 const css = readFileSync(join(import.meta.dirname, "controls.css"), "utf8");
+
+/** A path with forward slashes whatever the platform separator is. */
+function posix(path: string, separator: string): string {
+  return path.split(separator).join("/");
+}
 
 function svelteFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -18,7 +23,7 @@ function svelteFiles(dir: string): string[] {
 }
 
 const files = svelteFiles(SRC).map((path) => ({
-  name: relative(SRC, path),
+  name: posix(relative(SRC, path), sep),
   text: readFileSync(path, "utf8"),
 }));
 
@@ -37,6 +42,27 @@ const NOT_TEXT = [
   "reset",
   "image",
 ];
+
+/** The text of a component's `<style>` block, or "" without one. */
+function styleOf(text: string): string {
+  return /<style[^>]*>([\s\S]*?)<\/style>/.exec(text)?.[1] ?? "";
+}
+
+/** A file input the user never sees: the `hidden` attribute, or a class the component's own style
+ * sets to `display: none` (a button opens the picker). */
+function isHiddenInput(attrs: string, style: string): boolean {
+  if (/\bhidden\b/.test(attrs)) return true;
+  const classes = /class=(?:"([^"]*)"|\{([^}]*)\})/.exec(attrs) ?? [];
+  const names = (classes[1] ?? classes[2] ?? "")
+    .split(/[\s"'`${}?:()]+/)
+    .filter(Boolean);
+  return names.some((c) =>
+    new RegExp(
+      `\\.${c}\\b[^{]*\\{[^}]*\\bdisplay\\s*:\\s*none\\b[^}]*\\}`,
+      "s",
+    ).test(style),
+  );
+}
 
 function lineOf(text: string, index: number): number {
   return text.slice(0, index).split("\n").length;
@@ -81,7 +107,7 @@ describe("every form control in the product", () => {
       for (const { attrs, line } of openings(text, "input")) {
         const type = /\btype=["'{]*([a-z]+)/.exec(attrs)?.[1] ?? "text";
         if (type === "file") {
-          if (!/\bhidden\b/.test(attrs))
+          if (!isHiddenInput(attrs, styleOf(text)))
             unstyled.push(`${name}:${line} a visible file input`);
         } else if (NOT_TEXT.includes(type) && !STYLED_TYPES.includes(type)) {
           if (type !== "hidden" && type !== "button" && type !== "submit")
@@ -95,7 +121,7 @@ describe("every form control in the product", () => {
   it("gives every button the shared look or a look of its own", () => {
     const unstyled: string[] = [];
     for (const { name, text } of files) {
-      const style = /<style[^>]*>([\s\S]*?)<\/style>/.exec(text)?.[1] ?? "";
+      const style = styleOf(text);
       for (const { attrs, line } of openings(text, "button")) {
         const classes =
           /class(?::\w+)?=(?:"([^"]*)"|\{([^}]*)\})/.exec(attrs) ?? [];
@@ -121,5 +147,32 @@ describe("every form control in the product", () => {
     const text = `<button type="button">x</button>\n<input type="file" />`;
     expect(openings(text, "button")).toHaveLength(1);
     expect(openings(text, "input")[0]?.attrs).not.toMatch(/\bhidden\b/);
+    expect(isHiddenInput(openings(text, "input")[0]?.attrs ?? "", "")).toBe(
+      false,
+    );
+  });
+
+  it("accepts a file input hidden by its component's own style, and no other", () => {
+    const style = ".file { display: none; }\n.other { color: red; }";
+    expect(isHiddenInput('class="file" type="file"', style)).toBe(true);
+    expect(isHiddenInput('type="file" hidden', "")).toBe(true);
+    expect(isHiddenInput('class="other" type="file"', style)).toBe(false);
+    expect(
+      isHiddenInput('class="file" type="file"', ".file { color: red; }"),
+    ).toBe(false);
+  });
+
+  it("names every file with forward slashes, so a path filter matches on Windows too", () => {
+    expect(posix("lib\\testing\\Warmup.svelte", "\\")).toBe(
+      "lib/testing/Warmup.svelte",
+    );
+    expect(posix("lib/testing/Warmup.svelte", "/")).toBe(
+      "lib/testing/Warmup.svelte",
+    );
+    const warmup = files.find((f) => f.name.startsWith("lib/testing/"));
+    expect(
+      warmup,
+      "the warm-up page is found by its forward-slash path",
+    ).toBeDefined();
   });
 });

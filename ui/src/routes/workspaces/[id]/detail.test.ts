@@ -206,17 +206,7 @@ describe("the detail layout", () => {
       screen.getByRole("navigation", { name: "Workspace sections" }),
     );
     expect(tabs.getAllByRole("link").map((l) => l.textContent?.trim())).toEqual(
-      [
-        "Overview",
-        "Terminal",
-        "Network",
-        "Git",
-        "Environment",
-        "Shell init",
-        "SSH agent",
-        "Ports",
-        "Settings",
-      ],
+      ["Overview", "Terminal", "Network", "Git", "Settings"],
     );
     expect(tabs.getByRole("link", { name: "Overview" })).toHaveAttribute(
       "aria-current",
@@ -298,15 +288,18 @@ describe("the detail layout", () => {
     ).toHaveAttribute("href", "/settings");
   });
 
-  it("marks another tab, and counts what waits on the network tab", async () => {
+  it("marks another tab, and counts what waits on the Overview tab", async () => {
     url.pathname = "/workspaces/w-demo/network";
     inbox.add(request(1, { workspace: "w-demo" as never }), "example.com");
     inbox.add(request(2, { workspace: "other" as never }), "example.com");
     await load();
     render(DetailLayout, { children: (() => {}) as never });
-    const link = await screen.findByRole("link", { name: /Network/ });
-    expect(link).toHaveAttribute("aria-current", "page");
-    expect(link).toHaveTextContent("1 waiting");
+    const network = await screen.findByRole("link", { name: "Network" });
+    expect(network).toHaveAttribute("aria-current", "page");
+    expect(network).not.toHaveTextContent("waiting");
+    expect(screen.getByRole("link", { name: /Overview/ })).toHaveTextContent(
+      "1 waiting",
+    );
   });
 
   it("shows the progress line while something runs and says Start for a stopped workspace", async () => {
@@ -319,6 +312,37 @@ describe("the detail layout", () => {
     await vi.waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("Starting"),
     );
+  });
+
+  it("stops the workspace and opens the connect step from the buttons in the header", async () => {
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Connect to demo" }),
+    );
+    expect(workspaceActions.connectOpen).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Stop demo" }));
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("POST /api/workspaces/{id}/stop"),
+    );
+  });
+
+  it("dismisses the line of a step that failed", async () => {
+    await load();
+    workspaces.progress = {
+      "w-demo": {
+        step: "failed",
+        detail: "the disk is full",
+        repository: null,
+        operation: "starting",
+        failed: true,
+      },
+    };
+    render(DetailLayout, { children: (() => {}) as never });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Dismiss" }),
+    );
+    expect(workspaces.progress["w-demo"]).toBeUndefined();
   });
 
   it("says which clone of how many is running, from the workspace's repositories", async () => {
@@ -403,13 +427,15 @@ describe("the trusted mark", () => {
   });
 });
 
+/** The Settings tab, once its table has loaded. */
+async function openSettings() {
+  await load();
+  render(Settings);
+  await screen.findByText("Advanced");
+}
+
 describe("the overview", () => {
-  it("shows state, image, repository, resources and the network summary", async () => {
-    rules.rules = [
-      rule(1, { scope: { type: "workspace", workspace: "w-demo" } }),
-      rule(2),
-      rule(3, { expires_at: 1 }),
-    ];
+  it("shows when it was created, what waits, the repositories and what listens, and nothing of its id or state", async () => {
     inbox.add(request(1, { workspace: "w-demo" as never }), "example.com");
     const entry = {
       entry: "e-demo",
@@ -419,84 +445,254 @@ describe("the overview", () => {
     api.checkouts["w-demo"] = listing([checkout("demo", { entry })]);
     await load();
     render(Overview);
-    expect(await screen.findByText("ws-w-demo")).toBeInTheDocument();
+    expect(await screen.findByText(/^Created/)).toBeInTheDocument();
     expect(
       await screen.findByRole("list", { name: "Checkouts of demo" }),
     ).toHaveTextContent("https://github.com/acme/demo.git");
-    expect(screen.getByText("2 GiB of 32 GiB used")).toBeInTheDocument();
-    expect(screen.getByText("8 GiB")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open a terminal" }),
+    ).toHaveAttribute("href", "/workspaces/w-demo/terminal");
+    expect(
+      await screen.findByRole("heading", { name: /Waiting for you/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("State")).toBeNull();
+    expect(screen.queryByText("Workspace id")).toBeNull();
+    expect(screen.queryByText(/w-demo/)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Network" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Delete workspace" }),
+    ).toBeNull();
+  });
+
+  it("decides one waiting request on the Overview and leaves the others", async () => {
+    inbox.add(
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
+      "example.com",
+    );
+    inbox.add(
+      request(2, { workspace: "w-demo" as never, host: "b.example.com" }),
+      "example.com",
+    );
+    inbox.add(
+      request(3, { workspace: "other" as never, host: "c.example.org" }),
+      "example.org",
+    );
+    await load();
+    render(Overview);
+    await screen.findByText("a.example.com");
+    expect(screen.queryByText("c.example.org")).toBeNull();
+    const row = screen.getByText("a.example.com").closest("li") as HTMLElement;
+    await fireEvent.click(within(row).getByRole("button", { name: /^Allow/ }));
     await vi.waitFor(() =>
-      expect(
-        screen.getByText(
-          "1 waiting · 1 workspace rule · 1 rule for every workspace",
-        ),
-      ).toBeInTheDocument(),
+      expect(screen.queryByText("a.example.com")).toBeNull(),
+    );
+    expect(screen.getByText("b.example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Allow all" })).toBeNull();
+  });
+
+  it("offers Allow all and Deny all from two waiting requests, asks first, and decides each one", async () => {
+    inbox.add(
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
+      "example.com",
+    );
+    inbox.add(
+      request(2, { workspace: "w-demo" as never, host: "b.example.com" }),
+      "example.com",
+    );
+    inbox.add(
+      request(3, { workspace: "other" as never, host: "c.example.org" }),
+      "example.org",
+    );
+    await load();
+    render(Overview);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Allow all" }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Allow all 2 requests?");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Allow all" }),
     );
     await vi.waitFor(() =>
-      expect(screen.getByText("global default")).toBeInTheDocument(),
+      expect(screen.queryByText("a.example.com")).toBeNull(),
+    );
+    expect(screen.queryByText("b.example.com")).toBeNull();
+    expect(inbox.calls.filter((c) => c.includes("approve"))).toHaveLength(2);
+    expect(inbox.calls.filter((c) => c.includes("deny"))).toHaveLength(0);
+    expect(toasts.items.at(-1)?.message).toBe("Allowed 2 requests for demo.");
+    expect(inbox.open.map((r) => r.request.host)).toEqual(["c.example.org"]);
+  });
+
+  it("denies all waiting requests of the workspace after a confirm, and Cancel decides nothing", async () => {
+    inbox.add(
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
+      "example.com",
+    );
+    inbox.add(
+      request(2, { workspace: "w-demo" as never, host: "b.example.com" }),
+      "example.com",
+    );
+    await load();
+    render(Overview);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Deny all" }),
+    );
+    let dialog = await screen.findByRole("alertdialog");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    expect(inbox.calls.filter((c) => c.includes("deny"))).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Deny all" }));
+    dialog = await screen.findByRole("alertdialog");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Deny all" }),
+    );
+    await vi.waitFor(() =>
+      expect(inbox.calls.filter((c) => c.includes("deny"))).toHaveLength(2),
+    );
+    await vi.waitFor(() =>
+      expect(toasts.items.at(-1)?.message).toBe("Denied 2 requests for demo."),
     );
   });
 
-  it("says where the memory comes from, and copes with settings that can't be read", async () => {
-    await workspaces.refresh();
-    api.overrides["w-demo"] = {
-      ...(await settingsOf("w-demo")),
-      memory: 4096,
-    };
-    await load();
-    const view = render(Overview);
-    await vi.waitFor(() =>
-      expect(screen.getByText("workspace override")).toBeInTheDocument(),
+  it("opens the more-choices popover of a waiting request on the Overview", async () => {
+    inbox.add(
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
+      "example.com",
     );
-    view.unmount();
-    api.refuse.set("GET /api/settings/workspaces/{workspace}", {
-      status: 500,
-      message: "x",
+    await load();
+    render(Overview);
+    const more = await screen.findByRole("button", {
+      name: "More choices for a.example.com",
     });
-    render(Overview);
-    await screen.findByText("ws-w-demo");
-    expect(screen.queryByText("workspace override")).toBeNull();
+    await fireEvent.click(more);
+    await vi.waitFor(() =>
+      expect(more).toHaveAttribute("aria-expanded", "true"),
+    );
   });
 
-  it("ignores a memory-source answer that a newer read has overtaken", async () => {
-    await workspaces.refresh();
-    api.overrides["w-demo"] = {
-      ...(await settingsOf("w-demo")),
-      memory: 4096,
-    };
-    await load();
-    const real = api.GET;
-    let release: () => void = () => {};
-    const gate = new Promise<void>((done) => (release = done));
-    let held = false;
-    api.GET = (async (...args: Parameters<typeof real>) => {
-      const answer = await real(...args);
-      if (args[0] === "/api/settings/workspaces/{workspace}" && !held) {
-        held = true;
-        await gate;
-      }
-      return answer;
-    }) as typeof real;
-    render(Overview);
-    await vi.waitFor(() => expect(held).toBe(true));
-    api.overrides["w-demo"] = {
-      ...(await settingsOf("w-demo")),
-      memory: null,
-    };
-    workspaces.list = workspaces.list.map((w) =>
-      w.id === "w-demo" ? { ...w, memory_mib: 1234 } : w,
+  it("counts a decision that could not be made, and says so in the summary", async () => {
+    inbox.add(
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
+      "example.com",
     );
-    await screen.findByText("global default");
-    release();
-    await new Promise((done) => setTimeout(done, 0));
-    expect(screen.queryByText("workspace override")).toBeNull();
-    expect(screen.getByText("global default")).toBeInTheDocument();
+    inbox.add(
+      request(2, { workspace: "w-demo" as never, host: "b.example.com" }),
+      "example.com",
+    );
+    await load();
+    render(Overview);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Allow all" }),
+    );
+    inbox.down = true;
+    const dialog = await screen.findByRole("alertdialog");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Allow all" }),
+    );
+    await vi.waitFor(() =>
+      expect(toasts.items.at(-1)?.message).toBe(
+        "Allowed 0 requests for demo; 2 requests could not be decided.",
+      ),
+    );
+    expect(screen.getByText("a.example.com")).toBeInTheDocument();
+  });
+
+  it("keeps the times on waiting requests current as the minutes pass", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      inbox.add(
+        request(1, {
+          workspace: "w-demo" as never,
+          host: "a.example.com",
+          first_seen: Date.now() - 60_000,
+          last_seen: Date.now() - 60_000,
+        }),
+        "example.com",
+      );
+      await load();
+      render(Overview);
+      render(Network);
+      await screen.findByText("a.example.com");
+      const before = document.querySelector("li.req time")?.textContent;
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      expect(document.querySelector("li.req time")?.textContent).not.toBe(
+        before,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lists what listens in a running workspace, with where it is forwarded", async () => {
+    const real = api.GET;
+    api.GET = (async (...args: Parameters<typeof real>) => {
+      if (args[0] === "/api/workspaces/{id}/ports") {
+        return {
+          data: {
+            running: true,
+            ports: [
+              {
+                guest_port: 3000,
+                host_port: 3000,
+                forwarded: true,
+                pinned: false,
+                listening: true,
+                problem: null,
+              },
+              {
+                guest_port: 5432,
+                host_port: null,
+                forwarded: false,
+                pinned: false,
+                listening: false,
+                problem: null,
+              },
+            ],
+          },
+        };
+      }
+      return real(...args);
+    }) as typeof real;
+    try {
+      await load();
+      render(Overview);
+      const section = (
+        await screen.findByRole("heading", { name: "Serving now" })
+      ).closest("section") as HTMLElement;
+      expect(section).toHaveTextContent(":3000");
+      expect(section).toHaveTextContent("Open on 127.0.0.1:3000");
+      expect(section).not.toHaveTextContent("5432");
+      expect(
+        within(section).getByRole("link", { name: "Forward a port" }),
+      ).toHaveAttribute("href", "/workspaces/w-demo/settings/ports");
+    } finally {
+      api.GET = real;
+    }
+  });
+
+  it("shows no serving list for a workspace that listens on nothing", async () => {
+    await load();
+    render(Overview);
+    await screen.findByText("Get in");
+    expect(screen.queryByRole("heading", { name: "Serving now" })).toBeNull();
+  });
+
+  it("says nothing waits for the workspace when it is so", async () => {
+    await load();
+    render(Overview);
+    expect(
+      await screen.findByText("Nothing is waiting for demo."),
+    ).toBeInTheDocument();
   });
 
   it("shows an out-of-memory notice that can be dismissed", async () => {
     await load();
     render(Overview);
-    await screen.findByText("ws-w-demo");
+    await screen.findByText("Get in");
     expect(screen.queryByRole("alert")).toBeNull();
     workspaces.handleEvent({
       type: "oom_kill",
@@ -518,8 +714,7 @@ describe("the overview", () => {
   });
 
   it("reclaims space on a running workspace, and not while it is changing", async () => {
-    await load();
-    render(Overview);
+    await openSettings();
     await fireEvent.click(
       await screen.findByRole("button", { name: "Reclaim space" }),
     );
@@ -544,15 +739,17 @@ describe("the overview", () => {
     ];
     await load();
     render(Overview);
-    expect(
-      await screen.findByText("3.8 GiB of 4 GiB used (nearly full)"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("2 GiB of 32 GiB used")).toBeInTheDocument();
-    const banner = screen.getByTestId("disk-warning-root");
+    const banner = await screen.findByTestId("disk-warning-root");
     expect(banner).toHaveAttribute("role", "alert");
     expect(banner).toHaveTextContent("Root disk nearly full: 95 % used.");
     expect(banner).toHaveTextContent("the volume and your work are untouched");
     expect(screen.queryByTestId("disk-warning-volume")).toBeNull();
+    cleanup();
+    render(Settings);
+    expect(
+      await screen.findByText("3.8 GiB of 4 GiB used (nearly full)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 GiB of 32 GiB used")).toBeInTheDocument();
   });
 
   it("resets the root disk of a stopped workspace after a confirm that says what is lost", async () => {
@@ -623,12 +820,11 @@ describe("the overview", () => {
     );
   });
 
-  it("offers the grow in the resources card, and not while the workspace is busy", async () => {
+  it("offers the grow in the Advanced group of Settings, and not while the workspace is busy", async () => {
     api.list = [
       workspace("demo", { status: "stopped", root_disk_size_mib: 4096 }),
     ];
-    await load();
-    render(Overview);
+    await openSettings();
     const grow = await screen.findByRole("button", {
       name: "Make root disk bigger…",
     });
@@ -650,8 +846,7 @@ describe("the overview", () => {
 
   it("offers the reset next to Reclaim space even when no disk is nearly full", async () => {
     api.list = [workspace("demo", { status: "stopped" })];
-    await load();
-    render(Overview);
+    await openSettings();
     await fireEvent.click(
       await screen.findByRole("button", { name: "Reset root disk…" }),
     );
@@ -676,7 +871,7 @@ describe("the overview", () => {
       within(banner).getByRole("button", { name: "Reset root disk…" }),
     ).toBeDisabled();
     expect(
-      within(banner).getByText("Stop the workspace first."),
+      within(banner).getByText("Stop the workspace to reset its root disk."),
     ).toBeInTheDocument();
   });
 
@@ -694,8 +889,10 @@ describe("the overview", () => {
     expect(banner).toHaveTextContent("Volume nearly full: 97 % used.");
     expect(banner).toHaveTextContent("cannot grow");
     expect(within(banner).queryByRole("button")).toBeNull();
+    cleanup();
+    render(Settings);
     expect(
-      screen.getByText("31.3 GiB of 32 GiB used (nearly full)"),
+      await screen.findByText("31.3 GiB of 32 GiB used (nearly full)"),
     ).toBeInTheDocument();
   });
 
@@ -703,37 +900,12 @@ describe("the overview", () => {
     api.list = [
       workspace("demo", { root_disk_size_mib: null, root_disk_used_mib: null }),
     ];
-    await load();
-    render(Overview);
-    await screen.findByText("Status");
+    await openSettings();
     expect(screen.queryByText("Root disk")).toBeNull();
   });
 
-  it("shows the workspace id on its own row, with a button that copies it", async () => {
-    api.list = [workspace("demo", { status: "running", name: "Web shop" })];
-    await load();
-    const write = vi.fn(async (_text: string) => undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: write },
-      configurable: true,
-    });
-    render(Overview);
-    const row = await screen.findByText("Workspace id");
-    expect(row.nextElementSibling).toHaveTextContent(/^w-demo\s*Copy$/);
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Copy the workspace id" }),
-    );
-    expect(write).toHaveBeenCalledWith("w-demo");
-    expect(
-      await screen.findByRole("button", { name: "Copy the workspace id" }),
-    ).toHaveTextContent("Copied");
-    // The disk is named after the id, not the name.
-    expect(screen.getByText("ws-w-demo")).toBeInTheDocument();
-  });
-
   it("can't delete a running workspace and says why", async () => {
-    await load();
-    render(Overview);
+    await openSettings();
     const del = await screen.findByRole("button", {
       name: "Delete workspace…",
     });
@@ -746,8 +918,7 @@ describe("the overview", () => {
   it("checks what a delete would lose, then opens the dialog with it", async () => {
     api.list = [workspace("demo", { status: "stopped" })];
     api.check = dirtyCheck("w-demo");
-    await load();
-    render(Overview);
+    await openSettings();
     const del = await screen.findByRole("button", {
       name: "Delete workspace…",
     });
@@ -790,7 +961,7 @@ describe("the overview", () => {
   it("shows no install note on a workspace whose editor works", async () => {
     await load();
     render(Overview);
-    await screen.findByText("Status");
+    await screen.findByText("Get in");
     expect(screen.queryByText(/could not be installed/)).toBeNull();
     expect(screen.queryByText(/could not update/)).toBeNull();
     expect(screen.queryByText(/runs as root/)).toBeNull();
@@ -861,10 +1032,16 @@ describe("the overview", () => {
     render(Overview);
     expect(await screen.findByText(/Its disk is gone/)).toBeInTheDocument();
     expect(
-      screen.getByText(/delete the workspace below; nothing is lost/),
+      screen.getByText(
+        /delete the workspace under Danger in Settings; nothing is lost/,
+      ),
     ).toBeInTheDocument();
+    cleanup();
+    render(Settings);
     expect(
-      screen.getByText(/deleting only removes the workspace from Puddle/),
+      await screen.findByText(
+        /deleting only removes the workspace from Puddle/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Delete workspace…" }),
@@ -908,7 +1085,7 @@ describe("the network tab", () => {
     url.pathname = "/workspaces/w-demo/network";
   });
 
-  it("lists this workspace's waiting requests, newest first, and not another's", async () => {
+  it("lists this workspace's waiting requests on the Overview, newest first, and not another's", async () => {
     inbox.add(
       request(1, {
         workspace: "w-demo" as never,
@@ -930,22 +1107,41 @@ describe("the network tab", () => {
       "example.org",
     );
     await load();
-    render(Network);
+    render(Overview);
     await screen.findByText("new.example.com");
     const hosts = [...document.querySelectorAll("li.req .host")].map(
       (e) => e.textContent,
     );
     expect(hosts).toEqual(["new.example.com", "old.example.com"]);
     expect(screen.queryByText("theirs.example.org")).toBeNull();
-    expect(screen.getByRole("heading", { name: /Waiting/ })).toHaveTextContent(
-      "2",
+    expect(
+      screen.getByRole("heading", { name: /Waiting for you/ }),
+    ).toHaveTextContent("2");
+  });
+
+  it("points to the Overview instead of listing the waiting requests", async () => {
+    inbox.add(
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
+      "example.com",
     );
+    await load();
+    render(Network);
+    const note = (await screen.findByText(/request is waiting/)).closest(
+      "p",
+    ) as HTMLElement;
+    expect(note).toHaveTextContent("1 request is waiting for demo.");
+    expect(
+      within(note).getByRole("link", { name: "Decide on the Overview" }),
+    ).toHaveAttribute("href", "/workspaces/w-demo");
+    expect(screen.queryByText("a.example.com")).toBeNull();
   });
 
   it("says when nothing waits, and when requests are still loading", async () => {
     await workspaces.refresh();
+    render(Overview);
     render(Network);
     expect(await screen.findByText(/Loading requests/)).toBeInTheDocument();
+    expect(screen.getByText(/Loading rules/)).toBeInTheDocument();
     await load();
     expect(
       await screen.findByText("Nothing is waiting for demo."),
@@ -954,6 +1150,7 @@ describe("the network tab", () => {
 
   it("says a read failed instead of showing an empty list, and warns when a refresh failed", async () => {
     await load();
+    render(Overview);
     render(Network);
     await screen.findByText("Nothing is waiting for demo.");
     inbox.down = true;
@@ -990,6 +1187,7 @@ describe("the network tab", () => {
       rule(1, { scope: { type: "workspace", workspace: "w-demo" } }),
     ];
     await load();
+    render(Overview);
     render(Network);
     await screen.findByText("a.example.com");
     inbox.down = true;
@@ -1009,7 +1207,7 @@ describe("the network tab", () => {
       "example.com",
     );
     await load();
-    render(Network);
+    render(Overview);
     await fireEvent.click(
       await screen.findByRole("button", { name: /^Allow/ }),
     );
@@ -1111,19 +1309,20 @@ describe("the settings tab", () => {
   async function open() {
     await load();
     render(Settings);
-    return screen.findByLabelText(
-      "Memory for this workspace",
-    ) as Promise<HTMLSelectElement>;
+    return screen.findByLabelText("Memory") as Promise<HTMLSelectElement>;
   }
 
-  it("shows each setting with where its value comes from", async () => {
+  it("shows each setting as a row with its value and where the value comes from, and no dropdown option that only says to follow the global setting", async () => {
     const memory = await open();
-    expect(memory.value).toBe("");
+    expect(memory.value).toBe("8192");
+    expect(within(memory).queryByText(/Use the global/)).toBeNull();
     expect(
       screen.getByText(/A change applies at the next restart/),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("global setting").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Global setting").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Puddle's default").length).toBeGreaterThan(0);
+    // Following the global setting needs no reset link.
+    expect(screen.queryByRole("button", { name: /again for/ })).toBeNull();
     for (const label of [
       "This computer (loopback)",
       "Private networks",
@@ -1135,6 +1334,19 @@ describe("the settings tab", () => {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
     expect(document.getElementById("local-destinations")).not.toBeNull();
+    expect(
+      screen.getByRole("columnheader", { name: "Setting" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "From" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Advanced" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Danger" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("table")).toHaveLength(1);
   });
 
   it("lists stored fields it doesn't know, only when there are some", async () => {
@@ -1148,7 +1360,7 @@ describe("the settings tab", () => {
     ).toHaveTextContent("clipboard_reed");
   });
 
-  it("saves a memory choice at once and says the next start applies it", async () => {
+  it("saves a memory choice at once, says the next start applies it, and follows the global setting again from the row's link", async () => {
     const memory = await open();
     await fireEvent.change(memory, { target: { value: "16384" } });
     await screen.findByText("Memory saved.");
@@ -1158,36 +1370,46 @@ describe("the settings tab", () => {
         "The new memory applies the next time the workspace starts.",
       ),
     ).toBeInTheDocument();
-    await fireEvent.change(memory, { target: { value: "" } });
+    expect(screen.getByText("This workspace")).toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Memory",
+      }),
+    );
     await vi.waitFor(() => expect(api.overrides["w-demo"]?.memory).toBeNull());
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /again for Memory/ }),
+      ).toBeNull(),
+    );
   });
 
   it("saves a CPU count at once; a running workspace is told it keeps its count until the next start", async () => {
     await open();
-    const cpus = screen.getByLabelText(
-      "CPUs for this workspace",
-    ) as HTMLSelectElement;
-    expect(cpus.value).toBe("");
-    expect(cpus.options[0]?.text).toBe("Use the global default (4 CPUs)");
+    const cpus = screen.getByLabelText("CPUs") as HTMLSelectElement;
+    expect(cpus.value).toBe("4");
+    expect(within(cpus).queryByText(/Use the global/)).toBeNull();
     expect(
       screen.getByText(/A running workspace keeps the count it started with/),
     ).toBeInTheDocument();
-    await fireEvent.change(cpus, { target: { value: "4" } });
+    await fireEvent.change(cpus, { target: { value: "2" } });
     await screen.findByText("CPUs saved.");
-    expect(api.overrides["w-demo"]?.cpus).toBe(4);
+    expect(api.overrides["w-demo"]?.cpus).toBe(2);
     expect(
       await screen.findByText(/The new CPU count applies the next time/),
     ).toBeInTheDocument();
-    await fireEvent.change(cpus, { target: { value: "" } });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for CPUs",
+      }),
+    );
     await vi.waitFor(() => expect(api.overrides["w-demo"]?.cpus).toBeNull());
   });
 
   it("says nothing of a restart for a stopped workspace and puts the CPU choice back when the save is refused", async () => {
     api.list = [workspace("demo", { status: "stopped" })];
     await open();
-    const cpus = screen.getByLabelText(
-      "CPUs for this workspace",
-    ) as HTMLSelectElement;
+    const cpus = screen.getByLabelText("CPUs") as HTMLSelectElement;
     await fireEvent.change(cpus, { target: { value: "2" } });
     await screen.findByText("CPUs saved.");
     expect(screen.queryByText(/The new CPU count/)).toBeNull();
@@ -1207,21 +1429,25 @@ describe("the settings tab", () => {
     expect(screen.queryByText(/applies the next time/)).toBeNull();
   });
 
-  it("turns direct SSH off or back to the global default at once, and asks the trust text before on", async () => {
+  it("turns direct SSH off or back to the global setting at once, and asks the trust text before on", async () => {
     await open();
     const select = screen.getByLabelText(
       "Allow direct SSH",
     ) as HTMLSelectElement;
-    expect(select.value).toBe("inherit");
+    const before = select.value;
     await fireEvent.change(select, { target: { value: "on" } });
     expect(workspaceActions.trustOpen).toBe(true);
     expect(workspaceActions.trustFor?.name).toBe("demo");
     expect(api.overrides["w-demo"]?.direct_ssh ?? null).toBeNull();
-    expect(select.value).toBe("inherit");
+    expect(select.value).toBe(before);
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Allow direct SSH saved.");
     expect(api.overrides["w-demo"]?.direct_ssh).toBe(false);
-    await fireEvent.change(select, { target: { value: "inherit" } });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Allow direct SSH",
+      }),
+    );
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.direct_ssh).toBeNull(),
     );
@@ -1232,7 +1458,7 @@ describe("the settings tab", () => {
     const select = screen.getByLabelText(
       "Allow direct SSH",
     ) as HTMLSelectElement;
-    expect(select.value).toBe("inherit");
+    expect(select.value).toBe("off");
     api.overrides["w-demo"] = {
       ...(await settingsOf("w-demo")),
       direct_ssh: true,
@@ -1242,37 +1468,45 @@ describe("the settings tab", () => {
     await vi.waitFor(() => expect(select.value).toBe("on"));
   });
 
-  it("shows the two tool switches on, saves each one on its own and keeps the other settings", async () => {
+  it("shows the two tool switches on, saves each one on its own and returns to the default from the row's link", async () => {
     await open();
     const mise = screen.getByLabelText(
       "Manage this workspace's tools with mise",
-    ) as HTMLInputElement;
+    ) as HTMLSelectElement;
     const code = screen.getByLabelText(
       "Let mise run the repository's own code",
-    ) as HTMLInputElement;
-    expect(mise.checked).toBe(true);
-    expect(code.checked).toBe(true);
-    await fireEvent.click(code);
+    ) as HTMLSelectElement;
+    expect(mise.value).toBe("on");
+    expect(code.value).toBe("on");
+    await fireEvent.change(code, { target: { value: "off" } });
     await screen.findByText("Running repository code saved.");
     expect(api.tools["w-demo"]).toEqual({ mise: null, repo_code: false });
-    await fireEvent.click(mise);
+    await fireEvent.change(mise, { target: { value: "off" } });
     await screen.findByText("Tools with mise saved.");
     expect(api.tools["w-demo"]).toEqual({ mise: false, repo_code: false });
-    expect(code.checked).toBe(false);
+    expect(code.value).toBe("off");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the default again for Let mise run the repository's own code",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.tools["w-demo"]).toEqual({ mise: false, repo_code: null }),
+    );
   });
 
   it("puts a tool switch back when the save is refused", async () => {
     await open();
     const mise = screen.getByLabelText(
       "Manage this workspace's tools with mise",
-    ) as HTMLInputElement;
+    ) as HTMLSelectElement;
     api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 500,
       message: "no",
     });
-    await fireEvent.click(mise);
+    await fireEvent.change(mise, { target: { value: "off" } });
     await screen.findByText("no");
-    expect(mise.checked).toBe(true);
+    expect(mise.value).toBe("on");
   });
 
   it("hides the tool switches while the global mise switch is off, and keeps their values", async () => {
@@ -1282,28 +1516,28 @@ describe("the settings tab", () => {
     expect(
       screen.queryByLabelText("Manage this workspace's tools with mise"),
     ).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Tools" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Tools" })).toBeNull();
     expect(api.tools["w-demo"]).toEqual({ mise: false, repo_code: false });
   });
 
   it("shows no tools section in a build without the mise layer (v0.1)", async () => {
     api.miseAvailable = false;
     await open();
-    expect(screen.queryByRole("heading", { name: "Tools" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Tools" })).toBeNull();
     expect(screen.queryByText(/mise/i)).toBeNull();
   });
 
-  it("keeps logins by default, turns capture off or back to the global default, and says the next start applies it", async () => {
+  it("keeps logins by default, turns capture off or back to the global setting, and says the next start applies it", async () => {
     await open();
     const select = screen.getByLabelText(
       "Keep logins made in this workspace",
     ) as HTMLSelectElement;
-    expect(select.value).toBe("inherit");
+    expect(select.value).toBe("on");
     expect(
-      within(select).getByRole("option", {
-        name: "Use the global setting (on)",
-      }),
-    ).toBeInTheDocument();
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["On", "Off"]);
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Login capture saved.");
     expect(api.overrides["w-demo"]?.capture_logins).toBe(false);
@@ -1312,7 +1546,11 @@ describe("the settings tab", () => {
         "The new login setting applies the next time the workspace starts.",
       ),
     ).toBeInTheDocument();
-    await fireEvent.change(select, { target: { value: "inherit" } });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Keep logins made in this workspace",
+      }),
+    );
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.capture_logins).toBeNull(),
     );
@@ -1323,16 +1561,15 @@ describe("the settings tab", () => {
     const select = screen.getByLabelText(
       "Warn when a tool sends a token of its own",
     ) as HTMLSelectElement;
-    expect(select.value).toBe("inherit");
-    expect(
-      within(select).getByRole("option", {
-        name: "Use the global setting (on)",
-      }),
-    ).toBeInTheDocument();
+    expect(select.value).toBe("on");
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Credential warning saved.");
     expect(api.overrides["w-demo"]?.warn_foreign_credentials).toBe(false);
-    await fireEvent.change(select, { target: { value: "inherit" } });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Warn when a tool sends a token of its own",
+      }),
+    );
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.warn_foreign_credentials).toBeNull(),
     );
@@ -1340,15 +1577,11 @@ describe("the settings tab", () => {
 
   it("sets the interception mode at once and saves the never-decrypt names", async () => {
     await open();
-    const select = (await screen.findByLabelText(
-      "Interception mode",
-    )) as HTMLSelectElement;
-    expect(select.value).toBe("inherit");
-    expect(
-      within(select).getByRole("option", {
-        name: "Use the global setting (Decrypt only hosts Puddle has a reason to read)",
-      }),
-    ).toBeInTheDocument();
+    const select = (await screen.findByRole("combobox", {
+      name: "Which hosts to decrypt",
+    })) as HTMLSelectElement;
+    expect(select.value).toBe("known_only");
+    expect(within(select).queryByText(/Use the global/)).toBeNull();
     await fireEvent.change(select, { target: { value: "all" } });
     await screen.findByText("Interception mode saved.");
     expect(api.interception["w-demo"]?.mode).toBe("all");
@@ -1367,18 +1600,43 @@ describe("the settings tab", () => {
       "*.corp.test",
       "bank.example",
     ]);
-    await fireEvent.change(select, { target: { value: "inherit" } });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Which hosts to decrypt",
+      }),
+    );
     await vi.waitFor(() =>
       expect(api.interception["w-demo"]?.mode).toBe("inherit"),
     );
   });
 
+  it("keeps the workspace's own interception mode and says why when following the global mode again is refused", async () => {
+    await open();
+    const select = (await screen.findByRole("combobox", {
+      name: "Which hosts to decrypt",
+    })) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "all" } });
+    await screen.findByText("Interception mode saved.");
+    api.refuse.set("PUT /api/workspaces/{id}/interception", {
+      status: 500,
+      message: "disk full",
+    });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Which hosts to decrypt",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
+    expect(select.value).toBe("all");
+    expect(api.interception["w-demo"]?.mode).toBe("all");
+  });
+
   it("names the global never-decrypt list read-only, and puts the mode back when the save is refused", async () => {
     api.globalNeverDecrypt = ["bank.example"];
     await open();
-    const select = (await screen.findByLabelText(
-      "Interception mode",
-    )) as HTMLSelectElement;
+    const select = (await screen.findByRole("combobox", {
+      name: "Which hosts to decrypt",
+    })) as HTMLSelectElement;
     expect(
       screen.getByText(/Never decrypted in any workspace/),
     ).toHaveTextContent("bank.example");
@@ -1388,7 +1646,7 @@ describe("the settings tab", () => {
     });
     await fireEvent.change(select, { target: { value: "all" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
-    expect(select.value).toBe("inherit");
+    expect(select.value).toBe("known_only");
   });
 
   const seen = (
@@ -1695,11 +1953,10 @@ describe("the settings tab", () => {
     await screen.findByText("Clipboard saved.");
     expect(api.overrides["w-demo"]?.clipboard_read).toBe("deny");
     expect(api.overrides["w-demo"]?.local_toggles.private).toBe(true);
-    await fireEvent.change(
-      screen.getByLabelText("Pages reading the clipboard"),
-      {
-        target: { value: "inherit" },
-      },
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Pages reading the clipboard",
+      }),
     );
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.clipboard_read).toBeNull(),
@@ -1722,14 +1979,14 @@ describe("the settings tab", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "memory is too small",
     );
-    expect(memory.value).toBe("");
+    await vi.waitFor(() => expect(memory.value).toBe("8192"));
     api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "no",
     });
     const toggle = screen.getByLabelText("Link-local") as HTMLSelectElement;
     await fireEvent.change(toggle, { target: { value: "on" } });
-    await vi.waitFor(() => expect(toggle.value).toBe("inherit"));
+    await vi.waitFor(() => expect(toggle.value).toBe("off"));
     api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "no",
@@ -1738,7 +1995,7 @@ describe("the settings tab", () => {
       "Pages reading the clipboard",
     ) as HTMLSelectElement;
     await fireEvent.change(clipboard, { target: { value: "allow" } });
-    await vi.waitFor(() => expect(clipboard.value).toBe("inherit"));
+    await vi.waitFor(() => expect(clipboard.value).toBe("ask"));
   });
 
   it("says when the settings can't be read, and while they load", async () => {

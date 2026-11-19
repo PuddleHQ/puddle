@@ -504,10 +504,45 @@ for (const scheme of ["light", "dark"] as const) {
       await raise(backend, page, denied("pull"), "was refused");
       await scan(page, "with a notice");
       await open(page, backend, "data-tools");
-      await expect(page.getByText(/No identity yet/)).toBeVisible();
+      await expect(
+        page.getByText(/No identity is on this workspace/),
+      ).toBeVisible();
       await scan(page, "no identities");
       await staysEmpty(page, csp);
       scan.done();
     });
   }
 }
+
+test("with no identity anywhere the tab says one line, offers one button, and shows no dead controls", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await backend.control.reset("git-identities");
+  await backend.signIn(page);
+  const listed = await request.get("/api/identities", {
+    headers: auth(backend),
+  });
+  const all = (await listed.json()) as
+    Array<{ id: number }> | { identities: Array<{ id: number }> };
+  const rows = Array.isArray(all) ? all : all.identities;
+  for (const row of rows) {
+    const gone = await request.delete(`/api/identities/${row.id}`, {
+      headers: auth(backend),
+    });
+    expect(gone.ok()).toBe(true);
+  }
+  await page.goto("/workspaces/data-tools/git");
+  await expect(
+    page.getByText("This workspace can read public repositories only."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Create an identity" }),
+  ).toHaveAttribute("href", "/identities");
+  await expect(page.getByLabel("Add an identity")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add identity" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/No identity here covers/)).toHaveCount(0);
+});

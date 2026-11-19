@@ -53,7 +53,7 @@
 </script>
 
 <section class="card" id="session-user" aria-labelledby="{id}-h">
-  <h2 id="{id}-h">User</h2>
+  <h3 id="{id}-h">User</h3>
   <div class="setting">
     <div class="grow">
       <label for="{id}-user">Terminals and the editor run as</label>
@@ -90,20 +90,13 @@
   .card {
     display: grid;
     gap: var(--space-3);
-    max-width: 48rem;
-    margin-bottom: var(--space-4);
-    padding: var(--space-4);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
   }
-  h2 {
+  h3 {
     font-size: var(--text-md);
   }
   .setting {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
+    display: grid;
+    gap: var(--space-2);
   }
   .grow {
     flex: 1;
@@ -125,12 +118,5 @@
   }
   .saved {
     color: var(--color-success);
-  }
-
-  @media (max-width: 760px) {
-    .setting {
-      flex-direction: column;
-      align-items: stretch;
-    }
   }
 </style>

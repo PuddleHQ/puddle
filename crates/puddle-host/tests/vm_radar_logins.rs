@@ -364,6 +364,8 @@ struct Approved {
     rounds: usize,
     /// The hosts approved, in the order they were asked for.
     hosts: Vec<String>,
+    /// One line per run and per approval, for the test to print.
+    log: Vec<String>,
     /// What the first run printed (the first refusal, when the command needed any host).
     first_output: String,
 }
@@ -378,6 +380,7 @@ async fn run_through_approvals(
     script: &str,
 ) -> Approved {
     let mut hosts = Vec::new();
+    let mut log = Vec::new();
     let mut first_output = String::new();
     for round in 1..=MAX_ROUNDS {
         let (code, out) = guest_as(
@@ -388,7 +391,7 @@ async fn run_through_approvals(
             Duration::from_mins(10),
         )
         .await;
-        eprintln!("round {round}: exit {code}: {}", tail(&out));
+        log.push(format!("round {round}: exit {code}: {}", tail(&out)));
         if round == 1 {
             first_output.clone_from(&out);
         }
@@ -396,6 +399,7 @@ async fn run_through_approvals(
             return Approved {
                 rounds: round,
                 hosts,
+                log,
                 first_output,
             };
         }
@@ -405,21 +409,30 @@ async fn run_through_approvals(
             .get(&format!("/api/pending?workspace={workspace}"))
             .await
             .json();
-        let rows = listed["requests"].as_array().unwrap().clone();
+        let rows = listed
+            .get("requests")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         assert!(
             !rows.is_empty(),
             "round {round} failed with exit {code} and nothing waits for approval, so the tool failed for another reason: {out}"
         );
         for row in rows {
-            let host = row["host"].as_str().unwrap().to_owned();
-            let id = row["id"].as_i64().unwrap();
+            let host = row.get("host").and_then(Value::as_str).unwrap().to_owned();
+            let id = row.get("id").and_then(Value::as_i64).unwrap();
             let reply = api.post(&format!("/api/pending/{id}/approve"), "{}").await;
             assert_eq!(reply.status, 200, "{}", reply.body);
-            eprintln!("round {round}: approved {host}");
+            log.push(format!("round {round}: approved {host}"));
             hosts.push(host);
         }
     }
-    panic!("no success after {MAX_ROUNDS} rounds; approved {hosts:?}");
+    Approved {
+        rounds: MAX_ROUNDS + 1,
+        hosts,
+        log,
+        first_output,
+    }
 }
 
 /// The hosts of `approved` that `pinned` does not list.
@@ -468,6 +481,12 @@ async fn vm_radar_login_tools_native_installer() {
         "sudo apt-get update -qq && sudo apt-get install -y -qq gh",
     )
     .await;
+    eprintln!("{}", gh.log.join("\n"));
+    assert!(
+        gh.rounds <= MAX_ROUNDS,
+        "apt did not finish in {MAX_ROUNDS} rounds; approved {:?}",
+        gh.hosts
+    );
     eprintln!("apt gh: {} round(s), hosts: {:?}", gh.rounds, gh.hosts);
     let outside = unpinned(&gh, APT_GH_HOSTS);
     assert!(
@@ -498,6 +517,12 @@ async fn vm_radar_login_tools_native_installer() {
         "set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash",
     )
     .await;
+    eprintln!("{}", installer.log.join("\n"));
+    assert!(
+        installer.rounds <= MAX_ROUNDS,
+        "the installer did not finish in {MAX_ROUNDS} rounds; approved {:?}",
+        installer.hosts
+    );
     eprintln!(
         "installer: {} round(s), hosts approved in order: {:?}",
         installer.rounds, installer.hosts

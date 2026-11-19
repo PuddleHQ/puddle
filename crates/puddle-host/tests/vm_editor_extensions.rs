@@ -65,16 +65,20 @@ ls -1 "$exts"
 exit $status
 "#;
 
-/// A fresh workspace: the editor server up, no rule of the user's own. Returns what the tests need.
-async fn fresh_editor_workspace(tag: &str) -> (VmHost, WorkspaceId, String, Api) {
+/// The popular extensions install in a fresh workspace and ask for exactly the pinned hosts. The
+/// installs go to the live Open VSX and whatever else each extension downloads, so the test is a
+/// radar (weekly `full-test`, never a merge gate): it discovers an extension that began to need a
+/// host nobody pinned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_editor_extensions_python_and_eslint_ask_only_for_the_pinned_hosts() {
     let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
         "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
     ));
-    let vm = start_vm_host_config(tag, named_id_options(), |config| {
+    let vm = start_vm_host_config("pop", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;
-    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
+    let name = format!("{}-pop", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(vm.host.url(), vm.host.token());
     let mut events = api.events().await;
@@ -91,16 +95,6 @@ async fn fresh_editor_workspace(tag: &str) -> (VmHost, WorkspaceId, String, Api)
         .await;
     assert_eq!(end["step"], "done", "{end}");
     guest(&vm.runtime, &sandbox, EDITOR_UP).await;
-    (vm, sandbox, name, api)
-}
-
-/// The popular extensions install in a fresh workspace and ask for exactly the pinned hosts. The
-/// installs go to the live Open VSX and whatever else each extension downloads, so the test is a
-/// radar (weekly `full-test`, never a merge gate): it discovers an extension that began to need a
-/// host nobody pinned.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn vm_radar_editor_extensions_python_and_eslint_ask_only_for_the_pinned_hosts() {
-    let (vm, sandbox, name, api) = fresh_editor_workspace("pop").await;
     assert_eq!(api.get("/api/rules").await.json()["rules"], json!([]));
     for extension in POPULAR {
         let script = format!("EXTENSION={extension}\nexport EXTENSION\n{INSTALL}");

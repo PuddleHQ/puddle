@@ -1778,6 +1778,11 @@ test.describe("keyboard only", () => {
 
     await created.getByRole("link", { name: /^Details/ }).focus();
     await page.keyboard.press("Enter");
+    await page
+      .getByRole("navigation", { name: "Workspace sections" })
+      .getByRole("link", { name: "Settings" })
+      .focus();
+    await page.keyboard.press("Enter");
     const del = page.getByRole("button", { name: "Delete workspace…" });
     await del.focus();
     await page.keyboard.press("Enter");
@@ -1881,7 +1886,7 @@ test.describe("accessibility", () => {
       await expect(page.getByRole("alert")).toBeVisible();
       await expectNoAxeViolations(page, "overview with the notice");
 
-      await page.goto("/workspaces/data-tools");
+      await page.goto("/workspaces/data-tools/settings");
       await expect(
         page.getByRole("heading", { level: 1, name: "data-tools" }),
       ).toBeVisible();

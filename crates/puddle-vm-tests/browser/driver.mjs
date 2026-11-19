@@ -8,7 +8,10 @@
 //       opens a new page, waits until `ready` is truthy and evaluates `result`; the page stays open
 //   {"op":"wait","page":<id>,"ready":...,"result":...,"timeoutMs":...}   the same on an open page
 //   {"op":"press","page":<id>,"keys":"Control+Backquote"}                  presses keys in the page
+//   {"op":"type","page":<id>,"text":"..."}                                 types text into the focused element
 //   {"op":"close","page":<id>}                                             closes the page (its sockets end)
+//   {"op":"crash","page":<id>}                                             kills the page's renderer, as a killed
+//       browser does: its sockets drop with no close frame and no unload handler runs; the page is then gone
 //   {"op":"quit"}                                                          closes the browser and exits
 // Replies: {"ok":true,"result":<value>,"console":[...],"pageErrors":[...]} or
 //          {"ok":false,"error":"...","console":[...],"pageErrors":[...]}; console and errors are
@@ -64,6 +67,19 @@ const run = async (command) => {
     case "press":
       await page(command.page).page.keyboard.press(command.keys);
       return null;
+    case "type":
+      await page(command.page).page.keyboard.type(command.text, { delay: 10 });
+      return null;
+    case "crash": {
+      const entry = page(command.page);
+      pages.delete(command.page);
+      const session = await context.newCDPSession(entry.page);
+      // The renderer dies before the command answers: the answer never comes.
+      session.send("Page.crash").catch(() => {});
+      await new Promise((resolve) => entry.page.once("crash", resolve));
+      await entry.page.close({ runBeforeUnload: false });
+      return null;
+    }
     case "close": {
       const entry = page(command.page);
       pages.delete(command.page);

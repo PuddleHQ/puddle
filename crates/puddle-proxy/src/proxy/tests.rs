@@ -1828,7 +1828,7 @@ mod company_network {
         policy.allow_as_suffix(&host("corp.example"));
         let p = proxy(policy.clone(), nexus()).with_address_check(guard(on));
         let (admitted, event) = super::super::admit(&p, &request("intranet.corp.example")).await;
-        assert_eq!(admitted.unwrap_err().status, super::WAITING_STATUS);
+        assert_eq!(admitted.unwrap_err().status, WAITING_STATUS);
         assert_eq!(event.decision, ConnectionDecision::Pending);
         assert_eq!(policy.pending().len(), 1);
     }

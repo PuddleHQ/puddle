@@ -146,18 +146,23 @@ test("no settings page is longer than two screens at 1440 px", async ({
   }
 });
 
-test("every setting is found by the search and the result opens it", async ({
-  page,
-  backend,
-}) => {
-  await openSettings(page, backend);
-  const mise = (await (
-    await page.request.get("/api/settings", { headers: auth(backend) })
-  ).json()) as { mise_available: boolean };
-  for (const entry of SETTINGS) {
-    if (entry.id === "set-mise" && !mise.mise_available) continue;
-    if (entry.id === "set-ms-telemetry") continue; // only while Microsoft's server is chosen
-    if (entry.id === "set-withdraw") continue;
+// One test per setting: the catalogue grows, and a single test that walked all of it took 18 s in
+// chromium and 32 s in webkit on the host, so it grew past the test limit with every setting added.
+for (const entry of SETTINGS) {
+  test(`the search finds ${entry.id} and the result opens it`, async ({
+    page,
+    backend,
+  }) => {
+    await openSettings(page, backend);
+    const mise = (await (
+      await page.request.get("/api/settings", { headers: auth(backend) })
+    ).json()) as { mise_available: boolean };
+    const noMise = entry.id === "set-mise" && !mise.mise_available;
+    test.skip(noMise, "no mise here");
+    const needsMicrosoft = ["set-ms-telemetry", "set-withdraw"].includes(
+      entry.id,
+    );
+    test.skip(needsMicrosoft, "only while Microsoft's server is chosen");
     await page.goto("/settings/appearance");
     await page
       .getByRole("searchbox", { name: "Search settings" })
@@ -170,8 +175,8 @@ test("every setting is found by the search and the result opens it", async ({
       new RegExp(`/settings/${entry.page}#${entry.id}$`),
     );
     await expect(page.locator(`#${entry.id}`), entry.id).toBeVisible();
-  }
-});
+  });
+}
 
 for (const scheme of ["light", "dark"] as const) {
   test(`axe finds nothing on the screen or in the popup in ${scheme}`, async ({

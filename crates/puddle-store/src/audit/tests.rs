@@ -603,6 +603,17 @@ fn connection_window_counts_excess_per_second() {
 }
 
 #[test]
+fn a_clock_step_back_keeps_the_window_and_its_limit() {
+    let mut w = ConnectionWindow::default();
+    assert_eq!(w.admit(5_000, 1), (true, None));
+    assert_eq!(w.admit(5_100, 1), (false, None));
+    // The clock steps back: the second does not restart, so the limit still holds.
+    assert_eq!(w.admit(3_000, 1), (false, None));
+    assert_eq!(w.admit(5_900, 1), (false, None));
+    assert_eq!(w.admit(6_000, 1), (true, Some((5_000, 3))));
+}
+
+#[test]
 fn a_summary_whose_write_failed_is_handed_out_again_merged_with_the_next_one() {
     let mut w = ConnectionWindow::default();
     assert_eq!(w.admit(5_000, 1), (true, None));

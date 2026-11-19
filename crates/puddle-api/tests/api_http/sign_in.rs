@@ -708,6 +708,11 @@ async fn devices_are_listed_and_revoked_and_a_revoked_one_is_out_everywhere() {
         )
         .await;
     assert_eq!(not_a_number.status, 400);
+    assert_eq!(
+        not_a_number.json()["error"],
+        "bad_request",
+        "an error body, not axum's plain text: {not_a_number:?}"
+    );
     site.running.shutdown().await;
 }
 

@@ -6390,6 +6390,7 @@ dependencies = [
  "hyper-util",
  "proptest",
  "puddle-agent-proto",
+ "puddle-fd-limit",
  "puddle-fs",
  "puddle-netpolicy",
  "puddle-ports",

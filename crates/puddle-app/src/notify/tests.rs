@@ -412,6 +412,11 @@ fn what_a_workspace_controls_cannot_inject_markup_or_flood_a_notice() {
     assert_eq!(cleaned.chars().count(), MAX_QUOTED_CHARS + 1);
     assert!(cleaned.ends_with('…'));
     assert_eq!(clean("fine.example.org"), "fine.example.org");
+    assert_eq!(
+        clean("a\u{202e}b\u{200b}c\u{2066}d\u{feff}e\u{2028}f\u{fff9}g\u{e0020}h"),
+        "a?b?c?d?e?f?g?h"
+    );
+    assert_eq!(clean("bücher.example"), "bücher.example", "letters stay");
 }
 
 #[test]

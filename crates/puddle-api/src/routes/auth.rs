@@ -7,7 +7,7 @@
 //! where the desktop window and the command line live, they do not exist.
 
 use axum::Json;
-use axum::extract::{FromRequestParts, Path, State};
+use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -17,7 +17,7 @@ use crate::ApiErrorBody;
 use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
 use crate::error::{ApiError, ErrorCode};
-use crate::extract::SecretJson;
+use crate::extract::{Path, SecretJson};
 use crate::routes::AppState;
 use crate::signin::{COOKIE_NAME, DEVICE_TTL_MS, Granted, SignIn};
 use crate::wire::{

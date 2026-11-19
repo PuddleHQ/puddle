@@ -470,6 +470,8 @@ pub enum WorkspaceOpKind {
     RepoSwitched,
     /// A repository removed from a workspace's list.
     RepoRemoved,
+    /// A workspace's "only listed repositories" switch for push or pull changed.
+    GitSwitchesChanged,
     /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
     GitRepaired,
     /// A workspace's root disk made bigger (or the attempt failed; the detail says from what
@@ -501,6 +503,7 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::RepoAdded => Self::RepoAdded,
             K::RepoSwitched => Self::RepoSwitched,
             K::RepoRemoved => Self::RepoRemoved,
+            K::GitSwitchesChanged => Self::GitSwitchesChanged,
             K::GitRepaired => Self::GitRepaired,
             K::RootDiskGrown => Self::RootDiskGrown,
             K::SshAgentSigned => Self::SshAgentSigned,

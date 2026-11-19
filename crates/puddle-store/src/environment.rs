@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Environment variables and secrets, global or for one workspace
-//! (`docs/arch/spec/credentials.md` §9).
+//! Environment variables and secrets, global or for one workspace.
 //!
 //! A plain variable's value is stored here and goes into the workspace's environment at its next
 //! start. A secret's value is **not** stored here: this crate keeps only the id the operating

@@ -195,6 +195,16 @@ const WHERE: &str = "({ path: location.pathname, search: decodeURIComponent(loca
 /// A page's first load, running on its own task: it fails with the browser's message.
 type PageLoad = tokio::task::JoinHandle<Result<(), String>>;
 
+/// A browser session, in the system colour scheme `scheme` when one is named.
+async fn browser_in(scheme: Option<&str>) -> BrowserSession {
+    let client = BrowserClient::from_env().expect("browser client environment");
+    match scheme {
+        Some(scheme) => client.session_in_color_scheme(scheme).await,
+        None => client.session().await,
+    }
+    .expect("the browser started")
+}
+
 /// The desktop shell's part, with a real browser for its webview (module docs).
 struct ShellStandIn {
     browser: Arc<tokio::sync::Mutex<BrowserSession>>,
@@ -217,11 +227,12 @@ struct ShellStandIn {
 
 impl ShellStandIn {
     async fn new() -> Arc<Self> {
-        let browser = BrowserClient::from_env()
-            .expect("browser client environment")
-            .session()
-            .await
-            .expect("the browser started");
+        Self::new_in(None).await
+    }
+
+    /// [`ShellStandIn::new`] with a browser whose system colour scheme is `scheme`.
+    async fn new_in(scheme: Option<&str>) -> Arc<Self> {
+        let browser = browser_in(scheme).await;
         Arc::new(Self {
             browser: Arc::new(tokio::sync::Mutex::new(browser)),
             pages: Arc::default(),
@@ -249,6 +260,15 @@ impl ShellStandIn {
                 .expect("the page load task ran")
                 .unwrap_or_else(|e| panic!("{workspace}'s page did not open: {e}"));
         }
+    }
+
+    /// Closes `workspace`'s pages and the browser, and starts a new one (an empty data folder)
+    /// whose system colour scheme is `scheme`; the next window signs in again by cookie.
+    async fn restart_browser_in(&self, workspace: &str, scheme: &str) {
+        self.close_pages(workspace).await;
+        let fresh = browser_in(Some(scheme)).await;
+        let old = std::mem::replace(&mut *self.browser.lock().await, fresh);
+        old.quit().await.expect("the browser closed");
     }
 
     /// Closes the browser. A page load still running keeps it open: then the process ends it.
@@ -829,6 +849,138 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         roots.contains(&"api") && roots.contains(&"web") && roots.len() == 3,
         "{rows}"
     );
+
+    host.shutdown().await;
+    drop(host);
+    if let Some(shell) = Arc::into_inner(shell) {
+        shell.quit().await;
+    }
+}
+
+/// What a window of the editor shows of its colour theme: the workbench's theme class (`vs-dark`
+/// for a dark theme, `vs` for a light one: VS Code's `ColorScheme`) and the scheme the browser
+/// reports as the system's.
+const WINDOW_THEME: &str = r"(() => {
+  const classes = [...(document.querySelector('.monaco-workbench')?.classList ?? [])];
+  return {
+    dark: classes.includes('vs-dark'),
+    light: classes.includes('vs'),
+    system: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  };
+})()";
+
+/// The first open of a window follows the system's colour scheme, in code-server itself: the
+/// settings Puddle seeded make the real workbench pick its dark theme in a browser on a dark
+/// system and its light theme in a browser on a light one (the control: the same server and the
+/// same settings file, the other scheme). A user's own settings file stays what it was after the
+/// server starts again.
+///
+/// What this cannot say is how the window looks on a real dark system: that stays a person's check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_first_open_follows_the_systems_colour_scheme_and_keeps_the_users_settings()
+ {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let shell = ShellStandIn::new_in(Some("dark")).await;
+    let mut options = named_id_options();
+    options.launcher = shell.clone();
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("wth", options, |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+    let name = format!("{}-wth", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    guest(&runtime, &sandbox, EDITOR_UP).await;
+
+    // The file the agent seeded before the server's first start.
+    let settings_file =
+        format!("/workspaces/{name}/.puddle/code-server/user-data/User/settings.json");
+    let seeded = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
+    assert!(
+        seeded.contains(r#""window.autoDetectColorScheme": true"#),
+        "{seeded}"
+    );
+
+    let attach = || async {
+        let reply = api
+            .post(
+                &format!("/api/workspaces/{name}/attach"),
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    };
+    let theme = |ws: &str| {
+        let ws = ws.to_owned();
+        let shell = Arc::clone(&shell);
+        async move {
+            shell
+                .wait(
+                    &ws,
+                    "!!document.querySelector('.monaco-workbench')",
+                    WINDOW_THEME,
+                    WORKBENCH_BUDGET,
+                )
+                .await
+        }
+    };
+
+    // A browser on a dark system: the window's workbench is in a dark theme.
+    attach().await;
+    let dark = theme(&name).await;
+    assert_eq!(dark["system"], "dark", "{dark}");
+    assert_eq!(dark["dark"], true, "the window did not open dark: {dark}");
+    assert_eq!(dark["light"], false, "{dark}");
+
+    // A browser on a light system, same server, same file: the window is in a light theme.
+    shell.restart_browser_in(&name, "light").await;
+    attach().await;
+    let light = theme(&name).await;
+    assert_eq!(light["system"], "light", "{light}");
+    assert_eq!(
+        light["light"], true,
+        "the window did not open light: {light}"
+    );
+    assert_eq!(light["dark"], false, "{light}");
+
+    // A user's own file is not touched by a start of the server.
+    let own = r#"{"workbench.colorTheme": "Solarized Dark"}"#;
+    guest(
+        &runtime,
+        &sandbox,
+        &format!("printf '%s' '{own}' >{settings_file}"),
+    )
+    .await;
+    guest(
+        &runtime,
+        &sandbox,
+        "for p in /proc/[0-9]*; do tr '\\0' ' ' <$p/cmdline 2>/dev/null | \
+         grep -q '[c]ode-server/lib/node' && kill -9 ${p#/proc/}; done; sleep 3; true",
+    )
+    .await;
+    guest(&runtime, &sandbox, EDITOR_UP).await;
+    let kept = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
+    assert_eq!(kept, own, "a start of the server changed the user's file");
 
     host.shutdown().await;
     drop(host);

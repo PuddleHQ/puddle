@@ -62,12 +62,12 @@ pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
     GitSeed, KeptLoginSeed, ProblemSeed, ProfileSeed, ReadBy, RepoItemSeed, RepoListSeed,
     RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed,
-    RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed,
-    WorkspaceSeed,
+    RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnreadableSeed, UnreadableWhy, UnsavedSeed,
+    WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 17] = [
+const BUILT_IN: [(&str, &str); 18] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -107,6 +107,10 @@ const BUILT_IN: [(&str, &str); 17] = [
     (
         "azure-cli",
         include_str!("../../../../ui/e2e/fixtures/azure-cli.json"),
+    ),
+    (
+        "azure-cli-missing",
+        include_str!("../../../../ui/e2e/fixtures/azure-cli-missing.json"),
     ),
     (
         "repo-lists",
@@ -1202,6 +1206,15 @@ impl State {
             self.credentials.set_unreadable(
                 source.clone().into_spec().map_err(|e| e.to_string())?,
                 Some(SourceError::NotSignedIn),
+            );
+        }
+        for item in &seed.unreadable {
+            self.credentials.set_unreadable(
+                item.source.clone().into_spec().map_err(|e| e.to_string())?,
+                Some(match item.why {
+                    UnreadableWhy::AzMissing => SourceError::ToolMissing(Tool::Az),
+                    UnreadableWhy::WrongTenant => SourceError::WrongTenant,
+                }),
             );
         }
         self.credentials.set_sign_in(match &seed.sign_in {

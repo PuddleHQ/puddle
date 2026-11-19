@@ -447,6 +447,90 @@ test("the sign-in notice leads to the credential's page and goes when the creden
   await expect(notice).not.toContainText("Sign-in needed");
 });
 
+/** Adds an identity that reads one pasted token for dev.azure.com and answers the line the host words for it. */
+async function identityWithPastedToken(page: Page, backend: Backend) {
+  await open(page, backend);
+  await page.getByRole("button", { name: "Add identity" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add identity" });
+  await dialog.getByLabel("Identity name").fill("Token user");
+  await dialog.getByLabel("Author name").fill("T");
+  await dialog.getByLabel("Author email").fill("t@example.com");
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel("Paste a token").check();
+  await dialog.getByLabel("Git host").fill("dev.azure.com");
+  await dialog.getByLabel("Azure DevOps organisation").fill("fabrikam");
+  await dialog
+    .getByLabel("Token", { exact: true })
+    .fill("old-token-0123456789");
+  await dialog.getByLabel(/Owners or organisations/).fill("fabrikam");
+  await dialog.getByLabel(/The rest of dev.azure.com/).uncheck();
+  await dialog.getByRole("button", { name: "Add credential" }).click();
+  await dialog.getByRole("button", { name: "Add identity" }).click();
+  await expect(dialog).toBeHidden();
+  const [kept] = (await backend.control.state()).kept_tokens;
+  return `stored token ${kept} for dev.azure.com`;
+}
+
+test("a pasted token a host refused shows a problem whose way out is Edit, and a new token clears it for good", async ({
+  page,
+  backend,
+}) => {
+  const line = await identityWithPastedToken(page, backend);
+  await raise(
+    backend,
+    page,
+    { type: "credential_sign_in_needed", host: "dev.azure.com", source: line },
+    "did not accept a pasted token",
+  );
+  const token = row(page, "Token user");
+  await expect(token).toContainText("Problem");
+  await expect(token).not.toContainText("Sign in needed");
+  await expect(
+    notices(page).getByRole("link", { name: "Sign in" }),
+  ).toHaveCount(0);
+  await notices(page).getByRole("link", { name: "Edit" }).click();
+  await expect(page).toHaveURL(/\/identities\/\d+$/);
+  const cred = page.locator("[data-credential]").first();
+  await expect(cred.getByTestId("fix-step")).toContainText(
+    "Edit this identity and paste a new token",
+  );
+  await expect(cred.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
+  await expect(cred.getByRole("button", { name: /^Test / })).toBeVisible();
+
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit identity" });
+  await dialog.getByRole("button", { name: /^Remove / }).click();
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel("Paste a token").check();
+  await dialog.getByLabel("Git host").fill("dev.azure.com");
+  await dialog.getByLabel("Azure DevOps organisation").fill("fabrikam");
+  await dialog
+    .getByLabel("Token", { exact: true })
+    .fill("new-token-0123456789");
+  await dialog.getByLabel(/Owners or organisations/).fill("fabrikam");
+  await dialog.getByLabel(/The rest of dev.azure.com/).uncheck();
+  await dialog.getByRole("button", { name: "Add credential" }).click();
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(cred.getByTestId("fix-step")).toHaveCount(0);
+  await expect(page.locator("[data-credential]").first()).not.toContainText(
+    "Problem",
+  );
+  await expect(notices(page)).not.toContainText("did not accept");
+
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Token user" }),
+  ).toBeVisible();
+  const after = page.locator("[data-credential]").first();
+  await expect(after).toContainText("Pasted token · fabrikam");
+  await expect(after.getByTestId("fix-step")).toHaveCount(0);
+  await expect(after).not.toContainText("Problem");
+  await page.goto("/identities");
+  await expect(row(page, "Token user")).not.toContainText("Problem");
+  await expect(row(page, "Token user")).not.toContainText("Sign in needed");
+});
+
 test("keyboard only: add, move and delete without a pointer", async ({
   page,
   backend,

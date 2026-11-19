@@ -1673,3 +1673,12 @@ async fn a_users_audit_holds_their_records_and_the_owners_does_not() {
     );
     shut_down(pair).await;
 }
+
+#[test]
+fn a_method_without_a_declaration_is_405_on_a_declared_path_and_500_on_a_path_with_none() {
+    let refused = undeclared(&Method::POST, "/api/rule-sets/{id}/switch");
+    assert_eq!(refused.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(refused.headers()["allow"], "PUT");
+    let missing = undeclared(&Method::GET, "/api/no-such-route");
+    assert_eq!(missing.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}

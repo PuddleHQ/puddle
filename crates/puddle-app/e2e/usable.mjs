@@ -413,8 +413,10 @@ async function step(what, action) {
 /** What the first-run pages show and press, the same list the page tests and ui/e2e/first-run.spec.ts read. */
 const WALK = JSON.parse(readFileSync(join(here, "..", "..", "..", "ui", "src", "lib", "welcome", "walk.json"), "utf8")).steps;
 const control = (c) => inMain(c.role, c.name);
+/** Controls on other pages the walk presses, and the closed details each sits behind. */
+const TERMINAL_OPTIONS = JSON.parse(readFileSync(join(here, "..", "..", "..", "ui", "src", "lib", "welcome", "walk.json"), "utf8")).behindDetails.terminal;
 
-/** The first-run flow, step by step, ending with the create form on the last step. */
+/** The first-run flow, step by step, ending on the Workspaces page that Open Puddle leads to. */
 async function firstRunToCreateForm() {
   for (const [i, step] of WALK.entries()) {
     await uia.waitFor(`the "${step.heading}" heading`, heading(step.heading), i === 0 ? 120_000 : undefined);
@@ -438,7 +440,8 @@ async function firstRunToCreateForm() {
 
 /** Fills the New workspace form as a person does and presses Create. */
 async function createFromTheForm() {
-  await uia.click("Create a workspace", inMain("button", "Create a workspace"));
+  // The empty list offers a one-line form; More options opens the full New workspace dialog.
+  await uia.click("More options", inMain("button", "More options"));
   await uia.waitFor("the New workspace dialog", { window: MAIN, localized: "dialog", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
@@ -560,7 +563,9 @@ async function terminalTab(startFolder) {
     return;
   }
   await step("a new terminal opens, its lines listed for a screen reader", async () => {
-    const modeSwitch = { window: MAIN, role: "checkbox", name: "Screen reader mode" };
+    // The switch sits in a closed details, which is not in the UI Automation tree: open its summary first.
+    const modeSwitch = { window: MAIN, ...TERMINAL_OPTIONS.control };
+    if ((await uia.find(modeSwitch)).length === 0) await uia.click(TERMINAL_OPTIONS.summary.name, { window: MAIN, ...TERMINAL_OPTIONS.summary });
     const mode = await uia.waitFor("the Screen reader mode switch", modeSwitch);
     if (mode.checked !== true) await uia.click("Screen reader mode", modeSwitch);
     await until("Screen reader mode to be on", async () => (await uia.find(modeSwitch))[0]?.checked === true, 10_000, 500);
@@ -812,7 +817,7 @@ try {
     await uia.click("the Workspaces link", { window: MAIN, role: "link", nameRegex: "^Workspaces" });
     await uia.click(`Connect to ${WORKSPACE}`, inMain("button", `Connect to ${WORKSPACE}`));
     await uia.waitFor("the Connect step", { window: MAIN, localized: "dialog", name: `Connect to ${WORKSPACE}` });
-    await uia.click("Open in the browser", inMain("button", "Open in the browser"));
+    await uia.click("Open isolated VS Code", inMain("button", "Open isolated VS Code"));
   });
   const title = await until(
     "the editor window, titled with the workspace",

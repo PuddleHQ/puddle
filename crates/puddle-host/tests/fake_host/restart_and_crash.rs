@@ -380,7 +380,9 @@ enum VmAfterKill {
 /// Puddle is killed (no shutdown) while a stop runs, at the stop's first guest command. Whatever
 /// the VM was left doing, the next start shows the workspace stopped or crashed, never draining,
 /// and a start brings it back.
-#[tokio::test(flavor = "multi_thread")]
+// Four workers whatever the CPU count: the held guest command blocks a worker (block_in_place) while the test's own
+// requests need one; on the one CPU the nightly stress job pins to, the default of one worker starved them for 20 s.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn puddle_killed_during_a_stop_leaves_the_workspace_stopped_or_crashed_and_a_start_works() {
     for vm in [VmAfterKill::Died, VmAfterKill::LeftRunning] {
         let rig = Rig::named_ids();

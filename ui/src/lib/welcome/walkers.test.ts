@@ -23,6 +23,8 @@ describe("the installed-app walk", () => {
   it("reads the first-run list, and names none of the pages' headings or buttons itself", () => {
     const text = readFileSync(walker, "utf8");
     expect(text).toContain("walk.json");
+    // Controls behind a closed details are opened through the list, not by a name kept in the script.
+    expect(text).toContain("behindDetails");
     const source = text
       .split("\n")
       .filter((line) => !/^\s*(\/\/|\/?\*)/.test(line))

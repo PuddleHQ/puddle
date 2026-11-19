@@ -309,6 +309,10 @@ async function typeInTerminal(handle, command) {
   await click(500, 300);
   // Ctrl+Shift+` creates a terminal; when the keys do not reach the workbench, the command palette does the same.
   await key({ key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 10 });
+  // A multi-root workspace asks first in which folder the terminal starts (picture of run 44527092064): take the first.
+  const asksFolder = () => handle.evaluate(`[...document.querySelectorAll('.quick-input-widget input')].some((i) => i.offsetParent !== null && /working directory/i.test(i.placeholder))`).catch(() => false);
+  await until("the terminal or its folder question", async () => (await terminalUp()) || (await asksFolder()), 15_000, 500).catch(() => false);
+  if (await asksFolder()) await key({ key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   let up = await until("the terminal after Ctrl+Shift+`", terminalUp, 15_000, 500).catch(() => false);
   if (!up) {
     await key({ key: "F1", code: "F1", windowsVirtualKeyCode: 112 });

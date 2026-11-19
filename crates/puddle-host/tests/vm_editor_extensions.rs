@@ -17,6 +17,7 @@ mod vm_support;
 
 use std::time::Duration;
 
+use puddle_compute::ExecRequest;
 use puddle_e2e::lab::{Squid, SquidOptions};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
@@ -277,7 +278,12 @@ async fn vm_radar_company_squid_carries_pip_a_build_and_an_open_vsx_install() {
     let name = format!("{}-sqd", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(vm.host.url(), vm.host.token());
-    for host in ["pypi.org", "files.pythonhosted.org"] {
+    for host in [
+        "deb.debian.org",
+        "security.debian.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+    ] {
         let rule = api
             .post(
                 "/api/rules",
@@ -302,16 +308,29 @@ async fn vm_radar_company_squid_carries_pip_a_build_and_an_open_vsx_install() {
     assert_eq!(end["step"], "done", "{end}");
     guest(&vm.runtime, &sandbox, EDITOR_UP).await;
 
-    let python = guest_live(
+    // The image ships no Python: Debian's through apt is the first thing that goes through Squid.
+    guest_live(
         &vm.runtime,
         &sandbox,
-        &format!(
-            "runuser -l agent -c '{}'",
-            PIP_AND_A_BUILD.replace('\'', "'\\''")
-        ),
-        "pypi.org files.pythonhosted.org",
+        "apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv ca-certificates >/tmp/apt.log 2>&1 || { cat /tmp/apt.log; exit 1; }",
+        "deb.debian.org",
     )
     .await;
+    let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
+    // As the workspace's user in a login shell, the way a terminal of the workspace runs it.
+    let ran = handle
+        .exec(
+            ExecRequest::sh(format!(
+                "cd && exec bash -l -c '{}'",
+                PIP_AND_A_BUILD.replace('\'', "'\\''")
+            ))
+            .as_user("agent")
+            .with_timeout(Duration::from_mins(10)),
+        )
+        .await
+        .unwrap();
+    let python = format!("{}{}", ran.stdout_text(), ran.stderr_text());
+    assert_eq!(ran.status.code, 0, "{python}");
     assert!(
         python.contains("wheel-ok") && python.contains("source-build-ok"),
         "{python}"

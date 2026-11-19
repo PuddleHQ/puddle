@@ -176,7 +176,7 @@ async function explorerOf(handle, what) {
 let uia;
 let id;
 
-/** Presses Connect, then "Open in the browser", in the main window as a person does. */
+/** Presses Connect, then "Open isolated VS Code", in the main window as a person does. */
 async function connectFromTheMainWindow() {
   const main = await page(mainPort, /^http:\/\/127\.0\.0\.1:\d+\//);
   try {
@@ -191,11 +191,11 @@ async function connectFromTheMainWindow() {
     await clicked(`[...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\\s+/g, ' ').trim() === 'Connect to ${NAME}').click(); return true;`);
     await until(
       "the Connect step's browser button",
-      () => main.evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Open in the browser')`),
+      () => main.evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Open isolated VS Code')`),
       30_000,
       300,
     );
-    await clicked(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Open in the browser').click(); return true;`);
+    await clicked(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Open isolated VS Code').click(); return true;`);
   } finally {
     main.close();
   }

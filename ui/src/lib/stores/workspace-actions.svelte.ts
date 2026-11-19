@@ -71,7 +71,7 @@ export function settledMessage(settled: Settled): string {
 
 /** How each way of opening is named in a toast. */
 const EDITOR_WORDS = {
-  browser: { where: "the browser", what: "the browser editor" },
+  browser: { where: "isolated VS Code", what: "isolated VS Code" },
   desktop: { where: "VS Code", what: "VS Code" },
 } as const;
 

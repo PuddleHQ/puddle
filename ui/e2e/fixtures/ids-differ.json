@@ -1,0 +1,41 @@
+{
+  "name": "ids-differ",
+  "workspaces": [
+    {
+      "name": "Shop One",
+      "id": "shop-one"
+    },
+    {
+      "name": "Billing Two",
+      "id": "billing-two"
+    },
+    {
+      "name": "Docs Three",
+      "id": "docs-three"
+    },
+    {
+      "name": "Mobile Four",
+      "id": "mobile-four"
+    },
+    {
+      "name": "Search Five",
+      "id": "search-five"
+    },
+    {
+      "name": "Flood Zone",
+      "id": "flood-zone"
+    },
+    {
+      "name": "Rules One",
+      "id": "rules-one"
+    },
+    {
+      "name": "Rules Two",
+      "id": "rules-two"
+    },
+    {
+      "name": "Rules Three",
+      "id": "rules-three"
+    }
+  ]
+}

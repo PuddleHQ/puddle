@@ -110,6 +110,7 @@ import DetailLayout from "./+layout.svelte";
 import Overview from "./+page.svelte";
 import Network from "./network/+page.svelte";
 import Settings from "./settings/+page.svelte";
+import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 
 const {
   inbox,
@@ -1509,6 +1510,27 @@ describe("the settings tab", () => {
       expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
     );
     await vi.waitFor(() => expect(theme.value).toBe("Default Dark Modern"));
+  });
+
+  it("holds an automatic reload while an editor default is typed and not saved", async () => {
+    await open();
+    expect(hasUnsavedEdits()).toBe(false);
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "20" },
+    });
+    expect(hasUnsavedEdits()).toBe(true);
+  });
+
+  it("sends nothing when Enter is pressed on an unchanged or refused value", async () => {
+    await open();
+    const size = screen.getByLabelText(
+      "Font size (pixels)",
+    ) as HTMLInputElement;
+    const puts = () => api.calls.filter((c) => c.startsWith("PUT")).length;
+    await fireEvent.submit(size.form!);
+    await fireEvent.input(size, { target: { value: "99" } });
+    await fireEvent.submit(size.form!);
+    expect(puts()).toBe(0);
   });
 
   it("holds back a value the API would refuse and says why, and keeps an empty list as none", async () => {

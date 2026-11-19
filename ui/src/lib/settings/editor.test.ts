@@ -18,6 +18,7 @@ describe("the colour theme", () => {
     expect(parseTheme("  ")).toEqual({ ok: true, value: null });
     expect(parseTheme("x".repeat(100)).ok).toBe(true);
     expect(parseTheme("x".repeat(101)).ok).toBe(false);
+    expect(parseTheme("Dark\u0007").ok).toBe(false);
   });
 });
 

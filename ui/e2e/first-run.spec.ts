@@ -372,14 +372,14 @@ test("Settings runs the system check again on its own page and leads back", asyn
   backend,
 }) => {
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/this-computer");
   await page.getByRole("link", { name: "Run the system check again" }).click();
   await expect(page).toHaveURL(/\/welcome\/check\?from=settings$/);
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(page.getByRole("list", { name: "Setup steps" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Continue" })).toHaveCount(0);
   await page.getByRole("link", { name: "Back to Settings" }).click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/this-computer$/);
 });
 
 test("no link on a first-run step leads out of the flow", async ({

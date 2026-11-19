@@ -86,12 +86,18 @@ test("a tab on another build waits while the settings form has unsaved edits, th
   });
   await backend.control.reset("lived-in");
   await backend.signIn(page);
-  await page.goto("/settings");
-  const sound = page.getByLabel("Sound");
-  await expect(sound).toBeVisible();
-  const before = await sound.isChecked();
-  await sound.click();
-  await expect(page.getByText(/You have unsaved changes/)).toBeVisible();
+  await page.goto("/settings/workspaces");
+  const line = page.getByLabel("Warn when free space is under (GB)", {
+    exact: true,
+  });
+  await expect(line).toBeVisible();
+  const before = await line.inputValue();
+  await line.fill("33");
+  await expect(
+    page.getByRole("button", {
+      name: "Save Warn when free space is under (GB)",
+    }),
+  ).toBeVisible();
   const loaded = counts.loads;
 
   // The server now names a newer build and the poll asks: the edit is held, not reloaded over.
@@ -99,7 +105,7 @@ test("a tab on another build waits while the settings form has unsaved edits, th
   await page.clock.fastForward(61_000);
   await expect.poll(() => counts.newer).toBeGreaterThanOrEqual(1);
   expect(counts.loads).toBe(loaded);
-  await expect(sound).toBeChecked({ checked: !before });
+  await expect(line).toHaveValue("33");
   await staysEmpty(page, async () => {
     const kept = await page.evaluate(
       (key) => sessionStorage.getItem(key),
@@ -108,10 +114,16 @@ test("a tab on another build waits while the settings form has unsaved edits, th
     return kept === null ? [] : [kept];
   });
 
-  // Discarding ends the hold; the next poll reloads once.
-  await page.getByRole("button", { name: "Discard" }).click();
-  await expect(page.getByText("No unsaved changes.")).toBeVisible();
+  // Putting the text back to what is stored ends the hold; the next poll reloads once.
+  await line.fill(before);
+  await expect(
+    page.getByRole("button", {
+      name: "Save Warn when free space is under (GB)",
+    }),
+  ).toHaveCount(0);
   await page.clock.fastForward(61_000);
   await expect.poll(() => counts.loads).toBe(loaded + 1);
-  await expect(page.getByLabel("Sound")).toBeVisible();
+  await expect(
+    page.getByLabel("Warn when free space is under (GB)", { exact: true }),
+  ).toBeVisible();
 });

@@ -8,10 +8,10 @@ use std::sync::atomic::Ordering;
 use puddle_types::WorkspaceId;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{Store, corrupt, lock, sql_ts, stored_ts};
+use super::{Store, corrupt, lock, stored_ts};
 use crate::account_secrets::AccountSecrets;
 use crate::error::StoreError;
-use crate::users::{Role, User, UserId, UserName};
+use crate::users::{Role, User, UserId};
 
 /// A stored role, or the corruption it is.
 pub(crate) fn role_of(user: i64, role: &str) -> Result<Role, StoreError> {
@@ -131,12 +131,14 @@ impl Store {
         }
     }
 
-    /// Adds a plain user (never a second owner).
+    /// Adds a plain user (never a second owner), for tests: no admin audit line is written. The
+    /// install adds users through [`Store::admin_add_user`], so the two cannot drift.
     ///
     /// # Errors
     /// [`StoreError::UserName`] when another user has the name (ignoring ASCII case), or a
     /// database error.
-    pub fn add_user(&self, name: &UserName) -> Result<User, StoreError> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn add_user(&self, name: &crate::users::UserName) -> Result<User, StoreError> {
         let conn = lock(&self.conn);
         let now = self.clock.now_ms();
         let taken: bool = conn.query_row(
@@ -149,7 +151,7 @@ impl Store {
         }
         conn.execute(
             "INSERT INTO users (role, name, created_at) VALUES ('user', ?1, ?2)",
-            params![name.as_str(), sql_ts(now)],
+            params![name.as_str(), super::sql_ts(now)],
         )?;
         Ok(User {
             id: UserId::from_stored(conn.last_insert_rowid()),

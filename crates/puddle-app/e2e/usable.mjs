@@ -426,9 +426,13 @@ async function firstRunToCreateForm() {
       // 6. Its report, copied to the Windows clipboard.
       await copyTheReport();
     }
-    if (step.preselected) {
-      const radio = await uia.waitFor(`the preselected choice on "${step.heading}"`, { window: MAIN, ...step.preselected });
-      check(`the ${step.id} step opens with "${step.preselected.nameRegex}" chosen`, radio.checked === true, JSON.stringify(radio));
+    if (step.id === "interception") {
+      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
+      check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
+    }
+    if (step.id === "connect") {
+      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
+      check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
     }
     if (step.continue) await uia.click(`${step.continue.name} (from ${step.heading})`, control(step.continue));
   }
@@ -441,7 +445,9 @@ async function createFromTheForm() {
   await uia.waitFor("the New workspace dialog", { window: MAIN, localized: "dialog", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
-  await uia.click("Create workspace", inMain("button", "Create workspace"));
+  // Enter in the Name field submits the dialog's form: two buttons are called "Create workspace" (the Workspaces
+  // page's own one-line form sits behind the dialog), and a click by name may reach that one.
+  await uia.type("the Name field", { window: MAIN, role: "edit", name: "Name" }, "", { enter: true });
 }
 
 /**
@@ -565,14 +571,16 @@ async function terminalTab(startFolder) {
     const mode = await uia.waitFor("the Screen reader mode switch", modeSwitch);
     if (mode.checked !== true) await uia.click("Screen reader mode", modeSwitch);
     await until("Screen reader mode to be on", async () => (await uia.find(modeSwitch))[0]?.checked === true, 10_000, 500);
-    await uia.click("New terminal", inMain("button", "New terminal"));
+    // The page opens a first terminal itself when there is none; New terminal only when it did not.
+    const opened = await uia.waitFor("the first terminal tab", { window: MAIN, role: "tab", nameRegex: "^Terminal \\d+$" }, 15_000).catch(() => undefined);
+    if (!opened) await uia.click("New terminal", inMain("button", "New terminal"));
     await uia.waitFor("the shell's prompt", { window: MAIN, role: "listitem", nameRegex: "[$#]\\s*$" }, 120_000);
   });
   const command = "whoami; pwd; sudo -n true && echo sudo-ok";
   await step("the command is typed into the terminal", () => {
     // The keys go to the window in front: make sure that is this one.
     if (!mainWindow("front").foreground) throw new Error("the main window did not come to the front");
-    return uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+    return uia.type("the terminal's input", { window: MAIN, role: "edit", nameRegex: `^Terminal \\d+, ${literally(WORKSPACE)}$` }, command, { enter: true });
   });
   const shows = (text) =>
     uia.waitFor(`the terminal line "${text}"`, { window: MAIN, role: "listitem", nameRegex: `^\\s*${literally(text)}\\s*$` }, 60_000).then(

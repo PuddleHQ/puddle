@@ -35,8 +35,21 @@ pub struct AppLauncher<R: Runtime> {
     desktop: VsCodeLauncher,
     windows: OnceLock<SandboxWindows>,
     close_wait: Duration,
-    /// WebView2's DevTools port for the editor windows (debug builds, `PUDDLE_APP_DEBUG_PORT`).
+    /// WebView2's DevTools port for the first workspace's editor window (debug builds,
+    /// `PUDDLE_APP_DEBUG_PORT`); see [`slot_port`] for the others.
     debug_port: Option<u16>,
+    /// The workspaces that have had an editor window, in the order they got their DevTools port.
+    debug_slots: std::sync::Mutex<Vec<WorkspaceId>>,
+}
+
+/// The DevTools port of the editor window of the workspace in slot `slot`: slot 0 gets `base`, and
+/// each further workspace the next even port, because its window has a WebView2 browser process of
+/// its own and the forwarded-port windows of a workspace take the odd one after its editor's.
+fn slot_port(base: u16, slot: usize) -> Option<u16> {
+    u16::try_from(slot)
+        .ok()
+        .and_then(|slot| slot.checked_mul(2))
+        .and_then(|offset| base.checked_add(offset))
 }
 
 impl<R: Runtime> std::fmt::Debug for AppLauncher<R> {
@@ -57,7 +70,26 @@ impl<R: Runtime> AppLauncher<R> {
             windows: OnceLock::new(),
             close_wait: CLOSE_WAIT,
             debug_port: None,
+            debug_slots: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// The DevTools port for `workspace`'s editor window, kept for as long as the launcher lives so
+    /// a reopened window is found where it was.
+    fn debug_port_for(&self, workspace: &WorkspaceId) -> Option<u16> {
+        let base = self.debug_port?;
+        let mut slots = self
+            .debug_slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = slots
+            .iter()
+            .position(|w| w == workspace)
+            .unwrap_or_else(|| {
+                slots.push(workspace.clone());
+                slots.len() - 1
+            });
+        slot_port(base, slot)
     }
 
     /// The launcher whose editor windows open WebView2's DevTools Protocol on `port`, for the
@@ -133,7 +165,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 data_folder: sandbox_window::data_folder(&self.webview_root, &workspace.id),
                 settings: WindowSettings::from(&target.settings),
                 cookie,
-                debug_port: self.debug_port,
+                debug_port: self.debug_port_for(&workspace.id),
             };
             // Building a window waits for the window system: not on an async worker.
             let (windows, app) = (windows.clone(), self.app.clone());

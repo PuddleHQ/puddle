@@ -149,6 +149,7 @@ impl SseState {
 /// only when the task is dropped.
 pub async fn read_events(target: Target, state: Arc<SseState>) {
     let mut first = true;
+    // flake-ok: a reader that reconnects for ever until stopped, not a wait for a condition
     loop {
         if !first {
             state.reconnected();
@@ -211,6 +212,7 @@ pub async fn probe_web_app(
     window: Arc<Mutex<W4Window>>,
     now: impl Fn() -> u64 + Send,
 ) {
+    // flake-ok: a prober paced at a fixed interval until stopped, not a wait for a condition
     loop {
         let ok = get(&target, &path)
             .await
@@ -317,7 +319,7 @@ fn parse_df(text: &str) -> Option<f64> {
 pub struct Config {
     /// The API.
     pub api: Target,
-    /// The web app of workload W4, when the run has one.
+    /// The forwarded web app, when the run has one.
     pub w4: Option<Target>,
     /// Command-name prefixes of the processes to follow.
     pub process_prefixes: Vec<String>,
@@ -338,7 +340,7 @@ pub struct Sampler {
     cpu_before: Option<(u64, u64)>,
 }
 
-/// Window the W4 failure share covers.
+/// Seconds the failed-request share covers.
 pub const W4_WINDOW_SECS: u64 = 300;
 
 impl Sampler {

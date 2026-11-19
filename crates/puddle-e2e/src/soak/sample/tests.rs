@@ -116,6 +116,7 @@ async fn a_get_returns_status_body_and_time_and_sends_the_token() {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("none")
                 .to_owned();
+            // simulated latency of the server, so the reply time can be asserted
             tokio::time::sleep(Duration::from_millis(50)).await;
             auth
         }),
@@ -145,6 +146,7 @@ async fn scripted(
     let connections = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let seen = connections.clone();
     tokio::spawn(async move {
+        // flake-ok: a test server's accept loop, ended with the runtime, not a wait for a condition
         loop {
             let (mut s, _) = listener.accept().await.unwrap();
             seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -155,9 +157,11 @@ async fn scripted(
                 let (first, more) = script.split_once("<pause>").unwrap_or((script, ""));
                 s.write_all(first.as_bytes()).await.unwrap();
                 if !more.is_empty() {
+                    // simulated latency: 300 ms of silence between the comment and the data line
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     s.write_all(more.as_bytes()).await.unwrap();
                 }
+                // holds the connection open so the reader sees no end of the stream
                 tokio::time::sleep(hold).await;
             });
         }
@@ -174,6 +178,7 @@ async fn keep_alive_comments_are_not_events_and_data_lines_are() {
     .await;
     let state = SseState::new();
     let task = tokio::spawn(read_events(target(addr), state.clone()));
+    // an absence window: a comment line must not reset the age over 400 ms
     tokio::time::sleep(Duration::from_millis(400)).await;
     let (age, reconnects) = state.read();
     assert!(age >= 0.4, "a comment must not reset the age: {age}");
@@ -187,6 +192,7 @@ async fn keep_alive_comments_are_not_events_and_data_lines_are() {
     .await;
     let state = SseState::new();
     let task = tokio::spawn(read_events(target(addr), state.clone()));
+    // the data line arrives at 300 ms; the age is read 150 ms after it
     tokio::time::sleep(Duration::from_millis(450)).await;
     let age = state.read().0;
     assert!(age < 0.3, "the data line at 300 ms resets the age: {age}");
@@ -198,6 +204,7 @@ async fn a_stream_that_ends_is_reconnected_and_counted() {
     let (addr, connections) = scripted("HTTP/1.0 200 OK\r\n\r\ndata: {}\n\n", Duration::ZERO).await;
     let state = SseState::new();
     let task = tokio::spawn(read_events(target(addr), state.clone()));
+    // the server closes at once; 2.6 s lets the reader's 1 s pause before a reconnect run twice
     tokio::time::sleep(Duration::from_millis(2600)).await;
     task.abort();
     let n = connections.load(std::sync::atomic::Ordering::SeqCst);
@@ -217,6 +224,7 @@ async fn the_prober_records_a_good_and_a_failed_request() {
         window.clone(),
         || 10,
     ));
+    // the prober records no signal a test could wait on: 200 ms is four rounds at a 50 ms pace
     tokio::time::sleep(Duration::from_millis(200)).await;
     good.abort();
     assert_eq!(window.lock().unwrap().fail_share(10, 300), Some(0.0));
@@ -227,6 +235,7 @@ async fn the_prober_records_a_good_and_a_failed_request() {
         window.clone(),
         || 10,
     ));
+    // the prober records no signal a test could wait on: 200 ms is four rounds at a 50 ms pace
     tokio::time::sleep(Duration::from_millis(200)).await;
     bad.abort();
     assert!(window.lock().unwrap().fail_share(10, 300).unwrap() > 0.0);
@@ -277,6 +286,7 @@ async fn a_sample_holds_every_family_of_the_measurement_list() {
         disk: Some(dir.path().to_owned()),
     };
     let mut sampler = Sampler::start(cfg, || 7);
+    // an absence window: the sampler's two readers need 300 ms to see the fake servers' first lines
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut s = Series::default();
     sampler.sample(100, &mut s).await;

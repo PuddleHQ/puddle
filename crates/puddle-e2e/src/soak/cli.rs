@@ -143,6 +143,7 @@ async fn sample_command(args: &[String]) -> Result<(), String> {
     let count = number::<u64>(&flags, "count")?;
     let mut sampler = Sampler::start(cfg, now);
     let mut rounds = 0_u64;
+    // flake-ok: a sampler paced at a fixed interval until its count, not a wait for a condition
     loop {
         let mut sample = Series::default();
         sampler.sample(now(), &mut sample).await;

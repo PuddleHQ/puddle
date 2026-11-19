@@ -898,12 +898,11 @@ function Get-InstallerDialogs {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $A = [System.Windows.Automation.AutomationElement]
     $ids = @(Get-Process -Name msiexec -ErrorAction SilentlyContinue | ForEach-Object Id)
-    if ($ids.Count -eq 0) { return }
     $isText = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
     $isButton = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
     foreach ($w in $A::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition)) {
         try {
-            if ($ids -notcontains $w.Current.ProcessId) { continue }
+            if ($ids -notcontains $w.Current.ProcessId -and $w.Current.ClassName -notlike 'MsiDialog*') { continue }
             $texts = @($w.FindAll('Descendants', $isText) | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
             $buttons = @($w.FindAll('Descendants', $isButton) | ForEach-Object {
                 [pscustomobject]@{ Name = $_.Current.Name; Enabled = $_.Current.IsEnabled; Element = $_ } })
@@ -931,6 +930,7 @@ function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$Time
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList ($Arguments + @('/norestart', '/l*v', "`"$log`"")) -PassThru
     $seen = [ordered]@{}
+    $dumped = $false
     while (-not $p.HasExited) {
         if ($clock.Elapsed.TotalSeconds -gt $TimeoutSec) {
             Stop-Process -Id $p.Id -Force
@@ -950,6 +950,16 @@ function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$Time
                 Invoke-DialogButton $button
                 Add-Content -LiteralPath $dialogLog -Value "           pressed '$($button.Name)'"
             }
+        }
+        if ($seen.Count -eq 0 -and -not $dumped -and $clock.Elapsed.TotalSeconds -gt 20) {
+            # No dialog read yet: say what UI Automation does see, for the diagnosis.
+            $dumped = $true
+            Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+            $top = [System.Windows.Automation.AutomationElement]::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition)
+            $rows = @($top | ForEach-Object { "$($_.Current.ProcessId) '$($_.Current.ClassName)' '$($_.Current.Name)'" })
+            $note = "no dialog read after 20 s; msiexec pids: $((Get-Process -Name msiexec -ErrorAction SilentlyContinue | ForEach-Object Id) -join ','); top-level windows: $($rows -join ' ; ')"
+            Write-Host $note
+            Add-Content -LiteralPath $dialogLog -Value $note
         }
         Start-Sleep -Milliseconds 250
     }

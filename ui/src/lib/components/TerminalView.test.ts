@@ -44,26 +44,6 @@ function make(
 }
 
 describe("TerminalView", () => {
-  it("reads the tokens through a probe directly under body, outside the view, and removes it on unmount", () => {
-    const seen: HTMLElement[] = [];
-    const fake = new FakeScreen();
-    fake.applyLook = (probe: HTMLElement) => {
-      seen.push(probe);
-      fake.looks += 1;
-    };
-    const session = new TerminalSession("w", 2, fake);
-    const { unmount } = render(TerminalView, {
-      session,
-      workspaceName: "web",
-      onReady: () => {},
-      onLeave: () => {},
-    } as never);
-    const probe = seen[0] as HTMLElement;
-    expect(probe.parentElement).toBe(document.body);
-    unmount();
-    expect(probe.isConnected).toBe(false);
-  });
-
   it("mounts the emulator, labels it and reports its size once", () => {
     const { fake, props } = make();
     expect(fake.mounted).toBe(

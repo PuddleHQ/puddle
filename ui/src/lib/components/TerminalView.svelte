@@ -37,15 +37,7 @@
 
   onMount(() => {
     const target = host as HTMLDivElement;
-    // The probe that resolves the UI tokens lives directly under <body>, not inside this view: in the
-    // installed app's WebView2 a probe inside the view kept the inherited text colour whatever
-    // `color` it was given, so every token read as the same colour and the terminal drew grey.
-    const probe = document.createElement("span");
-    probe.setAttribute("aria-hidden", "true");
-    probe.style.cssText =
-      "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none";
-    document.body.append(probe);
-    const look = () => screen.applyLook(probe);
+    const look = () => screen.applyLook(document.body);
     screen.onHover = (text) => (hovered = text);
     screen.onLeave = onLeave;
     look();
@@ -61,7 +53,6 @@
     const scheme = globalThis.matchMedia("(prefers-color-scheme: dark)");
     scheme.addEventListener("change", look);
     return () => {
-      probe.remove();
       resized.disconnect();
       restyled.disconnect();
       scheme.removeEventListener("change", look);

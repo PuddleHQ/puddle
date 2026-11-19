@@ -1214,7 +1214,6 @@ impl State {
                 Some(match item.why {
                     UnreadableWhy::AzMissing => SourceError::ToolMissing(Tool::Az),
                     UnreadableWhy::WrongTenant => SourceError::WrongTenant,
-                    UnreadableWhy::NoAccess => SourceError::NoAccess,
                 }),
             );
         }

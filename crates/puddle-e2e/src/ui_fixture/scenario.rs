@@ -403,8 +403,6 @@ pub enum UnreadableWhy {
     AzMissing,
     /// The Azure CLI's account is not in the credential's tenant.
     WrongTenant,
-    /// The account has no access to Azure DevOps in the tenant.
-    NoAccess,
 }
 
 const fn ok_state() -> RepoListState {

@@ -504,12 +504,9 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         | ("PUT" | "DELETE", "/api/workspaces/{id}/ports/{port}") => (A::UseWorkspace, WS),
         ("GET", "/api/workspaces/{id}/terminals/{terminal}") => (A::UseWorkspace, T::Ticket),
         ("GET", "/api/workspaces/{id}/git") => (A::ReadWorkspaceGit, WS),
-        (
-            "PUT" | "POST",
-            "/api/workspaces/{id}/identities"
-            | "/api/workspaces/{id}/git/switches"
-            | "/api/workspaces/{id}/git/repos",
-        )
+        ("PUT" | "POST", "/api/workspaces/{id}/identities")
+        | ("PUT", "/api/workspaces/{id}/git/switches")
+        | ("POST", "/api/workspaces/{id}/git/repos")
         | ("PUT" | "DELETE", "/api/workspaces/{id}/git/repos/{repo}")
         | ("DELETE", "/api/workspaces/{id}/identities/{identity}") => (A::ChangeWorkspaceGit, WS),
         ("GET", "/api/pending" | "/api/inbox" | "/api/ssh-agent-asks") => (A::ReadRequests, T::Own),
@@ -590,6 +587,33 @@ fn unauthorized() -> ApiError {
     )
 }
 
+/// The answer for a request whose method has no declaration for its route. A route layer runs
+/// for a path whose router has no handler for the method, before the router answers 405: a path
+/// declared for other methods is that case, refused as the router would (nothing runs, `Allow`
+/// names the declared methods); a path with no declaration at all is a missing one (500).
+fn undeclared(method: &Method, path: &str) -> Response {
+    let allowed: Vec<&str> = [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+    ]
+    .iter()
+    .filter(|m| declaration(m, path).is_some())
+    .map(Method::as_str)
+    .collect();
+    if allowed.is_empty() {
+        tracing::error!(%method, path, "route has no permission declaration");
+        return ApiError::internal(&"route has no permission declaration").into_response();
+    }
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        [(axum::http::header::ALLOW, allowed.join(", "))],
+    )
+        .into_response()
+}
+
 /// axum route middleware: the route's declaration, checked for the request's principal.
 pub(crate) async fn authorize(
     State(state): State<AppState>,
@@ -606,8 +630,7 @@ pub(crate) async fn authorize(
         request.method()
     };
     let Some(declared) = declaration(method, path) else {
-        tracing::error!(method = %request.method(), path, "route has no permission declaration");
-        return ApiError::internal(&"route has no permission declaration").into_response();
+        return undeclared(request.method(), path);
     };
     if declared.target == Target::Ticket || declared.action == Action::SignIn {
         return next.run(request).await;

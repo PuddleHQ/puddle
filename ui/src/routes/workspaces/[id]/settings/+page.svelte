@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import Trash2 from "@lucide/svelte/icons/trash-2";
   import InterceptionSetting from "#lib/components/InterceptionSetting.svelte";
+  import RootDiskControls from "#lib/components/RootDiskControls.svelte";
   import KeptLoginsList from "#lib/components/KeptLoginsList.svelte";
   import SessionUserSetting from "#lib/components/SessionUserSetting.svelte";
   import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
@@ -10,7 +12,7 @@
     LOCAL_LABELS,
     type LocalCategory,
   } from "#lib/decision/local-labels.ts";
-  import { CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
+  import { CPUS_NOTE } from "#lib/settings/cpus.ts";
   import { KeptLogins } from "#lib/stores/kept-logins.svelte.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
@@ -20,20 +22,24 @@
     DIRECT_SSH_LABEL,
   } from "#lib/workspaces/direct-ssh.ts";
   import {
-    clipboardOptions,
-    cpuOptions,
-    cpusFromChoice,
-    cpusToChoice,
-    memoryFromChoice,
-    memoryOptions,
-    memoryToChoice,
+    canDelete,
+    diskLabel,
+    diskWarned,
+    rootDiskLabel,
+  } from "#lib/workspaces/model.ts";
+  import {
+    ALLOW_OPTIONS,
+    CLIPBOARD_OPTIONS,
+    SWITCH_OPTIONS,
+    cpuChoices,
+    fromOnOff,
+    memoryChoices,
+    onOff,
     sourceLabel,
-    switchOptions,
-    toggleFromChoice,
-    toggleOptions,
-    toggleToChoice,
     type Clipboard,
     type Layer,
+    type Option,
+    type Source,
   } from "#lib/workspaces/settings.ts";
   import "#lib/theme/controls.css";
 
@@ -47,6 +53,7 @@
   let restartHint = $state(false);
   let cpusHint = $state(false);
   let captureHint = $state(false);
+  const fid = $props.id();
 
   // Reload only for another workspace, not on every status change of this one.
   const wid = $derived(workspace?.id);
@@ -83,134 +90,253 @@
     "special",
   ];
 
-  /** Saves; on a refusal the select goes back to what is stored (`undo` puts it there). */
-  async function save(patch: Partial<Layer>, what: string, undo: () => void) {
+  /** One line of the table: its value in effect, what the dropdown offers and how a choice is saved. */
+  interface SettingRow {
+    key: string;
+    label: string;
+    hint?: string;
+    value: string;
+    options: Option<string>[];
+    source: Source;
+    /** Saves a choice; false when it was refused, and the dropdown goes back to `value`. */
+    pick: (choice: string) => Promise<boolean>;
+    /** Follows the global setting (or Puddle's default) again. */
+    reset: () => Promise<boolean>;
+    resetLabel?: string;
+  }
+  interface Group {
+    /** The anchor of the group, for a link from elsewhere. */
+    anchor?: string;
+    title: string;
+    rows: SettingRow[];
+  }
+
+  /** Saves a patch of the overrides and says so; a refusal is shown and returns false. */
+  async function save(patch: Partial<Layer>, what: string) {
     saved = null;
     problem = null;
     const result = await settings.change(patch);
-    if (result.ok) {
-      saved = `${what} saved.`;
-    } else {
-      problem = result.message;
-      undo();
-    }
+    if (result.ok) saved = `${what} saved.`;
+    else problem = result.message;
     return result.ok;
   }
 
-  async function saveMemory(select: HTMLSelectElement) {
-    const ok = await save(
-      { memory: memoryFromChoice(select.value) },
-      "Memory",
-      () => {
-        select.value = memoryToChoice(settings.overrides?.memory ?? null);
-      },
-    );
-    restartHint = ok && workspace?.status === "running";
-    cpusHint = false;
+  /** A restart note only for a change that waits for the next start of a running workspace. */
+  function note(kind: "memory" | "cpus" | "capture" | null, ok: boolean) {
+    const running = ok && workspace?.status === "running";
+    restartHint = kind === "memory" && running;
+    cpusHint = kind === "cpus" && running;
+    captureHint = kind === "capture" && running;
   }
 
-  async function saveCpus(select: HTMLSelectElement) {
-    const ok = await save(
-      { cpus: cpusFromChoice(select.value) },
-      "CPUs",
-      () => {
-        select.value = cpusToChoice(settings.overrides?.cpus ?? null);
-      },
-    );
-    restartHint = false;
-    cpusHint = ok && workspace?.status === "running";
-  }
-
-  async function saveToggle(
-    category: LocalCategory,
-    select: HTMLSelectElement,
-  ) {
-    const current = settings.overrides?.local_toggles;
-    if (!current) return;
-    await save(
-      {
-        local_toggles: {
-          ...current,
-          [category]: toggleFromChoice(select.value),
-        },
-      },
-      LOCAL_LABELS[category],
-      () => {
-        select.value = toggleToChoice(current[category]);
-      },
-    );
-  }
-
-  /** Off and "follow the global default" save at once; on asks the trust text first. */
-  async function saveDirectSsh(select: HTMLSelectElement) {
-    const choice = toggleFromChoice(select.value);
-    if (choice === true && workspace) {
-      select.value = toggleToChoice(settings.overrides?.direct_ssh ?? null);
+  /** On asks the trust text first; off and the global setting save at once. */
+  async function saveDirectSsh(value: boolean | null) {
+    if (value === true && workspace) {
       actions.requestDirectSsh(workspace, true);
-      return;
+      return false;
     }
-    const ok = await save({ direct_ssh: choice }, DIRECT_SSH_LABEL, () => {
-      select.value = toggleToChoice(settings.overrides?.direct_ssh ?? null);
-    });
+    const ok = await save({ direct_ssh: value }, DIRECT_SSH_LABEL);
     if (ok) await workspaces.refresh();
+    return ok;
   }
 
-  async function saveCapture(select: HTMLSelectElement) {
-    const ok = await save(
-      { capture_logins: toggleFromChoice(select.value) },
-      "Login capture",
-      () => {
-        select.value = toggleToChoice(
-          settings.overrides?.capture_logins ?? null,
-        );
-      },
-    );
-    restartHint = false;
-    cpusHint = false;
-    captureHint = ok && workspace?.status === "running";
-  }
-
-  async function saveForeignWarning(select: HTMLSelectElement) {
-    await save(
-      { warn_foreign_credentials: toggleFromChoice(select.value) },
-      "Credential warning",
-      () => {
-        select.value = toggleToChoice(
-          settings.overrides?.warn_foreign_credentials ?? null,
-        );
-      },
-    );
-  }
-
-  /** The tool switches are plain checkboxes; a refusal puts the box back to what is stored. */
   async function saveTool(
     key: "mise" | "repo_code",
-    box: HTMLInputElement,
+    value: boolean | null,
     what: string,
   ) {
-    const stored = settings.tools[key] ?? true;
     saved = null;
     problem = null;
-    const result = await settings.changeTools({ [key]: box.checked });
-    if (result.ok) {
-      saved = `${what} saved.`;
-    } else {
-      problem = result.message;
-      box.checked = stored;
-    }
+    const result = await settings.changeTools({ [key]: value });
+    if (result.ok) saved = `${what} saved.`;
+    else problem = result.message;
+    return result.ok;
   }
 
-  async function saveClipboard(select: HTMLSelectElement) {
-    await save(
-      {
-        clipboard_read:
-          select.value === "inherit" ? null : (select.value as Clipboard),
-      },
-      "Clipboard",
-      () => {
-        select.value = settings.overrides?.clipboard_read ?? "inherit";
-      },
+  /** A yes-or-no row: `save` takes true, false, or null to follow the global setting again. */
+  function yesNo(
+    key: string,
+    label: string,
+    resolved: { value: boolean; source: Source },
+    options: Option<string>[],
+    saveValue: (value: boolean | null) => Promise<boolean>,
+    hint?: string,
+  ): SettingRow {
+    return {
+      key,
+      label,
+      ...(hint ? { hint } : {}),
+      value: onOff(resolved.value),
+      options,
+      source: resolved.source,
+      pick: (choice) => saveValue(fromOnOff(choice)),
+      reset: () => saveValue(null),
+    };
+  }
+
+  const groups = $derived.by((): Group[] => {
+    const effective = settings.effective;
+    if (!effective) return [];
+    const local = CATEGORIES.map((category) =>
+      yesNo(
+        `local-${category}`,
+        LOCAL_LABELS[category],
+        effective.local_toggles[category],
+        ALLOW_OPTIONS,
+        (value) => {
+          const current = settings.overrides?.local_toggles;
+          return current
+            ? save(
+                { local_toggles: { ...current, [category]: value } },
+                LOCAL_LABELS[category],
+              )
+            : Promise.resolve(false);
+        },
+      ),
     );
+    const out: Group[] = [
+      {
+        title: "Resources",
+        rows: [
+          {
+            key: "memory",
+            label: "Memory",
+            hint: "A change applies at the next restart.",
+            value: String(effective.memory.value),
+            options: memoryChoices(effective.memory.value),
+            source: effective.memory.source,
+            pick: async (choice) => {
+              const ok = await save({ memory: Number(choice) }, "Memory");
+              note("memory", ok);
+              return ok;
+            },
+            reset: async () => {
+              const ok = await save({ memory: null }, "Memory");
+              note("memory", ok);
+              return ok;
+            },
+          },
+          {
+            key: "cpus",
+            label: "CPUs",
+            hint: CPUS_NOTE,
+            value: String(effective.cpus.value),
+            options: cpuChoices(settings.maxCpus, effective.cpus.value),
+            source: effective.cpus.source,
+            pick: async (choice) => {
+              const ok = await save({ cpus: Number(choice) }, "CPUs");
+              note("cpus", ok);
+              return ok;
+            },
+            reset: async () => {
+              const ok = await save({ cpus: null }, "CPUs");
+              note("cpus", ok);
+              return ok;
+            },
+          },
+        ],
+      },
+      {
+        title: "Access",
+        rows: [
+          yesNo(
+            "direct-ssh",
+            DIRECT_SSH_LABEL,
+            effective.direct_ssh,
+            ALLOW_OPTIONS,
+            saveDirectSsh,
+            `${DIRECT_SSH_HINT} Applies at once.`,
+          ),
+          {
+            key: "clipboard",
+            label: "Pages reading the clipboard",
+            hint: "When a page in this workspace's browser window reads the clipboard from a script.",
+            value: effective.clipboard_read.value,
+            options: CLIPBOARD_OPTIONS,
+            source: effective.clipboard_read.source,
+            pick: (choice) =>
+              save({ clipboard_read: choice as Clipboard }, "Clipboard"),
+            reset: () => save({ clipboard_read: null }, "Clipboard"),
+          },
+        ],
+      },
+      {
+        anchor: "local-destinations",
+        title: "Local destinations: whether requests to them may be approved",
+        rows: local,
+      },
+      {
+        title: "Logins and credentials",
+        rows: [
+          yesNo(
+            "capture",
+            "Keep logins made in this workspace",
+            effective.capture_logins,
+            SWITCH_OPTIONS,
+            async (value) => {
+              const ok = await save({ capture_logins: value }, "Login capture");
+              note("capture", ok);
+              return ok;
+            },
+            "Puddle keeps the real token on this computer and the workspace gets a stand-in. A change applies when the workspace next starts.",
+          ),
+          yesNo(
+            "foreign-warning",
+            "Warn when a tool sends a token of its own",
+            effective.warn_foreign_credentials,
+            SWITCH_OPTIONS,
+            (value) =>
+              save({ warn_foreign_credentials: value }, "Credential warning"),
+            "A notice and a flag in the Activity log name the website and the kind of token, never the token. Applies to the next request.",
+          ),
+        ],
+      },
+    ];
+    if (settings.globalMise) {
+      const tool = (
+        key: "mise" | "repo_code",
+        label: string,
+        what: string,
+        hint: string,
+      ): SettingRow => {
+        const own = settings.tools[key] ?? null;
+        return {
+          key: `tool-${key}`,
+          label,
+          hint,
+          value: onOff(own ?? true),
+          options: SWITCH_OPTIONS,
+          source: own === null ? "default" : "workspace",
+          pick: (choice) => saveTool(key, fromOnOff(choice), what),
+          reset: () => saveTool(key, null, what),
+          resetLabel: "Use the default",
+        };
+      };
+      out.push({
+        anchor: "tools",
+        title: "Tools",
+        rows: [
+          tool(
+            "mise",
+            "Manage this workspace's tools with mise",
+            "Tools with mise",
+            "Turning it off leaves the tools and mise.toml as they are.",
+          ),
+          tool(
+            "repo_code",
+            "Let mise run the repository's own code",
+            "Running repository code",
+            "A repository's mise.toml can run hooks and templates. With this off, mise does not trust that file.",
+          ),
+        ],
+      });
+    }
+    return out;
+  });
+
+  /** A dropdown changed: save it, and put it back when the save was refused. */
+  async function choose(row: SettingRow, select: HTMLSelectElement) {
+    if (!(await row.pick(select.value))) select.value = row.value;
   }
 </script>
 
@@ -223,14 +349,6 @@
       {#if settings.reason}<p class="error">{settings.reason}</p>{/if}
     </div>
   {:else}
-    {@const overrides = settings.overrides}
-    {@const effective = settings.effective}
-    {@const global = settings.global}
-    <p class="intro">
-      These settings belong to <b>{workspace.name}</b>. Each one can follow the
-      global setting or be set here.
-    </p>
-
     <UnknownFields fields={settings.unknownFields} />
 
     <div class="status" aria-live="polite">
@@ -250,265 +368,160 @@
       {/if}
     </div>
 
-    <StartFolderSetting {workspace} />
-
-    <SessionUserSetting {workspace} />
-
-    <section class="card" aria-labelledby="memory-h">
-      <h2 id="memory-h">Memory</h2>
-      <div class="setting">
-        <div class="grow">
-          <label for="ws-memory">Memory for this workspace</label>
-          <p class="desc" id="ws-memory-desc">
-            A change applies at the next restart. Now in effect:
-            {effective.memory.value} MiB
-            <span class="chip">{sourceLabel(effective.memory.source)}</span>
-          </p>
-        </div>
-        <select
-          id="ws-memory"
-          aria-describedby="ws-memory-desc"
-          value={memoryToChoice(overrides.memory)}
-          onchange={(e) => void saveMemory(e.currentTarget)}
-        >
-          {#each memoryOptions(overrides.memory, global.memory.value) as option (option.value)}
-            <option value={option.value}>{option.label}</option>
+    <table aria-label="Settings of {workspace.name}">
+      <thead>
+        <tr>
+          <th scope="col">Setting</th>
+          <th scope="col">Value</th>
+          <th scope="col">From</th>
+        </tr>
+      </thead>
+      {#each groups as group (group.title)}
+        <tbody>
+          <tr class="group">
+            <th scope="colgroup" colspan="3" id={group.anchor}>{group.title}</th
+            >
+          </tr>
+          {#each group.rows as row (row.key)}
+            <tr data-setting={row.key}>
+              <th scope="row">
+                <span id="{fid}-{row.key}">{row.label}</span>
+                {#if row.hint}
+                  <span class="hint" id="{fid}-{row.key}-hint">{row.hint}</span>
+                {/if}
+              </th>
+              <td>
+                <select
+                  class="pick"
+                  aria-labelledby="{fid}-{row.key}"
+                  aria-describedby={row.hint
+                    ? `${fid}-${row.key}-hint`
+                    : undefined}
+                  value={row.value}
+                  onchange={(e) => void choose(row, e.currentTarget)}
+                >
+                  {#each row.options as option (option.value)}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </td>
+              <td class="from">
+                <span class="chip">{sourceLabel(row.source)}</span>
+                {#if row.source === "workspace"}
+                  <button
+                    type="button"
+                    class="reset"
+                    aria-label="{row.resetLabel ??
+                      'Use the global setting'} again for {row.label}"
+                    onclick={() => void row.reset()}
+                    >{row.resetLabel ?? "Use global"}</button
+                  >
+                {/if}
+              </td>
+            </tr>
           {/each}
-        </select>
-      </div>
-    </section>
-
-    <section class="card" aria-labelledby="cpus-h">
-      <h2 id="cpus-h">CPUs</h2>
-      <div class="setting">
-        <div class="grow">
-          <label for="ws-cpus">CPUs for this workspace</label>
-          <p class="desc" id="ws-cpus-desc">
-            {CPUS_NOTE} Now in effect:
-            {cpuLabel(effective.cpus.value)}
-            <span class="chip">{sourceLabel(effective.cpus.source)}</span>
-          </p>
-        </div>
-        <select
-          id="ws-cpus"
-          aria-describedby="ws-cpus-desc"
-          value={cpusToChoice(overrides.cpus)}
-          onchange={(e) => void saveCpus(e.currentTarget)}
-        >
-          {#each cpuOptions(global.cpus.value, settings.maxCpus, overrides.cpus) as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </div>
-    </section>
-
-    <section class="card" aria-labelledby="local-h" id="local-destinations">
-      <h2 id="local-h">Local destinations</h2>
-      <p class="desc">
-        Whether requests to this computer and to private networks may be
-        approved. Off by default; a request still needs your approval.
-      </p>
-      {#each CATEGORIES as category (category)}
-        <div class="setting">
-          <div class="grow">
-            <label for="ws-local-{category}">{LOCAL_LABELS[category]}</label>
-            <p class="desc">
-              <span class="chip"
-                >{sourceLabel(effective.local_toggles[category].source)}</span
-              >
-            </p>
-          </div>
-          <select
-            id="ws-local-{category}"
-            value={toggleToChoice(overrides.local_toggles[category])}
-            onchange={(e) => void saveToggle(category, e.currentTarget)}
-          >
-            {#each toggleOptions(global.local_toggles[category].value) as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        </div>
+        </tbody>
       {/each}
-    </section>
-
-    <section class="card" aria-labelledby="ssh-h">
-      <h2 id="ssh-h">Direct SSH</h2>
-      <div class="setting">
-        <div class="grow">
-          <label for="ws-direct-ssh">{DIRECT_SSH_LABEL}</label>
-          <p class="desc" id="ws-direct-ssh-desc">
-            {DIRECT_SSH_HINT} While it is off, Puddle opens no SSH way in and writes
-            no ssh config entry. It applies at once.
-            <span class="chip">{sourceLabel(effective.direct_ssh.source)}</span>
-          </p>
-        </div>
-        <select
-          id="ws-direct-ssh"
-          aria-describedby="ws-direct-ssh-desc"
-          value={toggleToChoice(overrides.direct_ssh)}
-          onchange={(e) => void saveDirectSsh(e.currentTarget)}
-        >
-          {#each toggleOptions(global.direct_ssh.value) as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </div>
-    </section>
-
-    <section class="card" aria-labelledby="logins-h">
-      <h2 id="logins-h">Logins</h2>
-      <div class="setting">
-        <div class="grow">
-          <label for="ws-capture">Keep logins made in this workspace</label>
-          <p class="desc" id="ws-capture-desc">
-            When you sign in to Claude Code, GitHub or Copilot inside this
-            workspace, Puddle keeps the real token on this computer. The
-            workspace gets a stand-in that works only through Puddle, so while
-            capture works nothing running in the workspace can copy your login.
-            When Puddle cannot keep a token it stops the sign-in. A change takes
-            effect when the workspace next starts; turning it off leaves the
-            logins Puddle already kept unused, so sign in again in the
-            workspace. A token the workspace prints, such as the one of
-            <code>claude setup-token</code>, is a stand-in as well and works
-            only inside this workspace; copy it elsewhere and it is refused.
-            With capture off, a login keeps its real token in the workspace.
-            <span class="chip"
-              >{sourceLabel(effective.capture_logins.source)}</span
-            >
-          </p>
-        </div>
-        <select
-          id="ws-capture"
-          aria-describedby="ws-capture-desc"
-          value={toggleToChoice(overrides.capture_logins)}
-          onchange={(e) => void saveCapture(e.currentTarget)}
-        >
-          {#each switchOptions(global.capture_logins.value) as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </div>
-      <KeptLoginsList
-        store={kept}
-        workspaceId={workspace.id}
-        workspaceLabel={workspace.name}
-        reload={() => void kept.load(workspace.id)}
-      />
-    </section>
-
-    <section class="card" aria-labelledby="foreign-h">
-      <h2 id="foreign-h">Credentials Puddle did not add</h2>
-      <div class="setting">
-        <div class="grow">
-          <label for="ws-foreign-warning"
-            >Warn when a tool sends a token of its own</label
+      <tbody>
+        <tr class="group">
+          <th scope="colgroup" colspan="3" id="advanced">Advanced</th>
+        </tr>
+        <tr>
+          <th scope="row">Image</th>
+          <td colspan="2" class="mono wide" title={workspace.image}
+            >{workspace.image.split("@")[0]}</td
           >
-          <p class="desc" id="ws-foreign-warning-desc">
-            When a tool in this workspace sends a token Puddle did not add (one
-            you pasted, or a login Puddle does not keep) to a website, the
-            request goes through as it always did. With the warning on you also
-            get a notice and a flag in the Activity log that names the website
-            and what kind of token it looked like, never the token itself.
-            Puddle cannot tell your own token from one that leaked, so this
-            catches mistakes, not a workspace that hides what it sends. The same
-            switch covers a token of a known kind that a website sends this
-            workspace in an answer and Puddle does not hold. A change applies to
-            the next request.
-            <span class="chip"
-              >{sourceLabel(effective.warn_foreign_credentials.source)}</span
+        </tr>
+        {#if rootDiskLabel(workspace) !== null}
+          <tr>
+            <th scope="row">Root disk</th>
+            <td colspan="2" class:full={diskWarned(workspace, "root")}
+              >{rootDiskLabel(workspace)}{diskWarned(workspace, "root")
+                ? " (nearly full)"
+                : ""}</td
             >
-          </p>
-        </div>
-        <select
-          id="ws-foreign-warning"
-          aria-describedby="ws-foreign-warning-desc"
-          value={toggleToChoice(overrides.warn_foreign_credentials)}
-          onchange={(e) => void saveForeignWarning(e.currentTarget)}
-        >
-          {#each switchOptions(global.warn_foreign_credentials.value) as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </div>
-    </section>
-
-    <InterceptionSetting id={workspace.id} />
-
-    {#if settings.globalMise}
-      <section class="card" aria-labelledby="tools-h" id="tools">
-        <h2 id="tools-h">Tools</h2>
-        <div class="setting">
-          <div class="grow">
-            <label for="ws-mise">Manage this workspace's tools with mise</label>
-            <p class="desc" id="ws-mise-desc">
-              On by default. Turning it off leaves the tools and mise.toml as
-              they are.
-            </p>
-          </div>
-          <input
-            id="ws-mise"
-            type="checkbox"
-            aria-describedby="ws-mise-desc"
-            checked={settings.tools.mise ?? true}
-            onchange={(e) =>
-              void saveTool("mise", e.currentTarget, "Tools with mise")}
-          />
-        </div>
-        <div class="setting">
-          <div class="grow">
-            <label for="ws-repo-code"
-              >Let mise run the repository's own code</label
+          </tr>
+        {/if}
+        <tr>
+          <th scope="row">Disk</th>
+          <td colspan="2" class:full={diskWarned(workspace, "volume")}
+            >{diskLabel(workspace)}{diskWarned(workspace, "volume")
+              ? " (nearly full)"
+              : ""}</td
+          >
+        </tr>
+        <tr>
+          <th scope="row">
+            Disk space
+            <span class="hint"
+              >Reclaiming gives disk the workspace no longer uses back to your
+              computer. Resetting the root disk (a stopped workspace) removes
+              what was installed outside the volume. Making it bigger works for
+              a running or a stopped workspace and is kept when it is reset.</span
             >
-            <p class="desc" id="ws-repo-code-desc">
-              A repository's mise.toml can run hooks and templates. With this
-              off, mise does not trust that file. On by default.
-            </p>
-          </div>
-          <input
-            id="ws-repo-code"
-            type="checkbox"
-            aria-describedby="ws-repo-code-desc"
-            checked={settings.tools.repo_code ?? true}
-            onchange={(e) =>
-              void saveTool(
-                "repo_code",
-                e.currentTarget,
-                "Running repository code",
-              )}
-          />
-        </div>
-      </section>
-    {/if}
-
-    <section class="card" aria-labelledby="clip-h">
-      <h2 id="clip-h">Clipboard</h2>
-      <div class="setting">
-        <div class="grow">
-          <label for="ws-clipboard">Pages reading the clipboard</label>
-          <p class="desc">
-            When a page in this workspace's browser window reads the clipboard
-            from a script.
-            <span class="chip"
-              >{sourceLabel(effective.clipboard_read.source)}</span
+          </th>
+          <td colspan="2"><RootDiskControls {workspace} /></td>
+        </tr>
+        <tr>
+          <td colspan="3"><StartFolderSetting {workspace} /></td>
+        </tr>
+        <tr>
+          <td colspan="3"><SessionUserSetting {workspace} /></td>
+        </tr>
+        <tr>
+          <td colspan="3"><InterceptionSetting id={workspace.id} /></td>
+        </tr>
+        <tr>
+          <td colspan="3">
+            <KeptLoginsList
+              store={kept}
+              workspaceId={workspace.id}
+              workspaceLabel={workspace.name}
+              reload={() => void kept.load(workspace.id)}
+            />
+          </td>
+        </tr>
+      </tbody>
+      <tbody class="danger">
+        <tr class="group">
+          <th scope="colgroup" colspan="3" id="danger">Danger</th>
+        </tr>
+        <tr>
+          <th scope="row">
+            Delete workspace
+            <span class="hint">
+              {#if workspace.status === "volume_missing"}
+                The disk is already gone, so deleting only removes the workspace
+                from Puddle.
+              {:else}
+                Deleting removes the workspace and its disk. Puddle first lists
+                uncommitted changes, unpushed commits and stashes.
+              {/if}
+            </span>
+          </th>
+          <td colspan="2">
+            <button
+              type="button"
+              class="btn deny"
+              disabled={!canDelete(workspace)}
+              onclick={() => void actions.askDelete(workspace)}
             >
-          </p>
-        </div>
-        <select
-          id="ws-clipboard"
-          value={overrides.clipboard_read ?? "inherit"}
-          onchange={(e) => void saveClipboard(e.currentTarget)}
-        >
-          {#each clipboardOptions(global.clipboard_read.value) as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </div>
-    </section>
+              <Trash2 aria-hidden="true" size={16} />{actions.checking ===
+              workspace.id
+                ? "Checking…"
+                : "Delete workspace…"}
+            </button>
+            {#if !canDelete(workspace) && workspace.busy === null}
+              <p class="why">Stop the workspace before deleting it.</p>
+            {/if}
+          </td>
+        </tr>
+      </tbody>
+    </table>
   {/if}
 {/if}
 
 <style>
-  .intro,
   .muted {
     margin: 0 0 var(--space-3);
     color: var(--color-text-muted);
@@ -526,47 +539,86 @@
   .error {
     color: var(--color-danger);
   }
-  .card {
-    display: grid;
-    gap: var(--space-3);
-    max-width: 48rem;
-    margin-bottom: var(--space-4);
-    padding: var(--space-4);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+  table {
+    width: 100%;
+    max-width: 64rem;
+    border-collapse: collapse;
   }
-  h2 {
-    font-size: var(--text-md);
-  }
-  .setting {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-  }
-  .grow {
-    flex: 1;
-    min-width: 0;
-  }
-  label {
-    font-weight: 600;
-  }
-  .desc {
-    margin: 0;
+  thead th {
+    padding: var(--space-2) var(--space-3);
     color: var(--color-text-muted);
     font-size: var(--text-sm);
+    text-align: start;
+  }
+  tbody th,
+  tbody td {
+    padding: var(--space-3);
+    border-top: 1px solid var(--color-border-subtle);
+    text-align: start;
+    vertical-align: top;
+  }
+  tbody th[scope="row"] {
+    width: 45%;
+    font-weight: 600;
+  }
+  tr.group th {
+    padding-top: var(--space-6);
+    border-top: 0;
+    border-bottom: 2px solid var(--color-border);
+    font-size: var(--text-md);
+  }
+  .hint {
+    display: block;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: 400;
+  }
+  .pick {
+    max-width: 100%;
+  }
+  .from {
+    white-space: nowrap;
   }
   .chip {
     padding: 0 var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-pill);
-    white-space: nowrap;
+    font-size: var(--text-sm);
+  }
+  .reset {
+    margin-inline-start: var(--space-2);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-accent);
+    font: inherit;
+    font-size: var(--text-sm);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .wide {
+    overflow-wrap: anywhere;
+  }
+  .full {
+    color: var(--color-warning);
+    font-weight: 600;
+  }
+  .danger tr.group th {
+    border-bottom-color: var(--color-danger);
+    color: var(--color-danger);
+  }
+  .why {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
 
   @media (max-width: 760px) {
-    .setting {
-      flex-direction: column;
-      align-items: stretch;
+    tbody th[scope="row"] {
+      width: auto;
+    }
+    .from {
+      white-space: normal;
     }
   }
 </style>

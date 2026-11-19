@@ -26,6 +26,7 @@ const input = (page: Page) => page.locator(".xterm-helper-textarea");
 const newTerminal = (page: Page) =>
   page.getByRole("button", { name: "New terminal" });
 
+/** Opening the tab of a running workspace opens the first terminal by itself. */
 async function start(page: Page) {
   await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
   await expect(screen(page)).toContainText("$");
@@ -85,6 +86,7 @@ test("is the second tab of the workspace page and offers a terminal in a running
     "page",
   );
   await start(page);
+  await expect(page.getByText(/No terminal is open/)).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Terminal 1" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -113,18 +115,38 @@ test("the tab opens from the workspace's Overview under the app's prototype guar
     page.getByRole("heading", { level: 2, name: "Terminal" }),
   ).toBeVisible();
   await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
-  await expect(screen(page)).toContainText("$");
   expect(errors).toEqual([]);
 });
 
-test("a stopped workspace says to start it", async ({ page, backend }) => {
+test("a stopped workspace has one button, which starts it and opens a terminal", async ({
+  page,
+  backend,
+}) => {
   await open(page, backend, "docs-site");
-  await expect(
-    page.getByText("Start the workspace to open a terminal."),
-  ).toBeVisible();
   const section = page.getByRole("region", { name: "Terminal" });
-  await expect(section.getByRole("button", { name: "Start" })).toBeEnabled();
+  await expect(
+    section.getByRole("button", { name: "Start and open a terminal" }),
+  ).toBeEnabled();
+  await expect(section.getByRole("button")).toHaveCount(1);
   await expect(newTerminal(page)).toHaveCount(0);
+  await section
+    .getByRole("button", { name: "Start and open a terminal" })
+    .click();
+  await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
+  await expect(screen(page)).toContainText("$");
+});
+
+test("closing the last terminal leaves the tab empty with a button, and does not open another at once", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await start(page);
+  await page.getByRole("button", { name: "Close Terminal 1" }).click();
+  await expect(page.getByText(/No terminal is open/)).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(0);
+  await newTerminal(page).click();
+  await expect(page.getByRole("tab", { name: "Terminal 2" })).toBeVisible();
 });
 
 test("typed text reaches the shell and its answer is drawn", async ({
@@ -402,7 +424,14 @@ test("a terminal outlives the tab: going to another tab and back keeps the scree
   await open(page, backend);
   await start(page);
   await run(page, "remember me");
-  await page.getByRole("link", { name: "Ports" }).click();
+  await page
+    .getByRole("navigation", { name: "Workspace sections" })
+    .getByRole("link", { name: "Settings" })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Workspace settings" })
+    .getByRole("link", { name: "Ports" })
+    .click();
   await expect(
     page.getByRole("heading", { level: 2, name: "Ports" }),
   ).toBeVisible();
@@ -428,7 +457,7 @@ test("New terminal turns off at 8 terminals and says why", async ({
   backend,
 }) => {
   await open(page, backend);
-  await expect(page.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
+  await start(page);
   for (let i = 0; i < 7; i += 1) await newTerminal(page).click();
   await expect(newTerminal(page)).toBeDisabled();
   await expect(
@@ -454,6 +483,7 @@ test("Screen reader mode adds the emulator's accessible text", async ({
   await open(page, backend);
   await start(page);
   await expect(page.locator(".xterm-accessibility")).toHaveCount(0);
+  await page.getByText("Terminal options").click();
   await page.getByRole("checkbox", { name: "Screen reader mode" }).check();
   await expect(page.locator(".xterm-accessibility")).toHaveCount(1);
   await input(page).focus();

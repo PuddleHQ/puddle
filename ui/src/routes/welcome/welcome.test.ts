@@ -85,7 +85,7 @@ import Check from "./check/+page.svelte";
 import Connect from "./connect/+page.svelte";
 import Interception from "./interception/+page.svelte";
 import Look from "./look/+page.svelte";
-import Workspace from "./workspace/+page.svelte";
+import Done from "./done/+page.svelte";
 
 beforeEach(() => {
   nav.path = "/welcome";
@@ -149,7 +149,7 @@ describe("the flow's frame", () => {
       "4 Connect",
       "5 Interception",
       "6 Look",
-      "7 First workspace",
+      "7 Done",
     ]);
     expect(
       items.filter((li) => li.getAttribute("aria-current") === "step"),
@@ -461,7 +461,7 @@ describe("look step", () => {
     expect(radio("Comfortable")).toBeChecked();
     expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute(
       "href",
-      "/welcome/workspace",
+      "/welcome/done",
     );
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
       "href",
@@ -543,78 +543,39 @@ describe("look step", () => {
   });
 });
 
-describe("first workspace step", () => {
-  it("offers to create one or skip, and goes back to the look step", () => {
-    render(Workspace);
+describe("done step", () => {
+  it("says where settings live and that feedback is welcome, and goes back to the look step", () => {
+    render(Done);
     expect(
-      screen.getByRole("heading", { level: 1, name: "Your first workspace" }),
+      screen.getByRole("heading", { level: 1, name: "You're all set" }),
     ).toHaveFocus();
+    expect(screen.getByText(/holds every choice you made here/)).toBeVisible();
+    expect(screen.getByText(/Feedback is very welcome/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
       "href",
       "/welcome/look",
     );
-    expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "Create a workspace" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open Puddle" })).toBeEnabled();
   });
 
-  it("skipping ends the flow without a workspace", async () => {
-    render(Workspace);
-    await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  it("offers no workspace form and no tutorial", () => {
+    render(Done);
+    expect(screen.queryByRole("button", { name: /Create/ })).toBeNull();
+    expect(screen.queryByText(/tutorial/i)).toBeNull();
+  });
+
+  it("opening Puddle ends the flow without creating a workspace", async () => {
+    render(Done);
+    await fireEvent.click(screen.getByRole("button", { name: "Open Puddle" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(h.firstRun.state.completed).toBe(true);
     expect(h.workspaces.calls).toEqual([]);
   });
 
-  it("creates the workspace in the usual form, then ends the flow", async () => {
-    render(Workspace);
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create a workspace" }),
-    );
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    await fireEvent.input(within(dialog).getByLabelText(/Git repository/), {
-      target: { value: "https://github.com/acme/shop-api.git" },
-    });
-    expect(within(dialog).getByLabelText("Name")).toHaveValue("shop-api");
-    await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Create workspace" }),
-    );
-    await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
-    expect(h.workspaces.bodies[0]).toMatchObject({
-      name: "shop-api",
-      repositories: [{ url: "https://github.com/acme/shop-api.git" }],
-    });
-    expect(h.firstRun.state.completed).toBe(true);
-  });
-
-  it("keeps the flow open when the workspace is refused, with the reason in the form", async () => {
-    h.workspaces.refuse.set("POST /api/workspaces", {
-      status: 422,
-      message: "SSH addresses aren't supported yet",
-    });
-    render(Workspace);
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create a workspace" }),
-    );
-    const dialog = await screen.findByRole("dialog");
-    await fireEvent.input(within(dialog).getByLabelText(/Git repository/), {
-      target: { value: "https://github.com/acme/shop-api.git" },
-    });
-    await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Create workspace" }),
-    );
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "SSH addresses aren't supported yet",
-    );
-    expect(nav.goto).not.toHaveBeenCalled();
-    expect(h.firstRun.state.completed).toBe(false);
-  });
-
   it("opens the list even when it could not keep that the flow is done, and says so", async () => {
     h.firstRun.refusePut = true;
-    render(Workspace);
-    await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    render(Done);
+    await fireEvent.click(screen.getByRole("button", { name: "Open Puddle" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(toasts.items[0]?.message).toMatch(
       /newer Puddle.*may show again next time/,
@@ -632,7 +593,7 @@ describe("every step", () => {
     ["connect", Connect],
     ["interception", Interception],
     ["look", Look],
-    ["workspace", Workspace],
+    ["done", Done],
   ] as const)(
     "the %s step links only to steps of the flow",
     async (_, Step) => {

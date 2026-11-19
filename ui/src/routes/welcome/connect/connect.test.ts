@@ -28,7 +28,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const codeServer = () =>
-  screen.getByRole("radio", { name: /code-server \(bundled\)/ });
+  screen.getByRole("radio", { name: /VS Code in the browser \(built in\)/ });
 const microsoft = () =>
   screen.getByRole("radio", { name: /Microsoft's VS Code server/ });
 const directSsh = () =>

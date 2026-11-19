@@ -9,7 +9,7 @@ export type StepId =
   | "connect"
   | "interception"
   | "look"
-  | "workspace";
+  | "done";
 
 export interface Step {
   id: StepId;
@@ -35,11 +35,7 @@ export const STEPS: readonly Step[] = [
     label: "Interception",
   },
   { id: "look", href: `${WELCOME_ROOT}/look`, label: "Look" },
-  {
-    id: "workspace",
-    href: `${WELCOME_ROOT}/workspace`,
-    label: "First workspace",
-  },
+  { id: "done", href: `${WELCOME_ROOT}/done`, label: "Done" },
 ];
 
 /** Whether a path belongs to the flow (the app's sidebar is left out there). */

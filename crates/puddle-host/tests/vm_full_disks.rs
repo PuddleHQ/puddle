@@ -68,7 +68,7 @@ fn in_small_disk(test: &str, gib: u64, body: impl FnOnce(PathBuf)) -> Option<(bo
         body(PathBuf::from(SMALL_DISK));
         return None;
     }
-    let root = PathBuf::from(format!("/tmp/pvfdroot{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("pvfdroot{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let out = Command::new("unshare")
         .args([
@@ -253,7 +253,7 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
         &vm.runtime,
         &workspace,
         "root",
-        &format!("yes puddle | dd of={dir}/big.bin bs=1M count=2600 iflag=fullblock conv=fsync 2>&1; echo dd-exit=$?"),
+        &format!("yes data | dd of={dir}/big.bin bs=1M count=2600 iflag=fullblock conv=fsync 2>&1; echo dd-exit=$?"),
         Duration::from_secs(300),
     )
     .await;
@@ -381,7 +381,7 @@ async fn volume_and_root_fill() {
     guest_ok(&vm, &workspace, &format!("rm {dir}/zeros && sync")).await;
 
     // The volume: 3 GiB, filled from inside to the end with data that is not zeros.
-    let out = guest_ok(&vm, &workspace, &format!("(yes puddle | dd of={dir}/fill bs=1M count=2980 iflag=fullblock conv=fsync 2>&1 | tail -2); df -m {dir} | tail -1")).await;
+    let out = guest_ok(&vm, &workspace, &format!("(yes data | dd of={dir}/fill bs=1M count=2980 iflag=fullblock conv=fsync 2>&1 | tail -2); df -m {dir} | tail -1")).await;
     eprintln!("FINDING volume fill: {}", out.trim());
     // Nobody asks: the host's own minute read says it.
     let said = events
@@ -404,7 +404,7 @@ async fn volume_and_root_fill() {
         &vm.runtime,
         &workspace,
         "root",
-        "(yes puddle | dd of=/var/tmp/fill bs=1M count=15800 iflag=fullblock conv=fsync 2>&1 | tail -2); df -m / | tail -1",
+        "(yes data | dd of=/var/tmp/fill bs=1M count=15800 iflag=fullblock conv=fsync 2>&1 | tail -2); df -m / | tail -1",
         Duration::from_secs(600),
     )
     .await;

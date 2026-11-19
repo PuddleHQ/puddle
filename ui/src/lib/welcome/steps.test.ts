@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { around, isWelcome, STEPS, stepFor } from "./steps.ts";
 
 describe("first-run steps", () => {
-  it("run welcome, check, certificates, connect, interception, look, first workspace", () => {
+  it("run welcome, check, certificates, connect, interception, look, done", () => {
     expect(STEPS.map((s) => s.id)).toEqual([
       "welcome",
       "check",
@@ -11,7 +11,7 @@ describe("first-run steps", () => {
       "connect",
       "interception",
       "look",
-      "workspace",
+      "done",
     ]);
   });
 
@@ -43,7 +43,7 @@ describe("first-run steps", () => {
       back: "/welcome/connect",
       next: "/welcome/look",
     });
-    expect(around("workspace")).toEqual({
+    expect(around("done")).toEqual({
       back: "/welcome/look",
       next: undefined,
     });

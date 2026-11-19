@@ -8,9 +8,8 @@
 //   Ctrl+V pastes into a field of the page under deny (a paste is the person's own keystroke, not a
 //   script's read).
 // Not shown here: the prompt itself and that its answer is kept per workspace. On the hosted runner the
-// prompt is in no window UI Automation lists (run 44529135697: every top-level window of the desktop and
-// everything under the app's processes, none had it), so nothing can press Allow; that part is still
-// a hands-on step of docs/qa/10 S8c.
+// prompt is in no window UI Automation lists (every top-level window of the desktop and everything
+// under the app's processes were listed, none had it), so nothing can press Allow.
 // The probe window is the one sandbox-window.mjs uses, opened with the setting the session names
 // (PUDDLE_APP_SANDBOX_PROBE_CLIPBOARD). Plain Node 24, no packages.
 //

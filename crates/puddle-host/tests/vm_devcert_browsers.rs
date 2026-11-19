@@ -5,8 +5,7 @@
 //! `https://localhost:<port>/`. Before the person trusts the certificate (the Windows confirmation
 //! answered No) both show their certificate warning; after Yes both load the page.
 //!
-//! This is the step of the first-day playbook that used to be done by hand with
-//! `work/scripts/hands-on/devcert-browsers.sh`. `ci/trust-dialog.ps1` presses the button of the
+//! `ci/trust-dialog.ps1` presses the button of the
 //! Windows confirmation (a throwaway runner has nobody to click) and `ci/browser-cert.mjs` drives the
 //! browsers, with the page served by the guest instead of by itself.
 //!

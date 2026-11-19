@@ -11,18 +11,25 @@ fn dir() -> tempfile::TempDir {
 }
 
 #[test]
-fn the_first_refresh_makes_sequence_one_and_each_later_one_adds_one() {
+fn the_first_refresh_takes_the_minute_count_and_each_later_one_adds_one() {
     let d = dir();
     let file = d.path().join("freshness.json");
+    let first = NOW / 60;
     let line = refresh_file(&file, &PLACEHOLDER_SEED, NOW, DEFAULT_VALIDITY_SECS).unwrap();
-    assert!(line.contains("sequence 1"), "{line}");
+    assert!(line.contains(&format!("sequence {first},")), "{line}");
     let line = refresh_file(&file, &PLACEHOLDER_SEED, NOW + DAY, DEFAULT_VALIDITY_SECS).unwrap();
-    assert!(line.contains("sequence 2"), "{line}");
-    assert!(!d.path().join("freshness.json.tmp").exists());
+    assert!(line.contains(&format!("sequence {},", first + 1)), "{line}");
+    // Only the file is left in the folder, no temporary file next to it.
+    let names: Vec<_> = std::fs::read_dir(d.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["freshness.json"]);
     let key = public_key_text(&PLACEHOLDER_SEED);
     let ok = verify_file(&file, &key, NOW + DAY).unwrap();
     assert!(
-        ok.contains("sequence 2") && ok.contains(&format!("{} s left", 7 * DAY)),
+        ok.contains(&format!("sequence {},", first + 1))
+            && ok.contains(&format!("{} s left", 7 * DAY)),
         "{ok}"
     );
 }
@@ -88,6 +95,16 @@ fn a_seed_is_32_bytes_of_base64() {
     }
 }
 
+#[test]
+fn a_malformed_seed_is_not_quoted_in_the_error() {
+    // The decoder's own message names the offending byte and its offset; neither may reach a log.
+    let err = parse_seed("QUJDRA-secretXYZ").unwrap_err().to_string();
+    assert_eq!(
+        err,
+        "cannot read the signing key seed: it is not valid base64"
+    );
+}
+
 fn args(list: &[&str]) -> Vec<OsString> {
     list.iter().map(OsString::from).collect()
 }
@@ -107,7 +124,7 @@ fn the_command_refreshes_verifies_and_prints_the_key() {
         "1800000000",
     ]))
     .unwrap();
-    assert!(line.contains("sequence 1"), "{line}");
+    assert!(line.contains("sequence 30000000,"), "{line}");
     let line = run(args(&[
         "refresh",
         "--placeholder-key",
@@ -120,7 +137,7 @@ fn the_command_refreshes_verifies_and_prints_the_key() {
     ]))
     .unwrap();
     assert!(
-        line.contains("sequence 2") && line.contains("259200 s"),
+        line.contains("sequence 30000001,") && line.contains("259200 s"),
         "{line}"
     );
     let line = run(args(&[

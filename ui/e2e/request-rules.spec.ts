@@ -208,7 +208,9 @@ test.describe("adding", () => {
     await dialog.getByLabel("Host").fill("registry.example.com");
     await dialog.getByLabel("Methods").fill("delete, put");
     await dialog.getByLabel("Path").fill("/packages/*/versions");
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog).toHaveCount(0);
     const row = rowFor(page, "registry.example.com");
@@ -238,7 +240,9 @@ test.describe("adding", () => {
     const dialog = addDialog(page);
     await dialog.getByLabel("Host").fill("admin.example.com");
     await dialog.getByLabel("Path").fill("/admin/**");
-    await dialog.getByLabel("Workspace name").fill("docs-site");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "docs-site" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(rowFor(page, "admin.example.com")).toContainText(
       "Every method",
@@ -307,7 +311,7 @@ test.describe("adding", () => {
     await expect(dialog).toContainText("Rules name hosts, not IP addresses.");
     await expect(dialog).toContainText("is not an HTTP method");
     await expect(dialog).toContainText("A * stands for a whole segment");
-    await expect(dialog).toContainText("Name the workspace");
+    await expect(dialog).toContainText("Choose the workspace");
     // The alerts above are shown, so the refusal is final; the API still holds only the two seeds.
     await expect
       .poll(async () => (await requestRules(request, backend)).length)
@@ -324,7 +328,9 @@ test.describe("adding", () => {
     const dialog = addDialog(page);
     await dialog.getByLabel("Host").fill("bad_name.example.com");
     await dialog.getByLabel("Path").fill("/**");
-    await dialog.getByLabel("Workspace name").fill("web-shop");
+    await dialog
+      .getByLabel("Workspace", { exact: true })
+      .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(dialog.getByRole("alert")).toContainText(
       '"bad_name.example.com" is not a host name',

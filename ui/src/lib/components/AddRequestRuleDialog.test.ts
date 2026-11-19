@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NewRequestRule } from "#lib/rules/request-rules.ts";
 import type { RequestRuleRefusal } from "#lib/stores/request-rules.svelte.ts";
 import AddRequestRuleDialog from "./AddRequestRuleDialog.svelte";
+import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
 
 afterEach(cleanup);
 
@@ -39,9 +40,7 @@ async function fill(
   await fireEvent.input(field("Host"), { target: { value: host } });
   await fireEvent.input(field("Methods"), { target: { value: methods } });
   await fireEvent.input(field("Path"), { target: { value: path } });
-  await fireEvent.input(field("Workspace name"), {
-    target: { value: workspace },
-  });
+  await chooseWorkspace(field("Workspace"), workspace);
 }
 
 describe("the Add method and path rule dialog", () => {
@@ -72,7 +71,7 @@ describe("the Add method and path rule dialog", () => {
   it("sends no methods for every method, and no workspace for every workspace", async () => {
     const { onSubmit } = await open();
     await fireEvent.click(screen.getByLabelText(/Every workspace/));
-    expect(screen.queryByLabelText("Workspace name")).toBeNull();
+    expect(screen.queryByLabelText("Workspace")).toBeNull();
     await fireEvent.input(field("Host"), {
       target: { value: "a.example.com" },
     });
@@ -148,7 +147,7 @@ describe("the Add method and path rule dialog", () => {
   it("labels every control and submits as a form, so Enter in a field sends it", async () => {
     const onSubmit = vi.fn(async () => null);
     await open(onSubmit);
-    for (const name of ["Host", "Methods", "Path", "Workspace name"]) {
+    for (const name of ["Host", "Methods", "Path", "Workspace"]) {
       expect(field(name)).toBeInTheDocument();
     }
     expect(screen.getByRole("radio", { name: "One workspace" })).toBeChecked();
@@ -161,9 +160,9 @@ describe("the Add method and path rule dialog", () => {
   it("shows the workspace field again when One workspace is chosen after Every workspace", async () => {
     await open();
     await fireEvent.click(screen.getByLabelText(/Every workspace/));
-    expect(screen.queryByLabelText("Workspace name")).toBeNull();
+    expect(screen.queryByLabelText("Workspace")).toBeNull();
     await fireEvent.click(screen.getByLabelText("One workspace"));
-    expect(screen.getByLabelText("Workspace name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
   });
 
   it("clears on request", async () => {

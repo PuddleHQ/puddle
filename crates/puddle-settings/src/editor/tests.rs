@@ -15,7 +15,7 @@ fn nothing_set_resolves_to_the_defaults() {
     let e = EffectiveEditor::resolve(&EditorLayer::default(), &EditorLayer::default());
     assert_eq!(e, EffectiveEditor::DEFAULTS);
     assert_eq!(e.colour_theme.source, Source::Default);
-    assert!(e.extensions.value.is_empty());
+    assert_eq!(e.extensions.value, Vec::<ExtensionId>::new());
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn an_empty_workspace_extension_list_clears_the_global_one() {
         ..EditorLayer::default()
     };
     let e = EffectiveEditor::resolve(&global, &workspace);
-    assert!(e.extensions.value.is_empty());
+    assert_eq!(e.extensions.value, Vec::<ExtensionId>::new());
     assert_eq!(e.extensions.source, Source::Workspace);
 }
 

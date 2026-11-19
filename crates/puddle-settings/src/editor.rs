@@ -347,26 +347,26 @@ impl EffectiveEditor {
         } = workspace;
         Self {
             colour_theme: pick_with(
-                colour_theme,
-                &global.colour_theme,
+                colour_theme.as_ref(),
+                global.colour_theme.as_ref(),
                 |v| Some(v.clone()),
                 Self::DEFAULTS.colour_theme,
             ),
             font_size: pick_with(
-                font_size,
-                &global.font_size,
+                font_size.as_ref(),
+                global.font_size.as_ref(),
                 |v| Some(*v),
                 Self::DEFAULTS.font_size,
             ),
             extensions: pick_with(
-                extensions,
-                &global.extensions,
+                extensions.as_ref(),
+                global.extensions.as_ref(),
                 Clone::clone,
                 Self::DEFAULTS.extensions,
             ),
             keybindings: pick_with(
-                keybindings,
-                &global.keybindings,
+                keybindings.as_ref(),
+                global.keybindings.as_ref(),
                 |v| Some(v.clone()),
                 Self::DEFAULTS.keybindings,
             ),
@@ -375,8 +375,8 @@ impl EffectiveEditor {
 }
 
 fn pick_with<S, T>(
-    workspace: &Option<S>,
-    global: &Option<S>,
+    workspace: Option<&S>,
+    global: Option<&S>,
     lift: impl Fn(&S) -> T,
     builtin: crate::Resolved<T>,
 ) -> crate::Resolved<T> {

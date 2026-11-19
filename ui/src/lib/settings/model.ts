@@ -44,11 +44,11 @@ export const MS_POPUP = {
 export const microsoftChosenToast = (telemetry: boolean): string =>
   "Microsoft's VS Code server is on. You accepted Microsoft's licence terms, and " +
   `telemetry is ${telemetry ? "on" : "off"}. ` +
-  "Puddle downloads the server from Microsoft the next time you open a workspace in the browser, " +
+  "Puddle downloads the server from Microsoft the next time you open isolated VS Code, " +
   "so that first open can take a little longer. You can go back to code-server in Settings.";
 
 export const CODE_SERVER_NOTE =
-  "code-server (bundled). Some extensions may not be listed: it is not Microsoft's official VS Code, so it uses the Open VSX registry instead of Microsoft's Marketplace.";
+  "Some extensions may not be listed: it is not Microsoft's official VS Code, so it uses the Open VSX registry instead of Microsoft's Marketplace.";
 export const MICROSOFT_NOTE =
   "Microsoft's VS Code server, downloaded by Puddle from Microsoft.";
 

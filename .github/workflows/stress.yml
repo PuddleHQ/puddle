@@ -3,7 +3,10 @@
 # machine, so a test that fails only under load fails here, a day after it merged, instead of in a merge
 # queue group. Not a required check; it runs only on the schedule and by hand.
 #  - rust: nextest --stress-count 20 on fake_host, the proxy suites and the agent's capture tests, pinned to
-#    one CPU with 6 busy loops, in two halves (ci/stress.sh).
+#    one CPU with 6 busy loops, in six partitions (ci/stress.sh): one
+#    iteration of a half took 710 to 750 s, so 20 iterations of a half needed about 240 min and the 150-minute
+#    job timeout cancelled it; a sixth is about 240 s an iteration, 80 min for 20, leaving room for the build
+#    and for an uneven split.
 #  - playwright: --repeat-each 3 on chromium (CDP CPU throttle, ui/e2e/cpu-throttle.ts) and on webkit, a job
 #    each. The ask was 10: one repeat of the 990 tests took about 45 minutes starved (measured), so 3 is about
 #    an hour a job; raise STRESS_COUNT in ci/stress.sh once the yield says it pays.
@@ -39,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: ["1/2", "2/2"]
+        part: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]
     env:
       STRESS_PARTITION: ${{ matrix.part }}
     steps:

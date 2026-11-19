@@ -572,6 +572,30 @@ fn prepare(server: &EditorServer) -> io::Result<()> {
     Ok(())
 }
 
+/// What a code-server window shows in its first open: the colour theme follows the colour scheme
+/// of the browser that shows it (the system's, as Puddle's own window does), with VS Code's
+/// default dark and light themes. Without it the window opens in the light theme on a dark system.
+const FIRST_SETTINGS: &str = r#"{
+    "window.autoDetectColorScheme": true,
+    "workbench.preferredDarkColorTheme": "Default Dark Modern",
+    "workbench.preferredLightColorTheme": "Default Light Modern"
+}
+"#;
+
+/// Writes [`FIRST_SETTINGS`] as code-server's user settings when the file does not exist yet, so
+/// a setting the user changed (or a file the settings sync brought) is never overwritten. Returns
+/// the paths it made, for the caller to hand to the server's user.
+fn seed_first_settings(server: &EditorServer) -> io::Result<Vec<PathBuf>> {
+    let dir = Path::new(&server.data).join(USER_DATA).join("User");
+    let file = dir.join("settings.json");
+    if file.exists() {
+        return Ok(Vec::new());
+    }
+    std::fs::create_dir_all(&dir)?;
+    write_private(&file, FIRST_SETTINGS)?;
+    Ok(vec![dir, file])
+}
+
 /// Runs the server and starts it again whenever it exits; never returns.
 pub async fn run(config: EditorConfig, control: Arc<Control>) {
     run_controlled(config, Downloader::system(), control).await;
@@ -924,6 +948,13 @@ async fn start_once(
     let account = account(&config.server, control, Account::read);
     if let Some(account) = &account {
         give_to(account, config)?;
+    }
+    if config.server.kind == ServerKind::CodeServer {
+        for path in seed_first_settings(&config.server)? {
+            if let Some(account) = &account {
+                account.own(&path)?;
+            }
+        }
     }
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
     let mut child = command(launch, &password, inherited, account.as_ref()).spawn()?;

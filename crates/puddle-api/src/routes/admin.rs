@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use puddle_store::UserId;
@@ -16,6 +16,7 @@ use crate::ApiErrorBody;
 use crate::admin::AdminService;
 use crate::authz::Principal;
 use crate::error::ApiError;
+use crate::extract::{Path, Query};
 use crate::routes::AppState;
 use crate::wire::{AdminAuditList, AdminStats, AdminUserList, CreateUserRequest, InviteIssued};
 

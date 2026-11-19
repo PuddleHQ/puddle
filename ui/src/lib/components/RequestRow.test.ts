@@ -29,7 +29,7 @@ function mount(
 }
 
 describe("RequestRow", () => {
-  it("shows host:port, workspace, attempts and when it was first and last seen", () => {
+  it("shows host:port, the workspace by name, tries and the last time, without a 'Workspace' label", () => {
     mount(
       {},
       request(1, {
@@ -40,11 +40,33 @@ describe("RequestRow", () => {
     );
     const li = screen.getByRole("listitem");
     expect(li).toHaveTextContent("h1.example.com:8443");
-    expect(li).toHaveTextContent("Workspace demo");
-    expect(li).toHaveTextContent("3 attempts");
-    expect(li).toHaveTextContent(/First seen 5 minutes ago/);
-    expect(li).toHaveTextContent(/Last seen 1 minute ago/);
-    expect(li.querySelectorAll("time")).toHaveLength(2);
+    expect(li).toHaveTextContent(/demo · 3 tries, last 1 minute ago/);
+    expect(li).not.toHaveTextContent("Workspace");
+    expect(li).not.toHaveTextContent("Last seen");
+    expect(li).not.toHaveTextContent("attempt");
+  });
+
+  it("adds when it first asked only when that differs from the last time", () => {
+    mount(
+      {},
+      request(1, {
+        attempts: 3,
+        first_seen: 1_000_000 - 2 * 3_600_000,
+        last_seen: 1_000_000 + 4 * 60_000,
+      }),
+    );
+    expect(screen.getByRole("listitem")).toHaveTextContent(
+      /3 tries, last 1 minute ago, first 2 hours ago/,
+    );
+    expect(document.querySelectorAll("time")).toHaveLength(2);
+  });
+
+  it("says the time once when the tries all fell in the same minute", () => {
+    mount({}, request(1, { attempts: 4, last_seen: 1_000_000 }));
+    const li = screen.getByRole("listitem");
+    expect(li).toHaveTextContent(/4 tries, last 5 minutes ago/);
+    expect(li).not.toHaveTextContent("first");
+    expect(li.querySelectorAll("time")).toHaveLength(1);
   });
 
   it("labels a name lookup (port 0) instead of showing host:0", () => {
@@ -55,9 +77,11 @@ describe("RequestRow", () => {
     expect(li).not.toHaveTextContent(":0");
   });
 
-  it("says '1 attempt' in the singular", () => {
+  it("says '1 try' and a single time for a request seen once", () => {
     mount({}, request(1));
-    expect(screen.getByRole("listitem")).toHaveTextContent("1 attempt ");
+    const li = screen.getByRole("listitem");
+    expect(li).toHaveTextContent(/demo · 1 try, 5 minutes ago/);
+    expect(li.querySelectorAll("time")).toHaveLength(1);
   });
 
   it("shows an untrusted host as text, never as markup", () => {
@@ -112,7 +136,7 @@ describe("RequestRow", () => {
     expect(note).toHaveTextContent("Private networks");
     expect(
       screen.getByRole("link", { name: "Private networks" }),
-    ).toHaveAttribute("href", "/settings#local-destinations");
+    ).toHaveAttribute("href", "/settings/network#local-destinations");
   });
 
   it("says a company-network destination is on the company network, why, and opens that workspace's switch", () => {

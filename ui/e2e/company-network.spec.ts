@@ -62,7 +62,7 @@ test("Settings shows the company network switch under private networks, off", as
   page,
   backend,
 }) => {
-  await open(page, backend, "/settings");
+  await open(page, backend, "/settings/network");
   const toggles = page.locator('input[id^="set-local-"]');
   await expect(toggles).toHaveCount(6);
   await expect(toggles.nth(2)).toHaveAttribute(
@@ -75,7 +75,7 @@ test("Settings shows the company network switch under private networks, off", as
     page.getByText("mark as internal", { exact: false }),
   ).toBeVisible();
   await box.check();
-  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
   await expect(page.getByLabel("Company network")).toBeChecked();
   await expectNoAxeViolations(page);
 });

@@ -62,7 +62,9 @@ describe("the activity log card", () => {
     const days = await box();
     await fireEvent.input(days, { target: { value: "30" } });
     await fireEvent.click(
-      screen.getByRole("button", { name: "Keep for this long" }),
+      screen.getByRole("button", {
+        name: "Save how long the activity log is kept",
+      }),
     );
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
     expect(api.bodies).toEqual([{ days: 30 }]);
@@ -79,7 +81,9 @@ describe("the activity log card", () => {
     });
     await fireEvent.input(days, { target: { value: "0" } });
     await fireEvent.click(
-      screen.getByRole("button", { name: "Keep for this long" }),
+      screen.getByRole("button", {
+        name: "Save how long the activity log is kept",
+      }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The log is kept for 1 to 3650 days (0 given).",
@@ -92,7 +96,9 @@ describe("the activity log card", () => {
     const days = await box();
     await fireEvent.input(days, { target: { value: "" } });
     await fireEvent.click(
-      screen.getByRole("button", { name: "Keep for this long" }),
+      screen.getByRole("button", {
+        name: "Save how long the activity log is kept",
+      }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Type a whole number of days.",

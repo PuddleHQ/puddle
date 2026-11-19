@@ -97,6 +97,21 @@ list() {
     fi
 }
 
+# Like `list`, for `git log --format='%H %h %s'`: keeps only the commits named in $made (one full
+# hash per line) and prints them as `<short hash> <subject>`.
+list_made() {
+    kind=$1
+    shift
+    if out=$(g "$@" 2>&1); then
+        kept=$(printf '%s\n' "$out" | while IFS= read -r line; do
+            case $made in *"${line%% *}"*) printf '%s\n' "${line#* }" ;; esac
+        done)
+        if [ -n "$kept" ]; then printf '%s\n' "$kept" | emit "$kind"; fi
+    else
+        fail "$name" "git $1 failed: $out"
+    fi
+}
+
 cd -- "$1" || {
     fail . "cannot enter $1"
     exit 3
@@ -120,6 +135,12 @@ for d in * .[!.]* ..?*; do
             continue
         fi
         list U status --porcelain=v1 --untracked-files=normal
+        # A commit only a tag reaches is the user's work only when this clone made it (it was
+        # committed, cherry-picked, reverted, rebased or applied here, which the reflogs record);
+        # a tag fetched from the remote points at upstream commits that no remote-tracking
+        # branch reaches (a release branch deleted after tagging), and the remote keeps those.
+        made=$(g reflog show --all --format='%H %gs' 2>/dev/null |
+            awk '$2 ~ /^(commit|cherry-pick|revert|rebase|am)/ { print $1 }' | sort -u)
         # A shallow clone's history is grafted, so a tag that `fetch --tags` brought in points at
         # upstream commits no remote-tracking branch reaches. There a tag counts only when its
         # commit descends from a remote-tracking commit (work made on top of the clone); a
@@ -131,9 +152,10 @@ for d in * .[!.]* ..?*; do
         # shellcheck disable=SC2086 # $head is one revision or nothing
         if [ -s "$shallow" ]; then
             list C log --format='%h %s' $head --branches --not --remotes
-            list C log --format='%h %s' --tags --ancestry-path --not --remotes --branches $head
+            list_made C log --format='%H %h %s' --tags --ancestry-path --not --remotes --branches $head
         else
-            list C log --format='%h %s' $head --branches --tags --not --remotes
+            list C log --format='%h %s' $head --branches --not --remotes
+            list_made C log --format='%H %h %s' --tags --not --remotes --branches $head
         fi
         list S stash list
     else

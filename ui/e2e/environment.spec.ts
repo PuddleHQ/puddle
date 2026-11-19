@@ -235,10 +235,11 @@ test.describe("environment", () => {
   }) => {
     await backend.control.reset("environment");
     await backend.signIn(page);
-    await page.goto("/settings");
+    await page.goto("/settings/workspaces");
     await expect(
       page.getByRole("heading", { level: 2, name: "Environment" }),
     ).toBeVisible();
+    await page.getByText("Show the variables").click();
     const global = page.getByRole("table", {
       name: "Environment of every workspace",
     });
@@ -253,6 +254,7 @@ test.describe("environment", () => {
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(global).toContainText("emacs");
     await page.reload();
+    await page.getByText("Show the variables").click();
     await expect(
       page.getByRole("table", { name: "Environment of every workspace" }),
     ).toContainText("emacs");
@@ -477,7 +479,8 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto("/workspaces/web-shop/settings/ports");
       await expect(ports(page)).toBeVisible();
       await scan(page, "ports");
-      await page.goto("/settings");
+      await page.goto("/settings/workspaces");
+      await page.getByText("Show the variables").click();
       await expect(
         page.getByRole("table", { name: "Environment of every workspace" }),
       ).toBeVisible();

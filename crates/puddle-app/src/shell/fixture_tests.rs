@@ -109,6 +109,7 @@ fn a_probe_in_the_options_opens_its_workspace_window_beside_the_main_one() {
             Some("9444"),
             None,
             None,
+            None,
         ),
         ..fixture_options()
     };
@@ -127,6 +128,7 @@ fn a_probe_can_open_before_the_main_window() {
         sandbox_probe: SandboxProbe::parse(
             Some("http://probe.localhost:4900/attack.html"),
             Some("9444"),
+            None,
             None,
             None,
         ),
@@ -154,6 +156,7 @@ fn a_window_that_fails_to_open_stops_the_backend_it_started() {
             Some("9444"),
             None,
             Some("1"),
+            None,
         ),
         ..fixture_options()
     };

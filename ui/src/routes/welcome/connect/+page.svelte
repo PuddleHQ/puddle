@@ -97,7 +97,7 @@
 {:else}
   {@const view = store.view}
   <fieldset class="card">
-    <legend>Editor in your browser</legend>
+    <legend>Isolated VS Code</legend>
     <p class="muted">Optional: it needs nothing installed on this computer.</p>
     <label class="choice">
       <input
@@ -109,7 +109,7 @@
         onchange={() => void chooseServer()}
       />
       <span>
-        <b>code-server (bundled)</b>
+        <b>Built-in VS Code server</b>
         <span class="chip">default</span>
         <span class="desc">{CODE_SERVER_NOTE}</span>
       </span>
@@ -123,7 +123,7 @@
         onchange={() => void chooseServer()}
       />
       <span>
-        <b>Microsoft's VS Code server</b>
+        <b>Microsoft's VS Code server (downloaded)</b>
         <span class="desc"
           >{MICROSOFT_NOTE} You accept Microsoft's licence terms.</span
         >

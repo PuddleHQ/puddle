@@ -68,7 +68,7 @@ impl WorkspaceHandler {
         {
             return stand_in_or_no_data(query.rtype, StandInReason::Blocked);
         }
-        match allowed(proxy, &self.workspace, &host).await {
+        match allowed(proxy, &self.workspace, &host) {
             Allowed::No => return stand_in_or_no_data(query.rtype, StandInReason::NotAllowed),
             Allowed::Unmatched => {
                 if query.rtype != RecordType::Srv {
@@ -149,7 +149,7 @@ impl WorkspaceHandler {
                 tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, ?reason, "service record left out: its target is blocked");
                 continue;
             }
-            match allowed(&self.proxy, &self.workspace, &target_host).await {
+            match allowed(&self.proxy, &self.workspace, &target_host) {
                 Allowed::Yes => kept.push(record),
                 Allowed::No => {
                     tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, "service record left out: a rule denies its target");
@@ -210,9 +210,9 @@ enum Allowed {
 }
 
 /// Whether a rule allows `host` for `workspace`. Asks without recording anything.
-async fn allowed(proxy: &Proxy, workspace: &WorkspaceId, host: &Host) -> Allowed {
+fn allowed(proxy: &Proxy, workspace: &WorkspaceId, host: &Host) -> Allowed {
     let request = EgressRequest::new(workspace.clone(), host.clone(), 0);
-    match proxy.look_up_rule(request, SuffixAllows::Count).await {
+    match proxy.look_up_rule(&request, SuffixAllows::Count) {
         Ok(Some(decision)) if decision.is_allow() => Allowed::Yes,
         Ok(Some(_)) => Allowed::No,
         Ok(None) => Allowed::Unmatched,

@@ -460,9 +460,11 @@ test.describe("1000 rules", () => {
     const loads: number[] = [];
     for (let load = 0; load < 5; load += 1) {
       await nav.getByRole("link", { name: /^Inbox/ }).click();
+      // Leaving the 1000-row page is the page's own work (not judged here, the Rules load below is):
+      // it took over 5 s on the shared host, in chromium and webkit alike (two of two runs).
       await expect(
         page.getByRole("heading", { level: 1, name: "Inbox" }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 60_000 * SLOWDOWN });
       const began = Date.now();
       await nav.getByRole("link", { name: /^Rules/ }).click();
       await expect(page.locator("p.count")).toHaveText(`${seeded} rules`, {

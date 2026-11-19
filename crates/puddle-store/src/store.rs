@@ -995,16 +995,30 @@ impl Store {
         workspace: Option<&WorkspaceId>,
     ) -> Result<Vec<PendingRow>, StoreError> {
         let conn = lock(&self.conn);
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {PENDING_COLUMNS} FROM pending
-             WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1)
-               AND (?2 IS NULL OR workspace_id IN
-                    (SELECT workspace_id FROM workspace_owners WHERE user_id = ?2))
-             ORDER BY last_seen DESC, id DESC"
-        ))?;
+        let mut stmt = conn.prepare(&open_pending_sql())?;
         let args = params![workspace.map(WorkspaceId::as_str), user.map(UserId::get)];
         let rows = stmt.query_map(args, raw_pending)?;
         rows.map(|raw| pending_from_raw(&raw?)).collect()
+    }
+
+    /// How many SQLite virtual-machine steps [`Store::open_pending_every_user`] takes, rows
+    /// included. A step count does not move with the machine's load, so a test can put a bar on
+    /// the work the read does (a per-row rescan multiplies it) instead of on a clock.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn open_pending_steps(
+        &self,
+        _: &AllUsers,
+        workspace: Option<&WorkspaceId>,
+    ) -> Result<i32, StoreError> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(&open_pending_sql())?;
+        let args = params![workspace.map(WorkspaceId::as_str), None::<i64>];
+        let mut rows = stmt.query(args)?;
+        while rows.next()?.is_some() {}
+        drop(rows);
+        Ok(stmt.get_status(rusqlite::StatementStatus::VmStep))
     }
 
     /// [`Store::inbox`] over every user's workspaces, for the install's own jobs.
@@ -1023,6 +1037,17 @@ impl Store {
     pub fn inbox(&self, user: UserId) -> Result<Vec<InboxGroup>, StoreError> {
         Ok(group_by_domain(self.open_pending(user, None)?))
     }
+}
+
+/// The open-rows read: `?1` a workspace or null, `?2` a user or null.
+fn open_pending_sql() -> String {
+    format!(
+        "SELECT {PENDING_COLUMNS} FROM pending
+         WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1)
+           AND (?2 IS NULL OR workspace_id IN
+                (SELECT workspace_id FROM workspace_owners WHERE user_id = ?2))
+         ORDER BY last_seen DESC, id DESC"
+    )
 }
 
 /// Open rows, most recent first, grouped by registrable domain in that order.

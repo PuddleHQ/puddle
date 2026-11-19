@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The three interception modes in plain words: one name and one warning each, shared by the
-// workspace card, the global setting and the first-run step so they never disagree.
+// workspace row, the global setting and the first-run step so they never disagree.
 import type { components } from "#lib/api/schema.d.ts";
 
 export type Mode = components["schemas"]["InterceptionMode"];

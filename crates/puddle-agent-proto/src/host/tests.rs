@@ -471,6 +471,15 @@ fn guest_text_in_logs_is_cut_and_stripped_of_control_characters() {
     assert!(reason.starts_with("no nf_tables?[2J"));
 }
 
+#[test]
+fn guest_text_loses_the_characters_that_reorder_or_hide_text() {
+    let reason = clean(
+        "safe\u{202e}txt.exe\u{200b}\u{feff}\u{2066}",
+        MAX_REASON_CHARS,
+    );
+    assert_eq!(reason, "safe?txt.exe???");
+}
+
 #[tokio::test]
 async fn a_handler_that_does_not_care_about_capture_reports_loses_nothing_else() {
     let mut h = start();

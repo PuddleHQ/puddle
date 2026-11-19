@@ -273,9 +273,9 @@ const LAYOUT = {
   },
   "/workspaces": {
     h1: 24,
-    card: true,
+    card: false,
     cardSelector: ".card",
-    cardGap: true,
+    cardGap: false,
     select: false,
     selectWaitsForData: false,
     oneLineButton: true,

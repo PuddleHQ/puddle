@@ -12,6 +12,10 @@ export interface Line {
   tone: Extract<DoctorStatus, "ok" | "info" | "warn" | "skipped">;
   title: string;
   text: string;
+  /** What this means for the person, behind a closed toggle. Absent where there is nothing to add. */
+  impact?: string;
+  /** What to do about it, behind a closed toggle. Absent where there is nothing to do. */
+  remedy?: string;
 }
 
 /** Whether the step offers the Trust button: Windows can be asked, and the user has not said yes. */
@@ -42,6 +46,19 @@ export function trustNote(press: {
   return parts.join(" ");
 }
 
+/** What the step is for, in one place the page shows above the lines. */
+export const PURPOSE =
+  "Some apps in your workspaces serve a web page over HTTPS, and Puddle forwards that page to your own browser at https://localhost. Puddle makes one certificate for localhost so your browser opens those pages without a warning. Nothing else needs it.";
+
+/** The expert text behind the page's "More details" toggle: why, what is trusted, how to undo it, what skipping costs. */
+export const MORE_DETAILS: readonly string[] = [
+  "A web app you run in a workspace (for example a Vite or ASP.NET server using HTTPS) listens inside the workspace. Puddle forwards its port to your computer, so you open it as https://localhost:PORT in your own browser.",
+  "A browser only trusts an HTTPS address when a certificate it knows vouches for it. Without one it shows a 'not secure' page, and features that need a secure address, such as secure cookies, sign-in redirects and service workers, can fail.",
+  "Trusting means Windows asks you once. It shows a Security Warning that names the certificate: choose Yes. The question is about this one certificate, made on this computer for localhost only, and it applies to your Windows user only. No administrator rights are needed, and Puddle changes nothing else.",
+  "To remove it later, open 'Manage user certificates' in Windows, go to Trusted Root Certification Authorities, then Certificates, and delete the one for localhost that Puddle made. This screen then shows it as not trusted again.",
+  "If you skip, everything in Puddle keeps working. Only your browser warns on https://localhost pages that a workspace serves, until you trust the certificate. Puddle asks only on this screen. The same certificate is also placed inside each workspace, so tools there such as curl, git and node trust it either way.",
+];
+
 /** The line about the development certificate: what Puddle uses and whether the browser trusts it. */
 export function devCertificateLine(status: DevCertificate | undefined): Line {
   switch (status) {
@@ -49,37 +66,54 @@ export function devCertificateLine(status: DevCertificate | undefined): Line {
       return {
         tone: "ok",
         title: "Development certificate trusted",
-        text: "Puddle made a certificate for localhost and Windows trusts it, so HTTPS on localhost works in your browser for apps in every workspace. If Firefox was open when you trusted it, restart Firefox.",
+        text: "Windows trusts Puddle's localhost certificate. If Firefox was open when you trusted it, restart Firefox.",
+        impact:
+          "Your browser opens apps your workspaces serve over HTTPS without a warning.",
       };
     case "needs_trust":
       return {
         tone: "info",
         title: "Development certificate: not trusted yet",
-        text: "Puddle hasn't asked Windows to trust the certificate it makes for localhost. Until you do, an HTTPS development server shows a browser warning. Press Trust it now and Windows shows one Security Warning that names the certificate: choose Yes to trust it.",
+        text: "Your browser doesn't trust Puddle's localhost certificate yet.",
+        impact:
+          "A workspace app opened at https://localhost shows a 'not secure' warning, and some features that need a secure address may not work. Nothing else is affected.",
+        remedy:
+          "Press Trust it now. Windows asks once, in a Security Warning that names the certificate: choose Yes, which trusts only this certificate, for your user. Or skip.",
       };
     case "trust_declined":
       return {
         tone: "warn",
         title: "Development certificate: not trusted",
-        text: "You declined Windows' confirmation. Apps in your workspaces still get the certificate, but your browser warns about HTTPS on localhost until you trust it. Press Trust it now to be asked again.",
+        text: "You answered No in Windows, so your browser still warns on workspace apps at https://localhost.",
+        impact:
+          "Apps in your workspaces still work. Only your browser shows the warning.",
+        remedy: "Press Trust it now to be asked again, or skip.",
       };
     case "trust_failed":
       return {
         tone: "warn",
         title: "Development certificate: couldn't be trusted",
-        text: "Windows didn't let Puddle trust it. A company policy that forbids adding certificates is one reason, and Puddle never overrides a policy. An HTTPS development server shows a browser warning.",
+        text: "Windows didn't let Puddle trust the certificate.",
+        impact:
+          "Your browser warns on workspace apps at https://localhost. Everything else works.",
+        remedy:
+          "A company policy that forbids adding certificates is one reason, and Puddle never overrides a policy. Ask your administrator, or click through the browser warning.",
       };
     case "unsupported":
       return {
         tone: "info",
         title: "Development certificate: not trusted on this system yet",
-        text: "Apps in your workspaces get a certificate for localhost, but Puddle can't add it to your browser's trust yet, so an HTTPS development server shows a browser warning.",
+        text: "Puddle can't add its localhost certificate to your browser's trust on this system yet.",
+        impact:
+          "Your browser warns on workspace apps at https://localhost. Everything else works.",
       };
     default:
       return {
         tone: "skipped",
         title: "Development certificate: not checked yet",
-        text: "An HTTPS development server in a workspace shows a browser warning until Puddle can trust a certificate for it.",
+        text: "Puddle hasn't looked at whether your browser trusts its localhost certificate.",
+        impact:
+          "Until it is trusted, your browser warns on workspace apps at https://localhost.",
       };
   }
 }

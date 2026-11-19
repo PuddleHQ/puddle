@@ -305,13 +305,19 @@ test("Trust it now shows a no and a failure in words, and ends the offer after a
     page.getByText("Development certificate: not trusted yet"),
   ).toBeVisible();
   const trust = page.getByRole("button", { name: "Trust it now" });
+  // The reason for the question and what Windows will ask are on the page before the press.
+  await expect(page.getByText(/Nothing else needs it/)).toBeVisible();
+  await page.getByText("More details", { exact: true }).click();
+  await expect(page.getByText(/Manage user certificates/)).toBeVisible();
+  await page.getByText("Remediation", { exact: true }).click();
+  await expect(
+    page.getByText(/Windows asks once, in a Security Warning/),
+  ).toBeVisible();
   await expectNoAxeViolations(page);
 
   // No in Windows' dialog: the step says so and offers it again.
   await trust.click();
-  await expect(
-    page.getByText("You declined Windows' confirmation."),
-  ).toBeVisible();
+  await expect(page.getByText(/You answered No in Windows/)).toBeVisible();
   await expect(trust).toBeEnabled();
 
   // A policy refusal: the system's words show and there is nothing to press.

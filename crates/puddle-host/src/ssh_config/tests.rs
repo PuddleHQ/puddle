@@ -248,6 +248,26 @@ mod files {
     }
 
     #[test]
+    fn a_publish_that_cannot_write_keeps_the_pinned_host_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ssh, _) = setup(dir.path(), false);
+        ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+            .unwrap();
+        let known = ssh.known_hosts(&name("web"));
+        std::fs::write(&known, b"web ssh-ed25519 AAAApinned\n").unwrap();
+        // A folder where the config file should be: the write fails after the endpoint changed.
+        std::fs::remove_file(ssh.config_path()).unwrap();
+        std::fs::create_dir(ssh.config_path()).unwrap();
+        ssh.publish(&name("web"), Path::new("/run/ep-2"), SessionUser::Root)
+            .unwrap_err();
+        assert_eq!(
+            std::fs::read(&known).unwrap(),
+            b"web ssh-ed25519 AAAApinned\n",
+            "the old host key is still pinned"
+        );
+    }
+
+    #[test]
     fn a_host_key_file_that_cannot_be_removed_is_an_error_and_changes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let (ssh, _) = setup(dir.path(), false);

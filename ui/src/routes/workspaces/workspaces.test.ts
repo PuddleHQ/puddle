@@ -82,7 +82,7 @@ async function mount() {
 }
 
 describe("the workspace list", () => {
-  it("shows a loading line, then a card per workspace with a count", async () => {
+  it("shows a loading line, then a row per workspace with a count", async () => {
     api.list = [
       workspace("web-shop", { status: "running" }),
       workspace("docs"),
@@ -94,7 +94,7 @@ describe("the workspace list", () => {
       await screen.findByRole("heading", { level: 1, name: "Workspaces" }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("article")).toHaveLength(2);
-    expect(screen.getByText("2 workspaces")).toBeInTheDocument();
+    expect(screen.getByText("2 workspaces, 1 running")).toBeInTheDocument();
     expect(
       screen.getByRole("list", { name: "Workspaces" }),
     ).toBeInTheDocument();
@@ -103,7 +103,9 @@ describe("the workspace list", () => {
   it("says one workspace in the singular", async () => {
     api.list = [workspace("only")];
     await mount();
-    expect(await screen.findByText("1 workspace")).toBeInTheDocument();
+    expect(
+      await screen.findByText("1 workspace, 0 running"),
+    ).toBeInTheDocument();
   });
 
   it("says so when the service didn't answer", async () => {
@@ -119,24 +121,50 @@ describe("the workspace list", () => {
   it("keeps the list but says it may be out of date when a refresh fails", async () => {
     api.list = [workspace("a-shop")];
     await mount();
-    await screen.findByText("1 workspace");
+    await screen.findByText("1 workspace, 0 running");
     api.down = true;
     await workspaces.refresh();
     expect(
       await screen.findByText(/Couldn't refresh the workspaces/),
     ).toBeInTheDocument();
-    expect(screen.getByText("1 workspace")).toBeInTheDocument();
+    expect(screen.getByText("1 workspace, 0 running")).toBeInTheDocument();
   });
 
-  it("explains what a workspace is when there is none, and offers to make one", async () => {
+  it("shows the create form itself when there is none, not a box about it", async () => {
     await mount();
     expect(
-      await screen.findByRole("heading", { name: "No workspaces yet" }),
+      await screen.findByRole("textbox", { name: "Repository address" }),
     ).toBeInTheDocument();
-    await fireEvent.click(
-      screen.getAllByRole("button", { name: "New workspace" }).at(-1)!,
-    );
+    expect(screen.queryByText("No workspaces yet")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New workspace" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "More options" }));
     expect(workspaceActions.createOpen).toBe(true);
+  });
+
+  it("creates the first workspace from the address alone, named after the repository", async () => {
+    await mount();
+    await fireEvent.input(
+      await screen.findByRole("textbox", { name: "Repository address" }),
+      { target: { value: "https://github.com/acme/ledger.git" } },
+    );
+    expect(screen.getByText("It will be called ledger.")).toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create workspace" }),
+    );
+    await vi.waitFor(() => expect(api.bodies).toHaveLength(1));
+    expect(api.bodies[0]).toEqual({
+      name: "ledger",
+      repositories: [{ url: "https://github.com/acme/ledger.git" }],
+    });
+  });
+
+  it("says why an address cannot be used, at the field", async () => {
+    await mount();
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Create workspace" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/address/i);
+    expect(api.bodies).toHaveLength(0);
   });
 
   it("opens the create dialog from the header button", async () => {
@@ -148,7 +176,7 @@ describe("the workspace list", () => {
     expect(workspaceActions.createOpen).toBe(true);
   });
 
-  it("starts a workspace from its card", async () => {
+  it("starts a workspace from its row", async () => {
     api.list = [workspace("docs")];
     await mount();
     await fireEvent.click(
@@ -160,50 +188,20 @@ describe("the workspace list", () => {
     expect(screen.getByRole("article")).toHaveTextContent("Starting");
   });
 
-  it("shows the strip when requests wait, with the newest one, and each card's own count", async () => {
+  it("shows each row's own waiting count and no banner above the list", async () => {
     api.list = [workspace("a"), workspace("b")];
-    inbox.add(
-      request(1, {
-        workspace: "w-a" as never,
-        host: "old.example.com",
-        first_seen: 1,
-      }),
-      "example.com",
-    );
-    inbox.add(
-      request(2, {
-        workspace: "w-b" as never,
-        host: "new.example.com",
-        first_seen: 9,
-      }),
-      "example.com",
-    );
-    inbox.add(
-      request(3, {
-        workspace: "w-b" as never,
-        host: "newer.example.org",
-        first_seen: 5,
-      }),
-      "example.org",
-    );
+    inbox.add(request(1, { workspace: "w-a" as never }), "example.com");
+    inbox.add(request(2, { workspace: "w-b" as never }), "example.com");
+    inbox.add(request(3, { workspace: "w-b" as never }), "example.org");
     await mount();
-    const strip = await screen.findByText(/3 requests waiting/);
-    expect(strip.closest("[role=status]")).toHaveTextContent(
-      "Latest: b wants new.example.com:443",
+    expect(
+      await screen.findByRole("link", { name: "1 waiting" }),
+    ).toHaveAttribute("href", "/workspaces/w-a/network");
+    expect(screen.getByRole("link", { name: "2 waiting" })).toHaveAttribute(
+      "href",
+      "/workspaces/w-b/network",
     );
-    expect(screen.getByRole("article", { name: "a" })).toHaveTextContent(
-      "1 waiting",
-    );
-    expect(screen.getByRole("article", { name: "b" })).toHaveTextContent(
-      "2 waiting",
-    );
-  });
-
-  it("has no strip when nothing waits", async () => {
-    api.list = [workspace("a")];
-    await mount();
-    await screen.findByRole("article");
-    expect(screen.queryByText(/waiting\./)).toBeNull();
+    expect(screen.queryByText(/requests waiting/)).toBeNull();
   });
 
   it("shows the out-of-memory flag and a failure with a Dismiss", async () => {
@@ -228,15 +226,24 @@ describe("the workspace list", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("ticks the relative times every 30 seconds", async () => {
+  it("ticks the out-of-memory age every 30 seconds", async () => {
+    const start = Date.now();
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
-    vi.setSystemTime(10_000_000);
-    api.list = [workspace("a", { created_at: 10_000_000 - 3_600_000 })];
+    vi.setSystemTime(start);
+    api.list = [workspace("a", { status: "running" })];
     await mount();
-    expect(await screen.findByText("1 hour ago")).toBeInTheDocument();
-    vi.setSystemTime(10_000_000 + 2 * 3_600_000);
+    workspaces.handleEvent({
+      type: "oom_kill",
+      workspace: "w-a",
+      pid: 3,
+      process: "node",
+    });
+    expect(
+      await screen.findByText(/Out of memory just now/),
+    ).toBeInTheDocument();
+    vi.setSystemTime(start + 2 * 60_000);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(screen.getByText("3 hours ago")).toBeInTheDocument();
+    expect(screen.getByText(/Out of memory 2 minutes ago/)).toBeInTheDocument();
   });
 });
 

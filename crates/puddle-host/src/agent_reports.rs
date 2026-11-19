@@ -100,7 +100,13 @@ pub(crate) fn entrypoint_problem(id: &WorkspaceId, name: &str, failure: &str) ->
     let failure: String = failure
         .chars()
         .take(MAX_FAILURE_CHARS)
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if puddle_agent_proto::is_hostile_text_char(c) {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect();
     Problem::new(
         entrypoint_key(id),
@@ -392,7 +398,7 @@ impl Run {
     }
 }
 
-/// Takes the reports of every workspace and keeps the two problems they can raise. The workspaces
+/// Takes the reports of every workspace and keeps the problems they can raise. The workspaces
 /// service tells it when a run begins and ends.
 pub(crate) struct ReportDesk {
     problems: Arc<Problems>,
@@ -454,7 +460,7 @@ impl ReportDesk {
         self.problems.clear(&agent_protocol_key(id));
     }
 
-    /// `id` was deleted: both problems end.
+    /// `id` was deleted: every problem the desk keeps for it ends.
     pub(crate) fn forget(&self, id: &WorkspaceId) {
         self.end(id);
         self.problems.clear(&entrypoint_key(id));
@@ -466,8 +472,10 @@ impl AgentReports for ReportDesk {
     fn report(&self, workspace: &WorkspaceId, report: AgentReport) {
         let mut end_editor = None;
         let mut end_unavailable = false;
+        // Held until the problems are raised and cleared: a stop's `end` between the decision and
+        // the raise would leave the problem standing on a workspace that no longer runs.
+        let mut runs = self.runs();
         let raise = {
-            let mut runs = self.runs();
             let Some(run) = runs.get_mut(workspace).filter(|run| run.taking) else {
                 tracing::debug!(%workspace, "agent report for a workspace that is not starting or running ignored");
                 return;

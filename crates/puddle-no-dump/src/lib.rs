@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Keeps the host process out of dump files.
+//! Keeps the host process out of dump files. Only that process: the programs it starts keep
+//! the system's default.
 //!
 //! The host holds the plaintext of every credential it injects (tokens, pasted secrets, the
 //! per-workspace CA keys). A core file or a crash report of that process would carry them to
@@ -8,7 +9,7 @@
 //!
 //! | OS | What it does | What it does not stop |
 //! |---|---|---|
-//! | Linux | `prctl(PR_SET_DUMPABLE, 0)`: no core file, and no `ptrace` or `/proc/<pid>/mem` from a process that is not root | root, a debugger started with the privilege |
+//! | Linux | `prctl(PR_SET_DUMPABLE, 0)`: no core file, and no `ptrace` or `/proc/<pid>/mem` from a process that is not root | root, a debugger started with the privilege; a program the process starts (the kernel makes it dumpable again at `exec`, so `msb`, which holds the guest's memory, is dumpable) |
 //! | Windows | `WerAddExcludedApplication` for Puddle's executables: Windows Error Reporting writes no dump | an administrator's dump, Task Manager, procdump, the webview's own crash reports |
 //! | other | nothing | everything |
 //!

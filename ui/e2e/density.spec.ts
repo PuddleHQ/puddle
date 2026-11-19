@@ -284,7 +284,7 @@ const LAYOUT = {
   },
   "/workspaces": {
     h1: 24,
-    card: true,
+    card: false,
     select: false,
     selectWaitsForData: false,
     oneLineButton: true,
@@ -352,6 +352,12 @@ async function required(page: Page, selector: string): Promise<Box> {
   return box as unknown as Box;
 }
 
+// The select a screen is measured by. The Rules screen has more selects (a workspace dropdown in
+// each rule set) that show as soon as the sets load, so it is measured by its filter bar, which
+// waits for the rules.
+const selectOf = (path: string) =>
+  path === "/rules" ? 'main [role="search"] select' : "main select";
+
 // What each screen reads before it shows its controls.
 const DATA = {
   "/settings": "/api/settings",
@@ -405,7 +411,7 @@ test.describe("layout by density", () => {
           .toBeGreaterThan(0);
         if (layout.selectWaitsForData)
           // eslint-disable-next-line no-restricted-syntax -- the data read is held (asserted just above), so the controls are absent by construction
-          expect(await measure(page, "main select")).toBeNull();
+          expect(await measure(page, selectOf(path))).toBeNull();
         data.release();
 
         // The page settles on the chosen density once the settings have loaded.
@@ -456,7 +462,7 @@ test.describe("layout by density", () => {
           );
 
         if (layout.select) {
-          const select = await required(page, "main select");
+          const select = await required(page, selectOf(path));
           expect(select.height, "select height").toBe(t.control);
           expect(select.padLeft, "select padding").toBe(t.s2);
         }

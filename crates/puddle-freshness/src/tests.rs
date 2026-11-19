@@ -6,7 +6,7 @@ const DAY: u64 = 24 * 60 * 60;
 const POLICY: Policy<'static> = Policy {
     project: "puddle",
     max_validity_secs: 14 * DAY,
-    sequence_ceiling: 1_000_000,
+    sequence_ceiling: 1_000_000_000,
 };
 const OTHER_SEED: [u8; 32] = [0x51; 32];
 
@@ -228,14 +228,14 @@ fn a_window_over_the_cap_a_future_issue_and_a_high_sequence_are_refused() {
     assert_eq!(
         check(&fresh(u64::MAX), None),
         Err(FreshnessError::SequenceCeiling {
-            ceiling: 1_000_000,
+            ceiling: 1_000_000_000,
             got: u64::MAX
         })
     );
 }
 
 #[test]
-fn refresh_starts_at_one_and_counts_up() {
+fn refresh_starts_at_the_minute_count_and_counts_up() {
     let first = refresh(
         None,
         &PLACEHOLDER_SEED,
@@ -246,7 +246,10 @@ fn refresh_starts_at_one_and_counts_up() {
     .unwrap()
     .bytes;
     let a = check(&first, None).unwrap();
-    assert_eq!((a.sequence, a.expires_at - a.issued_at), (1, 7 * DAY));
+    assert_eq!(
+        (a.sequence, a.expires_at - a.issued_at),
+        (NOW / 60, 7 * DAY)
+    );
     let second = refresh(
         Some(&first),
         &PLACEHOLDER_SEED,
@@ -257,7 +260,32 @@ fn refresh_starts_at_one_and_counts_up() {
     .unwrap()
     .bytes;
     let b = verify(&second, &keys(), &POLICY, NOW + DAY, Some(&a)).unwrap();
-    assert_eq!((b.sequence, b.issued_at), (2, NOW + DAY));
+    assert_eq!((b.sequence, b.issued_at), (NOW / 60 + 1, NOW + DAY));
+}
+
+#[test]
+fn a_fresh_start_after_a_lost_file_is_above_every_sequence_given_out_before() {
+    // A year of daily refreshes, then the file is lost and the job starts over.
+    let mut file = refresh(None, &PLACEHOLDER_SEED, "puddle", NOW, DAY)
+        .unwrap()
+        .bytes;
+    for day in 1..=365 {
+        file = refresh(
+            Some(&file),
+            &PLACEHOLDER_SEED,
+            "puddle",
+            NOW + day * DAY,
+            DAY,
+        )
+        .unwrap()
+        .bytes;
+    }
+    let last = verify(&file, &keys(), &POLICY, NOW + 365 * DAY, None).unwrap();
+    let restart = refresh(None, &PLACEHOLDER_SEED, "puddle", NOW + 366 * DAY, DAY)
+        .unwrap()
+        .bytes;
+    let got = verify(&restart, &keys(), &POLICY, NOW + 366 * DAY, Some(&last)).unwrap();
+    assert!(got.sequence > last.sequence, "{got:?} after {last:?}");
 }
 
 #[test]
@@ -269,7 +297,7 @@ fn refresh_recovers_after_the_previous_file_expired() {
         .unwrap()
         .bytes;
     let got = verify(&later, &keys(), &POLICY, NOW + 30 * DAY, None).unwrap();
-    assert_eq!(got.sequence, 2);
+    assert_eq!(got.sequence, NOW / 60 + 1);
 }
 
 #[test]

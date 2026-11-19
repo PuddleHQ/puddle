@@ -47,6 +47,19 @@ pub fn git_command() -> Command {
 ///
 /// [`XtaskError::Tool`] when it can't start or exits non-zero (with the end of its stderr).
 pub fn run(command: &mut Command) -> Result<String> {
+    run_with_stdin(command, b"")
+}
+
+/// [`run`] with `input` written to the command's stdin (a secret goes this way, never on the
+/// command line, which the error message shows).
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn run_with_stdin(command: &mut Command, input: &[u8]) -> Result<String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
     let shown = format!(
         "{} {}",
         command.get_program().to_string_lossy(),
@@ -56,17 +69,32 @@ pub fn run(command: &mut Command) -> Result<String> {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    let out = command.output().map_err(|e| XtaskError::Tool {
+    let tool_error = |detail: String| XtaskError::Tool {
         command: shown.clone(),
-        detail: if e.kind() == std::io::ErrorKind::NotFound {
-            let program = command.get_program().to_string_lossy();
-            format!(
-                "cannot start: {e}; `{program}` is not installed or not on PATH, install it and run the task again"
-            )
-        } else {
-            format!("cannot start: {e}")
-        },
-    })?;
+        detail,
+    };
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            tool_error(if e.kind() == std::io::ErrorKind::NotFound {
+                let program = command.get_program().to_string_lossy();
+                format!(
+                    "cannot start: {e}; `{program}` is not installed or not on PATH, install it and run the task again"
+                )
+            } else {
+                format!("cannot start: {e}")
+            })
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // a tool that exits without reading its input closes the pipe; its exit status says why
+        let _ = stdin.write_all(input);
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| tool_error(format!("cannot read its output: {e}")))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let tail: String = {
@@ -76,10 +104,7 @@ pub fn run(command: &mut Command) -> Result<String> {
                 .skip(chars.len().saturating_sub(2000))
                 .collect()
         };
-        return Err(XtaskError::Tool {
-            command: shown,
-            detail: format!("{}\n{tail}", out.status),
-        });
+        return Err(tool_error(format!("{}\n{tail}", out.status)));
     }
     String::from_utf8(out.stdout).map_err(|e| XtaskError::parse(format!("output of `{shown}`"), e))
 }

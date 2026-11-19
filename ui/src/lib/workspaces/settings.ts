@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// A workspace's own settings as the form shows them: what each control offers and how a choice
-// becomes an override (a value, or `null` to inherit).
+// A workspace's own settings as the table shows them: the value in effect is what each dropdown
+// shows, and a choice becomes an override. Following the global setting again is a separate
+// reset beside the row, so no option has to say "use the global setting" in place of its value.
 import type { components } from "#lib/api/schema.d.ts";
 import { cpuCounts, cpuLabel } from "#lib/settings/cpus.ts";
 import { formatMib } from "./model.ts";
@@ -9,7 +10,7 @@ export type Layer = components["schemas"]["SettingsLayer"];
 export type Source = components["schemas"]["SettingSource"];
 export type Clipboard = components["schemas"]["ClipboardRead"];
 
-/** `""` inherits, anything else is a memory size in MiB. */
+/** The memory sizes offered, in MiB. */
 export const MEMORY_CHOICES_MIB: readonly number[] = [
   2048, 4096, 8192, 12_288, 16_384, 24_576, 32_768,
 ];
@@ -19,83 +20,40 @@ export interface Option<V extends string> {
   label: string;
 }
 
-/** The memory choices, with the current override added when it is not a standard size. */
-export function memoryOptions(
-  override: number | null,
-  globalMib: number,
-): Option<string>[] {
-  const sizes = new Set(MEMORY_CHOICES_MIB);
-  if (override !== null) sizes.add(override);
-  return [
-    { value: "", label: `Use the global default (${formatMib(globalMib)})` },
-    ...[...sizes]
-      .sort((a, b) => a - b)
-      .map((mib) => ({ value: String(mib), label: formatMib(mib) })),
-  ];
+/** The memory sizes, with the one in effect added when it is not a standard size. */
+export function memoryChoices(inEffectMib: number): Option<string>[] {
+  const sizes = new Set([...MEMORY_CHOICES_MIB, inEffectMib]);
+  return [...sizes]
+    .sort((a, b) => a - b)
+    .map((mib) => ({ value: String(mib), label: formatMib(mib) }));
 }
 
-/** `""` follows the global default, anything else is a CPU count. */
-export function cpuOptions(
-  globalCount: number,
-  max: number,
-  override: number | null = null,
-): Option<string>[] {
-  return [
-    {
-      value: "",
-      label: `Use the global default (${cpuLabel(globalCount)})`,
-    },
-    ...cpuCounts(max, override).map((n) => ({
-      value: String(n),
-      label: cpuLabel(n),
-    })),
-  ];
+/** 1 up to the host's maximum, and the count in effect when it is above that. */
+export function cpuChoices(max: number, inEffect: number): Option<string>[] {
+  return cpuCounts(max, inEffect).map((n) => ({
+    value: String(n),
+    label: cpuLabel(n),
+  }));
 }
 
-export const cpusFromChoice = (value: string): number | null =>
-  value === "" ? null : Number(value);
+/** A yes-or-no setting as a dropdown value. */
+export type OnOff = "on" | "off";
 
-export const cpusToChoice = (value: number | null): string =>
-  value === null ? "" : String(value);
+export const onOff = (value: boolean): OnOff => (value ? "on" : "off");
 
-export function memoryFromChoice(value: string): number | null {
-  return value === "" ? null : Number(value);
-}
+export const fromOnOff = (choice: string): boolean => choice === "on";
 
-export const memoryToChoice = (value: number | null): string =>
-  value === null ? "" : String(value);
+/** A local destination or direct SSH: allowed or not. */
+export const ALLOW_OPTIONS: Option<OnOff>[] = [
+  { value: "on", label: "Allowed" },
+  { value: "off", label: "Not allowed" },
+];
 
-/** A tri-state toggle as a select value: inherit, on or off. */
-export type ToggleChoice = "inherit" | "on" | "off";
-
-export const toggleToChoice = (value: boolean | null): ToggleChoice =>
-  value === null ? "inherit" : value ? "on" : "off";
-
-export const toggleFromChoice = (choice: string): boolean | null =>
-  choice === "on" ? true : choice === "off" ? false : null;
-
-export function toggleOptions(globalOn: boolean): Option<ToggleChoice>[] {
-  return [
-    {
-      value: "inherit",
-      label: `Use the global setting (${globalOn ? "allowed" : "not allowed"})`,
-    },
-    { value: "on", label: "Allowed" },
-    { value: "off", label: "Not allowed" },
-  ];
-}
-
-/** The login capture switch: inherit, on or off, in the words of a switch. */
-export function switchOptions(globalOn: boolean): Option<ToggleChoice>[] {
-  return [
-    {
-      value: "inherit",
-      label: `Use the global setting (${globalOn ? "on" : "off"})`,
-    },
-    { value: "on", label: "On" },
-    { value: "off", label: "Off" },
-  ];
-}
+/** A switch: on or off. */
+export const SWITCH_OPTIONS: Option<OnOff>[] = [
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
 
 export const CLIPBOARD_OPTIONS: Option<Clipboard>[] = [
   { value: "ask", label: "Ask me each time" },
@@ -103,24 +61,11 @@ export const CLIPBOARD_OPTIONS: Option<Clipboard>[] = [
   { value: "deny", label: "Never allow" },
 ];
 
-export function clipboardOptions(
-  globalValue: Clipboard,
-): Option<Clipboard | "inherit">[] {
-  const named = CLIPBOARD_OPTIONS.find((o) => o.value === globalValue);
-  return [
-    {
-      value: "inherit",
-      label: `Use the global setting (${named?.label.toLowerCase() ?? globalValue})`,
-    },
-    ...CLIPBOARD_OPTIONS,
-  ];
-}
-
 const SOURCE_WORDS: Record<Source, string> = {
-  workspace: "this workspace",
-  global: "global setting",
+  workspace: "This workspace",
+  global: "Global setting",
   default: "Puddle's default",
 };
 
-/** Where a value in effect comes from, in words for a chip. */
+/** Where a value in effect comes from, in words for the "From" column. */
 export const sourceLabel = (source: Source): string => SOURCE_WORDS[source];

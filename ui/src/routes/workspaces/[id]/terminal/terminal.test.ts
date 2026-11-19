@@ -114,17 +114,46 @@ describe("a workspace that is not running", () => {
   it("says to start it and offers a Start button", async () => {
     url.id = `w-${docs}`;
     render(Page);
-    expect(
-      await screen.findByText("Start the workspace to open a terminal."),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Start and open a terminal" }),
+    );
     expect(workspaceActions.start).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: /New terminal/ })).toBeNull();
+    expect(
+      screen.queryByText(/Start the workspace to open a terminal/),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  });
+
+  it("greys the button and says why while something else is happening to the workspace", async () => {
+    workspaces.list = [
+      workspace(docs, { status: "stopped", busy: "deleting" }),
+    ];
+    url.id = `w-${docs}`;
+    render(Page);
+    expect(
+      await screen.findByRole("button", { name: "Start and open a terminal" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/cannot start right now/)).toBeInTheDocument();
+  });
+
+  it("opens the terminal by itself once the start has made the workspace usable", async () => {
+    url.id = `w-${docs}`;
+    render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Start and open a terminal" }),
+    );
+    expect(screen.queryByRole("tab")).toBeNull();
+    workspaces.list = [workspace(docs, { status: "starting" })];
+    expect(
+      await screen.findByRole("tab", { name: "Terminal 1" }),
+    ).toBeInTheDocument();
+    expect(terminals.sessions).toHaveLength(1);
   });
 
   it("keeps a stopped workspace's ended terminals, with New terminal off", async () => {
     render(Page);
-    await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
     await waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]?.open();
     workspaces.list = [workspace(web, { status: "stopped" })];
@@ -133,9 +162,6 @@ describe("a workspace that is not running", () => {
       await screen.findByText("The workspace stopped; the terminal ended."),
     ).toBeInTheDocument();
     expect(newTerminal()).toBeDisabled();
-    expect(
-      screen.getAllByText("Start the workspace to open a terminal."),
-    ).toHaveLength(1);
     await fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(workspaceActions.start).toHaveBeenCalledTimes(1);
   });
@@ -144,8 +170,6 @@ describe("a workspace that is not running", () => {
 describe("opening and closing", () => {
   it("opens a terminal, connects it at the measured size and labels the sub-tab", async () => {
     render(Page);
-    expect(screen.getByText(/No terminal is open/)).toBeInTheDocument();
-    await fireEvent.click(newTerminal());
     const tab = await screen.findByRole("tab", { name: "Terminal 1" });
     expect(tab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toBeInTheDocument();
@@ -159,7 +183,7 @@ describe("opening and closing", () => {
 
   it("shows several sub-tabs, one in view, and closes one", async () => {
     render(Page);
-    await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
     await fireEvent.click(newTerminal());
     const tabs = await screen.findAllByRole("tab");
     expect(tabs).toHaveLength(2);
@@ -178,11 +202,14 @@ describe("opening and closing", () => {
     );
     expect(screen.queryByRole("tab")).toBeNull();
     expect(newTerminal()).toHaveFocus();
+    // Closing the last one leaves the tab empty with a button; it does not open another at once.
+    expect(screen.getByText(/No terminal is open/)).toBeInTheDocument();
   });
 
   it("moves between sub-tabs with the arrow keys, Home and End", async () => {
     render(Page);
-    for (let i = 0; i < 3; i += 1) await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
+    for (let i = 0; i < 2; i += 1) await fireEvent.click(newTerminal());
     const [one, two, three] = await screen.findAllByRole("tab");
     three?.focus();
     await fireEvent.keyDown(three as HTMLElement, { key: "ArrowRight" });
@@ -202,7 +229,8 @@ describe("opening and closing", () => {
 
   it("turns New terminal off at the limit and says which one holds", async () => {
     render(Page);
-    for (let i = 0; i < 8; i += 1) await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
+    for (let i = 0; i < 7; i += 1) await fireEvent.click(newTerminal());
     await waitFor(() => expect(newTerminal()).toBeDisabled());
     expect(
       screen.getByText(/This workspace has 8 terminals open/),
@@ -215,7 +243,6 @@ describe("opening and closing", () => {
       error: { error: "conflict", message: "this workspace is not running" },
     });
     render(Page);
-    await fireEvent.click(newTerminal());
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "This workspace is not running.",
     );
@@ -225,7 +252,6 @@ describe("opening and closing", () => {
   it("opens in a workspace that is still starting and says it waits", async () => {
     url.id = `w-${boot}`;
     render(Page);
-    await fireEvent.click(newTerminal());
     await waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]?.open();
     expect(
@@ -243,7 +269,7 @@ describe("opening and closing", () => {
 describe("the sub-tab", () => {
   async function open() {
     render(Page);
-    await fireEvent.click(newTerminal());
+    await screen.findByRole("tab", { name: "Terminal 1" });
     await waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0] as FakeSocket;
     socket.open();

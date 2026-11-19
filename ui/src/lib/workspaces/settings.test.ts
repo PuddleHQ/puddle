@@ -1,29 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import {
+  ALLOW_OPTIONS,
   CLIPBOARD_OPTIONS,
-  clipboardOptions,
-  cpuOptions,
-  cpusFromChoice,
-  cpusToChoice,
-  memoryFromChoice,
-  memoryOptions,
-  memoryToChoice,
+  SWITCH_OPTIONS,
+  cpuChoices,
+  fromOnOff,
+  memoryChoices,
+  onOff,
   sourceLabel,
-  toggleFromChoice,
-  switchOptions,
-  toggleOptions,
-  toggleToChoice,
 } from "./settings.ts";
 
 describe("memory", () => {
-  it("offers the global default first, then the sizes in order", () => {
-    const options = memoryOptions(null, 8192);
-    expect(options[0]).toEqual({
-      value: "",
-      label: "Use the global default (8 GiB)",
-    });
-    expect(options.slice(1).map((o) => o.label)).toEqual([
+  it("lists the sizes in order, none of them worded as a default", () => {
+    expect(memoryChoices(8192).map((o) => o.label)).toEqual([
       "2 GiB",
       "4 GiB",
       "8 GiB",
@@ -34,107 +24,54 @@ describe("memory", () => {
     ]);
   });
 
-  it("keeps an override that is not a standard size, in its place", () => {
-    const labels = memoryOptions(5120, 8192).map((o) => o.label);
-    expect(labels).toContain("5 GiB");
+  it("adds the size in effect when it is not a standard one, in its place", () => {
+    const labels = memoryChoices(5120).map((o) => o.label);
     expect(labels.indexOf("5 GiB")).toBeGreaterThan(labels.indexOf("4 GiB"));
     expect(labels.indexOf("5 GiB")).toBeLessThan(labels.indexOf("8 GiB"));
-    expect(memoryOptions(4096, 8192)).toHaveLength(8);
-  });
-
-  it("converts between a choice and an override", () => {
-    expect(memoryFromChoice("")).toBeNull();
-    expect(memoryFromChoice("16384")).toBe(16_384);
-    expect(memoryToChoice(null)).toBe("");
-    expect(memoryToChoice(16_384)).toBe("16384");
+    expect(memoryChoices(4096)).toHaveLength(7);
   });
 });
 
-describe("toggles", () => {
-  it("is inherit, on or off", () => {
-    expect(toggleToChoice(null)).toBe("inherit");
-    expect(toggleToChoice(true)).toBe("on");
-    expect(toggleToChoice(false)).toBe("off");
-    expect(toggleFromChoice("inherit")).toBeNull();
-    expect(toggleFromChoice("on")).toBe(true);
-    expect(toggleFromChoice("off")).toBe(false);
+describe("yes-or-no settings", () => {
+  it("maps a value to its dropdown choice and back", () => {
+    expect(onOff(true)).toBe("on");
+    expect(onOff(false)).toBe("off");
+    expect(fromOnOff("on")).toBe(true);
+    expect(fromOnOff("off")).toBe(false);
   });
 
-  it("names what the global setting is", () => {
-    expect(toggleOptions(false)[0]?.label).toBe(
-      "Use the global setting (not allowed)",
-    );
-    expect(toggleOptions(true)[0]?.label).toBe(
-      "Use the global setting (allowed)",
-    );
-    expect(toggleOptions(true).map((o) => o.value)).toEqual([
-      "inherit",
-      "on",
-      "off",
+  it("shows only the values, with no option that says to follow the global setting", () => {
+    expect(ALLOW_OPTIONS.map((o) => o.label)).toEqual([
+      "Allowed",
+      "Not allowed",
     ]);
-  });
-});
-
-describe("the login capture switch", () => {
-  it("names what the global setting is, in the words of a switch", () => {
-    expect(switchOptions(true)[0]?.label).toBe("Use the global setting (on)");
-    expect(switchOptions(false)[0]?.label).toBe("Use the global setting (off)");
-    expect(switchOptions(true).map((o) => [o.value, o.label])).toEqual([
-      ["inherit", "Use the global setting (on)"],
-      ["on", "On"],
-      ["off", "Off"],
+    expect(SWITCH_OPTIONS.map((o) => o.label)).toEqual(["On", "Off"]);
+    expect(CLIPBOARD_OPTIONS.map((o) => o.value)).toEqual([
+      "ask",
+      "allow",
+      "deny",
     ]);
-  });
-});
-
-describe("clipboard", () => {
-  it("names the global choice in the inherit option", () => {
-    expect(clipboardOptions("ask")[0]).toEqual({
-      value: "inherit",
-      label: "Use the global setting (ask me each time)",
-    });
-    expect(clipboardOptions("deny")[0]?.label).toBe(
-      "Use the global setting (never allow)",
-    );
-    expect(clipboardOptions("ask").slice(1)).toEqual(CLIPBOARD_OPTIONS);
   });
 });
 
 describe("sources", () => {
   it("are said in words", () => {
-    expect(sourceLabel("workspace")).toBe("this workspace");
-    expect(sourceLabel("global")).toBe("global setting");
+    expect(sourceLabel("workspace")).toBe("This workspace");
+    expect(sourceLabel("global")).toBe("Global setting");
     expect(sourceLabel("default")).toBe("Puddle's default");
   });
 });
 
 describe("cpus", () => {
-  it("offers the global default first, then 1 up to the maximum", () => {
-    const options = cpuOptions(2, 32);
-    expect(options[0]).toEqual({
-      value: "",
-      label: "Use the global default (2 CPUs)",
-    });
-    expect(options).toHaveLength(33);
-    expect(options[1]).toEqual({ value: "1", label: "1 CPU" });
-    expect(options[32]).toEqual({ value: "32", label: "32 CPUs" });
+  it("lists 1 up to the maximum", () => {
+    const options = cpuChoices(32, 2);
+    expect(options).toHaveLength(32);
+    expect(options[0]).toEqual({ value: "1", label: "1 CPU" });
+    expect(options[31]).toEqual({ value: "32", label: "32 CPUs" });
   });
 
-  it("has no fixed cap: the maximum is the host's, and a stored count above it stays", () => {
-    expect(cpuOptions(4, 64)).toHaveLength(65);
-    expect(cpuOptions(1, 2).map((o) => o.value)).toEqual(["", "1", "2"]);
-    expect(cpuOptions(1, 2, 6).map((o) => o.value)).toEqual([
-      "",
-      "1",
-      "2",
-      "6",
-    ]);
-  });
-
-  it("maps a choice to an override and back", () => {
-    expect(cpusFromChoice("")).toBeNull();
-    expect(cpusFromChoice("8")).toBe(8);
-    expect(cpusToChoice(null)).toBe("");
-    expect(cpusToChoice(8)).toBe("8");
+  it("has no fixed cap: the maximum is the host's, and a count above it stays", () => {
+    expect(cpuChoices(64, 4)).toHaveLength(64);
+    expect(cpuChoices(2, 6).map((o) => o.value)).toEqual(["1", "2", "6"]);
   });
 });

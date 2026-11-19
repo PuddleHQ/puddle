@@ -45,6 +45,14 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("a workspace's rule sets", () => {
+  it("says the rule sets are loading until the first read is back", () => {
+    const unread = new RuleSetsStore({ api: new FakeRuleSets() as never });
+    render(WorkspaceSets, {
+      props: { store: unread, workspace: "api" },
+    } as never);
+    expect(screen.getByText(/Loading rule sets/)).toBeInTheDocument();
+  });
+
   it("shows each set's colour as a dot before its name", async () => {
     render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
     const work = (await screen.findByText("Work")).closest(".set-dotted");

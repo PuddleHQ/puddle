@@ -78,7 +78,7 @@ test.describe("deciding", () => {
     await ask(backend, "shop", "allow.example.com");
     await openInbox(page, backend);
     const row = rowFor(page, "allow.example.com");
-    await expect(row).toContainText("Workspace shop");
+    await expect(row).toContainText("shop · 1 try");
     await row
       .getByRole("button", { name: "Allow allow.example.com for shop" })
       .click();
@@ -385,7 +385,7 @@ test.describe("live", () => {
     await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("2 pending");
     await ask(backend, "shop", "live.example.com", { repeat: 2 });
-    await expect(rowFor(page, "live.example.com")).toContainText("3 attempts", {
+    await expect(rowFor(page, "live.example.com")).toContainText("3 tries", {
       timeout: CONVERGE_WAIT_MS,
     });
   });
@@ -435,10 +435,7 @@ test.describe("live", () => {
     await backend.installClock(page);
     await openInbox(page, backend);
     await expect(rowFor(page, "clock.example.com")).toContainText(
-      "First seen 5 minutes ago",
-    );
-    await expect(rowFor(page, "clock.example.com")).toContainText(
-      "Last seen just now",
+      "last just now, first 5 minutes ago",
     );
   });
 });
@@ -895,21 +892,24 @@ test.describe("accessibility", () => {
     }
   }
 
-  test("the options cover the more-choices buttons of the rows beside them completely, not all but a sliver", async ({
+  test("the options leave Allow, Deny and the arrow of every row visible, not covering the rows beside them", async ({
     page,
     backend,
   }) => {
     await ask(backend, "shop", "a.axe.example.com");
     await ask(backend, "shop", "b.axe.example.com");
+    await ask(backend, "shop", "c.axe.example.com");
     await openInbox(page, backend);
-    const dialog = await openOptions(rowFor(page, "a.axe.example.com"), page);
+    const dialog = await openOptions(rowFor(page, "b.axe.example.com"), page);
     const edge = (await dialog.boundingBox())!;
     const right = edge.x + edge.width;
-    for (const chevron of await page.locator("[data-more]").all()) {
-      const box = (await chevron.boundingBox())!;
-      expect(right, "the dialog's right edge").toBeGreaterThanOrEqual(
-        box.x + box.width + 2,
-      );
+    const buttons = page
+      .locator("li.req")
+      .getByRole("button", { name: /^(Allow|Deny|More)/ });
+    await expect(buttons).toHaveCount(12); // the three asked here plus the seeded rows, three buttons each
+    for (const button of await buttons.all()) {
+      const box = (await button.boundingBox())!;
+      expect(right, "the dialog's right edge").toBeLessThanOrEqual(box.x);
     }
   });
 

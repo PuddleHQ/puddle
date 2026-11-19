@@ -139,15 +139,18 @@ fn stub_modules() -> tempfile::TempDir {
                newContext: async (o) => {
                  const jar = [];
                  return {
+                 newCDPSession: async (pg) => ({ send: async (m) => { if (m === 'Page.crash') { await pg.keyboard.press('crashed'); } } }),
                  addCookies: async (c) => { if (c.some((k) => k.name === 'exit')) process.exit(3); jar.push(...c); },
                  newPage: async () => {
                    const h = {}; let url = null; const keys = [];
+                   const once = {};
                    return {
                      on: (e, f) => { h[e] = f; },
+                     once: (e, f) => { once[e] = f; if (e === 'crash' && keys.includes('crashed')) f(); },
                      goto: async (u) => { if (u.endsWith('/hang')) await new Promise(() => {}); url = u; h.console({ type: () => 'log', text: () => 'at ' + u }); },
                      waitForFunction: async (e) => { if (e === 'never') { h.pageerror(new Error('never ready')); throw new Error('timed out'); } },
                      evaluate: async (e) => ({ evaluated: e, url, cookies: jar.map(c => c.name), keys, strict: o.ignoreHTTPSErrors }),
-                     keyboard: { press: async (k) => { keys.push(k); } },
+                     keyboard: { press: async (k) => { keys.push(k); }, type: async (t) => { keys.push('typed:' + t); } },
                      close: async () => {},
                    };
                  } };
@@ -232,6 +235,31 @@ async fn a_session_keeps_its_cookies_and_pages_takes_keys_and_closes_them() {
     let err = session.close(first).await.expect_err("closed twice");
     assert!(err.to_string().contains("no open page"), "{err}");
     session.close(second).await.expect("close the second");
+    session.quit().await.expect("quit");
+}
+
+#[tokio::test]
+async fn a_page_takes_typed_text_and_a_crash_removes_it() {
+    let modules = stub_modules();
+    let mut session = stub_client(&modules).session().await.expect("session");
+    let (page, _) = session
+        .open(&PageRequest::new("http://x.localhost:9/a", "ready"))
+        .await
+        .expect("page");
+    session.type_text(page, "echo hi\n").await.expect("typed");
+    let waited = session
+        .wait(page, &PageRequest::new("", "ready").result("r"))
+        .await
+        .expect("wait");
+    assert_eq!(waited.result["keys"], json!(["typed:echo hi\n"]));
+    session.crash(page).await.expect("crash");
+    let err = session
+        .wait(page, &PageRequest::new("", "ready"))
+        .await
+        .expect_err("gone");
+    assert!(err.to_string().contains("no open page"), "{err}");
+    let err = session.crash(page).await.expect_err("crashed twice");
+    assert!(err.to_string().contains("no open page"), "{err}");
     session.quit().await.expect("quit");
 }
 

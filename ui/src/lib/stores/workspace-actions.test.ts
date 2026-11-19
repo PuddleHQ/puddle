@@ -179,6 +179,12 @@ describe("connecting", () => {
     api.overrides["w-up"] = {
       capture_logins: null,
       warn_foreign_credentials: null,
+      editor: {
+        colour_theme: null,
+        font_size: null,
+        extensions: null,
+        keybindings: null,
+      },
       clipboard_read: null,
       direct_ssh: null,
       local_toggles: {

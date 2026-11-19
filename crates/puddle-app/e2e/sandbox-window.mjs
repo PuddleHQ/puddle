@@ -9,7 +9,7 @@
 // browser in this test) and leaves the window where it was, the guest's /proxy/<port>/ links open a
 // guarded window on that port's own origin (<port>.probe.localhost) with the same result, and the
 // editor's "New Window" becomes a second guarded window with the same result.
-// What it does not show: clipboard prompts, zoom keys, the browser shortcuts being off, and a
+// Clipboard reads are clipboard-permission.mjs. What it does not show: zoom keys, the browser shortcuts being off, and a
 // close ending the workspace's extension hosts (unit tests cover the decisions, nobody has watched
 // the rest in a window).
 //

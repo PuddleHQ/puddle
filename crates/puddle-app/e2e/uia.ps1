@@ -23,11 +23,27 @@ $roles = @{
   group = $CT::Group; list = $CT::List; tab = $CT::TabItem; document = $CT::Document; tree = $CT::Tree; treeitem = $CT::TreeItem
 }
 
-function Get-Windows([string]$titleRegex) {
+# The app's process and, with $tree, every process below it (WebView2's browser process shows its own popups, such as the permission prompt).
+function Get-AppPids([bool]$tree) {
+  $pids = @($AppProcessId)
+  if (-not $tree) { return $pids }
+  $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId
+  $grew = $true
+  while ($grew) {
+    $grew = $false
+    foreach ($p in $all) {
+      if (($pids -contains $p.ParentProcessId) -and -not ($pids -contains $p.ProcessId)) { $pids += $p.ProcessId; $grew = $true }
+    }
+  }
+  return $pids
+}
+
+function Get-Windows([string]$titleRegex, [bool]$tree = $false) {
   $children = $AE::RootElement.FindAll($Scope::Children, [System.Windows.Automation.Condition]::TrueCondition)
+  $pids = Get-AppPids $tree
   $found = @()
   foreach ($w in $children) {
-    if ($w.Current.ProcessId -ne $AppProcessId) { continue }
+    if ($pids -notcontains $w.Current.ProcessId) { continue }
     if ($titleRegex -and ($w.Current.Name -notmatch $titleRegex)) { continue }
     $found += $w
   }
@@ -36,7 +52,7 @@ function Get-Windows([string]$titleRegex) {
 
 function Get-Matches($req) {
   $result = @()
-  foreach ($win in (Get-Windows $req.window)) {
+  foreach ($win in (Get-Windows $req.window ([bool]$req.tree))) {
     $conds = @()
     if ($req.role) { $conds += [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, $roles[$req.role]) }
     if ($req.name) { $conds += [System.Windows.Automation.PropertyCondition]::new($AE::NameProperty, [string]$req.name) }
@@ -135,10 +151,18 @@ function Handle($req) {
       [System.Windows.Forms.SendKeys]::SendWait($escaped)
       return @{ found = $true; element = (Describe $e) }
     }
+    'tops' {
+      # Every top-level window on the desktop, whoever owns it, for a failure's diagnosis.
+      $items = @()
+      foreach ($w in $AE::RootElement.FindAll($Scope::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
+        $items += ('pid {0} | {1} | {2}' -f $w.Current.ProcessId, $w.Current.ClassName, $w.Current.Name)
+      }
+      return @{ lines = $items }
+    }
     'dump' {
       # The names under the windows, for a failure's diagnosis (depth-first, capped).
       $lines = @()
-      foreach ($win in (Get-Windows $req.window)) {
+      foreach ($win in (Get-Windows $req.window ([bool]$req.tree))) {
         $lines += "WINDOW $($win.Current.Name)"
         foreach ($e in $win.FindAll($Scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
           if ($lines.Count -gt 600) { break }

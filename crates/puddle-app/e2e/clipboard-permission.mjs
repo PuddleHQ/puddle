@@ -104,8 +104,8 @@ async function session(n, workspace, setting, body) {
   }
 }
 
-/** The prompt's buttons that allow the read, from any window of the app. */
-const allowButtons = (uia) => uia.find({ role: "button", nameRegex: "^Allow" });
+/** The prompt's buttons that allow the read, from any window of the app or of the processes below it (the webview's browser process draws the prompt). */
+const allowButtons = (uia) => uia.find({ role: "button", nameRegex: "^Allow", tree: true });
 const promptShowing = async (uia) => (await allowButtons(uia)).length > 0;
 
 try {
@@ -143,12 +143,14 @@ try {
       const found = await allowButtons(uia);
       return found.length > 0 ? found : false;
     }, 20_000).catch(async (err) => {
-      console.log(`     ${err.message}; the app's windows:\n${(await uia.dump()).join("\n")}`);
+      const tops = (await uia.call({ action: "tops" })).lines ?? [];
+      const below = (await uia.call({ action: "dump", tree: true })).lines ?? [];
+      console.log(`     ${err.message}; every top-level window:\n${tops.join("\n")}\n     the app's windows and what is in them:\n${below.join("\n")}`);
       return [];
     });
     check("ask: the webview's permission prompt shows", buttons.length > 0, JSON.stringify(buttons.map((b) => b.name)));
     if (buttons.length > 0) {
-      await uia.click("the Allow button", { role: "button", name: buttons[0].name });
+      await uia.click("the Allow button", { role: "button", name: buttons[0].name, tree: true });
       const r = await until("the read to settle", async () => {
         const v = await page.evaluate(`Promise.race([window.__read, new Promise((r) => setTimeout(() => r(null), 500))])`);
         return v ?? false;

@@ -956,6 +956,9 @@ async fn start_once(
             }
         }
     }
+    if config.server.kind == ServerKind::CodeServer {
+        defaults::merge_at_start(&config.server, &launch.program, account.as_ref())?;
+    }
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
     let mut child = command(launch, &password, inherited, account.as_ref()).spawn()?;
     tracing::info!(
@@ -991,6 +994,8 @@ async fn start_once(
     }
     status
 }
+
+mod defaults;
 
 #[cfg(test)]
 mod tests;

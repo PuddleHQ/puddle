@@ -194,6 +194,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "empty",
             "lived-in",
             "corporate-network",
+            "company-proxy-env",
             "company-network",
             "network-trouble",
             "volume-missing",

@@ -67,7 +67,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 19] = [
+const BUILT_IN: [(&str, &str); 20] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -83,6 +83,10 @@ const BUILT_IN: [(&str, &str); 19] = [
     (
         "corporate-network",
         include_str!("../../../../ui/e2e/fixtures/corporate-network.json"),
+    ),
+    (
+        "company-proxy-env",
+        include_str!("../../../../ui/e2e/fixtures/company-proxy-env.json"),
     ),
     (
         "company-network",

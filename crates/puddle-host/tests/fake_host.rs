@@ -15,6 +15,9 @@ mod support;
 mod attach_places;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
+#[cfg(unix)]
+#[path = "fake_host/company_proxy.rs"]
+mod company_proxy;
 #[path = "fake_host/contract.rs"]
 mod contract;
 #[path = "fake_host/credential_store_and_shell_init.rs"]
@@ -1172,6 +1175,9 @@ struct Rig {
     deletes: Arc<HeldDeletes>,
     /// The drive the host reads its free space from, when a test sets one; else a fixed figure.
     free_space: Mutex<Option<Arc<dyn puddle_host::Space>>>,
+    /// The route discovery and the names the host resolves itself, when a test sets them; else
+    /// the config's direct mode and no names.
+    network: Mutex<Option<(Arc<Discovery>, Arc<puddle_proxy::testing::StaticResolver>)>>,
 }
 
 impl Rig {
@@ -1205,6 +1211,7 @@ impl Rig {
             indexed: AtomicBool::new(false),
             deletes: Arc::default(),
             free_space: Mutex::new(None),
+            network: Mutex::new(None),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
         // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
@@ -1305,6 +1312,10 @@ impl Rig {
         }
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
+        if let Some((discovery, resolver)) = self.network.lock().unwrap().clone() {
+            options.discovery = Some(discovery);
+            options.resolver = Some(resolver);
+        }
         Host::start(
             prepared,
             &FakeFactory::new(&self.runtime, &self.log),

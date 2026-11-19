@@ -236,6 +236,17 @@ fn an_extra_file_beside_the_right_text_is_removed_and_reported() {
 }
 
 #[test]
+fn what_an_interrupted_write_left_is_cleared_and_not_reported_as_a_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let (copies, _) = copies(dir.path());
+    copies.publish(&id("w1")).unwrap();
+    let leftover = dir.path().join("w1/.init.sh.new");
+    fs::write(&leftover, "half").unwrap();
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Clean);
+    assert!(!leftover.exists());
+}
+
+#[test]
 fn a_folder_that_cannot_be_written_says_which_workspace_and_why() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("in-the-way");

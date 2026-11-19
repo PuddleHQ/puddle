@@ -143,6 +143,11 @@ impl StoreGate {
             seen.retain(|_, at| now.duration_since(*at) < self.refusal_every);
         }
         let key = (workspace.clone(), cause);
+        // A table still full of refusals of the last minute is a flood: nothing more is
+        // remembered or written until it drains, so the cap is a cap.
+        if seen.len() >= REFUSALS_REMEMBERED && !seen.contains_key(&key) {
+            return false;
+        }
         if seen
             .get(&key)
             .is_some_and(|at| now.duration_since(*at) < self.refusal_every)

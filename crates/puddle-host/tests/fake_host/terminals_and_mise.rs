@@ -104,6 +104,93 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
     host.shutdown().await;
 }
 
+/// Opens a terminal in `workspace`, asks the stand-in shell which sandbox serves it, and closes it.
+async fn sandbox_a_terminal_reaches(
+    service: &puddle_host::HostWorkspaces<FakeRuntime>,
+    workspace: &str,
+) -> String {
+    let id = WorkspaceId::new(workspace).unwrap();
+    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
+    let mut link = puddle_api::TerminalService::open(service, &id, size)
+        .await
+        .unwrap();
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(b"hostname\r".to_vec()))
+        .await
+        .unwrap();
+    let mut seen = String::new();
+    loop {
+        let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
+            .await
+            .unwrap()
+            .expect("the terminal stays open until the answer");
+        if let puddle_api::TerminalOutput::Bytes(b) = item {
+            seen.push_str(&String::from_utf8_lossy(&b));
+            // The shell echoes the typed line, then answers with the name and a new prompt.
+            if let Some((_, answer)) = seen.split_once("hostname\r\n")
+                && let Some((name, _)) = answer.split_once("\r\n")
+            {
+                return name.to_owned();
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_opened_for_one_of_two_running_workspaces_runs_in_that_workspaces_sandbox() {
+    let rig = Rig::named_ids();
+    rig.runtime.serve_terminals();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "alpha").await;
+    create(&api, &mut events, "bravo").await;
+    let service = host.workspaces();
+
+    // Each name reaches its own sandbox, in either order and again, so a terminal that always
+    // went to the first or the last workspace, or swapped the two, fails.
+    let mut reached = Vec::new();
+    for workspace in ["alpha", "bravo", "alpha", "bravo", "bravo", "alpha"] {
+        reached.push((
+            workspace,
+            sandbox_a_terminal_reaches(service, workspace).await,
+        ));
+    }
+    let sandbox_of = |workspace: &str| {
+        let id = WorkspaceId::new(workspace).unwrap();
+        rig.runtime
+            .calls()
+            .into_iter()
+            .find_map(|c| {
+                (c.op == Op::Create && c.target.as_deref().is_some_and(|t| t.contains(id.as_str())))
+                    .then_some(c.target)
+                    .flatten()
+            })
+            .expect("the workspace's sandbox was created")
+    };
+    let (alpha, bravo) = (sandbox_of("alpha"), sandbox_of("bravo"));
+    assert_ne!(alpha, bravo);
+    for (workspace, sandbox) in &reached {
+        let want = if *workspace == "alpha" {
+            &alpha
+        } else {
+            &bravo
+        };
+        assert_eq!(sandbox, want, "the terminal opened for {workspace}");
+    }
+
+    // The runtime saw the terminals' connections on the same two sandboxes and no other.
+    let served: std::collections::BTreeSet<String> = rig
+        .runtime
+        .calls()
+        .into_iter()
+        .filter(|c| c.op == Op::ServeSsh)
+        .filter_map(|c| c.target)
+        .collect();
+    assert!(served.is_superset(&[alpha, bravo].into()), "{served:?}");
+    host.shutdown().await;
+}
+
 const MISE_SUDOERS: &str = "/etc/sudoers.d/puddle-mise";
 
 /// The variables the latest start gave the sandbox, as (name, value).

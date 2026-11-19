@@ -1158,7 +1158,7 @@ impl Sandbox for FakeSandbox {
             message: e.to_string(),
         };
         if self.runtime.lock().terminals {
-            return pty::serve(stream)
+            return pty::serve_for(stream, self.name.as_str())
                 .await
                 .map_err(|message| ComputeError::Runtime {
                     op: "serve ssh",

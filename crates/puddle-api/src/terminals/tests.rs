@@ -47,6 +47,25 @@ fn a_ticket_already_used_keeps_its_place_while_new_ones_are_made() {
     assert_eq!(registry.claim(&a, first, b"t1"), None);
 }
 
+#[tokio::test]
+async fn the_fake_shell_of_each_workspace_names_that_workspace() {
+    let fake = FakeTerminals::new();
+    for name in ["alpha", "bravo"] {
+        let mut link = fake.open(&id(name), size()).await.unwrap();
+        link.input
+            .send(TerminalInput::Bytes(b"hostname\r".to_vec()))
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        while !seen.contains(&format!("\r\n{name}\r\n")) {
+            let Some(TerminalOutput::Bytes(bytes)) = link.output.recv().await else {
+                panic!("the shell ended before it answered: {seen:?}");
+            };
+            seen.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_ticket_works_once_for_its_own_terminal_within_thirty_seconds() {
     let registry = Registry::default();

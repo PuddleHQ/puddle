@@ -104,7 +104,13 @@ impl GitRig {
 
     /// As [`Self::new`], with a host the options describe.
     pub(crate) async fn with_options(options: GitHostOptions) -> Self {
-        Self::build(GitHost::start_with(&options).await, None).await
+        Self::build(GitHost::start_with(&options).await, None, None).await
+    }
+
+    /// As [`Self::new`], with the proxy reaching the host at `reach` (a link in front of it that
+    /// the test controls) instead of at the host's own address.
+    pub(crate) async fn behind(host: GitHost, reach: SocketAddr) -> Self {
+        Self::build(host, None, Some(reach)).await
     }
 
     /// As [`Self::new`], with the proxy's upstream leg going through the company proxy that the
@@ -124,10 +130,10 @@ impl GitRig {
         auth: Arc<dyn ProxyAuth>,
         trust: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
     ) -> Self {
-        Self::build(host, Some((hops, auth, trust))).await
+        Self::build(host, Some((hops, auth, trust)), None).await
     }
 
-    async fn build(host: GitHost, via: Option<Via>) -> Self {
+    async fn build(host: GitHost, via: Option<Via>, reach: Option<SocketAddr>) -> Self {
         host.accept_token(WORK);
         host.accept_token(PERSONAL);
         // Private: need a token. Public: anyone reads, a push needs a token.
@@ -169,7 +175,7 @@ impl GitRig {
         );
         let mut proxy = Proxy::new(world.store.clone(), Arc::new(NullSink))
             .with_connection_log(world.store.clone())
-            .with_resolver(Arc::new(Fixed(host.addr())))
+            .with_resolver(Arc::new(Fixed(reach.unwrap_or_else(|| host.addr()))))
             .with_address_check(Arc::new(AnyAddress))
             .with_termination(
                 terminations as Arc<dyn puddle_proxy::TerminationSource>,

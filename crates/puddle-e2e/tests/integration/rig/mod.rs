@@ -4,12 +4,16 @@
 
 #[cfg(unix)]
 mod ntlm;
+#[cfg(target_os = "linux")]
+mod link_shim;
 mod origin;
 #[cfg(unix)]
 mod sandbox;
 
 #[cfg(unix)]
 pub(crate) use ntlm::*;
+#[cfg(target_os = "linux")]
+pub(crate) use link_shim::*;
 pub(crate) use origin::*;
 #[cfg(unix)]
 pub(crate) use sandbox::*;

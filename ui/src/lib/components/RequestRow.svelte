@@ -94,7 +94,9 @@
     <p class="blocked">
       <b>{LOCAL_LABELS[blockedBy]}</b> destinations are switched off, so this
       can't be approved yet. Turn on
-      <a href="/settings#local-destinations">{LOCAL_LABELS[blockedBy]}</a>
+      <a href="/settings/network#local-destinations"
+        >{LOCAL_LABELS[blockedBy]}</a
+      >
       in Settings to make it approvable; it will still need your approval after that.
     </p>
   {/if}

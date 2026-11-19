@@ -51,12 +51,16 @@
       <p class="note">
         {#if singleKeys}
           A, D, J and K act on the marked request.
-          <a class="link-block" href="/settings#s-inbox"
+          <a
+            class="link-block"
+            href="/settings/notifications#set-confirm-global"
             >Turn the single keys off in Settings</a
           >
         {:else}
           The single keys A, D, J and K are off.
-          <a class="link-block" href="/settings#s-inbox"
+          <a
+            class="link-block"
+            href="/settings/notifications#set-confirm-global"
             >Turn them on in Settings</a
           >
         {/if}

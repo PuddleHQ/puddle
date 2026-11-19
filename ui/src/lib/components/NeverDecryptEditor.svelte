@@ -59,9 +59,14 @@
     bind:value={text}
     oninput={() => (saved = false)}></textarea>
   <div class="row">
-    <button type="submit" class="btn" disabled={working || unchanged}
-      >Keep names</button
-    >
+    {#if !unchanged}
+      <button
+        type="submit"
+        class="btn primary"
+        aria-label="Save {label}"
+        disabled={working}>Save</button
+      >
+    {/if}
     <span aria-live="polite">
       {#if saved}<span class="saved">Saved.</span>{/if}
       {#if failure}<span class="error" role="alert">{failure}</span>{/if}

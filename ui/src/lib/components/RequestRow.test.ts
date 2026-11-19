@@ -112,7 +112,7 @@ describe("RequestRow", () => {
     expect(note).toHaveTextContent("Private networks");
     expect(
       screen.getByRole("link", { name: "Private networks" }),
-    ).toHaveAttribute("href", "/settings#local-destinations");
+    ).toHaveAttribute("href", "/settings/network#local-destinations");
   });
 
   it("says a company-network destination is on the company network, why, and opens that workspace's switch", () => {

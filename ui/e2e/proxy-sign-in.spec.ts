@@ -13,7 +13,7 @@ test("a stored proxy sign-in shows by proxy and user in Settings and on the netw
 }) => {
   await backend.control.reset("corporate-network");
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/network");
   await expect(page.getByText("No proxy sign-in is stored.")).toBeVisible();
 
   await page
@@ -22,7 +22,7 @@ test("a stored proxy sign-in shows by proxy and user in Settings and on the netw
   await page.getByLabel("User name").fill("svc-alice");
   await page.getByLabel("Password").fill(PASSWORD);
   await expectNoAxeViolations(page);
-  await page.getByRole("button", { name: "Keep sign-in" }).click();
+  await page.getByRole("button", { name: "Save proxy sign-in" }).click();
 
   const stored = page.getByRole("list", { name: "Stored proxy sign-ins" });
   await expect(stored).toContainText("proxy-a.corp.example:8080");
@@ -36,7 +36,7 @@ test("a stored proxy sign-in shows by proxy and user in Settings and on the netw
   await expect(sign).toContainText("svc-alice");
   await expect(page.locator("body")).not.toContainText(PASSWORD);
 
-  await page.goto("/settings");
+  await page.goto("/settings/network");
   await page
     .getByRole("button", {
       name: "Remove the sign-in for proxy-a.corp.example:8080",

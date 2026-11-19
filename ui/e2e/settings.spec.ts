@@ -225,9 +225,11 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
     await expect(global).toHaveCount(0);
     await page.goto("/workspaces/web-shop/settings");
     await expect(
-      page.getByRole("heading", { level: 2, name: "Clipboard" }),
+      page.getByRole("table", { name: "Settings of web-shop" }),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Tools" })).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "Tools" })).toHaveCount(
+      0,
+    );
     await expect(
       page.getByLabel("Manage this workspace's tools with mise"),
     ).toHaveCount(0);
@@ -238,12 +240,16 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
 
   // On: the workspace tab has the two switches.
   await page.goto("/workspaces/web-shop/settings");
-  const mise = page.getByLabel("Manage this workspace's tools with mise");
-  const code = page.getByLabel("Let mise run the repository's own code");
-  await expect(mise).toBeChecked();
-  await expect(code).toBeChecked();
+  const mise = page.getByLabel("Manage this workspace's tools with mise", {
+    exact: true,
+  });
+  const code = page.getByLabel("Let mise run the repository's own code", {
+    exact: true,
+  });
+  await expect(mise).toHaveValue("on");
+  await expect(code).toHaveValue("on");
   // A workspace value is kept while the global switch is off, and never turns it back on.
-  await code.uncheck();
+  await code.selectOption("off");
   await expect(page.getByText("Running repository code saved.")).toBeVisible();
 
   await page.goto("/settings");
@@ -257,11 +263,13 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
   // Off: the workspace tab loses both switches (and its section).
   await page.goto("/workspaces/web-shop/settings");
   await expect(
-    page.getByRole("heading", { level: 2, name: "Clipboard" }),
+    page.getByRole("table", { name: "Settings of web-shop" }),
   ).toBeVisible();
   await expect(mise).toHaveCount(0);
   await expect(code).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Tools" })).toHaveCount(0);
+  await expect(page.getByRole("columnheader", { name: "Tools" })).toHaveCount(
+    0,
+  );
   const view = await request.get("/api/settings/workspaces/web-shop", {
     headers: auth(backend),
   });
@@ -275,8 +283,8 @@ test("the global mise switch is on, is kept after Save, and takes the tool switc
   await global.check();
   await pressSave(page);
   await page.goto("/workspaces/web-shop/settings");
-  await expect(mise).toBeChecked();
-  await expect(code).not.toBeChecked();
+  await expect(mise).toHaveValue("on");
+  await expect(code).toHaveValue("off");
 });
 
 test.describe("default CPUs", () => {

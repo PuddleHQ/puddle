@@ -43,7 +43,7 @@
 
 <div class="head">
   <div>
-    <p class="crumb"><a href="/settings#s-net">Settings</a> /</p>
+    <p class="crumb"><a href="/settings/this-computer">Settings</a> /</p>
     <h1 bind:this={heading} tabindex="-1">App errors</h1>
     <p class="sub">
       Errors Puddle's pages hit that no code expected, since Puddle started.

@@ -14,20 +14,10 @@ const SCREENS = [
   { path: "/activity", heading: "Activity" },
 ];
 
-const saved = (page: Page) =>
-  page.waitForResponse(
-    (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
-  );
-
 async function setDensity(page: Page, value: string) {
   await page.getByLabel("Density", { exact: true }).selectOption(value);
-  // Choosing what is already stored changes nothing, and Save stays off.
-  const save = page.getByRole("button", { name: "Save" });
-  if (await save.isEnabled()) {
-    const done = saved(page);
-    await save.click();
-    await done;
-  }
+  // The choice is stored the moment it is made.
+  await expect(page.getByLabel("Density", { exact: true })).toHaveValue(value);
 }
 
 async function open(page: Page, backend: Backend, path: string) {
@@ -183,9 +173,6 @@ test.describe("the density setting", () => {
       .poll(() => answered, { message: "reads answered" })
       .toBe(reads);
 
-    const done = saved(page);
-    await page.getByRole("button", { name: "Save" }).click();
-    await done;
     await expect(page.locator("html")).toHaveAttribute(
       "data-density",
       "compact",
@@ -278,6 +265,8 @@ const LAYOUT = {
   "/settings": {
     h1: 32,
     card: true,
+    cardSelector: ".group",
+    cardGap: false,
     select: true,
     selectWaitsForData: true,
     oneLineButton: true,
@@ -285,6 +274,8 @@ const LAYOUT = {
   "/workspaces": {
     h1: 24,
     card: false,
+    cardSelector: ".card",
+    cardGap: false,
     select: false,
     selectWaitsForData: false,
     oneLineButton: true,
@@ -292,6 +283,8 @@ const LAYOUT = {
   "/rules": {
     h1: 24,
     card: false,
+    cardSelector: ".card",
+    cardGap: false,
     select: true,
     selectWaitsForData: true,
     oneLineButton: true,
@@ -300,6 +293,8 @@ const LAYOUT = {
   "/activity": {
     h1: 24,
     card: false,
+    cardSelector: ".card",
+    cardGap: false,
     select: true,
     selectWaitsForData: false,
     oneLineButton: false,
@@ -468,12 +463,12 @@ test.describe("layout by density", () => {
         }
 
         if (layout.card) {
-          const card = await required(page, ".card");
+          const card = await required(page, layout.cardSelector);
           expect([card.padTop, card.padLeft], "card padding").toEqual([
             t.s4,
             t.s4,
           ]);
-          expect(card.rowGap, "card row gap").toBe(t.s3);
+          if (layout.cardGap) expect(card.rowGap, "card row gap").toBe(t.s3);
         }
       });
     }

@@ -1017,7 +1017,22 @@ const BACKUPS_KEPT: usize = 2;
 /// One row of `PRAGMA foreign_key_check`: (child table, child rowid, parent table, constraint).
 type Violation = (String, Option<i64>, String, i64);
 
+/// How long an upgrade waits for another process that holds the file (the CLI or a host that is
+/// upgrading it too). The normal write wait is 5 s; an upgrade can run far longer, and the
+/// process that lost the race has nothing to serve until the file is current.
+const UPGRADE_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
 fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
+    let normal: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
+    conn.busy_timeout(UPGRADE_WAIT)?;
+    let result = migrate_loop(conn, migrations);
+    let restored = conn.busy_timeout(std::time::Duration::from_millis(
+        u64::try_from(normal).unwrap_or(0),
+    ));
+    result.and_then(|start| restored.map(|()| start).map_err(StoreError::from))
+}
+
+fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     loop {
         let start = current_version(conn, supported)?;
@@ -1163,6 +1178,46 @@ fn backup_path(db: &Path, version: u32) -> PathBuf {
     let mut name = db.as_os_str().to_owned();
     name.push(format!(".pre-v{version}"));
     PathBuf::from(name)
+}
+
+/// A half-made copy nobody has written to for this long belongs to a process that died (a live
+/// `VACUUM INTO` keeps growing its file).
+const STALE_PARTIAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// A copy idle for [`STALE_PARTIAL`] or longer is a crash leftover.
+fn partial_copy_is_stale(idle: std::time::Duration) -> bool {
+    idle >= STALE_PARTIAL
+}
+
+/// Deletes the `<file>.pre-v<N>.<pid>-<n>.partial` files a crash during the pre-upgrade copy
+/// left next to `db`. A file written to within [`STALE_PARTIAL`] may be another process's copy in
+/// progress and stays. Failures are logged; the open goes on.
+pub(crate) fn remove_stale_partial_copies(db: &Path) {
+    let dir = db
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let prefix = format!(
+        "{}.pre-v",
+        db.file_name().unwrap_or_default().to_string_lossy()
+    );
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with(&prefix) && name.ends_with(".partial")) {
+            continue;
+        }
+        let idle = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|written| written.elapsed().ok());
+        if !idle.is_some_and(partial_copy_is_stale) {
+            continue;
+        }
+        if let Err(error) = std::fs::remove_file(entry.path()) {
+            tracing::warn!(%error, path = %entry.path().display(), "half-made upgrade copy not deleted");
+        }
+    }
 }
 
 /// Deletes all but the newest [`BACKUPS_KEPT`] copies next to `db`.

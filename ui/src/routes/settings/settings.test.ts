@@ -14,26 +14,40 @@ const api = await vi.hoisted(async () => {
   return new mod.FakeSettings();
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
-const nav = vi.hoisted(() => ({
-  hooks: [] as ((n: { cancel: () => void; willUnload: boolean }) => void)[],
-}));
-vi.mock("$app/navigation", () => ({
-  beforeNavigate: (hook: (typeof nav.hooks)[number]) => nav.hooks.push(hook),
+vi.mock("$app/state", () => ({
+  page: {
+    url: new URL("http://127.0.0.1/settings/appearance"),
+    status: 200,
+    error: null,
+  },
 }));
 
 import { report } from "#lib/testing/fake-network.ts";
+import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
-import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
-import Page from "./+page.svelte";
+import Appearance from "./(pages)/appearance/+page.svelte";
+import EditorAndGit from "./(pages)/editor-and-git/+page.svelte";
+import Network from "./(pages)/network/+page.svelte";
+import Notifications from "./(pages)/notifications/+page.svelte";
+import ThisComputer from "./(pages)/this-computer/+page.svelte";
+import Workspaces from "./(pages)/workspaces/+page.svelte";
+
+const ALL = [
+  Appearance,
+  Notifications,
+  Workspaces,
+  Network,
+  EditorAndGit,
+  ThisComputer,
+];
 
 beforeEach(() => {
-  nav.hooks = [];
   api.reset();
   globalSettings.view = null;
   globalSettings.consents = null;
@@ -52,20 +66,27 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** Every page of Settings at once, in the real frame, so a test reaches any setting by its label. */
+function show() {
+  return render(SettingsHost, { props: { pages: ALL } });
+}
+
 async function open() {
-  render(Page);
+  show();
   await screen.findByRole("heading", { level: 2, name: "Appearance" });
 }
 
 // The licence test is the first to open "Third-party licences", which needs jsdom's queued `toggle`
 // event, vitest's first load of the notices file and the first render of its text. Under load
 // those cold steps outlasted that test's one-second wait, so open it once here, before the tests.
-// The waits are long on purpose: nothing is asserted about speed, and a slow warm-up must not
-// fail the whole file at collection.
 {
   const slow = { timeout: 30_000 };
-  render(Page);
-  await screen.findByRole("heading", { level: 2, name: "About" }, slow);
+  show();
+  await screen.findByRole(
+    "heading",
+    { level: 2, name: "Privacy and about" },
+    slow,
+  );
   await fireEvent.click(screen.getByText("Third-party licences"));
   await screen.findByLabelText(
     "Third-party licences",
@@ -82,16 +103,21 @@ async function choose(label: string | RegExp, value: string) {
   await fireEvent.change(select);
 }
 
-/** Presses Save and waits for the answer. */
-async function save(says: string | RegExp = "Settings saved.") {
-  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await screen.findByText(says);
-}
-
 const putBodies = () =>
   api.calls
     .map((c, i) => [c, api.bodies[i]] as const)
     .filter(([c]) => c === "PUT /api/settings");
+
+/**
+ * Lets every change in flight finish: presses the Save button of a typed value when one shows (the
+ * Save button of a field, never a bar), then waits until no row says "Saving".
+ */
+async function save(says?: string | RegExp) {
+  const typed = screen.queryAllByRole("button", { name: /^Save / });
+  for (const button of typed) await fireEvent.click(button);
+  await waitFor(() => expect(screen.queryByText(/^Saving/)).toBeNull());
+  if (says) await screen.findByText(says);
+}
 
 describe("the mise switch", () => {
   it("is on by default and a save sends it as the global tools switch", async () => {
@@ -124,12 +150,16 @@ describe("the mise switch", () => {
     api.miseAvailable = true;
   });
 
-  it("sends nothing for a switch put back to what is stored", async () => {
+  it("sends each flip on its own, so flipping back stores the first value again", async () => {
     await open();
     const box = screen.getByLabelText("Manage tools with mise in workspaces");
     await fireEvent.click(box);
+    await save();
+    expect(api.tools.mise).toBe(false);
     await fireEvent.click(box);
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await save();
+    expect(api.tools.mise).toBe(true);
+    expect(putBodies()).toHaveLength(2);
   });
 });
 
@@ -163,22 +193,23 @@ describe("the screen", () => {
       .map((h) => h.textContent);
     expect(names).toEqual([
       "Appearance",
-      "App icon",
-      "Startup",
       "Notifications",
+      "Also notify when",
       "Inbox",
       "Workspaces",
       "Disk space",
-      "Activity log",
-      "SSH agent",
-      "Network",
-      "Browser VS Code",
-      "Git and credentials",
       "Environment",
+      "Proxy",
+      "Local destinations",
+      "Decrypting traffic",
+      "Browser VS Code",
+      "Git and SSH",
+      "Startup and window",
       "Devices and sign-in",
       "Back up",
-      "Privacy",
-      "About",
+      "Activity log",
+      "Checks and errors",
+      "Privacy and about",
     ]);
     expect(screen.getByLabelText("Default memory")).toHaveValue("4096");
     expect(screen.getByLabelText("Theme")).toHaveValue("system");
@@ -208,39 +239,6 @@ describe("the screen", () => {
     ).toBeInTheDocument();
   });
 
-  it("says when the settings can't be read, and when a newer Puddle wrote them", async () => {
-    api.down = true;
-    render(Page);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Couldn't read Puddle's settings.",
-    );
-    cleanup();
-    api.down = false;
-    globalSettings.status = "loading";
-    api.refuse.set("GET /api/settings", {
-      status: 409,
-      error: "newer_settings",
-      message: "newer",
-    });
-    render(Page);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /newer Puddle\. Update Puddle/,
-    );
-  });
-
-  it("shows why the settings can't be read when the API says", async () => {
-    api.refuse.set("GET /api/settings", {
-      status: 409,
-      error: "settings_unreadable",
-      message:
-        "Puddle cannot read the global settings: global settings must be an object",
-    });
-    render(Page);
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Couldn't read Puddle's settings.");
-    expect(alert).toHaveTextContent("global settings must be an object");
-  });
-
   it("lists the stored fields it doesn't know, and nothing when there are none", async () => {
     await open();
     expect(screen.queryByText(/fields this Puddle doesn't know/)).toBeNull();
@@ -266,272 +264,45 @@ describe("the screen", () => {
   });
 });
 
-describe("explicit Save", () => {
-  it("starts clean: Save and Discard are off and nothing is sent until Save", async () => {
-    await open();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
-    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await choose("Default memory", "16384");
-    expect(screen.getByText(/You have unsaved changes/)).toBeInTheDocument();
-    expect(putBodies()).toHaveLength(0);
-    expect(api.ui.sound).toBeNull();
-  });
-
-  it("holds an automatic reload while the draft has edits, and lets it go after Discard or unmount", async () => {
-    await open();
-    expect(hasUnsavedEdits()).toBe(false);
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(hasUnsavedEdits()).toBe(false));
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await waitFor(() => expect(hasUnsavedEdits()).toBe(true));
-    cleanup();
-    expect(hasUnsavedEdits()).toBe(false);
-  });
-
-  it("shows the company network switch right under private networks, off, with its words", async () => {
-    await open();
-    const boxes = screen
-      .getAllByRole("checkbox")
-      .filter((b) => b.id.startsWith("set-local-"))
-      .map((b) => b.id);
-    expect(boxes).toEqual([
-      "set-local-loopback",
-      "set-local-private",
-      "set-local-company_network",
-      "set-local-link_local",
-      "set-local-metadata",
-      "set-local-special",
-    ]);
-    expect(screen.getByLabelText("Company network")).not.toBeChecked();
-    expect(
-      screen.getByText(
-        /VPN, private-access client or DNS suffixes mark as internal/,
-      ),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByLabelText("Company network"));
-    await save();
-    expect(api.layer.local_toggles.company_network).toBe(true);
-    expect(api.layer.local_toggles.private).toBeNull();
-  });
-
-  it("sends every edit as one change", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await fireEvent.click(screen.getByLabelText("Private networks"));
-    await choose("Closing the window", "quit");
-    await save();
-    expect(putBodies()).toHaveLength(1);
-    expect(api.ui.sound).toBe(true);
-    expect(api.ui.close_behaviour).toBe("quit");
-    expect(api.layer.local_toggles.private).toBe(true);
-    expect(api.layer.local_toggles.loopback).toBeNull();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    // With nothing left in the draft, the controls show what was stored.
-    expect(screen.getByLabelText("Sound")).toBeChecked();
-    expect(screen.getByLabelText("Private networks")).toBeChecked();
-    expect(screen.getByLabelText("Closing the window")).toHaveValue("quit");
-  });
-
-  it("names the saved settings that apply at the next start", async () => {
-    await open();
-    expect(
-      screen.getAllByText("Applies when a workspace next starts."),
-    ).toHaveLength(3);
-    await choose("Default memory", "16384");
-    expect(
-      screen.getByText(/Default memory apply when a workspace next starts/),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await save(
-      "Settings saved. Default memory apply when a workspace next starts.",
-    );
-    expect(api.layer.memory).toBe(16_384);
-  });
-
-  it("sets the default CPU count from 1 up to the computer's cores and says a running workspace keeps its own", async () => {
-    await open();
-    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
-    expect(cpus).toHaveValue("4");
-    expect([...cpus.options].map((o) => o.value)).toEqual(
-      Array.from({ length: 16 }, (_, i) => String(i + 1)),
-    );
-    expect(cpus.options[0]?.text).toBe("1 CPU");
-    expect(cpus.options[3]?.text).toBe("4 CPUs");
-    expect(
-      screen.getByText(/A running workspace keeps the count it started with/),
-    ).toBeInTheDocument();
-    await choose("Default CPUs", "6");
-    expect(
-      screen.getByText(/Default CPUs apply when a workspace next starts/),
-    ).toBeInTheDocument();
-    await save(
-      "Settings saved. Default CPUs apply when a workspace next starts.",
-    );
-    expect(api.layer.cpus).toBe(6);
-    expect(screen.getByLabelText("Default CPUs")).toHaveValue("6");
-  });
-
-  it("takes the CPU maximum from the setting, not from a fixed 32, and saves a new one", async () => {
-    api.hostCpus = 64;
-    await open();
-    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
-    expect(cpus.options).toHaveLength(64);
-    const max = screen.getByLabelText(
-      "Most CPUs a workspace may have",
-    ) as HTMLInputElement;
-    expect(max.value).toBe("");
-    expect(max.placeholder).toBe("64");
-    await fireEvent.change(max, { target: { value: "6" } });
-    await save("Settings saved.");
-    expect(api.limits.max_cpus).toBe(6);
-    expect(
-      (screen.getByLabelText("Default CPUs") as HTMLSelectElement).options,
-    ).toHaveLength(6);
-    await fireEvent.change(max, { target: { value: "" } });
-    expect(max.value).toBe("");
-    await save("Settings saved.");
-    expect(api.limits.max_cpus).toBeNull();
-  });
-
-  it("keeps the CPU maximum when another setting is saved", async () => {
-    api.limits = { max_cpus: 9 };
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await save("Settings saved.");
-    expect(api.limits.max_cpus).toBe(9);
-  });
-
-  it("says nothing about a restart for settings that apply at once", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await save("Settings saved.");
-    expect(screen.queryByText(/next starts\.$/, { selector: "p" })).toBeNull();
-  });
-
-  it("drops an edit that puts a value back to what is stored", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  });
-
-  it("Discard puts every control back to what is stored", async () => {
-    await open();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await choose("Default memory", "16384");
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(screen.getByLabelText("Sound")).not.toBeChecked();
-    expect(screen.getByLabelText("Default memory")).toHaveValue("8192");
-    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
-    expect(putBodies()).toHaveLength(0);
-  });
-
-  it("keeps the edits and says why when the save is refused", async () => {
-    await open();
-    api.refuse.set("PUT /api/settings", {
-      status: 422,
-      error: "invalid",
-      message: "no thanks",
-    });
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("no thanks");
-    expect(screen.getByLabelText("Sound")).toBeChecked();
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(api.ui.sound).toBeNull();
-  });
-
-  it("keeps the edit when another client changed the settings, shows theirs, and saves the edit on top", async () => {
-    await open();
-    api.ui = { ...api.ui, badge: false };
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "changed somewhere else",
-    );
-    expect(screen.getByLabelText("Sound")).toBeChecked();
-    expect(api.ui.sound).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(api.ui.sound).toBe(true));
-    expect(api.ui.badge).toBe(false);
-  });
-
-  it("blocks leaving with unsaved edits, and lets go once they are saved", async () => {
-    await open();
-    const leave = () => {
-      let cancelled = false;
-      for (const hook of nav.hooks)
-        hook({ cancel: () => (cancelled = true), willUnload: false });
-      return cancelled;
-    };
-    expect(leave()).toBe(false);
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(leave()).toBe(true);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Save or discard them first",
-    );
-    for (const hook of nav.hooks) {
-      let cancelled = false;
-      hook({ cancel: () => (cancelled = true), willUnload: true });
-      expect(cancelled).toBe(false);
-    }
-    await save();
-    expect(leave()).toBe(false);
-  });
-});
-
+/*EXPLICIT*/
 describe("appearance and notifications", () => {
-  it("previews the theme at once and stores it, with a hint for the first paint, on Save", async () => {
+  it("shows the theme at once, stores it at once and keeps a hint for the first paint", async () => {
     await open();
     await choose("Theme", "dark");
     expect(document.documentElement.dataset["theme"]).toBe("dark");
     expect(localStorage.getItem("puddle.theme")).toBe("dark");
-    expect(api.ui.theme).toBeNull();
     await save();
     expect(api.ui.theme).toBe("dark");
   });
 
-  it("goes back to the stored theme and density on Discard", async () => {
-    await open();
-    await choose("Theme", "dark");
-    await choose("Density", "compact");
-    expect(document.documentElement.dataset["density"]).toBe("compact");
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(document.documentElement.dataset["theme"]).toBeUndefined();
-    expect(document.documentElement.dataset["density"]).toBeUndefined();
-    expect(screen.getByLabelText("Theme")).toHaveValue("system");
-  });
-
-  it("ends an unsaved preview when the screen is left", async () => {
-    await open();
-    await choose("Theme", "dark");
-    cleanup();
-    expect(document.documentElement.dataset["theme"]).toBeUndefined();
-  });
-
-  it("keeps the previewed theme when the save is refused", async () => {
+  it("goes back to the stored theme and density when the save is refused", async () => {
     await open();
     api.refuse.set("PUT /api/settings", {
       status: 500,
       error: "internal",
       message: "x",
     });
-    await choose("Theme", "light");
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await choose("Theme", "dark");
     expect(await screen.findByRole("alert")).toHaveTextContent("x");
-    expect(document.documentElement.dataset["theme"]).toBe("light");
+    await waitFor(() =>
+      expect(document.documentElement.dataset["theme"]).toBeUndefined(),
+    );
+    expect(screen.getByLabelText("Theme")).toHaveValue("system");
+    api.refuse.set("PUT /api/settings", {
+      status: 500,
+      error: "internal",
+      message: "y",
+    });
+    await choose("Density", "compact");
+    await waitFor(() => expect(screen.getByText("y")).toBeVisible());
+    expect(document.documentElement.dataset["density"]).toBeUndefined();
+    expect(api.ui.density).toBeNull();
   });
 
-  it("stores the density on Save", async () => {
+  it("stores the density at once", async () => {
     await open();
     expect(screen.getByLabelText("Density")).toHaveValue("comfortable");
     await choose("Density", "compact");
-    expect(api.ui.density).toBeNull();
     await save();
     expect(api.ui.density).toBe("compact");
     expect(localStorage.getItem("puddle.density")).toBe("compact");
@@ -541,15 +312,13 @@ describe("appearance and notifications", () => {
     expect(document.documentElement.dataset["density"]).toBeUndefined();
   });
 
-  it("previews a palette at once and stores it on Save, and Discard puts Pond back", async () => {
+  it("shows a palette at once and stores it at once", async () => {
     await open();
     expect(screen.getByLabelText("Colours")).toHaveValue("pond");
     await choose("Colours", "meadow");
     expect(document.documentElement.dataset["palette"]).toBe("meadow");
-    expect(api.ui.palette).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(document.documentElement.dataset["palette"]).toBeUndefined();
-    expect(screen.getByLabelText("Colours")).toHaveValue("pond");
+    await save();
+    expect(api.ui.palette).toBe("meadow");
     await choose("Colours", "ember");
     await save();
     expect(api.ui.palette).toBe("ember");
@@ -577,13 +346,17 @@ describe("appearance and notifications", () => {
     expect(
       document.documentElement.style.getPropertyValue("--color-accent"),
     ).toContain("#7a1fa2");
+    // Dragging only previews; the pick is stored when it is settled.
+    await save();
+    expect(api.ui.custom_accent).toBeNull();
+    await fireEvent.change(accent);
     await save();
     expect(api.ui.palette).toBe("custom");
     expect(api.ui.custom_accent).toBe("#7a1fa2");
     expect(api.ui.custom_text).toBeNull();
   });
 
-  it("resets one custom colour to Pond's, and that is an edit until saved", async () => {
+  it("resets one custom colour to Pond's, and that is stored at once", async () => {
     api.ui.palette = "custom";
     api.ui.custom_accent = "#7a1fa2";
     api.ui.custom_text = "#102030";
@@ -656,7 +429,8 @@ describe("notifications in this browser", () => {
     await open();
     const box = screen.getByLabelText("Notifications in this browser");
     expect(box).not.toBeChecked();
-    await fireEvent.click(screen.getByLabelText("Sound"));
+    await fireEvent.click(box);
+    await waitFor(() => expect(screen.queryByText(/^Saving/)).toBeNull());
     expect(putBodies()).toHaveLength(0);
   });
 
@@ -696,7 +470,7 @@ describe("notification and inbox switches", () => {
     ["Minimizing hides Puddle in the tray", "minimize_to_tray", false],
   ];
 
-  it("shows each switch at Puddle's default and saves a change on Save", async () => {
+  it("shows each switch at Puddle's default and saves each change at once", async () => {
     await open();
     for (const [label, , on] of rows) {
       const box = screen.getByLabelText(label);
@@ -704,7 +478,6 @@ describe("notification and inbox switches", () => {
       else expect(box).not.toBeChecked();
       await fireEvent.click(box);
     }
-    expect(putBodies()).toHaveLength(0);
     await save();
     for (const [, key, on] of rows) expect(api.ui[key]).toBe(!on);
   });
@@ -713,20 +486,17 @@ describe("notification and inbox switches", () => {
     await open();
     const input = screen.getByLabelText("Warn when a disk is this full (%)");
     expect(input).toHaveValue("95");
+    const saveButton = () =>
+      screen.getByRole("button", {
+        name: "Save Warn when a disk is this full (%)",
+      });
     for (const bad of ["49", "101", "lots", ""]) {
       await fireEvent.input(input, { target: { value: bad } });
-      await fireEvent.change(input);
-      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      expect(saveButton()).toBeDisabled();
     }
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Enter a whole number of percent.")).toBeVisible();
-    // With another edit waiting, the bar says why Save is off.
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(
-      screen.getByText("Fix the disk warning percentage to save."),
-    ).toBeVisible();
     await fireEvent.input(input, { target: { value: "90 %" } });
-    await fireEvent.change(input);
     await save();
     expect(api.ui.disk_warning_percent).toBe(90);
   });
@@ -757,10 +527,79 @@ describe("notification and inbox switches", () => {
 });
 
 describe("workspace defaults and the network", () => {
+  it("sets the default CPU count from 1 up to the computer's cores and says a running workspace keeps its own", async () => {
+    await open();
+    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
+    expect(cpus).toHaveValue("4");
+    expect([...cpus.options].map((o) => o.value)).toEqual(
+      Array.from({ length: 16 }, (_, i) => String(i + 1)),
+    );
+    expect(cpus.options[0]?.text).toBe("1 CPU");
+    expect(
+      screen.getByText(/A running workspace keeps the count it started with/),
+    ).toBeInTheDocument();
+    await choose("Default CPUs", "6");
+    await save();
+    expect(api.layer.cpus).toBe(6);
+    expect(screen.getByLabelText("Default CPUs")).toHaveValue("6");
+  });
+
+  it("takes the CPU maximum from the setting, not from a fixed 32, and saves a new one", async () => {
+    api.hostCpus = 64;
+    await open();
+    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
+    expect(cpus.options).toHaveLength(64);
+    const max = screen.getByLabelText(
+      "Most CPUs a workspace may have",
+    ) as HTMLInputElement;
+    expect(max.value).toBe("");
+    expect(max.placeholder).toBe("64");
+    await fireEvent.input(max, { target: { value: "6" } });
+    await save();
+    expect(api.limits.max_cpus).toBe(6);
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Default CPUs") as HTMLSelectElement).options,
+      ).toHaveLength(6),
+    );
+    await fireEvent.input(max, { target: { value: "" } });
+    await save();
+    expect(api.limits.max_cpus).toBeNull();
+  });
+
+  it("refuses a CPU maximum that is not a whole number from 1 to 255", async () => {
+    await open();
+    const max = screen.getByLabelText("Most CPUs a workspace may have");
+    await fireEvent.input(max, { target: { value: "300" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Use a whole number from 1 to 255.",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Save Most CPUs a workspace may have",
+      }),
+    ).toBeDisabled();
+    expect(putBodies()).toHaveLength(0);
+  });
+
+  it("keeps the CPU maximum when another setting is saved", async () => {
+    api.limits = { max_cpus: 9 };
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await save();
+    expect(api.limits.max_cpus).toBe(9);
+  });
+
   it("changes the default memory", async () => {
     await open();
     await choose("Default memory", "16384");
-    await save(/Default memory apply when a workspace next starts/);
+    await save();
+    const row = screen.getByLabelText("Default memory").closest(".control");
+    expect(
+      within(row as HTMLElement).getByText(
+        "Applies when a workspace next starts.",
+      ),
+    ).toBeInTheDocument();
     expect(api.layer.memory).toBe(16_384);
   });
 
@@ -808,7 +647,7 @@ describe("workspace defaults and the network", () => {
     });
     await fireEvent.click(
       within(box.closest("form") as HTMLElement).getByRole("button", {
-        name: "Keep names",
+        name: "Save Never decrypt, in any workspace",
       }),
     );
     await screen.findByText("Saved.");
@@ -827,7 +666,9 @@ describe("workspace defaults and the network", () => {
     const password = screen.getByLabelText("Password") as HTMLInputElement;
     expect(password.type).toBe("password");
     await fireEvent.input(password, { target: { value: "s3cret-pw" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Keep sign-in" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save proxy sign-in" }),
+    );
     await screen.findByText("Saved.");
     expect(api.proxyPasswords.get("proxy.corp.example:8080")).toBe("s3cret-pw");
     const list = screen.getByRole("list", { name: "Stored proxy sign-ins" });
@@ -864,7 +705,9 @@ describe("workspace defaults and the network", () => {
     await fireEvent.input(screen.getByLabelText("Password"), {
       target: { value: "pw" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Keep sign-in" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save proxy sign-in" }),
+    );
     expect(
       await screen.findByText(/credential store did not answer/),
     ).toBeInTheDocument();
@@ -924,7 +767,9 @@ describe("workspace defaults and the network", () => {
     expect([minutes.value, hosts.value]).toEqual(["720", "1024"]);
     await fireEvent.input(minutes, { target: { value: "90" } });
     await fireEvent.input(hosts, { target: { value: "64" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Keep limits" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save limits for hosts left alone" }),
+    );
     await screen.findByText("Saved.");
     expect(api.learnedLimits).toEqual({ ttl_secs: 5400, cap: 64 });
   });
@@ -937,7 +782,13 @@ describe("workspace defaults and the network", () => {
       error: "invalid",
       message: "the size must be 1 to 10000 hosts",
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Keep limits" }));
+    await fireEvent.input(
+      screen.getByLabelText("Hosts remembered per workspace"),
+      { target: { value: "64" } },
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save limits for hosts left alone" }),
+    );
     expect(
       await screen.findByText("The size must be 1 to 10000 hosts."),
     ).toBeInTheDocument();
@@ -971,7 +822,7 @@ describe("workspace defaults and the network", () => {
     ).toBeNull();
   });
 
-  it("turns the global direct SSH default on only after the trust text, then saves it with the rest", async () => {
+  it("turns the global direct SSH default on only after the trust text, then saves it at once", async () => {
     await open();
     const box = screen.getByLabelText("Allow direct SSH for new workspaces");
     expect(box).not.toBeChecked();
@@ -984,12 +835,11 @@ describe("workspace defaults and the network", () => {
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Allow for new workspaces" }),
     );
-    expect(api.layer.direct_ssh).toBeNull();
+    await save();
+    expect(api.layer.direct_ssh).toBe(true);
     expect(
       screen.getByLabelText("Allow direct SSH for new workspaces"),
     ).toBeChecked();
-    await save();
-    expect(api.layer.direct_ssh).toBe(true);
     await fireEvent.click(
       screen.getByLabelText("Allow direct SSH for new workspaces"),
     );
@@ -1002,7 +852,7 @@ describe("workspace defaults and the network", () => {
     const box = screen.getByLabelText("Keep logins made in workspaces");
     expect(box).toBeChecked();
     await fireEvent.click(box);
-    await save(/Login capture apply when a workspace next starts/);
+    await save();
     expect(api.layer.capture_logins).toBe(false);
     expect(
       screen.getByLabelText("Keep logins made in workspaces"),
@@ -1010,7 +860,7 @@ describe("workspace defaults and the network", () => {
     await fireEvent.click(
       screen.getByLabelText("Keep logins made in workspaces"),
     );
-    await save(/Login capture apply/);
+    await save();
     expect(api.layer.capture_logins).toBe(true);
   });
 
@@ -1049,19 +899,13 @@ describe("workspace defaults and the network", () => {
     await open();
     const input = screen.getByLabelText("Reconnection grace (seconds)");
     await fireEvent.input(input, { target: { value: "5" } });
-    await fireEvent.change(input);
     expect(await screen.findByText(/Use between 30 and 86400/)).toBeVisible();
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(putBodies()).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    // With another edit waiting, the bar says why Save is off.
-    await fireEvent.click(screen.getByLabelText("Sound"));
     expect(
-      screen.getByText("Fix the reconnection grace to save."),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      screen.getByRole("button", { name: "Save Reconnection grace (seconds)" }),
+    ).toBeDisabled();
     await fireEvent.input(input, { target: { value: "600" } });
-    await fireEvent.change(input);
     await save();
     expect(api.layer.reconnection_grace).toBe(600);
     expect(screen.queryByText(/Use between/)).toBeNull();
@@ -1084,7 +928,7 @@ describe("disk space lines", () => {
       .getByRole("heading", { level: 2, name: "Disk space" })
       .closest("section");
     expect(section).toHaveTextContent(
-      "They measure the room left on the drive, not the size of the disks",
+      "They do not measure the size of the disks",
     );
     expect(section).toHaveTextContent(
       "root disk (16 GiB for a new workspace) and its volume are sparse files",
@@ -1095,12 +939,12 @@ describe("disk space lines", () => {
     await open();
     expect(
       screen.getByText(
-        /reached the percentage below of its own size; the figure is what the disk file takes on the drive/,
+        /The percentage is of the disk's own size, as the disk file takes it on the drive/,
       ),
-    ).toBeVisible();
+    ).toBeInTheDocument();
   });
 
-  it("shows Puddle's lines of 20 and 5 GB and saves a change on Save", async () => {
+  it("shows Puddle's lines of 20 and 5 GB and saves a change on its Save button", async () => {
     await open();
     expect(warn()).toHaveValue("20");
     expect(fail()).toHaveValue("5");
@@ -1131,9 +975,11 @@ describe("disk space lines", () => {
     expect(
       await screen.findByText("Enter a whole number of GB."),
     ).toBeVisible();
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(screen.getByText("Fix the disk space lines to save.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Save Warn when free space is under (GB)",
+      }),
+    ).toBeDisabled();
     await type(warn(), "30");
     await type(fail(), "6");
     await save();
@@ -1149,9 +995,21 @@ describe("disk space lines", () => {
         "The failure line (25 GB) cannot be above the warning line (20 GB).",
       ),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Save Fail when free space is under (GB)",
+      }),
+    ).toBeDisabled();
+    // The pair is checked against the stored lines: raise the warning line first.
     await type(warn(), "25");
-    expect(screen.queryByText(/cannot be above the warning line/)).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Save Warn when free space is under (GB)",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/cannot be above the warning line/)).toBeNull(),
+    );
     await save();
     expect(api.ui.disk_warn_free_gb).toBe(25);
     expect(api.ui.disk_fail_free_gb).toBe(25);
@@ -1161,7 +1019,11 @@ describe("disk space lines", () => {
     await open();
     await type(warn(), "50");
     await type(warn(), "20");
-    expect(screen.getByText("No unsaved changes.")).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: "Save Warn when free space is under (GB)",
+      }),
+    ).toBeNull();
   });
 });
 
@@ -1190,7 +1052,7 @@ describe("SSH agent pipe", () => {
     expect(api.ui.ssh_agent_pipe).toBeNull();
   });
 
-  it("refuses a control character and holds Save until it is fixed", async () => {
+  it("refuses a control character and holds its Save until it is fixed", async () => {
     await open();
     await type(field(), "/run/a\tb");
     expect(
@@ -1199,9 +1061,9 @@ describe("SSH agent pipe", () => {
       ),
     ).toBeVisible();
     expect(field()).toHaveAttribute("aria-invalid", "true");
-    await fireEvent.click(screen.getByLabelText("Sound"));
-    expect(screen.getByText("Fix the SSH agent pipe to save.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Save SSH agent pipe or socket" }),
+    ).toBeDisabled();
     await type(field(), "/run/agent.sock");
     await save();
     expect(api.ui.ssh_agent_pipe).toBe("/run/agent.sock");
@@ -1212,7 +1074,9 @@ describe("SSH agent pipe", () => {
     await open();
     await type(field(), "/other");
     await type(field(), "/run/agent.sock");
-    expect(screen.getByText("No unsaved changes.")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Save SSH agent pipe or socket" }),
+    ).toBeNull();
   });
 });
 

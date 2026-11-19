@@ -517,3 +517,22 @@ fn the_debug_form_names_the_launcher_and_nothing_inside_it() {
     let launcher = AppLauncher::new(app.handle().clone(), "unused".into());
     assert_eq!(format!("{launcher:?}"), "AppLauncher { .. }");
 }
+
+#[test]
+fn each_workspace_s_editor_window_gets_a_devtools_port_of_its_own_and_keeps_it() {
+    let app = tauri::test::mock_app();
+    let data = tempfile::tempdir().unwrap();
+    let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"))
+        .with_debug_port(Some(9341));
+    let id = |name: &str| WorkspaceId::new(name).unwrap();
+    // The first workspace keeps the port a single-workspace run always had; the next ones skip the
+    // odd port after it, which the forwarded-port windows of that workspace take.
+    assert_eq!(launcher.debug_port_for(&id("one")), Some(9341));
+    assert_eq!(launcher.debug_port_for(&id("two")), Some(9343));
+    assert_eq!(launcher.debug_port_for(&id("three")), Some(9345));
+    // A reopened window is where it was, and a launcher without a port gives none.
+    assert_eq!(launcher.debug_port_for(&id("two")), Some(9343));
+    let plain = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+    assert_eq!(plain.debug_port_for(&id("one")), None);
+    assert_eq!(slot_port(u16::MAX - 1, 1), None);
+}

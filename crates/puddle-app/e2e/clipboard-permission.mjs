@@ -28,7 +28,7 @@ import { GiveUp, until } from "./poll.mjs";
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
 const basePort = Number(process.env.CDP_PORT ?? 9340);
-const CLIP = "puddle clipboard canary 7f3a";
+const CLIP = "Puddle clipboard canary 7f3a";
 
 // A prompt nobody answers must not hold the job to its step limit.
 setTimeout(() => {

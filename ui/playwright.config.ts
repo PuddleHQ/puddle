@@ -67,7 +67,7 @@ export default defineConfig({
   // took 7 s at the median and 13 s at the worst of 40 loads there against 2 s unstarved, and every
   // later step is dearer by about the same factor, so a test's and a read's limit fail a page that
   // is only slow. Both limits grow by the slowdown the run declares, as the bars of `inbox-bulk` and
-  // `inbox-full-list` do; a run that declares none keeps 30 s and 5 s (the Playwright defaults for a read; T-1972).
+  // `inbox-full-list` do; a run that declares none keeps 30 s and 5 s (the Playwright defaults).
   timeout: 30_000 * slowdown(),
   expect: { timeout: 5_000 * slowdown() },
   use: {

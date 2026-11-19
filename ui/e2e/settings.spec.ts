@@ -157,11 +157,12 @@ for (const entry of SETTINGS) {
     const mise = (await (
       await page.request.get("/api/settings", { headers: auth(backend) })
     ).json()) as { mise_available: boolean };
-    test.skip(entry.id === "set-mise" && !mise.mise_available, "no mise here");
-    test.skip(
-      entry.id === "set-ms-telemetry" || entry.id === "set-withdraw",
-      "only while Microsoft's server is chosen",
+    const noMise = entry.id === "set-mise" && !mise.mise_available;
+    test.skip(noMise, "no mise here");
+    const needsMicrosoft = ["set-ms-telemetry", "set-withdraw"].includes(
+      entry.id,
     );
+    test.skip(needsMicrosoft, "only while Microsoft's server is chosen");
     await page.goto("/settings/appearance");
     await page
       .getByRole("searchbox", { name: "Search settings" })

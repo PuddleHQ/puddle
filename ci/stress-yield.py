@@ -12,7 +12,7 @@
       decision needs. `report --download N` first fetches the last N runs' `stress-yield-*` artifacts
       with gh into a temporary directory.
 
-One row per job per night (rust runs as two partitions, so two rows). Columns: date, sha, run, kind, status (ok, failed, no-report), wall_s (the
+One row per job per night (rust runs as six partitions, so six rows). Columns: date, sha, run, kind, status (ok, failed, no-report), wall_s (the
 tool), runner_min (the whole job, setup and build included), failures (tests that failed in any
 repeat), known (of those, ones in known-flakes.tsv), tests (`name:failed/runs`, `;` separated), runs (test runs in the report), args (what the
 tool ran with: counts, CPUs, the vitest seed, so a failure can be run again).

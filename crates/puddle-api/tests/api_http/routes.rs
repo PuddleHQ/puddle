@@ -1178,3 +1178,44 @@ async fn rule_input_is_normalised_not_refused() {
     );
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_method_a_route_does_not_serve_answers_405_with_an_allow_header_never_500() {
+    let api = start().await;
+    let spec: Value = serde_json::from_str(&puddle_api::openapi_json()).unwrap();
+    let mut checked = 0;
+    for (path, item) in spec["paths"].as_object().unwrap() {
+        let served: Vec<String> = item
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|m| m.to_uppercase())
+            .collect();
+        let concrete = path
+            .split('/')
+            .map(|segment| {
+                if segment.starts_with('{') {
+                    "x"
+                } else {
+                    segment
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
+            if served.iter().any(|m| m == method) {
+                continue;
+            }
+            let reply = api.send(method, &concrete, Some(&json!({}))).await;
+            assert_eq!(reply.status, 405, "{method} {path}: {}", reply.body);
+            let allow = reply.header("allow").unwrap_or_default().to_owned();
+            assert!(
+                served.iter().all(|m| allow.contains(m.as_str())),
+                "{method} {path}: Allow is {allow:?}, the spec serves {served:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "only {checked} wrong-method calls were made");
+    api.running.shutdown().await;
+}

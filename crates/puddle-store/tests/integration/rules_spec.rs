@@ -18,7 +18,7 @@ use puddle_store::{
     PatternChoice, PatternError, PendingState, Precedence, Resolution, RuleEdit, Scope,
     ScopeChoice, Store, StoreError, Sweeper,
 };
-use puddle_test_kit::{cpu_time, eventually};
+use puddle_test_kit::eventually;
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
@@ -622,23 +622,23 @@ fn r45_a_hundred_thousand_new_hosts_keep_the_store_bounded_and_the_inbox_fast() 
     }
     let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
     assert_eq!(listed, cap);
-    let ((rows, groups), cpu) = cpu_time(|| {
-        (
-            store
-                .open_pending_every_user(&puddle_store::testing::all_users(), Some(&sb("a")))
-                .unwrap(),
-            store
-                .inbox_every_user(&puddle_store::testing::all_users())
-                .unwrap(),
-        )
-    });
-    eprintln!("inbox over the capped open rows: {cpu:?} of CPU");
-    // The bar is on this thread's CPU time, so a loaded machine does not move it; it catches a
-    // per-row rescan of the open rows, which costs seconds (2.8 s planted). The read took 5 ms on
-    // Linux; the Windows clock ticks in 15.6 ms steps and read 0 ns, so 100 ms is far above both.
+    let all = puddle_store::testing::all_users();
+    let rows = store.open_pending_every_user(&all, Some(&sb("a"))).unwrap();
+    let groups = store.inbox_every_user(&all).unwrap();
+    // The bar is on the work the read does, counted in SQLite's virtual-machine steps, which no
+    // other process on the machine changes. It catches a per-row rescan of the open rows (a
+    // correlated lookup per row multiplies the steps by the row count).
+    let steps = u64::try_from(store.open_pending_steps(&all, Some(&sb("a"))).unwrap()).unwrap();
+    eprintln!("inbox over the capped open rows: {steps} steps");
+    // Every row returned took at least one step, so a count that does not cover them is no count.
     assert!(
-        cpu < Duration::from_millis(200),
-        "the inbox used {cpu:?} of CPU"
+        steps > rows.len() as u64,
+        "{} rows in {steps} steps",
+        rows.len()
+    );
+    assert!(
+        steps < 50 * cap as u64,
+        "the inbox read took {steps} steps over {cap} rows"
     );
     assert_eq!(rows.len(), cap);
     assert_eq!(groups.iter().map(|g| g.rows.len()).sum::<usize>(), cap);

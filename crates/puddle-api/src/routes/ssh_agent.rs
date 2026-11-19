@@ -21,6 +21,7 @@ use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
+use crate::routes::workspaces::named;
 use puddle_store::Actor;
 
 use crate::authz::Principal;
@@ -31,12 +32,6 @@ use crate::wire::{
 
 /// Base64 characters in a SHA-256 fingerprint (`ssh-keygen -l` leaves the padding off).
 const FINGERPRINT_CHARS: usize = 43;
-
-async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
-    let id =
-        WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    Ok(state.workspaces.get(&id).await?.id)
-}
 
 /// The host in its stored form: a lower-case name without a trailing dot, or an IP address.
 fn host(raw: &str) -> Result<String, ApiError> {

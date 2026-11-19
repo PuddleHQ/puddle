@@ -860,6 +860,7 @@ describe("a record as a row", () => {
       "repo_added",
       "repo_switched",
       "repo_removed",
+      "git_switches_changed",
       "root_disk_grown",
       "git_repaired",
     ]) {

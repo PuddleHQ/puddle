@@ -587,11 +587,11 @@ test.describe("connecting", () => {
       .click();
     const step = page.getByRole("dialog", { name: "Connect to web-shop" });
     await expect(step.getByRole("heading", { level: 3 })).toHaveText([
-      "In the browser",
+      "Isolated VS Code",
       "On this computer",
     ]);
     await expect(
-      step.getByRole("button", { name: "Open in the browser" }),
+      step.getByRole("button", { name: "Open isolated VS Code" }),
     ).toBeEnabled();
     await expect(
       step.getByRole("checkbox", { name: "Allow direct SSH" }),
@@ -627,7 +627,7 @@ test.describe("connecting", () => {
     await expectNoAxeViolations(page, "connect step");
     // Trying anyway is still the user's call.
     await expect(
-      step.getByRole("button", { name: "Open in the browser" }),
+      step.getByRole("button", { name: "Open isolated VS Code" }),
     ).toBeEnabled();
     await step.getByRole("button", { name: "Close" }).click();
 
@@ -698,8 +698,10 @@ test.describe("connecting", () => {
       .getByRole("button", { name: "Connect to web-shop" })
       .click();
     const step = page.getByRole("dialog", { name: "Connect to web-shop" });
-    await step.getByRole("button", { name: "Open in the browser" }).click();
-    await expect(toast(page, "Opening web-shop in the browser.")).toBeVisible();
+    await step.getByRole("button", { name: "Open isolated VS Code" }).click();
+    await expect(
+      toast(page, "Opening web-shop in isolated VS Code."),
+    ).toBeVisible();
     await expect(step).toHaveCount(0);
   });
 

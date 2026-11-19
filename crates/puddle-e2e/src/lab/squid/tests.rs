@@ -73,31 +73,32 @@ socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 "#;
 
 #[test]
-fn a_paused_squid_refuses_connections_and_a_resumed_one_answers_again_on_the_same_port() {
+fn a_paused_squid_stops_answering_and_a_resumed_one_answers_again_on_the_same_port() {
     let program = tempfile::tempdir().unwrap();
     let bin = program.path().join("fake-squid");
     puddle_test_kit::write_executable(&bin, FAKE_SQUID);
-    let dir = tempfile::tempdir().unwrap();
-    let port = free_port();
-    write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), port);
-    let child = spawn_process(bin.as_os_str(), dir.path(), port);
-    let mut squid = Squid {
-        port,
-        prefix: Prefix::new("squid"),
-        dir,
-        stop: Stop::Process(child),
-        started: StartCost::default(),
-        bin: Some(bin.into_os_string()),
-    };
-    squid.wait().unwrap();
+    // A port nothing can hold across the program's own bind: a taken one is retried, as in `launch`.
+    let mut squid = on_free_port(free_port, |port| {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), port);
+        let child = spawn_process(bin.as_os_str(), dir.path(), port);
+        let mut squid = Squid {
+            port,
+            prefix: Prefix::new("squid"),
+            dir,
+            stop: Stop::Process(child),
+            started: StartCost::default(),
+            bin: Some(bin.clone().into_os_string()),
+        };
+        squid.wait().map(|()| squid)
+    });
+    let port = squid.port();
     assert!(squid_answers(port));
 
     squid.pause();
     squid.pause();
-    assert!(
-        std::net::TcpStream::connect((LOCAL, port)).is_err(),
-        "a paused Squid refuses connections"
-    );
+    // Only Squid's own page counts as an answer, so a stranger that takes the freed port does not.
+    assert!(!squid_answers(port), "a paused Squid does not answer");
 
     squid.resume();
     assert_eq!(squid.port(), port);

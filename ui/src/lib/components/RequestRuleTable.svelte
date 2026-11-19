@@ -86,7 +86,7 @@
             {#if rule.workspace === null}
               {scopeLabel(rule)}
             {:else}
-              <span class="mono">{rule.workspace}</span>
+              <span>{scopeLabel(rule)}</span>
             {/if}
           </td>
           <td>

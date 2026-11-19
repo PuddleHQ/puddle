@@ -9,7 +9,9 @@
     type EntryPage,
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
+  import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
   import SetChip from "./SetChip.svelte";
+  import WorkspaceSelect from "./WorkspaceSelect.svelte";
   import "#lib/theme/controls.css";
 
   // One rule set: what it is, its switch for every workspace and the workspaces that switch it
@@ -148,7 +150,10 @@
     <ul class="overrides" aria-label="Workspaces that switch {set.name}">
       {#each set.overrides as o (o.workspace)}
         <li>
-          <span><b>{o.enabled ? "On" : "Off"}</b> in <b>{o.workspace}</b></span>
+          <span
+            ><b>{o.enabled ? "On" : "Off"}</b> in
+            <b>{workspaceStore.labelOf(o.workspace)}</b></span
+          >
           <button
             type="button"
             class="btn"
@@ -167,21 +172,14 @@
     novalidate
   >
     <div class="field">
-      <label for="{id}-ws">Workspace name</label>
-      <input
+      <label for="{id}-ws">Workspace</label>
+      <WorkspaceSelect
         id="{id}-ws"
-        type="text"
-        list="{id}-wss"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
         bind:value={workspace}
-        aria-invalid={problem ? "true" : undefined}
-        aria-describedby={problem ? `${id}-ws-error` : undefined}
+        known={workspaces}
+        invalid={problem !== null}
+        describedby={problem ? `${id}-ws-error` : undefined}
       />
-      <datalist id="{id}-wss">
-        {#each workspaces as name (name)}<option value={name}></option>{/each}
-      </datalist>
     </div>
     <button type="button" class="btn" onclick={() => switchHere(true)}
       >On there</button

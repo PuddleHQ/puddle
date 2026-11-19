@@ -634,8 +634,11 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
     /// default window and returns one started with the setting on.
     async fn phase_local_server_keeps_terminal(s: &Story, window: VsCodeWindow) -> VsCodeWindow {
         window.close().await.expect("the default window closes");
-        let mut window = s
-            .launch_with(None, true, Some(true))
+        // The window reads its settings file at its start, and `prepare` wrote the default ones: write
+        // the ones with the local server on before it starts.
+        let local = s.launch_with(None, true, Some(true));
+        local.write_settings().expect("the settings are written");
+        let mut window = local
             .start(
                 &s.release,
                 &s.node,

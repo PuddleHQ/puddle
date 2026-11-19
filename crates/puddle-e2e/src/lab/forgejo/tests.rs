@@ -292,3 +292,15 @@ fn a_created_token_answer_yields_its_token() {
     };
     assert_eq!(made.token("make token t"), "tok-abc123");
 }
+
+#[test]
+fn a_status_outside_the_known_ones_is_named_by_a_fixed_text() {
+    let odd = PasswordAnswer {
+        status: 418,
+        body: String::new(),
+    };
+    let text = panic_text(|| odd.expect_status(204, "revoke token t"));
+    assert!(text.contains("another status"), "{text}");
+    assert!(!text.contains("418"), "{text}");
+    assert_eq!(status_text(403), "403");
+}

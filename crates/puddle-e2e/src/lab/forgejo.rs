@@ -338,10 +338,6 @@ fn random_hex() -> String {
     })
 }
 
-/// Checks that the API answered `201 Created` to `what`.
-///
-/// # Panics
-/// On any other status, with Forgejo's answer.
 /// The answer to a call made with the account's password. Its body can hold a token, so it has
 /// no `Debug` or `Display` of its own and every failure message here carries the status and a
 /// fixed text only.
@@ -355,8 +351,28 @@ impl std::fmt::Debug for PasswordAnswer {
         write!(
             f,
             "PasswordAnswer {{ status: {}, body: <hidden> }}",
-            self.status
+            status_text(self.status)
         )
+    }
+}
+
+/// A status of an answer to a call made with the password, as a fixed text. The text is chosen
+/// by a `match`, so no value derived from that call reaches a log or panic message.
+const fn status_text(status: u16) -> &'static str {
+    match status {
+        200 => "200",
+        201 => "201",
+        204 => "204",
+        400 => "400",
+        401 => "401",
+        403 => "403",
+        404 => "404",
+        409 => "409",
+        422 => "422",
+        500 => "500",
+        502 => "502",
+        503 => "503",
+        _ => "another status",
     }
 }
 
@@ -367,8 +383,8 @@ impl PasswordAnswer {
     fn expect_status(&self, want: u16, what: &str) {
         assert!(
             self.status == want,
-            "{what}: Forgejo answered {}, wanted {want} (body not logged)",
-            self.status
+            "{what}: Forgejo answered {}, not {want} (body not logged)",
+            status_text(self.status)
         );
     }
 
@@ -385,6 +401,10 @@ impl PasswordAnswer {
     }
 }
 
+/// Checks that the API answered `201 Created` to `what`.
+///
+/// # Panics
+/// On any other status, with Forgejo's answer.
 fn expect_created(status: u16, answer: &str, what: &str) {
     assert_eq!(status, 201, "{what}: {answer}");
 }

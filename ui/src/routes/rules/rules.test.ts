@@ -70,6 +70,10 @@ import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import RulesPage from "./+page.svelte";
+import { expectNoIdsShown } from "#lib/testing/no-ids.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
+import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
 
 const {
   api,
@@ -136,6 +140,41 @@ async function loaded() {
   render(RulesPage);
   await waitFor(() => expect(rulesStore.status).toBe("ready"));
 }
+
+describe("workspace ids", () => {
+  it("stay behind the names in the table, the filter and the add form", async () => {
+    workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];
+    api.rules = [
+      rule(1, {
+        pattern: "a.example.com",
+        scope: { type: "workspace", workspace: "g07jxx5q" as never },
+      }),
+    ];
+    setsApi.sets = [
+      builtIn("github", {
+        overrides: [{ workspace: "g07jxx5q" as never, enabled: true }],
+      }),
+    ];
+    await loaded();
+    await fireEvent.click(screen.getByRole("button", { name: /Add rule/ }));
+    await screen.findByRole("dialog");
+    // The filter, the form and the rule set switch all read "Shop" and carry the id as the value.
+    const shop = screen.getAllByRole("option", { name: "Shop", hidden: true });
+    expect(shop.length).toBeGreaterThanOrEqual(3);
+    for (const option of shop) expect(option).toHaveValue("g07jxx5q");
+    expect(within(rows()[0]!).getByText("Shop")).toBeInTheDocument();
+    expectNoIdsShown(document.body, ["g07jxx5q"]);
+    workspaces.list = [];
+  });
+  it("show an example host in the host filter", async () => {
+    seed();
+    await loaded();
+    expect(screen.getByLabelText("Host contains")).toHaveAttribute(
+      "placeholder",
+      expect.stringContaining("github.com"),
+    );
+  });
+});
 
 describe("the list", () => {
   it("says it is loading, then shows an empty state with a way forward", async () => {
@@ -274,9 +313,10 @@ describe("adding", () => {
       target: { value: host },
     });
     if (workspace)
-      await fireEvent.input(within(dialog).getByLabelText("Workspace name"), {
-        target: { value: workspace },
-      });
+      await chooseWorkspace(
+        within(dialog).getByLabelText("Workspace"),
+        workspace,
+      );
   };
 
   it("sends what is chosen last when the user changes their mind about effect and who", async () => {
@@ -340,18 +380,19 @@ describe("adding", () => {
         .map((a) => a.textContent),
     ).toEqual([
       expect.stringMatching(/enter a host/i),
-      expect.stringMatching(/name the workspace/i),
+      expect.stringMatching(/choose the workspace/i),
     ]);
     expect(within(dialog).getByLabelText("Host")).toHaveAttribute(
       "aria-invalid",
       "true",
     );
     expect(api.bodies).toHaveLength(0);
-    await fill(dialog, "a.example.com", "Bad Name");
+    // The dropdown holds only real workspaces, so once one is chosen the form is complete.
+    await fill(dialog, "a.example.com");
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Add rule" }),
     );
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(/lower-case/);
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
   });
   it("shows the server's refusal under the host and keeps what was typed", async () => {
     const dialog = await open();
@@ -382,7 +423,7 @@ describe("adding", () => {
     const dialog = await open();
     await fireEvent.click(within(dialog).getByLabelText(/Every workspace/));
     expect(
-      within(dialog).queryByLabelText("Workspace name"),
+      within(dialog).queryByLabelText("Workspace"),
     ).not.toBeInTheDocument();
     await fireEvent.input(within(dialog).getByLabelText("Host"), {
       target: { value: "cdn.example.com" },
@@ -468,7 +509,7 @@ describe("editing a rule in place", () => {
     expect(within(dialog).getByLabelText("Host")).toHaveValue("*.github.com");
     expect(within(dialog).getByLabelText("Deny")).toBeChecked();
     expect(within(dialog).getByLabelText("One workspace")).toBeChecked();
-    expect(within(dialog).getByLabelText("Workspace name")).toHaveValue("shop");
+    expect(within(dialog).getByLabelText("Workspace")).toHaveValue("shop");
     expect(within(dialog).getByLabelText("Expires")).toHaveDisplayValue(
       /^Unchanged/,
     );

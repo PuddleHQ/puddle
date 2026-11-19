@@ -2,6 +2,7 @@
 // Rule sets and System managed as pure data (rules spec §7): where a set is on and why, how its
 // entries and the System managed hosts read. No layout and no API calls here.
 import type { components } from "#lib/api/schema.d.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 
 type Schemas = components["schemas"];
 export type RuleSet = Schemas["RuleSetView"];
@@ -53,7 +54,10 @@ export function systemFor(
 /** "On in demo; off in api": the workspaces that switch the set for themselves. */
 export function overridesLabel(set: RuleSet): string {
   return set.overrides
-    .map((o) => `${o.enabled ? "on" : "off"} in ${o.workspace}`)
+    .map(
+      (o) =>
+        `${o.enabled ? "on" : "off"} in ${workspaces.labelOf(o.workspace)}`,
+    )
     .join("; ");
 }
 

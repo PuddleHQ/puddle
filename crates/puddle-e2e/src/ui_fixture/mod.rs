@@ -67,7 +67,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 18] = [
+const BUILT_IN: [(&str, &str); 19] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -139,6 +139,10 @@ const BUILT_IN: [(&str, &str); 18] = [
     (
         "request-rules",
         include_str!("../../../../ui/e2e/fixtures/request-rules.json"),
+    ),
+    (
+        "ids-differ",
+        include_str!("../../../../ui/e2e/fixtures/ids-differ.json"),
     ),
 ];
 
@@ -1016,8 +1020,8 @@ impl State {
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
         let name = puddle_api::DisplayName::parse(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
-        let id = WorkspaceId::new(&seed.name)
-            .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
+        let id = WorkspaceId::new(seed.id())
+            .map_err(|err| format!("workspace id {:?}: {err}", seed.id()))?;
         let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
         let drafts: Vec<RepositoryDraft> = seed
             .repositories
@@ -1032,7 +1036,7 @@ impl State {
             .map_err(|err| at(&err))?
             .into_iter()
             .map(|r| Repository {
-                entry: entry_id_from_text(&format!("{}:{}", seed.name, r.repository.directory)),
+                entry: entry_id_from_text(&format!("{}:{}", seed.id(), r.repository.directory)),
                 ..r.repository
             })
             .collect();
@@ -1154,7 +1158,7 @@ impl State {
 
     /// A seeded workspace's own variables, shell init and listening ports.
     fn workspace_environment(&self, seed: &WorkspaceSeed) -> Result<(), String> {
-        let name = workspace(&seed.name)?;
+        let name = workspace(seed.id())?;
         let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
         for entry in &seed.env {
             self.env_seed(&puddle_store::EnvScope::Workspace(name.clone()), entry)?;
@@ -1177,7 +1181,7 @@ impl State {
         seed: &WorkspaceSeed,
         identities: &[(String, IdentityId)],
     ) -> Result<(), String> {
-        let name = workspace(&seed.name)?;
+        let name = workspace(seed.id())?;
         let git = &seed.git;
         let ids = git
             .identities

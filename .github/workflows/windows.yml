@@ -593,8 +593,7 @@ jobs:
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/sandbox-window.mjs
       # A script's clipboard read in a workspace window follows the workspace setting: deny rejects
-      # with no prompt, allow resolves, "Ask" shows the webview's prompt once per workspace
-      # (UI Automation clicks it), and Ctrl+V pastes under deny.
+      # with no prompt, allow resolves, "Ask" waits for the person, and Ctrl+V pastes under deny.
       - name: workspace window clipboard permission test (WebView2)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         timeout-minutes: 10

@@ -60,24 +60,46 @@ fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name
     assert!(store.set_workspace_name(&ws, "Lost").is_err());
 }
 
+/// Set by the busy handler of `a_write_waits_for_another_connection_holding_the_file`.
+static WRITER_IS_WAITING: AtomicBool = AtomicBool::new(false);
+
+fn note_writer_is_waiting(_attempts: i32) -> bool {
+    WRITER_IS_WAITING.store(true, std::sync::atomic::Ordering::SeqCst);
+    // Simulated latency: SQLite calls the handler again at once, so back off between retries.
+    std::thread::sleep(Duration::from_millis(1));
+    true
+}
+
 #[test]
 fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
+    use std::sync::atomic::Ordering;
+
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.db");
     let clock = Arc::new(ManualClock::new(1_000_000));
     let store = Store::open(&path, clock, Limits::default()).unwrap();
+    // The write's own busy handler marks the moment it is blocked, and that releases the lock.
+    lock(&store.conn)
+        .busy_handler(Some(note_writer_is_waiting))
+        .unwrap();
     // The other writer: the CLI, or the host a restart has not finished with.
     let holder = Connection::open(&path).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     let release = std::thread::spawn(move || {
-        // The write below blocks inside the call under test, so no signal can mark the moment to
-        // release: the lock is held for a fixed window that the write has to wait out.
-        std::thread::sleep(Duration::from_millis(300));
+        puddle_test_kit::eventually_blocking(
+            "the write to be blocked",
+            Duration::from_secs(30),
+            || WRITER_IS_WAITING.load(Ordering::SeqCst),
+        );
         holder.execute_batch("COMMIT").unwrap();
     });
     let made = store.create_rule_set(UserId::OWNER, "Waits", "", None, Actor::Ui);
     release.join().unwrap();
     assert!(made.is_ok(), "{:?}", made.err());
+    assert!(
+        WRITER_IS_WAITING.load(Ordering::SeqCst),
+        "the write ran only after the holder let go"
+    );
 }
 
 #[test]
@@ -564,4 +586,270 @@ fn closing_a_store_that_read_the_audit_leaves_no_write_ahead_log() {
     store.audit_workspace_names(&[1]).unwrap(); // reads through the read-only connection
     drop(store);
     assert!(!dir.path().join("puddle.db-wal").exists());
+}
+
+fn partial_copy(dir: &Path, name: &str, age: Duration) -> std::path::PathBuf {
+    let path = dir.join(name);
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_modified(std::time::SystemTime::now() - age)
+        .unwrap();
+    path
+}
+
+#[test]
+fn an_open_deletes_the_half_made_upgrade_copy_a_crash_left_but_not_one_still_being_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let crashed = partial_copy(
+        dir.path(),
+        "store.db.pre-v9.4242-0.partial",
+        Duration::from_hours(3),
+    );
+    let running = partial_copy(
+        dir.path(),
+        "store.db.pre-v9.4243-0.partial",
+        Duration::from_secs(5),
+    );
+    let other = partial_copy(
+        dir.path(),
+        "other.db.pre-v9.1-0.partial",
+        Duration::from_secs(9999),
+    );
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    Store::open(&path, clock, Limits::default()).unwrap();
+    assert!(!crashed.exists(), "the crash leftover is deleted");
+    assert!(running.exists(), "a copy another process is writing stays");
+    assert!(other.exists(), "another database's file stays");
+}
+
+/// A clock that, on its first reading after `arm`, runs a write through another handle on the
+/// same file: another process writing between a setter's start and its transaction.
+struct RaceClock {
+    clock: ManualClock,
+    hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Clock for RaceClock {
+    fn now_ms(&self) -> u64 {
+        if let Some(hook) = lock(&self.hook).take() {
+            hook();
+        }
+        self.clock.now_ms()
+    }
+}
+
+#[derive(Default)]
+struct Emitted(Mutex<Vec<Event>>);
+
+impl EventSink for Emitted {
+    fn emit(&self, event: Event) {
+        lock(&self.0).push(event);
+    }
+}
+
+/// Two handles on one file. `rival` does the same write as `ours` just before ours starts, so
+/// ours finds the value already there and has nothing to report.
+fn race(
+    rival: impl FnOnce(&Store) + Send + 'static,
+    ours: impl FnOnce(&Store),
+) -> (Store, Vec<Event>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let clock = Arc::new(RaceClock {
+        clock: ManualClock::new(1_000_000),
+        hook: Mutex::new(None),
+    });
+    let emitted = Arc::new(Emitted::default());
+    let store = Store::open(&path, clock.clone(), Limits::default())
+        .unwrap()
+        .with_events(emitted.clone());
+    let other = Store::open(
+        &path,
+        Arc::new(ManualClock::new(1_000_000)),
+        Limits::default(),
+    )
+    .unwrap();
+    store
+        .set_workspace_name(&WorkspaceId::new("a").unwrap(), "A")
+        .unwrap();
+    lock(&emitted.0).clear();
+    *lock(&clock.hook) = Some(Box::new(move || rival(&other)));
+    ours(&store);
+    let events = std::mem::take(&mut *lock(&emitted.0));
+    drop(dir);
+    (store, events)
+}
+
+fn ws_a() -> WorkspaceId {
+    WorkspaceId::new("a").unwrap()
+}
+
+#[test]
+fn a_workspace_mode_already_saved_by_another_writer_sends_no_event() {
+    let mode = Some(puddle_types::InterceptionMode::All);
+    let (_, events) = race(
+        move |other| other.set_workspace_mode(&ws_a(), mode).unwrap(),
+        |store| store.set_workspace_mode(&ws_a(), mode).unwrap(),
+    );
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn never_decrypt_names_already_saved_by_another_writer_send_no_event() {
+    let names = vec!["bank.example".to_owned()];
+    let other_names = names.clone();
+    let (_, events) = race(
+        move |other| other.set_never_decrypt(&ws_a(), &other_names).unwrap(),
+        |store| store.set_never_decrypt(&ws_a(), &names).unwrap(),
+    );
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn learned_limits_already_saved_by_another_writer_send_no_event() {
+    let limits = LearnedLimits {
+        ttl_secs: 99,
+        cap: 7,
+    };
+    let (_, events) = race(
+        move |other| other.set_learned_limits(limits).unwrap(),
+        |store| store.set_learned_limits(limits).unwrap(),
+    );
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn interception_settings_already_saved_by_another_writer_send_no_event() {
+    let settings = InterceptionSettings {
+        mode: Some(puddle_types::InterceptionMode::All),
+        learn_from_rejections: false,
+        notice_seen: true,
+    };
+    let (_, events) = race(
+        move |other| other.set_interception_settings(settings).unwrap(),
+        |store| store.set_interception_settings(settings).unwrap(),
+    );
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_shell_init_already_saved_by_another_writer_sends_no_event() {
+    let text = crate::ShellInitText::new("export A=1").unwrap();
+    let other_text = text.clone();
+    let (_, events) = race(
+        move |other| {
+            other.set_shell_init(&ws_a(), &other_text).unwrap();
+        },
+        |store| {
+            store.set_shell_init(&ws_a(), &text).unwrap();
+        },
+    );
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_system_managed_plan_already_saved_by_another_writer_is_not_recorded_twice() {
+    let plan = SystemPlan {
+        everywhere: [crate::SystemReason::CodeServer].into(),
+        ..SystemPlan::default()
+    };
+    let other_plan = plan.clone();
+    let (store, _) = race(
+        move |other| {
+            other.set_system_managed(&other_plan).unwrap();
+        },
+        |store| {
+            assert_eq!(store.set_system_managed(&plan).unwrap(), vec![]);
+        },
+    );
+    let changes = store
+        .audit_lines(0, 100)
+        .unwrap()
+        .iter()
+        .filter(|(_, line)| line.contains("system_managed_changed"))
+        .count();
+    assert_eq!(changes, 1, "one record for one change");
+}
+
+#[test]
+fn a_rule_change_shares_the_built_in_entries_instead_of_rebuilding_them() {
+    let (_, store) = store();
+    let before = store.snapshot();
+    let w = WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &w);
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(w),
+            pattern: Pattern::parse("x.example").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let after = store.snapshot();
+    assert!(!Arc::ptr_eq(&before, &after), "the snapshot is replaced");
+    assert!(Arc::ptr_eq(before.built_in(), after.built_in()));
+}
+
+#[test]
+fn a_page_of_built_in_entries_is_searched_offset_and_counted() {
+    let (_, store) = store();
+    let github = puddle_types::RuleSetId::BuiltIn("github");
+    let all = store
+        .built_in_entries(UserId::OWNER, github, "", 0, 1000)
+        .unwrap();
+    assert!(all.total >= 2 && all.entries.len() == all.total);
+    let info = store.rule_set(UserId::OWNER, github).unwrap();
+    assert_eq!(info.entry_count, all.total);
+    let first = all.entries[0].pattern.clone();
+    let one = store
+        .built_in_entries(UserId::OWNER, github, &first.to_ascii_uppercase(), 0, 1)
+        .unwrap();
+    assert_eq!(one.entries.len(), 1);
+    assert_eq!(one.entries[0].pattern, first);
+    assert!(one.total >= 1 && one.total <= all.total);
+    let rest = store
+        .built_in_entries(UserId::OWNER, github, "", 1, 1000)
+        .unwrap();
+    assert_eq!(rest.entries, all.entries[1..]);
+    assert_eq!(rest.total, all.total);
+    let none = store
+        .built_in_entries(UserId::OWNER, github, "no-such-host.invalid", 0, 10)
+        .unwrap();
+    assert_eq!((none.total, none.entries.len()), (0, 0));
+}
+
+#[test]
+fn built_in_entries_refuse_a_set_that_is_not_built_in() {
+    let (_, store) = store();
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, puddle_types::RuleSetId::User(1), "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, puddle_types::RuleSetId::System, "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+}
+
+#[test]
+fn the_entries_of_a_hidden_built_in_set_are_not_served() {
+    let (_, store) = store();
+    let github = puddle_types::RuleSetId::BuiltIn("github");
+    assert!(
+        store
+            .built_in_entries(UserId::OWNER, github, "", 0, 10)
+            .is_ok()
+    );
+    store
+        .set_system_managed(&SystemPlan {
+            hidden_sets: ["github"].into(),
+            ..SystemPlan::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        store.built_in_entries(UserId::OWNER, github, "", 0, 10),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
 }

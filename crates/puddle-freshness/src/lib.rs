@@ -304,8 +304,10 @@ pub struct Refreshed {
 ///
 /// The previous file must carry a valid signature from the same key, but it may have expired: the
 /// job has to recover after an outage. A previous file that is unreadable or signed by another
-/// key is an error, never a fresh start at sequence 1, because that would hand every client a
-/// rollback.
+/// key is an error, never a fresh start, because a file may only be replaced by one its own key
+/// signed. With no previous file the sequence is the count of minutes since the epoch at `now`:
+/// each run adds one and runs come at most once a minute, so a start over after the file was lost
+/// still lands above every sequence a client may have seen, never a rollback.
 ///
 /// # Errors
 ///
@@ -319,7 +321,9 @@ pub fn refresh(
     validity_secs: u64,
 ) -> Result<Refreshed, FreshnessError> {
     let sequence = match previous {
-        None => 1,
+        // The minute count since the epoch: a daily job gives out at most one sequence a minute,
+        // so a start over (the published file lost) is above every sequence given out before.
+        None => now / 60,
         Some(bytes) => {
             let key = SigningKey::from_bytes(seed).verifying_key();
             let before = Signed::open(bytes, &[key])?;

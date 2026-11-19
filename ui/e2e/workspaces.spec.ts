@@ -66,6 +66,16 @@ async function openList(page: Page, backend: Backend, path = "/workspaces") {
 const card = (page: Page, name: string): Locator =>
   page.getByRole("article", { name });
 
+/** A row's name link: the way into the workspace (the row has no separate "Details"). */
+const nameLink = (row: Locator, name: string): Locator =>
+  row.getByRole("link", { name, exact: true });
+
+/** Opens the "more" menu of a row and chooses Stop: the row's one action is Start or Connect. */
+async function stopFromRow(page: Page, row: Locator, name: string) {
+  await row.getByRole("button", { name: `More about ${name}` }).click();
+  await page.getByRole("menuitem", { name: `Stop ${name}` }).click();
+}
+
 const toast = (page: Page, text: string | RegExp): Locator =>
   page.getByRole("status").filter({ hasText: text });
 
@@ -84,7 +94,7 @@ async function openDetail(
 }
 
 test.describe("the list and the start screen", () => {
-  test("the app starts on the workspaces, with a strip for waiting requests", async ({
+  test("the app starts on the workspaces, and the count of waiting requests shows in the sidebar, not as a banner", async ({
     page,
     request,
     backend,
@@ -95,16 +105,13 @@ test.describe("the list and the start screen", () => {
     await expect(page).toHaveURL(/\/workspaces$/);
     const waiting = await pendingCount(request, backend);
     expect(waiting).toBeGreaterThan(3);
-    const strip = page
-      .getByRole("status")
-      .filter({ hasText: "requests waiting" });
-    await expect(strip).toContainText(`${waiting} requests waiting`);
-    await expect(strip).toContainText("Latest:");
-    await strip.getByRole("link", { name: "Review" }).click();
-    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(page.getByTestId("pending-badge")).toContainText(
+      String(waiting),
+    );
+    await expect(page.getByText("requests waiting")).toHaveCount(0);
   });
 
-  test("a card per workspace with its state, size and waiting requests", async ({
+  test("a row per workspace with its state, repository, disk and waiting requests", async ({
     page,
     backend,
   }) => {
@@ -112,12 +119,10 @@ test.describe("the list and the start screen", () => {
     await expect(page.getByRole("article")).toHaveCount(3);
     const running = card(page, "web-shop");
     await expect(running).toContainText("Running");
-    await expect(running).toContainText("https://github.com/acme/web-shop.git");
-    await expect(running).toContainText("6 GiB of 32 GiB used");
-    await expect(running).toContainText("14 days ago");
+    await expect(running).toContainText("acme/web-shop");
+    await expect(running).toContainText("6 GiB / 32 GiB");
     await expect(running.getByRole("link", { name: /waiting$/ })).toBeVisible();
     await expect(card(page, "docs-site")).toContainText("Stopped");
-    await expect(card(page, "docs-site")).toContainText("4 GiB memory");
     await expect(card(page, "data-tools")).toContainText("Not started");
     await expect(
       running.getByRole("button", { name: "Connect to web-shop" }),
@@ -128,49 +133,70 @@ test.describe("the list and the start screen", () => {
     ).toBeEnabled();
   });
 
-  test("no workspaces shows what to do", async ({ page, backend }) => {
+  test("no workspaces shows the create form itself", async ({
+    page,
+    backend,
+  }) => {
     await backend.control.reset("empty");
     await openList(page, backend);
     await expect(
-      page.getByRole("heading", { name: "No workspaces yet" }),
+      page.getByRole("textbox", { name: "Repository address" }),
     ).toBeVisible();
+    await expect(page.getByText("No workspaces yet")).toHaveCount(0);
     await expect(page.getByText("requests waiting")).toHaveCount(0);
-    await page.getByRole("button", { name: "New workspace" }).last().click();
+    await page.getByRole("button", { name: "More options" }).click();
     await expect(
       page.getByRole("dialog", { name: "New workspace" }),
     ).toBeVisible();
   });
 
-  test("a card opens the details", async ({ page, backend }) => {
+  test("the first workspace is made from the address alone", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("empty");
     await openList(page, backend);
-    await card(page, "docs-site")
-      .getByRole("link", { name: /^Details/ })
-      .click();
+    await page
+      .getByRole("textbox", { name: "Repository address" })
+      .fill("https://github.com/acme/ledger.git");
+    await page.getByRole("button", { name: "Create workspace" }).click();
+    await expect(card(page, "ledger")).toContainText("acme/ledger");
+    await expect(
+      page.getByRole("textbox", { name: "Repository address" }),
+    ).toHaveCount(0);
+  });
+
+  test("a row opens the details", async ({ page, backend }) => {
+    await openList(page, backend);
+    await nameLink(card(page, "docs-site"), "docs-site").click();
     await expect(page).toHaveURL(/\/workspaces\/docs-site$/);
     await expect(
       page.getByRole("heading", { level: 1, name: "docs-site" }),
     ).toBeVisible();
   });
 
-  test("a request that arrives updates the strip and the card live", async ({
+  test("a request that arrives updates the sidebar count and the row live", async ({
     page,
     request,
     backend,
   }) => {
     await openList(page, backend);
     const before = await pendingCount(request, backend);
-    await expect(page.getByText(`${before} requests waiting`)).toBeVisible();
+    const row = card(page, "data-tools");
+    await expect(page.getByTestId("pending-badge")).toContainText(
+      String(before),
+    );
+    const own = row.getByRole("link", { name: /^\d+ waiting$/ });
+    const ownBefore = Number((await own.innerText()).trim());
     await backend.control.step({
       do: "request",
       workspace: "data-tools",
       host: "live.example.org",
     });
-    await expect(
-      page.getByText(`${before + 1} requests waiting`),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("status").filter({ hasText: "live.example.org" }),
-    ).toBeVisible();
+    await expect(page.getByTestId("pending-badge")).toContainText(
+      String(before + 1),
+    );
+    await expect(own).toHaveText(String(ownBefore + 1));
   });
 });
 
@@ -492,11 +518,13 @@ test.describe("start and stop", () => {
     await openList(page, backend);
     const shop = card(page, "web-shop");
     await backend.control.step({ do: "hold_workspaces" });
-    await shop.getByRole("button", { name: "Stop web-shop" }).click();
+    await stopFromRow(page, shop, "web-shop");
     await expect(shop).toContainText("Stopping");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
     await expect(
-      shop.getByRole("button", { name: "Stop web-shop" }),
+      page.getByRole("menuitem", { name: "Stop web-shop" }),
     ).toBeDisabled();
+    await page.keyboard.press("Escape");
     await backend.control.step({ do: "release_workspaces" });
     await expect(toast(page, "Stopped web-shop.")).toBeVisible();
     await expect(shop).toContainText("Stopped");
@@ -509,7 +537,7 @@ test.describe("start and stop", () => {
       operation: "stop",
       reason: "the guest did not answer",
     });
-    await shop.getByRole("button", { name: "Stop web-shop" }).click();
+    await stopFromRow(page, shop, "web-shop");
     await expect(
       toast(page, "Stopping web-shop failed: the guest did not answer"),
     ).toBeVisible();
@@ -603,9 +631,7 @@ test.describe("connecting", () => {
     ).toBeEnabled();
     await step.getByRole("button", { name: "Close" }).click();
 
-    await card(page, "web-shop")
-      .getByRole("link", { name: /^Details/ })
-      .click();
+    await nameLink(card(page, "web-shop"), "web-shop").click();
     const main = page.getByRole("main");
     await expect(main.getByRole("alert")).toContainText(
       "could not be installed in web-shop",
@@ -752,7 +778,7 @@ test.describe("deleting", () => {
     request,
     backend,
   }) => {
-    await openDetail(page, backend, "docs-site");
+    await openDetail(page, backend, "docs-site", "settings");
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const dialog = page.getByRole("alertdialog", { name: "Delete docs-site?" });
     await expect(dialog).toContainText("Uncommitted changes");
@@ -787,7 +813,7 @@ test.describe("deleting", () => {
     request,
     backend,
   }) => {
-    await openDetail(page, backend, "docs-site");
+    await openDetail(page, backend, "docs-site", "settings");
     const button = page.getByRole("button", { name: "Delete workspace…" });
     await button.click();
     await page
@@ -803,7 +829,7 @@ test.describe("deleting", () => {
     page,
     backend,
   }) => {
-    await openDetail(page, backend, "data-tools");
+    await openDetail(page, backend, "data-tools", "settings");
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toContainText("found nothing unsaved");
@@ -816,7 +842,7 @@ test.describe("deleting", () => {
   });
 
   test("a running workspace can't be deleted", async ({ page, backend }) => {
-    await openDetail(page, backend, "web-shop");
+    await openDetail(page, backend, "web-shop", "settings");
     await expect(
       page.getByRole("button", { name: "Delete workspace…" }),
     ).toBeDisabled();
@@ -830,7 +856,7 @@ test.describe("deleting", () => {
     request,
     backend,
   }) => {
-    await openDetail(page, backend, "data-tools");
+    await openDetail(page, backend, "data-tools", "settings");
     await backend.control.step({
       do: "fail_workspace",
       operation: "delete",
@@ -886,7 +912,7 @@ test.describe("deleting", () => {
 });
 
 test.describe("the detail page", () => {
-  test("overview: state, resources, network summary and the tabs", async ({
+  test("overview: five tabs, what waits and what the workspace holds, with no id and no state row", async ({
     page,
     backend,
   }) => {
@@ -897,24 +923,48 @@ test.describe("the detail page", () => {
       /Terminal/,
       /Network/,
       /Git/,
-      /Environment/,
-      /Shell init/,
-      /SSH agent/,
-      /Ports/,
       /Settings/,
     ]);
     await expect(tabs.getByRole("link", { name: /Overview/ })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    await expect(page.getByText("ws-web-shop")).toBeVisible();
     await expect(
-      page.getByText("global default").or(page.getByText("Puddle's default")),
+      page.getByRole("heading", { name: /Waiting for you/ }),
     ).toBeVisible();
-    await expect(page.getByRole("region", { name: "Network" })).toContainText(
-      /\d+ waiting · 3 workspace rules/,
-    );
-    await expect(page.getByText("6 GiB of 32 GiB used")).toBeVisible();
+    await expect(page.getByText("Workspace id")).toHaveCount(0);
+    await expect(page.getByText("ws-web-shop")).toHaveCount(0);
+    await expect(page.getByText("State", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Delete workspace" }),
+    ).toHaveCount(0);
+  });
+
+  test("the settings tab is one table with Advanced and Danger groups, and a dropdown that shows only its value", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const table = page.getByRole("table", { name: "Settings of web-shop" });
+    await expect(table).toBeVisible();
+    await expect(
+      table.getByRole("columnheader", { name: "Advanced" }),
+    ).toBeVisible();
+    await expect(
+      table.getByRole("columnheader", { name: "Danger" }),
+    ).toBeVisible();
+    const link = page.getByRole("link", { name: "Ports" });
+    await expect(link).toBeVisible();
+    const memory = page.getByLabel("Memory", { exact: true });
+    await expect(memory).toBeVisible();
+    await expect(memory.locator("option")).not.toContainText([
+      /Use the global/,
+    ]);
+    // The text of a value is not cut off: the select is as wide as its longest option needs.
+    const box = await page
+      .getByLabel("Private networks", { exact: true })
+      .boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThan(90);
   });
 
   test("a kill by the out-of-memory killer shows a notice that links to the memory setting", async ({
@@ -942,7 +992,7 @@ test.describe("the detail page", () => {
   });
 
   test("reclaim space runs and reports", async ({ page, backend }) => {
-    await openDetail(page, backend, "web-shop");
+    await openDetail(page, backend, "web-shop", "settings");
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "Reclaim space" }).click();
     await expect(
@@ -954,21 +1004,34 @@ test.describe("the detail page", () => {
     ).toBeVisible();
   });
 
-  test("the Environment, Shell init and Ports tabs open on their own content", async ({
+  test("Environment, Shell init, SSH agent and Ports are pages under Settings, and the old addresses lead to them", async ({
     page,
     backend,
   }) => {
-    await openDetail(page, backend, "web-shop");
-    for (const tab of ["Environment", "Shell init", "Ports"]) {
-      await page.getByRole("link", { name: tab }).click();
+    await openDetail(page, backend, "web-shop", "settings");
+    for (const name of ["Environment", "Shell init", "SSH agent", "Ports"]) {
+      await page
+        .getByRole("navigation", { name: "Workspace settings" })
+        .getByRole("link", { name })
+        .click();
+      await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
       await expect(
-        page.getByRole("heading", { level: 2, name: tab }),
-      ).toBeVisible();
-      await expect(page.getByRole("link", { name: tab })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
+        page
+          .getByRole("navigation", { name: "Workspace settings" })
+          .getByRole("link", { name }),
+      ).toHaveAttribute("aria-current", "page");
+      await expect(
+        page
+          .getByRole("navigation", { name: "Workspace sections" })
+          .getByRole("link", { name: "Settings" }),
+      ).toHaveAttribute("aria-current", "page");
     }
+    await page.goto("/workspaces/web-shop/ports");
+    await expect(page).toHaveURL(/\/workspaces\/web-shop\/settings\/ports$/);
+    await page.goto("/workspaces/web-shop/environment");
+    await expect(page).toHaveURL(
+      /\/workspaces\/web-shop\/settings\/environment$/,
+    );
   });
 
   test("start and stop work from the detail page", async ({
@@ -1011,8 +1074,8 @@ test.describe("renaming", () => {
     // Still running, still the same address, and the id is on the overview.
     await expect(page).toHaveURL(/\/workspaces\/web-shop$/);
     await expect(page.getByText("Running").first()).toBeVisible();
-    await expect(page.getByText("Workspace id")).toBeVisible();
-    await expect(page.getByText("ws-web-shop")).toBeVisible();
+    await expect(page.getByText("Workspace id")).toHaveCount(0);
+    await expect(page.getByText("ws-web-shop")).toHaveCount(0);
     const found = (await workspaceList(request, backend)).find(
       (w) => w.id === "web-shop",
     );
@@ -1031,7 +1094,7 @@ test.describe("renaming", () => {
     await expect(card(page, "web-shop")).toHaveCount(0);
     await expect(
       card(page, "Web shop (prod)").getByRole("button", {
-        name: "Stop Web shop (prod)",
+        name: "Connect to Web shop (prod)",
       }),
     ).toBeVisible();
   });
@@ -1113,10 +1176,8 @@ test.describe("renaming", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Shop API \u00fc" }),
     ).toBeVisible();
-    await expect(page.getByText("Workspace id")).toBeVisible();
-    await expect(
-      page.getByText("shop-api", { exact: true }).first(),
-    ).toBeVisible();
+    await expect(page.getByText("Workspace id")).toHaveCount(0);
+    await expect(page.getByText("shop-api", { exact: true })).toHaveCount(0);
     // Renaming changes the name and nothing else, and the address survives.
     await rename(page).click();
     const form = dialog(page);
@@ -1154,9 +1215,7 @@ test.describe("renaming", () => {
       .fill("https://github.com/acme/slow.git");
     await create.getByRole("button", { name: "Create workspace" }).click();
     await expect(card(page, "slow")).toContainText("Creating");
-    await card(page, "slow")
-      .getByRole("link", { name: /^Details/ })
-      .click();
+    await nameLink(card(page, "slow"), "slow").click();
     await expect(
       page.getByRole("button", { name: "Rename slow" }),
     ).toBeDisabled();
@@ -1211,21 +1270,29 @@ test.describe("the network tab", () => {
     page,
     backend,
   }) => {
-    await openDetail(page, backend, "web-shop", "network");
+    await openDetail(page, backend, "web-shop");
     const waiting = page.locator("li.req");
     await expect(waiting.first()).toBeVisible();
     for (const text of await waiting.allTextContents())
       expect(text).toContain("web-shop");
-    await expect(page.getByText("telemetry.example.net").first()).toBeVisible();
+    await expect(
+      page.getByText("api.stripe-sandbox.example.com").first(),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Workspace sections" })
+        .getByRole("link", { name: /Overview/ }),
+    ).toContainText(String(await waiting.count()));
+    await page
+      .getByRole("navigation", { name: "Workspace sections" })
+      .getByRole("link", { name: "Network" })
+      .click();
+    await expect(page.locator("li.req")).toHaveCount(0);
+    await expect(page.getByText(/waiting for web-shop/)).toBeVisible();
     const rules = page.getByRole("table");
     await expect(rules).toContainText("registry.npmjs.org"); // for every workspace
     await expect(rules).toContainText("api.example.com");
     await expect(rules).not.toContainText("ads.example.net"); // docs-site's rule
-    await expect(
-      page
-        .getByRole("navigation", { name: "Workspace sections" })
-        .getByRole("link", { name: /Network/ }),
-    ).toContainText(String(await waiting.count()));
     await expect(rules.getByRole("button")).toHaveCount(0);
   });
 
@@ -1234,7 +1301,7 @@ test.describe("the network tab", () => {
     request,
     backend,
   }) => {
-    await openDetail(page, backend, "docs-site", "network");
+    await openDetail(page, backend, "docs-site");
     const rows = page.locator("li.req");
     // The heading shows before the requests are read: count only once a row is there.
     await expect(rows.first()).toBeVisible();
@@ -1252,10 +1319,55 @@ test.describe("the network tab", () => {
     await expect(toast(page, /Undone/)).toBeVisible();
   });
 
+  test("Allow all decides every request of the workspace after a confirm and leaves the others", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    const rows = page.locator("li.req");
+    // web-shop has three requests waiting in the default scenario.
+    const mine = 3;
+    await expect(rows).toHaveCount(mine);
+    const total = await pendingCount(request, backend);
+    await page.getByRole("button", { name: "Allow all" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText(`Allow all ${mine} requests?`);
+    await dialog.getByRole("button", { name: "Allow all" }).click();
+    await expect(
+      page.getByText("Nothing is waiting for web-shop."),
+    ).toBeVisible();
+    await expect(
+      toast(page, `Allowed ${mine} requests for web-shop.`),
+    ).toBeVisible();
+    await expect.poll(() => pendingCount(request, backend)).toBe(total - mine);
+  });
+
+  test("Deny all decides every request of the workspace after a confirm", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    const rows = page.locator("li.req");
+    const mine = 3;
+    await expect(rows).toHaveCount(mine);
+    const total = await pendingCount(request, backend);
+    await page.getByRole("button", { name: "Deny all" }).click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Deny all" })
+      .click();
+    await expect(
+      toast(page, `Denied ${mine} requests for web-shop.`),
+    ).toBeVisible();
+    await expect.poll(() => pendingCount(request, backend)).toBe(total - mine);
+  });
+
   test("nothing waiting says so", async ({ page, backend }) => {
     await backend.control.reset("empty");
     await backend.control.reset("lived-in");
-    await openDetail(page, backend, "data-tools", "network");
+    await openDetail(page, backend, "data-tools");
     // data-tools has requests in this scenario; decide them all.
     const rows = page.locator("li.req");
     await expect(rows.first()).toBeVisible();
@@ -1268,7 +1380,9 @@ test.describe("the network tab", () => {
     await expect(
       page.getByText("Nothing is waiting for data-tools."),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Waiting" })).toBeFocused();
+    await expect(
+      page.getByRole("heading", { name: "Waiting for you" }),
+    ).toBeFocused();
   });
 });
 
@@ -1279,8 +1393,10 @@ test.describe("the settings tab", () => {
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    const memory = page.getByLabel("Memory for this workspace");
-    await expect(memory).toHaveValue("");
+    const memory = page.getByLabel("Memory", { exact: true });
+    await expect(memory.locator("option")).not.toContainText([
+      /Use the global/,
+    ]);
     await expect(
       page.getByText(/A change applies at the next restart/),
     ).toBeVisible();
@@ -1292,7 +1408,9 @@ test.describe("the settings tab", () => {
       ),
     ).toBeVisible();
     await expect(
-      page.locator(".chip", { hasText: "this workspace" }).first(),
+      page.locator('[data-setting="memory"] .chip', {
+        hasText: "This workspace",
+      }),
     ).toBeVisible();
     const stored = await request.get("/api/settings/workspaces/web-shop", {
       headers: auth(backend),
@@ -1302,10 +1420,12 @@ test.describe("the settings tab", () => {
     };
     expect(view.overrides.memory).toBe(16_384);
     await page.reload();
-    await expect(page.getByLabel("Memory for this workspace")).toHaveValue(
+    await expect(page.getByLabel("Memory", { exact: true })).toHaveValue(
       "16384",
     );
-    await page.getByLabel("Memory for this workspace").selectOption("");
+    await page
+      .getByRole("button", { name: "Use the global setting again for Memory" })
+      .click();
     await expect(page.getByText("Memory saved.")).toBeVisible();
     const again = await request.get("/api/settings/workspaces/web-shop", {
       headers: auth(backend),
@@ -1325,22 +1445,22 @@ test.describe("the settings tab", () => {
     // The arrow key below picks the first count; a count of one would not change the select.
     test.skip(limits.max_cpus < 2, "a one-core computer");
     await openDetail(page, backend, "web-shop", "settings");
-    const cpus = page.getByLabel("CPUs for this workspace");
-    await expect(cpus).toHaveValue("");
-    await expect(cpus.locator("option").first()).toHaveText(
-      `Use the global default (${cpuLabel(limits.default_cpus)})`,
-    );
+    const cpus = page.getByLabel("CPUs", { exact: true });
+    await expect(cpus).toHaveValue(String(limits.default_cpus));
+    await expect(cpus.locator("option").first()).toHaveText(cpuLabel(CPUS_MIN));
     await expect(cpus.locator("option")).toHaveCount(
-      limits.max_cpus - CPUS_MIN + 2,
+      limits.max_cpus - CPUS_MIN + 1,
     );
     await expect(
       page.getByText(/A running workspace keeps the count it started with/),
     ).toBeVisible();
 
-    await page.getByLabel("Memory for this workspace").focus();
+    const up = limits.default_cpus < limits.max_cpus;
+    const chosen = limits.default_cpus + (up ? 1 : -1);
+    await page.getByLabel("Memory", { exact: true }).focus();
     await page.keyboard.press("Tab");
     await expect(cpus).toBeFocused();
-    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press(up ? "ArrowDown" : "ArrowUp");
     await expect(page.getByText("CPUs saved.")).toBeVisible();
     await expect(
       page.getByText(/The new CPU count applies the next time/),
@@ -1350,14 +1470,18 @@ test.describe("the settings tab", () => {
       (await (await request.get(url, { headers: auth(backend) })).json()) as {
         overrides: { cpus: number | null };
       };
-    expect((await read()).overrides.cpus).toBe(1);
-    await expect(page.locator("#ws-cpus-desc .chip")).toHaveText(
-      "this workspace",
+    expect((await read()).overrides.cpus).toBe(chosen);
+    await expect(page.locator('[data-setting="cpus"] .chip')).toHaveText(
+      "This workspace",
     );
 
     await page.reload();
-    await expect(page.getByLabel("CPUs for this workspace")).toHaveValue("1");
-    await page.getByLabel("CPUs for this workspace").selectOption("");
+    await expect(page.getByLabel("CPUs", { exact: true })).toHaveValue(
+      String(chosen),
+    );
+    await page
+      .getByRole("button", { name: "Use the global setting again for CPUs" })
+      .click();
     await expect(page.getByText("CPUs saved.")).toBeVisible();
     expect((await read()).overrides.cpus).toBeNull();
 
@@ -1391,17 +1515,22 @@ test.describe("the settings tab", () => {
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    const loopback = page.getByLabel("This computer (loopback)");
-    await expect(loopback).toHaveValue("inherit");
-    await expect(loopback.locator("option").first()).toContainText(
-      "Use the global setting (not allowed)",
-    );
+    const loopback = page.getByLabel("This computer (loopback)", {
+      exact: true,
+    });
+    await expect(loopback).toHaveValue("off");
+    await expect(loopback.locator("option")).toHaveText([
+      "Allowed",
+      "Not allowed",
+    ]);
     await loopback.selectOption("on");
     await expect(
       page.getByText("This computer (loopback) saved."),
     ).toBeVisible();
-    const clipboard = page.getByLabel("Pages reading the clipboard");
-    await expect(clipboard).toHaveValue("inherit");
+    const clipboard = page.getByLabel("Pages reading the clipboard", {
+      exact: true,
+    });
+    await expect(clipboard).toHaveValue("ask");
     await clipboard.selectOption("deny");
     await expect(page.getByText("Clipboard saved.")).toBeVisible();
     const stored = (await (
@@ -1424,7 +1553,11 @@ test.describe("the settings tab", () => {
       value: true,
       source: "workspace",
     });
-    await loopback.selectOption("inherit");
+    await page
+      .getByRole("button", {
+        name: "Use the global setting again for This computer (loopback)",
+      })
+      .click();
     await expect(
       page.getByText("This computer (loopback) saved."),
     ).toBeVisible();
@@ -1436,11 +1569,11 @@ test.describe("the settings tab", () => {
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    const capture = page.getByLabel("Keep logins made in this workspace");
-    await expect(capture).toHaveValue("inherit");
-    await expect(capture.locator("option").first()).toContainText(
-      "Use the global setting (on)",
-    );
+    const capture = page.getByLabel("Keep logins made in this workspace", {
+      exact: true,
+    });
+    await expect(capture).toHaveValue("on");
+    await expect(capture.locator("option")).toHaveText(["On", "Off"]);
     await capture.selectOption("off");
     await expect(page.getByText("Login capture saved.")).toBeVisible();
     const stored = (await (
@@ -1458,11 +1591,13 @@ test.describe("the settings tab", () => {
     });
     await page.reload();
     await expect(
-      page.getByLabel("Keep logins made in this workspace"),
+      page.getByLabel("Keep logins made in this workspace", { exact: true }),
     ).toHaveValue("off");
     await page
-      .getByLabel("Keep logins made in this workspace")
-      .selectOption("inherit");
+      .getByRole("button", {
+        name: "Use the global setting again for Keep logins made in this workspace",
+      })
+      .click();
     await expect(page.getByText("Login capture saved.")).toBeVisible();
   });
 
@@ -1490,15 +1625,13 @@ test.describe("the settings tab", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(notice).toHaveCount(0);
 
-    await page.goto("/settings");
+    await page.goto("/settings/network");
     const mode = page.getByLabel("Which hosts to decrypt");
     await expect(mode).toHaveValue("known_only");
     await mode.selectOption("all_except_curated");
-    await expect(page.getByText("Interception mode saved.")).toBeVisible();
+    await expect(page.getByText("Saved.")).toBeVisible();
     await page.getByLabel("Learn from rejections").uncheck();
-    await expect(
-      page.getByText("Learning from rejections saved."),
-    ).toBeVisible();
+    await expect(page.getByText("Saved.")).toHaveCount(2);
     await page.reload();
     await expect(page.getByLabel("Which hosts to decrypt")).toHaveValue(
       "all_except_curated",
@@ -1511,21 +1644,27 @@ test.describe("the settings tab", () => {
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    const mode = page.getByLabel("Interception mode");
-    await expect(mode).toHaveValue("inherit");
+    const mode = page.getByRole("combobox", { name: "Which hosts to decrypt" });
+    await expect(mode).toHaveValue("known_only");
     await mode.selectOption("all");
     await expect(page.getByText("Interception mode saved.")).toBeVisible();
     const names = page.getByLabel("Never decrypt in this workspace");
     await names.fill("Bank.example\n*.corp.test");
-    await page.getByRole("button", { name: "Keep names" }).click();
+    await page
+      .getByRole("button", { name: "Save Never decrypt in this workspace" })
+      .click();
     await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByLabel("Interception mode")).toHaveValue("all");
+    await expect(
+      page.getByRole("combobox", { name: "Which hosts to decrypt" }),
+    ).toHaveValue("all");
     await expect(
       page.getByLabel("Never decrypt in this workspace"),
     ).toHaveValue("*.corp.test\nbank.example");
     await names.fill("10.0.0.1");
-    await page.getByRole("button", { name: "Keep names" }).click();
+    await page
+      .getByRole("button", { name: "Save Never decrypt in this workspace" })
+      .click();
     await expect(page.getByRole("alert")).toContainText("10.0.0.1");
   });
 
@@ -1629,10 +1768,11 @@ test.describe("the settings tab", () => {
         });
       } else await route.continue();
     });
-    const memory = page.getByLabel("Memory for this workspace");
+    const memory = page.getByLabel("Memory", { exact: true });
+    const before = await memory.inputValue();
     await memory.selectOption({ label: "4 GiB" });
     await expect(page.getByRole("alert")).toContainText("memory is too small");
-    await expect(memory).toHaveValue("");
+    await expect(memory).toHaveValue(before);
   });
 });
 
@@ -1658,11 +1798,18 @@ test.describe("keyboard only", () => {
     await created.getByRole("button", { name: "Start keys" }).focus();
     await page.keyboard.press("Enter");
     await expect(created).toContainText("Running");
-    await created.getByRole("button", { name: "Stop keys" }).focus();
+    await created.getByRole("button", { name: "More about keys" }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: "Stop keys" }).focus();
     await page.keyboard.press("Enter");
     await expect(created).toContainText("Stopped");
 
-    await created.getByRole("link", { name: /^Details/ }).focus();
+    await nameLink(created, "keys").focus();
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("navigation", { name: "Workspace sections" })
+      .getByRole("link", { name: "Settings" })
+      .focus();
     await page.keyboard.press("Enter");
     const del = page.getByRole("button", { name: "Delete workspace…" });
     await del.focus();
@@ -1688,7 +1835,7 @@ test.describe("keyboard only", () => {
     page,
     backend,
   }) => {
-    await openDetail(page, backend, "docs-site");
+    await openDetail(page, backend, "docs-site", "settings");
     const del = page.getByRole("button", { name: "Delete workspace…" });
     await del.focus();
     await page.keyboard.press("Enter");
@@ -1767,7 +1914,7 @@ test.describe("accessibility", () => {
       await expect(page.getByRole("alert")).toBeVisible();
       await expectNoAxeViolations(page, "overview with the notice");
 
-      await page.goto("/workspaces/data-tools");
+      await page.goto("/workspaces/data-tools/settings");
       await expect(
         page.getByRole("heading", { level: 1, name: "data-tools" }),
       ).toBeVisible();
@@ -1813,7 +1960,7 @@ test.describe("accessibility", () => {
     page,
     backend,
   }) => {
-    await openDetail(page, backend, "docs-site");
+    await openDetail(page, backend, "docs-site", "settings");
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     await expect(page.getByRole("alertdialog")).toContainText("stash@{0}");
     await expectNoAxeViolations(page, "delete with losses");
@@ -1860,8 +2007,12 @@ test.describe("a workspace whose volume is gone", () => {
     ).toBeEnabled();
     await expectNoAxeViolations(page, "list");
 
-    await lost.getByRole("link", { name: /^Details/ }).click();
+    await nameLink(lost, "lost-disk").click();
     await expect(page.getByText("Its disk is gone")).toBeVisible();
+    await page
+      .getByRole("navigation", { name: "Workspace sections" })
+      .getByRole("link", { name: "Settings" })
+      .click();
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const confirm = page.getByRole("alertdialog");
     await expect(confirm).toContainText("nothing is lost");
@@ -1900,6 +2051,10 @@ test.describe("a workspace whose root disk is nearly full, made bigger", () => {
       toast(page, "Made the root disk of full-root bigger."),
     ).toBeVisible();
     await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await page
+      .getByRole("navigation", { name: "Workspace sections" })
+      .getByRole("link", { name: "Settings" })
+      .click();
     await expect(page.getByText("9.7 GiB of 24 GiB used")).toBeVisible();
     await expectNoAxeViolations(page, "after the grow");
   });

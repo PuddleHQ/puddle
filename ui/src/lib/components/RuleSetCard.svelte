@@ -6,9 +6,12 @@
     globalState,
     isOn,
     type RuleSet,
+    type EntryPage,
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
+  import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
   import SetChip from "./SetChip.svelte";
+  import WorkspaceSelect from "./WorkspaceSelect.svelte";
   import "#lib/theme/controls.css";
 
   // One rule set: what it is, its switch for every workspace and the workspaces that switch it
@@ -21,6 +24,7 @@
     onRename,
     onDelete,
     onDeleteEntry,
+    loadEntries,
   }: {
     set: RuleSet;
     /** Workspace names to suggest for a per-workspace switch. */
@@ -34,6 +38,12 @@
     onRename: (set: RuleSet) => void;
     onDelete: (set: RuleSet) => void;
     onDeleteEntry: (set: RuleSet, entry: RuleSetEntry) => void;
+    /** Reads a page of a big built-in set's entries, optionally searched. */
+    loadEntries: (
+      set: RuleSet,
+      query: string,
+      offset: number,
+    ) => Promise<EntryPage>;
   } = $props();
 
   const id = $props.id();
@@ -52,6 +62,32 @@
   );
   let workspace = $state("");
   let problem = $state<string | null>(null);
+
+  // A big built-in set lists only its first entries; the rest is searched and paged in.
+  const paged = $derived(set.entry_count > set.entries.length);
+  let query = $state("");
+  let listed = $state.raw<RuleSetEntry[] | null>(null);
+  let matches = $state<number | null>(null);
+  let loadProblem = $state<string | null>(null);
+  const shown = $derived(listed ?? set.entries);
+  const total = $derived(matches ?? set.entry_count);
+
+  async function load(more: boolean) {
+    loadProblem = null;
+    const text = query.trim();
+    if (!more && text === "") {
+      listed = null;
+      matches = null;
+      return;
+    }
+    try {
+      const page = await loadEntries(set, text, more ? shown.length : 0);
+      listed = more ? [...shown, ...page.entries] : page.entries;
+      matches = page.total;
+    } catch {
+      loadProblem = "Puddle couldn't read the entries.";
+    }
+  }
 
   function switchHere(enabled: boolean) {
     problem = workspaceNameError(workspace.trim());
@@ -114,7 +150,10 @@
     <ul class="overrides" aria-label="Workspaces that switch {set.name}">
       {#each set.overrides as o (o.workspace)}
         <li>
-          <span><b>{o.enabled ? "On" : "Off"}</b> in <b>{o.workspace}</b></span>
+          <span
+            ><b>{o.enabled ? "On" : "Off"}</b> in
+            <b>{workspaceStore.labelOf(o.workspace)}</b></span
+          >
           <button
             type="button"
             class="btn"
@@ -133,21 +172,14 @@
     novalidate
   >
     <div class="field">
-      <label for="{id}-ws">Workspace name</label>
-      <input
+      <label for="{id}-ws">Workspace</label>
+      <WorkspaceSelect
         id="{id}-ws"
-        type="text"
-        list="{id}-wss"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
         bind:value={workspace}
-        aria-invalid={problem ? "true" : undefined}
-        aria-describedby={problem ? `${id}-ws-error` : undefined}
+        known={workspaces}
+        invalid={problem !== null}
+        describedby={problem ? `${id}-ws-error` : undefined}
       />
-      <datalist id="{id}-wss">
-        {#each workspaces as name (name)}<option value={name}></option>{/each}
-      </datalist>
     </div>
     <button type="button" class="btn" onclick={() => switchHere(true)}
       >On there</button
@@ -162,17 +194,41 @@
 
   <details>
     <summary
-      >{set.entries.length}
-      {set.entries.length === 1 ? "entry" : "entries"}</summary
+      >{set.entry_count}
+      {set.entry_count === 1 ? "entry" : "entries"}</summary
     >
-    {#if set.entries.length === 0}
+    {#if paged}
+      <form
+        class="row"
+        role="search"
+        aria-label="Search the entries of {set.name}"
+        onsubmit={(e) => {
+          e.preventDefault();
+          void load(false);
+        }}
+      >
+        <div class="field">
+          <label for="{id}-q">Search entries</label>
+          <input
+            id="{id}-q"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={query}
+          />
+        </div>
+        <button type="submit" class="btn">Search</button>
+      </form>
+    {/if}
+    {#if shown.length === 0}
       <p class="muted">
-        No entries yet. Add one, or approve a request into this set from the
-        Inbox.
+        {matches !== null
+          ? "No entry matches."
+          : "No entries yet. Add one, or approve a request into this set from the Inbox."}
       </p>
     {:else}
       <ul class="entries">
-        {#each set.entries as entry (entry.rule_id ?? entry.pattern)}
+        {#each shown as entry (entry.rule_id ?? entry.pattern)}
           <li>
             <span class="chip {entry.effect}"
               >{entry.effect === "allow" ? "Allow" : "Deny"}</span
@@ -190,6 +246,17 @@
           </li>
         {/each}
       </ul>
+    {/if}
+    {#if paged}
+      <p class="muted" aria-live="polite">
+        Showing {shown.length} of {total}{matches !== null ? " matches" : ""}.
+      </p>
+      {#if shown.length < total}
+        <button type="button" class="btn" onclick={() => void load(true)}
+          >Show more</button
+        >
+      {/if}
+      {#if loadProblem}<p class="error" role="alert">{loadProblem}</p>{/if}
     {/if}
   </details>
 

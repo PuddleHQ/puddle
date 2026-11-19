@@ -76,7 +76,7 @@
         aria-current={current === tab.slug ? "page" : undefined}
       >
         {tab.label}
-        {#if tab.slug === "network" && waiting > 0}
+        {#if tab.slug === "" && waiting > 0}
           <span class="badge">
             <span aria-hidden="true">{waiting}</span>
             <span class="visually-hidden">{waiting} waiting</span>

@@ -1219,6 +1219,76 @@ fn v32_reads_every_existing_pending_row_as_not_needing_an_exact_allow() {
     );
 }
 
+#[test]
+fn an_upgrade_waits_out_another_process_holding_the_file_longer_than_a_normal_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    migrate_to(&mut Connection::open(&path).unwrap(), 2).unwrap();
+    let mut conn = Connection::open(&path).unwrap();
+    // A normal write gives up quickly; the upgrade must wait for the other process's upgrade.
+    conn.busy_timeout(std::time::Duration::from_millis(50))
+        .unwrap();
+    let holder = Connection::open(&path).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let release = std::thread::spawn(move || {
+        // Ordering with no signal: the upgrade's wait runs inside SQLite's own busy timeout, which
+        // offers no hook, so the holder must outlast the 50 ms normal timeout by a clear margin.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        holder.execute_batch("COMMIT").unwrap();
+    });
+    let upgraded = migrate_to(&mut conn, 4);
+    release.join().unwrap();
+    assert_eq!(upgraded.unwrap(), 2);
+    assert_eq!(version(&conn), 4);
+    let timeout: i64 = conn
+        .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+        .unwrap();
+    assert_eq!(timeout, 50, "the normal wait is back after the upgrade");
+}
+
+#[test]
+fn a_half_made_copy_is_stale_from_exactly_the_cutoff() {
+    let cutoff = STALE_PARTIAL;
+    assert!(!partial_copy_is_stale(
+        cutoff
+            .checked_sub(std::time::Duration::from_secs(1))
+            .unwrap()
+    ));
+    assert!(partial_copy_is_stale(cutoff));
+    assert!(partial_copy_is_stale(
+        cutoff + std::time::Duration::from_secs(1)
+    ));
+}
+
+#[test]
+fn a_stale_half_made_copy_that_cannot_be_deleted_is_logged() {
+    let dir = tempfile::tempdir().unwrap();
+    let stuck = dir.path().join("puddle.db.pre-v2.1-0.partial");
+    std::fs::create_dir(&stuck).unwrap();
+    // Windows opens a directory only with backup semantics, and setting its time needs write access.
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        open.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    open.open(&stuck)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_hours(3))
+        .unwrap();
+    let logs = crate::test_support::Logs::capture();
+    remove_stale_partial_copies(&dir.path().join("puddle.db"));
+    let lines = logs.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with("WARN half-made upgrade copy not deleted"),
+        "{lines:?}"
+    );
+    assert!(stuck.exists());
+}
+
 /// Writes `tests/data/golden-v23.db`, the checked-in database the `golden_database` integration
 /// test migrates: the migrations up to version 23, then `tests/data/golden-v23-rows.sql`.
 /// Run it only to change the rows: `cargo test -p puddle-store --lib write_golden_database -- --ignored`.

@@ -98,3 +98,21 @@ fn only_the_puddle_key_is_owned() {
     let err = MergeSpec::new(MergeFormat::ShellBlock, vec![other]).unwrap_err();
     assert!(err.to_string().contains("only Puddle is owned"), "{err}");
 }
+
+#[test]
+fn a_duplicated_block_keeps_the_lines_between_the_copies() {
+    let file = format!(
+        "head\n{}alias ll='ls -l'\n{}tail\n",
+        ours("export A='old'"),
+        ours("export A='older'")
+    );
+    assert_eq!(
+        written(Some(&file), BODY),
+        format!("head\nalias ll='ls -l'\ntail\n{}", ours(BODY))
+    );
+    let gone = unmerge_file(MergeFormat::ShellBlock, file.as_bytes(), &[]).unwrap();
+    assert_eq!(
+        gone.merged,
+        Merged::Write(b"head\nalias ll='ls -l'\ntail\n".to_vec())
+    );
+}

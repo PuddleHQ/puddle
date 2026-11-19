@@ -5,10 +5,8 @@
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { asEnvFailed } from "#lib/environment/events.ts";
 import { asPortForwardFailed } from "#lib/workspaces/ports.ts";
+import { tabHref } from "#lib/workspaces/tabs.ts";
 import type { Notifier } from "./notifier.ts";
-
-const tab = (workspace: string, slug: string) =>
-  `/workspaces/${encodeURIComponent(workspace)}/${slug}`;
 
 export class EnvironmentNotices {
   readonly #notifier: Notifier;
@@ -27,7 +25,7 @@ export class EnvironmentNotices {
         title: `A change to the environment of ${workspaces.labelOf(env.workspace)} did not reach it.`,
         detail: env.reason,
         link: {
-          href: tab(env.workspace, "environment"),
+          href: tabHref(env.workspace, "environment"),
           label: "Open the environment",
         },
       });
@@ -40,7 +38,10 @@ export class EnvironmentNotices {
         tone: "warning",
         title: `Port ${port.guest_port} of ${workspaces.labelOf(port.workspace)} could not be forwarded to 127.0.0.1:${port.host_port}.`,
         detail: port.reason,
-        link: { href: tab(port.workspace, "ports"), label: "Open the ports" },
+        link: {
+          href: tabHref(port.workspace, "ports"),
+          label: "Open the ports",
+        },
       });
       return true;
     }

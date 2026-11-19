@@ -204,6 +204,22 @@ fn an_identity_without_credentials_is_only_a_fallback_and_nobody_is_none() {
 }
 
 #[test]
+fn an_author_rule_git_cannot_keep_is_left_out_and_said() {
+    let long_owner = "o".repeat(256);
+    let a = authors(&git(vec![(
+        "Long",
+        vec![credential("github.com", &[long_owner.as_str()], false)],
+    )]));
+    assert_eq!(a.rules, []);
+    assert_eq!(a.left_out.len(), 1, "{:?}", a.left_out);
+    assert!(
+        a.left_out[0].starts_with("an author rule of the identity Long is left out:"),
+        "{:?}",
+        a.left_out
+    );
+}
+
+#[test]
 fn an_author_git_cannot_keep_is_left_out_not_fatal() {
     let mut with_bad = git(vec![
         ("Good", vec![credential("github.com", &["a"], false)]),

@@ -4,6 +4,7 @@
 //! behind the System managed hosts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -16,8 +17,8 @@ use super::{
 use crate::audit::{
     AuditRecord, RuleDeleteReason, RuleSetWire, RuleSwitchKind, RuleWire, actor_str,
 };
-use crate::catalogue::{self, BUILT_IN_SETS, SystemReason};
-use crate::engine::{RuleIndex, SetEntry, Switches, default_on};
+use crate::catalogue::{self, BUILT_IN_SETS, BuiltInSet, SystemReason};
+use crate::engine::{EntryIndex, RuleIndex, SetEntry, Switches, default_on};
 use crate::error::StoreError;
 use crate::pattern::Pattern;
 use crate::rule::{Actor, Effect, Precedence, Rule, Scope};
@@ -25,6 +26,10 @@ use crate::users::UserId;
 
 /// The longest rule set name, in characters.
 const MAX_SET_NAME: usize = 64;
+/// How many entries of a built-in set the set list carries, and the most one page of
+/// [`Store::built_in_entries`] returns. A big built-in list is paged and searched, never sent whole.
+pub const ENTRY_PAGE: usize = 200;
+
 /// The longest rule set description, in characters.
 const MAX_SET_DESCRIPTION: usize = 500;
 
@@ -46,8 +51,11 @@ pub struct RuleSetInfo {
     pub global: Option<bool>,
     /// Workspaces that override the switch, by name.
     pub overrides: Vec<(WorkspaceId, bool)>,
-    /// Its entries.
+    /// Its entries. A built-in set lists only its first [`ENTRY_PAGE`]; page the rest with
+    /// [`Store::built_in_entries`].
     pub entries: Vec<RuleSetEntryInfo>,
+    /// How many entries the set has in all (at least `entries.len()`).
+    pub entry_count: usize,
     /// Built-in sets: when a Puddle update last changed the entries (R-36), else `None`.
     pub changed_at: Option<u64>,
     /// Sets the user made: when.
@@ -148,15 +156,21 @@ pub fn parse_rule_set(text: &str) -> Option<RuleSetId> {
     id.parse().ok().map(RuleSetId::User)
 }
 
-/// Builds the engine's snapshot from the database and the catalogue.
+/// Every built-in set's entries, indexed once for the life of the process and shared by every
+/// snapshot (S8): a rule change re-indexes only the rules and System managed entries, however
+/// large a built-in list is. Hidden sets are filtered per snapshot, not here.
+fn built_in_index() -> Arc<EntryIndex> {
+    static BUILT_IN: OnceLock<Arc<EntryIndex>> = OnceLock::new();
+    Arc::clone(
+        BUILT_IN.get_or_init(|| Arc::new(EntryIndex::new(catalogue::set_entries(BUILT_IN_SETS)))),
+    )
+}
+
+/// Builds the engine's snapshot from the database and the shared built-in index.
 pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
     let rules = load_rules(conn)?;
     let hidden = load_hidden(conn)?;
-    let mut entries = catalogue::set_entries(
-        BUILT_IN_SETS
-            .iter()
-            .filter(|set| !hidden.contains(set.slug)),
-    );
+    let mut entries = Vec::new();
     for (workspace, reason) in load_reasons(conn)? {
         for pattern in catalogue::patterns(reason.hosts()) {
             entries.push(SetEntry {
@@ -172,7 +186,8 @@ pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
         entries,
         load_switches(conn)?,
         users::load_owners(conn)?,
-    ))
+    )
+    .with_built_in(built_in_index(), hidden.into_iter().collect()))
 }
 
 fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
@@ -522,20 +537,13 @@ impl Store {
                 default_on: set.default_on,
                 global: index.switches().global(user, id),
                 overrides: index.overrides(user, id),
-                entries: set
-                    .entries
-                    .iter()
-                    .map(|entry| RuleSetEntryInfo {
-                        pattern: entry.pattern.to_owned(),
-                        effect: set.effect,
-                        note: entry.note.to_owned(),
-                        enabled: !Pattern::parse(entry.pattern)
-                            .is_ok_and(|p| index.entry_off(user, id, &p)),
-                        rule_id: None,
-                        expires_at: None,
-                        precedence: Precedence::BUILT_IN,
-                    })
-                    .collect(),
+                entries: built_in_entry_infos(
+                    &index,
+                    user,
+                    set,
+                    set.entries.iter().take(ENTRY_PAGE),
+                ),
+                entry_count: set.entries.len(),
                 changed_at,
                 created_at: None,
                 default_precedence: None,
@@ -552,6 +560,47 @@ impl Store {
             out.push(user_set_info(&conn, &index, user, id)?);
         }
         Ok(out)
+    }
+
+    /// A page of the entries of the built-in set `slug`: those whose pattern or note contains
+    /// `query` (ignoring case; empty matches all), from the `offset`th match, at most `limit`
+    /// (capped at [`ENTRY_PAGE`]). Looks at the catalogue only, so it does not slow with the list.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRuleSet`] for a set this Puddle does not ship or one that is hidden.
+    pub fn built_in_entries(
+        &self,
+        user: UserId,
+        id: RuleSetId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<EntryPage, StoreError> {
+        let RuleSetId::BuiltIn(slug) = id else {
+            return Err(StoreError::UnknownRuleSet(id.to_string()));
+        };
+        let set =
+            catalogue::built_in(slug).ok_or_else(|| StoreError::UnknownRuleSet(id.to_string()))?;
+        if load_hidden(&lock(&self.conn))?.contains(slug) {
+            return Err(StoreError::UnknownRuleSet(id.to_string()));
+        }
+        let query = query.trim().to_ascii_lowercase();
+        let matches = |entry: &&catalogue::CatalogueEntry| {
+            query.is_empty()
+                || entry.pattern.to_ascii_lowercase().contains(&query)
+                || entry.note.to_ascii_lowercase().contains(&query)
+        };
+        let total = set.entries.iter().filter(matches).count();
+        let page = set
+            .entries
+            .iter()
+            .filter(matches)
+            .skip(offset)
+            .take(limit.min(ENTRY_PAGE));
+        Ok(EntryPage {
+            entries: built_in_entry_infos(&self.snapshot(), user, set, page),
+            total,
+        })
     }
 
     /// One rule set, as `user` sees it.
@@ -944,25 +993,22 @@ impl Store {
                 wanted.insert(Some(workspace.clone()), reasons.clone());
             }
         }
-        let current: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> = {
-            let mut map: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
-            let loaded = load_reasons(&lock(&self.conn))?;
-            for (workspace, reason) in loaded {
-                map.entry(workspace).or_default().insert(reason);
-            }
-            map
-        };
-        let hidden_now = load_hidden(&lock(&self.conn))?;
         let hidden_wanted: BTreeSet<String> = plan
             .hidden_sets
             .iter()
             .filter(|slug| catalogue::built_in(slug).is_some())
             .map(ToString::to_string)
             .collect();
-        if current == wanted && hidden_now == hidden_wanted {
-            return Ok(Vec::new());
-        }
         let closed = self.change(|tx, now, fx| {
+            // Read here, under the write lock: another writer's plan must not be recorded twice.
+            let mut current: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> =
+                BTreeMap::new();
+            for (workspace, reason) in load_reasons(tx)? {
+                current.entry(workspace).or_default().insert(reason);
+            }
+            if current == wanted && load_hidden(tx)? == hidden_wanted {
+                return Ok(Vec::new());
+            }
             tx.execute("DELETE FROM hidden_builtin_sets", [])?;
             for slug in &hidden_wanted {
                 tx.execute(
@@ -1012,6 +1058,36 @@ impl Store {
     }
 }
 
+/// `entries` of the built-in `set` as `user` sees them (R-65: an entry they switched off is off).
+fn built_in_entry_infos<'a>(
+    index: &RuleIndex,
+    user: UserId,
+    set: &BuiltInSet,
+    entries: impl Iterator<Item = &'a catalogue::CatalogueEntry>,
+) -> Vec<RuleSetEntryInfo> {
+    let id = RuleSetId::BuiltIn(set.slug);
+    entries
+        .map(|entry| RuleSetEntryInfo {
+            pattern: entry.pattern.to_owned(),
+            effect: set.effect,
+            note: entry.note.to_owned(),
+            enabled: !Pattern::parse(entry.pattern).is_ok_and(|p| index.entry_off(user, id, &p)),
+            rule_id: None,
+            expires_at: None,
+            precedence: Precedence::BUILT_IN,
+        })
+        .collect()
+}
+
+/// One page of a built-in set's entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryPage {
+    /// The entries of this page, in catalogue order.
+    pub entries: Vec<RuleSetEntryInfo>,
+    /// How many entries match the search in all.
+    pub total: usize,
+}
+
 /// A set `user` made, with its switches from `index` and its entries.
 fn user_set_info(
     conn: &Connection,
@@ -1021,6 +1097,20 @@ fn user_set_info(
 ) -> Result<RuleSetInfo, StoreError> {
     let wire = require_user_set(conn, user, id)?;
     let set = RuleSetId::User(id);
+    let entries: Vec<RuleSetEntryInfo> = index
+        .rules()
+        .iter()
+        .filter(|rule| rule.scope == Scope::Set(id))
+        .map(|rule| RuleSetEntryInfo {
+            pattern: rule.pattern.to_string(),
+            effect: rule.effect,
+            note: String::new(),
+            enabled: rule.enabled,
+            rule_id: Some(rule.id),
+            expires_at: rule.expires_at,
+            precedence: rule.precedence.get(),
+        })
+        .collect();
     Ok(RuleSetInfo {
         id: set,
         name: wire.name,
@@ -1029,20 +1119,8 @@ fn user_set_info(
         default_on: default_on(set),
         global: index.switches().global(user, set),
         overrides: index.overrides(user, set),
-        entries: index
-            .rules()
-            .iter()
-            .filter(|rule| rule.scope == Scope::Set(id))
-            .map(|rule| RuleSetEntryInfo {
-                pattern: rule.pattern.to_string(),
-                effect: rule.effect,
-                note: String::new(),
-                enabled: rule.enabled,
-                rule_id: Some(rule.id),
-                expires_at: rule.expires_at,
-                precedence: rule.precedence.get(),
-            })
-            .collect(),
+        entry_count: entries.len(),
+        entries,
         changed_at: None,
         created_at: Some(wire.created_at),
         default_precedence: wire.default_precedence.map(Precedence::new).transpose()?,

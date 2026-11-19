@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { builtIn, mine } from "#lib/testing/fake-rule-sets.ts";
+import { builtIn, mine, trackerEntries } from "#lib/testing/fake-rule-sets.ts";
 import type { RuleSet } from "#lib/rules/sets.ts";
 import RuleSetCard from "./RuleSetCard.svelte";
+import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
 
 afterEach(cleanup);
 
@@ -67,11 +68,9 @@ describe("a built-in set", () => {
   it("switches for one workspace, checking the name first", async () => {
     const props = mount(builtIn("github"));
     await fireEvent.click(screen.getByRole("button", { name: "On there" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Name the workspace");
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose the workspace");
     expect(props.onSwitch).not.toHaveBeenCalled();
-    await fireEvent.input(screen.getByLabelText("Workspace name"), {
-      target: { value: "api" },
-    });
+    await chooseWorkspace(screen.getByLabelText("Workspace"), "api");
     await fireEvent.click(screen.getByRole("button", { name: "Off there" }));
     expect(props.onSwitch).toHaveBeenCalledWith(props.set, "api", false);
     // Enter in the field submits nothing by itself: the buttons say on or off.
@@ -195,3 +194,115 @@ describe("what a set does", () => {
     expect(screen.queryByText(/^Allows|^Blocks/)).toBeNull();
   });
 });
+
+describe("a big built-in set", () => {
+  function big(extra: Partial<RuleSet> = {}) {
+    return builtIn("trackers", {
+      entries: trackerEntries(200),
+      entry_count: 450,
+      ...extra,
+    });
+  }
+
+  it("lists the first entries and says how many there are", () => {
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries: vi.fn() },
+    } as never);
+    expect(screen.getByText("450 entries")).toBeInTheDocument();
+    expect(screen.getAllByText(/tracker\.example/)).toHaveLength(200);
+    expect(screen.getByText("Showing 200 of 450.")).toBeInTheDocument();
+  });
+
+  it("searches and shows only the matches", async () => {
+    const loadEntries = vi.fn(async () => ({
+      entries: trackerEntries(3),
+      total: 3,
+    }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.input(screen.getByLabelText("Search entries"), {
+      target: { value: "h1" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Showing 3 of 3 matches.");
+    expect(loadEntries).toHaveBeenCalledWith(expect.anything(), "h1", 0);
+    expect(screen.getAllByText(/tracker\.example/)).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("says when no entry matches", async () => {
+    const loadEntries = vi.fn(async () => ({ entries: [], total: 0 }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.input(screen.getByLabelText("Search entries"), {
+      target: { value: "zzz" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("No entry matches.")).toBeInTheDocument();
+    expect(screen.getByText("Showing 0 of 0 matches.")).toBeInTheDocument();
+  });
+
+  it("goes back to the first entries when the search is emptied", async () => {
+    const loadEntries = vi.fn(async () => ({
+      entries: trackerEntries(3),
+      total: 3,
+    }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    const box = screen.getByLabelText("Search entries");
+    await fireEvent.input(box, { target: { value: "h1" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Showing 3 of 3 matches.");
+    await fireEvent.input(box, { target: { value: " " } });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Showing 200 of 450.");
+    expect(loadEntries).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows more from where the list ends", async () => {
+    const loadEntries = vi.fn(async () => ({
+      entries: trackerEntries(250).slice(200),
+      total: 450,
+    }));
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Showing 250 of 450 matches.");
+    expect(loadEntries).toHaveBeenCalledWith(expect.anything(), "", 200);
+  });
+
+  it("says when the entries can't be read", async () => {
+    const loadEntries = vi.fn(async () => {
+      throw new Error("down");
+    });
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: big(), loadEntries },
+    } as never);
+    await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Puddle couldn't read the entries.",
+    );
+  });
+
+  it("has no search on a small set", () => {
+    render(RuleSetCard, {
+      props: { ...baseProps(), set: builtIn("github"), loadEntries: vi.fn() },
+    } as never);
+    expect(screen.queryByLabelText("Search entries")).toBeNull();
+  });
+});
+
+function baseProps() {
+  return {
+    workspaces: [],
+    onSwitch: vi.fn(),
+    onAddEntry: vi.fn(),
+    onRename: vi.fn(),
+    onDelete: vi.fn(),
+    onDeleteEntry: vi.fn(),
+  };
+}

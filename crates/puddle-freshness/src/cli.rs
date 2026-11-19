@@ -181,14 +181,17 @@ pub const PROJECT: &str = "puddle";
 /// an outage but a key that signs "valid for a year" is refused.
 pub const MAX_VALIDITY_SECS: u64 = 2 * DEFAULT_VALIDITY_SECS;
 
-/// A highest sequence no honest daily refresh reaches (about 2.7 million years).
+/// A highest sequence no honest refresh reaches: a first file starts at the minute count since the
+/// epoch, which passes this in the year 3871, and each daily refresh adds one.
 pub const SEQUENCE_CEILING: u64 = 1_000_000_000;
 
 /// Decodes a base64 32-byte value (a seed or a public key).
 fn decode32(what: &str, text: &str) -> Result<[u8; 32]> {
+    // The decoder's message names the offending byte and its offset, which for a seed is a
+    // piece of the secret, so it is not passed on.
     let raw = STANDARD
         .decode(text.trim())
-        .map_err(|e| key_error(what, &e))?;
+        .map_err(|_| key_error(what, &"it is not valid base64"))?;
     <[u8; 32]>::try_from(raw.as_slice())
         .map_err(|_| key_error(what, &format!("{} bytes, not 32", raw.len())))
 }
@@ -215,8 +218,7 @@ pub fn refresh_file(path: &Path, seed: &[u8; 32], now: u64, validity_secs: u64) 
         Err(e) => return Err(io_error(format!("reading {}", path.display()), e)),
     };
     let next = refresh(previous.as_deref(), seed, PROJECT, now, validity_secs)?;
-    std::fs::write(path, &next.bytes)
-        .map_err(|e| io_error(format!("writing {}", path.display()), e))?;
+    replace(path, &next.bytes).map_err(|e| io_error(format!("writing {}", path.display()), e))?;
     Ok(format!(
         "freshness {}: sequence {}, expires {} ({} s from {})",
         path.display(),
@@ -225,6 +227,29 @@ pub fn refresh_file(path: &Path, seed: &[u8; 32], now: u64, validity_secs: u64) 
         validity_secs,
         now
     ))
+}
+
+/// Puts `bytes` in place of the file at `path` in one step: a temporary file next to it, synced,
+/// then renamed over it. A run stopped part way (killed, disk full) leaves the old file whole, so
+/// the next run can still read and advance it.
+fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".new");
+    let tmp = path.with_file_name(name);
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        // Best effort: the error that matters is `result`; a leftover temporary file is
+        // overwritten by the next run.
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Checks the file at `path` as a client would, against the public key `key` (base64).

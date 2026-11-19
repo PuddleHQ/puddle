@@ -461,4 +461,23 @@ mod gate {
         let len = gate.refused.lock().unwrap().len();
         assert!(len <= REFUSALS_REMEMBERED, "{len}");
     }
+
+    #[test]
+    fn a_flood_of_distinct_refusals_inside_the_window_stops_at_the_cap_and_writes_no_more() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::from_secs(60));
+        for n in 0..(REFUSALS_REMEMBERED + 44) {
+            gate.record(
+                &ws("a"),
+                Some("h"),
+                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+            );
+        }
+        let len = gate.refused.lock().unwrap().len();
+        assert_eq!(len, REFUSALS_REMEMBERED);
+        assert_eq!(
+            store.audit_lines(0, 1000).unwrap().len(),
+            REFUSALS_REMEMBERED
+        );
+    }
 }

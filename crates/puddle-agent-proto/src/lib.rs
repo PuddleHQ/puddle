@@ -52,5 +52,22 @@ pub mod yamux;
 
 pub use control::{AgentMessage, EditorProblemKind, StubDnsTrouble};
 
+/// Whether `c` must not reach a log line or a problem shown to the user when a guest wrote it:
+/// a control character, or one that hides or reorders text (the bidirectional controls and the
+/// zero-width characters).
+#[must_use]
+pub fn is_hostile_text_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{feff}'
+        )
+}
+
 /// The yamux crate both sides use, so callers name the same types.
 pub use tokio_yamux;

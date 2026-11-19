@@ -11,7 +11,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "usage: $0 <cargo-tauri binary>" >&2; exit 2; }
 bin=$1
 line=$(awk '!/^#/ && NF >= 3 { print; exit }' "$here/wix.sha256")
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # why: the word split of the pin line (or the file list) is the point
 set -- $line
 version=$1
 url=$2

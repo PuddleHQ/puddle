@@ -24,7 +24,7 @@ wix_complete() {
 
 line=$(awk '!/^#/ && NF >= 3 { print; exit }' "$here/wix.sha256")
 [ -n "$line" ] || { echo "fetch-wix: nothing pinned in ci/wix.sha256" >&2; exit 1; }
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # why: the word split of the pin line (or the file list) is the point
 set -- $line
 url=$2
 want=$3

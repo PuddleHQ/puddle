@@ -12,7 +12,7 @@ fail() { echo "fetch-wix-test: FAIL: $1" >&2; exit 1; }
 files="candle.exe candle.exe.config darice.cub light.exe light.exe.config wconsole.dll winterop.dll wix.dll WixUIExtension.dll WixUtilExtension.dll"
 mkdir -p "$tmp/src" "$tmp/site"
 for f in $files; do printf 'x' >"$tmp/src/$f"; done
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # why: the word split of the pin line (or the file list) is the point
 python3 -I -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[2], "w"); [z.write(sys.argv[1] + "/" + n, n) for n in sys.argv[3:]]; z.close()' "$tmp/src" "$tmp/site/wix-test.zip" $files
 sum=$(sha256sum <"$tmp/site/wix-test.zip" | cut -d' ' -f1)
 

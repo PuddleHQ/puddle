@@ -7,8 +7,10 @@
     reason = "test helpers outside #[test] fns: a failed setup fails the test"
 )]
 
+use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::task::{Context, Waker};
 use std::time::Duration;
 
 use puddle_boot::{
@@ -408,4 +410,79 @@ async fn a_hook_that_hangs_times_out_as_a_failure() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("boot hook could not run"), "{err}");
+}
+
+/// Polls `fut` `polls` times with a waker that does nothing, then drops it: a caller that gave up
+/// (a timeout, a shutdown, a `select!`) at that await.
+fn drop_after<F: Future>(fut: F, polls: usize) -> bool {
+    let mut fut = pin!(fut);
+    let mut cx = Context::from_waker(Waker::noop());
+    (0..polls).any(|_| fut.as_mut().poll(&mut cx).is_ready())
+}
+
+#[tokio::test]
+async fn a_boot_dropped_at_any_await_leaves_the_gate_where_it_was() {
+    let rt = FakeRuntime::new();
+    let _hook = FakeHook::install(&rt, 0, "", Duration::ZERO);
+    let boot = BootHook::new();
+    rt.wait_in_every_call(true);
+    for waits in 1..10 {
+        // create: the gate was Down and stays Down.
+        let gate = Gate::new();
+        let n = format!("drop-c{waits}");
+        let ended = drop_after(boot.create(&rt, spec(&n), &plan(), &gate), waits);
+        if ended {
+            break;
+        }
+        assert_eq!(
+            gate.state(),
+            GateState::Down,
+            "create dropped after {waits}"
+        );
+    }
+    let gate = Gate::new();
+    let sb = boot
+        .create(&rt, spec("drop-s"), &plan(), &gate)
+        .await
+        .unwrap();
+    sb.stop().await.unwrap();
+    for waits in 1..10 {
+        if drop_after(boot.start(&rt, &name("drop-s"), &plan(), &gate), waits) {
+            break;
+        }
+        assert_eq!(gate.state(), GateState::Down, "start dropped after {waits}");
+    }
+    let gate = Gate::new();
+    for waits in 1..10 {
+        if drop_after(boot.adopt(&rt, &name("drop-s"), &plan(), &gate), waits) {
+            break;
+        }
+        assert_eq!(gate.state(), GateState::Down, "adopt dropped after {waits}");
+    }
+}
+
+#[tokio::test]
+async fn a_stop_during_a_boot_is_not_undone_when_the_boot_ends() {
+    let rt = FakeRuntime::new();
+    let _hook = FakeHook::install(&rt, 0, "", Duration::ZERO);
+    let boot = BootHook::new();
+    let gate = Gate::new();
+    let first = boot
+        .create(&rt, spec("race"), &plan(), &gate)
+        .await
+        .unwrap();
+    rt.wait_in_every_call(true);
+    // A second boot (a new Puddle adopting the sandbox) is inside its hook run...
+    let (race, plan) = (name("race"), plan());
+    let mut again = pin!(boot.adopt(&rt, &race, &plan, &gate));
+    let mut cx = Context::from_waker(Waker::noop());
+    for _ in 0..2 {
+        assert!(again.as_mut().poll(&mut cx).is_pending());
+    }
+    assert_eq!(gate.state(), GateState::Booting);
+    // ...when the user stops the sandbox through the handle of the first boot.
+    first.stop().await.unwrap();
+    assert_eq!(gate.state(), GateState::Down);
+    let _ = again.await;
+    assert_eq!(gate.state(), GateState::Down, "the stop stands");
 }

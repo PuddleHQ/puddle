@@ -104,3 +104,14 @@ async fn one_lock_per_workspace_and_an_unused_one_is_dropped() {
         .collect();
     assert_eq!(names, ["third"], "locks nobody holds are gone");
 }
+
+/// What the guest writes to standard error reaches the UI and the host log, so a terminal escape
+/// or a bidi control in it is replaced and a line of any length is cut.
+#[test]
+fn a_failure_reason_has_no_control_or_bidi_characters_and_is_cut() {
+    let out = ExecOutput::new(1, "", "\u{1b}[31mdenied\u{202e}\rtxt\n");
+    assert_eq!(failure_reason(Ok(out)), "?[31mdenied??txt");
+    let long = "x".repeat(1_000_000);
+    let reason = failure_reason(Ok(ExecOutput::new(1, "", long)));
+    assert_eq!(reason.chars().count(), 500);
+}

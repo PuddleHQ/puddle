@@ -16,7 +16,7 @@ use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as 
 use puddle_types::{Event, Problem, ToolsState, WorkspaceId};
 use puddle_workspace::WORKSPACES_ROOT;
 
-use super::{HostWorkspaces, tools_key};
+use super::{HostWorkspaces, guest_text, last_stderr_line, tools_key};
 
 /// How long the install may take: a JDK and two runtimes through a slow proxy take minutes.
 const INSTALL_TIMEOUT: Duration = Duration::from_mins(60);
@@ -97,16 +97,8 @@ fn read_install(outcome: Result<ExecOutput, ComputeError>) -> (Report, Option<St
     if out.status.code == 0 && report.failed.is_empty() {
         return (report, None);
     }
-    let reason = out
-        .stderr_text()
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map_or_else(
-            || format!("the install ended with exit code {}", out.status.code),
-            str::to_owned,
-        );
+    let reason = last_stderr_line(&out)
+        .unwrap_or_else(|| format!("the install ended with exit code {}", out.status.code));
     (report, Some(reason))
 }
 
@@ -126,8 +118,8 @@ fn exec_said(outcome: &Result<ExecOutput, ComputeError>) -> String {
         Ok(out) => format!(
             "exit code {}: {} {}",
             out.status.code,
-            out.stdout_text().trim(),
-            out.stderr_text().trim()
+            guest_text(out.stdout_text().trim()),
+            guest_text(out.stderr_text().trim())
         ),
         Err(e) => e.to_string(),
     }

@@ -290,6 +290,24 @@ async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
     host.shutdown().await;
 }
 
+/// The owner row of a create whose list could not be saved is already written, so its id is
+/// retired like any failed create's and no later workspace is given it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_whose_list_cannot_be_saved_retires_its_id() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    make_unwritable(&list_path(&rig));
+    let refused = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    std::fs::remove_dir_all(list_path(&rig)).unwrap();
+
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    assert_eq!(read_list(&rig)["retired_ids"], json!(["acme"]));
+    host.shutdown().await;
+}
+
 fn name_body(shown: &str) -> String {
     json!({"name": shown}).to_string()
 }

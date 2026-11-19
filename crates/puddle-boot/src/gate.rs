@@ -115,6 +115,18 @@ impl Gate {
         self.state.send_replace(state);
     }
 
+    /// Ends a boot with `state`, unless the gate left `Booting` meanwhile (a stop or
+    /// [`Gate::close`] during the hook): that one stands.
+    pub(crate) fn settle(&self, state: GateState) {
+        self.state.send_if_modified(|current| {
+            let booting = *current == GateState::Booting;
+            if booting {
+                *current = state;
+            }
+            booting
+        });
+    }
+
     /// Serialises boots of one sandbox, so two hook runs never overlap.
     pub(crate) async fn lock_boot(&self) -> MutexGuard<'_, ()> {
         self.boot.lock().await

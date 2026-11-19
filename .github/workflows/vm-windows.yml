@@ -399,7 +399,7 @@ jobs:
       contents: read
       actions: write
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: whp
@@ -483,10 +483,12 @@ jobs:
         with:
           name: vm-windows-agent
           path: ${{ runner.temp }}/bundle
-      - name: desktop VS Code tests (vm_vscode_*)
+      # Also `vm_nightly_*` (ci/vm-filter.sh vscode): the development certificate behind a forward in Edge and Firefox, with the
+      # Windows trust confirmation answered No and then Yes (ci/trust-dialog.ps1).
+      - name: desktop VS Code tests (vm_vscode_*) and nightly desktop tests (vm_nightly_*)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: |
           export PUDDLE_AGENT_BIN
           PUDDLE_AGENT_BIN=$(cygpath -w "$RUNNER_TEMP/bundle/puddle-agent")

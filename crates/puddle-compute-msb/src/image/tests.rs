@@ -107,5 +107,8 @@ fn a_failed_connect_says_which_registry_could_not_be_reached() {
 #[test]
 fn a_reason_that_is_not_a_failed_connect_is_left_alone() {
     let reason = "registry error: 401 Unauthorized".to_owned();
-    assert_eq!(super::explain_connect(reason.clone(), "registry.test"), reason);
+    assert_eq!(
+        super::explain_connect(reason.clone(), "registry.test"),
+        reason
+    );
 }

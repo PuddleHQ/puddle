@@ -79,7 +79,12 @@ impl Drop for LinkShim {
         if let Door::Open(task) = &*self.door.lock().unwrap_or_else(PoisonError::into_inner) {
             task.abort();
         }
-        for task in self.live.lock().unwrap_or_else(PoisonError::into_inner).iter() {
+        for task in self
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+        {
             task.abort();
         }
     }
@@ -94,13 +99,10 @@ fn bind(addr: SocketAddr, backlog: u32) -> std::io::Result<TcpListener> {
 
 /// [`bind`], retried while an aborted task has not yet dropped the old listener.
 async fn rebind(addr: SocketAddr, backlog: u32) -> TcpListener {
-    for _ in 0..100 {
-        if let Ok(listener) = bind(addr, backlog) {
-            return listener;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    bind(addr, backlog).unwrap()
+    puddle_test_kit::eventually("the old listener is gone", Duration::from_secs(5), || {
+        bind(addr, backlog).ok()
+    })
+    .await
 }
 
 impl LinkShim {
@@ -148,7 +150,12 @@ impl LinkShim {
         if let Door::Open(task) = &*door {
             task.abort();
         }
-        for task in self.live.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
+        for task in self
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
             task.abort();
         }
         *door = Door::Closed;
@@ -158,13 +165,12 @@ impl LinkShim {
     pub(crate) async fn cut(&self) {
         self.close_door();
         // The aborted tasks dropped their sockets and the listener; wait until the port refuses.
-        for _ in 0..100 {
-            if TcpStream::connect(self.addr).await.is_err() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        panic!("the cut link still accepts");
+        puddle_test_kit::eventually_async(
+            "the cut link refuses",
+            Duration::from_secs(5),
+            || async { TcpStream::connect(self.addr).await.is_err() },
+        )
+        .await;
     }
 
     /// The route drops every packet: a connect to it hangs until the client gives up.
@@ -180,8 +186,7 @@ impl LinkShim {
                 fillers.push(conn);
             }
         }
-        *self.door.lock().unwrap_or_else(PoisonError::into_inner) =
-            Door::Blackhole {
+        *self.door.lock().unwrap_or_else(PoisonError::into_inner) = Door::Blackhole {
             _listener: listener,
             _fillers: fillers,
         };

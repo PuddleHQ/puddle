@@ -41,9 +41,7 @@ const SIZE: usize = 1024 * 1024;
 
 fn pattern() -> Vec<u8> {
     #[expect(clippy::cast_possible_truncation, reason = "a repeating byte pattern")]
-    (0..SIZE)
-        .map(|i| (i.wrapping_mul(31) >> 3) as u8)
-        .collect()
+    (0..SIZE).map(|i| (i.wrapping_mul(31) >> 3) as u8).collect()
 }
 
 fn sha(bytes: &[u8]) -> String {
@@ -71,7 +69,9 @@ async fn origin() -> SocketAddr {
                 }
                 let head = String::from_utf8_lossy(&head);
                 let reply = if head.starts_with("GET /sized ") {
-                    format!("HTTP/1.1 200 OK\r\ncontent-length: {SIZE}\r\nconnection: close\r\n\r\n")
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {SIZE}\r\nconnection: close\r\n\r\n"
+                    )
                 } else {
                     "HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n".to_owned()
                 };
@@ -102,7 +102,9 @@ async fn rig() -> Rig {
 /// read ended (`Ok` is an end of file, `Err` an abort).
 async fn get(rig: &Rig, link: &LinkShim, path: &str) -> (Vec<u8>, std::io::Result<()>) {
     let authority = format!("{NAME}:{}", link.addr().port());
-    let mut tunnel = try_tunnel(rig.agent.local_addr(), &authority).await.unwrap();
+    let mut tunnel = try_tunnel(rig.agent.local_addr(), &authority)
+        .await
+        .unwrap();
     tunnel
         .write_all(
             format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n")
@@ -169,7 +171,11 @@ async fn an_upstream_reset_mid_download_is_an_aborted_transfer_for_the_client_an
         .await
         .expect("the next download did not finish");
     end.unwrap();
-    assert_eq!(sha(&body), sha(&pattern()), "the next tunnel's bytes differ");
+    assert_eq!(
+        sha(&body),
+        sha(&pattern()),
+        "the next tunnel's bytes differ"
+    );
     assert!(
         link.carried().connections >= 2,
         "the next download did not use a new connection through the link"
@@ -198,9 +204,7 @@ fn big_package() -> Vec<u8> {
         header.set_size(data.len() as u64);
         header.set_mode(0o644);
         header.set_mtime(0);
-        archive
-            .append_data(&mut header, name, &data[..])
-            .unwrap();
+        archive.append_data(&mut header, name, &data[..]).unwrap();
     }
     let raw = archive.into_inner().unwrap();
     let mut gz = GzEncoder::new(Vec::new(), Compression::fast());
@@ -284,7 +288,13 @@ async fn npm_ci_over_a_slow_lossy_link_succeeds_with_no_502_or_504_from_puddle()
     let home_dir = home.path().to_owned();
     let out = tokio::task::spawn_blocking(move || {
         Command::new("npm")
-            .args(["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=http"])
+            .args([
+                "ci",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--loglevel=http",
+            ])
             .current_dir(&dir)
             .env("HOME", &home_dir)
             .env("npm_config_cache", home_dir.join("cache"))
@@ -304,11 +314,17 @@ async fn npm_ci_over_a_slow_lossy_link_succeeds_with_no_502_or_504_from_puddle()
     );
     assert!(out.status.success(), "npm ci failed:\n{log}");
     assert!(
-        project.path().join("node_modules/probe-big/noise.bin").is_file(),
+        project
+            .path()
+            .join("node_modules/probe-big/noise.bin")
+            .is_file(),
         "{log}"
     );
     for code in [" 502 ", " 504 ", "Bad Gateway", "Gateway Timeout"] {
-        assert!(!log.contains(code), "a Puddle-made error ({code:?}) in npm's log:\n{log}");
+        assert!(
+            !log.contains(code),
+            "a Puddle-made error ({code:?}) in npm's log:\n{log}"
+        );
     }
     // The link did what the case says: the package came through it, and chunks were held.
     let carried = link.carried();
@@ -316,5 +332,8 @@ async fn npm_ci_over_a_slow_lossy_link_succeeds_with_no_502_or_504_from_puddle()
         carried.bytes_down >= tarball.len() as u64,
         "the package did not come through the link: {carried:?}"
     );
-    assert!(carried.stalled_chunks >= 1, "no chunk was held: {carried:?}");
+    assert!(
+        carried.stalled_chunks >= 1,
+        "no chunk was held: {carried:?}"
+    );
 }

@@ -14,7 +14,8 @@ use puddle_e2e::lab::{GitHost, Versions, git_available};
 use crate::rig::{GitRig, LinkShim, NAME};
 
 #[tokio::test]
-async fn a_guest_clone_while_the_route_is_cut_gets_the_proxys_502_and_works_after_the_route_returns() {
+async fn a_guest_clone_while_the_route_is_cut_gets_the_proxy_502_and_works_after_the_route_returns()
+{
     if !git_available() {
         return;
     }
@@ -30,7 +31,12 @@ async fn a_guest_clone_while_the_route_is_cut_gets_the_proxys_502_and_works_afte
     eprintln!("git said: {}", ran.stderr);
     // The text the guest's tool is given by the proxy: a 502 that names what it could not reach.
     let answer = rig
-        .request("GET", "/acme/web.git/info/refs?service=git-upload-pack", &[], b"")
+        .request(
+            "GET",
+            "/acme/web.git/info/refs?service=git-upload-pack",
+            &[],
+            b"",
+        )
         .await;
     assert_eq!(answer.status, 502, "{}", answer.body);
     assert!(
@@ -38,11 +44,19 @@ async fn a_guest_clone_while_the_route_is_cut_gets_the_proxys_502_and_works_afte
         "the proxy's text does not say it could not connect: {}",
         answer.body
     );
-    assert!(answer.body.contains(NAME), "the host is not named: {}", answer.body);
+    assert!(
+        answer.body.contains(NAME),
+        "the host is not named: {}",
+        answer.body
+    );
 
     // The route returns: the same clone works, no restart of anything.
     link.restore().await;
     let ran = rig.run(&dir, &["clone", "-q", &url, "web"]).await;
-    assert!(ran.ok, "the clone after the route returned failed: {}", ran.stderr);
+    assert!(
+        ran.ok,
+        "the clone after the route returned failed: {}",
+        ran.stderr
+    );
     assert!(dir.join("web/.git").is_dir());
 }

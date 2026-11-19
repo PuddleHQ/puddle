@@ -36,7 +36,10 @@ async fn failed_pull(lab: &Lab) -> (String, Duration) {
 }
 
 fn names_the_registry_and_the_failure(reason: &str) {
-    assert!(reason.contains(REGISTRY), "the registry is not named: {reason}");
+    assert!(
+        reason.contains(REGISTRY),
+        "the registry is not named: {reason}"
+    );
     assert!(
         reason.contains("could not connect"),
         "the reason does not say Puddle could not connect: {reason}"

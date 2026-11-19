@@ -95,9 +95,7 @@ async fn vm_a_workspace_with_a_cached_image_starts_while_the_pull_route_is_dead(
     );
 
     // The cached image needs no route: the start goes through.
-    let reply = api
-        .post(&format!("/api/workspaces/{name}/start"), "")
-        .await;
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     let end = events
         .until(ended(name_static), Duration::from_secs(300))

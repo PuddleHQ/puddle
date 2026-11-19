@@ -284,7 +284,7 @@ const LAYOUT = {
   },
   "/workspaces": {
     h1: 24,
-    card: true,
+    card: false,
     select: false,
     selectWaitsForData: false,
     oneLineButton: true,

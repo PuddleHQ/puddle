@@ -636,26 +636,75 @@ fn run(cmd: &Command) -> Result<(), String> {
         .clone()
         .unwrap_or_else(|| info_path.with_extension("ca.pem"));
     let lab = Lab::start(&cmd.plan, &ca)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    // Listening before the info file exists: a script that signals the lab as soon as it is ready
+    // must get a clean stop, not the default action of a signal nobody handles yet.
+    let signals = {
+        let _entered = runtime.enter();
+        Signals::listen()?
+    };
     // Written last and in one go: a script waits for the file.
     let part = info_path.with_extension("part");
     std::fs::write(&part, lab.info().to_string())
         .and_then(|()| std::fs::rename(&part, info_path))
         .map_err(|e| format!("cannot write {}: {e}", info_path.display()))?;
     eprintln!("puddle-lab: ready, info in {}", info_path.display());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    runtime.block_on(shutdown(cmd.stop.as_deref()))?;
+    runtime.block_on(shutdown(cmd.stop.as_deref(), signals));
     eprintln!("puddle-lab: stopping");
     Ok(())
 }
 
-/// Returns when the process is asked to stop: `SIGINT`, `SIGTERM` or the stop file appearing.
-///
-/// # Errors
-/// When the `SIGTERM` handler cannot be installed.
-async fn shutdown(stop: Option<&Path>) -> Result<(), String> {
+/// The stop signals, caught from the moment [`Signals::listen`] returns.
+struct Signals {
+    #[cfg(unix)]
+    terminate: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    interrupt: tokio::signal::unix::Signal,
+    #[cfg(windows)]
+    ctrl_c: tokio::signal::windows::CtrlC,
+}
+
+impl Signals {
+    /// Installs the handlers; runs inside the runtime.
+    ///
+    /// # Errors
+    /// When a handler cannot be installed.
+    fn listen() -> Result<Self, String> {
+        let failed = |e: std::io::Error| format!("cannot listen for a stop signal: {e}");
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            Ok(Self {
+                terminate: signal(SignalKind::terminate()).map_err(failed)?,
+                interrupt: signal(SignalKind::interrupt()).map_err(failed)?,
+            })
+        }
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                ctrl_c: tokio::signal::windows::ctrl_c().map_err(failed)?,
+            })
+        }
+    }
+
+    /// Returns at the first stop signal.
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = self.terminate.recv() => {}
+            _ = self.interrupt.recv() => {}
+        }
+        #[cfg(windows)]
+        self.ctrl_c.recv().await;
+    }
+}
+
+/// Returns when the process is asked to stop: `SIGINT`, `SIGTERM` (Ctrl+C on Windows) or the stop
+/// file appearing.
+async fn shutdown(stop: Option<&Path>, mut signals: Signals) {
     let stop_file = async {
         let Some(stop) = stop else {
             return std::future::pending::<()>().await;
@@ -666,19 +715,10 @@ async fn shutdown(stop: Option<&Path>) -> Result<(), String> {
             tick.tick().await;
         }
     };
-    #[cfg(unix)]
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .map_err(|e| format!("cannot listen for SIGTERM: {e}"))?;
-    #[cfg(unix)]
-    let terminate = term.recv();
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<Option<()>>();
     tokio::select! {
         () = stop_file => {}
-        _ = terminate => {}
-        _ = tokio::signal::ctrl_c() => {}
+        () = signals.recv() => {}
     }
-    Ok(())
 }
 
 /// The program: parse, then run or self-test. The exit code is 0 for a clean run, 1 for a failed

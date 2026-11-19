@@ -455,7 +455,9 @@ fn read_within(
 ///
 /// # Errors
 /// [`VaultAdminError`]: the folder is held by a running host, keeps its secrets in the
-/// operating system's store, has not chosen, has no vault, or has a vault that opens.
+/// operating system's store, has not chosen, has no vault, has a vault that opens, or has one
+/// that fails for a reason with a fix in place (a key file with loose permissions, a service
+/// that is not running).
 pub fn vault_reset(
     paths: &HostPaths,
     setup: &SecretSetup,
@@ -476,6 +478,11 @@ pub fn vault_reset(
     let Err(failure) = block_on(open_file_vault(home.as_deref(), &vault, tools(setup)))? else {
         return Err(VaultAdminError::VaultOpens);
     };
+    // A key file with loose permissions, a service that is not running or a full disk has a fix
+    // in place; setting the vault aside would only hide the secrets.
+    if !failure.resettable {
+        return Err(failure.into());
+    }
     // Without a place for keys there is no vault to start either: the failure says why.
     let keys = home
         .as_deref()

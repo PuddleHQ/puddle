@@ -636,3 +636,68 @@ fn an_agent_on_another_protocol_is_one_problem_per_run_that_says_to_restart_and_
     desk.report(&box_, mismatch("late"));
     assert_eq!(problems.list(), Vec::<Problem>::new(), "no run, no problem");
 }
+
+/// Raising a problem calls this sink; it stands for a stop that arrives while the report is
+/// still being applied.
+struct StopDuringRaise {
+    desk: std::sync::OnceLock<Arc<ReportDesk>>,
+    workspace: WorkspaceId,
+    stopped_meanwhile: Mutex<Option<bool>>,
+}
+
+impl puddle_types::EventSink for StopDuringRaise {
+    fn emit(&self, _: Event) {
+        let Some(desk) = self.desk.get().cloned() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            desk.end(&workspace);
+            let _ = done.send(());
+        });
+        // The stop must wait for the report that is being applied, not run between its decision
+        // and its raise.
+        let ran_at_once = finished
+            .recv_timeout(std::time::Duration::from_millis(300))
+            .is_ok();
+        *self.stopped_meanwhile.lock().unwrap() = Some(ran_at_once);
+    }
+}
+
+#[tokio::test]
+async fn a_stop_arriving_while_a_report_raises_its_problem_ends_it_afterwards() {
+    let box_ = name("box");
+    let sink = Arc::new(StopDuringRaise {
+        desk: std::sync::OnceLock::new(),
+        workspace: box_.clone(),
+        stopped_meanwhile: Mutex::new(None),
+    });
+    let problems = Arc::new(Problems::new(sink.clone()));
+    let desk = Arc::new(ReportDesk::new(problems.clone()));
+    sink.desk.set(desk.clone()).ok();
+    desk.begin(&box_, &shown());
+    desk.report(&box_, dns(StubDnsTrouble::LookupFailed));
+    assert_eq!(
+        *sink.stopped_meanwhile.lock().unwrap(),
+        Some(false),
+        "the stop waited for the report"
+    );
+    // The stop finishes once the report is done.
+    puddle_test_kit::eventually(
+        "the stop ended the problem",
+        std::time::Duration::from_secs(5),
+        || problems.list().is_empty(),
+    )
+    .await;
+}
+
+#[test]
+fn an_entrypoint_tail_cannot_reorder_or_hide_the_problem_text() {
+    let problem = entrypoint_problem(&name("box"), SHOWN, "1: ok\u{202e}exe.txt\u{200b}");
+    assert!(
+        problem.detail.contains("1: ok?exe.txt?."),
+        "{}",
+        problem.detail
+    );
+}

@@ -6,6 +6,7 @@ use crate::audit::{WorkspaceOpKind, WorkspaceOpOutcome};
 use crate::clock::ManualClock;
 use crate::rule::Actor;
 use crate::store::{AuditCursor, AuditFilter, Limits, NewWorkspaceOp};
+use crate::users::UserName;
 
 fn store() -> Store {
     Store::open_in_memory(Arc::new(ManualClock::new(5)), Limits::default()).unwrap()

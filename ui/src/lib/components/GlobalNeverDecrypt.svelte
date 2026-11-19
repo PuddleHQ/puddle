@@ -19,7 +19,7 @@
 {:else if store.status === "ready"}
   <NeverDecryptEditor
     label="Never decrypt, in any workspace"
-    hint="Only matters in a workspace that decrypts every host. One host name per line, or *. and a domain such as *.example.com. Hosts with a credential are always decrypted."
+    hint="One host per line, or *.example.com for a domain. Only matters when every host is decrypted."
     names={store.names}
     save={(names) => store.save(names)}
   />

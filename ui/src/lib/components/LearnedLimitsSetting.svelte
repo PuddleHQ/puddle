@@ -26,6 +26,13 @@
     }
   });
 
+  /** The boxes differ from what is stored: only then is there something to save. */
+  const changed = $derived(
+    store.status === "ready" &&
+      (minutes !== String(Math.ceil(store.limits.ttl_secs / 60)) ||
+        cap !== String(store.limits.cap)),
+  );
+
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     working = true;
@@ -83,9 +90,14 @@
       </div>
     </div>
     <div class="row">
-      <button type="submit" class="btn primary" disabled={working}
-        >Keep limits</button
-      >
+      {#if changed}
+        <button
+          type="submit"
+          class="btn primary"
+          aria-label="Save limits for hosts left alone"
+          disabled={working}>Save</button
+        >
+      {/if}
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}
         {#if failure}<span class="error" role="alert">{failure}</span>{/if}

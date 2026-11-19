@@ -42,7 +42,7 @@
 
 <div class="head">
   <div>
-    <p class="crumb"><a href="/settings#s-net">Settings</a> /</p>
+    <p class="crumb"><a href="/settings/network">Settings</a> /</p>
     <h1 bind:this={heading} tabindex="-1">Network health</h1>
     <p class="sub">
       How Puddle reaches the internet from this computer: the proxy it found,
@@ -189,7 +189,7 @@
     {:else}
       <p class="muted">
         No user name and password is stored for a proxy. <a
-          href="/settings#s-net">Enter one in Settings, Network.</a
+          href="/settings/network">Enter one in Settings, Network.</a
         >
       </p>
     {/if}
@@ -313,7 +313,7 @@
     <p class="muted small">
       Destinations that your company's VPN, private-access client or DNS
       suffixes mark as internal. They are off by default; you can turn them on
-      under <a href="/settings#local-destinations"
+      under <a href="/settings/network#local-destinations"
         >Settings, Network, Local destinations</a
       >. Puddle reads those signals on Windows only; on other systems "None
       found" below means "not looked at" and the switch changes nothing.

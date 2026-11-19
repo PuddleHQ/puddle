@@ -1625,15 +1625,13 @@ test.describe("the settings tab", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(notice).toHaveCount(0);
 
-    await page.goto("/settings");
+    await page.goto("/settings/network");
     const mode = page.getByLabel("Which hosts to decrypt");
     await expect(mode).toHaveValue("known_only");
     await mode.selectOption("all_except_curated");
-    await expect(page.getByText("Interception mode saved.")).toBeVisible();
+    await expect(page.getByText("Saved.")).toBeVisible();
     await page.getByLabel("Learn from rejections").uncheck();
-    await expect(
-      page.getByText("Learning from rejections saved."),
-    ).toBeVisible();
+    await expect(page.getByText("Saved.")).toHaveCount(2);
     await page.reload();
     await expect(page.getByLabel("Which hosts to decrypt")).toHaveValue(
       "all_except_curated",
@@ -1652,7 +1650,9 @@ test.describe("the settings tab", () => {
     await expect(page.getByText("Interception mode saved.")).toBeVisible();
     const names = page.getByLabel("Never decrypt in this workspace");
     await names.fill("Bank.example\n*.corp.test");
-    await page.getByRole("button", { name: "Keep names" }).click();
+    await page
+      .getByRole("button", { name: "Save Never decrypt in this workspace" })
+      .click();
     await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     await page.reload();
     await expect(
@@ -1662,7 +1662,9 @@ test.describe("the settings tab", () => {
       page.getByLabel("Never decrypt in this workspace"),
     ).toHaveValue("*.corp.test\nbank.example");
     await names.fill("10.0.0.1");
-    await page.getByRole("button", { name: "Keep names" }).click();
+    await page
+      .getByRole("button", { name: "Save Never decrypt in this workspace" })
+      .click();
     await expect(page.getByRole("alert")).toContainText("10.0.0.1");
   });
 

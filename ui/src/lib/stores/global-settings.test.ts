@@ -171,6 +171,35 @@ describe("saving", () => {
   });
 });
 
+describe("a read that began before a save", () => {
+  it("does not put the older settings back over the saved ones", async () => {
+    await store.load();
+    // A second read starts, and its answer is held until the save below has landed.
+    const stale = structuredClone(await api.GET("/api/settings"));
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const real = api.GET;
+    let first = true;
+    api.GET = (async (path: string) => {
+      const answer = await real(path);
+      if (first && path === "/api/settings") {
+        first = false;
+        await held;
+        return stale;
+      }
+      return answer;
+    }) as never;
+    const reading = store.load();
+    expect(await store.save({ ui: { density: "compact" } })).toEqual({
+      ok: true,
+    });
+    release();
+    await reading;
+    expect(store.view?.ui.density).toBe("compact");
+    expect(store.status).toBe("ready");
+  });
+});
+
 describe("a save from a stale read", () => {
   it("sends the revision it read, and goes through while nothing changed", async () => {
     await store.load();

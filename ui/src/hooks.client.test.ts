@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "#lib/api/client.ts";
 import {
   handleError,
   init,
@@ -97,15 +95,16 @@ describe("sendReport", () => {
 
 describe("reporter", () => {
   it("sends through the app's API client", async () => {
-    const POST = vi.spyOn(api, "POST").mockResolvedValue({
+    // A page sends at most MAX_PER_PAGE distinct reports, and the shared reporter lives as long as the
+    // module: a repeat of this test is a new page, so each run loads a fresh copy of the module (and the
+    // client it sends through) and starts with nothing sent.
+    vi.resetModules();
+    const fresh = await import("./hooks.client.ts");
+    const { api: freshApi } = await import("#lib/api/client.ts");
+    const POST = vi.spyOn(freshApi, "POST").mockResolvedValue({
       response: new Response(null, { status: 204 }),
     } as never);
-    // The shared reporter sends a message once per page, and a repeat of this test is the same page: a
-    // message of its own keeps every repeat a first report.
-    reporter.report(
-      "uncaught",
-      new Error(`through the client ${randomUUID()}`),
-    );
+    fresh.reporter.report("uncaught", new Error("through the client"));
     await vi.waitFor(() => expect(POST).toHaveBeenCalledOnce());
     expect(POST.mock.calls[0]?.[0]).toBe("/api/ui-errors");
   });

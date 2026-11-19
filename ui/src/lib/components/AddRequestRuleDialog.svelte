@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { workspaceNameError } from "#lib/rules/model.ts";
+  import WorkspaceSelect from "./WorkspaceSelect.svelte";
   import {
     hostProblem,
     methodsProblem,
@@ -192,24 +193,14 @@
       </label>
       {#if scope === "workspace"}
         <div class="field">
-          <label for="{id}-workspace">Workspace name</label>
-          <input
+          <label for="{id}-workspace">Workspace</label>
+          <WorkspaceSelect
             id="{id}-workspace"
-            type="text"
-            list="{id}-workspaces"
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck="false"
             bind:value={workspace}
-            aria-invalid={workspaceMessage ? "true" : undefined}
-            aria-describedby={workspaceMessage
-              ? `${id}-workspace-error`
-              : undefined}
+            known={workspaces}
+            invalid={workspaceMessage !== null}
+            describedby={workspaceMessage ? `${id}-workspace-error` : undefined}
           />
-          <datalist id="{id}-workspaces">
-            {#each workspaces as name (name)}<option value={name}
-              ></option>{/each}
-          </datalist>
           {#if workspaceMessage}
             <p class="error" id="{id}-workspace-error" role="alert">
               {workspaceMessage}

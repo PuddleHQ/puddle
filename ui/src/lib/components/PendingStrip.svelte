@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import Bell from "@lucide/svelte/icons/bell";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   let {
@@ -19,7 +20,8 @@
     <p>
       <b>{count} {count === 1 ? "request" : "requests"} waiting.</b>
       {#if latest}
-        Latest: <span class="mono">{latest.workspace}</span> wants
+        Latest: <span class="mono">{workspaces.labelOf(latest.workspace)}</span>
+        wants
         <span class="mono">{latest.host}:{latest.port}</span>.
       {/if}
     </p>

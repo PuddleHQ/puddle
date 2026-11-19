@@ -430,7 +430,7 @@ test("the delete check says what Puddle itself removes", async ({
 }) => {
   await backend.control.reset("environment");
   await backend.signIn(page);
-  await page.goto("/workspaces/docs-site");
+  await page.goto("/workspaces/docs-site/settings");
   await page.getByRole("button", { name: "Delete workspace…" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Delete docs-site?" });
   await expect(dialog).toContainText(
@@ -463,7 +463,7 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(page.getByLabel("Hosts it may be sent to")).toBeVisible();
       await scan(page, "add dialog");
       await page.keyboard.press("Escape");
-      await page.goto("/workspaces/web-shop/shell-init");
+      await page.goto("/workspaces/web-shop/settings/shell-init");
       await expect(page.getByLabel("Script for web-shop")).toBeVisible();
       await scan(page, "shell init");
       await backend.control.step({
@@ -474,7 +474,7 @@ for (const scheme of ["light", "dark"] as const) {
       await page.getByRole("button", { name: "Save" }).click();
       await expect(page.getByRole("alert")).toBeVisible();
       await scan(page, "shell init refused");
-      await page.goto("/workspaces/web-shop/ports");
+      await page.goto("/workspaces/web-shop/settings/ports");
       await expect(ports(page)).toBeVisible();
       await scan(page, "ports");
       await page.goto("/settings");

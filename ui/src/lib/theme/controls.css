@@ -159,6 +159,8 @@
 }
 :where(input[type="range"]) {
   min-height: var(--control-size);
+  /* The browser paints the track in its own blue, whatever the colour set. */
+  accent-color: var(--color-accent);
 }
 :where(textarea) {
   resize: vertical;

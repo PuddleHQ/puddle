@@ -350,6 +350,15 @@ impl Ports {
         }
     }
 
+    /// A boot of the workspace begins, before its agent can connect: the reports of this start are
+    /// taken again (those of a session that outlived the last stop were dropped until now). The
+    /// agent's hello comes during the boot, long before [`Self::started`].
+    pub fn booting(&self, workspace: &WorkspaceId) {
+        let entries = self.entries();
+        self.stopped_set().remove(workspace);
+        drop(entries);
+    }
+
     /// The workspace stopped: its forwards close and what the guest listened on is forgotten. Its
     /// pins stay. What the workspace's agent reports after this is dropped until the next
     /// [`Self::started`]. Idempotent.

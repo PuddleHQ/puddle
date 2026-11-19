@@ -181,6 +181,8 @@ async fn serve(listener: TcpListener, shared: Arc<Shared>) {
                 continue;
             }
         };
+        // Connections that ended while the loop waited in `accept` must not count.
+        while connections.try_join_next().is_some() {}
         if !peer.ip().is_loopback() || connections.len() >= MAX_CONNECTIONS {
             tracing::warn!(open = connections.len(), "a front connection was refused");
             continue;

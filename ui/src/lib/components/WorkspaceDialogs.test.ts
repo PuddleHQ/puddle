@@ -168,9 +168,9 @@ describe("WorkspaceDialogs", () => {
     const headings = within(dialog)
       .getAllByRole("heading", { level: 3 })
       .map((h) => h.textContent?.trim());
-    expect(headings).toEqual(["In the browser", "On this computer"]);
+    expect(headings).toEqual(["Isolated VS Code", "On this computer"]);
     expect(
-      within(dialog).getByRole("button", { name: "Open in the browser" }),
+      within(dialog).getByRole("button", { name: "Open isolated VS Code" }),
     ).toBeEnabled();
     expect(
       within(dialog).getByRole("checkbox", { name: "Allow direct SSH" }),
@@ -189,7 +189,7 @@ describe("WorkspaceDialogs", () => {
       name: "Connect to demo",
     });
     await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Open in the browser" }),
+      within(dialog).getByRole("button", { name: "Open isolated VS Code" }),
     );
     await vi.waitFor(() =>
       expect(api.calls).toContain("POST /api/workspaces/{id}/attach"),
@@ -217,7 +217,7 @@ describe("WorkspaceDialogs", () => {
     expect(trust).toHaveTextContent("a trusted workspace");
     expect(trust).toHaveTextContent("signed-in GitHub token");
     expect(trust).toHaveTextContent(
-      "The browser editor keeps the workspace isolated.",
+      "Isolated VS Code keeps the workspace isolated.",
     );
     expect(api.calls).not.toContain("PUT /api/settings/workspaces/{workspace}");
     await fireEvent.click(

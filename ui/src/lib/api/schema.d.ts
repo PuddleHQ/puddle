@@ -3902,10 +3902,47 @@ export interface components {
          */
         DoctorStatus: "ok" | "info" | "warn" | "fail" | "skipped";
         /**
+         * @description The editor defaults at one level: a workspace's values win over the global ones field by
+         *     field. `null` inherits.
+         */
+        EditorSettings: {
+            /**
+             * @description The colour theme's name as the editor lists it (at most 100 characters). Unset follows
+             *     the system colour scheme.
+             */
+            colour_theme: string | null;
+            /**
+             * @description Extensions to preinstall, as `publisher.name` ids (at most 50). A level that sets the
+             *     list replaces the next level's list; an empty list means none.
+             */
+            extensions: string[] | null;
+            /**
+             * Format: int32
+             * @description The font size in pixels (8 to 40). Unset keeps the editor's own.
+             */
+            font_size: number | null;
+            /**
+             * @description Key bindings to merge into the editor: the text of a JSON array of `{key, command}`
+             *     objects (at most 64 KiB).
+             */
+            keybindings: string | null;
+        };
+        /**
          * @description Allow or deny.
          * @enum {string}
          */
         Effect: "allow" | "deny";
+        /** @description The editor defaults a workspace gets, each with where it came from. */
+        EffectiveEditor: {
+            /** @description The colour theme; `null` follows the system colour scheme. */
+            colour_theme: components["schemas"]["ResolvedText"];
+            /** @description The extensions to preinstall. */
+            extensions: components["schemas"]["ResolvedTextList"];
+            /** @description The font size in pixels; `null` keeps the editor's own. */
+            font_size: components["schemas"]["ResolvedOptionalNumber"];
+            /** @description The key bindings text; `null` adds none. */
+            keybindings: components["schemas"]["ResolvedText"];
+        };
         /** @description The limits as they apply on this computer. */
         EffectiveLimits: {
             /**
@@ -3935,6 +3972,8 @@ export interface components {
             cpus: components["schemas"]["ResolvedNumber"];
             /** @description Whether direct SSH is on. */
             direct_ssh: components["schemas"]["ResolvedBool"];
+            /** @description What the editor starts with. */
+            editor: components["schemas"]["EffectiveEditor"];
             /** @description Local destination toggles. */
             local_toggles: components["schemas"]["EffectiveToggles"];
             /** @description Guest memory in MiB. */
@@ -5745,6 +5784,30 @@ export interface components {
              */
             value: number;
         };
+        /** @description An optional effective number and where it came from. */
+        ResolvedOptionalNumber: {
+            /** @description Where it came from. */
+            source: components["schemas"]["SettingSource"];
+            /**
+             * Format: int32
+             * @description The value, `null` when nothing sets it.
+             */
+            value: number | null;
+        };
+        /** @description An optional effective text and where it came from. */
+        ResolvedText: {
+            /** @description Where it came from. */
+            source: components["schemas"]["SettingSource"];
+            /** @description The value, `null` when nothing sets it. */
+            value: string | null;
+        };
+        /** @description An effective list of texts and where it came from. */
+        ResolvedTextList: {
+            /** @description Where it came from. */
+            source: components["schemas"]["SettingSource"];
+            /** @description The values. */
+            value: string[];
+        };
         /** @description `POST /api/orphan-volumes/{id}/restore`. */
         RestoreOrphanRequest: {
             /**
@@ -6150,6 +6213,11 @@ export interface components {
              *     config entry. Turning it on marks the workspace trusted.
              */
             direct_ssh: boolean | null;
+            /**
+             * @description The editor's colour theme, font size, preinstalled extensions and key bindings. Left out,
+             *     it means nothing is set at this level.
+             */
+            editor: components["schemas"]["EditorSettings"];
             /** @description Which local destination categories may be approved (all off by default). */
             local_toggles: components["schemas"]["LocalToggles"];
             /**
@@ -6976,7 +7044,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_switches_changed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered";
         /**
          * @description How a workspace operation ended.
          * @enum {string}

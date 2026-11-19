@@ -124,8 +124,8 @@ mk "$tmp/j1.xml" 10.000 99.000; mk "$tmp/j2.xml" 30.000 99.000; mk "$tmp/j3.xml"
 for ev in pull_request merge_group push ""; do grep -q vm_soak_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "soak is not excluded on '$ev'"; done
 for ev in schedule workflow_dispatch; do grep -q vm_soak_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" && bad "soak is excluded on $ev"; done
 # The desktop VS Code tests are in no partition on any event, and the job that runs them selects exactly them.
-for ev in schedule workflow_dispatch pull_request merge_group push ""; do grep -q 'not (.*vm_vscode_' <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "vscode tests are not excluded on '$ev'"; done
-[ "$("$here/vm-filter.sh" vscode)" = 'test(/(^|::)vm_vscode_/)' ] || bad "the vscode job's filter is not just the vscode tests"
+for ev in schedule workflow_dispatch pull_request merge_group push ""; do grep -q 'not (.*vm_vscode_' <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "vscode tests are not excluded on '$ev'"; grep -q 'not (.*vm_nightly_' <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "nightly desktop tests are not excluded on '$ev'"; done
+[ "$("$here/vm-filter.sh" vscode)" = 'test(/(^|::)vm_vscode_/) | test(/(^|::)vm_nightly_/)' ] || bad "the vscode job's filter is not just the vscode and nightly desktop tests"
 for ev in pull_request merge_group push ""; do grep -q vm_perf_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" || bad "perf bars are not excluded on '$ev'"; done
 for ev in schedule workflow_dispatch; do grep -q vm_perf_ <<<"$(GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh")" && bad "perf bars are excluded on $ev"; done
 

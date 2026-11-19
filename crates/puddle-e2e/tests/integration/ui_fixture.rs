@@ -163,6 +163,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("disks-full", 0, 0),
         ("git-identities", 0, 0),
         ("azure-cli", 0, 0),
+        ("azure-cli-missing", 0, 0),
         ("repo-lists", 0, 0),
         ("first-run", 0, 0),
         ("unmanaged-checkouts", 0, 0),
@@ -170,6 +171,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("environment", 0, 1),
         ("multi-user", 0, 0),
         ("request-rules", 0, 1),
+        ("ids-differ", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -198,13 +200,15 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "disks-full",
             "git-identities",
             "azure-cli",
+            "azure-cli-missing",
             "repo-lists",
             "first-run",
             "unmanaged-checkouts",
             "start-folder-missing",
             "environment",
             "multi-user",
-            "request-rules"
+            "request-rules",
+            "ids-differ"
         ]
     );
 }
@@ -602,6 +606,45 @@ async fn the_connection_file_is_written_for_the_dev_proxy_and_playwright() {
     fixture.restart().await.unwrap();
     let again: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(again, written);
+}
+
+#[tokio::test]
+async fn a_seeded_workspace_with_an_id_keeps_it_apart_from_its_name() {
+    let mut scenario = load_scenario("empty").unwrap();
+    scenario.workspaces = serde_json::from_value(json!([
+        {"name": "Shop One", "id": "shop-1"},
+        {"name": "plain"}
+    ]))
+    .unwrap();
+    scenario.requests = serde_json::from_value(json!([
+        {"workspace": "shop-1", "host": "a.example.org"}
+    ]))
+    .unwrap();
+    let run = start_scenario(scenario).await;
+    let list = run.get("/api/workspaces").await.json();
+    let pairs: Vec<_> = list["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| (w["id"].as_str().unwrap(), w["name"].as_str().unwrap()))
+        .collect();
+    assert!(pairs.contains(&("shop-1", "Shop One")), "{pairs:?}");
+    assert!(pairs.contains(&("plain", "plain")), "{pairs:?}");
+    assert_eq!(
+        run.get("/api/workspaces/shop-1/delete-check").await.status,
+        200
+    );
+}
+
+#[tokio::test]
+async fn a_built_in_scenario_carries_workspaces_whose_ids_differ_from_their_names() {
+    let run = start("ids-differ").await;
+    let list = run.get("/api/workspaces").await.json();
+    let rows = list["workspaces"].as_array().unwrap();
+    assert_eq!(rows.len(), 9);
+    for w in rows {
+        assert_ne!(w["id"], w["name"], "{w}");
+    }
 }
 
 #[tokio::test]
@@ -1176,6 +1219,45 @@ async fn the_azure_cli_scenario_answers_a_check_with_the_step_and_starts_no_sign
             .as_str()
             .unwrap()
             .contains("az login --tenant contoso.onmicrosoft.com")
+    );
+    run.fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_azure_cli_missing_scenario_names_the_install_step_and_the_wrong_tenant_step() {
+    let run = start("azure-cli-missing").await;
+    let check = |tenant: &'static str, org: &'static str| {
+        let run = &run;
+        async move {
+            let reply = run
+                .api(
+                    "POST",
+                    "/api/credentials/check",
+                    Some(&json!({"source": {"kind": "az_cli", "tenant": tenant, "org": org}})),
+                )
+                .await;
+            assert_eq!(reply.status, 200, "{}", reply.body);
+            reply.json()
+        }
+    };
+    let missing = check("fabrikam.com", "fabrikam").await;
+    assert_eq!(missing["readable"], false);
+    assert_eq!(missing["needs_sign_in"], false);
+    assert!(
+        missing["fix_step"]
+            .as_str()
+            .unwrap()
+            .contains("Install the Azure CLI"),
+        "{missing}"
+    );
+    let zero = check("00000000-0000-0000-0000-000000000000", "fabrikam").await;
+    assert_eq!(zero["needs_sign_in"], false);
+    assert!(
+        zero["fix_step"]
+            .as_str()
+            .unwrap()
+            .contains("is not in tenant 00000000-0000-0000-0000-000000000000"),
+        "{zero}"
     );
     run.fixture.shutdown().await;
 }

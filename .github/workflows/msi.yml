@@ -50,6 +50,9 @@ on:
       - ci/msi-install-test.ps1
       - ci/fetch-baseline-msi.sh
       - ci/fetch-tauri-cli.sh
+      - ci/fetch-wix.sh
+      - ci/check-wix-pin.sh
+      - ci/wix.sha256
       - ci/fetch-retry.sh
       - ci/tauri-cli.sha256
       - ci/msb-runtime.sha256
@@ -143,6 +146,20 @@ jobs:
         run: |
           ci/fetch-tauri-cli.sh "$RUNNER_TEMP/tauri-cli"
           cygpath -w "$RUNNER_TEMP/tauri-cli" >>"$GITHUB_PATH"
+      # Tauri downloads its WiX toolset itself, without a retry (one HTTP 500 from github.com failed the whole chain on
+      # 2026-11-18). ci/build-msi.sh seeds the folder Tauri reads from ci/wix.sha256 first; this proves the pinned
+      # Tauri still reads that very name, URL and hash, so the seeded copy is the one it uses.
+      - name: Tauri still reads the pinned WiX (name, URL, hash)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: ci/check-wix-pin.sh "$RUNNER_TEMP/tauri-cli/cargo-tauri.exe"
+      - name: WiX download cache (keyed on the pin)
+        id: wix-cache
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/wix-cache
+          key: wix-${{ runner.os }}-${{ hashFiles('ci/wix.sha256') }}
       - name: UI build (the shell embeds it)
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -161,9 +178,12 @@ jobs:
         shell: bash
         run: ci/build-msi.sh shell "$RUNNER_TEMP/msi-stage"
       - name: pack the MSI and a newer one for the upgrade test
+        id: pack
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: |
+          # The folder Tauri reads is seeded from the cache or a retried download (ci/build-msi.sh, ci/fetch-wix.sh).
+          export FETCH_CACHE_DIR="$HOME/wix-cache"
           current=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
           next=${current%.*}.$(( ${current##*.} + 1 ))
           echo "current=$current next=$next"
@@ -172,6 +192,13 @@ jobs:
           ls -l "$RUNNER_TEMP/msi-out" "$RUNNER_TEMP/msi-upgrade"
           echo "FIRST_MSI=$(cygpath -w "$RUNNER_TEMP/msi-out/Puddle_${current}_x64_en-US.msi")" >>"$GITHUB_ENV"
           echo "NEXT_MSI=$(cygpath -w "$RUNNER_TEMP/msi-upgrade/Puddle_${next}_x64_en-US.msi")" >>"$GITHUB_ENV"
+      - name: WiX download cache (save on a miss)
+        if: ${{ !cancelled() && steps.changed.outputs.run == 'true' && steps.wix-cache.outputs.cache-hit != 'true' && steps.pack.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/wix-cache
+          key: ${{ steps.wix-cache.outputs.cache-primary-key }}
       - name: install, start, boot a workspace, upgrade, uninstall
         if: steps.changed.outputs.run == 'true'
         shell: pwsh
@@ -223,10 +250,21 @@ jobs:
           msi=$(ci/fetch-baseline-msi.sh "$RUNNER_TEMP/msi-baseline" | tail -n 1)
           echo "BASELINE_MSI=$(cygpath -w "$msi")" >>"$GITHUB_ENV"
       - name: this run's build, under the next package version
+        id: next-msi
+        continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: puddle-msi-next
           path: ${{ runner.temp }}/msi-next
+      - name: say it when the msi job produced no artifact
+        if: steps.next-msi.outcome == 'failure'
+        shell: bash
+        env:
+          MSI_RESULT: ${{ needs.msi.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "::error title=the msi job produced no artifact::the msi job (result: $MSI_RESULT) uploaded no puddle-msi-next, so this job has nothing to upgrade to; read the msi job's log first: $RUN_URL"
+          exit 1
       # The upgrade-state checks (crates/puddle-app/e2e/upgrade-state.mjs) run on this Node.
       - name: Node (the upgrade-state driver)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -297,11 +335,22 @@ jobs:
           title: msi usable
           fail-events: pull_request
       - name: the MSI this run built
+        id: built-msi
         if: ${{ steps.whp.outputs.ok == 'true' && inputs.msi_run_id == '' }}
+        continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: puddle-msi
           path: ${{ runner.temp }}/msi
+      - name: say it when the msi job produced no artifact
+        if: steps.built-msi.outcome == 'failure'
+        shell: bash
+        env:
+          MSI_RESULT: ${{ needs.msi.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "::error title=the msi job produced no artifact::the msi job (result: $MSI_RESULT) uploaded no puddle-msi, so this job has no MSI to install; read the msi job's log first: $RUN_URL"
+          exit 1
       - name: the MSI an earlier run kept (by hand, msi_run_id)
         if: ${{ steps.whp.outputs.ok == 'true' && inputs.msi_run_id != '' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

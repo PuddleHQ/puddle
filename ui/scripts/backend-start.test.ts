@@ -35,28 +35,55 @@ function start(script: string): {
   return { file, output, child };
 }
 
+/**
+ * A backend that is alive and silent, without a process behind it. Starting a real node takes the
+ * operating system 50 ms on an idle machine and 2.6 s on a loaded host (measured: the child's own
+ * clock said 82 ms from its start to its write, 2550 ms after spawn() returned), so a test that is
+ * about the wait must not wait on that. Only the test that needs a real process spawns one.
+ */
+function silentBackend(): {
+  file: string;
+  output: OutputTail;
+  child: ChildProcess;
+} {
+  const dir = mkdtempSync(join(tmpdir(), "backend-start-"));
+  dirs.push(dir);
+  return {
+    file: join(dir, "connection.json"),
+    output: new OutputTail(),
+    child: new EventEmitter() as unknown as ChildProcess,
+  };
+}
+
 describe("waiting for the fixture backend", () => {
   it("returns once the control file is there", async () => {
-    const { file, output, child } = start(
-      `require("fs").writeFileSync(process.argv[1] + ".control", '{"url":"http://127.0.0.1:1"}'); setTimeout(() => {}, 60000)`,
-    );
-    await expect(waitForBackend(child, file, output)).resolves.toBeUndefined();
+    const { file, output, child } = silentBackend();
+    const waiting = waitForBackend(child, file, output, { pollMs: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    writeFileSync(`${file}.control`, '{"url":"http://127.0.0.1:1"}');
+    await expect(waiting).resolves.toBeUndefined();
   });
 
-  it("names a backend that ended, with its exit code and what it printed", async () => {
-    const { file, output, child } = start(
-      `console.error("puddle-ui-fixture: cannot bind 127.0.0.1:9"); process.exit(2)`,
-    );
-    const failure = await waitForBackend(child, file, output, {
-      timeoutMs: 30_000,
-    }).catch((error: Error) => error);
-    expect(failure).toBeInstanceOf(Error);
-    const message = (failure as Error).message;
-    expect(message).toContain("the process ended (exit code 2)");
-    expect(message).toContain("cannot bind 127.0.0.1:9");
-    expect(message).toContain("control url: not written");
-    expect(message).toContain("host load:");
-  });
+  // A real child, so the exit code and the stderr pipe are the operating system's. The bound is
+  // explicit because the test waits for a process to start, which a loaded host can take seconds for.
+  it(
+    "names a backend that ended, with its exit code and what it printed",
+    { timeout: 30_000 },
+    async () => {
+      const { file, output, child } = start(
+        `console.error("puddle-ui-fixture: cannot bind 127.0.0.1:9"); process.exit(2)`,
+      );
+      const failure = await waitForBackend(child, file, output, {
+        timeoutMs: 30_000,
+      }).catch((error: Error) => error);
+      expect(failure).toBeInstanceOf(Error);
+      const message = (failure as Error).message;
+      expect(message).toContain("the process ended (exit code 2)");
+      expect(message).toContain("cannot bind 127.0.0.1:9");
+      expect(message).toContain("control url: not written");
+      expect(message).toContain("host load:");
+    },
+  );
 
   it("keeps output that arrives after the process exit event", async () => {
     const child = Object.assign(new EventEmitter(), {
@@ -83,9 +110,9 @@ describe("waiting for the fixture backend", () => {
   });
 
   it("names a backend that is still starting at the limit, with the URL it announced", async () => {
-    const { file, output, child } = start(
-      `require("fs").writeFileSync(process.argv[1], '{"url":"http://127.0.0.1:4242","token":"t"}'); console.log("binding"); setTimeout(() => {}, 60000)`,
-    );
+    const { file, output, child } = silentBackend();
+    writeFileSync(file, '{"url":"http://127.0.0.1:4242","token":"t"}');
+    output.push("binding\n");
     const failure = await waitForBackend(child, file, output, {
       timeoutMs: 600,
       pollMs: 20,
@@ -120,7 +147,7 @@ describe("waiting for the fixture backend", () => {
   });
 
   it("does not take a half-written control file for a started backend", async () => {
-    const { file, output, child } = start(`setTimeout(() => {}, 60000)`);
+    const { file, output, child } = silentBackend();
     writeFileSync(`${file}.control`, '{"url":');
     const failure = await waitForBackend(child, file, output, {
       timeoutMs: 300,

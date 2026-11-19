@@ -17,6 +17,7 @@ import { RequestRulesStore } from "#lib/stores/request-rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import Toast from "./Toast.svelte";
 import RequestRulesSection from "./RequestRulesSection.svelte";
+import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
 
 let api: FakeRequestRules;
 let store: RequestRulesStore;
@@ -57,9 +58,10 @@ const fill = async (host: string, path: string, workspace?: string) => {
   if (workspace === undefined) {
     await fireEvent.click(within(dialog).getByLabelText(/Every workspace/));
   } else {
-    await fireEvent.input(within(dialog).getByLabelText("Workspace name"), {
-      target: { value: workspace },
-    });
+    await chooseWorkspace(
+      within(dialog).getByLabelText("Workspace"),
+      workspace,
+    );
   }
   return dialog;
 };

@@ -14,6 +14,7 @@
   import type { NewRule, ServerError } from "#lib/stores/rules.svelte.ts";
   import FormDialog from "./FormDialog.svelte";
   import SetChip from "./SetChip.svelte";
+  import WorkspaceSelect from "./WorkspaceSelect.svelte";
 
   // The form keeps what was typed while it is closed, so a refused rule (or a cancelled confirm)
   // can be corrected instead of retyped. `onSubmit` gets a complete request; it returns `null` when
@@ -242,24 +243,14 @@
       {/each}
       {#if scope === "workspace"}
         <div class="field">
-          <label for="{id}-workspace">Workspace name</label>
-          <input
+          <label for="{id}-workspace">Workspace</label>
+          <WorkspaceSelect
             id="{id}-workspace"
-            type="text"
-            list="{id}-workspaces"
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck="false"
             bind:value={workspace}
-            aria-invalid={workspaceProblem ? "true" : undefined}
-            aria-describedby={workspaceProblem
-              ? `${id}-workspace-error`
-              : undefined}
+            known={workspaces}
+            invalid={workspaceProblem !== null}
+            describedby={workspaceProblem ? `${id}-workspace-error` : undefined}
           />
-          <datalist id="{id}-workspaces">
-            {#each workspaces as name (name)}<option value={name}
-              ></option>{/each}
-          </datalist>
           {#if workspaceProblem}
             <p class="error" id="{id}-workspace-error" role="alert">
               {workspaceProblem}

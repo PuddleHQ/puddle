@@ -112,12 +112,28 @@ export function signedOutCheck(source: Source): Check {
       fixStep: `Run \`${azLoginCommand(source.tenant)}\` in a terminal and finish the sign-in.`,
     };
   }
+  if (source.kind === "stored") {
+    return {
+      state: "problem",
+      message: `${source.host} did not accept the token you pasted.`,
+      needsSignIn: false,
+      fixStep: STORED_FIX_STEP,
+    };
+  }
   return {
     state: "problem",
     message: "A workspace asked for it and Puddle couldn't read it.",
     needsSignIn: true,
   };
 }
+
+/** What to do about a pasted token a Git host refused: there is no sign-in for it, only a new token. */
+export const STORED_FIX_STEP =
+  "Edit this identity and paste a new token (one that can reach the repositories it covers).";
+
+/** Whether the line a sign-in notice carries names a pasted token (`SourceSpec::describe`). */
+export const isStoredLine = (line: string): boolean =>
+  line.startsWith("stored token ");
 
 /** Whether Puddle can start a sign-in for a source: not for a pasted token, not for the Azure CLI. */
 export function canSignIn(source: Source): boolean {

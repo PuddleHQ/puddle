@@ -1,35 +1,19 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import Trash2 from "@lucide/svelte/icons/trash-2";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import { page } from "$app/state";
   import EditorInstallNotice from "#lib/components/EditorInstallNotice.svelte";
   import RepositoriesSection from "#lib/components/RepositoriesSection.svelte";
-  import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
-  import GrowRootDiskDialog from "#lib/components/GrowRootDiskDialog.svelte";
-  import StatusChip from "#lib/components/StatusChip.svelte";
+  import RootDiskControls from "#lib/components/RootDiskControls.svelte";
   import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
-  import { api } from "#lib/api/client.ts";
-  import { copyText } from "#lib/welcome/doctor.ts";
+  import WaitingRequests from "#lib/components/WaitingRequests.svelte";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
-  import { isExpired, workspaceOf } from "#lib/rules/model.ts";
   import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
-  import { pending } from "#lib/stores/pending.svelte.ts";
-  import { rulesStore } from "#lib/stores/rules.svelte.ts";
-  import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
+  import { WorkspacePortsStore } from "#lib/stores/workspace-ports.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
-  import {
-    canDelete,
-    canGrowRootDisk,
-    canReclaim,
-    canResetRootDisk,
-    diskLabel,
-    diskPercent,
-    diskWarned,
-    formatMib,
-    rootDiskLabel,
-  } from "#lib/workspaces/model.ts";
+  import { canStart, diskPercent } from "#lib/workspaces/model.ts";
+  import { forwardText } from "#lib/workspaces/ports.ts";
   import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
 
@@ -45,86 +29,32 @@
     workspace ? editorProblems.sessionUserOf(workspace.id) : null,
   );
   const oom = $derived(workspace ? workspaces.oom[workspace.id] : undefined);
+  const ports = new WorkspacePortsStore();
+  // What listens in the workspace right now: the answer to "what is this thing serving".
+  const serving = $derived(
+    workspace?.status === "running"
+      ? ports.ports.filter((p) => p.listening)
+      : [],
+  );
 
   let now = $state(Date.now());
   let dismissedOom = $state<number | null>(null);
-  let resetOpen = $state(false);
-  function openReset() {
-    resetOpen = true;
-  }
-  let growOpen = $state(false);
-  function openGrow() {
-    growOpen = true;
-  }
-  let copied = $state<"yes" | "no" | null>(null);
-  async function copyId() {
-    if (!workspace) return;
-    copied = (await copyText(workspace.id)) ? "yes" : "no";
-  }
-  let memorySource = $state<"workspace" | "global" | "default" | null>(null);
 
   onMount(() => {
-    const stopRules = rulesStore.start();
     const stopEditor = editorProblems.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
-      stopRules();
       stopEditor();
       clearInterval(clock);
     };
   });
 
-  // Where the memory figure comes from, so "workspace override" and "global default" say true.
   const wid = $derived(workspace?.id);
-  const memoryMib = $derived(workspace?.memory_mib);
   $effect(() => {
-    if (!wid) return;
-    void memoryMib; // read again when the figure changes
-    // An answer for another workspace, or one the figure has moved on from, is not shown.
-    let current = true;
-    memorySource = null;
-    void (async () => {
-      let source: "workspace" | "global" | "default" | null = null;
-      try {
-        const { data } = await api.GET("/api/settings/workspaces/{workspace}", {
-          params: { path: { workspace: wid } },
-        });
-        source = data?.effective.memory.source ?? null;
-      } catch {
-        // Unreadable settings: no source is shown.
-      }
-      if (current) memorySource = source;
-    })();
-    return () => {
-      current = false;
-    };
+    if (wid) return ports.start(wid);
   });
-
-  const waiting = $derived(
-    pending.rows.filter((r) => r.request.workspace === workspace?.id).length,
-  );
-  const ruleCounts = $derived.by(() => {
-    const active = rulesStore.rules.filter((r) => !isExpired(r, now));
-    return {
-      workspace: active.filter((r) => workspaceOf(r) === workspace?.id).length,
-      global: active.filter((r) => workspaceOf(r) === null).length,
-    };
-  });
-  const plural = (n: number, one: string, many: string) =>
-    `${n} ${n === 1 ? one : many}`;
-  const networkSummary = $derived(
-    [
-      `${waiting} waiting`,
-      plural(ruleCounts.workspace, "workspace rule", "workspace rules"),
-      plural(
-        ruleCounts.global,
-        "rule for every workspace",
-        "rules for every workspace",
-      ),
-    ].join(" · "),
-  );
 </script>
 
 {#if workspace}
@@ -132,33 +62,21 @@
     <div class="warn" role="alert" data-testid="disk-warning-{kind}">
       <TriangleAlert aria-hidden="true" size={20} />
       {#if kind === "root"}
-        <p>
-          <b>Root disk nearly full:</b>
-          {diskPercent(workspace, "root")} % used. It holds what was installed or
-          cached outside the volume. Resetting it removes that (packages reinstall
-          on the next start); the volume and your work are untouched. Puddle never
-          does this by itself. Making it bigger keeps everything and needs no reset.
-        </p>
-        <button
-          type="button"
-          class="btn primary"
-          disabled={!canGrowRootDisk(workspace)}
-          onclick={openGrow}>Make root disk bigger…</button
-        >
-        <button
-          type="button"
-          class="btn"
-          disabled={!canResetRootDisk(workspace)}
-          onclick={openReset}>Reset root disk…</button
-        >
-        {#if workspace.busy === null && !canResetRootDisk(workspace)}
-          <span class="hint">Stop the workspace first.</span>
-        {/if}
+        <div class="grow">
+          <p>
+            <b>Root disk nearly full:</b>
+            {diskPercent(workspace, "root")} % used. It holds what was installed or
+            cached outside the volume. Resetting it removes that (packages reinstall
+            on the next start); the volume and your work are untouched. Puddle never
+            does this by itself. Making it bigger keeps everything and needs no reset.
+          </p>
+          <RootDiskControls {workspace} reclaim={false} />
+        </div>
       {:else}
         <p>
           <b>Volume nearly full:</b>
           {diskPercent(workspace, "volume")} % used. The volume cannot grow: delete
-          what you no longer need in the workspace, then use Reclaim space.
+          what you no longer need in the workspace, then use Reclaim space in Settings.
         </p>
       {/if}
     </div>
@@ -183,38 +101,29 @@
     </div>
   {/if}
 
-  <div class="grid">
-    <section class="card" aria-labelledby="status-h">
-      <h2 id="status-h">Status</h2>
-      <dl>
-        <dt>Workspace id</dt>
-        <dd class="id-row">
-          <span class="mono">{workspace.id}</span>
-          <button
-            type="button"
-            class="btn"
-            aria-label="Copy the workspace id"
-            onclick={() => void copyId()}
-            >{copied === "yes"
-              ? "Copied"
-              : copied === "no"
-                ? "Could not copy"
-                : "Copy"}</button
+  <div class="stack">
+    <section class="card" aria-labelledby="in-h">
+      <h2 id="in-h">Get in</h2>
+      <p class="line">
+        Created
+        <time
+          datetime={new Date(workspace.created_at).toISOString()}
+          title={absoluteTime(workspace.created_at)}
+          >{relativeTime(workspace.created_at, now)}</time
+        >.
+        {#if workspace.status === "running"}
+          Open a terminal here, or use Connect for the editor and SSH.
+        {:else if canStart(workspace)}
+          Start it to open a terminal or the editor.
+        {/if}
+      </p>
+      {#if workspace.status === "running"}
+        <p>
+          <a class="btn primary" href={tabHref(workspace.id, "terminal")}
+            >Open a terminal</a
           >
-        </dd>
-        <dt>State</dt>
-        <dd><StatusChip status={workspace.status} busy={workspace.busy} /></dd>
-        <dt>Created</dt>
-        <dd>
-          <time
-            datetime={new Date(workspace.created_at).toISOString()}
-            title={absoluteTime(workspace.created_at)}
-            >{relativeTime(workspace.created_at, now)}</time
-          >
-        </dd>
-        <dt>Image</dt>
-        <dd class="mono">{workspace.image}</dd>
-      </dl>
+        </p>
+      {/if}
       {#if workspace.status === "volume_missing" && workspace.busy === null}
         <VolumeMissingNotice id={workspace.id} detail />
       {/if}
@@ -238,138 +147,36 @@
       {/if}
     </section>
 
+    <WaitingRequests workspace={workspace.id} name={workspace.name} />
+
     <RepositoriesSection {workspace} />
 
-    <section class="card" aria-labelledby="resources-h">
-      <h2 id="resources-h">Resources</h2>
-      <dl>
-        <dt>Memory</dt>
-        <dd>
-          {formatMib(workspace.memory_mib)}
-          {#if memorySource}
-            <span class="chip"
-              >{memorySource === "workspace"
-                ? "workspace override"
-                : memorySource === "global"
-                  ? "global default"
-                  : "Puddle's default"}</span
-            >
-          {/if}
-        </dd>
-        {#if rootDiskLabel(workspace) !== null}
-          <dt>Root disk</dt>
-          <dd class:full={diskWarned(workspace, "root")}>
-            {rootDiskLabel(workspace)}{diskWarned(workspace, "root")
-              ? " (nearly full)"
-              : ""}
-          </dd>
-        {/if}
-        <dt>Disk</dt>
-        <dd class:full={diskWarned(workspace, "volume")}>
-          {diskLabel(workspace)}{diskWarned(workspace, "volume")
-            ? " (nearly full)"
-            : ""}
-        </dd>
-        <dt>Volume</dt>
-        <dd class="mono">ws-{workspace.id}</dd>
-      </dl>
-      <p class="hint">
-        Reclaiming space gives disk the workspace no longer uses back to your
-        computer. Resetting the root disk (a stopped workspace) removes what was
-        installed outside the volume. Making it bigger works for a running or a
-        stopped workspace and is kept when it is reset.
-      </p>
-      <div class="row">
-        <button
-          type="button"
-          class="btn"
-          disabled={!canGrowRootDisk(workspace)}
-          onclick={openGrow}>Make root disk bigger…</button
-        >
-        <button
-          type="button"
-          class="btn"
-          disabled={!canReclaim(workspace)}
-          onclick={() => void actions.reclaim(workspace)}>Reclaim space</button
-        >
-        <button
-          type="button"
-          class="btn"
-          disabled={!canResetRootDisk(workspace)}
-          onclick={openReset}>Reset root disk…</button
-        >
-      </div>
-    </section>
-
-    <section class="card" aria-labelledby="network-h">
-      <h2 id="network-h">Network</h2>
-      <p>{networkSummary}</p>
-      <p>
-        <a class="link-block" href={tabHref(workspace.id, "network")}
-          >Open the network tab</a
-        >
-      </p>
-    </section>
-
-    <section class="card danger" aria-labelledby="danger-h">
-      <h2 id="danger-h">Delete workspace</h2>
-      {#if workspace.status === "volume_missing"}
-        <p class="hint">
-          The disk is already gone, so deleting only removes the workspace from
-          Puddle.
+    {#if serving.length > 0}
+      <section class="card" aria-labelledby="serving-h">
+        <h2 id="serving-h">Serving now</h2>
+        <ul class="ports">
+          {#each serving as entry (entry.guest_port)}
+            <li>
+              <span class="mono">:{entry.guest_port}</span>
+              <span class="muted">{forwardText(entry)}</span>
+            </li>
+          {/each}
+        </ul>
+        <p>
+          <a class="link-block" href={tabHref(workspace.id, "ports")}
+            >Forward a port</a
+          >
         </p>
-      {:else}
-        <p class="hint">
-          Deleting removes the workspace and its disk. Puddle first lists
-          uncommitted changes, unpushed commits and stashes.
-        </p>
-      {/if}
-      {#if !canDelete(workspace) && workspace.busy === null}
-        <p class="hint">Stop the workspace before deleting it.</p>
-      {/if}
-      <div class="row">
-        <button
-          type="button"
-          class="btn deny"
-          disabled={!canDelete(workspace)}
-          onclick={() => void actions.askDelete(workspace)}
-        >
-          <Trash2 aria-hidden="true" size={16} />{actions.checking ===
-          workspace.id
-            ? "Checking…"
-            : "Delete workspace…"}
-        </button>
-      </div>
-    </section>
+      </section>
+    {/if}
   </div>
-  <GrowRootDiskDialog
-    bind:open={growOpen}
-    {workspace}
-    onSubmit={(gib) => actions.growRootDisk(workspace, gib)}
-  />
-  <ConfirmDialog
-    bind:open={resetOpen}
-    title="Reset the root disk of {workspace.name}?"
-    summary="Everything installed or cached outside the volume is removed."
-    detail="Packages and tools installed outside the volume, the home directory and tool caches are lost, including any file kept there that is not in a repository on the volume; packages reinstall and caches rebuild on the next start. The volume, with your repositories and files, is untouched."
-    confirmLabel="Reset root disk"
-    tone="deny"
-    onConfirm={() => void actions.resetRootDisk(workspace)}
-  />
 {/if}
 
 <style>
-  .id-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .grid {
+  .stack {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(24rem, 100%), 1fr));
     gap: var(--space-4);
-    align-items: start;
+    max-width: 60rem;
   }
   .card {
     display: grid;
@@ -379,45 +186,26 @@
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
   }
-  .card.danger {
-    border-color: var(--color-danger);
-  }
   h2 {
     font-size: var(--text-md);
   }
   p {
     margin: 0;
   }
-  dl {
+  .muted {
+    color: var(--color-text-muted);
+  }
+  .ports {
     display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: var(--space-2) var(--space-4);
+    gap: var(--space-1);
     margin: 0;
+    padding: 0;
+    list-style: none;
   }
-  dt {
-    color: var(--color-text-muted);
-  }
-  dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .hint {
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-  .row {
+  .ports li {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2);
-  }
-  .chip {
-    margin-inline-start: var(--space-2);
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    white-space: nowrap;
+    gap: var(--space-3);
   }
   .warn {
     display: flex;
@@ -435,12 +223,10 @@
     min-width: 12rem;
     overflow-wrap: anywhere;
   }
-  .full {
-    color: var(--color-warning);
-    font-weight: 600;
-  }
-  .btn:disabled {
-    cursor: default;
-    opacity: 0.6;
+  .grow {
+    display: grid;
+    flex: 1;
+    gap: var(--space-2);
+    min-width: 12rem;
   }
 </style>

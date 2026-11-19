@@ -11,7 +11,6 @@
     patternLabel,
     ruleName,
     scopeLabel,
-    workspaceOf,
     type Rule,
     type Sort,
     type SortKey,
@@ -42,6 +41,22 @@
     /** Left out, the table has no switch column. The page changes the rule and the row follows. */
     onEnabled?: (rule: Rule, enabled: boolean) => void;
   } = $props();
+
+  // Drawing 1000 rows in one go blocks WebKit for about 3 s. The first slice is drawn at once and the
+  // rest follows one chunk per frame, so the page answers first. Every row still ends up in the DOM
+  // (keyboard, screen readers and find-in-page reach all of them), and aria-rowcount gives the real
+  // size meanwhile.
+  const FIRST_SLICE = 50;
+  const CHUNK = 50;
+  let drawn = $state(FIRST_SLICE);
+  const visible = $derived(rules.slice(0, drawn));
+  $effect(() => {
+    if (drawn >= rules.length) return;
+    const frame = requestAnimationFrame(() => {
+      drawn += CHUNK;
+    });
+    return () => cancelAnimationFrame(frame);
+  });
   const editable = $derived(onExpiry !== undefined && onDelete !== undefined);
 
   const columns: { key: SortKey; label: string }[] = [
@@ -62,7 +77,7 @@
 </script>
 
 <div class="wrap">
-  <table>
+  <table aria-rowcount={rules.length + 1}>
     <caption class="visually-hidden">Rules</caption>
     <thead>
       <tr>
@@ -98,9 +113,14 @@
       </tr>
     </thead>
     <tbody>
-      {#each rules as rule (rule.id)}
+      {#each visible as rule, index (rule.id)}
         {@const expired = isExpired(rule, now)}
-        <tr data-rule-id={rule.id} class:expired class:off={!rule.enabled}>
+        <tr
+          data-rule-id={rule.id}
+          aria-rowindex={index + 2}
+          class:expired
+          class:off={!rule.enabled}
+        >
           <td class="host">
             <span class="mono">{patternLabel(rule)}</span>
             {#if rule.pattern_kind === "suffix"}
@@ -114,11 +134,7 @@
             >
           </td>
           <td>
-            {#if workspaceOf(rule) === null}
-              {scopeLabel(rule)}
-            {:else}
-              <span class="mono">{scopeLabel(rule)}</span>
-            {/if}
+            {scopeLabel(rule)}
           </td>
           <td class="precedence">{rule.precedence}</td>
           <td>

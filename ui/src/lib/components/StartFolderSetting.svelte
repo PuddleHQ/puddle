@@ -111,12 +111,12 @@
 </script>
 
 <section class="card" id="start-folder" aria-labelledby="{id}-h">
-  <h2 id="{id}-h">Start folder</h2>
+  <h3 id="{id}-h">Start folder</h3>
   <form onsubmit={save} novalidate>
     <div class="field">
-      <label for="{id}-folder">Start folder</label>
       <input
         id="{id}-folder"
+        aria-labelledby="{id}-h"
         type="text"
         autocomplete="off"
         spellcheck="false"
@@ -168,14 +168,8 @@
   .card {
     display: grid;
     gap: var(--space-3);
-    max-width: 48rem;
-    margin-bottom: var(--space-4);
-    padding: var(--space-4);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
   }
-  h2 {
+  h3 {
     font-size: var(--text-md);
   }
   form {
@@ -185,9 +179,6 @@
   .field {
     display: grid;
     gap: var(--space-1);
-  }
-  label {
-    font-weight: 600;
   }
 
   p {

@@ -12,6 +12,7 @@ import {
   type GitAccessDenied,
   type GitNoIdentity,
 } from "#lib/identities/events.ts";
+import { isStoredLine } from "#lib/identities/model.ts";
 import { repoName } from "#lib/identities/repo.ts";
 import { sentence } from "#lib/rules/model.ts";
 import type { Notifier } from "./notifier.ts";
@@ -70,15 +71,23 @@ export class CredentialNotices {
     this.#identities.markSignedOut(event.source);
     await this.#identities.ensureLoaded();
     const identity = this.#identities.bySource(event.source);
+    const href = identity ? `/identities/${identity.id}` : "/identities";
+    if (isStoredLine(event.source)) {
+      this.#notifier.notify({
+        key: signInKey(event.source),
+        tone: "warning",
+        title: `${event.host} did not accept a pasted token: ${event.source}.`,
+        detail: `A workspace's request to ${event.host} was refused. There is no sign-in for a pasted token: Edit the identity and paste a new token.`,
+        link: { href, label: "Edit" },
+      });
+      return;
+    }
     this.#notifier.notify({
       key: signInKey(event.source),
       tone: "warning",
       title: `Sign-in needed: Puddle can't read ${event.source}.`,
       detail: `A workspace asked ${event.host} for it, so that request failed. Sign in from Identities; Puddle never opens a sign-in window by itself.`,
-      link: {
-        href: identity ? `/identities/${identity.id}` : "/identities",
-        label: "Sign in",
-      },
+      link: { href, label: "Sign in" },
     });
   }
 

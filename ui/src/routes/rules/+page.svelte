@@ -12,6 +12,7 @@
   import RuleTable from "#lib/components/RuleTable.svelte";
   import SystemManagedList from "#lib/components/SystemManagedList.svelte";
   import Toast from "#lib/components/Toast.svelte";
+  import WorkspaceSelect from "#lib/components/WorkspaceSelect.svelte";
   import {
     DEFAULT_SORT,
     NO_FILTER,
@@ -40,7 +41,13 @@
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
   import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
+  import { workspaces as workspaceList } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
+
+  const SCOPE_FILTER = [
+    { value: "any", label: "Any" },
+    { value: "global", label: "Every workspace" },
+  ] as const;
 
   let now = $state(Date.now());
   let filter = $state<Filter>({ ...NO_FILTER });
@@ -95,12 +102,15 @@
     }
     const stop = store.start();
     const stopSets = ruleSets.start();
+    // The dropdowns and the names in the table read the live workspace list.
+    const stopWorkspaces = workspaceList.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stop();
       stopSets();
+      stopWorkspaces();
       clearInterval(clock);
     };
   });
@@ -323,17 +333,18 @@
           id="f-host"
           type="search"
           autocomplete="off"
+          placeholder="for example github.com"
           bind:value={filter.host}
         />
       </div>
       <div class="field">
         <label for="f-scope">Workspace</label>
-        <select id="f-scope" bind:value={filter.scope}>
-          <option value="any">Any</option>
-          <option value="global">Every workspace</option>
-          {#each workspaces as name (name)}<option value={name}>{name}</option
-            >{/each}
-        </select>
+        <WorkspaceSelect
+          id="f-scope"
+          bind:value={filter.scope}
+          known={workspaces}
+          leading={SCOPE_FILTER}
+        />
       </div>
       <div class="field">
         <label for="f-effect">Effect</label>

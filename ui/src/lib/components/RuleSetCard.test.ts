@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtIn, mine, trackerEntries } from "#lib/testing/fake-rule-sets.ts";
 import type { RuleSet } from "#lib/rules/sets.ts";
 import RuleSetCard from "./RuleSetCard.svelte";
+import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
 
 afterEach(cleanup);
 
@@ -67,11 +68,9 @@ describe("a built-in set", () => {
   it("switches for one workspace, checking the name first", async () => {
     const props = mount(builtIn("github"));
     await fireEvent.click(screen.getByRole("button", { name: "On there" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Name the workspace");
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose the workspace");
     expect(props.onSwitch).not.toHaveBeenCalled();
-    await fireEvent.input(screen.getByLabelText("Workspace name"), {
-      target: { value: "api" },
-    });
+    await chooseWorkspace(screen.getByLabelText("Workspace"), "api");
     await fireEvent.click(screen.getByRole("button", { name: "Off there" }));
     expect(props.onSwitch).toHaveBeenCalledWith(props.set, "api", false);
     // Enter in the field submits nothing by itself: the buttons say on or off.

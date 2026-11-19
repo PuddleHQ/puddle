@@ -10,6 +10,11 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Advice may name `puddle serve --headless` only in a build that has the command (the `puddle`
+# crate's `serve` feature forwards here); without it the advice names what the build can do.
+serve = []
+
 [dependencies]
 puddle-fs = { workspace = true }
 puddle-process = { workspace = true }

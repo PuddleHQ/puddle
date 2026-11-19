@@ -202,7 +202,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 let mut state = self.state();
                 let saved = stored.and_then(|()| self.persist(&state).map_err(|e| e.to_string()));
                 if saved.is_err() {
+                    // `git.claim` wrote the owner row, so the id is retired like a failed
+                    // create's; the next save that works keeps it.
                     state.slots.remove(&id);
+                    state.retired.insert(id.clone());
                 }
                 saved
             };

@@ -890,11 +890,11 @@ async fn vm_browser_code_server_first_open_follows_the_systems_colour_scheme_and
         runtime,
         settings,
         ..
-    } = start_vm_host_config("wth", options, |config| {
+    } = start_vm_host_config("scheme", options, |config| {
         config.guest.code_server = Some(release);
     })
     .await;
-    let name = format!("{}-wth", settings.prefix.as_str());
+    let name = format!("{}-scheme", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;

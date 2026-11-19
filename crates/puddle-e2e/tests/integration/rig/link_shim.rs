@@ -61,6 +61,11 @@ enum Door {
         _listener: TcpListener,
         _fillers: Vec<std::net::TcpStream>,
     },
+    /// The port is held by a socket that never listens: connects are refused and no other test
+    /// can take the port.
+    Cut {
+        _socket: TcpSocket,
+    },
     Closed,
 }
 
@@ -164,13 +169,16 @@ impl LinkShim {
     /// The route is gone: running transfers end and a new connect is refused.
     pub(crate) async fn cut(&self) {
         self.close_door();
-        // The aborted tasks dropped their sockets and the listener; wait until the port refuses.
-        puddle_test_kit::eventually_async(
-            "the cut link refuses",
-            Duration::from_secs(5),
-            || async { TcpStream::connect(self.addr).await.is_err() },
-        )
-        .await;
+        // The aborted tasks drop the listener soon; then a socket that never listens takes the port.
+        let socket =
+            puddle_test_kit::eventually("the old listener is gone", Duration::from_secs(5), || {
+                let socket = TcpSocket::new_v4().ok()?;
+                socket.set_reuseaddr(true).ok()?;
+                socket.bind(self.addr).ok()?;
+                Some(socket)
+            })
+            .await;
+        *self.door.lock().unwrap_or_else(PoisonError::into_inner) = Door::Cut { _socket: socket };
     }
 
     /// The route drops every packet: a connect to it hangs until the client gives up.

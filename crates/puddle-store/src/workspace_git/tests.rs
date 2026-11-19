@@ -131,6 +131,21 @@ fn an_azure_devops_name_can_hold_a_space_and_a_letter_a_git_host_has_not() {
 }
 
 #[test]
+fn a_host_with_a_port_or_trailing_dot_and_a_dot_owner_are_refused() {
+    for host in ["github.com:443", "github.com.", "gitlab.example:8443"] {
+        assert!(RepoRef::new(host, "acme", "web").is_err(), "{host:?}");
+        assert!(RepoRef::new(host, "acme", "a/b/c").is_err(), "{host:?}");
+    }
+    for owner in [".", ".."] {
+        assert!(
+            RepoRef::new("github.com", owner, "web").is_err(),
+            "{owner:?}"
+        );
+    }
+    assert!(RepoRef::from_https_url("https://github.com./acme/web").is_err());
+}
+
+#[test]
 fn only_ascii_letters_fold_so_a_look_alike_is_another_name() {
     let kelvin = RepoRef::new("dev.azure.com", "org", "proj\u{212a}/x").unwrap();
     assert_ne!(

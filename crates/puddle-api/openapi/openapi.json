@@ -17243,6 +17243,56 @@
           "skipped"
         ]
       },
+      "EditorSettings": {
+        "type": "object",
+        "description": "The editor defaults at one level: a workspace's values win over the global ones field by\nfield. `null` inherits.",
+        "required": [
+          "colour_theme",
+          "font_size",
+          "extensions",
+          "keybindings"
+        ],
+        "properties": {
+          "colour_theme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The colour theme's name as the editor lists it (at most 100 characters). Unset follows\nthe system colour scheme.",
+            "maxLength": 100
+          },
+          "extensions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Extensions to preinstall, as `publisher.name` ids (at most 50). A level that sets the\nlist replaces the next level's list; an empty list means none.",
+            "maxItems": 50
+          },
+          "font_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The font size in pixels (8 to 40). Unset keeps the editor's own.",
+            "maximum": 40,
+            "minimum": 8
+          },
+          "keybindings": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Key bindings to merge into the editor: the text of a JSON array of `{key, command}`\nobjects (at most 64 KiB).",
+            "maxLength": 65536
+          }
+        },
+        "additionalProperties": false
+      },
       "Effect": {
         "type": "string",
         "description": "Allow or deny.",
@@ -17250,6 +17300,34 @@
           "allow",
           "deny"
         ]
+      },
+      "EffectiveEditor": {
+        "type": "object",
+        "description": "The editor defaults a workspace gets, each with where it came from.",
+        "required": [
+          "colour_theme",
+          "font_size",
+          "extensions",
+          "keybindings"
+        ],
+        "properties": {
+          "colour_theme": {
+            "$ref": "#/components/schemas/ResolvedText",
+            "description": "The colour theme; `null` follows the system colour scheme."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/ResolvedTextList",
+            "description": "The extensions to preinstall."
+          },
+          "font_size": {
+            "$ref": "#/components/schemas/ResolvedOptionalNumber",
+            "description": "The font size in pixels; `null` keeps the editor's own."
+          },
+          "keybindings": {
+            "$ref": "#/components/schemas/ResolvedText",
+            "description": "The key bindings text; `null` adds none."
+          }
+        }
       },
       "EffectiveLimits": {
         "type": "object",
@@ -17293,7 +17371,8 @@
           "clipboard_read",
           "direct_ssh",
           "capture_logins",
-          "warn_foreign_credentials"
+          "warn_foreign_credentials",
+          "editor"
         ],
         "properties": {
           "capture_logins": {
@@ -17311,6 +17390,10 @@
           "direct_ssh": {
             "$ref": "#/components/schemas/ResolvedBool",
             "description": "Whether direct SSH is on."
+          },
+          "editor": {
+            "$ref": "#/components/schemas/EffectiveEditor",
+            "description": "What the editor starts with."
           },
           "local_toggles": {
             "$ref": "#/components/schemas/EffectiveToggles",
@@ -21561,6 +21644,71 @@
           }
         }
       },
+      "ResolvedOptionalNumber": {
+        "type": "object",
+        "description": "An optional effective number and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The value, `null` when nothing sets it.",
+            "minimum": 0
+          }
+        }
+      },
+      "ResolvedText": {
+        "type": "object",
+        "description": "An optional effective text and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The value, `null` when nothing sets it."
+          }
+        }
+      },
+      "ResolvedTextList": {
+        "type": "object",
+        "description": "An effective list of texts and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values."
+          }
+        }
+      },
       "RestoreApplied": {
         "type": "object",
         "description": "A restore that is confirmed and waits for the next start.",
@@ -22736,7 +22884,8 @@
           "clipboard_read",
           "direct_ssh",
           "capture_logins",
-          "warn_foreign_credentials"
+          "warn_foreign_credentials",
+          "editor"
         ],
         "properties": {
           "capture_logins": {
@@ -22773,6 +22922,10 @@
               "null"
             ],
             "description": "Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop\nVS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh\nconfig entry. Turning it on marks the workspace trusted."
+          },
+          "editor": {
+            "$ref": "#/components/schemas/EditorSettings",
+            "description": "The editor's colour theme, font size, preinstalled extensions and key bindings. Left out,\nit means nothing is set at this level."
           },
           "local_toggles": {
             "$ref": "#/components/schemas/LocalToggles",

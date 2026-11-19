@@ -129,10 +129,11 @@ pub use rules::{
     RuleExpiryRequest, RuleList, RuleScope, ScopeChoice, UndoOutcome, UpdateRuleRequest,
 };
 pub use settings_view::{
-    ClipboardRead, CloseBehaviour, DensityChoice, EffectiveLimits, EffectiveSettings,
-    EffectiveToggles, GlobalSettingsRequest, GlobalSettingsView, GlobalTools, Limits, LocalToggles,
-    PaletteChoice, ResolvedBool, ResolvedClipboardRead, ResolvedNumber, ServerChoice,
-    SettingSource, SettingsLayer, ThemeChoice, UiPrefs, VsCodeServer, WorkspaceSettingsRequest,
+    ClipboardRead, CloseBehaviour, DensityChoice, EditorSettings, EffectiveEditor, EffectiveLimits,
+    EffectiveSettings, EffectiveToggles, GlobalSettingsRequest, GlobalSettingsView, GlobalTools,
+    Limits, LocalToggles, PaletteChoice, ResolvedBool, ResolvedClipboardRead, ResolvedNumber,
+    ResolvedOptionalNumber, ResolvedText, ResolvedTextList, ServerChoice, SettingSource,
+    SettingsLayer, ThemeChoice, UiPrefs, VsCodeServer, WorkspaceSettingsRequest,
     WorkspaceSettingsView, WorkspaceTools,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};

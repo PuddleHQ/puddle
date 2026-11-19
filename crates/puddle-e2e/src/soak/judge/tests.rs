@@ -327,3 +327,64 @@ fn a_finding_prints_its_severity_rule_subject_and_numbers() {
     );
     let _ = flat_rss(0.0);
 }
+
+#[test]
+fn the_median_and_the_p95_of_a_few_values() {
+    assert_eq!(median(vec![4.0, 1.0, 3.0, 2.0]), Some(2.5));
+    assert_eq!(median(vec![3.0, 1.0, 2.0]), Some(2.0));
+    assert_eq!(median(vec![]), None);
+    assert_eq!(p95(vec![]), None);
+    assert_eq!(p95((1..=20).map(f64::from).collect()), Some(19.0));
+    assert_eq!(p95(vec![7.0]), Some(7.0));
+}
+
+#[test]
+fn a_minor_finding_prints_as_minor() {
+    let base = run(|_, _, _| {});
+    let s = shape(&base, "file.db_wal.bytes", |_, _| {
+        Some(300.0 * 1024.0 * 1024.0)
+    });
+    let text = judge(&s, sched())[0].to_string();
+    assert!(
+        text.starts_with("MINOR WalSize file.db_wal.bytes: "),
+        "{text}"
+    );
+}
+
+#[test]
+fn too_little_data_is_not_judged() {
+    // Three idle samples that rise: too few to call a trend.
+    let mut s = Series::default();
+    for i in 0..3_u64 {
+        let t = START + 8 * 3600 + i * STEP;
+        s.push(
+            t,
+            "proc.worker.100.rss_kb",
+            100_000.0 + 50_000.0 * f64::from(u32::try_from(i).unwrap()),
+        );
+    }
+    assert_eq!(judge(&s, sched()), []);
+    // A latency that was never measured in hour 0 has no baseline.
+    let late = run(|s, t, h| {
+        if h >= 3.0 {
+            s.push(t, "api.late.ms", 900.0);
+        }
+    });
+    assert_eq!(judge(&late, sched()), []);
+    // A database size with no record count cannot be compared with it.
+    let mut db_only = Series::default();
+    for i in 0..=(8 * 12_u64) {
+        let big = if i < 24 { 5.0e6 } else { 50.0e6 };
+        db_only.push(START + i * STEP, "file.db.bytes", big);
+    }
+    assert_eq!(judge(&db_only, sched()), []);
+}
+
+#[test]
+fn a_silence_with_no_reconnect_series_at_all_counts_as_no_reconnect() {
+    let mut s = Series::default();
+    s.push(START + 3600, "sse.age_s", 700.0);
+    let f = judge(&s, sched());
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].check, Check::SseSilence);
+}

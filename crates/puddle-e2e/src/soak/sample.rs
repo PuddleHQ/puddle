@@ -144,6 +144,14 @@ impl SseState {
     }
 }
 
+async fn open_stream(target: &Target) -> io::Result<TcpStream> {
+    let mut stream = TcpStream::connect(&target.addr).await?;
+    stream
+        .write_all(request_text(target, "/api/events").as_bytes())
+        .await?;
+    Ok(stream)
+}
+
 /// Reads `GET /api/events` for ever, counting each `data:` or `event:` line as an event (a comment
 /// line, the keep-alive, is not one) and reconnecting after a second when the stream ends. Ends
 /// only when the task is dropped.
@@ -156,16 +164,9 @@ pub async fn read_events(target: Target, state: Arc<SseState>) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         first = false;
-        let Ok(mut stream) = TcpStream::connect(&target.addr).await else {
+        let Ok(stream) = open_stream(&target).await else {
             continue;
         };
-        if stream
-            .write_all(request_text(&target, "/api/events").as_bytes())
-            .await
-            .is_err()
-        {
-            continue;
-        }
         let mut lines = BufReader::new(stream).lines();
         let mut in_body = false;
         while let Ok(Some(line)) = lines.next_line().await {
@@ -373,10 +374,9 @@ impl Sampler {
         self.host(now, into);
         let procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
         for (comm, pid) in procs {
-            if let Some(vals) = read_process(&Path::new("/proc").join(pid.to_string())) {
-                for (field, v) in vals {
-                    into.push(now, &format!("proc.{comm}.{pid}.{field}"), v);
-                }
+            let readings = read_process(&Path::new("/proc").join(pid.to_string()));
+            for (field, v) in readings.into_iter().flatten() {
+                into.push(now, &format!("proc.{comm}.{pid}.{field}"), v);
             }
         }
         self.files(now, into);
@@ -436,12 +436,13 @@ impl Sampler {
 
     async fn api(&self, now: u64, into: &mut Series) {
         for (name, path) in API_CALLS {
-            let Ok(reply) = get(&self.cfg.api, path).await else {
+            let Some(reply) = get(&self.cfg.api, path)
+                .await
+                .ok()
+                .filter(|r| r.status == 200)
+            else {
                 continue;
             };
-            if reply.status != 200 {
-                continue;
-            }
             into.push(
                 now,
                 &format!("api.{name}.ms"),

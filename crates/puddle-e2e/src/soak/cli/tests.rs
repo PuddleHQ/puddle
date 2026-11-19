@@ -90,12 +90,19 @@ async fn bad_input_is_a_usage_error() {
 async fn sample_appends_one_sample_per_round_to_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("metrics.tsv");
+    let volume = dir.path().join("vol.img");
+    std::fs::write(&volume, [0_u8; 12]).unwrap();
+    let file = format!("vol={}", volume.display());
     let a = args(&[
         "sample",
         "--out",
         out.to_str().unwrap(),
         "--api",
         "127.0.0.1:1",
+        "--w4",
+        "127.0.0.1:1",
+        "--file",
+        &file,
         "--interval",
         "1",
         "--count",
@@ -104,6 +111,11 @@ async fn sample_appends_one_sample_per_round_to_the_file() {
     assert_eq!(run(&a, &mut Vec::new()).await, Ok(0));
     let series = Series::parse(&std::fs::read_to_string(&out).unwrap()).unwrap();
     assert_eq!(series.points("host.free_ram_kb").len(), 2);
+    assert_eq!(series.points("file.vol.bytes").len(), 2);
+    assert_eq!(
+        series.points("file.vol.bytes").first().map(|p| p.1),
+        Some(12.0)
+    );
     let bad = args(&[
         "sample",
         "--out",

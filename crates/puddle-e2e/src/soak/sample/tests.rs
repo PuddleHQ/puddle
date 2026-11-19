@@ -341,3 +341,17 @@ async fn a_reading_that_fails_leaves_a_gap_never_a_zero() {
     assert_eq!(s.points("w4.fail_share"), []);
     assert_ne!(s.points("host.free_ram_kb"), []);
 }
+
+#[tokio::test]
+async fn a_reader_that_cannot_connect_keeps_trying_and_counts_each_try() {
+    let dead = Target {
+        addr: "127.0.0.1:1".to_owned(),
+        token: None,
+    };
+    let state = SseState::new();
+    let task = tokio::spawn(read_events(dead, state.clone()));
+    // The reader pauses 1 s before each retry; 1.5 s holds at least one.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    task.abort();
+    assert!(state.read().1 >= 1, "{:?}", state.read());
+}

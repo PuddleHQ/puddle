@@ -148,9 +148,6 @@ fn values_in(points: &[(u64, f64)], from: u64, to: u64) -> Vec<f64> {
 }
 
 fn median(mut v: Vec<f64>) -> Option<f64> {
-    if v.is_empty() {
-        return None;
-    }
     v.sort_by(f64::total_cmp);
     let mid = v.len() / 2;
     let upper = *v.get(mid)?;
@@ -163,9 +160,6 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 
 /// Nearest-rank p95.
 fn p95(mut v: Vec<f64>) -> Option<f64> {
-    if v.is_empty() {
-        return None;
-    }
     v.sort_by(f64::total_cmp);
     let rank = (v.len() * 95).div_ceil(100).max(1);
     v.get(rank - 1).copied()
@@ -213,18 +207,16 @@ fn leak(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
 }
 
 /// Least-squares rise over the span and the standard deviation of what the line leaves over.
-fn trend(points: &[(u64, f64)]) -> Option<(f64, f64)> {
+/// Both are NaN for points that all share one time, which no comparison against them passes.
+fn trend(points: &[(u64, f64)]) -> (f64, f64) {
     #[expect(
         clippy::cast_precision_loss,
         reason = "sample counts and seconds are small"
     )]
     {
         let n = points.len() as f64;
-        let t0 = points.first()?.0;
-        let last = points.last()?.0;
-        if points.len() < 2 || last == t0 {
-            return None;
-        }
+        let t0 = points.first().map_or(0, |p| p.0);
+        let last = points.last().map_or(0, |p| p.0);
         let xs: Vec<f64> = points.iter().map(|&(t, _)| (t - t0) as f64).collect();
         let mx = xs.iter().sum::<f64>() / n;
         let my = points.iter().map(|&(_, v)| v).sum::<f64>() / n;
@@ -240,7 +232,7 @@ fn trend(points: &[(u64, f64)]) -> Option<(f64, f64)> {
             .zip(points)
             .map(|(x, &(_, y))| (y - (my + slope * (x - mx))).powi(2))
             .sum();
-        Some((slope * (last - t0) as f64, (ss / n).sqrt()))
+        (slope * (last - t0) as f64, (ss / n).sqrt())
     }
 }
 
@@ -267,9 +259,7 @@ fn idle_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
             if idle.len() < MIN_IDLE_SAMPLES {
                 continue;
             }
-            let Some((rise, noise)) = trend(&idle) else {
-                continue;
-            };
+            let (rise, noise) = trend(&idle);
             if rise >= idle_floor(field) && rise > 3.0 * noise {
                 find(
                     out,
@@ -325,7 +315,7 @@ fn sse_silence(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
             .rev()
             .find(|&&(rt, _)| rt <= t)
             .or_else(|| reconnects.first())
-            .map(|&(_, v)| v)
+            .map_or(0.0, |&(_, v)| v)
     };
     let mut worst: Option<(u64, f64)> = None;
     for &(t, age) in series.points("sse.age_s") {
@@ -334,9 +324,7 @@ fn sse_silence(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
         }
         let silent = Duration::try_from_secs_f64(age).map_or(u64::MAX, |d| d.as_secs() + 1);
         let begun = t.saturating_sub(silent);
-        let (Some(then), Some(now)) = (at_or_before(begun), at_or_before(t)) else {
-            continue;
-        };
+        let (then, now) = (at_or_before(begun), at_or_before(t));
         if now <= then && worst.is_none_or(|(_, a)| age > a) {
             worst = Some((t, age));
         }

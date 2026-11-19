@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
-use puddle_proxy::{InjectDecision, StandIns};
+use puddle_proxy::{ExchangeRewriter, InjectDecision, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
@@ -163,8 +163,22 @@ fn claude_api(request: &Recorded) -> Reply {
         // The connectivity check of the older tool (2.1.x) before its login screen.
         "/api/hello" => json_reply(&json!({})),
         "/api/oauth/claude_cli/create_api_key" => json_reply(&json!({"raw_key": API_KEY})),
+        // The inference call: a bearer that is not one of the real tokens is refused the way the
+        // real API refuses it, which is what a tool holding only a stand-in meets after a forget.
+        "/v1/messages" if !is_a_real_bearer(request) => Reply::status(
+            401,
+            "content-type: application/json\r\n",
+            r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ),
         _ => not_found(),
     }
+}
+
+fn is_a_real_bearer(request: &Recorded) -> bool {
+    request
+        .header("authorization")
+        .and_then(|a| a.strip_prefix("Bearer "))
+        .is_some_and(|token| REALS.contains(&token))
 }
 
 /// GitHub's OAuth endpoints, answering in the format the request's `Accept` asks for. The device
@@ -267,6 +281,7 @@ struct Tools {
     servers: Vec<(&'static str, FakeServer)>,
     notices: Arc<Notices>,
     store: Arc<MemoryStore>,
+    logins: Arc<Logins>,
     _guest: Guest,
     _bridge: JoinHandle<()>,
 }
@@ -311,7 +326,7 @@ impl Tools {
         let store = Arc::new(MemoryStore::new());
         let notices = Arc::new(Notices::default());
         let registry = Arc::new(StandIns::new());
-        let logins = Logins::new(
+        let logins = Arc::new(Logins::new(
             WorkspaceId::new("box").unwrap(),
             true,
             builtin(),
@@ -319,13 +334,13 @@ impl Tools {
             Arc::clone(&store) as Arc<dyn SecretStore>,
             Arc::clone(&notices) as Arc<dyn LoginNotices>,
             puddle_logins::Marker::none(),
-        );
+        ));
         let rig = rig
             .bound(bound.clone())
             .allow(bound)
             .injector(TestInjector::new(|_| InjectDecision::PassThrough))
             .stand_ins(&registry)
-            .exchanges(Arc::new(logins))
+            .exchanges(Arc::clone(&logins) as Arc<dyn ExchangeRewriter>)
             .build();
         let guest = rig.guest();
         let (port, bridge) = guest.proxy_port().await;
@@ -340,6 +355,7 @@ impl Tools {
             servers,
             notices,
             store,
+            logins,
             _guest: guest,
             _bridge: bridge,
         }
@@ -543,6 +559,98 @@ async fn claude_code_logs_in_calls_the_api_and_refreshes_with_stand_ins_only() {
         serde_json::from_str(&std::fs::read_to_string(&credentials).unwrap()).unwrap();
     assert_eq!(after["claudeAiOauth"]["accessToken"], access.as_str());
     assert_eq!(after["claudeAiOauth"]["refreshToken"], refresh.as_str());
+    tools.assert_no_real_token_in_the_workspace();
+    let _ = &tools.store;
+    let _ = &tools.rig;
+}
+
+/// A forgotten login ends where the user sees it: the tool that held stand-ins is not signed in any
+/// more (its next call fails with an authentication error), and the only thing the server ever
+/// sees after the forget is the stand-in the tool holds, never the real token the store held.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claude_code_after_the_login_is_forgotten_fails_to_authenticate_and_sends_only_its_stand_in()
+ {
+    let Some(claude) = on_path("claude") else {
+        tool_missing("claude");
+        return;
+    };
+    let tools = Tools::new(false).await;
+    let mut login = tools.command(&claude);
+    login.args(["auth", "login"]);
+    tools
+        .run(login, "fakecode#fakestate\n", Duration::from_secs(90))
+        .await;
+    let credentials = tools.home.path().join(".claude/.credentials.json");
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(&credentials).unwrap()).unwrap();
+    let stand_in = saved["claudeAiOauth"]["accessToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(stand_in, ACCESS);
+
+    // While the login is kept, a call is swapped to the real token and the API takes it.
+    let mut ask = tools.command(&claude);
+    ask.args(["-p", "say hi", "--output-format", "json"]);
+    let ran = tools.run(ask, "", Duration::from_secs(90)).await;
+    let before = authorizations(tools.server("api.anthropic.com"));
+    assert!(
+        before.contains(&format!("Bearer {ACCESS}")),
+        "{before:?}\n{}",
+        ran.out
+    );
+
+    // Forget it: the real tokens leave the store and nothing is swapped any more.
+    assert_eq!(tools.logins.forget("claude").await, Ok(true));
+    let api_before = before.len();
+    let refreshes_before = tools.server("platform.claude.com").recorded().len();
+    let refresh_stand_in = saved["claudeAiOauth"]["refreshToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut ask = tools.command(&claude);
+    ask.args(["-p", "say hi after the forget", "--output-format", "json"]);
+    let ran = tools.run(ask, "", Duration::from_secs(90)).await;
+    eprintln!("after the forget: ok={} {}", ran.ok, ran.out);
+    // Everything the servers were sent after the forget: the bearer of each API call and the refresh
+    // token of each refresh. The tool holds only stand-ins, and they now go out as they are.
+    let mut sent: Vec<String> = authorizations(tools.server("api.anthropic.com"))
+        .into_iter()
+        .skip(api_before)
+        .collect();
+    sent.extend(
+        tools
+            .server("platform.claude.com")
+            .recorded()
+            .iter()
+            .skip(refreshes_before)
+            .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+            .filter_map(|b| b["refresh_token"].as_str().map(str::to_owned)),
+    );
+    assert!(
+        sent.iter()
+            .any(|s| s.contains(&stand_in) || s.contains(&refresh_stand_in)),
+        "the servers never saw the tool's stand-in after the forget: {sent:?}\n{}",
+        ran.out
+    );
+    assert!(
+        !sent
+            .iter()
+            .any(|s| REALS.iter().any(|real| s.contains(real))),
+        "a real token went out after the forget: {sent:?}"
+    );
+    assert!(
+        !ran.ok,
+        "the tool still answered after the forget: {}",
+        ran.out
+    );
+    assert!(
+        ran.out.contains("Failed to authenticate")
+            || ran.out.contains("authentication_error")
+            || ran.out.contains("/login"),
+        "the failure is not an authentication failure: {}",
+        ran.out
+    );
     tools.assert_no_real_token_in_the_workspace();
     let _ = &tools.store;
     let _ = &tools.rig;

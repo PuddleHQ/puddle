@@ -89,6 +89,14 @@ export class Uia {
     }, within);
   }
 
+  /** Waits for the element, gives it the keyboard focus and types `text` into it with real key presses, then Enter when `enter`. */
+  async type(what, selector, text, { enter = false, within = 60_000 } = {}) {
+    return until(`${what} to take the keys`, async () => {
+      const reply = await this.call({ action: "type", ...selector, value: text, enter });
+      return reply.found ? reply : false;
+    }, within);
+  }
+
   /** The value a field holds now. */
   async valueOf(selector) {
     const reply = await this.call({ action: "value", ...selector });

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The browser editor under remote serving, over real HTTP: a request whose `Host` is a
 //! workspace's name goes to the editor's entry instead of the API's routes, a name of no
-//! workspace is refused, and two legacy ids whose names clash raise a problem.
+//! workspace gets the same answer as a workspace's, and two legacy ids whose names clash raise a
+//! problem.
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
@@ -127,7 +128,7 @@ async fn a_workspace_name_reaches_the_editor_entry_and_never_the_api_routes() {
 }
 
 #[tokio::test]
-async fn a_name_of_no_workspace_is_misdirected_and_other_names_stay_the_apis() {
+async fn a_name_of_no_workspace_is_the_editors_and_other_names_stay_the_apis() {
     let site = site(true, &[(WS, "Shop")]).await;
     for host in [
         format!("abcdefgh.{BASE}"),
@@ -136,9 +137,9 @@ async fn a_name_of_no_workspace_is_misdirected_and_other_names_stay_the_apis() {
         format!("5173-abcdefgh.{BASE}"),
     ] {
         let reply = site.get("/", &host, &[]).await;
-        assert_eq!(reply.status, 421, "{host}: {reply:?}");
+        assert_eq!(reply.status, 403, "{host}: {reply:?}");
         assert!(is_text(&reply), "{host}: {reply:?}");
-        assert!(reply.body.contains("workspace"), "{reply:?}");
+        assert!(reply.body.contains("from Puddle"), "{reply:?}");
     }
     // Deeper names, another port and the base domain itself are no workspace's: the API refuses
     // them as names that are not its own.
@@ -190,5 +191,25 @@ async fn two_legacy_ids_whose_names_clash_raise_a_problem_and_the_editor_wins() 
         listed["problems"][0]["title"], "Eighty and Shop API share an address on this host",
         "{listed}"
     );
+    site.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_caller_cannot_tell_a_workspace_id_from_a_name_of_none() {
+    let site = site(true, &[(WS, "Shop")]).await;
+    let known = site.get("/", &format!("{WS}.{BASE}"), &[]).await;
+    for host in [
+        format!("abcdefgh.{BASE}"),
+        format!("5173-{WS}.{BASE}"),
+        format!("5173-abcdefgh.{BASE}"),
+        format!("0-{WS}.{BASE}"),
+    ] {
+        let reply = site.get("/", &host, &[]).await;
+        assert_eq!(reply.status, known.status, "{host}: {reply:?}");
+        assert_eq!(reply.body, known.body, "{host}: {reply:?}");
+        for name in ["content-type", "cache-control", "content-security-policy"] {
+            assert_eq!(reply.header(name), known.header(name), "{host} {name}");
+        }
+    }
     site.running.shutdown().await;
 }

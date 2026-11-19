@@ -6,6 +6,7 @@ import {
   builtIn,
   mine,
   systemHost,
+  trackerEntries,
 } from "#lib/testing/fake-rule-sets.ts";
 import { RuleSetsStore } from "./rule-sets.svelte.ts";
 
@@ -180,5 +181,38 @@ describe("changing", () => {
     ]);
     expect(changed).toBe(1);
     expect(api.bodies.at(-1)).toEqual({ workspace: "api", enabled: false });
+  });
+});
+
+describe("a big built-in set", () => {
+  it("pages and searches its entries through the entries endpoint", async () => {
+    api.full["builtin:trackers"] = trackerEntries(450);
+    const store = make();
+    const first = await store.entries("builtin:trackers", "", 200);
+    expect(first.ok && first.value.total).toBe(450);
+    expect(first.ok && first.value.entries[0]?.pattern).toBe(
+      "h200.tracker.example",
+    );
+    const found = await store.entries("builtin:trackers", "h44", 0);
+    expect(found.ok && found.value.total).toBe(11);
+    expect(api.calls).toContain("GET /api/rule-sets/{id}/entries");
+  });
+
+  it("says when Puddle refused a page", async () => {
+    api.refuse = { status: 422, message: "no such set" };
+    const result = await make().entries("builtin:nope", "", 0);
+    expect(result).toEqual({
+      ok: false,
+      message: "Puddle couldn't read the entries.",
+    });
+  });
+
+  it("says so when the service is down", async () => {
+    api.down = true;
+    const store = make();
+    expect(await store.entries("builtin:trackers", "", 0)).toEqual({
+      ok: false,
+      message: "Puddle's service isn't answering.",
+    });
   });
 });

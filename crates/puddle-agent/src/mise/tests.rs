@@ -75,7 +75,7 @@ impl Fetch for Server {
         tokio::task::yield_now().await; // a network answer is not instant
         Err(io::Error::other("mise never asks for text"))
     }
-    async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
+    async fn file(&self, url: &str, dest: &Path, _max_bytes: u64) -> io::Result<()> {
         tokio::task::yield_now().await;
         self.downloads.fetch_add(1, Ordering::SeqCst);
         self.asked.lock().unwrap().push(url.to_owned());

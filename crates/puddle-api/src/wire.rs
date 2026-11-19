@@ -45,6 +45,7 @@ mod shell_init;
 mod ssh_agent;
 mod start_folder;
 mod tools;
+mod ui_errors;
 mod workspaces;
 
 pub use admin::{
@@ -111,15 +112,15 @@ pub use repository_hosts::{
 };
 pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
 pub use rule_sets::{
-    NewRuleSetRequest, RuleSetEntry, RuleSetEntrySwitchRequest, RuleSetKind, RuleSetList,
-    RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView,
-    SystemManagedHost, SystemReason,
+    NewRuleSetRequest, RuleSetEntry, RuleSetEntryPage, RuleSetEntrySwitchRequest, RuleSetKind,
+    RuleSetList, RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest,
+    RuleSetView, SystemManagedHost, SystemReason,
 };
 pub(crate) use rules::checked_precedence;
 pub use rules::{
     Actor, DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, NewRuleRequest,
     PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleEnabledRequest,
-    RuleExpiryRequest, RuleList, RuleScope, ScopeChoice, UpdateRuleRequest,
+    RuleExpiryRequest, RuleList, RuleScope, ScopeChoice, UndoOutcome, UpdateRuleRequest,
 };
 pub use settings_view::{
     ClipboardRead, CloseBehaviour, DensityChoice, EffectiveLimits, EffectiveSettings,
@@ -137,6 +138,7 @@ pub use start_folder::{StartFolderRequest, StartFolderSet};
 pub use tools::{
     RegistryTool, ToolChangeRequest, ToolEntry, ToolRegistry, ToolVersions, ToolsFile, ToolsListing,
 };
+pub use ui_errors::{UiError, UiErrorKind, UiErrorList, UiErrorReport};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,

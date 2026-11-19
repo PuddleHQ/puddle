@@ -52,6 +52,7 @@ puddle-ports = { path = "crates/puddle-ports" }
 puddle-front = { path = "crates/puddle-front" }
 puddle-appicon = { path = "crates/puddle-appicon" }
 puddle-freshness = { path = "crates/puddle-freshness" }
+puddle-process = { path = "crates/puddle-process" }
 # Dev-dependency only (scripts/quality-gate.py checks it): bounded waits, event reads, ports, temp folders for tests.
 puddle-test-kit = { path = "crates/puddle-test-kit" }
 # Dev-dependency only, like the kit: the rigs the puddle-proxy integration tests share.
@@ -69,11 +70,11 @@ puddle-proxy-test-support = { path = "crates/puddle-proxy-test-support" }
 # required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
 # and a release msb refuses it ("missing field `sandbox_slot`"). `ssh` for the in-process
 # SSH server.
-microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.5", default-features = false, features = ["local", "net", "ssh"] }
+microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
-microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.5", default-features = false }
+microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false }
 # Only for building the SDK's boot error in tests.
-microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.5", default-features = false }
+microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false }
 object = { version = "0.41", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
@@ -253,20 +254,20 @@ disallowed_methods = "deny"
 # The msb fork's own `[patch.crates-io]` doesn't reach Puddle (patches apply only in the root
 # workspace), so its libkrun, russh and imago forks are repeated here, pinned to the commits the
 # fork tag's Cargo.lock pins (a branch would follow later pushes, which the tag's msb wasn't built
-# with). libkrun: PuddleHQ/libkrun tag `msb_krun-v0.1.42-puddle.1` (msb_krun 0.1.42 + fixes); russh:
+# with). libkrun: PuddleHQ/libkrun tag `msb_krun-v0.1.42-puddle.2` (msb_krun 0.1.42 + fixes); russh:
 # PuddleHQ/russh branch `puddle-0.65.2` pinned by commit (russh 0.65.2, which carries the agent-lock and host-key-order security fixes, + the peer-close fix).
 [patch.crates-io]
-msb_krun = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_arch = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_arch_gen = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_cpuid = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_devices = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_hvf = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_kernel = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_polly = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_smbios = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_utils = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
-msb_krun_vmm = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.1" }
+msb_krun = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_arch = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_arch_gen = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_cpuid = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_devices = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_hvf = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_kernel = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_polly = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_smbios = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_utils = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
+msb_krun_vmm = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
 russh = { git = "https://github.com/PuddleHQ/russh", rev = "1fa97aaaadd68215406af1667e64c7764b6a8ecc" }
 # msb-imago: PuddleHQ/imago `puddle` (File::sync() calls fdatasync, so a guest flush no longer commits the
 # host journal for the image mtime).

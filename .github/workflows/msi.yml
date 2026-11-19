@@ -12,7 +12,9 @@
 # release's MSI (ci/fetch-baseline-msi.sh; while there is none, the MSI the newest green develop
 # run kept), makes a workspace and writes files to it, upgrades to this run's build, and checks that
 # the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
-# -BaselineMsi).
+# -BaselineMsi), and that the state a user builds up (rules, a pending request, variables, a secret,
+# settings, an identity, a home file) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
+# dispatch input `plant_breakage` shows the job fails when a migration loses data.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
 # this run built, per user, starts the installed app, and drives its real window with Windows UI Automation, plus the REST API for what
@@ -22,6 +24,10 @@
 # secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
 # editor opens in its own window, a real `npm run build` and `npm test` run in the workspace, and `git push`
 # reaches Forgejo with the injected credential while no token is in the guest, the audit log or the API.
+# Then the shell around the window, with the workspace running (desktop.ps1): the Terminal tab runs a command
+# typed with real keys, the close button hides to the tray with one Windows notification while the guest runs
+# on, a new request notifies only while the window is not in front, Activity's export lands in Downloads, the
+# first run's "Copy report" reaches the Windows clipboard, and the tray's Quit ends every Puddle process.
 # The same job runs a second time behind the lab's company network (matrix `network: company`, the "also on the
 # corporate lab network" half of the bar): the machine's only way out is the lab company proxy from `puddle-lab`
 # (crates/puddle-e2e/src/lab/standing.rs), set up as a company sets up a Windows computer: a PAC file as the user's
@@ -54,6 +60,11 @@ on:
       - crates/puddle-app/e2e/usable.mjs
       - crates/puddle-app/e2e/uia.mjs
       - crates/puddle-app/e2e/uia.ps1
+      - crates/puddle-app/e2e/upgrade-state.mjs
+      - crates/puddle-app/e2e/upgrade-compare.mjs
+      - crates/puddle-app/e2e/poll.mjs
+      - crates/puddle-app/e2e/child-end.mjs
+      - crates/puddle-app/e2e/desktop.ps1
       - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
@@ -67,6 +78,10 @@ on:
     inputs:
       msi_run_id:
         description: "Run only the usable job, on the MSI that this earlier run of the workflow kept (skips the build)"
+        required: false
+        default: ""
+      plant_breakage:
+        description: "Run the upgrade job with a planted breakage (drop-table, empty-env or empty-pending) and expect it to fail: shows that the upgrade's state checks catch a migration that loses data"
         required: false
         default: ""
 
@@ -210,11 +225,30 @@ jobs:
         with:
           name: puddle-msi-next
           path: ${{ runner.temp }}/msi-next
-      - name: install the older build, make a workspace with files, upgrade, start it, check the files
+      # The upgrade-state checks (crates/puddle-app/e2e/upgrade-state.mjs) run on this Node.
+      - name: Node (the upgrade-state driver)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: install the older build, build up a user's state, upgrade, check the state and the files
         shell: pwsh
+        env:
+          PLANT_BREAKAGE: ${{ inputs.plant_breakage }}
         run: |
           $next = Get-ChildItem "$env:RUNNER_TEMP\msi-next" -Filter *.msi | Select-Object -First 1
-          ./ci/msi-install-test.ps1 -BaselineMsi $env:BASELINE_MSI -UpgradeMsi $next.FullName -LogDir "$env:RUNNER_TEMP\msi-logs"
+          if (-not $env:PLANT_BREAKAGE) {
+            ./ci/msi-install-test.ps1 -BaselineMsi $env:BASELINE_MSI -UpgradeMsi $next.FullName -LogDir "$env:RUNNER_TEMP\msi-logs"
+            return
+          }
+          # A by-hand run that damages the older build's data after its quit: the run passes only when the test fails.
+          $failed = $false
+          try {
+            ./ci/msi-install-test.ps1 -BaselineMsi $env:BASELINE_MSI -UpgradeMsi $next.FullName -LogDir "$env:RUNNER_TEMP\msi-logs" -PlantBreakage $env:PLANT_BREAKAGE
+          } catch {
+            $failed = $true
+            Write-Host "the planted breakage '$env:PLANT_BREAKAGE' failed the upgrade test, as it must: $_"
+          }
+          if (-not $failed) { throw "the planted breakage '$env:PLANT_BREAKAGE' did not fail the upgrade test" }
       - name: what the app and the runtime logged
         if: ${{ !cancelled() }}
         shell: pwsh

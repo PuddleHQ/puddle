@@ -716,6 +716,7 @@ impl ApiServer {
             events: services.events,
             presence: Arc::new(crate::presence::Presence::default()),
             problems: services.problems,
+            ui_errors: Arc::new(crate::ui_errors::UiErrors::default()),
             clock: services.clock,
             workspaces: services.workspaces,
             network_health: services.network_health,
@@ -1084,7 +1085,7 @@ where
         async move {
             match editor {
                 Some(editor) if editor.claims(request.headers()) => {
-                    Ok::<_, Infallible>(editor.handle(request.headers()))
+                    Ok::<_, Infallible>(editor.handle())
                 }
                 _ => hyper::service::Service::call(&api, request).await,
             }

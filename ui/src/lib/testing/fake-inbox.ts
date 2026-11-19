@@ -37,6 +37,9 @@ export class FakeInbox {
   nextDecisionStatus: number | null = null;
   rules: components["schemas"]["Rule"][] = [];
   #rule = 100;
+  /** The requests each rule closed, so an undo can reopen them. */
+  #closedBy = new Map<number, { request: Req; domain: string }[]>();
+  #reopened = 1000;
 
   add(req: Req, domain?: string): void {
     this.open.push({
@@ -85,6 +88,7 @@ export class FakeInbox {
   ) => {
     this.calls.push(`POST ${path}`);
     if (this.down) throw new TypeError("down");
+    if (path === "/api/rules/{id}/undo") return this.undo(init.params.path.id);
     const status = this.nextDecisionStatus;
     this.nextDecisionStatus = null;
     if (status !== null) return this.reply(status);
@@ -99,8 +103,9 @@ export class FakeInbox {
       (suffix === null
         ? o.request.host === found.request.host
         : o.request.host.endsWith(suffix));
-    const closed = this.open
-      .filter((o) => covers(o) && o.request.id !== id)
+    const closedRows = this.open.filter((o) => covers(o));
+    const closed = closedRows
+      .filter((o) => o.request.id !== id)
       .map((o) => o.request.id);
     this.open = this.open.filter((o) => !covers(o));
     const rule: components["schemas"]["Rule"] = {
@@ -122,6 +127,7 @@ export class FakeInbox {
       precedence: 5,
     };
     this.rules.push(rule);
+    this.#closedBy.set(rule.id, closedRows);
     return this.reply(200, {
       request: {
         ...found.request,
@@ -131,6 +137,28 @@ export class FakeInbox {
       also_closed: closed,
     });
   };
+
+  /** The service's undo: the rule goes and each request it closed is open again as a new row. */
+  private undo(ruleId: number) {
+    const rule = this.rules.find((r) => r.id === ruleId);
+    if (!rule) return this.reply(404);
+    this.rules = this.rules.filter((r) => r.id !== ruleId);
+    const reopened: Req[] = [];
+    for (const { request: old, domain } of this.#closedBy.get(ruleId) ?? []) {
+      const taken = this.open.some(
+        (o) =>
+          o.request.workspace === old.workspace &&
+          o.request.host === old.host &&
+          o.request.port === old.port,
+      );
+      if (taken) continue;
+      const again = { ...old, id: this.#reopened++ };
+      this.open.push({ request: again, domain });
+      reopened.push(again);
+    }
+    this.#closedBy.delete(ruleId);
+    return this.reply(200, { rule, reopened });
+  }
 
   DELETE = async (path: string, init: { params: { path: { id: number } } }) => {
     this.calls.push(`DELETE ${path}`);

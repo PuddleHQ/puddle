@@ -6,7 +6,7 @@
 
   // The emulator of one session, in the page. The emulator belongs to the session (it keeps the
   // scrollback while another tab is in view); this mounts it, keeps it fitted, follows the theme,
-  // and offers the right-click menu (Copy, Select all, Clear) and the address of a hovered link.
+  // and offers the right-click menu (Copy, Paste, Select all, Clear) and the address of a hovered link.
   let {
     session,
     workspaceName,
@@ -87,8 +87,9 @@
     if (refocus) screen.focus();
   }
 
-  function choose(action: "copy" | "all" | "clear") {
+  function choose(action: "copy" | "paste" | "all" | "clear") {
     if (action === "copy") screen.copy();
+    else if (action === "paste") void screen.paste();
     else if (action === "all") screen.selectAll();
     else screen.clear();
     closeMenu();
@@ -139,15 +140,28 @@
     >
       <button
         type="button"
+        class="menu-item"
         role="menuitem"
         disabled={!canCopy}
         onclick={() => choose("copy")}>Copy</button
       >
-      <button type="button" role="menuitem" onclick={() => choose("all")}
-        >Select all</button
+      <button
+        type="button"
+        class="menu-item"
+        role="menuitem"
+        onclick={() => choose("paste")}>Paste</button
       >
-      <button type="button" role="menuitem" onclick={() => choose("clear")}
-        >Clear</button
+      <button
+        type="button"
+        class="menu-item"
+        role="menuitem"
+        onclick={() => choose("all")}>Select all</button
+      >
+      <button
+        type="button"
+        class="menu-item"
+        role="menuitem"
+        onclick={() => choose("clear")}>Clear</button
       >
     </div>
   {/if}
@@ -190,7 +204,7 @@
     border-radius: var(--radius-md);
     background: var(--color-surface-raised);
   }
-  .menu button {
+  .menu-item {
     min-height: var(--control-size);
     padding: var(--space-1) var(--space-3);
     border: 0;
@@ -201,11 +215,11 @@
     text-align: start;
     cursor: pointer;
   }
-  .menu button:hover:not(:disabled),
-  .menu button:focus-visible {
+  .menu-item:hover:not(:disabled),
+  .menu-item:focus-visible {
     background: var(--color-accent-subtle);
   }
-  .menu button:disabled {
+  .menu-item:disabled {
     color: var(--color-text-muted);
     cursor: default;
   }

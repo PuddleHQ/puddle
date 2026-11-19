@@ -523,6 +523,9 @@ jobs:
       - name: early-exit pipes (grep -q after a pipe is a SIGPIPE coin toss under pipefail)
         if: ${{ !cancelled() }}
         run: scripts/check.sh early-exit-pipes
+      - name: spawn (a host process start opens no console window on Windows)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh spawn
       - name: test hooks (a test-only feature stays out of release builds; a test that starts a doctor sets az_search_path)
         if: ${{ !cancelled() }}
         run: scripts/check.sh test-hooks
@@ -658,6 +661,10 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
           restore-keys: cargo-xwin-
+      # The cold cargo home fetches the microsandbox git dependency and its `skills` submodule here, with
+      # retries, so a TLS error on one fetch ends in a retry and not in a red job (ci/cargo-fetch.sh).
+      - name: Crate sources (with retries)
+        run: ci/cargo-fetch.sh
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows
@@ -813,6 +820,7 @@ jobs:
             ui/test-results
             ui/coverage/lcov.info
             ui/coverage/coverage-summary.json
+            ui/vitest-out
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group

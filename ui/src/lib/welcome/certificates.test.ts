@@ -4,6 +4,8 @@ import { report } from "#lib/testing/fake-network.ts";
 import {
   canTrust,
   devCertificateLine,
+  MORE_DETAILS,
+  PURPOSE,
   rootsLine,
   trustNote,
 } from "./certificates.ts";
@@ -75,25 +77,25 @@ describe("the development certificate line", () => {
         "needs_trust",
         "info",
         "Development certificate: not trusted yet",
-        /Security Warning/,
+        /doesn't trust/,
       ],
       [
         "trust_declined",
         "warn",
         "Development certificate: not trusted",
-        /declined/,
+        /answered No/,
       ],
       [
         "trust_failed",
         "warn",
         "Development certificate: couldn't be trusted",
-        /never overrides a policy/,
+        /didn.t let Puddle/,
       ],
       [
         "unsupported",
         "info",
         "Development certificate: not trusted on this system yet",
-        /can't add it/,
+        /can't add its localhost certificate/,
       ],
     ] as const;
     for (const [status, tone, title, text] of cases) {
@@ -104,12 +106,58 @@ describe("the development certificate line", () => {
     }
   });
 
+  it("says what skipping costs, and what to do, in every state that warns", () => {
+    for (const status of [
+      "needs_trust",
+      "trust_declined",
+      "trust_failed",
+      "unsupported",
+    ] as const) {
+      expect(devCertificateLine(status).impact, status).toMatch(
+        /browser .*warn|not secure/,
+      );
+    }
+    expect(devCertificateLine("needs_trust").remedy).toMatch(
+      /asks once.*Security Warning[^.]*choose Yes.*only this certificate.*skip/is,
+    );
+    expect(devCertificateLine("trusted").remedy).toBeUndefined();
+  });
+
+  it("keeps every short text short and free of jargon", () => {
+    for (const status of [
+      "trusted",
+      "needs_trust",
+      "trust_declined",
+      "trust_failed",
+      "unsupported",
+      undefined,
+    ] as const) {
+      const line = devCertificateLine(status);
+      for (const t of [line.text, line.impact, line.remedy]) {
+        if (t === undefined) continue;
+        expect(t.split(/(?<=\.)\s/).length, t).toBeLessThanOrEqual(3);
+        expect(t).not.toMatch(/development server|HTTPS development/i);
+      }
+    }
+  });
+
+  it("explains the purpose and the Windows question in advance", () => {
+    expect(PURPOSE).toMatch(/forwards that page.*https:\/\/localhost/);
+    expect(PURPOSE).toMatch(/Nothing else needs it/);
+    const all = MORE_DETAILS.join(" ");
+    expect(all).toMatch(/Security Warning that names the certificate/);
+    expect(all).toMatch(/your Windows user only/);
+    expect(all).toMatch(/Manage user certificates/);
+    expect(all).toMatch(/If you skip/);
+  });
+
   it("says plainly that nothing was looked at yet", () => {
     for (const status of ["not_checked", undefined] as const) {
       const line = devCertificateLine(status);
       expect(line.tone).toBe("skipped");
       expect(line.title).toBe("Development certificate: not checked yet");
-      expect(line.text).toMatch(/browser warning/);
+      expect(line.text).toMatch(/hasn't looked/);
+      expect(line.impact).toMatch(/browser warns/);
     }
   });
 });

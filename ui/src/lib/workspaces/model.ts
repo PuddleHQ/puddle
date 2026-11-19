@@ -308,6 +308,9 @@ const EMPTY_ADDRESS =
   "Enter the repository's address, such as owner/repo or https://github.com/owner/repo.";
 const NOT_SHORTHAND =
   "Give owner/repo for a GitHub repository, or the repository's full address.";
+/** True for the refusal of an address that may only be unfinished, so a form waits to show it. */
+export const isIncompleteAddress = (message: string): boolean =>
+  message === NOT_SHORTHAND;
 const DOT_NAME = "The address can't have . or .. as a name in its path.";
 const TRAILING_DOT = "Leave out the dot at the end of the host name.";
 

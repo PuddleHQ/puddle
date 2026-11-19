@@ -109,7 +109,7 @@
         />
       {/if}
       <p class="error" role="alert" aria-live="polite">{problem ?? ""}</p>
-      <button type="submit" class="btn primary" disabled={session.busy}>
+      <button type="submit" class="btn primary stretch" disabled={session.busy}>
         {invited
           ? "Set password and sign in"
           : session.mode === "setup"
@@ -155,7 +155,7 @@
     min-height: 1.5em;
     color: var(--color-danger);
   }
-  button {
+  .stretch {
     justify-self: stretch;
   }
 </style>

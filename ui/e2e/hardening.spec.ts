@@ -423,6 +423,8 @@ test.describe("with the keyboard alone", () => {
     };
     await expect(heading("Welcome to Puddle")).toBeFocused();
     await next("Get started", "System check");
+    await tabTo(page, page.getByRole("button", { name: "Start system check" }));
+    await page.keyboard.press("Enter");
     await expect(page.getByText("No problems found.")).toBeVisible();
     await next("Continue", "Certificates");
     await next("Continue", "How do you want to connect?");

@@ -123,6 +123,7 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
             "DELETE /api/proxy-sign-ins/{proxy} Install",
             "DELETE /api/rule-sets/{id} Own",
             "GET /api/identities/{id} Own",
+            "GET /api/rule-sets/{id}/entries Own",
             "POST /api/admin/users/{id}/invite Install",
             "POST /api/orphan-volumes/{id}/restore Install",
             "PUT /api/consents/{kind} Install",
@@ -690,7 +691,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 63, "routes that name a resource");
+    assert_eq!(checked, 64, "routes that name a resource");
     shut_down(pair).await;
 }
 
@@ -1045,7 +1046,7 @@ async fn hostile_lists_hold_only_their_callers_things() {
         })
         .map(|(_, path)| path)
         .collect();
-    assert_eq!(lists.len(), 14, "{lists:?}");
+    assert_eq!(lists.len(), 15, "{lists:?}");
     for path in &lists {
         let (status, body) = send(ann, token, "GET", path, None).await;
         // The devices list answers 503 here: this server has no sign-in.

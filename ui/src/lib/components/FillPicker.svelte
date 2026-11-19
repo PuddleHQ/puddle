@@ -49,6 +49,7 @@
       <span class="label">Other</span>
       <input
         id="{id}-custom"
+        class="swatch-input"
         type="color"
         value={current ?? SWATCHES[0]}
         oninput={(e) => pick(e.currentTarget.value)}
@@ -113,13 +114,8 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  .custom input {
+  .swatch-input {
     width: var(--control-size);
-    height: var(--control-size);
-    padding: 0;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
   }
   .preview {
     display: flex;

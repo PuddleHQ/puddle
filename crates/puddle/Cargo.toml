@@ -49,6 +49,7 @@ puddle-certs = { workspace = true }
 puddle-runtime = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-vm-tests = { workspace = true }
+puddle-workspace = { workspace = true }
 puddle-ipc = { workspace = true }
 tempfile = { workspace = true }
 sha2 = { workspace = true }

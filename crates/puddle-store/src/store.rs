@@ -20,8 +20,8 @@ use rusqlite::{
 };
 
 use crate::audit::{
-    AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleDeleteReason, RuleSwitchKind,
-    RuleWire, WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
+    AuditOutcome, AuditRecord, ConnectionWindow, PendingWire, RuleSwitchKind, RuleWire,
+    WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
 };
 use crate::clock::Clock;
 use crate::engine::{Hit, RuleIndex};
@@ -38,6 +38,7 @@ mod admin;
 mod audit;
 mod audit_retention;
 mod devices;
+pub(crate) use devices::insert_device;
 mod environment;
 #[cfg(test)]
 mod failures;
@@ -56,8 +57,9 @@ pub(crate) mod users;
 
 use audit::{append, append_for, appended_since, audit_head};
 use rows::{
-    PENDING_COLUMNS, close_decided_rows, corrupt, decide_row, decide_row_by, insert_rule,
-    load_pending, load_rule, load_rules, pending_from_raw, raw_pending, stored_ts,
+    PENDING_COLUMNS, close_decided_rows, closed_by_rule, corrupt, decide_row, decide_row_by,
+    delete_rule_row, insert_rule, load_pending, load_rule, load_rules, pending_from_raw,
+    raw_pending, reopen_rows, stored_ts,
 };
 
 pub use audit_retention::{
@@ -71,7 +73,9 @@ pub use learned::LearnedRow;
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use scoped::UserStore;
-pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
+pub use sets::{
+    ENTRY_PAGE, EntryPage, RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set,
+};
 pub use ssh_agent::{HostKeyPin, MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
 pub use ssh_agent_asks::{
     MAX_OPEN_SSH_AGENT_ASKS, SshAgentAnswer, SshAgentAsk, SshAgentAskStart, SshAgentAskState,
@@ -680,23 +684,36 @@ impl Store {
     /// [`StoreError::UnknownRule`] or a database error.
     pub fn delete_rule(&self, id: RuleId, actor: Actor) -> Result<Rule, StoreError> {
         let rule = self.change(|tx, now, fx| {
-            let rule = load_rule(tx, id)?;
-            tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
-            append_for(
-                tx,
-                &AuditRecord::RuleDeleted {
-                    ts: now,
-                    rule: RuleWire::from(&rule),
-                    reason: RuleDeleteReason::User,
-                    actor: actor_str(actor),
-                },
-                rule.user,
-            )?;
+            let rule = delete_rule_row(tx, id, now, actor)?;
             fx.push(Event::RulesChanged {});
             Ok(rule)
         })?;
         tracing::info!(rule = %id, "rule deleted");
         Ok(rule)
+    }
+
+    /// Takes back a decision made in the inbox: deletes the rule and puts the requests it closed
+    /// back in the inbox (R-12 keeps the closed rows as they are, so each comes back as a new row
+    /// with the same workspace, host, port, first and last time and attempt count, which puts it in
+    /// its old place in the list). A request whose workspace asked for the host again meanwhile
+    /// already has an open row and is not repeated. Returns the rule and the reopened rows.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRule`] or a database error.
+    pub fn undo_decision(
+        &self,
+        id: RuleId,
+        actor: Actor,
+    ) -> Result<(Rule, Vec<PendingRow>), StoreError> {
+        let (rule, reopened) = self.change(|tx, now, fx| {
+            let closed = closed_by_rule(tx, id)?;
+            let rule = delete_rule_row(tx, id, now, actor)?;
+            let reopened = reopen_rows(tx, closed, now, fx)?;
+            fx.push(Event::RulesChanged {});
+            Ok((rule, reopened))
+        })?;
+        tracing::info!(rule = %id, reopened = reopened.len(), "decision undone");
+        Ok((rule, reopened))
     }
 
     /// Changes a rule's expiry (`None` makes it permanent).

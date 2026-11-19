@@ -4,7 +4,10 @@
 use puddle_types::{CpuCount, LocalCategory, MemoryMib};
 use serde::Serialize;
 
-use crate::{ClipboardRead, GlobalSettings, LocalToggles, ReconnectionGrace, WorkspaceSettings};
+use crate::{
+    ClipboardRead, EffectiveEditor, GlobalSettings, LocalToggles, ReconnectionGrace,
+    WorkspaceSettings,
+};
 
 /// Which level a value came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -28,7 +31,7 @@ pub struct Resolved<T> {
 }
 
 /// The values one workspace runs with. Every field is set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Effective {
     /// Guest memory.
     pub memory: Resolved<MemoryMib>,
@@ -50,6 +53,8 @@ pub struct Effective {
     pub capture_logins: Resolved<bool>,
     /// Whether a credential in a request that Puddle did not add raises a warning.
     pub warn_foreign_credentials: Resolved<bool>,
+    /// The editor's colour theme, font size, preinstalled extensions and key bindings.
+    pub editor: EffectiveEditor,
 }
 
 /// The local-destination toggles in effect for one workspace.
@@ -114,10 +119,11 @@ impl Effective {
         direct_ssh: default(false),
         capture_logins: default(true),
         warn_foreign_credentials: default(true),
+        editor: EffectiveEditor::DEFAULTS,
     };
 }
 
-const fn default<T: Copy>(value: T) -> Resolved<T> {
+pub(crate) const fn default<T>(value: T) -> Resolved<T> {
     Resolved {
         value,
         source: Source::Default,
@@ -205,6 +211,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
         direct_ssh,
         capture_logins,
         warn_foreign_credentials,
+        editor,
         extra: _,
     } = s;
     let LocalToggles {
@@ -262,6 +269,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
             g.warn_foreign_credentials,
             d.warn_foreign_credentials,
         ),
+        editor: EffectiveEditor::resolve(&g.editor, editor),
     }
 }
 

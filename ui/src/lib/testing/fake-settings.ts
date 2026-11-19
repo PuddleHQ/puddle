@@ -27,6 +27,12 @@ const noLayer = (): S["SettingsLayer"] => ({
   direct_ssh: null,
   capture_logins: null,
   warn_foreign_credentials: null,
+  editor: {
+    colour_theme: null,
+    font_size: null,
+    extensions: null,
+    keybindings: null,
+  },
 });
 
 const noUi = (): S["UiPrefs"] => ({
@@ -229,6 +235,24 @@ export class FakeSettings {
         clipboard_read: {
           value: l.clipboard_read ?? "ask",
           source: l.clipboard_read === null ? "default" : "global",
+        },
+        editor: {
+          colour_theme: {
+            value: l.editor.colour_theme,
+            source: l.editor.colour_theme === null ? "default" : "global",
+          },
+          font_size: {
+            value: l.editor.font_size,
+            source: l.editor.font_size === null ? "default" : "global",
+          },
+          extensions: {
+            value: l.editor.extensions ?? [],
+            source: l.editor.extensions === null ? "default" : "global",
+          },
+          keybindings: {
+            value: l.editor.keybindings,
+            source: l.editor.keybindings === null ? "default" : "global",
+          },
         },
       },
     };

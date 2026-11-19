@@ -147,11 +147,39 @@ describe("load", () => {
     expect(store.users[0]?.name).toBe("Second");
   });
 
+  it("starts the audit read only once the users are in", async () => {
+    let releaseUsers: (answer: Answer) => void = () => undefined;
+    const held = new Promise<Answer>((resolve) => {
+      releaseUsers = resolve;
+    });
+    const store = make();
+    reads();
+    const original = api.GET;
+    api.GET = (path: string, init?: unknown) =>
+      path === "/api/admin/users" ? held : original(path, init);
+    try {
+      const loading = store.load();
+      await Promise.resolve();
+      expect(calls.map((call) => call.key)).not.toContain(
+        "GET /api/admin/audit",
+      );
+      releaseUsers(good({ users: [user()] }));
+      await loading;
+      expect(calls.map((call) => call.key)).toContain("GET /api/admin/audit");
+    } finally {
+      api.GET = original;
+    }
+  });
+
   it("shows the newest read when two overlap", async () => {
     const store = make();
     reads([user({ name: "First" })]);
     const first = store.load();
-    reads([user({ name: "Second" })]);
+    answers["GET /api/admin/users"]?.push(
+      good({ users: [user({ name: "Second" })] }),
+    );
+    answers["GET /api/admin/stats"]?.push(good(stats));
+    answers["GET /api/admin/audit"]?.push(good({ lines: [] }));
     await store.load();
     await first;
     expect(store.users[0]?.name).toBe("Second");

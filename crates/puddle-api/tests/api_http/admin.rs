@@ -106,6 +106,23 @@ const ROUTES: &[(&str, &str)] = &[
 ];
 
 #[tokio::test]
+async fn a_bad_path_or_query_is_answered_with_the_json_error_body() {
+    let admin = admin_site(true).await;
+    admin.site.setup().await;
+    for (method, path) in [
+        ("POST", "/api/admin/users/x/invite"),
+        ("DELETE", "/api/admin/users/x?confirm=ann"),
+        ("DELETE", "/api/admin/users/2"),
+    ] {
+        let reply = admin.owner(method, path, None).await;
+        assert_eq!(reply.status, 400, "{method} {path}: {reply:?}");
+        let body = reply.json();
+        assert_eq!(body["error"], "bad_request", "{method} {path}: {reply:?}");
+        assert!(body["message"].is_string(), "{method} {path}: {reply:?}");
+    }
+}
+
+#[tokio::test]
 async fn a_new_user_is_invited_never_given_a_password_and_chooses_their_own() {
     let admin = admin_site(true).await;
     admin.site.setup().await;

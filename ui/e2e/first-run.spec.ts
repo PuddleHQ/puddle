@@ -2,6 +2,8 @@
 // The first-run flow against the real API on the fixture backend: the whole way through, a
 // blocking finding, skipping, the certificates step with company roots, and the system check
 // run again from Settings. Each test has a backend of its own, reset before it.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
@@ -32,15 +34,50 @@ async function freshInstall(page: Page, backend: Backend) {
 const heading = (page: Page, name: string) =>
   page.getByRole("heading", { level: 1, name });
 
-const STEPS = [
-  ["/welcome", "Welcome to Puddle"],
-  ["/welcome/check", "System check"],
-  ["/welcome/certificates", "Certificates"],
-  ["/welcome/connect", "How do you want to connect?"],
-  ["/welcome/interception", "Which hosts should Puddle decrypt?"],
-  ["/welcome/look", "Look"],
-  ["/welcome/done", "You're all set"],
-] as const;
+interface Control {
+  role: "link" | "button";
+  name: string;
+}
+interface WalkStep {
+  href: string;
+  heading: string;
+  start?: Control;
+  afterStart?: Control;
+  continue?: Control;
+  preselected?: { role: "radio"; nameRegex: string };
+}
+// The pages and what to press on them: the list the page tests and the installed-app walk read too.
+const WALK = (
+  JSON.parse(
+    readFileSync(
+      join(import.meta.dirname, "../src/lib/welcome/walk.json"),
+      "utf8",
+    ),
+  ) as { steps: WalkStep[] }
+).steps;
+const STEPS = WALK.map((step) => [step.href, step.heading] as const);
+const walkStep = (heading: string): WalkStep => {
+  const step = WALK.find((s) => s.heading === heading);
+  if (!step) throw new Error(`no step "${heading}" in walk.json`);
+  return step;
+};
+/** The radio a page opens with chosen, as walk.json names it. */
+const preselected = (page: Page, heading: string) => {
+  const radio = walkStep(heading).preselected!;
+  return page.getByRole("radio", { name: new RegExp(radio.nameRegex) });
+};
+const control = (page: Page, c: Control) =>
+  page.getByRole(c.role, { name: c.name });
+/** Presses what takes a person on from the page with this heading. */
+const goOn = (page: Page, heading: string) =>
+  control(page, walkStep(heading).continue!).click();
+/** Starts the system check and waits for its result. */
+async function runTheCheck(page: Page) {
+  const check = walkStep("System check");
+  await control(page, check.start!).click();
+  await expect(page.getByText("No problems found.")).toBeVisible();
+  await expect(control(page, check.afterStart!)).toBeVisible();
+}
 
 test("a fresh install is led through every step and then opens on the workspaces", async ({
   page,
@@ -59,18 +96,17 @@ test("a fresh install is led through every step and then opens on the workspaces
   await expect(
     page.getByRole("listitem").filter({ hasText: "Welcome" }),
   ).toHaveAttribute("aria-current", "step");
-  await page.getByRole("link", { name: "Get started" }).click();
+  await goOn(page, "Welcome to Puddle");
 
   // System check: a healthy machine goes on.
   await expect(heading(page, "System check")).toBeVisible();
   // Nothing runs until the person starts it.
   await expect(page.getByRole("list", { name: "Checks" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Start system check" }).click();
-  await expect(page.getByText("No problems found.")).toBeVisible();
+  await runTheCheck(page);
   await expect(
     page.getByRole("list", { name: "Checks" }).getByRole("listitem"),
   ).toHaveCount(5);
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "System check");
 
   // Certificates: nothing about a development certificate is known yet, and this machine has no
   // company roots.
@@ -81,13 +117,11 @@ test("a fresh install is led through every step and then opens on the workspaces
   await expect(
     page.getByText("Company certificates: not read yet"),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "Certificates");
 
   // Connect: code-server is preselected, direct SSH is off until the trust text is accepted.
   await expect(heading(page, "How do you want to connect?")).toBeVisible();
-  await expect(
-    page.getByRole("radio", { name: /VS Code in the browser \(built in\)/ }),
-  ).toBeChecked();
+  await expect(preselected(page, "How do you want to connect?")).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
     name: /Allow direct SSH for new workspaces/,
   });
@@ -108,20 +142,20 @@ test("a fresh install is led through every step and then opens on the workspaces
     await request.get("/api/settings", { headers: auth(backend) })
   ).json()) as { effective: { direct_ssh: { value: boolean } } };
   expect(settings.effective.direct_ssh.value).toBe(true);
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "How do you want to connect?");
 
   // Interception: the recommended mode is preselected and Continue keeps it.
   await expect(
     heading(page, "Which hosts should Puddle decrypt?"),
   ).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: /except a known list/ }),
+    preselected(page, "Which hosts should Puddle decrypt?"),
   ).toBeChecked();
   const kept = page.waitForResponse(
     (r) =>
       r.request().method() === "PUT" && r.url().endsWith("/api/interception"),
   );
-  await page.getByRole("button", { name: "Continue" }).click();
+  await goOn(page, "Which hosts should Puddle decrypt?");
   await kept;
   const mode = (await (
     await request.get("/api/interception", { headers: auth(backend) })
@@ -138,12 +172,12 @@ test("a fresh install is led through every step and then opens on the workspaces
   await page.getByRole("radio", { name: /^Meadow/ }).check();
   await expect(page.locator("html")).toHaveAttribute("data-palette", "meadow");
   await expect(page.getByText("Colours saved.")).toBeVisible();
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "Look");
 
   // Done: says where settings live, then opens the workspace list.
   await expect(heading(page, "You're all set")).toBeVisible();
   await expect(page.getByText(/Feedback is very welcome/)).toBeVisible();
-  await page.getByRole("button", { name: "Open Puddle" }).click();
+  await goOn(page, "You're all set");
   await expect(page).toHaveURL(/\/workspaces$/);
   await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
 
@@ -368,8 +402,7 @@ test("no link on a first-run step leads out of the flow", async ({
     await page.goto(path);
     await expect(heading(page, title)).toBeVisible();
     if (path === "/welcome/check") {
-      await page.getByRole("button", { name: "Start system check" }).click();
-      await expect(page.getByText("No problems found.")).toBeVisible();
+      await runTheCheck(page);
     }
   };
   const links = page.locator("main").getByRole("link");
@@ -398,17 +431,16 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto(path);
       await expect(heading(page, title)).toBeVisible();
       if (path === "/welcome/check") {
-        await page.getByRole("button", { name: "Start system check" }).click();
-        await expect(page.getByText("No problems found.")).toBeVisible();
+        await runTheCheck(page);
       }
       if (path === "/welcome/connect") {
         await expect(
-          page.getByRole("radio", { name: /VS Code in the browser/ }),
+          preselected(page, "How do you want to connect?"),
         ).toBeVisible();
       }
       if (path === "/welcome/interception") {
         await expect(
-          page.getByRole("radio", { name: /except a known list/ }),
+          preselected(page, "Which hosts should Puddle decrypt?"),
         ).toBeVisible();
       }
       await expectNoAxeViolations(page, path);

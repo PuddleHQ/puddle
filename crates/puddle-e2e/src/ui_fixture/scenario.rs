@@ -376,9 +376,35 @@ pub struct CredentialsSeed {
     /// Credentials that cannot be read: not signed in.
     #[serde(default)]
     pub signed_out: Vec<CredentialSource>,
+    /// Credentials that cannot be read for a reason other than "not signed in", as a missing or
+    /// wrong Azure CLI would leave them.
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSeed>,
     /// What a sign-in shows; a code and address when left out.
     #[serde(default)]
     pub sign_in: Option<SignInStarted>,
+}
+
+/// A credential that cannot be read, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnreadableSeed {
+    /// The credential's source.
+    pub source: CredentialSource,
+    /// Why it cannot be read.
+    pub why: UnreadableWhy,
+}
+
+/// Why a seeded credential cannot be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnreadableWhy {
+    /// The Azure CLI is not installed.
+    AzMissing,
+    /// The Azure CLI's account is not in the credential's tenant.
+    WrongTenant,
+    /// The account has no access to Azure DevOps in the tenant.
+    NoAccess,
 }
 
 const fn ok_state() -> RepoListState {

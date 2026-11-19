@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { closedDetailsAround } from "#lib/welcome/reachable.ts";
+import walk from "#lib/welcome/walk.json";
 import {
   cleanup,
   fireEvent,
@@ -357,6 +359,15 @@ describe("the sub-tab", () => {
     expect(
       await screen.findByRole("tab", { name: "Terminal 1" }),
     ).toHaveFocus();
+  });
+
+  it("the Screen reader mode switch is behind the summary the installed-app walk presses", async () => {
+    await open();
+    const { summary, control } = walk.behindDetails.terminal;
+    const found = screen.getByRole(control.role as "checkbox", {
+      name: control.name,
+    });
+    expect(closedDetailsAround(found)).toBe(summary.name);
   });
 
   it("the Screen reader mode switch reaches the emulator", async () => {

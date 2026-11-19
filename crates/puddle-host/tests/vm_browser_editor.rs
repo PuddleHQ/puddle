@@ -1762,42 +1762,34 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
 
     // The language server starts with the window, so the first asks may find it still loading.
     // "Show or Focus Hover" asks again until the widget carries the type.
-    let shown = Arc::new(Mutex::new(String::new()));
-    puddle_test_kit::eventually_async(
-        "the hover shows the inferred type of `total`",
-        Duration::from_secs(90),
-        || {
-            let shown = shown.clone();
-            async move {
-                shell.press(name, "Control+k").await;
-                shell.press(name, "Control+i").await;
-                tokio::time::sleep(Duration::from_millis(1500)).await;
-                let page = shell.page(name).await;
-                let request = PageRequest::new("", "true")
-                    .result(HOVER_TEXT)
-                    .budget(Duration::from_secs(5));
-                let text = shell
-                    .browser
-                    .lock()
-                    .await
-                    .wait(page, &request)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .result
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
-                *shown.lock().unwrap() = text.clone();
-                if text.contains("const total: number") {
-                    Ok(())
-                } else {
-                    Err(text)
-                }
-            }
-        },
-    )
-    .await;
-    eprintln!("hover: {}", shown.lock().unwrap());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(80);
+    let mut shown = String::new();
+    while !shown.contains("const total: number") {
+        if tokio::time::Instant::now() > deadline {
+            let state = PageRequest::new("", "true")
+                .result(WINDOW_STATE)
+                .budget(PAGE_BUDGET);
+            let window = shell.browser.lock().await.wait(page, &state).await;
+            let servers = editor
+                .guest("ps -eo pid=,args= | grep -e 'tsserve[r]' -e 'typescript-language-feature[s]' | cut -c1-200 || true")
+                .await;
+            panic!(
+                "the hover never showed the inferred type of `total`; last text {shown:?}\nwindow: {window:?}\nguest language server processes:\n{servers}"
+            );
+        }
+        shell.press(name, "Control+k").await;
+        shell.press(name, "Control+i").await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let request = PageRequest::new("", "true")
+            .result(HOVER_TEXT)
+            .budget(Duration::from_secs(5));
+        let waited = shell.browser.lock().await.wait(page, &request).await;
+        shown = waited
+            .map(|w| w.result.as_str().unwrap_or_default().to_string())
+            .unwrap_or_default();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    eprintln!("hover: {shown}");
 
     let errors = shell.page_errors.lock().unwrap().clone();
     assert!(errors.is_empty(), "the pages reported errors: {errors:?}");

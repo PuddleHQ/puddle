@@ -1756,9 +1756,16 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
     // The cursor goes into `total` on line 2 ("const " is six characters).
     shell.press(name, "Control+g").await;
     shell.type_text(name, "2\n").await;
+    let at = |column: u32| {
+        format!(
+            "/Ln 2, Col {column}\\b/.test(document.querySelector('.part.statusbar')?.textContent ?? '')"
+        )
+    };
+    shell.wait(name, &at(1), "true", PAGE_BUDGET).await;
     for _ in 0..7 {
         shell.press(name, "ArrowRight").await;
     }
+    shell.wait(name, &at(8), "true", PAGE_BUDGET).await;
 
     // The language server starts with the window, so the first asks may find it still loading.
     // "Show or Focus Hover" asks again until the widget carries the type.

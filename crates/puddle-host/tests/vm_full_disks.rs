@@ -14,6 +14,7 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::panic,
+    clippy::print_stderr,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 #![allow(
@@ -59,17 +60,20 @@ exec /usr/sbin/chroot "$root" "$@""#;
 /// Where the small disk is mounted inside the namespace.
 const SMALL_DISK: &str = "/pvm";
 
-/// Runs `test` (the name of the calling test function) again in a private user and mount
+/// Runs `fn_name` (the name of the calling test function) again in a private user and mount
 /// namespace whose `/pvm` is a RAM file system of `gib` GiB, and returns how that second run ended
 /// and what it printed. Inside the namespace (the second run) it runs `body` with the mount and
 /// returns `None`.
-fn in_small_disk(test: &str, gib: u64, body: impl FnOnce(PathBuf)) -> Option<(bool, String)> {
+fn in_small_disk(fn_name: &str, gib: u64, body: impl FnOnce(PathBuf)) -> Option<(bool, String)> {
     if std::env::var_os(INSIDE).is_some() {
         body(PathBuf::from(SMALL_DISK));
         return None;
     }
-    let root = std::env::temp_dir().join(format!("pvfdroot{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("pvfdroot")
+        .tempdir()
+        .unwrap();
+    let root = dir.path().to_path_buf();
     let out = Command::new("unshare")
         .args([
             "--user",
@@ -82,7 +86,7 @@ fn in_small_disk(test: &str, gib: u64, body: impl FnOnce(PathBuf)) -> Option<(bo
         .arg(&root)
         .arg(gib.to_string())
         .arg(std::env::current_exe().unwrap())
-        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .args([fn_name, "--exact", "--nocapture", "--test-threads=1"])
         .env(INSIDE, "1")
         .env(vm_root_var(), SMALL_DISK)
         .output()
@@ -93,7 +97,6 @@ fn in_small_disk(test: &str, gib: u64, body: impl FnOnce(PathBuf)) -> Option<(bo
         String::from_utf8_lossy(&out.stderr)
     );
     eprintln!("{text}");
-    let _ = std::fs::remove_dir(&root);
     Some((out.status.success(), text))
 }
 

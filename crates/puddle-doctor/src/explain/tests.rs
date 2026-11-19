@@ -128,3 +128,13 @@ fn a_problem_without_words_gets_the_generic_ones_and_never_an_empty_line() {
         UNWORDED
     );
 }
+
+#[test]
+fn the_no_desktop_remedy_names_the_serve_command_only_in_a_build_that_has_it() {
+    assert!(no_desktop_remedy(true).contains("puddle serve --headless"));
+    let without = no_desktop_remedy(false);
+    assert!(
+        !without.contains("puddle serve") && !without.contains("--headless"),
+        "{without}"
+    );
+}

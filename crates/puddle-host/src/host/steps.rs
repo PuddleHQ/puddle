@@ -92,13 +92,14 @@ pub const SHUTDOWN_STEPS: [Step; 6] = [
 
 /// The result of [`prepare`]: everything the asynchronous start needs from the synchronous phase.
 pub struct Prepared {
-    // First field: dropped last, so a failed start releases the folder after everything else.
-    pub(super) lock: DataLock,
     pub(super) config: HostConfig,
     pub(super) pull: PullProxy,
     pub(super) endpoints: PuddleEndpoints,
     pub(super) roots: CorporateRoots,
     pub(super) steps: Vec<Step>,
+    // Last field: Rust drops fields in declaration order, so a failed start releases the folder
+    // after everything else.
+    pub(super) lock: DataLock,
 }
 
 impl std::fmt::Debug for Prepared {
@@ -150,12 +151,12 @@ pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, 
     );
     open_files.log(FDS_NEEDED);
     Ok(Prepared {
-        lock,
         config,
         pull,
         endpoints,
         roots,
         steps,
+        lock,
     })
 }
 

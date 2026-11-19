@@ -28,6 +28,9 @@ pub(crate) const GUEST_DIR: &str = "/puddle/shell-init";
 /// The file in the folder that login shells source.
 const FILE_NAME: &str = "init.sh";
 
+/// The name a text is written under before it is renamed to [`FILE_NAME`].
+const PARTIAL_NAME: &str = ".init.sh.new";
+
 /// The file Puddle owns in the guest that loads the shell init.
 pub(crate) const LOADER_GUEST: &str = "/etc/profile.d/02-puddle-shell-init.sh";
 
@@ -155,7 +158,9 @@ fn publish_in(dir: &Path, wanted: &str) -> std::io::Result<Published> {
             // The text is compared below, through the same entry.
             continue;
         }
-        restored = true;
+        // What an interrupted write of Puddle's own left is cleared, but nothing in the guest
+        // changed it.
+        restored |= !(is_file && entry.file_name() == PARTIAL_NAME);
         let path = entry.path();
         if entry.file_type()?.is_dir() {
             fs::remove_dir_all(path)?;
@@ -180,15 +185,21 @@ fn publish_in(dir: &Path, wanted: &str) -> std::io::Result<Published> {
     // Written beside the target and renamed over it: a link at the target is replaced, never
     // followed, and a reader never sees half a text. `create_new` refuses a name that is taken,
     // links included.
-    let partial = dir.join(".init.sh.new");
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&partial)?;
-    file.write_all(wanted.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&partial, &target)?;
+    let partial = dir.join(PARTIAL_NAME);
+    let written = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)?;
+        file.write_all(wanted.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&partial, &target)
+    })();
+    // After the rename there is nothing to remove; after a failed write this clears the half
+    // written file, which must not stay to be read as the guest's doing at the next start.
+    let _ = fs::remove_file(&partial);
+    written?;
     Ok(if restored {
         Published::Restored
     } else {

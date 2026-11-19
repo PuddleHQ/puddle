@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The "Tools:" line on the workspace card, fed by `workspace_tools` events (the background install
+// The "Tools:" line on the workspace row, fed by `workspace_tools` events (the background install
 // after a start). Every state, with the accessibility scan, and the same card at 390 px.
 import type { Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";

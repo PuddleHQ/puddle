@@ -411,7 +411,7 @@ fn ssh_azure_and_store(os: Os, finding: Finding) -> (&'static str, &'static str)
         ),
         F::CredentialStoreNoDesktop => (
             "After a reboot the keyring may stay locked, and Puddle can't read its saved secrets then.",
-            "On a server, run Puddle with `puddle serve --headless` so secrets go in its own vault.",
+            no_desktop_remedy(crate::SERVE_BUILT_IN),
         ),
         F::CredentialStoreVaultUnreadable => (
             "Puddle can't read the secrets it saved in its file vault.",
@@ -438,6 +438,15 @@ fn ssh_azure_and_store(os: Os, finding: Finding) -> (&'static str, &'static str)
             "Install the TPM2 libraries (tpm2-tools).",
         ),
         _ => UNWORDED,
+    }
+}
+
+/// The one-line remedy for [`Finding::CredentialStoreNoDesktop`]; see `no_desktop_fix`.
+pub(crate) fn no_desktop_remedy(serve: bool) -> &'static str {
+    if serve {
+        "On a server, run Puddle with `puddle serve --headless` so secrets go in its own vault."
+    } else {
+        "On a server, unlock the keyring after every reboot, then check again."
     }
 }
 

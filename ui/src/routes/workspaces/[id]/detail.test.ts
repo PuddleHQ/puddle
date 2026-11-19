@@ -1467,7 +1467,9 @@ describe("the settings tab", () => {
       keybindings: null,
     };
     await open();
-    const theme = screen.getByLabelText("Editor colour theme") as HTMLInputElement;
+    const theme = screen.getByLabelText(
+      "Editor colour theme",
+    ) as HTMLInputElement;
     const row = (name: string) =>
       document.querySelector(`[data-setting="${name}"]`) as HTMLElement;
     expect(theme.value).toBe("Default Dark Modern");

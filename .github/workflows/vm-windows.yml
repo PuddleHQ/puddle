@@ -544,7 +544,7 @@ jobs:
   # Microsoft's real VS Code server in the app's real WebView2 window (a secret kept across a reopen, and the multi-root view): the debug
   # app runs the Puddle host on real microVMs, the editor window is opened from the Connect step and read over DevTools, a test
   # extension's canary session survives closing and reopening the window, and a two-checkout workspace shows one root per
-  # checkout (crates/puddle-app/e2e/microsoft-editor.mjs). Accepts Microsoft's server licence terms on the runner, as the
+  # checkout, and three workspaces open three editor windows at once (crates/puddle-app/e2e/microsoft-editor.mjs). Accepts Microsoft's server licence terms on the runner, as the
   # product does once for a person. Nightly and by dispatch; it is in no partition and not a required check.
   microsoft-editor:
     name: vm-windows Microsoft editor window (nightly)
@@ -554,7 +554,7 @@ jobs:
       contents: read
       actions: write
     runs-on: windows-2025
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: whp
@@ -610,7 +610,7 @@ jobs:
       - name: the Microsoft editor window run
         if: steps.whp.outputs.ok == 'true'
         shell: pwsh
-        timeout-minutes: 50
+        timeout-minutes: 75
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'ms-editor-out'
           New-Item -ItemType Directory -Force -Path $out | Out-Null

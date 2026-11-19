@@ -8,6 +8,9 @@
 //   2. a test extension (fixtures/canary-secret) keeps a made-up session in the editor's secret storage;
 //   3. the window is closed the way the close button does it and opened again from the Connect step: the extension
 //      finds the same session in secret storage (still signed in), on a new extension host.
+//   4. two more workspaces, so three editor windows are open at once: each shows its own roots, and a command typed in its
+//      terminal runs in its own guest (`hostname`, and the workspace's name); closing all three leaves no editor WebView2 process
+//      of those workspaces and no extension host in any guest.
 //
 // Why the pinned build is put on the volume by this script: the product installs the newest build by itself, and
 // this run must not change when Microsoft ships; the script waits for that install, then replaces the build the
@@ -15,7 +18,7 @@
 //
 // Environment: PUDDLE_APP_EXE (a debug build without the `fixture` feature, with `runtime/` beside it),
 // PUDDLE_AGENT_BIN (the guest agent), MS_EDITOR_PIN (ci/vscode-server.sha256), MS_EDITOR_OUT (a folder for pictures and
-// logs), CDP_PORT (default 9340). Plain Node 24, no packages.
+// logs), CDP_PORT (default 9340; the editor windows take every second port after it, one per workspace). Plain Node 24, no packages.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -177,18 +180,18 @@ let uia;
 let id;
 
 /** Presses Connect, then "Open isolated VS Code", in the main window as a person does. */
-async function connectFromTheMainWindow() {
+async function connectFromTheMainWindow(name = NAME) {
   const main = await page(mainPort, /^http:\/\/127\.0\.0\.1:\d+\//);
   try {
     const clicked = (script) => main.evaluate(`(() => { ${script} })()`, true);
     await clicked(`document.querySelector('nav[aria-label="Main"] a[href="/workspaces"]')?.click(); return true;`);
     await until(
       "the Connect button of the workspace",
-      () => main.evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\\s+/g, ' ').trim() === 'Connect to ${NAME}')`),
+      () => main.evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\\s+/g, ' ').trim() === 'Connect to ${name}')`),
       60_000,
       500,
     );
-    await clicked(`[...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\\s+/g, ' ').trim() === 'Connect to ${NAME}').click(); return true;`);
+    await clicked(`[...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\\s+/g, ' ').trim() === 'Connect to ${name}').click(); return true;`);
     await until(
       "the Connect step's browser button",
       () => main.evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Open isolated VS Code')`),
@@ -203,6 +206,120 @@ async function connectFromTheMainWindow() {
 
 const canaryLog = async () => (await guest(id, "cat /tmp/canary-secret.log 2>/dev/null; true", 60_000)).text;
 const serverNow = () => guest(id, "curl -s --max-time 3 http://127.0.0.1:41337/version", 60_000).then((r) => r.text.trim());
+
+
+/** The workspace `name` made with no repository, run once and not busy; returns its id. */
+async function createRunning(name, memory = 1536) {
+  const made = await api("POST", "/api/workspaces", { name, repositories: [], memory_mib: memory });
+  check(`the workspace ${name} is accepted`, made.status === 202, `${made.status} ${made.body.slice(0, 200)}`);
+  let kicked = false;
+  const w = await until(
+    `the workspace ${name} to run`,
+    async () => {
+      const found = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.name === name);
+      if (!found) return false;
+      if (["crashed", "volume_missing"].includes(found.status)) throw new GiveUp(`${name} is ${found.status}`);
+      if (found.status === "running" && !found.busy) return found;
+      if (!kicked && !found.busy && ["created", "stopped"].includes(found.status)) {
+        kicked = true;
+        await api("POST", `/api/workspaces/${found.id}/start`);
+      }
+      return false;
+    },
+    900_000,
+    2000,
+  );
+  return w.id;
+}
+
+/** Waits until the editor's own install of the newest build is confirmed in `wsId`'s guest (as for the first workspace). */
+async function waitOwnInstall(wsId) {
+  const dir = `/workspaces/${wsId}/.puddle/vscode-server/servers`;
+  await until(
+    `the editor of ${wsId} to install its own build`,
+    async () => {
+      const named = (await guest(wsId, `cat ${dir}/current 2>/dev/null`, 60_000)).text.trim();
+      if (!/^[0-9a-f]{40}$/.test(named)) return false;
+      const confirmed = (await guest(wsId, `cat ${dir}/confirmed 2>/dev/null`, 60_000)).text.trim();
+      return confirmed === named;
+    },
+    600_000,
+    5000,
+  );
+  return dir;
+}
+
+/** The pinned build and the checkouts `checkouts`, put on the volume of `wsId` as root. */
+async function putPinned(wsId, dir, checkouts) {
+  const script = [
+    "set -eu",
+    `builds=${dir}; commit=${commit}; tmp=$builds/$commit.tar.gz.partial`,
+    `curl -fsSL --retry 3 --retry-delay 5 -o "$tmp" "https://update.code.visualstudio.com/commit:$commit/server-linux-x64-web/stable"`,
+    `echo "${sha256}  $tmp" | sha256sum -c -`,
+    `rm -rf "$builds/$commit.partial" "$builds/$commit"`,
+    `mkdir "$builds/$commit.partial"`,
+    `tar -xzf "$tmp" -C "$builds/$commit.partial" --strip-components=1`,
+    `rm -f "$tmp"`,
+    `[ -f "$builds/$commit.partial/bin/code-server" ]`,
+    `mv "$builds/$commit.partial" "$builds/$commit"`,
+    `: > "$builds/$commit/.puddle-installed"`,
+    `printf '%s' "$commit" > "$builds/current"`,
+    `cd /workspaces/${wsId}`,
+    ...checkouts.map((c) => `[ -d ${c}/.git ] || git init -q ${c}`),
+    `if id agent >/dev/null 2>&1; then chown -R agent:agent ${checkouts.join(" ")}; fi`,
+    "echo pinned-installed",
+  ].join("\n");
+  return guest(wsId, script, 900_000);
+}
+
+/** Stops and starts the workspace, waiting for each end. */
+async function restart(wsId) {
+  for (const step of ["stop", "start"]) {
+    await api("POST", `/api/workspaces/${wsId}/${step}`);
+    await until(
+      `${wsId} to finish ${step}`,
+      async () => {
+        const w = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.id === wsId);
+        return w && !w.busy && w.status === (step === "stop" ? "stopped" : "running") ? w : false;
+      },
+      300_000,
+      2000,
+    );
+  }
+}
+
+/** The editor window of workspace `wsId`: its own WebView2 process has its own DevTools port (every second port after the first window's). */
+async function editorOf(wsId, slot) {
+  return page(editorPort + 2 * slot, new RegExp(`^https?://${wsId}\\.localhost:\\d+/`), 240_000);
+}
+
+/** Opens the editor's integrated terminal and types one command, as a person does (real key events over the DevTools Protocol). */
+async function typeInTerminal(handle, command) {
+  await handle.send("Page.bringToFront");
+  const key = (type, extra) => handle.send("Input.dispatchKeyEvent", { type, ...extra });
+  // Ctrl+Shift+` creates a terminal and focuses it.
+  const backquote = { key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 10 };
+  await key("rawKeyDown", backquote);
+  await key("keyUp", backquote);
+  await until("the terminal to be on screen", () => handle.evaluate(`!!document.querySelector('.xterm-helper-textarea')`), 60_000, 500);
+  await sleep(3000);
+  await handle.send("Input.insertText", { text: command });
+  const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" };
+  await key("rawKeyDown", enter);
+  await key("char", enter);
+  await key("keyUp", enter);
+}
+
+/** The msedgewebview2 processes whose command line names the data folder of any of `ids`. */
+function editorWebViewProcesses(ids) {
+  const pattern = ids.map((i) => `webview[\\\\/]${i}`).join("|");
+  const r = spawnSync(
+    "powershell",
+    ["-NoProfile", "-Command", `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -match '${pattern}' } | ForEach-Object { $_.ProcessId }`],
+    { encoding: "utf8" },
+  );
+  return r.stdout.split(/\s+/).filter(Boolean);
+}
 
 try {
   await until(
@@ -376,8 +493,64 @@ try {
   check("the reopened window shows the same roots", JSON.stringify(rootsAgain) === JSON.stringify(roots), JSON.stringify(reopened.rows));
   again.close();
 
-  // Stop the workspace, as the user does at the end (the data folder is a temp one and goes with the runner).
-  await api("POST", `/api/workspaces/${id}/stop`);
+
+  // 4. Three workspaces, three editor windows at once. The first is open from step 3.
+  const more = [
+    { name: "msedit2", checkouts: ["alpha", "beta"] },
+    { name: "msedit3", checkouts: ["gamma", "delta"] },
+  ];
+  const all = [{ name: NAME, id, checkouts: ["api", "web"], window: await editorOf(id, 0), slot: 0 }];
+  for (const [i, w] of more.entries()) {
+    w.id = await createRunning(w.name);
+    const dir = await waitOwnInstall(w.id);
+    const put = await putPinned(w.id, dir, w.checkouts);
+    check(`${w.name}: the pinned build and its checkouts are on the volume`, put.code === 0 && put.text.includes("pinned-installed"), put.text.slice(-300));
+    await restart(w.id);
+    await connectFromTheMainWindow(w.name);
+    w.slot = i + 1;
+    w.window = await editorOf(w.id, w.slot);
+    all.push(w);
+  }
+  check("three workspaces have three different ids", new Set(all.map((w) => w.id)).size === 3, JSON.stringify(all.map((w) => w.id)));
+  for (const w of all) {
+    const shown = await explorerOf(w.window, `${w.name}-window`);
+    await picture(w.window, `${w.name}-roots`);
+    const rootNames = shown.rows.filter((r) => r.level === "1").map((r) => r.name);
+    check(`${w.name}: its window shows its own roots and no other workspace's`, JSON.stringify([...rootNames].sort()) === JSON.stringify([...w.checkouts].sort()), JSON.stringify(shown.rows));
+    check(`${w.name}: its window is on its own origin`, shown.where.href.includes(`${w.id}.localhost`), shown.where.href);
+  }
+  // A command typed in each window's terminal runs in that window's own guest.
+  for (const w of all) {
+    await typeInTerminal(w.window, `echo "$(hostname) ${w.name}" > /tmp/window-who`);
+  }
+  const hostnames = [];
+  for (const w of all) {
+    const said = await until(`the command typed in ${w.name}'s window to run in its guest`, async () => (await guest(w.id, "cat /tmp/window-who 2>/dev/null", 60_000)).text.trim() || false, 120_000, 3000).catch(() => "");
+    const own = (await guest(w.id, "hostname", 60_000)).text.trim();
+    hostnames.push(own);
+    check(`${w.name}: the window's terminal ran in its own guest (hostname ${own})`, said === `${own} ${w.name}`, JSON.stringify(said));
+  }
+  check("the three guests have three different hostnames", new Set(hostnames).size === 3, JSON.stringify(hostnames));
+
+  // Closing all three windows: no editor WebView2 process of these workspaces, no extension host in any guest.
+  for (const w of all) w.window.close();
+  for (const w of all) {
+    const closedOne = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(here, "window-close.ps1"), "-Title", `^${w.name} - `], { encoding: "utf8" });
+    check(`${w.name}: the editor window is closed like the close button`, closedOne.status === 0, closedOne.stdout.trim());
+  }
+  const left = await until("no editor WebView2 process of the three workspaces", () => editorWebViewProcesses(all.map((w) => w.id)).length === 0, 90_000, 2000).then(
+    () => [],
+    () => editorWebViewProcesses(all.map((w) => w.id)),
+  );
+  check("after closing all three windows no editor WebView2 process remains", left.length === 0, `pids ${left.join(",")}`);
+  for (const w of all) {
+    const hosts = async () => (await guest(w.id, "ps -eo args= | grep -c '[e]xtensionHost'", 60_000)).text.trim();
+    const ended = await until(`the extension hosts of ${w.name} to end`, async () => (await hosts()) === "0", 90_000, 3000).then(() => true, () => false);
+    check(`${w.name}: its guest has no extension host left`, ended, `extensionHost processes: ${await hosts()}`);
+  }
+
+  // Stop the workspaces, as the user does at the end (the data folder is a temp one and goes with the runner).
+  for (const w of all) await api("POST", `/api/workspaces/${w.id}/stop`);
 } catch (err) {
   check("the run ran to the end", false, String(err?.stack ?? err));
 } finally {

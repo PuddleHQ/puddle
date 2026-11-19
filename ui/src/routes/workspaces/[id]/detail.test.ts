@@ -150,6 +150,12 @@ function reset() {
   api.overrides = {};
   api.tools = {};
   api.globalMise = null;
+  api.globalEditor = {
+    colour_theme: null,
+    font_size: null,
+    extensions: null,
+    keybindings: null,
+  };
   api.miseAvailable = true;
   api.unknown = {};
   api.kept = {};
@@ -1450,6 +1456,90 @@ describe("the settings tab", () => {
     );
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.direct_ssh).toBeNull(),
+    );
+  });
+
+  it("shows each editor default with where it comes from, and saves a workspace's own value over the global one", async () => {
+    api.globalEditor = {
+      colour_theme: "Default Dark Modern",
+      font_size: 14,
+      extensions: ["a.b"],
+      keybindings: null,
+    };
+    await open();
+    const theme = screen.getByLabelText("Editor colour theme") as HTMLInputElement;
+    const row = (name: string) =>
+      document.querySelector(`[data-setting="${name}"]`) as HTMLElement;
+    expect(theme.value).toBe("Default Dark Modern");
+    expect(
+      within(row("editor-theme")).getByText("Global setting"),
+    ).toBeVisible();
+    expect(
+      within(row("editor-keybindings")).getByText("Puddle's default"),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /again for Editor colour theme/ }),
+    ).toBeNull();
+
+    await fireEvent.input(theme, { target: { value: "Solarized Dark" } });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBe(
+        "Solarized Dark",
+      ),
+    );
+    // The other fields of the group stay as they were.
+    expect(api.overrides["w-demo"]?.editor.font_size).toBeNull();
+    await vi.waitFor(() =>
+      expect(
+        within(row("editor-theme")).getByText("This workspace"),
+      ).toBeVisible(),
+    );
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Editor colour theme",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
+    );
+    await vi.waitFor(() => expect(theme.value).toBe("Default Dark Modern"));
+  });
+
+  it("holds back a value the API would refuse and says why, and keeps an empty list as none", async () => {
+    api.globalEditor = {
+      colour_theme: null,
+      font_size: null,
+      extensions: ["a.b"],
+      keybindings: null,
+    };
+    await open();
+    const size = screen.getByLabelText("Font size (pixels)");
+    await fireEvent.input(size, { target: { value: "99" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("8 to 40");
+    expect(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    ).toBeDisabled();
+
+    const list = screen.getByLabelText("Extensions to install");
+    await fireEvent.input(list, { target: { value: "" } });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Extensions to install" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.extensions).toEqual([]),
+    );
+    await vi.waitFor(() =>
+      expect(
+        within(
+          document.querySelector(
+            '[data-setting="editor-extensions"]',
+          ) as HTMLElement,
+        ).getByText("This workspace"),
+      ).toBeVisible(),
     );
   });
 

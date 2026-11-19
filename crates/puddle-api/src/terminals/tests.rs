@@ -59,10 +59,11 @@ async fn the_fake_shell_of_each_workspace_names_that_workspace() {
         let mut seen = String::new();
         while !seen.contains(&format!("\r\n{name}\r\n")) {
             let Some(TerminalOutput::Bytes(bytes)) = link.output.recv().await else {
-                panic!("the shell ended before it answered: {seen:?}");
+                break;
             };
             seen.push_str(&String::from_utf8_lossy(&bytes));
         }
+        assert!(seen.contains(&format!("\r\n{name}\r\n")), "{seen:?}");
     }
 }
 

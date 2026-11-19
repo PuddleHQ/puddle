@@ -123,8 +123,9 @@ async fn sandbox_a_terminal_reaches(
         let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
             .await
             .unwrap();
+        // A terminal that closes early returns what it said, so the caller's assertion fails on it.
         let Some(item) = item else {
-            panic!("the terminal closed before it answered: {seen:?}");
+            return format!("closed after {seen:?}");
         };
         if let puddle_api::TerminalOutput::Bytes(b) = item {
             seen.push_str(&String::from_utf8_lossy(&b));

@@ -641,7 +641,7 @@ async fn a_built_in_scenario_carries_workspaces_whose_ids_differ_from_their_name
     let run = start("ids-differ").await;
     let list = run.get("/api/workspaces").await.json();
     let rows = list["workspaces"].as_array().unwrap();
-    assert!(!rows.is_empty());
+    assert_eq!(rows.len(), 9);
     for w in rows {
         assert_ne!(w["id"], w["name"], "{w}");
     }

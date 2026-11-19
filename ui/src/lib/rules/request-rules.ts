@@ -3,6 +3,7 @@
 // before it asks (the same ones the API applies, so a typing slip is caught at the field), and how
 // the API's refusals map back to a field. No layout and no API calls here.
 import type { components } from "#lib/api/schema.d.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 
 export type RequestRule = components["schemas"]["RequestRule"];
 export type NewRequestRule = components["schemas"]["NewRequestRuleRequest"];
@@ -25,7 +26,9 @@ export function methodsLabel(rule: Pick<RequestRule, "methods">): string {
 }
 
 export function scopeLabel(rule: Pick<RequestRule, "workspace">): string {
-  return rule.workspace ?? "Every workspace";
+  return rule.workspace === null
+    ? "Every workspace"
+    : workspaces.labelOf(rule.workspace);
 }
 
 /** "refuse DELETE /repos/** on api.example.com for every workspace": how a rule is named. */
@@ -33,7 +36,9 @@ export function requestRuleName(rule: RequestRule): string {
   const methods =
     rule.methods.length === 0 ? "every method" : rule.methods.join(", ");
   const who =
-    rule.workspace === null ? "every workspace" : `workspace ${rule.workspace}`;
+    rule.workspace === null
+      ? "every workspace"
+      : `workspace ${workspaces.spokenLabelOf(rule.workspace)}`;
   return `refuse ${methods} ${rule.path} on ${rule.host} for ${who}`;
 }
 

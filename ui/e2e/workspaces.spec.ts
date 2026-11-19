@@ -66,6 +66,16 @@ async function openList(page: Page, backend: Backend, path = "/workspaces") {
 const card = (page: Page, name: string): Locator =>
   page.getByRole("article", { name });
 
+/** A row's name link: the way into the workspace (the row has no separate "Details"). */
+const nameLink = (row: Locator, name: string): Locator =>
+  row.getByRole("link", { name, exact: true });
+
+/** Opens the "more" menu of a row and chooses Stop: the row's one action is Start or Connect. */
+async function stopFromRow(page: Page, row: Locator, name: string) {
+  await row.getByRole("button", { name: `More about ${name}` }).click();
+  await page.getByRole("menuitem", { name: `Stop ${name}` }).click();
+}
+
 const toast = (page: Page, text: string | RegExp): Locator =>
   page.getByRole("status").filter({ hasText: text });
 
@@ -84,7 +94,7 @@ async function openDetail(
 }
 
 test.describe("the list and the start screen", () => {
-  test("the app starts on the workspaces, with a strip for waiting requests", async ({
+  test("the app starts on the workspaces, and the count of waiting requests shows in the sidebar, not as a banner", async ({
     page,
     request,
     backend,
@@ -95,16 +105,13 @@ test.describe("the list and the start screen", () => {
     await expect(page).toHaveURL(/\/workspaces$/);
     const waiting = await pendingCount(request, backend);
     expect(waiting).toBeGreaterThan(3);
-    const strip = page
-      .getByRole("status")
-      .filter({ hasText: "requests waiting" });
-    await expect(strip).toContainText(`${waiting} requests waiting`);
-    await expect(strip).toContainText("Latest:");
-    await strip.getByRole("link", { name: "Review" }).click();
-    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(page.getByTestId("pending-badge")).toContainText(
+      String(waiting),
+    );
+    await expect(page.getByText("requests waiting")).toHaveCount(0);
   });
 
-  test("a card per workspace with its state, size and waiting requests", async ({
+  test("a row per workspace with its state, repository, disk and waiting requests", async ({
     page,
     backend,
   }) => {
@@ -112,12 +119,10 @@ test.describe("the list and the start screen", () => {
     await expect(page.getByRole("article")).toHaveCount(3);
     const running = card(page, "web-shop");
     await expect(running).toContainText("Running");
-    await expect(running).toContainText("https://github.com/acme/web-shop.git");
-    await expect(running).toContainText("6 GiB of 32 GiB used");
-    await expect(running).toContainText("14 days ago");
+    await expect(running).toContainText("acme/web-shop");
+    await expect(running).toContainText("6 GiB / 32 GiB");
     await expect(running.getByRole("link", { name: /waiting$/ })).toBeVisible();
     await expect(card(page, "docs-site")).toContainText("Stopped");
-    await expect(card(page, "docs-site")).toContainText("4 GiB memory");
     await expect(card(page, "data-tools")).toContainText("Not started");
     await expect(
       running.getByRole("button", { name: "Connect to web-shop" }),
@@ -128,49 +133,70 @@ test.describe("the list and the start screen", () => {
     ).toBeEnabled();
   });
 
-  test("no workspaces shows what to do", async ({ page, backend }) => {
+  test("no workspaces shows the create form itself", async ({
+    page,
+    backend,
+  }) => {
     await backend.control.reset("empty");
     await openList(page, backend);
     await expect(
-      page.getByRole("heading", { name: "No workspaces yet" }),
+      page.getByRole("textbox", { name: "Repository address" }),
     ).toBeVisible();
+    await expect(page.getByText("No workspaces yet")).toHaveCount(0);
     await expect(page.getByText("requests waiting")).toHaveCount(0);
-    await page.getByRole("button", { name: "New workspace" }).last().click();
+    await page.getByRole("button", { name: "More options" }).click();
     await expect(
       page.getByRole("dialog", { name: "New workspace" }),
     ).toBeVisible();
   });
 
-  test("a card opens the details", async ({ page, backend }) => {
+  test("the first workspace is made from the address alone", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("empty");
     await openList(page, backend);
-    await card(page, "docs-site")
-      .getByRole("link", { name: /^Details/ })
-      .click();
+    await page
+      .getByRole("textbox", { name: "Repository address" })
+      .fill("https://github.com/acme/ledger.git");
+    await page.getByRole("button", { name: "Create workspace" }).click();
+    await expect(card(page, "ledger")).toContainText("acme/ledger");
+    await expect(
+      page.getByRole("textbox", { name: "Repository address" }),
+    ).toHaveCount(0);
+  });
+
+  test("a row opens the details", async ({ page, backend }) => {
+    await openList(page, backend);
+    await nameLink(card(page, "docs-site"), "docs-site").click();
     await expect(page).toHaveURL(/\/workspaces\/docs-site$/);
     await expect(
       page.getByRole("heading", { level: 1, name: "docs-site" }),
     ).toBeVisible();
   });
 
-  test("a request that arrives updates the strip and the card live", async ({
+  test("a request that arrives updates the sidebar count and the row live", async ({
     page,
     request,
     backend,
   }) => {
     await openList(page, backend);
     const before = await pendingCount(request, backend);
-    await expect(page.getByText(`${before} requests waiting`)).toBeVisible();
+    const row = card(page, "data-tools");
+    await expect(page.getByTestId("pending-badge")).toContainText(
+      String(before),
+    );
+    const own = row.getByRole("link", { name: /^\d+ waiting$/ });
+    const ownBefore = Number((await own.innerText()).trim());
     await backend.control.step({
       do: "request",
       workspace: "data-tools",
       host: "live.example.org",
     });
-    await expect(
-      page.getByText(`${before + 1} requests waiting`),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("status").filter({ hasText: "live.example.org" }),
-    ).toBeVisible();
+    await expect(page.getByTestId("pending-badge")).toContainText(
+      String(before + 1),
+    );
+    await expect(own).toHaveText(String(ownBefore + 1));
   });
 });
 
@@ -492,11 +518,13 @@ test.describe("start and stop", () => {
     await openList(page, backend);
     const shop = card(page, "web-shop");
     await backend.control.step({ do: "hold_workspaces" });
-    await shop.getByRole("button", { name: "Stop web-shop" }).click();
+    await stopFromRow(page, shop, "web-shop");
     await expect(shop).toContainText("Stopping");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
     await expect(
-      shop.getByRole("button", { name: "Stop web-shop" }),
+      page.getByRole("menuitem", { name: "Stop web-shop" }),
     ).toBeDisabled();
+    await page.keyboard.press("Escape");
     await backend.control.step({ do: "release_workspaces" });
     await expect(toast(page, "Stopped web-shop.")).toBeVisible();
     await expect(shop).toContainText("Stopped");
@@ -509,7 +537,7 @@ test.describe("start and stop", () => {
       operation: "stop",
       reason: "the guest did not answer",
     });
-    await shop.getByRole("button", { name: "Stop web-shop" }).click();
+    await stopFromRow(page, shop, "web-shop");
     await expect(
       toast(page, "Stopping web-shop failed: the guest did not answer"),
     ).toBeVisible();
@@ -603,9 +631,7 @@ test.describe("connecting", () => {
     ).toBeEnabled();
     await step.getByRole("button", { name: "Close" }).click();
 
-    await card(page, "web-shop")
-      .getByRole("link", { name: /^Details/ })
-      .click();
+    await nameLink(card(page, "web-shop"), "web-shop").click();
     const main = page.getByRole("main");
     await expect(main.getByRole("alert")).toContainText(
       "could not be installed in web-shop",
@@ -1031,7 +1057,7 @@ test.describe("renaming", () => {
     await expect(card(page, "web-shop")).toHaveCount(0);
     await expect(
       card(page, "Web shop (prod)").getByRole("button", {
-        name: "Stop Web shop (prod)",
+        name: "Connect to Web shop (prod)",
       }),
     ).toBeVisible();
   });
@@ -1154,9 +1180,7 @@ test.describe("renaming", () => {
       .fill("https://github.com/acme/slow.git");
     await create.getByRole("button", { name: "Create workspace" }).click();
     await expect(card(page, "slow")).toContainText("Creating");
-    await card(page, "slow")
-      .getByRole("link", { name: /^Details/ })
-      .click();
+    await nameLink(card(page, "slow"), "slow").click();
     await expect(
       page.getByRole("button", { name: "Rename slow" }),
     ).toBeDisabled();
@@ -1658,11 +1682,13 @@ test.describe("keyboard only", () => {
     await created.getByRole("button", { name: "Start keys" }).focus();
     await page.keyboard.press("Enter");
     await expect(created).toContainText("Running");
-    await created.getByRole("button", { name: "Stop keys" }).focus();
+    await created.getByRole("button", { name: "More about keys" }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: "Stop keys" }).focus();
     await page.keyboard.press("Enter");
     await expect(created).toContainText("Stopped");
 
-    await created.getByRole("link", { name: /^Details/ }).focus();
+    await nameLink(created, "keys").focus();
     await page.keyboard.press("Enter");
     const del = page.getByRole("button", { name: "Delete workspace…" });
     await del.focus();
@@ -1860,7 +1886,7 @@ test.describe("a workspace whose volume is gone", () => {
     ).toBeEnabled();
     await expectNoAxeViolations(page, "list");
 
-    await lost.getByRole("link", { name: /^Details/ }).click();
+    await nameLink(lost, "lost-disk").click();
     await expect(page.getByText("Its disk is gone")).toBeVisible();
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const confirm = page.getByRole("alertdialog");

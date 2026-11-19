@@ -335,7 +335,7 @@ describe("the inbox page", () => {
       last_seen: 9_500,
     });
     await tick();
-    expect(rowOf("new.example.com")).toHaveTextContent("4 attempts");
+    expect(rowOf("new.example.com")).toHaveTextContent("4 tries");
     source.emit({
       type: "pending_closed",
       id: 9,

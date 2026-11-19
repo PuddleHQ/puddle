@@ -580,6 +580,33 @@ fn unauthorized() -> ApiError {
     )
 }
 
+/// The answer for a request whose method has no declaration for its route. A route layer runs
+/// for a path whose router has no handler for the method, before the router answers 405: a path
+/// declared for other methods is that case, refused as the router would (nothing runs, `Allow`
+/// names the declared methods); a path with no declaration at all is a missing one (500).
+fn undeclared(method: &Method, path: &str) -> Response {
+    let allowed: Vec<&str> = [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+    ]
+    .iter()
+    .filter(|m| declaration(m, path).is_some())
+    .map(Method::as_str)
+    .collect();
+    if allowed.is_empty() {
+        tracing::error!(%method, path, "route has no permission declaration");
+        return ApiError::internal(&"route has no permission declaration").into_response();
+    }
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        [(axum::http::header::ALLOW, allowed.join(", "))],
+    )
+        .into_response()
+}
+
 /// axum route middleware: the route's declaration, checked for the request's principal.
 pub(crate) async fn authorize(
     State(state): State<AppState>,
@@ -596,29 +623,7 @@ pub(crate) async fn authorize(
         request.method()
     };
     let Some(declared) = declaration(method, path) else {
-        // A route layer runs for a path whose router has no handler for this method, before the
-        // router answers 405. A path declared for other methods is that case: refuse it as the
-        // router would (nothing runs); only a path with no declaration at all is a missing one.
-        let allowed: Vec<&str> = [
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-        ]
-        .iter()
-        .filter(|m| declaration(m, path).is_some())
-        .map(Method::as_str)
-        .collect();
-        if !allowed.is_empty() {
-            return (
-                StatusCode::METHOD_NOT_ALLOWED,
-                [(axum::http::header::ALLOW, allowed.join(", "))],
-            )
-                .into_response();
-        }
-        tracing::error!(method = %request.method(), path, "route has no permission declaration");
-        return ApiError::internal(&"route has no permission declaration").into_response();
+        return undeclared(request.method(), path);
     };
     if declared.target == Target::Ticket || declared.action == Action::SignIn {
         return next.run(request).await;

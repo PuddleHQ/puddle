@@ -30,6 +30,13 @@ if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
 const basePort = Number(process.env.CDP_PORT ?? 9340);
 const CLIP = "puddle clipboard canary 7f3a";
 
+// A prompt nobody answers must not hold the job to its step limit.
+setTimeout(() => {
+  console.error("clipboard permission test: no end after 8 minutes");
+  spawnSync("taskkill", ["/IM", "puddle-app.exe", "/T", "/F"], { stdio: "ignore" });
+  process.exit(1);
+}, 8 * 60_000).unref();
+
 const failures = [];
 function check(name, ok, detail = "") {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
@@ -47,7 +54,8 @@ const powershell = (script) => spawnSync("powershell", ["-NoProfile", "-Command"
 const setClipboard = (text) => powershell(`Set-Clipboard -Value '${text}'`);
 
 // The read, started and not awaited: with "Ask" it stays pending behind the prompt.
-const START_READ = `window.__read = navigator.clipboard.readText().then((text) => ({ text }), (e) => ({ error: e.name }))`;
+// (The expression ends in `true`: `evaluate` awaits a promise it gets back, and this one waits for the person.)
+const START_READ = `window.__read = navigator.clipboard.readText().then((text) => ({ text }), (e) => ({ error: e.name })); true`;
 const readResult = (page) => page.evaluate(`Promise.race([window.__read, new Promise((r) => setTimeout(() => r({ pending: true }), 1500))])`);
 
 /** One run of the shell on `workspace` with the clipboard setting `setting`; `body` gets the page and the UI Automation driver. */

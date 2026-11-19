@@ -397,6 +397,36 @@ async fn a_learned_host_is_made_permanent_for_the_workspace_or_for_every_workspa
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn learned_hosts_made_permanent_at_the_same_time_all_stay_on_the_list() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let hosts: Vec<String> = (0..40).map(|n| format!("h{n:02}.example")).collect();
+    for host in &hosts {
+        api.learned.learn(&shop(), host, 600);
+    }
+    for scope in ["workspace", "global"] {
+        let body = json!({ "scope": scope });
+        let replies = futures_util::future::join_all(hosts.iter().map(|host| {
+            let path = format!("/api/workspaces/shop/interception/learned/{host}/permanent");
+            let (api, body) = (&api, &body);
+            async move { api.send("POST", &path, Some(body)).await }
+        }))
+        .await;
+        assert!(replies.iter().all(|r| r.status == 204), "{scope}");
+        for host in &hosts {
+            api.learned.learn(&shop(), host, 600);
+        }
+    }
+    let view = api.get("/api/workspaces/shop/interception").await.json();
+    assert_eq!(view["never_decrypt"], json!(hosts), "the workspace list");
+    assert_eq!(
+        view["global_never_decrypt"],
+        json!(hosts),
+        "the global list"
+    );
+}
+
 #[tokio::test]
 async fn a_full_never_decrypt_list_refuses_to_take_a_learned_host_and_keeps_it_listed() {
     let api = start().await;

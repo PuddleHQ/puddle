@@ -46,30 +46,40 @@ fn locked_wry_version() -> String {
     panic!("Cargo.lock has no wry package");
 }
 
-/// One file of the locked wry crate, read from this machine's cargo registry (`cargo fetch` puts
-/// every locked crate there, on every platform).
-fn wry_file(version: &str, path: &str) -> String {
-    let cargo_home = std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|home| PathBuf::from(home).join(".cargo"))
-        })
-        .expect("neither CARGO_HOME, HOME nor USERPROFILE is set");
-    let registry = cargo_home.join("registry").join("src");
-    let indexes = fs::read_dir(&registry)
-        .unwrap_or_else(|err| panic!("{}: {err}; run `cargo fetch`", registry.display()));
-    for index in indexes.flatten() {
-        let file = index.path().join(format!("wry-{version}")).join(path);
-        if let Ok(text) = fs::read_to_string(file) {
-            return text;
-        }
-    }
-    panic!(
-        "wry {version} ({path}) is not under {}; run `cargo fetch`",
-        registry.display()
+/// The folder of the locked wry crate, as cargo itself reports it (`cargo metadata` knows where
+/// this machine keeps its sources: the registry, a vendored folder or a relocated cache).
+fn wry_folder(version: &str) -> PathBuf {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = std::process::Command::new(cargo)
+        .args(["metadata", "--format-version", "1", "--locked", "--offline"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo metadata did not start");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata printed no JSON");
+    let manifest = metadata
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .expect("cargo metadata has no packages")
+        .iter()
+        .find(|p| p.get("name") == Some(&"wry".into()) && p.get("version") == Some(&version.into()))
+        .and_then(|p| p.get("manifest_path")?.as_str())
+        .unwrap_or_else(|| panic!("cargo metadata lists no wry {version}; run `cargo fetch`"));
+    PathBuf::from(manifest)
+        .parent()
+        .expect("the manifest path has a folder")
+        .to_path_buf()
+}
+
+/// One file of the locked wry crate.
+fn wry_file(version: &str, path: &str) -> String {
+    let file = wry_folder(version).join(path);
+    fs::read_to_string(&file).unwrap_or_else(|err| panic!("{}: {err}", file.display()))
 }
 
 #[test]

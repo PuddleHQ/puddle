@@ -291,7 +291,7 @@ impl From<Actor> for ActorWire {
 pub enum RuleWirePatternKind {
     /// The identical host.
     Exact,
-    /// The host and every name under it.
+    /// Every name below the host, never the host itself.
     Suffix,
 }
 
@@ -529,6 +529,8 @@ pub enum WorkspaceOpKind {
     RepoSwitched,
     /// A repository removed from a workspace's list.
     RepoRemoved,
+    /// A workspace's "only listed repositories" switch for push or pull changed.
+    GitSwitchesChanged,
     /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
     GitRepaired,
     /// A workspace's root disk made bigger, or the attempt failed; `detail` says from what size
@@ -1190,7 +1192,8 @@ impl ConnectionWindow {
     /// from a failed write.
     pub(crate) fn roll(&mut self, now: u64) -> Option<(u64, u64)> {
         let second = now / 1000;
-        let finished = if second == self.second {
+        // A clock that stepped back stays in the current window, so the limit does not restart.
+        let finished = if second <= self.second {
             None
         } else {
             let finished = (self.excess > 0).then_some((self.second * 1000, self.excess));

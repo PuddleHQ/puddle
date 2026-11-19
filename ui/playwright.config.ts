@@ -67,19 +67,9 @@ export default defineConfig({
   // took 7 s at the median and 13 s at the worst of 40 loads there against 2 s unstarved, and every
   // later step is dearer by about the same factor, so a test's and a read's limit fail a page that
   // is only slow. Both limits grow by the slowdown the run declares, as the bars of `inbox-bulk` and
-  // `inbox-full-list` do; a run that declares none keeps 90 s and 30 s.
-  //
-  // The 30 s these limits were is a wall clock on processes the host may not schedule. Seven host logs
-  // fail the same way (a test or its `beforeEach` timed out at 30 s, four workers at once, tests that
-  // take 1 to 3 s idle) with the host's load average at 30 to 314 on 40 cores, and the `ui` gate's
-  // vitest probe in the same run reported a worker stalled for 7.6 s. A passing test returns at once, so
-  // a long limit costs nothing; a hung one still fails, after 90 s. Raising the limit of one step at a
-  // time (the page open, the backend start) had moved the failure to the next step each time.
-  timeout: 90_000 * slowdown(),
-  // `expect.poll` and the web-first assertions give a read this long. The 5 s default is shorter than an
-  // axe scan on a loaded machine (a scan that has not returned in 5 s ends a poll with "waiting on the
-  // predicate"), so a loaded run failed on time, not on the page.
-  expect: { timeout: 30_000 * slowdown() },
+  // `inbox-full-list` do; a run that declares none keeps 30 s and 5 s (the Playwright defaults).
+  timeout: 30_000 * slowdown(),
+  expect: { timeout: 5_000 * slowdown() },
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: "retain-on-failure",

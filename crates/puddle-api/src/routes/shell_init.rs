@@ -16,6 +16,7 @@ use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
+use crate::routes::workspaces::named;
 use crate::wire::{ShellInitRequest, ShellInitSaved, ShellInitView};
 use crate::workspaces::ShellInitCheck;
 
@@ -26,13 +27,6 @@ fn view(workspace: &WorkspaceId, saved: Option<ShellInit>) -> ShellInitView {
         changed_at: saved.as_ref().map(|s| s.changed_at),
         content: saved.map_or_else(String::new, |s| s.content.as_str().to_owned()),
     }
-}
-
-/// The workspace a path names: its id (the key the store uses); 404 for none.
-async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
-    let id =
-        WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    Ok(state.workspaces.get(&id).await?.id)
 }
 
 /// The shell init saved for a workspace; empty with `saved: false` when it has none.

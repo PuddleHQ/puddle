@@ -249,6 +249,7 @@ pub struct WorkspaceSeed {
 
 impl WorkspaceSeed {
     /// The id the workspace is seeded under.
+    #[must_use]
     pub fn id(&self) -> &str {
         self.id.as_deref().unwrap_or(&self.name)
     }

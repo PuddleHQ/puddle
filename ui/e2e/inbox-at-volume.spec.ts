@@ -420,7 +420,6 @@ test.describe("1000 rules", () => {
     page,
     request,
     backend,
-    browserName,
   }) => {
     // 20 adds and 20 deletes on a 1000-row page: seconds each on a host with every lane busy (the 4 min this had ran out at the 18th delete).
     test.setTimeout(900_000 * SLOWDOWN);
@@ -476,14 +475,19 @@ test.describe("1000 rules", () => {
       type: "rules-1000",
       description: `Rules page, 1000 rules, best of 5: ${best} ms (${loads.join(", ")})`,
     });
-    // WebKit draws the 1000 rows about twice as slowly as Chromium (2849 ms against 1.2 s on the
-    // shared host), so its bar is twice as long. Both grow with the machine's load the way every
-    // test's time limit does (scripts/load-budget.ts): the best of five loads on the host with every
-    // lane busy took 3337 ms in Chromium with nothing wrong with the page. An idle machine keeps
-    // 2 s (4 s); the load read when the test starts, at most four times that.
+    // Both browsers meet the same bar: the table draws its first rows at once and the rest a chunk
+    // per frame (RuleTable.svelte), because WebKit took 2849 ms to draw all 1000 in one go. The bar
+    // grows with the machine's load the way every test's time limit does (scripts/load-budget.ts):
+    // the best of five loads on the host with every lane busy took 3337 ms in Chromium with nothing
+    // wrong with the page. An idle machine keeps 2 s; the load read when the test starts, at most
+    // four times that.
     const load = loadFactor(loadavg()[0] ?? 0, availableParallelism());
-    const bar = (browserName === "webkit" ? 4000 : 2000) * SLOWDOWN * load;
+    const bar = 2000 * SLOWDOWN * load;
     expect(best, "the page lists 1000 rules in time").toBeLessThan(bar);
+    // Deferred is not dropped: every rule ends up as a row, reachable by keyboard and screen reader.
+    await expect(page.locator("tbody tr")).toHaveCount(seeded, {
+      timeout: 60_000 * SLOWDOWN,
+    });
 
     // 20 adds through the form, 20 deletes through the rows; the count follows each.
     for (let i = 0; i < 20; i += 1) {

@@ -122,13 +122,20 @@ test.describe("filters and sort", () => {
     await page.getByRole("button", { name: "Clear filters" }).click();
     await expect(page.locator("tbody tr")).toHaveCount(7);
 
-    await page.getByLabel("Workspace", { exact: true }).selectOption("global");
+    await page
+      .getByRole("search", { name: "Filter rules" })
+      .getByLabel("Workspace")
+      .selectOption("global");
     await expect(page.locator("tbody tr")).toHaveCount(3);
     await page
-      .getByLabel("Workspace", { exact: true })
+      .getByRole("search", { name: "Filter rules" })
+      .getByLabel("Workspace")
       .selectOption("docs-site");
     await expect(page.locator("tbody tr")).toHaveCount(1);
-    await page.getByLabel("Workspace", { exact: true }).selectOption("any");
+    await page
+      .getByRole("search", { name: "Filter rules" })
+      .getByLabel("Workspace")
+      .selectOption("any");
     await page.getByLabel("Effect", { exact: true }).selectOption("deny");
     await expect(page.locator("tbody tr")).toHaveCount(2);
 

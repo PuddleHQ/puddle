@@ -19,7 +19,7 @@ const REFERENCE_HOST: &str = "example.com";
 /// Evaluations that may run at once.
 const MAX_PENDING: usize = 4;
 /// Names whose answer is kept at most.
-const MAX_NAMES: usize = 1024;
+pub(super) const MAX_NAMES: usize = 1024;
 
 /// How long answers are kept and how long one evaluation may take.
 #[derive(Debug, Clone, Copy)]

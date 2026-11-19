@@ -245,13 +245,32 @@ describe("certificates step", () => {
     );
   });
 
+  it("says what the step is for and keeps the long text behind More details", async () => {
+    h.firstRun.state = { ...h.firstRun.state, dev_certificate: "needs_trust" };
+    render(Certificates);
+    expect(await screen.findByText(/Nothing else needs it/)).toBeVisible();
+    expect(screen.queryByText(/Nothing to decide here/)).toBeNull();
+    const more = screen.getByText("More details");
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    await fireEvent.click(more);
+    expect(more.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(/Manage user certificates/)).toBeVisible();
+    expect(screen.getByText(/If you skip, everything in Puddle/)).toBeVisible();
+  });
+
   it("offers Trust it now while the certificate needs trust, and a yes ends the offer", async () => {
     h.firstRun.state = { ...h.firstRun.state, dev_certificate: "needs_trust" };
     render(Certificates);
+    // The short text is on screen; Impact and Remediation open on a press.
     expect(
-      await screen.findByText(
-        /one Security Warning that names the certificate/,
-      ),
+      await screen.findByText(/doesn't trust Puddle's localhost certificate/),
+    ).toBeVisible();
+    const remediation = screen.getByText("Remediation");
+    expect(remediation.closest("details")).not.toHaveAttribute("open");
+    await fireEvent.click(remediation);
+    expect(remediation.closest("details")).toHaveAttribute("open");
+    expect(
+      screen.getByText(/Windows asks once, in a Security Warning/),
     ).toBeVisible();
     await fireEvent.click(screen.getByRole("button", { name: "Trust it now" }));
     expect(h.firstRun.calls).toContain("POST /api/dev-certificate/trust");

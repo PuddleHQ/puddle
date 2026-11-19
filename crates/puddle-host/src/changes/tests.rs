@@ -11,6 +11,8 @@ use super::*;
 struct Fake {
     calls: Arc<Mutex<Vec<String>>>,
     running: Arc<Mutex<Vec<String>>>,
+    /// A look at every workspace's Git settings that never finishes (one guest that never answers).
+    git_recovery_hangs: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Changes for Fake {
@@ -35,6 +37,12 @@ impl Changes for Fake {
 
     async fn all_git_changed(&self) {
         self.calls.lock().unwrap().push("all".to_owned());
+        if self
+            .git_recovery_hangs
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            std::future::pending::<()>().await;
+        }
     }
 
     fn all_request_rules_changed(&self) {
@@ -193,6 +201,27 @@ async fn missed_events_make_every_running_workspace_be_looked_at_again() {
     assert!(calls.contains(&"all env".to_owned()), "{calls:?}");
     let calls = calls_after(&fake, 3).await;
     assert!(calls.contains(&"all shell init".to_owned()), "{calls:?}");
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_guest_that_never_answers_after_missed_events_does_not_stall_later_events() {
+    let hub = EventHub::new(1);
+    let fake = Fake::default();
+    fake.git_recovery_hangs
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let task = follow(hub.subscribe(), fake.clone());
+    for name in ["a", "b", "c"] {
+        hub.emit(changed(name));
+    }
+    // The events are handled and the recovery has begun and never ends.
+    let _ = calls_after(&fake, 4).await;
+    hub.emit(Event::RequestRulesChanged {});
+    let calls = calls_after(&fake, 5).await;
+    assert!(
+        calls.contains(&"all request rules".to_owned()),
+        "a later event was handled: {calls:?}"
+    );
     task.abort();
 }
 

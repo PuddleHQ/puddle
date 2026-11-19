@@ -173,3 +173,22 @@ async fn progress_is_sent_each_time_the_count_in_place_changes_and_an_unreadable
         ]
     );
 }
+
+#[test]
+fn an_install_reason_and_the_logged_output_have_no_control_characters_and_are_cut() {
+    let failed = ExecOutput::new(1, "failed go@1\nend\n", "\u{1b}[2Jboom\u{2066}\n");
+    assert_eq!(read_install(Ok(failed)).1.as_deref(), Some("?[2Jboom?"));
+    let long = ExecOutput::new(1, "failed go@1\nend\n", "y".repeat(1_000_000));
+    let reason = read_install(Ok(long)).1.unwrap();
+    assert_eq!(reason.chars().count(), 500);
+    let said = exec_said(&Ok(ExecOutput::new(
+        1,
+        "o\u{1b}[0m",
+        "e\u{202e}x".repeat(1000),
+    )));
+    assert!(
+        !said.contains('\u{1b}') && !said.contains('\u{202e}'),
+        "{said}"
+    );
+    assert!(said.chars().count() < 1100, "{}", said.chars().count());
+}

@@ -283,6 +283,8 @@ struct Guest {
     /// What every `mise-tools` call answers on standard error with exit code 1, instead of its
     /// answer.
     mise_tools_failure: Mutex<Option<&'static str>>,
+    /// What `mise-tools registry` answers instead of its one tool, as `reg` records.
+    mise_registry: Mutex<Option<&'static str>>,
     /// `mise-tools list` prints lines that are not the agent's.
     mise_tools_garbled: AtomicBool,
     /// Every `puddle-agent mise-tools` as (arguments after the workspace folder, user).
@@ -573,7 +575,10 @@ impl Guest {
                 file.1 += 1;
                 ExecOutput::new(0, format!("hash\t{}\nend\n", hash(file.1)), "")
             }
-            ["registry"] => ExecOutput::new(0, "reg\tnode\tJavaScript runtime\nend\n", ""),
+            ["registry"] => match *self.mise_registry.lock().unwrap() {
+                Some(records) => ExecOutput::new(0, format!("{records}end\n"), ""),
+                None => ExecOutput::new(0, "reg\tnode\tJavaScript runtime\nend\n", ""),
+            },
             ["versions", _] => ExecOutput::new(0, "ver\t22.1.0\nver\t22.0.0\nend\n", ""),
             other => ExecOutput::new(2, "", format!("unexpected {other:?}")),
         }

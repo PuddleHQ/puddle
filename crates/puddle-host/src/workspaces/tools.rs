@@ -42,8 +42,9 @@ pub(super) struct ToolRuns {
     waiting: Mutex<BTreeMap<WorkspaceId, BTreeSet<i64>>>,
     /// The last listing of each workspace's tools in this run, for a stopped workspace to show.
     listed: Mutex<BTreeMap<WorkspaceId, edit::Listed>>,
-    /// The registry the pinned mise lists, once the first call has read it.
-    registry: Mutex<Option<Vec<puddle_api::wire::RegistryTool>>>,
+    /// The registry each workspace's own mise listed, once its first call has read it: a guest
+    /// controls its mise, so one workspace's answer is never shown for another.
+    registry: Mutex<BTreeMap<WorkspaceId, Vec<puddle_api::wire::RegistryTool>>>,
 }
 
 impl ToolRuns {
@@ -63,15 +64,14 @@ impl ToolRuns {
         listed.remove(name);
     }
 
-    fn registry(&self) -> Option<Vec<puddle_api::wire::RegistryTool>> {
-        self.registry
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    fn registry(&self, name: &WorkspaceId) -> Option<Vec<puddle_api::wire::RegistryTool>> {
+        let registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        registry.get(name).cloned()
     }
 
-    fn keep_registry(&self, tools: Vec<puddle_api::wire::RegistryTool>) {
-        *self.registry.lock().unwrap_or_else(PoisonError::into_inner) = Some(tools);
+    fn keep_registry(&self, name: &WorkspaceId, tools: Vec<puddle_api::wire::RegistryTool>) {
+        let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        registry.insert(name.clone(), tools);
     }
 
     /// The lock of `name`'s runs. Locks no run holds or waits for are dropped on the way, so a
@@ -221,19 +221,39 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 }
 
+/// The most characters of guest text that reach a problem, an API error or the host log.
+const GUEST_LINE_MAX: usize = 500;
+
+/// `text` as a guest wrote it, made safe to show and log: control characters (terminal escapes,
+/// a lone carriage return) and bidirectional controls replaced by `?`, cut at [`GUEST_LINE_MAX`]
+/// characters. A guest is untrusted and its standard error has no bound of its own.
+fn guest_text(text: &str) -> String {
+    text.chars()
+        .take(GUEST_LINE_MAX)
+        .map(|c| {
+            let bidi = matches!(c, '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+            if c.is_control() || bidi { '?' } else { c }
+        })
+        .collect()
+}
+
+/// The last line of `output`'s standard error that is not blank, through [`guest_text`].
+fn last_stderr_line(output: &ExecOutput) -> Option<String> {
+    output
+        .stderr_text()
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(guest_text)
+}
+
 /// What a failed fetch says: the last line the command wrote to standard error (the agent's
 /// own message), else its exit code, else why the command could not run.
 fn failure_reason(outcome: Result<ExecOutput, ComputeError>) -> String {
     match outcome {
-        Ok(output) => output
-            .stderr_text()
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .map_or_else(
-                || format!("the download ended with exit code {}", output.status.code),
-                |l| l.trim().to_owned(),
-            ),
+        Ok(output) => last_stderr_line(&output)
+            .unwrap_or_else(|| format!("the download ended with exit code {}", output.status.code)),
         Err(e) => e.to_string(),
     }
 }

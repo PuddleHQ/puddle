@@ -493,6 +493,30 @@ fn reset_keeps_the_unreadable_vault_aside_starts_a_new_one_and_leaves_the_rows()
     ));
 }
 
+/// A key file other users can read is fixed in place with `chmod 600`; `reset --yes` must not
+/// set a vault aside for it.
+#[cfg(target_os = "linux")]
+#[test]
+fn reset_refuses_a_key_file_that_only_needs_its_permissions_fixed() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let rig = Rig::new();
+    start_a_file_vault(&rig);
+    let vault_file = vault_path(&rig.data());
+    let old_vault = std::fs::read(&vault_file).unwrap();
+    let key = key_file(&rig);
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    for yes in [false, true] {
+        let err = vault_reset(&rig.paths(), &rig.setup(), yes).unwrap_err();
+        assert!(
+            err.to_string().contains("chmod 600"),
+            "the refusal names the fix: {err}"
+        );
+    }
+    assert_eq!(std::fs::read(&vault_file).unwrap(), old_vault);
+    assert!(key.exists(), "the key file stays where it is");
+}
+
 #[test]
 fn reset_refuses_an_os_store_an_undecided_folder_a_missing_vault_and_a_vault_that_opens() {
     let rig = Rig::new();

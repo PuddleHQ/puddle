@@ -396,3 +396,31 @@ async fn a_restore_whose_listing_ends_after_shutdown_began_makes_no_entry() {
     );
     host.shutdown().await;
 }
+
+/// A retired id belongs to nobody, and every start removes what is keyed by it. A restore that
+/// took the disk back would give a workspace each later start strips, so it is refused and the
+/// disk stays as it is.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_disk_whose_id_is_retired_is_not_restored_and_stays_unclaimed() {
+    let rig = Rig::new();
+    let paths = HostPaths::new(rig.dir.path().join("data"));
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    std::fs::create_dir_all(paths.workspace_book().parent().unwrap()).unwrap();
+    std::fs::write(
+        paths.workspace_book(),
+        r#"{"version": 3, "workspaces": [], "retired_ids": ["lost"]}"#,
+    )
+    .unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+
+    let refused = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(refused.status, 409, "{}", refused.body);
+    assert!(refused.body.contains("retired"), "{}", refused.body);
+    let listed = api.get("/api/workspaces").await.json();
+    assert_eq!(listed["workspaces"], json!([]), "{listed}");
+    assert_eq!(volume_names(&rig).await, ["ws-lost"]);
+    host.shutdown().await;
+}

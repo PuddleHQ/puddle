@@ -208,13 +208,30 @@ fn destination_inside_the_data_folder_is_refused() {
 fn relative_one_component_destination_is_judged_against_the_working_folder() {
     let root = tempfile::tempdir().unwrap();
     let paths = data_folder(root.path());
-    let inside = refuse_inside(
-        &paths.data().join("settings"),
+    let settings = paths.data().join("settings");
+    let inside = refuse_inside(|| Ok(settings), paths.data(), Path::new("out"));
+    assert!(matches!(inside, Err(BackupError::InsideData(_))));
+    refuse_inside(
+        || Ok(root.path().to_path_buf()),
         paths.data(),
         Path::new("out"),
-    );
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_absolute_destination_does_not_need_the_working_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = data_folder(root.path());
+    let gone = || Err(io::Error::from(io::ErrorKind::NotFound));
+    refuse_inside(gone, paths.data(), &root.path().join("out")).unwrap();
+    let inside = refuse_inside(gone, paths.data(), &paths.data().join("out"));
     assert!(matches!(inside, Err(BackupError::InsideData(_))));
-    refuse_inside(root.path(), paths.data(), Path::new("out")).unwrap();
+    let relative = refuse_inside(gone, paths.data(), Path::new("out"));
+    assert!(
+        matches!(relative, Err(BackupError::Io { .. })),
+        "{relative:?}"
+    );
 }
 
 #[test]

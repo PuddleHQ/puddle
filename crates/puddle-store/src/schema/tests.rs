@@ -1265,7 +1265,16 @@ fn a_stale_half_made_copy_that_cannot_be_deleted_is_logged() {
     let dir = tempfile::tempdir().unwrap();
     let stuck = dir.path().join("puddle.db.pre-v2.1-0.partial");
     std::fs::create_dir(&stuck).unwrap();
-    std::fs::File::open(&stuck)
+    // Windows opens a directory only with backup semantics, and setting its time needs write access.
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        open.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    open.open(&stuck)
         .unwrap()
         .set_modified(std::time::SystemTime::now() - std::time::Duration::from_hours(3))
         .unwrap();

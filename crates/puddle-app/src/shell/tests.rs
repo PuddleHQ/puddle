@@ -213,7 +213,7 @@ fn the_probe_window_opens_on_its_page_in_a_data_folder_of_its_own() {
         url: Url::parse("http://probe.localhost:4900/attack.html").unwrap(),
         debug_port: 9444,
         forget: false,
-        clipboard_read: puddle_settings::ClipboardRead::Ask,
+        clipboard_read: ClipboardRead::Ask,
     };
     open_probe(app.handle(), &probe, data.path()).unwrap();
     let window = app.get_webview_window("vs-probe").unwrap();
@@ -489,7 +489,6 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
 
 #[test]
 fn the_probe_opens_with_the_clipboard_setting_the_environment_names_and_refuses_a_typo() {
-    use puddle_settings::ClipboardRead;
     let page = Some("http://probe.localhost:4900/");
     let with = |value| SandboxProbe::parse(page, Some("9444"), None, None, value);
     assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Ask);

@@ -375,7 +375,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         phase_guard_on(&story, &mut window).await;
         phase_trusted_mode(&story, &mut window).await;
         phase_reload_ends_terminal(&story, &mut window).await;
-        let mut window = phase_local_server_keeps_terminal(&story, window).await;
+        let window = phase_local_server_keeps_terminal(&story, window).await;
         let who = phase_hostile_code(&story, window).await;
         phase_profile_without_sign_in(&story, &who).await;
         story
@@ -636,7 +636,12 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         window.close().await.expect("the default window closes");
         let mut window = s
             .launch_with(None, true, Some(true))
-            .start(&s.release, &s.node, &s.modules, &s.out.join("code-local-server.log"))
+            .start(
+                &s.release,
+                &s.node,
+                &s.modules,
+                &s.out.join("code-local-server.log"),
+            )
             .await
             .expect("VS Code starts with the local server on");
         window.attached(UP).await.expect("attached again");

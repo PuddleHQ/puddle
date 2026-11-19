@@ -3,6 +3,8 @@
 # Tests ci/apt-setup.sh against a scratch /etc/apt and a probe file instead of the network.
 set -euo pipefail
 
+# The apt-debs-cache action exports APT_DEBS_DIR for the rest of the CI job; each case below sets it itself.
+unset APT_DEBS_DIR
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 holder=

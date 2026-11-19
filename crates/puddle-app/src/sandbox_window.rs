@@ -218,11 +218,8 @@ fn classify(policy: &OriginPolicy, target: &Url, proxy_links: bool) -> NewWindow
 /// stays at the webview's default.
 #[must_use]
 pub fn permission_response(settings: &WindowSettings, kind: &PermissionKind) -> PermissionResponse {
-    match (kind, settings.clipboard_read) {
-        (PermissionKind::ClipboardRead, ClipboardRead::Allow) => PermissionResponse::Allow,
-        (PermissionKind::ClipboardRead, ClipboardRead::Deny) => PermissionResponse::Deny,
-        _ => PermissionResponse::Default,
-    }
+    let _ = (settings, kind);
+    PermissionResponse::Default
 }
 
 /// Where a workspace's editor opens and how its window is set up.

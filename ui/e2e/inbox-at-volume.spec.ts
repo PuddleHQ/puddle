@@ -498,7 +498,9 @@ test.describe("1000 rules", () => {
       await page.getByRole("button", { name: "Add rule" }).first().click();
       const dialog = page.getByRole("dialog", { name: "Add a rule" });
       await dialog.getByLabel("Host").fill(`added${i}.volume.example.org`);
-      await dialog.getByLabel("Workspace name").fill(spaces[0]!.id);
+      await dialog
+        .getByLabel("Workspace", { exact: true })
+        .selectOption({ label: spaces[0]!.name });
       await dialog.getByRole("button", { name: "Add rule" }).click();
       await expect(dialog).toHaveCount(0);
       await expect(page.locator("p.count")).toHaveText(

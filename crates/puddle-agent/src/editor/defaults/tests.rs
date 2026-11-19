@@ -336,18 +336,15 @@ fn a_dropped_key_binding_stays_in_a_file_with_comments() {
 
 #[cfg(unix)]
 fn fake_installer(rig: &Rig, exit: i32) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt as _;
     let program = rig.dir.path().join("code-server");
     let log = rig.dir.path().join("installed.log");
-    std::fs::write(
+    puddle_test_kit::write_executable(
         &program,
-        format!(
+        &format!(
             "#!/bin/sh\necho \"$2\" >> '{}'\nexit {exit}\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     program
 }
 
@@ -420,6 +417,7 @@ fn what_the_merge_made_is_handed_to_the_session_user() {
         .build()
         .unwrap();
     let _guard = runtime.enter();
-    merge_at_start(&rig.server, Path::new("/nonexistent"), Some(&account)).unwrap();
+    let program = rig.dir.path().join("no-such-server");
+    merge_at_start(&rig.server, &program, Some(&account)).unwrap();
     assert_eq!(rig.settings()["workbench.colorTheme"], "Solarized Dark");
 }

@@ -453,7 +453,7 @@ test.describe("what can't be approved, and a burst of new hosts", () => {
     );
     await expect(
       row.getByRole("link", { name: "Private networks" }),
-    ).toHaveAttribute("href", "/settings#local-destinations");
+    ).toHaveAttribute("href", "/settings/network#local-destinations");
     await expect(row.getByRole("button", { name: /^Allow/ })).toHaveCount(0);
     await expect(row.getByRole("button", { name: /^Deny/ })).toBeVisible();
   });

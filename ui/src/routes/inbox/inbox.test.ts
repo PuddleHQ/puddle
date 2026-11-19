@@ -277,7 +277,7 @@ describe("the inbox page", () => {
       within(list).getByRole("link", {
         name: "Turn the single keys off in Settings",
       }),
-    ).toHaveAttribute("href", "/settings#s-inbox");
+    ).toHaveAttribute("href", "/settings/notifications#set-confirm-global");
   });
 
   it("never holds a workspace's requests back: a long list has no held-back line (R-44)", async () => {
@@ -845,7 +845,7 @@ describe("the keys while the setting is off", () => {
     ).toEqual(INBOX_SHORTCUTS.filter((s) => !s.singleKey).map((s) => s.id));
     expect(
       within(list).getByRole("link", { name: "Turn them on in Settings" }),
-    ).toHaveAttribute("href", "/settings#s-inbox");
+    ).toHaveAttribute("href", "/settings/notifications#set-confirm-global");
   });
 
   it("keep Enter opening the options of the current row", async () => {

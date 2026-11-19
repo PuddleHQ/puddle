@@ -34,6 +34,11 @@
     }
   });
 
+  /** The box differs from what is stored: only then is there something to save. */
+  const changed = $derived(
+    store.size !== null && days !== String(store.size.retention_days),
+  );
+
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     saved = false;
@@ -108,9 +113,14 @@
           saved = false;
         }}
       />
-      <button type="submit" class="btn primary" disabled={working}
-        >Keep for this long</button
-      >
+      {#if changed}
+        <button
+          type="submit"
+          class="btn primary"
+          aria-label="Save how long the activity log is kept"
+          disabled={working}>Save</button
+        >
+      {/if}
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}
         {#if failure}<span class="error" role="alert">{failure}</span>{/if}

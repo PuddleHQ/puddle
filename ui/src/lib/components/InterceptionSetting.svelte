@@ -109,7 +109,7 @@
     {#if store.globalNames.length > 0}
       <p class="desc">
         Never decrypted in any workspace (set in
-        <a href="/settings#s-net">global settings</a>):
+        <a href="/settings/network#set-interception-mode">global settings</a>):
         {store.globalNames.join(", ")}
       </p>
     {/if}

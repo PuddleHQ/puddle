@@ -426,9 +426,13 @@ async function firstRunToCreateForm() {
       // 6. Its report, copied to the Windows clipboard.
       await copyTheReport();
     }
-    if (step.preselected) {
-      const radio = await uia.waitFor(`the preselected choice on "${step.heading}"`, { window: MAIN, ...step.preselected });
-      check(`the ${step.id} step opens with "${step.preselected.nameRegex}" chosen`, radio.checked === true, JSON.stringify(radio));
+    if (step.id === "interception") {
+      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
+      check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
+    }
+    if (step.id === "connect") {
+      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
+      check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
     }
     if (step.continue) await uia.click(`${step.continue.name} (from ${step.heading})`, control(step.continue));
   }

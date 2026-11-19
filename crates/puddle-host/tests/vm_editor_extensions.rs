@@ -17,7 +17,7 @@ mod vm_support;
 
 use std::time::Duration;
 
-use puddle_compute::{ExecRequest, Runtime as _};
+use puddle_compute::{ExecRequest, Runtime as _, Sandbox as _};
 use puddle_e2e::lab::{Squid, SquidOptions};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};

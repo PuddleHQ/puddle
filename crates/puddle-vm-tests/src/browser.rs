@@ -549,6 +549,33 @@ impl BrowserSession {
         .map(drop)
     }
 
+    /// Types `text` into the element that has focus in `page`.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Browser`] when the page is not open.
+    pub async fn type_text(&mut self, page: PageId, text: &str) -> Result<(), HarnessError> {
+        self.call(
+            &json!({"op": "type", "page": page.0, "text": text}),
+            START_BUDGET,
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Kills `page`'s renderer, as a killed browser would: its connections drop with no close
+    /// frame and nothing in the page runs a handler, so the server sees a client that vanished.
+    /// The page is gone afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Browser`] when the page is not open.
+    pub async fn crash(&mut self, page: PageId) -> Result<(), HarnessError> {
+        self.call(&json!({"op": "crash", "page": page.0}), START_BUDGET)
+            .await
+            .map(drop)
+    }
+
     /// Closes `page` as a closed window does: its connections end.
     ///
     /// # Errors

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git identities: who commits (the author) and which credential Puddle adds on the way out,
-//! per host and per owner or organisation (`docs/arch/spec/credentials.md` §7 and §8).
+//! per host and per owner or organisation.
 //!
 //! An [`Identity`] never holds a secret: a [`CredentialBinding`] names a [`SourceSpec`], the place
 //! the host reads the value from. What a binding [`Coverage`] covers decides which credential a

@@ -101,6 +101,46 @@ test("adds the Azure CLI to an identity by tenant and organisation, and checks i
   ).toContainText("Azure CLI · fabrikam.com");
 });
 
+test("with the Azure CLI missing, the dialog's check says to install it and the wrong tenant gets its own step, with no Sign in anywhere", async ({
+  page,
+  backend,
+}) => {
+  await backend.control.reset("azure-cli-missing");
+  await backend.signIn(page);
+  await page.goto("/identities");
+  await page.getByRole("button", { name: "Add identity" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add identity" });
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel("Use the Azure CLI (Azure DevOps)").check();
+  await dialog.getByLabel("Microsoft Entra tenant").fill("fabrikam.com");
+  await dialog.getByLabel(/Azure DevOps organisation/).fill("fabrikam");
+  await dialog.getByRole("button", { name: "Check the Azure CLI" }).click();
+  const check = dialog.getByTestId("az-check");
+  await expect(check).toContainText("Install the Azure CLI");
+  await expect(check).not.toContainText("az login");
+  await expect(dialog.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
+
+  await dialog
+    .getByLabel("Microsoft Entra tenant")
+    .fill("00000000-0000-0000-0000-000000000000");
+  await dialog.getByRole("button", { name: "Check the Azure CLI" }).click();
+  await expect(check).toContainText(
+    "is not in tenant 00000000-0000-0000-0000-000000000000",
+  );
+  await expect(check).not.toContainText("Install the Azure CLI");
+  await expect(dialog.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
+
+  // The identity page tells the same story for a credential whose `az` is gone.
+  await dialog.getByRole("button", { name: "Cancel" }).first().click();
+  await page.goto("/identities/1");
+  const azure = page.locator(`[data-credential="${LINE}"]`);
+  await azure.getByRole("button", { name: /^Test / }).click();
+  await expect(azure.getByTestId("fix-step")).toContainText(
+    "Install the Azure CLI",
+  );
+  await expect(azure.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
+});
+
 const stops = axeStops([["identity with the step", "editor with the step"]]);
 for (const scheme of ["light", "dark"] as const) {
   test(`axe finds nothing in ${scheme}: the Azure CLI step`, async ({

@@ -62,12 +62,12 @@ pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
     GitSeed, KeptLoginSeed, ProblemSeed, ProfileSeed, ReadBy, RepoItemSeed, RepoListSeed,
     RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed,
-    RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed,
-    WorkspaceSeed,
+    RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnreadableSeed, UnreadableWhy, UnsavedSeed,
+    WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 17] = [
+const BUILT_IN: [(&str, &str); 19] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -109,6 +109,10 @@ const BUILT_IN: [(&str, &str); 17] = [
         include_str!("../../../../ui/e2e/fixtures/azure-cli.json"),
     ),
     (
+        "azure-cli-missing",
+        include_str!("../../../../ui/e2e/fixtures/azure-cli-missing.json"),
+    ),
+    (
         "repo-lists",
         include_str!("../../../../ui/e2e/fixtures/repo-lists.json"),
     ),
@@ -135,6 +139,10 @@ const BUILT_IN: [(&str, &str); 17] = [
     (
         "request-rules",
         include_str!("../../../../ui/e2e/fixtures/request-rules.json"),
+    ),
+    (
+        "ids-differ",
+        include_str!("../../../../ui/e2e/fixtures/ids-differ.json"),
     ),
 ];
 
@@ -993,8 +1001,8 @@ impl State {
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
         let name = puddle_api::DisplayName::parse(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
-        let id = WorkspaceId::new(&seed.name)
-            .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
+        let id = WorkspaceId::new(seed.id())
+            .map_err(|err| format!("workspace id {:?}: {err}", seed.id()))?;
         let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
         let drafts: Vec<RepositoryDraft> = seed
             .repositories
@@ -1009,7 +1017,7 @@ impl State {
             .map_err(|err| at(&err))?
             .into_iter()
             .map(|r| Repository {
-                entry: entry_id_from_text(&format!("{}:{}", seed.name, r.repository.directory)),
+                entry: entry_id_from_text(&format!("{}:{}", seed.id(), r.repository.directory)),
                 ..r.repository
             })
             .collect();
@@ -1131,7 +1139,7 @@ impl State {
 
     /// A seeded workspace's own variables, shell init and listening ports.
     fn workspace_environment(&self, seed: &WorkspaceSeed) -> Result<(), String> {
-        let name = workspace(&seed.name)?;
+        let name = workspace(seed.id())?;
         let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
         for entry in &seed.env {
             self.env_seed(&puddle_store::EnvScope::Workspace(name.clone()), entry)?;
@@ -1154,7 +1162,7 @@ impl State {
         seed: &WorkspaceSeed,
         identities: &[(String, IdentityId)],
     ) -> Result<(), String> {
-        let name = workspace(&seed.name)?;
+        let name = workspace(seed.id())?;
         let git = &seed.git;
         let ids = git
             .identities
@@ -1202,6 +1210,15 @@ impl State {
             self.credentials.set_unreadable(
                 source.clone().into_spec().map_err(|e| e.to_string())?,
                 Some(SourceError::NotSignedIn),
+            );
+        }
+        for item in &seed.unreadable {
+            self.credentials.set_unreadable(
+                item.source.clone().into_spec().map_err(|e| e.to_string())?,
+                Some(match item.why {
+                    UnreadableWhy::AzMissing => SourceError::ToolMissing(Tool::Az),
+                    UnreadableWhy::WrongTenant => SourceError::WrongTenant,
+                }),
             );
         }
         self.credentials.set_sign_in(match &seed.sign_in {

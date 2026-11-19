@@ -278,6 +278,48 @@ async fn a_commit_only_a_tag_holds_is_listed_and_a_git_ignored_file_is_not() {
 }
 
 #[tokio::test]
+async fn a_full_clone_with_a_fetched_off_branch_tag_lists_only_its_own_commit() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let upstream = tmp.path().join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "-q", "-b", "main"]);
+        for file in ["one", "two", "three"] {
+            std::fs::write(upstream.join(file), "x\n").unwrap();
+            git(&upstream, &["add", "."]);
+            git(&upstream, &["commit", "-qm", &format!("upstream {file}")]);
+        }
+        // A release commit on a branch that was deleted after tagging: only the tag reaches it.
+        git(&upstream, &["checkout", "-q", "-b", "release", "main~1"]);
+        std::fs::write(upstream.join("notes"), "r\n").unwrap();
+        git(&upstream, &["add", "."]);
+        git(&upstream, &["commit", "-qm", "Updates for 0.4.0"]);
+        git(&upstream, &["tag", "v0.4.0"]);
+        git(&upstream, &["checkout", "-q", "main"]);
+        git(&upstream, &["branch", "-q", "-D", "release"]);
+        let vol = tmp.path().join("vol");
+        std::fs::create_dir_all(&vol).unwrap();
+        let url = format!("file://{}", upstream.display());
+        git(&vol, &["clone", "-q", &url, "solo"]);
+        let repo = vol.join("solo");
+        git(&repo, &["fetch", "-q", "--tags"]);
+        std::fs::write(repo.join("mine"), "m\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "local only"]);
+        let report = check(shell, &vol).await;
+        let solo = &report.findings.repos[0];
+        let subjects: Vec<&str> = solo
+            .unpushed
+            .items
+            .iter()
+            .map(|c| c.split_once(' ').unwrap().1)
+            .collect();
+        assert_eq!(subjects, ["local only"], "{shell}: {:?}", solo.unpushed);
+        assert_eq!(solo.unpushed.total(), 1, "{shell}");
+    }
+}
+
+#[tokio::test]
 async fn a_shallow_clone_with_fetched_tags_lists_only_its_own_commit() {
     for shell in shells() {
         let tmp = tempfile::tempdir().unwrap();

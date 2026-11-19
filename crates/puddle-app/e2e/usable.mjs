@@ -410,42 +410,44 @@ async function step(what, action) {
   }
 }
 
-/** The first-run flow, step by step, ending with the create form on the last step. */
+/** What the first-run pages show and press, the same list the page tests and ui/e2e/first-run.spec.ts read. */
+const WALK = JSON.parse(readFileSync(join(here, "..", "..", "..", "ui", "src", "lib", "welcome", "walk.json"), "utf8")).steps;
+const control = (c) => inMain(c.role, c.name);
+/** Controls on other pages the walk presses, and the closed details each sits behind. */
+const TERMINAL_OPTIONS = JSON.parse(readFileSync(join(here, "..", "..", "..", "ui", "src", "lib", "welcome", "walk.json"), "utf8")).behindDetails.terminal;
+
+/** The first-run flow, step by step, ending on the Workspaces page that Open Puddle leads to. */
 async function firstRunToCreateForm() {
-  await uia.waitFor("the welcome heading", heading("Welcome to Puddle"), 120_000);
-  await uia.click("Get started", inMain("link", "Get started"));
-  const pages = ["System check", "Certificates", "How do you want to connect?", "Which hosts should Puddle decrypt?", "Look", "Your first workspace"];
-  await uia.waitFor(`the "${pages[0]}" heading`, heading(pages[0]));
-  // The check waits for the person to press Start (Continue stays disabled until the run is done).
-  await uia.click("Start system check", inMain("button", "Start system check"));
-  // 6. Its report, copied to the Windows clipboard.
-  await copyTheReport();
-  for (const page of pages.slice(1)) {
-    if (page === "Look") {
-      // The interception step saves its choice with a button, not a link: the person keeps the recommended mode.
-      await uia.click(`Continue (to ${page})`, inMain("button", "Continue"));
-    } else {
-      await uia.click(`Continue (to ${page})`, inMain("link", "Continue"));
+  for (const [i, step] of WALK.entries()) {
+    await uia.waitFor(`the "${step.heading}" heading`, heading(step.heading), i === 0 ? 120_000 : undefined);
+    if (step.start) {
+      // The check waits for the person to press Start (Continue stays disabled until the run is done).
+      await uia.click(step.start.name, control(step.start));
+      // 6. Its report, copied to the Windows clipboard.
+      await copyTheReport();
     }
-    await uia.waitFor(`the "${page}" heading`, heading(page));
-    if (page === "Which hosts should Puddle decrypt?") {
+    if (step.id === "interception") {
       const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
       check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
     }
-    if (page === "How do you want to connect?") {
+    if (step.id === "connect") {
       const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
       check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
     }
+    if (step.continue) await uia.click(`${step.continue.name} (from ${step.heading})`, control(step.continue));
   }
 }
 
 /** Fills the New workspace form as a person does and presses Create. */
 async function createFromTheForm() {
-  await uia.click("Create a workspace", inMain("button", "Create a workspace"));
+  // The empty list offers a one-line form; More options opens the full New workspace dialog.
+  await uia.click("More options", inMain("button", "More options"));
   await uia.waitFor("the New workspace dialog", { window: MAIN, localized: "dialog", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
-  await uia.click("Create workspace", inMain("button", "Create workspace"));
+  // Enter in the Name field submits the dialog's form: two buttons are called "Create workspace" (the Workspaces
+  // page's own one-line form sits behind the dialog), and a click by name may reach that one.
+  await uia.type("the Name field", { window: MAIN, role: "edit", name: "Name" }, "", { enter: true });
 }
 
 /**
@@ -516,7 +518,8 @@ async function copyTheReport() {
   try {
     desktop("clipboard-set", placeholder);
     mainWindow("front");
-    await uia.click("Copy report", inMain("button", "Copy report"), 120_000);
+    const copy = WALK.find((step) => step.afterStart).afterStart;
+    await uia.click(copy.name, control(copy), 120_000);
     const said = await uia
       .waitFor("what the page says about the copy", { window: MAIN, nameRegex: "^(Report copied\\.|The browser didn't let Puddle copy)" }, 20_000)
       .catch(() => undefined);
@@ -562,18 +565,22 @@ async function terminalTab(startFolder) {
     return;
   }
   await step("a new terminal opens, its lines listed for a screen reader", async () => {
-    const modeSwitch = { window: MAIN, role: "checkbox", name: "Screen reader mode" };
+    // The switch sits in a closed details, which is not in the UI Automation tree: open its summary first.
+    const modeSwitch = { window: MAIN, ...TERMINAL_OPTIONS.control };
+    if ((await uia.find(modeSwitch)).length === 0) await uia.click(TERMINAL_OPTIONS.summary.name, { window: MAIN, ...TERMINAL_OPTIONS.summary });
     const mode = await uia.waitFor("the Screen reader mode switch", modeSwitch);
     if (mode.checked !== true) await uia.click("Screen reader mode", modeSwitch);
     await until("Screen reader mode to be on", async () => (await uia.find(modeSwitch))[0]?.checked === true, 10_000, 500);
-    await uia.click("New terminal", inMain("button", "New terminal"));
+    // The page opens a first terminal itself when there is none; New terminal only when it did not.
+    const opened = await uia.waitFor("the first terminal tab", { window: MAIN, role: "tab", nameRegex: "^Terminal \\d+$" }, 15_000).catch(() => undefined);
+    if (!opened) await uia.click("New terminal", inMain("button", "New terminal"));
     await uia.waitFor("the shell's prompt", { window: MAIN, role: "listitem", nameRegex: "[$#]\\s*$" }, 120_000);
   });
   const command = "whoami; pwd; sudo -n true && echo sudo-ok";
   await step("the command is typed into the terminal", () => {
     // The keys go to the window in front: make sure that is this one.
     if (!mainWindow("front").foreground) throw new Error("the main window did not come to the front");
-    return uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+    return uia.type("the terminal's input", { window: MAIN, role: "edit", nameRegex: `^Terminal \\d+, ${literally(WORKSPACE)}$` }, command, { enter: true });
   });
   const shows = (text) =>
     uia.waitFor(`the terminal line "${text}"`, { window: MAIN, role: "listitem", nameRegex: `^\\s*${literally(text)}\\s*$` }, 60_000).then(
@@ -800,7 +807,7 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create allowed the forge itself before the first clone, so nobody approves it and nobody
   // clones again: the checkout is there and the rule says who made it.
-  const checkout = `/workspace/app/package.json`;
+  const checkout = `/workspaces/${id}/app/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
   const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
   check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
@@ -814,7 +821,7 @@ try {
     await uia.click("the Workspaces link", { window: MAIN, role: "link", nameRegex: "^Workspaces" });
     await uia.click(`Connect to ${WORKSPACE}`, inMain("button", `Connect to ${WORKSPACE}`));
     await uia.waitFor("the Connect step", { window: MAIN, localized: "dialog", name: `Connect to ${WORKSPACE}` });
-    await uia.click("Open in the browser", inMain("button", "Open in the browser"));
+    await uia.click("Open isolated VS Code", inMain("button", "Open isolated VS Code"));
   });
   const title = await until(
     "the editor window, titled with the workspace",
@@ -852,8 +859,8 @@ try {
     { root: true, within: 900_000, ok: (r) => /apt=0/.test(r.text) },
   );
   check("nodejs and npm install from the distribution's archive after the approvals", /apt=0/.test(aptDone.text), `after ${aptDone.attempts} tries: ${aptDone.text.slice(-300)}`);
-  const rootDir = (await guest(id, "find /workspace -maxdepth 2 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
-  check("the checkout is in the workspace", rootDir.startsWith("/workspace/"), rootDir);
+  const rootDir = (await guest(id, "find /workspaces -maxdepth 3 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
+  check("the checkout is in the workspace", rootDir.startsWith("/workspaces/"), rootDir);
   const build = await guest(id, `cd ${rootDir} && node --version && npm --version && npm install --no-audit --no-fund 2>&1 | tail -2 && npm run build 2>&1 && npm test 2>&1 | tail -8 && node dist/app.js`);
   check("npm run build and npm test pass in the workspace", build.code === 0 && /build ok/.test(build.text) && /hello from usable/.test(build.text), build.text.slice(-500));
 
@@ -905,7 +912,7 @@ try {
   if (!company) {
     const listed = (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id);
     const phase = (what, run) => run().catch((err) => check(`${what} ran to the end`, false, String(err?.message ?? err)));
-    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? "/workspace"));
+    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? `/workspaces/${id}`));
     await phase("the close button", () => closeToTray(id));
     await phase("the request notifications", () => requestNotifications(id));
     await phase("the Activity export", exportActivity);

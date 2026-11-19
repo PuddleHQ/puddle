@@ -22,7 +22,7 @@ use crate::authz::Principal;
 use crate::error::{ApiError, ErrorCode, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::identities::workspace;
+use crate::routes::workspaces::named;
 use crate::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
 
 fn unavailable() -> ApiError {
@@ -243,7 +243,7 @@ pub(crate) async fn list_workspace_env(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceEnv>, ApiError> {
-    let name = workspace(&state, &id).await?;
+    let name = named(&state, &id).await?;
     let shown = name.clone();
     let variables = blocking(move || {
         Ok(state
@@ -285,7 +285,7 @@ pub(crate) async fn put_workspace_env(
     Path((id, name)): Path<(String, String)>,
     crate::extract::SecretJson(body): crate::extract::SecretJson<EnvSetRequest>,
 ) -> Result<Json<EnvVariable>, ApiError> {
-    let workspace = workspace(&state, &id).await?;
+    let workspace = named(&state, &id).await?;
     Ok(Json(
         set(
             &state,
@@ -319,7 +319,7 @@ pub(crate) async fn delete_workspace_env(
     principal: Principal,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let workspace = workspace(&state, &id).await?;
+    let workspace = named(&state, &id).await?;
     remove(
         &state,
         principal.user,

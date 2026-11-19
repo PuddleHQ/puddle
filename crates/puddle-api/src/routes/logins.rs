@@ -9,12 +9,12 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::error::ApiError;
 use crate::extract::Path;
 use crate::routes::AppState;
+use crate::routes::workspaces::workspace_id;
 use crate::wire::{KeptLoginList, KeptLoginView};
 
 /// The services Puddle keeps a login for in a workspace, with when each was first noted. No token
@@ -36,8 +36,7 @@ pub(crate) async fn list_logins(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<KeptLoginList>, ApiError> {
-    let id =
-        WorkspaceId::new(&id).map_err(|_| ApiError::not_found(format!("no workspace {id:?}")))?;
+    let id = workspace_id(&id)?;
     let kept = state.workspaces.kept_logins(&id).await?;
     Ok(Json(KeptLoginList {
         logins: kept
@@ -75,8 +74,7 @@ pub(crate) async fn forget_login(
     State(state): State<AppState>,
     Path((id, service)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let id =
-        WorkspaceId::new(&id).map_err(|_| ApiError::not_found(format!("no workspace {id:?}")))?;
+    let id = workspace_id(&id)?;
     state.workspaces.forget_login(&id, &service).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -488,6 +488,36 @@ async fn an_srv_answer_with_unreadable_rules_for_its_targets_is_unavailable() {
 }
 
 #[tokio::test]
+async fn a_rule_lookup_runs_where_it_is_asked_for_on_the_runtime_thread() {
+    /// Remembers the thread the lookup ran on.
+    struct Thread(std::sync::Mutex<Option<std::thread::ThreadId>>);
+    impl Policy for Thread {
+        fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
+            Err(PolicyError {
+                reason: "unused".into(),
+            })
+        }
+        fn lookup(
+            &self,
+            _: &EgressRequest,
+            _: SuffixAllows,
+        ) -> Result<Option<Decision>, PolicyError> {
+            *self.0.lock().unwrap() = Some(std::thread::current().id());
+            Ok(None)
+        }
+    }
+    let policy = Arc::new(Thread(std::sync::Mutex::new(None)));
+    let proxy = Proxy::new(policy.clone(), Arc::new(NullSink));
+    let request = EgressRequest::new(WorkspaceId::new("w").unwrap(), host("a.example"), 0);
+    let _ = proxy.look_up_rule(&request, SuffixAllows::Count);
+    assert_eq!(
+        *policy.0.lock().unwrap(),
+        Some(std::thread::current().id()),
+        "a lookup reads memory only, so it needs no blocking thread"
+    );
+}
+
+#[tokio::test]
 async fn an_srv_target_whose_request_cannot_be_recorded_makes_the_answer_unavailable() {
     /// Reads rules (the owner is allowed, the target unmatched) but cannot record a request.
     struct ReadOnly;

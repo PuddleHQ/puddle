@@ -30,7 +30,7 @@ const ROUTES = [
   "/welcome/connect",
   "/welcome/interception",
   "/welcome/look",
-  "/welcome/workspace",
+  "/welcome/done",
 ] as const;
 
 async function open(
@@ -471,20 +471,12 @@ test.describe("with the keyboard alone", () => {
     await expect
       .poll(() => page.locator("html").getAttribute("data-theme"))
       .not.toBe(before);
-    await next("Continue", "Your first workspace");
+    await next("Continue", "You're all set");
 
-    // First workspace: the dialog is filled in and sent without the mouse.
-    await tabTo(page, page.getByRole("button", { name: "Create a workspace" }));
-    await page.keyboard.press("Enter");
-    const form = page.getByRole("dialog", { name: "New workspace" });
-    await expect(form).toBeVisible();
-    await tabTo(page, form.getByLabel(/Git repository/));
-    await page.keyboard.type("https://github.com/example/shop-api.git");
-    await expect(form.getByLabel("Name")).toHaveValue("shop-api");
-    await tabTo(page, form.getByRole("button", { name: "Create workspace" }));
+    // Done: the button is reached and pressed without the mouse.
+    await tabTo(page, page.getByRole("button", { name: "Open Puddle" }));
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/workspaces$/);
-    await expect(page.getByText("shop-api").first()).toBeVisible();
   });
 
   test("from the workspace list to the inbox, and a request is decided on its button", async ({

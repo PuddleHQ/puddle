@@ -94,6 +94,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     .with_cpus(self.cpus(name).get()),
             )
             .with_file_mount(inner.kit.shell_init().mount(id));
+        // The agent says hello during this boot: its reports count again from here.
+        inner.ports.booting(name);
         let gate = Gate::new();
         match inner
             .kit

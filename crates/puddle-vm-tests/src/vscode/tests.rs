@@ -575,3 +575,24 @@ async fn a_launch_starts_the_release_with_its_arguments_and_env_and_connects_the
     assert!(ran.ends_with("vscode-remote://x/y\nfrom-launch\n"), "{ran}");
     window.close().await.expect("closed");
 }
+
+#[test]
+fn a_later_window_in_the_same_folder_gets_the_settings_written_for_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let default = VsCodeLaunch {
+        user_data: dir.path().to_owned(),
+        ..launch()
+    };
+    default.write_settings().unwrap();
+    let file = dir.path().join("User").join("settings.json");
+    let read = || serde_json::from_slice::<Value>(&std::fs::read(&file).unwrap()).unwrap();
+    assert!(read().get("remote.SSH.useLocalServer").is_none());
+    // The window reads the file at its start, so the phase with the local server on rewrites it.
+    VsCodeLaunch {
+        use_local_server: Some(true),
+        ..default
+    }
+    .write_settings()
+    .unwrap();
+    assert_eq!(read()["remote.SSH.useLocalServer"], true);
+}

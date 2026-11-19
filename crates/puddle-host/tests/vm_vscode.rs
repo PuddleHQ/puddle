@@ -10,6 +10,8 @@
 //!   guest as documented while no real credential is in play;
 //! - Developer: Reload Window with a terminal running replaces the guest's server and ends the terminal
 //!   (`remote.SSH.useLocalServer` off, the default);
+//! - the same reload with `remote.SSH.useLocalServer` on leaves the terminal's process alive, so the
+//!   notes on Reload Window name the setting and not a fixed behaviour;
 //! - code the guest put in its editor server opens a local terminal on this computer and runs a command;
 //! - with no `github` provider on this side the guest gets no token, and that code still runs.
 //!
@@ -310,13 +312,22 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
 
     impl Story {
         fn launch(&self, profile: Option<&str>, canary: bool) -> VsCodeLaunch {
+            self.launch_with(profile, canary, None)
+        }
+
+        fn launch_with(
+            &self,
+            profile: Option<&str>,
+            canary: bool,
+            use_local_server: Option<bool>,
+        ) -> VsCodeLaunch {
             VsCodeLaunch {
                 user_data: self.scratch.path().join("vsc-user"),
                 extensions: self.scratch.path().join("vsc-ext"),
                 ssh_config: self.root.join("ssh").join("config"),
                 ssh: ssh_exe(),
                 alias: self.alias.clone(),
-                use_local_server: None,
+                use_local_server,
                 port: PORT,
                 open: self.args.clone(),
                 dev_extension: canary.then(|| {
@@ -364,6 +375,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         phase_guard_on(&story, &mut window).await;
         phase_trusted_mode(&story, &mut window).await;
         phase_reload_ends_terminal(&story, &mut window).await;
+        let window = phase_local_server_keeps_terminal(&story, window).await;
         let who = phase_hostile_code(&story, window).await;
         phase_profile_without_sign_in(&story, &who).await;
         story
@@ -612,6 +624,64 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             !s.alive(pid).await,
             "the terminal's process {pid} survived the reload (servers before [{before}], after [{after}]): with the default settings a reload used to replace the server and end it; the notes on Reload Window need the new fact"
         );
+    }
+
+    /// U8, the other setting: with `remote.SSH.useLocalServer` on, the reload reconnects to the server
+    /// that is still running, so a terminal's process outlives it. The default phase above shows the
+    /// opposite, so a mapping that dropped or flipped the setting fails one of the two. Closes the
+    /// default window and returns one started with the setting on.
+    async fn phase_local_server_keeps_terminal(s: &Story, window: VsCodeWindow) -> VsCodeWindow {
+        window.close().await.expect("the default window closes");
+        // The window reads its settings file at its start, and `prepare` wrote the default ones: write
+        // the ones with the local server on before it starts.
+        let local = s.launch_with(None, true, Some(true));
+        local.write_settings().expect("the settings are written");
+        let mut window = local
+            .start(
+                &s.release,
+                &s.node,
+                &s.modules,
+                &s.out.join("code-local-server.log"),
+            )
+            .await
+            .expect("VS Code starts with the local server on");
+        window.attached(UP).await.expect("attached again");
+        let opened = window
+            .terminal("echo $$ > /tmp/u8b.pid; exec sleep 100000")
+            .await;
+        if opened.is_err() {
+            window.screenshot(&s.out.join("u8b.png")).await.unwrap();
+        }
+        assert!(
+            opened.is_ok(),
+            "no terminal opened: {opened:?}; the window shows {}",
+            window_shows(&mut window).await
+        );
+        let pid = eventually_async(
+            "the terminal ran its command in the guest",
+            SHOWS,
+            || async {
+                s.shell("cat /tmp/u8b.pid 2>/dev/null || true")
+                    .await
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+            },
+        )
+        .await;
+        assert!(
+            s.alive(pid).await,
+            "the terminal's process {pid} is not running before the reload"
+        );
+        window
+            .reload(UP, &s.out.join("u8b-reload.png"))
+            .await
+            .expect("the window comes back");
+        assert!(
+            s.alive(pid).await,
+            "the terminal's process {pid} ended in a reload with remote.SSH.useLocalServer on: the setting no longer reaches the window, or Remote-SSH's local server stopped keeping the guest's server"
+        );
+        window
     }
 
     /// U7c: guest code makes the window run a command on this computer (the documented trust).

@@ -111,7 +111,7 @@ fn toggles_resolve_per_category_under_their_keys() {
                 source: Source::Workspace
             }
         );
-        let v = serde_json::to_value(e).unwrap();
+        let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["local_toggles"][category.key()]["source"], "workspace");
         for other in LocalCategory::ALL.into_iter().filter(|o| *o != category) {
             assert_eq!(e.local_toggles.get(other).source, Source::Default);

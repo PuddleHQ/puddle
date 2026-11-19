@@ -152,7 +152,14 @@ async fn explorer(
         .budget(WORKBENCH_BUDGET);
     let outcome = shell.browser.lock().await.wait(page, &request).await;
     match outcome {
-        Ok(outcome) => outcome.result,
+        Ok(outcome) => {
+            shell
+                .page_errors
+                .lock()
+                .unwrap()
+                .extend(outcome.page_errors);
+            outcome.result
+        }
         Err(e) => {
             let state = PageRequest::new("", "true")
                 .result(WINDOW_STATE)
@@ -204,6 +211,8 @@ struct ShellStandIn {
     closed: Mutex<Vec<String>>,
     /// The origins it opened, in order.
     opened: Mutex<Vec<String>>,
+    /// The uncaught errors every page reported, in order.
+    page_errors: Mutex<Vec<String>>,
 }
 
 impl ShellStandIn {
@@ -221,6 +230,7 @@ impl ShellStandIn {
             sign_ins: Mutex::default(),
             closed: Mutex::default(),
             opened: Mutex::default(),
+            page_errors: Mutex::default(),
         })
     }
 
@@ -263,7 +273,13 @@ impl ShellStandIn {
     /// Waits in `workspace`'s newest page until `ready`, and reads `result`.
     async fn wait(&self, workspace: &str, ready: &str, result: &str, budget: Duration) -> Value {
         let page = self.page(workspace).await;
-        self.browser
+        self.wait_in(page, ready, result, budget).await
+    }
+
+    /// [`ShellStandIn::wait`] in a given page; the page's uncaught errors are kept.
+    async fn wait_in(&self, page: PageId, ready: &str, result: &str, budget: Duration) -> Value {
+        let outcome = self
+            .browser
             .lock()
             .await
             .wait(
@@ -271,8 +287,69 @@ impl ShellStandIn {
                 &PageRequest::new("", ready).result(result).budget(budget),
             )
             .await
-            .unwrap_or_else(|e| panic!("{workspace}'s page: {e}"))
-            .result
+            .unwrap_or_else(|e| {
+                let ready: String = ready.chars().take(200).collect();
+                panic!("the page, waiting for `{ready}`: {e}")
+            });
+        self.page_errors.lock().unwrap().extend(outcome.page_errors);
+        outcome.result
+    }
+
+    /// The page open for `workspace` at `index`, oldest first, once it has loaded.
+    async fn page_at(&self, workspace: &str, index: usize) -> PageId {
+        self.loaded(workspace).await;
+        self.pages.lock().unwrap()[workspace][index]
+    }
+
+    /// Presses `keys` in the newest page of `workspace`.
+    async fn press(&self, workspace: &str, keys: &str) {
+        let page = self.page(workspace).await;
+        self.browser
+            .lock()
+            .await
+            .press(page, keys)
+            .await
+            .expect("keys");
+    }
+
+    /// Types `text` into what has focus in the newest page of `workspace`.
+    async fn type_text(&self, workspace: &str, text: &str) {
+        let page = self.page(workspace).await;
+        self.browser
+            .lock()
+            .await
+            .type_text(page, text)
+            .await
+            .expect("typed");
+    }
+
+    /// Kills the newest page's renderer, as a killed browser would, and forgets the page.
+    async fn crash_newest(&self, workspace: &str) {
+        let page = self.page(workspace).await;
+        self.browser
+            .lock()
+            .await
+            .crash(page)
+            .await
+            .expect("the page crashed");
+        self.pages
+            .lock()
+            .unwrap()
+            .get_mut(workspace)
+            .expect("pages")
+            .retain(|open| *open != page);
+    }
+
+    /// Waits until some row of `selector` in `page` holds `needle` and returns every row's text.
+    async fn rows_with(&self, page: PageId, selector: &str, needle: &str) -> Vec<String> {
+        let selector = serde_json::to_string(selector).unwrap();
+        let needle = serde_json::to_string(needle).unwrap();
+        let rows = format!(
+            "[...document.querySelectorAll({selector})].map(r => r.textContent.replace(/\\s+/g, ' ').trim())"
+        );
+        let ready = format!("{rows}.some(r => r.includes({needle}))");
+        let found = self.wait_in(page, &ready, &rows, WORKBENCH_BUDGET).await;
+        serde_json::from_value(found).unwrap()
     }
 
     /// Closes `workspace`'s pages, as the user closes its windows.
@@ -1087,4 +1164,545 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     if let Some(shell) = Arc::into_inner(shell) {
         shell.quit().await;
     }
+}
+
+/// The workbench's terminal draws into the page (no text to read) unless its renderer is the DOM
+/// one; the machine settings of the server say so, and the editor reads them when a window loads.
+const READABLE_TERMINAL: &str = r#"
+data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
+mkdir -p "$data/Machine"
+echo '{"terminal.integrated.gpuAcceleration":"off"}' >"$data/Machine/settings.json"
+chown -R "$(stat -c %U "$data")" "$data/Machine"
+"#;
+
+/// A workspace with an editor server and a browser, ready for an attach.
+struct Editor {
+    vm: VmHost,
+    shell: Arc<ShellStandIn>,
+    api: Api,
+    name: String,
+    sandbox: WorkspaceId,
+    /// The volume root in the guest.
+    root: String,
+}
+
+impl Editor {
+    /// Boots a workspace named for `tag` (no repositories) whose editor server runs with the
+    /// reconnection grace `grace` (seconds, the settings' default when `None`), and makes the
+    /// terminal readable.
+    async fn start(tag: &str, grace: Option<u32>) -> Self {
+        let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+            "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+        ));
+        let shell = ShellStandIn::new().await;
+        let mut options = named_id_options();
+        options.launcher = shell.clone();
+        let vm = start_vm_host_config(tag, options, |config| {
+            config.guest.code_server = Some(release);
+        })
+        .await;
+        let name = format!("{}-{tag}", vm.settings.prefix.as_str());
+        let sandbox = WorkspaceId::new(&name).unwrap();
+        let api = Api::new(vm.host.url(), vm.host.token());
+        if let Some(grace) = grace {
+            let body = json!({"workspace_defaults": {"reconnection_grace": grace}}).to_string();
+            let reply = api.put("/api/settings", &body).await;
+            assert_eq!(reply.status, 200, "{}", reply.body);
+        }
+        let mut events = api.events().await;
+        let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+        let reply = api
+            .post(
+                "/api/workspaces",
+                &json!({"name": name, "repositories": [], "memory_mib": 2048}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events
+            .until(ended(name_static), Duration::from_secs(600))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
+        let editor = Self {
+            root: format!("/workspaces/{name}"),
+            vm,
+            shell,
+            api,
+            name,
+            sandbox,
+        };
+        editor.guest(EDITOR_UP).await;
+        editor.guest(READABLE_TERMINAL).await;
+        editor
+    }
+
+    async fn guest(&self, script: &str) -> String {
+        guest(&self.vm.runtime, &self.sandbox, script).await
+    }
+
+    /// An attach in the browser, as the user's "Open isolated VS Code".
+    async fn attach(&self) {
+        let reply = self
+            .api
+            .post(
+                &format!("/api/workspaces/{}/attach", self.name),
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    }
+
+    /// Waits until the newest window's explorer is up.
+    async fn explorer(&self, step: &str) {
+        explorer(&self.shell, &self.vm.runtime, &self.sandbox, step, "true").await;
+    }
+
+    /// Opens the terminal panel in the newest window and waits until its shell shows a prompt,
+    /// with the terminal focused.
+    async fn open_terminal(&self) {
+        let name = &self.name;
+        self.shell.press(name, "Escape").await;
+        self.shell.press(name, "Control+Backquote").await;
+        self.shell
+            .wait(
+                name,
+                "[...document.querySelectorAll('.xterm-rows > div')].some(r => r.textContent.trim() !== '')",
+                "true",
+                PAGE_BUDGET,
+            )
+            .await;
+        self.shell
+            .wait(
+                name,
+                "(document.querySelector('.xterm-helper-textarea').focus(), true)",
+                "true",
+                PAGE_BUDGET,
+            )
+            .await;
+    }
+
+    /// Runs `command` in the focused terminal.
+    async fn terminal(&self, command: &str) {
+        self.shell
+            .type_text(&self.name, &format!("{command}\n"))
+            .await;
+    }
+
+    /// The terminal's rows (long lines wrap) in the newest window once one holds `needle`.
+    async fn terminal_shows(&self, needle: &str) -> Vec<String> {
+        let page = self.shell.page(&self.name).await;
+        self.shell
+            .rows_with(page, ".xterm-rows > div", needle)
+            .await
+    }
+
+    /// The extension hosts' process ids in the guest, as a sorted line.
+    async fn extension_hosts(&self) -> Vec<u32> {
+        let out = self
+            .guest("ps -eo pid=,args= | grep -e '--type=extensionHos[t]' | while read -r pid _; do echo \"$pid\"; done")
+            .await;
+        out.split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()
+    }
+
+    /// Whether process `pid` runs in the guest.
+    async fn runs(&self, pid: u32) -> bool {
+        self.guest(&format!(
+            "kill -0 {pid} 2>/dev/null && echo up || echo down"
+        ))
+        .await
+        .trim()
+            == "up"
+    }
+
+    async fn finish(self) {
+        self.vm.host.shutdown().await;
+        drop(self.vm);
+        if let Some(shell) = Arc::into_inner(self.shell) {
+            shell.quit().await;
+        }
+    }
+}
+
+/// Files the editing test works on, in two checkouts and a loose file, owned by the editor's user.
+const WORK_FILES: &str = r#"
+set -e
+cd "$1"
+git init -q api && git init -q web && echo loose >notes.txt
+mkdir -p api/lib/router api/.vscode
+printf 'function route(path) { return path; }\nfunction other() { return 1; }\nmodule.exports = { route, other };\n' >api/lib/router/index.js
+printf 'function web() { return 2; }\n' >web/other.js
+printf 'const a = 1;\nconst b = a + 1;\nconsole.log("hit", b);\nsetTimeout(() => {}, 100000);\n' >api/app.js
+printf '{"version":"0.2.0","configurations":[{"type":"node","request":"launch","name":"Run app","program":"${workspaceFolder}/app.js","runtimeExecutable":"/puddle/code-server/lib/node"}]}\n' >api/.vscode/launch.json
+chown -R agent:agent .
+"#;
+
+/// K tier, code-server. Working in the window as the playbooks' editing steps do: Quick Open,
+/// the command palette, a save that the guest sees, a search across both checkouts, a terminal
+/// whose output is read back, a server started there that the Ports view lists on 3000, and a
+/// Node breakpoint that is hit. A checkout added while the window is open shows in it, or the
+/// window offers a reload. No page reports an uncaught error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+async fn vm_browser_code_server_edits_saves_searches_runs_a_terminal_lists_ports_and_hits_a_breakpoint()
+ {
+    let editor = Box::pin(Editor::start("wed", None)).await;
+    let (shell, name, root) = (&editor.shell, &editor.name, &editor.root);
+    editor
+        .guest(&format!(
+            "sh -c '{}' sh {root}",
+            WORK_FILES.replace('\'', "'\\''")
+        ))
+        .await;
+    editor.attach().await;
+    editor.explorer("first window").await;
+    let page = shell.page(name).await;
+
+    // The command palette lists commands.
+    shell.press(name, "F1").await;
+    shell
+        .wait(
+            name,
+            "!!document.querySelector('.quick-input-widget .quick-input-list')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+    shell.type_text(name, "Toggle Terminal").await;
+    let palette = shell
+        .rows_with(
+            page,
+            ".quick-input-list .monaco-list-row",
+            "Toggle Terminal",
+        )
+        .await;
+    assert!(
+        palette
+            .iter()
+            .any(|row| row.starts_with("View: Toggle Terminal")),
+        "{palette:?}"
+    );
+    shell.press(name, "Escape").await;
+
+    // Quick Open finds a file by part of its name and shows where it is.
+    shell.press(name, "Control+p").await;
+    shell.type_text(name, "router").await;
+    let files = shell
+        .rows_with(page, ".quick-input-list .monaco-list-row", "lib/router")
+        .await;
+    assert!(
+        files
+            .iter()
+            .any(|row| row.starts_with("index.js") && row.contains("api")),
+        "{files:?}"
+    );
+    shell.press(name, "Enter").await;
+    shell
+        .wait(
+            name,
+            "document.querySelector('.tabs-container .tab.active')?.getAttribute('aria-label')?.startsWith('index.js') && document.querySelector('.monaco-editor .view-lines')?.textContent.replace(/\\u00a0/g, ' ').includes('function route')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+
+    // A save reaches the guest's file.
+    shell.press(name, "Control+End").await;
+    shell.type_text(name, "\n// saved in the window\n").await;
+    shell.press(name, "Control+s").await;
+    puddle_test_kit::eventually_async(
+        "the save reaches the guest",
+        Duration::from_secs(60),
+        || async {
+            let line = editor
+                .guest(&format!(
+                    "grep -c 'saved in the window' {root}/api/lib/router/index.js || true"
+                ))
+                .await;
+            if line.trim() == "1" {
+                Ok(())
+            } else {
+                Err(line)
+            }
+        },
+    )
+    .await;
+
+    // A search across the checkouts lists the files of both.
+    shell.press(name, "Control+Shift+f").await;
+    shell
+        .wait(
+            name,
+            "!!document.activeElement?.closest('.search-widget')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+    shell.type_text(name, "function").await;
+    shell.press(name, "Enter").await;
+    let found = shell
+        .rows_with(page, ".search-view .monaco-list-row", "function web")
+        .await;
+    assert!(
+        found
+            .iter()
+            .any(|row| row.starts_with("index.js") && row.contains("api")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|row| row.starts_with("other.js") && row.contains("web")),
+        "{found:?}"
+    );
+
+    // A terminal command's output comes back (a computed value, not the typed text).
+    editor.open_terminal().await;
+    editor.terminal("echo out-$((6*7))-end").await;
+    let screen = editor.terminal_shows("out-42-end").await;
+    assert!(screen.iter().any(|row| row == "out-42-end"), "{screen:?}");
+
+    // A server started in the terminal on 3000 is in the Ports view.
+    editor
+        .terminal("/puddle/code-server/lib/node -e \"require('http').createServer((q,r)=>r.end('hi')).listen(3000)\"")
+        .await;
+    puddle_test_kit::eventually_async(
+        "the server answers in the guest",
+        Duration::from_secs(60),
+        || async {
+            let code = editor
+                .guest("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/ || true")
+                .await;
+            if code.trim() == "200" {
+                Ok(())
+            } else {
+                Err(code)
+            }
+        },
+    )
+    .await;
+    shell.press(name, "F1").await;
+    shell
+        .wait(
+            name,
+            "!!document.querySelector('.quick-input-widget .quick-input-list')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+    shell.type_text(name, "Ports: Focus on Ports View").await;
+    shell
+        .rows_with(
+            page,
+            ".quick-input-list .monaco-list-row",
+            "Ports: Focus on Ports View",
+        )
+        .await;
+    shell.press(name, "Enter").await;
+    let ports = shell
+        .rows_with(page, ".part.panel .monaco-list-row", "3000")
+        .await;
+    assert!(
+        ports
+            .iter()
+            .any(|row| row.starts_with("3000") && row.contains("/proxy/3000/")),
+        "{ports:?}"
+    );
+
+    // A breakpoint set on line 2 of a Node script is hit when it runs under the debugger.
+    shell.press(name, "Control+p").await;
+    shell.type_text(name, "app.js").await;
+    shell
+        .rows_with(page, ".quick-input-list .monaco-list-row", "app.js")
+        .await;
+    shell.press(name, "Enter").await;
+    shell
+        .wait(
+            name,
+            "document.querySelector('.tabs-container .tab.active')?.getAttribute('aria-label')?.startsWith('app.js') && document.querySelector('.monaco-editor .view-lines')?.textContent.replace(/\\u00a0/g, ' ').includes('setTimeout')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+    shell.press(name, "Control+g").await;
+    shell.type_text(name, "2\n").await;
+    shell.press(name, "F9").await;
+    shell
+        .wait(
+            name,
+            "document.querySelectorAll('.codicon-debug-breakpoint').length > 0",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+    shell.press(name, "F5").await;
+    let stack = shell
+        .rows_with(
+            page,
+            ".debug-call-stack .monaco-list-row",
+            "Paused on breakpoint",
+        )
+        .await;
+    assert!(stack.iter().any(|row| row.contains("app.js")), "{stack:?}");
+    shell.press(name, "Shift+F5").await;
+
+    // A checkout added while the window is open: the first window shows it, or offers a reload.
+    // The explorer is the side bar's view again before the attach opens a second window.
+    shell.press(name, "Control+Shift+e").await;
+    shell
+        .wait(
+            name,
+            "document.querySelectorAll('.explorer-folders-view .monaco-list-row .label-name').length >= 3",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+    editor
+        .guest(&format!(
+            "cd {root} && git init -q third && chown -R agent:agent third"
+        ))
+        .await;
+    editor.attach().await;
+    let first = shell.page_at(name, 0).await;
+    let request = PageRequest::new(
+        "",
+        "[...document.querySelectorAll('.explorer-folders-view .monaco-list-row .label-name')].some(e => e.textContent === 'third') || [...document.querySelectorAll('.notifications-toasts .notification-list-item, .monaco-dialog-box')].some(e => /reload/i.test(e.textContent))",
+    )
+    .result(
+        "({ third: [...document.querySelectorAll('.explorer-folders-view .monaco-list-row .label-name')].some(e => e.textContent === 'third'), reload: [...document.querySelectorAll('.notifications-toasts .notification-list-item, .monaco-dialog-box')].some(e => /reload/i.test(e.textContent)) })",
+    )
+    .budget(Duration::from_secs(120));
+    let waited = shell.browser.lock().await.wait(first, &request).await;
+    let outcome = match waited {
+        Ok(outcome) => outcome.result,
+        Err(e) => {
+            let state = PageRequest::new("", "true")
+                .result(WINDOW_STATE)
+                .budget(PAGE_BUDGET);
+            let window = shell.browser.lock().await.wait(first, &state).await;
+            let file = editor
+                .guest(&format!(
+                    "cat {root}/.puddle/editor/{name}.code-workspace; ls -a {root}"
+                ))
+                .await;
+            panic!(
+                "the open window neither shows the added checkout nor offers a reload: {e}\nwindow: {window:?}\nguest:\n{file}"
+            );
+        }
+    };
+    eprintln!("a checkout added to the open window: {outcome}");
+
+    let errors = shell.page_errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "the pages reported errors: {errors:?}");
+    editor.finish().await;
+}
+
+/// K tier, code-server, the reconnection grace set to 30 s. The browser dies abruptly (its renderer
+/// is killed: no close frame, no handler runs), and the window opened again within the grace finds
+/// the old window's extension host still running and the terminal back with its marker and the
+/// same job (same pid). When the browser dies again and nobody comes back, the extension host is
+/// freed about one grace later (not at once, not never), a `nohup` process lives, and so does the
+/// terminal's job: the grace frees the extension host and ends orphaned debuggees (the attach spec), and
+/// the server's terminal host and its jobs are outside that tree (the attach spec's process tree), so a terminal job
+/// outliving the grace is current behaviour.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_and_frees_its_extension_host_after_it()
+ {
+    // The seconds the server waits for a client that vanished; the settings' shortest value.
+    const GRACE: u64 = 30;
+    let editor = Box::pin(Editor::start("wgr", Some(u32::try_from(GRACE).unwrap()))).await;
+    let (shell, name) = (&editor.shell, &editor.name);
+    // Two checkouts and a loose file: the window shows three roots, which is when its explorer is up.
+    editor
+        .guest(&format!(
+            "cd {} && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .",
+            editor.root
+        ))
+        .await;
+    editor.attach().await;
+    editor.explorer("first window").await;
+    editor.open_terminal().await;
+    editor.terminal("nohup sleep 91411 >/dev/null 2>&1 &").await;
+    editor
+        .terminal("echo marker-$((1900+82)); sleep 91412")
+        .await;
+    editor.terminal_shows("marker-1982").await;
+    let job = editor
+        .guest("pgrep -f '^sleep 91412$'")
+        .await
+        .trim()
+        .parse::<u32>()
+        .expect("the terminal's job runs once");
+    let hosts = editor.extension_hosts().await;
+    assert!(!hosts.is_empty(), "the window has an extension host");
+
+    // Killed, and opened again within the grace: the window's host is still there, and the
+    // terminal is back with the same job and what it printed.
+    shell.crash_newest(name).await;
+    editor.attach().await;
+    for host in &hosts {
+        assert!(
+            editor.runs(*host).await,
+            "extension host {host} ended before the grace did"
+        );
+    }
+    editor
+        .explorer("window opened again within the grace")
+        .await;
+    editor.open_terminal().await;
+    editor.terminal_shows("marker-1982").await;
+    let again = editor.guest("pgrep -f '^sleep 91412$'").await;
+    assert_eq!(
+        again.trim(),
+        job.to_string(),
+        "the terminal's job is another one"
+    );
+
+    // Killed again and nobody comes: the hosts of that window stay for the grace and go after it.
+    let hosts = editor.extension_hosts().await;
+    shell.crash_newest(name).await;
+    let killed = std::time::Instant::now();
+    // flake-ok: an absence window: the host must still run a third of the grace after the kill, and
+    // nothing signals that a process has not yet ended.
+    tokio::time::sleep(Duration::from_secs(GRACE / 3)).await;
+    for host in &hosts {
+        assert!(
+            editor.runs(*host).await,
+            "extension host {host} ended long before the grace did"
+        );
+    }
+    puddle_test_kit::eventually_async(
+        "the grace frees the extension host",
+        Duration::from_secs(90),
+        || async {
+            let mut left = Vec::new();
+            for host in &hosts {
+                if editor.runs(*host).await {
+                    left.push(*host);
+                }
+            }
+            if left.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("still running: {left:?}"))
+            }
+        },
+    )
+    .await;
+    assert!(
+        killed.elapsed() >= Duration::from_secs(GRACE / 2),
+        "the extension host was freed after {:?}",
+        killed.elapsed()
+    );
+    let nohup = editor.guest("pgrep -f '^sleep 91411$'").await;
+    assert!(
+        !nohup.trim().is_empty(),
+        "the nohup process ended with the grace"
+    );
+    assert!(
+        editor.runs(job).await,
+        "the terminal's job ended with the grace"
+    );
+
+    editor.finish().await;
 }

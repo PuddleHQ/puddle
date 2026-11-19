@@ -592,6 +592,15 @@ jobs:
         run: |
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/sandbox-window.mjs
+      # A script's clipboard read in a workspace window follows the workspace setting: deny rejects
+      # with no prompt, allow resolves, "Ask" waits for the person, and Ctrl+V pastes under deny.
+      - name: workspace window clipboard permission test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/clipboard-permission.mjs
       # What the real webview keeps under a workspace's origins: storage and a cookie on
       # `<id>.localhost` and `<port>.<id>.localhost` survive a restart on the same id, a new id
       # starts empty, and a delete removes the data (five runs of the shell over one data folder).

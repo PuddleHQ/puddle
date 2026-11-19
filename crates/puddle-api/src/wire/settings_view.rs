@@ -66,6 +66,98 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true)]
     pub warn_foreign_credentials: Option<bool>,
+    /// The editor's colour theme, font size, preinstalled extensions and key bindings. Left out,
+    /// it means nothing is set at this level.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub editor: EditorSettings,
+}
+
+/// The editor defaults at one level: a workspace's values win over the global ones field by
+/// field. `null` inherits.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditorSettings {
+    /// The colour theme's name as the editor lists it (at most 100 characters). Unset follows
+    /// the system colour scheme.
+    #[serde(default)]
+    #[schema(required = true, max_length = 100)]
+    pub colour_theme: Option<String>,
+    /// The font size in pixels (8 to 40). Unset keeps the editor's own.
+    #[serde(default)]
+    #[schema(required = true, minimum = 8, maximum = 40)]
+    pub font_size: Option<u8>,
+    /// Extensions to preinstall, as `publisher.name` ids (at most 50). A level that sets the
+    /// list replaces the next level's list; an empty list means none.
+    #[serde(default)]
+    #[schema(required = true, max_items = 50)]
+    pub extensions: Option<Vec<String>>,
+    /// Key bindings to merge into the editor: the text of a JSON array of `{key, command}`
+    /// objects (at most 64 KiB).
+    #[serde(default)]
+    #[schema(required = true, max_length = 65_536)]
+    pub keybindings: Option<String>,
+}
+
+impl From<&settings::EditorLayer> for EditorSettings {
+    fn from(layer: &settings::EditorLayer) -> Self {
+        Self {
+            colour_theme: layer.colour_theme.clone().map(Into::into),
+            font_size: layer.font_size.map(Into::into),
+            extensions: layer
+                .extensions
+                .as_ref()
+                .map(|ids| ids.iter().cloned().map(Into::into).collect()),
+            keybindings: layer.keybindings.clone().map(Into::into),
+        }
+    }
+}
+
+impl EditorSettings {
+    /// Writes these values into `layer`, leaving its unknown fields alone.
+    fn apply_to(self, layer: &mut settings::EditorLayer) -> Result<(), ApiError> {
+        let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err);
+        let Self {
+            colour_theme,
+            font_size,
+            extensions,
+            keybindings,
+        } = self;
+        layer.colour_theme = colour_theme
+            .as_deref()
+            .map(settings::ColourTheme::new)
+            .transpose()
+            .map_err(invalid)?;
+        layer.font_size = font_size
+            .map(settings::EditorFontSize::new)
+            .transpose()
+            .map_err(invalid)?;
+        layer.extensions = extensions
+            .map(|ids| {
+                if ids.len() > settings::MAX_EXTENSIONS {
+                    return Err(puddle_types::ValidationError::new(
+                        "extensions",
+                        &format!("{} ids", ids.len()),
+                        format_args!("at most {} extensions", settings::MAX_EXTENSIONS),
+                    ));
+                }
+                let mut parsed = ids
+                    .iter()
+                    .map(|id| settings::ExtensionId::new(id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                parsed.sort();
+                parsed.dedup();
+                Ok(parsed)
+            })
+            .transpose()
+            .map_err(invalid)?;
+        layer.keybindings = keybindings
+            .as_deref()
+            .map(settings::Keybindings::new)
+            .transpose()
+            .map_err(invalid)?;
+        Ok(())
+    }
 }
 
 impl From<&settings::WorkspaceLayer> for SettingsLayer {
@@ -83,6 +175,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
             direct_ssh: layer.direct_ssh,
             capture_logins: layer.capture_logins,
             warn_foreign_credentials: layer.warn_foreign_credentials,
+            editor: (&layer.editor).into(),
         }
     }
 }
@@ -102,6 +195,7 @@ impl SettingsLayer {
             direct_ssh,
             capture_logins,
             warn_foreign_credentials,
+            editor,
         } = self;
         layer.memory = memory.map(MemoryMib::new).transpose().map_err(invalid)?;
         layer.cpus = cpus
@@ -119,6 +213,7 @@ impl SettingsLayer {
         layer.direct_ssh = direct_ssh;
         layer.capture_logins = capture_logins;
         layer.warn_foreign_credentials = warn_foreign_credentials;
+        editor.apply_to(&mut layer.editor)?;
         Ok(())
     }
 }
@@ -764,7 +859,7 @@ pub struct EffectiveToggles {
 }
 
 /// The values a workspace gets: its override, else the global value, else Puddle's default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EffectiveSettings {
     /// Guest memory in MiB.
     pub memory: ResolvedNumber,
@@ -786,6 +881,79 @@ pub struct EffectiveSettings {
     pub capture_logins: ResolvedBool,
     /// Whether a credential Puddle did not add raises a warning.
     pub warn_foreign_credentials: ResolvedBool,
+    /// What the editor starts with.
+    pub editor: EffectiveEditor,
+}
+
+/// The editor defaults a workspace gets, each with where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EffectiveEditor {
+    /// The colour theme; `null` follows the system colour scheme.
+    pub colour_theme: ResolvedText,
+    /// The font size in pixels; `null` keeps the editor's own.
+    pub font_size: ResolvedOptionalNumber,
+    /// The extensions to preinstall.
+    pub extensions: ResolvedTextList,
+    /// The key bindings text; `null` adds none.
+    pub keybindings: ResolvedText,
+}
+
+/// An optional effective text and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ResolvedText {
+    /// The value, `null` when nothing sets it.
+    #[schema(required = true)]
+    pub value: Option<String>,
+    /// Where it came from.
+    pub source: SettingSource,
+}
+
+/// An optional effective number and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ResolvedOptionalNumber {
+    /// The value, `null` when nothing sets it.
+    #[schema(required = true)]
+    pub value: Option<u32>,
+    /// Where it came from.
+    pub source: SettingSource,
+}
+
+/// An effective list of texts and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ResolvedTextList {
+    /// The values.
+    pub value: Vec<String>,
+    /// Where it came from.
+    pub source: SettingSource,
+}
+
+impl From<settings::EffectiveEditor> for EffectiveEditor {
+    fn from(e: settings::EffectiveEditor) -> Self {
+        let settings::EffectiveEditor {
+            colour_theme,
+            font_size,
+            extensions,
+            keybindings,
+        } = e;
+        Self {
+            colour_theme: ResolvedText {
+                value: colour_theme.value.map(Into::into),
+                source: colour_theme.source.into(),
+            },
+            font_size: ResolvedOptionalNumber {
+                value: font_size.value.map(|s| u32::from(s.get())),
+                source: font_size.source.into(),
+            },
+            extensions: ResolvedTextList {
+                value: extensions.value.into_iter().map(Into::into).collect(),
+                source: extensions.source.into(),
+            },
+            keybindings: ResolvedText {
+                value: keybindings.value.map(Into::into),
+                source: keybindings.source.into(),
+            },
+        }
+    }
 }
 
 impl From<settings::Effective> for EffectiveSettings {
@@ -801,6 +969,7 @@ impl From<settings::Effective> for EffectiveSettings {
             direct_ssh,
             capture_logins,
             warn_foreign_credentials,
+            editor,
         } = e;
         let settings::EffectiveToggles {
             loopback,
@@ -840,6 +1009,7 @@ impl From<settings::Effective> for EffectiveSettings {
             direct_ssh: rb(direct_ssh),
             capture_logins: rb(capture_logins),
             warn_foreign_credentials: rb(warn_foreign_credentials),
+            editor: editor.into(),
         }
     }
 }

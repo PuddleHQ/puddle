@@ -199,6 +199,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .get(name)
             .map(|l| l.gate.clone())
             .ok_or_else(|| OpError::NoRoute(name.clone()))?;
+        // The agent says hello during this boot: its reports count again from here.
+        inner.ports.booting(name);
         // The memory setting applies at the next start (ADR 0006 and the memory setting).
         inner
             .runtime

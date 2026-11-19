@@ -9,7 +9,7 @@ use puddle_types::{CpuCount, LocalCategory, MemoryMib};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ClipboardRead, ReconnectionGrace};
+use crate::{ClipboardRead, EditorLayer, ReconnectionGrace};
 
 /// The per-workspace settings, each optional. A setting added here gets a global default and a
 /// per-workspace override at once, and [`crate::resolve`] must learn it (its exhaustive
@@ -60,6 +60,9 @@ pub struct WorkspaceLayer {
     /// way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warn_foreign_credentials: Option<bool>,
+    /// The editor's colour theme, font size, preinstalled extensions and key bindings.
+    #[serde(default, skip_serializing_if = "EditorLayer::is_empty")]
+    pub editor: EditorLayer,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -75,6 +78,8 @@ impl WorkspaceLayer {
         crate::document::push_unknown(prefix, &self.extra, out);
         self.local_toggles
             .collect_unknown(&format!("{prefix}local_toggles."), out);
+        self.editor
+            .collect_unknown(&format!("{prefix}editor."), out);
     }
 }
 

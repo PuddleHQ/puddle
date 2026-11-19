@@ -179,6 +179,12 @@ describe("connecting", () => {
     api.overrides["w-up"] = {
       capture_logins: null,
       warn_foreign_credentials: null,
+      editor: {
+        colour_theme: null,
+        font_size: null,
+        extensions: null,
+        keybindings: null,
+      },
       clipboard_read: null,
       direct_ssh: null,
       local_toggles: {
@@ -370,7 +376,9 @@ describe("opening from another computer than the host", () => {
 describe("opening in the browser", () => {
   it("asks for a browser attach and says the window is opening", async () => {
     actions.openBrowser(w("up"));
-    await expect.poll(() => messages()).toEqual(["Opening up in the browser."]);
+    await expect
+      .poll(() => messages())
+      .toEqual(["Opening up in isolated VS Code."]);
     expect(api.bodies.at(-1)).toEqual({ mode: "browser" });
     expect(toasts.items[0]?.tone).toBe("info");
   });
@@ -395,7 +403,7 @@ describe("opening in the browser", () => {
     actions.openBrowser(w("up"));
     await expect
       .poll(() => messages())
-      .toEqual(["Puddle couldn't open the browser editor for up."]);
+      .toEqual(["Puddle couldn't open isolated VS Code for up."]);
   });
 
   it("a refused attach (not running) is an error toast with the service's words", async () => {

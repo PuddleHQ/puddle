@@ -122,8 +122,10 @@ async fn sandbox_a_terminal_reaches(
     loop {
         let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
             .await
-            .unwrap()
-            .expect("the terminal stays open until the answer");
+            .unwrap();
+        let Some(item) = item else {
+            panic!("the terminal closed before it answered: {seen:?}");
+        };
         if let puddle_api::TerminalOutput::Bytes(b) = item {
             seen.push_str(&String::from_utf8_lossy(&b));
             // The shell echoes the typed line, then answers with the name and a new prompt.

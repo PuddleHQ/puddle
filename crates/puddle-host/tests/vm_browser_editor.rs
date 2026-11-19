@@ -1765,7 +1765,7 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
     let shown = Arc::new(Mutex::new(String::new()));
     puddle_test_kit::eventually_async(
         "the hover shows the inferred type of `total`",
-        Duration::from_secs(120),
+        Duration::from_secs(90),
         || {
             let shown = shown.clone();
             async move {

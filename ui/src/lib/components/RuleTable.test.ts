@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rule } from "#lib/testing/fake-rules.ts";
 import { DEFAULT_SORT } from "#lib/rules/model.ts";
@@ -125,5 +131,43 @@ describe("RuleTable", () => {
     await fireEvent.click(second);
     expect(onEnabled).toHaveBeenCalledWith(mixed[1], true);
     expect(second).not.toBeChecked();
+  });
+
+  describe("with many rules", () => {
+    const many = Array.from({ length: 1000 }, (_, i) =>
+      rule(i + 1, { pattern: `host${i}.example.com` }),
+    );
+    const rows = () => document.querySelectorAll("tbody tr").length;
+
+    it("draws a first slice at once, then every row, so none is out of reach", async () => {
+      render(RuleTable, {
+        props: { rules: many, sort: DEFAULT_SORT, now: 5_000_000 },
+      });
+      expect(rows()).toBeGreaterThan(0);
+      expect(rows()).toBeLessThan(1000);
+      await waitFor(() => expect(rows()).toBe(1000));
+      expect(
+        document.querySelector("tbody tr:last-child td.host")?.textContent,
+      ).toContain("host999.example.com");
+    });
+
+    it("tells assistive technology the true row count while rows are still coming", () => {
+      render(RuleTable, {
+        props: { rules: many, sort: DEFAULT_SORT, now: 5_000_000 },
+      });
+      const table = screen.getByRole("table");
+      expect(table).toHaveAttribute("aria-rowcount", "1001");
+      expect(document.querySelector("tbody tr:first-child")).toHaveAttribute(
+        "aria-rowindex",
+        "2",
+      );
+    });
+
+    it("shows a short list in full on the first render", () => {
+      render(RuleTable, {
+        props: { rules, sort: DEFAULT_SORT, now: 5_000_000 },
+      });
+      expect(rows()).toBe(2);
+    });
   });
 });

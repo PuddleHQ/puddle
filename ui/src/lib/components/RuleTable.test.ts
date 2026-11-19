@@ -139,16 +139,22 @@ describe("RuleTable", () => {
     );
     const rows = () => document.querySelectorAll("tbody tr").length;
 
+    // Drawing every row costs jsdom about 0.4 ms each (0.4 s for 1000 rules alone, 3 to 7 s on a
+    // host with a load of 28), so the test that waits for all of them uses a few chunks, not 1000:
+    // the slicing is the same at any length past the first slice, and the page's 1000-rule case is
+    // covered in the browser by the "1000 rules" block of e2e/inbox-at-volume.spec.ts.
+    const few = many.slice(0, 160);
+
     it("draws a first slice at once, then every row, so none is out of reach", async () => {
       render(RuleTable, {
-        props: { rules: many, sort: DEFAULT_SORT, now: 5_000_000 },
+        props: { rules: few, sort: DEFAULT_SORT, now: 5_000_000 },
       });
       expect(rows()).toBeGreaterThan(0);
-      expect(rows()).toBeLessThan(1000);
-      await waitFor(() => expect(rows()).toBe(1000));
+      expect(rows()).toBeLessThan(few.length);
+      await waitFor(() => expect(rows()).toBe(few.length));
       expect(
         document.querySelector("tbody tr:last-child td.host")?.textContent,
-      ).toContain("host999.example.com");
+      ).toContain("host159.example.com");
     });
 
     it("tells assistive technology the true row count while rows are still coming", () => {

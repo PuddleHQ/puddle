@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { connection } from "#lib/testing/fake-audit.ts";
 import {
   DEFAULT_RANGE,
@@ -709,6 +711,16 @@ describe("a record as a row", () => {
         rule: { ...rule, created_by: "workspace_create" },
       } as AuditRecord),
     ).toMatchObject({ detail: "allow for workspace shop, by the create" });
+  });
+  it("names a workspace in a rule change by its name, not its id", () => {
+    workspaces.list = [{ ...fakeWorkspace("Shop"), id: "shop" }];
+    try {
+      expect(
+        row({ ts: 1, type: "rule_created", rule } as AuditRecord),
+      ).toMatchObject({ detail: "allow for workspace Shop, by ui" });
+    } finally {
+      workspaces.list = [];
+    }
   });
   it("shows rule changes by pattern and scope, with no outcome", () => {
     const base = { ts: 1, rule };

@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rule } from "#lib/testing/fake-rules.ts";
 import AddRuleDialog from "./AddRuleDialog.svelte";
+import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
 
 afterEach(cleanup);
 
@@ -40,9 +41,7 @@ describe("the Add rule dialog without rule sets", () => {
     await fireEvent.input(screen.getByLabelText("Host"), {
       target: { value: "example.com" },
     });
-    await fireEvent.input(screen.getByLabelText("Workspace name"), {
-      target: { value: "box" },
-    });
+    await chooseWorkspace(screen.getByLabelText("Workspace"), "box");
     await fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
     expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty("precedence");
   });
@@ -62,9 +61,7 @@ describe("the Add rule dialog without rule sets", () => {
     await fireEvent.input(screen.getByLabelText("Host"), {
       target: { value: "example.com" },
     });
-    await fireEvent.input(screen.getByLabelText("Workspace name"), {
-      target: { value: "box" },
-    });
+    await chooseWorkspace(screen.getByLabelText("Workspace"), "box");
     const precedence = screen.getByLabelText("Precedence") as HTMLSelectElement;
     expect([...precedence.options].map((option) => option.value)).toEqual([
       "",

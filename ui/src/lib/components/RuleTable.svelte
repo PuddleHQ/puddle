@@ -11,7 +11,6 @@
     patternLabel,
     ruleName,
     scopeLabel,
-    workspaceOf,
     type Rule,
     type Sort,
     type SortKey,
@@ -114,11 +113,7 @@
             >
           </td>
           <td>
-            {#if workspaceOf(rule) === null}
-              {scopeLabel(rule)}
-            {:else}
-              <span class="mono">{scopeLabel(rule)}</span>
-            {/if}
+            {scopeLabel(rule)}
           </td>
           <td class="precedence">{rule.precedence}</td>
           <td>

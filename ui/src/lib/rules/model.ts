@@ -2,6 +2,7 @@
 // The rules table as pure data: how a rule reads, which rules a filter keeps, and in which order
 // they are shown. No layout and no API calls here.
 import type { components } from "#lib/api/schema.d.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 
 export type Rule = components["schemas"]["Rule"];
 
@@ -71,7 +72,7 @@ export function workspaceOf(rule: Pick<Rule, "scope">): string | null {
 export function scopeLabel(rule: Pick<Rule, "scope">): string {
   if (rule.scope.type === "set") return "A rule set";
   const workspace = workspaceOf(rule);
-  return workspace === null ? "Every workspace" : workspace;
+  return workspace === null ? "Every workspace" : workspaces.labelOf(workspace);
 }
 
 /** `*.example.com` for a suffix rule, the host for an exact one. */
@@ -90,7 +91,7 @@ export function ruleName(rule: Rule): string {
   const who =
     rule.scope.type === "global"
       ? "every workspace"
-      : `workspace ${rule.scope.workspace}`;
+      : `workspace ${workspaces.spokenLabelOf(rule.scope.workspace)}`;
   return `${verb} ${patternLabel(rule)} for ${who}`;
 }
 
@@ -175,7 +176,7 @@ export function expiryFrom(now: number, secs: number | null): number | null {
 
 /** A workspace name is a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`). */
 export function workspaceNameError(name: string): string | null {
-  if (name === "") return "Name the workspace the rule belongs to.";
+  if (name === "") return "Choose the workspace the rule belongs to.";
   if (name.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name))
     return "A workspace name uses lower-case letters, digits and hyphens, and starts and ends with a letter or digit.";
   return null;

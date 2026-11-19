@@ -306,6 +306,10 @@ pub trait Policy: Send + Sync {
     ///
     /// The default answers `None` (no IP rules): nothing is excluded or admitted this way.
     ///
+    /// The proxy calls it on its runtime threads, once per resolved address, so it must answer
+    /// from memory and never do I/O. A policy that needs I/O to decide belongs in [`Self::decide`],
+    /// which the proxy calls on a blocking thread.
+    ///
     /// # Errors
     /// Returns [`PolicyError`] when the rules could not be read; the proxy then refuses the
     /// connection (fails closed).

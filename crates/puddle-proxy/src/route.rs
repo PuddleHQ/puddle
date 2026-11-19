@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent_proto::host::serve_session;
+use puddle_agent_proto::host::{SessionError, serve_session};
 use puddle_ipc::{Endpoint, IpcError, Listener};
 use puddle_types::WorkspaceId;
 use tokio::sync::oneshot;
@@ -82,6 +82,20 @@ impl Proxy {
     }
 }
 
+/// Cuts off every session still running and tells the guest watcher of each one's end, as
+/// `session_ended` promises "however it ended".
+async fn end_sessions(
+    proxy: &Proxy,
+    workspace: &WorkspaceId,
+    sessions: &mut JoinSet<Result<(), SessionError>>,
+) {
+    let cut = sessions.len();
+    sessions.shutdown().await;
+    for _ in 0..cut {
+        proxy.session_ended(workspace);
+    }
+}
+
 async fn accept_loop(
     proxy: Arc<Proxy>,
     mut listener: Listener,
@@ -93,7 +107,7 @@ async fn accept_loop(
     loop {
         tokio::select! {
             _ = &mut stopped => {
-                sessions.shutdown().await;
+                end_sessions(&proxy, handler.workspace(), &mut sessions).await;
                 listener.close().await;
                 return;
             }
@@ -113,6 +127,7 @@ async fn accept_loop(
                 }
                 Err(IpcError::Closed { .. }) => {
                     tracing::info!("route closed");
+                    end_sessions(&proxy, handler.workspace(), &mut sessions).await;
                     return;
                 }
                 Err(err) => {

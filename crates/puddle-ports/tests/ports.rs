@@ -978,3 +978,47 @@ async fn a_link_asked_for_of_a_workspace_that_stops_meanwhile_is_not_running() {
     rig.ports.stopped(&rig.workspace).await;
     assert_eq!(asked.await.unwrap(), Some(NoLink::NotRunning));
 }
+
+#[tokio::test]
+async fn a_late_agent_report_does_not_bring_a_stopped_workspace_back() {
+    let mut rig = rig_without_agent("late-report", |ports| ports);
+    rig.started().await;
+    rig.ports.stopped(&rig.workspace).await;
+    // The agent's session outlived the stop and reports once more: its hello gives a link,
+    // then a listening report.
+    rig.start_agent().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    GuestWatcher::ports(&rig.ports, &rig.workspace, vec![3000]);
+    let view = rig.ports.view(&rig.workspace).unwrap();
+    assert!(!view.running);
+    assert!(view.ports.is_empty(), "{:?}", view.ports);
+    assert!(rig.ports.guest_link(&rig.workspace).is_none());
+    assert_eq!(
+        rig.ports
+            .guest_link_within(&rig.workspace, Duration::from_millis(50))
+            .await
+            .err(),
+        Some(NoLink::NotRunning)
+    );
+    // A new start takes reports again.
+    rig.started().await;
+    GuestWatcher::ports(&rig.ports, &rig.workspace, vec![3000]);
+    assert_eq!(rig.ports.view(&rig.workspace).unwrap().ports.len(), 1);
+}
+
+#[tokio::test]
+async fn an_agent_that_says_hello_during_the_boot_of_a_restart_is_linked() {
+    let mut rig = rig_without_agent("hello-during-boot", |ports| ports);
+    rig.started().await;
+    rig.ports.stopped(&rig.workspace).await;
+    // The next start: the agent's hello comes while the sandbox boots, before `started`.
+    rig.ports.booting(&rig.workspace);
+    rig.start_agent().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    rig.started().await;
+    let linked = rig
+        .ports
+        .guest_link_within(&rig.workspace, Duration::from_secs(5))
+        .await;
+    assert!(linked.is_ok(), "{:?}", linked.err());
+}

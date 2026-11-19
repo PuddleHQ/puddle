@@ -243,3 +243,52 @@ fn a_private_key_file_is_readable_by_its_owner_only_and_never_overwritten() {
     assert!(std::panic::catch_unwind(|| write_private(&path, b"again")).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"secret");
 }
+
+/// What the closure panics with.
+fn panic_text(run: impl FnOnce() + std::panic::UnwindSafe) -> String {
+    let caught = std::panic::catch_unwind(run).expect_err("the call must panic");
+    caught
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| caught.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+        .unwrap()
+}
+
+#[test]
+fn a_refused_token_call_fails_with_its_status_and_leaks_neither_token_nor_password() {
+    let refused = PasswordAnswer {
+        status: 403,
+        body: r#"{"sha1":"tok-abc123","message":"secret-password is wrong"}"#.to_owned(),
+    };
+    let from_token = panic_text(|| {
+        refused.token("make token t");
+    });
+    let from_status = panic_text(|| refused.expect_status(204, "revoke token t"));
+    for text in [from_token, from_status, format!("{refused:?}")] {
+        assert!(text.contains("403") || text.contains("hidden"), "{text}");
+        assert!(!text.contains("tok-abc123"), "{text}");
+        assert!(!text.contains("secret-password"), "{text}");
+    }
+}
+
+#[test]
+fn a_created_token_answer_without_a_token_fails_without_its_body() {
+    let odd = PasswordAnswer {
+        status: 201,
+        body: r#"{"other":"tok-xyz789"}"#.to_owned(),
+    };
+    let text = panic_text(|| {
+        odd.token("make token t");
+    });
+    assert!(text.contains("holds no token"), "{text}");
+    assert!(!text.contains("tok-xyz789"), "{text}");
+}
+
+#[test]
+fn a_created_token_answer_yields_its_token() {
+    let made = PasswordAnswer {
+        status: 201,
+        body: r#"{"sha1":"tok-abc123"}"#.to_owned(),
+    };
+    assert_eq!(made.token("make token t"), "tok-abc123");
+}

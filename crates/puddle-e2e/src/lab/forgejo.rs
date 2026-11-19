@@ -342,6 +342,49 @@ fn random_hex() -> String {
 ///
 /// # Panics
 /// On any other status, with Forgejo's answer.
+/// The answer to a call made with the account's password. Its body can hold a token, so it has
+/// no `Debug` or `Display` of its own and every failure message here carries the status and a
+/// fixed text only.
+struct PasswordAnswer {
+    status: u16,
+    body: String,
+}
+
+impl std::fmt::Debug for PasswordAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PasswordAnswer {{ status: {}, body: <hidden> }}",
+            self.status
+        )
+    }
+}
+
+impl PasswordAnswer {
+    /// # Panics
+    /// When the status is not `want`; the message names `what`, the two statuses and nothing of
+    /// the body.
+    fn expect_status(&self, want: u16, what: &str) {
+        assert!(
+            self.status == want,
+            "{what}: Forgejo answered {}, wanted {want} (body not logged)",
+            self.status
+        );
+    }
+
+    /// The `sha1` of a created token.
+    ///
+    /// # Panics
+    /// When the status is not `201` or the body holds no token.
+    fn token(&self, what: &str) -> String {
+        self.expect_status(201, what);
+        serde_json::from_str::<serde_json::Value>(&self.body)
+            .ok()
+            .and_then(|json| json.get("sha1")?.as_str().map(str::to_owned))
+            .unwrap_or_else(|| panic!("{what}: the answer holds no token (body not logged)"))
+    }
+}
+
 fn expect_created(status: u16, answer: &str, what: &str) {
     assert_eq!(status, 201, "{what}: {answer}");
 }
@@ -589,11 +632,15 @@ impl Forgejo {
 
     /// [`Self::api`] signed in with the account's password, which Forgejo asks for to make or
     /// delete a token.
-    fn api_with_password(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+    ///
+    /// The answer is a [`PasswordAnswer`]: its body cannot be formatted into a log or a panic
+    /// message, because a call made with the password can answer with a token.
+    fn api_with_password(&self, method: &str, path: &str, body: Option<&str>) -> PasswordAnswer {
         use base64::Engine as _;
         let pair = format!("{OWNER}:{}", self.password);
         let basic = base64::engine::general_purpose::STANDARD.encode(pair);
-        self.call_as(&format!("Basic {basic}"), method, path, body)
+        let (status, body) = self.call_as(&format!("Basic {basic}"), method, path, body);
+        PasswordAnswer { status, body }
     }
 
     fn call_as(
@@ -629,14 +676,8 @@ impl Forgejo {
     #[must_use]
     pub fn add_token(&self, name: &str) -> String {
         let body = serde_json::json!({"name": name, "scopes": ["all"]}).to_string();
-        let (status, answer) =
-            self.api_with_password("POST", &format!("/users/{OWNER}/tokens"), Some(&body));
-        expect_created(status, &answer, &format!("make token {name}"));
-        let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
-        json.get("sha1")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_else(|| panic!("make token {name}: no sha1 in {answer}"))
-            .to_owned()
+        let answer = self.api_with_password("POST", &format!("/users/{OWNER}/tokens"), Some(&body));
+        answer.token(&format!("make token {name}"))
     }
 
     /// Deletes the token `name` of [`OWNER`] through the API: from then on Forgejo answers a
@@ -645,9 +686,9 @@ impl Forgejo {
     /// # Panics
     /// When Forgejo refuses (no such token).
     pub fn revoke_token(&self, name: &str) {
-        let (status, answer) =
+        let answer =
             self.api_with_password("DELETE", &format!("/users/{OWNER}/tokens/{name}"), None);
-        assert_eq!(status, 204, "revoke token {name}: {answer}");
+        answer.expect_status(204, &format!("revoke token {name}"));
     }
 
     /// Makes the repository `owner/name` of [`OWNER`] (`owner` must be [`OWNER`]) on branch `main`

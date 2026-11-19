@@ -22,7 +22,7 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
-    SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
@@ -122,6 +122,51 @@ pub fn create_owner_only_dir(dir: &Path) -> io::Result<()> {
 ///
 /// The OS error, for example when the current user may not change the list.
 pub fn set_owner_only_acl(path: &Path, inherit: bool) -> io::Result<()> {
+    let wide = wide_nul(path.as_os_str());
+    with_owner_only_dacl(inherit, |dacl| {
+        // SAFETY: `wide` is NUL-terminated and outlives the call; `dacl` stays valid for the
+        // call; null owner, group and SACL are allowed with only the DACL bits set.
+        unsafe {
+            SetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                dacl,
+                ptr::null(),
+            )
+        }
+    })
+}
+
+/// [`set_owner_only_acl`] on an open file, through its handle (opened with `WRITE_DAC`): the
+/// file that was checked is the one changed, whatever its path names meanwhile. Unlike the path
+/// form it does not pass inheritable entries on to existing children, so it is for files.
+///
+/// # Errors
+///
+/// Any Win32 error.
+pub fn set_owner_only_acl_on(file: &File) -> io::Result<()> {
+    with_owner_only_dacl(false, |dacl| {
+        // SAFETY: the handle is open for the call; `dacl` stays valid for the call; null owner,
+        // group and SACL are allowed with only the DACL bits set.
+        unsafe {
+            SetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                dacl,
+                ptr::null(),
+            )
+        }
+    })
+}
+
+/// Calls `set` with the DACL of the owner-only descriptor; `set` returns a Win32 error code.
+fn with_owner_only_dacl(inherit: bool, set: impl FnOnce(*const ACL) -> u32) -> io::Result<()> {
     let descriptor = owner_only_descriptor("FA", inherit)?;
     let mut present = 0;
     let mut defaulted = 0;
@@ -142,20 +187,8 @@ pub fn set_owner_only_acl(path: &Path, inherit: bool) -> io::Result<()> {
     if present == 0 || dacl.is_null() {
         return Err(io::Error::other("the owner-only descriptor has no DACL"));
     }
-    let wide = wide_nul(path.as_os_str());
-    // SAFETY: `wide` is NUL-terminated and outlives the call; `dacl` stays valid while
-    // `descriptor` lives; null owner, group and SACL are allowed with only the DACL bits set.
-    let rc = unsafe {
-        SetNamedSecurityInfoW(
-            wide.as_ptr(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            dacl,
-            ptr::null(),
-        )
-    };
+    // `dacl` points into `descriptor`, which lives until the end of this function.
+    let rc = set(dacl);
     if rc != 0 {
         return Err(io::Error::from_raw_os_error(rc.cast_signed()));
     }

@@ -392,12 +392,12 @@ fn plan_refuses_reserved_env_and_bad_image_values() {
     let err = BootPlan::builder(&image(&["a\0"], &[], None))
         .build()
         .unwrap_err();
-    assert_eq!(
-        err,
-        PlanError::ImageValue {
-            what: "ENTRYPOINT/CMD"
-        }
-    );
+    assert_eq!(err.to_string(), "the image's ENTRYPOINT/CMD contains a NUL");
+    // A newline in an argument is a legal byte of an exec argument and passes through.
+    let plan = BootPlan::builder(&image(&["sh", "-c", "echo a\necho b"], &[], None))
+        .build()
+        .unwrap();
+    assert_eq!(plan.entrypoint().unwrap(), ["sh", "-c", "echo a\necho b"]);
 }
 
 #[test]

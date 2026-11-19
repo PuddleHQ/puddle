@@ -739,7 +739,10 @@ allows can be ranked when one exists.
   with trailing spaces or control characters recognised or not; trailing dots alone or trailing
   dots and spaces in any mix dropped from a segment; a `?` or `#` that only decoding
   reveals ending the path; and a leading `//name` read as an authority (`//evil.example/admin` is
-  `/admin` to a server that resolves the target against a base URL).
+  `/admin` to a server that resolves the target against a base URL). A path longer than 2048
+  bytes (up to the query) is not read in all these ways, which would cost the proxy time in
+  proportion to its length: every rule on its host and method refuses it, as if the rule's path
+  named it.
 - **R-52 A method** is matched ignoring case. A request is also judged as every method it asks
   to be read as: an `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header and a
   `_method` key in the query string, read as PHP reads it (pairs split at `&` or `;`, `+` a space,

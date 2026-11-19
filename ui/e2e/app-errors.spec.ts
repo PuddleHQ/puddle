@@ -13,7 +13,7 @@ test("an uncaught error reaches the server scrubbed and Settings lists it", asyn
 }) => {
   await backend.control.reset("empty");
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/this-computer");
   await expect(
     page.getByRole("heading", { level: 1, name: "Settings" }),
   ).toBeVisible();

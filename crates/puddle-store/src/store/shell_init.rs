@@ -2,7 +2,7 @@
 //! Shell init rows in the store.
 
 use puddle_types::{Event, WorkspaceId};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, lock, sql_ts};
 use crate::error::StoreError;
@@ -14,31 +14,39 @@ fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceId) {
     });
 }
 
+/// The shell init `conn` holds for `workspace`; `set_shell_init` reads it inside its own write
+/// transaction.
+fn shell_init_in(
+    conn: &Connection,
+    workspace: &WorkspaceId,
+) -> Result<Option<ShellInit>, StoreError> {
+    let row: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT content, changed_at FROM shell_init WHERE workspace_id = ?1",
+            [workspace.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    row.map(|(content, changed_at)| {
+        Ok(ShellInit {
+            content: ShellInitText::new(&content).map_err(|e| StoreError::Corrupt {
+                table: "shell_init",
+                id: 0,
+                reason: e.to_string(),
+            })?,
+            changed_at: u64::try_from(changed_at).unwrap_or(0),
+        })
+    })
+    .transpose()
+}
+
 impl Store {
     /// The shell init saved for `workspace`, if it has one.
     ///
     /// # Errors
     /// A database error, or a stored row that does not parse.
     pub fn shell_init(&self, workspace: &WorkspaceId) -> Result<Option<ShellInit>, StoreError> {
-        let conn = lock(&self.conn);
-        let row: Option<(String, i64)> = conn
-            .query_row(
-                "SELECT content, changed_at FROM shell_init WHERE workspace_id = ?1",
-                [workspace.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        row.map(|(content, changed_at)| {
-            Ok(ShellInit {
-                content: ShellInitText::new(&content).map_err(|e| StoreError::Corrupt {
-                    table: "shell_init",
-                    id: 0,
-                    reason: e.to_string(),
-                })?,
-                changed_at: u64::try_from(changed_at).unwrap_or(0),
-            })
-        })
-        .transpose()
+        shell_init_in(&lock(&self.conn), workspace)
     }
 
     /// Saves `content` as `workspace`'s shell init, replacing what was there. An unchanged text
@@ -51,9 +59,9 @@ impl Store {
         workspace: &WorkspaceId,
         content: &ShellInitText,
     ) -> Result<ShellInit, StoreError> {
-        let before = self.shell_init(workspace)?;
-        let unchanged = before.as_ref().is_some_and(|b| &b.content == content);
         let changed_at = self.change(|tx, now, fx| {
+            let before = shell_init_in(tx, workspace)?;
+            let unchanged = before.as_ref().is_some_and(|b| &b.content == content);
             tx.execute(
                 "INSERT INTO shell_init (workspace_id, content, changed_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT (workspace_id) DO UPDATE SET content = ?2, changed_at = ?3",

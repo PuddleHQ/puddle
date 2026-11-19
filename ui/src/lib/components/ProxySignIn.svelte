@@ -53,10 +53,8 @@
   </div>
 {:else if store.status === "ready"}
   <p class="desc">
-    For a company proxy that asks for a user name and password. Puddle signs in
-    with your Windows account first, as before, and uses these when the proxy
-    still asks. The password is kept in this computer's credential store and
-    isn't shown again.
+    For a proxy that asks for a user name and password. Puddle tries your
+    Windows account first. The password stays in the credential store.
   </p>
   {#if store.signIns.length > 0}
     <ul class="list" aria-label="Stored proxy sign-ins">
@@ -122,8 +120,11 @@
       </div>
     </div>
     <div class="row">
-      <button type="submit" class="btn primary" disabled={working}
-        >Keep sign-in</button
+      <button
+        type="submit"
+        class="btn primary"
+        aria-label="Save proxy sign-in"
+        disabled={working}>Save</button
       >
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}

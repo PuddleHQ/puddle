@@ -145,7 +145,7 @@
     >
   {/if}
   {#if fromSettings}
-    <a class="btn primary" href="/settings">Back to Settings</a>
+    <a class="btn primary" href="/settings/this-computer">Back to Settings</a>
   {:else if blocked}
     <a class="btn" href="/workspaces">Leave setup for now</a>
   {:else if running || notStarted}

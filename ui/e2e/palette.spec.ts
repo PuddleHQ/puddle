@@ -9,20 +9,14 @@ import { expectNoAxeViolations, staysEmpty, watchCsp } from "./support";
 
 const PALETTES = ["pond", "dusk", "meadow", "ember", "graphite"] as const;
 
-const saved = (page: Page) =>
-  page.waitForResponse(
-    (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
-  );
-
 async function open(page: Page, backend: Backend, path = "/settings") {
   await backend.signIn(page);
   await page.goto(path);
 }
 
+/** The palette is stored the moment it is chosen; wait for that. */
 async function save(page: Page) {
-  const done = saved(page);
-  await page.getByRole("button", { name: "Save" }).click();
-  await done;
+  await expect(page.getByText("Saved.").first()).toBeVisible();
 }
 
 const accent = (page: Page) =>

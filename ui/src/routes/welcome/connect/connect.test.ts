@@ -28,7 +28,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const codeServer = () =>
-  screen.getByRole("radio", { name: /VS Code in the browser \(built in\)/ });
+  screen.getByRole("radio", { name: /Built-in VS Code server/ });
 const microsoft = () =>
   screen.getByRole("radio", { name: /Microsoft's VS Code server/ });
 const directSsh = () =>
@@ -39,7 +39,7 @@ const puts = () => api.calls.filter((c) => c === "PUT /api/settings").length;
 
 async function open() {
   render(Page);
-  await screen.findByRole("group", { name: "Editor in your browser" });
+  await screen.findByRole("group", { name: "Isolated VS Code" });
 }
 
 describe("connect step", () => {
@@ -81,7 +81,7 @@ describe("connect step", () => {
   it("says it is loading, and when the settings can't be read or are from a newer Puddle", async () => {
     render(Page);
     expect(screen.getByText(/Loading/)).toBeInTheDocument();
-    await screen.findByRole("group", { name: "Editor in your browser" });
+    await screen.findByRole("group", { name: "Isolated VS Code" });
     cleanup();
 
     globalSettings.view = null;

@@ -213,6 +213,7 @@ fn the_probe_window_opens_on_its_page_in_a_data_folder_of_its_own() {
         url: Url::parse("http://probe.localhost:4900/attack.html").unwrap(),
         debug_port: 9444,
         forget: false,
+        clipboard_read: puddle_settings::ClipboardRead::Ask,
     };
     open_probe(app.handle(), &probe, data.path()).unwrap();
     let window = app.get_webview_window("vs-probe").unwrap();
@@ -224,15 +225,21 @@ fn the_probe_window_opens_on_its_page_in_a_data_folder_of_its_own() {
 #[test]
 fn the_probe_needs_a_page_and_a_debug_port() {
     let page = Some("http://probe.localhost:4900/attack.html");
-    let probe = SandboxProbe::parse(page, Some("9444"), None, None).unwrap();
+    let probe = SandboxProbe::parse(page, Some("9444"), None, None, None).unwrap();
     assert_eq!((probe.url.path(), probe.debug_port), ("/attack.html", 9444));
-    assert_eq!(SandboxProbe::parse(None, Some("9444"), None, None), None);
-    assert_eq!(SandboxProbe::parse(page, None, None, None), None);
     assert_eq!(
-        SandboxProbe::parse(Some("not a url"), Some("9444"), None, None),
+        SandboxProbe::parse(None, Some("9444"), None, None, None),
         None
     );
-    assert_eq!(SandboxProbe::parse(page, Some("high"), None, None), None);
+    assert_eq!(SandboxProbe::parse(page, None, None, None, None), None);
+    assert_eq!(
+        SandboxProbe::parse(Some("not a url"), Some("9444"), None, None, None),
+        None
+    );
+    assert_eq!(
+        SandboxProbe::parse(page, Some("high"), None, None, None),
+        None
+    );
     // The environment is shared between tests: only a run with neither value set shows this.
     assert!(SandboxProbe::from_env().is_none());
 }
@@ -248,11 +255,11 @@ fn the_probe_opens_first_only_under_webdriver_automation() {
 #[test]
 fn the_probe_stands_for_the_workspace_the_environment_names_and_forgets_only_when_told_to() {
     let page = Some("http://k3x9q2ab.localhost:4900/");
-    let named = SandboxProbe::parse(page, Some("9444"), Some("k3x9q2ab"), None).unwrap();
+    let named = SandboxProbe::parse(page, Some("9444"), Some("k3x9q2ab"), None, None).unwrap();
     assert_eq!(named.workspace.as_str(), "k3x9q2ab");
     assert!(!named.forget);
     assert_eq!(
-        SandboxProbe::parse(page, Some("9444"), None, None)
+        SandboxProbe::parse(page, Some("9444"), None, None, None)
             .unwrap()
             .workspace
             .as_str(),
@@ -260,11 +267,11 @@ fn the_probe_stands_for_the_workspace_the_environment_names_and_forgets_only_whe
     );
     // A name that is no workspace id is no probe: it must not quietly open `probe` instead.
     assert_eq!(
-        SandboxProbe::parse(page, Some("9444"), Some("Not An Id"), None),
+        SandboxProbe::parse(page, Some("9444"), Some("Not An Id"), None, None),
         None
     );
     let forgetting = |value| {
-        SandboxProbe::parse(page, Some("9444"), None, value)
+        SandboxProbe::parse(page, Some("9444"), None, value, None)
             .unwrap()
             .forget
     };
@@ -287,6 +294,7 @@ fn a_forgetting_probe_removes_the_workspace_s_webview_data_before_it_opens() {
         Some("9444"),
         None,
         Some("1"),
+        None,
     )
     .unwrap();
     let log = logged(|| open_probe(app.handle(), &probe, data.path()).unwrap());
@@ -309,6 +317,7 @@ fn a_forgetting_probe_that_cannot_remove_the_data_says_so_and_then_fails_to_open
         Some("9444"),
         None,
         Some("1"),
+        None,
     )
     .unwrap();
     let mut opened = None;
@@ -476,4 +485,25 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
         text.contains("cannot start: job object: assign failed"),
         "{text}"
     );
+}
+
+#[test]
+fn the_probe_opens_with_the_clipboard_setting_the_environment_names_and_refuses_a_typo() {
+    use puddle_settings::ClipboardRead;
+    let page = Some("http://probe.localhost:4900/");
+    let with = |value| SandboxProbe::parse(page, Some("9444"), None, None, value);
+    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Ask);
+    assert_eq!(
+        with(Some("ask")).unwrap().clipboard_read,
+        ClipboardRead::Ask
+    );
+    assert_eq!(
+        with(Some("allow")).unwrap().clipboard_read,
+        ClipboardRead::Allow
+    );
+    assert_eq!(
+        with(Some("deny")).unwrap().clipboard_read,
+        ClipboardRead::Deny
+    );
+    assert_eq!(with(Some("Deny")), None);
 }

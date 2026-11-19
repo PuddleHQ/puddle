@@ -150,3 +150,21 @@ fn a_view_without_a_listing_has_no_time_hash_or_files() {
     assert_eq!((shown.listed_at, shown.running), (Some(7), true));
     assert_eq!(shown.sha256, Some(ToolsFileHash::absent()));
 }
+
+#[test]
+fn a_failed_mise_reason_has_no_control_or_bidi_characters_and_is_cut() {
+    let Err(Failed::Reason(said)) = read(
+        Ok(ExecOutput::new(1, "", "\u{1b}[31mmise ERROR\u{202e}\n")),
+        parse_hash,
+    ) else {
+        panic!("a reason");
+    };
+    assert_eq!(said, "?[31mmise ERROR?");
+    let Err(Failed::Reason(said)) = read(
+        Ok(ExecOutput::new(1, "", "z".repeat(1_000_000))),
+        parse_hash,
+    ) else {
+        panic!("a reason");
+    };
+    assert_eq!(said.chars().count(), MAX_FIELD);
+}

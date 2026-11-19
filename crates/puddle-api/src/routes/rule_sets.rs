@@ -10,11 +10,12 @@ use puddle_types::RuleSetId;
 use crate::ApiErrorBody;
 use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
-use crate::extract::Path;
+use crate::extract::{Path, Query};
 use crate::routes::AppState;
 use crate::wire::{
-    NewRuleSetRequest, RuleSetEntrySwitchRequest, RuleSetList, RuleSetSwitchRequest,
-    RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost, checked_precedence,
+    NewRuleSetRequest, RuleSetEntryPage, RuleSetEntrySwitchRequest, RuleSetList,
+    RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
+    checked_precedence,
 };
 
 /// The set a path names, or 404.
@@ -82,6 +83,55 @@ pub(crate) async fn list_rule_sets(
     })
     .await?;
     Ok(Json(list))
+}
+
+/// Which entries of a built-in set to return.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EntriesQuery {
+    /// Keep entries whose pattern or note contains this text, ignoring case.
+    q: Option<String>,
+    /// Skip this many matches (default 0).
+    offset: Option<usize>,
+    /// At most this many (default and most 200).
+    limit: Option<usize>,
+}
+
+/// A page of the entries of a built-in set, optionally filtered by a search. The set list carries
+/// only the first 200 entries of a built-in set, because such a set can hold tens of thousands.
+#[utoipa::path(
+    get,
+    path = "/api/rule-sets/{id}/entries",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "`builtin:<slug>`"),
+        ("q" = Option<String>, Query, description = "keep entries whose pattern or note contains this text, ignoring case"),
+        ("offset" = Option<usize>, Query, description = "skip this many matches (default 0)"),
+        ("limit" = Option<usize>, Query, description = "at most this many (default and most 200)")
+    ),
+    responses(
+        (status = OK, description = "the entries and how many match", body = RuleSetEntryPage),
+        (status = NOT_FOUND, description = "no such built-in set", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn list_builtin_entries(
+    State(state): State<AppState>,
+    principal: Principal,
+    Path(id): Path<String>,
+    Query(query): Query<EntriesQuery>,
+) -> Result<Json<RuleSetEntryPage>, ApiError> {
+    let id = set_id(&id)?;
+    let page = blocking(move || {
+        Ok(state.store.built_in_entries(
+            principal.user,
+            id,
+            query.q.as_deref().unwrap_or(""),
+            query.offset.unwrap_or(0),
+            query.limit.unwrap_or(puddle_store::ENTRY_PAGE),
+        )?)
+    })
+    .await?;
+    Ok(Json(RuleSetEntryPage::from_store(page)))
 }
 
 /// Makes a rule set of your own, empty and on everywhere. Add entries with `POST /api/rules`

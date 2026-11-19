@@ -2267,6 +2267,29 @@ fn a_store_record_that_cannot_be_read_is_a_warning() {
     assert!(r.ok);
 }
 
+/// The advice names `puddle serve --headless` only in a build that has the command: the
+/// snapshots below record the build with it, this test runs the other build too (`scripts/check.sh dormant`).
+#[test]
+fn the_no_desktop_advice_names_the_serve_command_only_when_it_is_built_in() {
+    for recorded in [true, false] {
+        let fake = with_store(CredentialStoreFacts::Os {
+            recorded,
+            health: StoreHealth::Working,
+            session: LoginSession::NotGraphical,
+        });
+        let r = run(&fake, &Options::default());
+        let text = format!("{} {}", r.to_json(), r.to_text());
+        let mentions = text.contains("puddle serve") || text.contains("--headless");
+        assert_eq!(
+            mentions,
+            puddle_doctor::SERVE_BUILT_IN,
+            "{recorded}: {text}"
+        );
+        assert!(text.contains("keyring"), "{text}");
+    }
+}
+
+#[cfg(feature = "serve")]
 #[test]
 fn a_working_keyring_on_a_linux_computer_with_no_graphical_session_is_a_warning() {
     for (recorded, snapshot, fix_has) in [

@@ -9,9 +9,13 @@
 //! the entries once (off the async threads), and a sign-in is then answered from memory. A change
 //! writes the list before the entry it adds and removes the entry before it takes its name off the
 //! list, so a crash leaves a name without an entry, which loading skips, never a value no list names.
+//! The addresses (never a user name or password) are also kept in a plain file next to the data, so
+//! a store that comes back empty (a secrets reset) is noticed: [`ProxyPasswords::lost`] names the
+//! proxies that had a sign-in and have none, and the host shows a problem until each is entered again.
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_secrets::{Secret, SecretStore, StoreError, StoredId};
@@ -59,6 +63,12 @@ pub struct ProxyPasswords {
     /// What is known now; held only to read or swap it, never across a store call, so the
     /// network-health page and the proxy's lookups stay quick while the store is slow.
     entries: Mutex<BTreeMap<ProxyAddr, Credentials>>,
+    /// A plain file naming the proxies (addresses only) that have had a sign-in, outside the
+    /// credential store: a store that comes back empty (a reset, a new vault) cannot also forget
+    /// which proxies were signed in to.
+    known_file: Option<PathBuf>,
+    /// The proxies a list or the known file names but no entry answers for, as of the last load.
+    lost: Mutex<Vec<ProxyAddr>>,
 }
 
 impl fmt::Debug for ProxyPasswords {
@@ -84,6 +94,22 @@ impl ProxyPasswords {
             prefix: prefix.to_owned(),
             changing: Mutex::default(),
             entries: Mutex::default(),
+            known_file: None,
+            lost: Mutex::default(),
+        })
+    }
+
+    /// Like [`ProxyPasswords::new`], also naming the proxies in the plain file `known_file`, so
+    /// [`ProxyPasswords::lost`] can say which sign-ins the credential store no longer holds.
+    #[must_use]
+    pub fn with_known_file(vault: Arc<dyn SecretStore>, known_file: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            vault,
+            prefix: ID_PREFIX.to_owned(),
+            changing: Mutex::default(),
+            entries: Mutex::default(),
+            known_file: Some(known_file),
+            lost: Mutex::default(),
         })
     }
 
@@ -96,16 +122,65 @@ impl ProxyPasswords {
     pub fn load(&self) -> Result<usize, ProxyPasswordError> {
         let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
         let mut loaded = BTreeMap::new();
-        for proxy in self.listed()? {
+        let mut lost = Vec::new();
+        let mut names = self.listed()?;
+        for proxy in self.known() {
+            if !names.contains(&proxy) {
+                names.push(proxy);
+            }
+        }
+        for proxy in names {
             if let Some(secret) = self.vault.get(&self.entry_id(&proxy)?)?
                 && let Some(credentials) = decode(&secret)
             {
                 loaded.insert(proxy, credentials);
+            } else {
+                lost.push(proxy);
             }
         }
         let count = loaded.len();
         *self.entries() = loaded;
+        *self.lost.lock().unwrap_or_else(PoisonError::into_inner) = lost;
         Ok(count)
+    }
+
+    /// The proxies that had a sign-in and have none now: named by the credential store's list or
+    /// the known file, but no readable entry as of the last [`ProxyPasswords::load`] or change.
+    /// Setting the proxy again, or removing it, takes it off.
+    #[must_use]
+    pub fn lost(&self) -> Vec<ProxyAddr> {
+        self.lost
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The proxies the known file names; none when there is no file or it cannot be read.
+    fn known(&self) -> Vec<ProxyAddr> {
+        let Some(text) = self
+            .known_file
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+        else {
+            return Vec::new();
+        };
+        text.lines()
+            .filter_map(|line| ProxyAddr::parse(line).ok())
+            .collect()
+    }
+
+    /// Writes `names` to the known file; a file that cannot be written is logged and left, since
+    /// the credential store's own list still names the proxy.
+    fn write_known(&self, names: &[ProxyAddr]) {
+        let Some(path) = &self.known_file else { return };
+        let text = names
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Err(err) = std::fs::write(path, text) {
+            tracing::warn!(error = %err.kind(), "the proxy sign-in names could not be written");
+        }
     }
 
     /// Stores `user` and `password` for `proxy`, replacing an earlier sign-in. The stored list is
@@ -137,7 +212,16 @@ impl ProxyPasswords {
         self.vault.set(&self.entry_id(proxy)?, &value)?;
         self.entries()
             .insert(proxy.clone(), Credentials::new(user, password));
+        let mut known = self.known();
+        if !known.contains(proxy) {
+            known.push(proxy.clone());
+            self.write_known(&known);
+        }
         self.read_missing(&names);
+        self.lost
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|p| p != proxy);
         Ok(())
     }
 
@@ -152,7 +236,14 @@ impl ProxyPasswords {
         names.retain(|p| p != proxy);
         self.write_list(&names)?;
         self.entries().remove(proxy);
+        let mut known = self.known();
+        known.retain(|p| p != proxy);
+        self.write_known(&known);
         self.read_missing(&names);
+        self.lost
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|p| p != proxy);
         Ok(())
     }
 

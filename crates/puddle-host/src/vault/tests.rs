@@ -354,16 +354,23 @@ async fn shutdown_reports_a_sweep_that_panicked_and_one_that_finished() {
 }
 
 #[test]
-fn a_retry_against_the_real_store_answers_and_leaves_the_problem_matching_it() {
-    // Whatever this computer's credential store does, the problem stands exactly when it refuses.
-    let list = Arc::new(problems());
-    let retry = StoreRetry {
-        probe: Probe::Os,
-        problems: list.clone(),
-    };
-    let working = retry.retry().expect("the host wires a check");
-    let standing = list.list().iter().any(|p| p.key == STORE_PROBLEM);
-    assert_eq!(standing, !working);
+fn a_retry_answers_and_leaves_the_problem_matching_the_store() {
+    // The problem stands exactly when the store refuses; no real credential store is touched.
+    for refuses in [true, false] {
+        let store = Arc::new(MemoryStore::new());
+        if refuses {
+            store.break_it();
+        }
+        let list = Arc::new(problems());
+        let retry = StoreRetry {
+            probe: Probe::Store(store),
+            problems: list.clone(),
+        };
+        let working = retry.retry().expect("the host wires a check");
+        let standing = list.list().iter().any(|p| p.key == STORE_PROBLEM);
+        assert_eq!(working, !refuses);
+        assert_eq!(standing, refuses);
+    }
 }
 
 #[tokio::test]
@@ -412,8 +419,19 @@ fn the_warning_says_whether_the_login_is_graphical_and_whether_the_store_works()
         warn_without_headless_flag(LoginSession::NotGraphical, StoreHealth::Working);
     });
     let text = logs.text();
+    // The advice names `puddle serve --headless` only in a build that has the command.
+    let advice = if puddle_doctor::SERVE_BUILT_IN {
+        "Puddle was started without --headless"
+    } else {
+        "Unlock the keyring after every reboot"
+    };
+    assert_eq!(
+        text.contains("serve") || text.contains("--headless"),
+        puddle_doctor::SERVE_BUILT_IN,
+        "{text}"
+    );
     assert!(
-        text.contains("Puddle was started without --headless")
+        text.contains(advice)
             && text.contains("graphical_session=false")
             && text.contains("store_works=true"),
         "{text}"
@@ -450,4 +468,15 @@ fn a_retry_with_nothing_to_check_has_no_answer_and_a_file_vault_is_checked_like_
     };
     assert_eq!(healthy.retry(), Some(true));
     assert_eq!(list.list(), Vec::new(), "a working vault ends the problem");
+}
+
+#[test]
+fn the_headless_advice_is_worded_for_a_build_with_and_without_the_serve_command() {
+    assert!(headless_advice(true).contains("puddle serve --headless"));
+    let without = headless_advice(false);
+    assert!(
+        !without.contains("puddle serve") && !without.contains("--headless"),
+        "{without}"
+    );
+    assert!(without.contains("keyring"), "{without}");
 }

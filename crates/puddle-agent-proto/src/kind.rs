@@ -128,7 +128,13 @@ pub fn parse_preamble(line: &[u8]) -> Result<(StreamKind, u32), PreambleError> {
         PreambleError::UnknownKind(
             name.chars()
                 .take(32)
-                .map(|c| if c.is_control() { '?' } else { c })
+                .map(|c| {
+                    if crate::is_hostile_text_char(c) {
+                        '?'
+                    } else {
+                        c
+                    }
+                })
                 .collect(),
         )
     })?;

@@ -36,7 +36,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::FutureExt as _;
@@ -111,7 +110,7 @@ pub struct Control {
     /// Set by a rollback that could not clean up because a download held `work`: the holder
     /// cleans up before it lets go, so the failed build's folder does not stay until some later
     /// confirmation.
-    cleanup_owed: AtomicBool,
+    cleanup_owed: std::sync::atomic::AtomicBool,
     restart: Notify,
     /// Held by whoever reads or moves the pointers (a switch, a claim of the build to run, a
     /// confirmation, a rollback), never across an await: those run in a few microseconds and must
@@ -144,7 +143,7 @@ impl Control {
         Arc::new(Self {
             builds: PathBuf::from(&server.dir),
             work: Mutex::new(()),
-            cleanup_owed: AtomicBool::new(false),
+            cleanup_owed: std::sync::atomic::AtomicBool::new(false),
             restart: Notify::new(),
             pointers: std::sync::Mutex::new(()),
             times,
@@ -683,7 +682,10 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
             let _work = control.work.lock().await;
             let looked = microsoft::stage_update(&*fetch, platform, &control.builds).await;
             // A rollback during this download could not clean up; `work` is still held here.
-            if control.cleanup_owed.swap(false, Ordering::SeqCst) {
+            if control
+                .cleanup_owed
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
                 let _pointers = control.pointers_lock();
                 microsoft::clean_up(&control.builds);
             }
@@ -860,12 +862,16 @@ async fn confirm_when_listening(control: Arc<Control>, port: u16, commit: String
 /// folders.
 fn settle_trial(control: &Control, commit: &str) {
     // Set before the try, so a holder that is still going sees it before it lets go.
-    control.cleanup_owed.store(true, Ordering::SeqCst);
+    control
+        .cleanup_owed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let work = control.work.try_lock();
     let _pointers = control.pointers_lock();
     let clean_up = work.is_ok();
     if clean_up {
-        control.cleanup_owed.store(false, Ordering::SeqCst);
+        control
+            .cleanup_owed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
     match microsoft::roll_back(&control.builds, commit, clean_up) {
         Ok(true) => {

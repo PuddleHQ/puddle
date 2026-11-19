@@ -21,8 +21,9 @@ run() {
         APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="$2" "$here/apt-setup.sh" >"$tmp/out" ||
             fail "$1: the script failed"
     done
-    [ "$(wc -l <"$tmp/apt/apt-mirrors.txt")" = 3 ] || fail "$1: the list is not exactly three mirrors"
-    grep -q "^https://security.ubuntu.com/ubuntu/	priority:3$" "$tmp/apt/apt-mirrors.txt" || fail "$1: no security mirror"
+    [ "$(wc -l <"$tmp/apt/apt-mirrors.txt")" = 4 ] || fail "$1: the list is not exactly four mirrors"
+    grep -q "^https://mirrors.edge.kernel.org/ubuntu/	priority:[23]$" "$tmp/apt/apt-mirrors.txt" || fail "$1: no kernel.org fallback"
+    grep -q "^https://security.ubuntu.com/ubuntu/	priority:4$" "$tmp/apt/apt-mirrors.txt" || fail "$1: no security mirror"
     conf=$tmp/apt/apt.conf.d/99-ci-timeouts
     grep -q 'Acquire::http::Timeout "20"' "$conf" || fail "$1: no http timeout"
     grep -q 'Acquire::Retries "5"' "$conf" || fail "$1: no retries"
@@ -47,11 +48,25 @@ head -c 3000000 /dev/zero >"$tmp/whole"
 run "a probe that sends more than asked" "file://$tmp/whole"
 [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$azure" ] || fail "a whole file: Azure is not first"
 
-# --canonical skips the probe
-printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
-APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" "$here/apt-setup.sh" --canonical >"$tmp/out" ||
-    fail "--canonical: the script failed"
-[ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ] || fail "--canonical: Canonical is not first"
+kernel="https://mirrors.edge.kernel.org/ubuntu/	priority:1"
+# --use skips the probe and puts the named mirror first, the others behind it
+for pair in "canonical:$canonical" "kernel:$kernel" "azure:$azure"; do
+    printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
+    APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" "$here/apt-setup.sh" --use "${pair%%:*}" >"$tmp/out" ||
+        fail "--use ${pair%%:*}: the script failed"
+    [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "${pair#*:}" ] || fail "--use ${pair%%:*}: that mirror is not first"
+    [ "$(wc -l <"$tmp/apt/apt-mirrors.txt")" = 4 ] || fail "--use ${pair%%:*}: the list is not four mirrors"
+done
+APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" "$here/apt-setup.sh" --use bogus >/dev/null 2>&1 && fail "--use bogus was accepted"
+
+# APT_DEBS_DIR moves apt's download directory (for the Actions cache) and drops the sandbox user
+APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" APT_DEBS_DIR="$tmp/debs" "$here/apt-setup.sh" >"$tmp/out" ||
+    fail "debs dir: the script failed"
+grep -q "Dir::Cache::Archives \"$tmp/debs\";" "$tmp/apt/apt.conf.d/99-ci-timeouts" || fail "debs dir: archives not redirected"
+grep -q 'APT::Sandbox::User "root";' "$tmp/apt/apt.conf.d/99-ci-timeouts" || fail "debs dir: sandbox user kept"
+[ -d "$tmp/debs/partial" ] || fail "debs dir: no partial directory"
+APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" "$here/apt-setup.sh" >"$tmp/out" || fail "no debs dir: the script failed"
+! grep -q "Dir::Cache" "$tmp/apt/apt.conf.d/99-ci-timeouts" || fail "no debs dir: archives redirected anyway"
 
 # apt-retry.sh: a command that finishes, one that stalls then works, one that always fails
 # Time limits depend on what a case proves. A case that must NOT time out gets bounds far above any spawn time
@@ -87,10 +102,11 @@ exit 7
 S
 chmod +x "$tmp/fail7.sh"
 rc=0
+printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
 "$here/apt-retry.sh" "$tmp/fail7.sh" >"$tmp/out" 2>&1 || rc=$?
 [ "$rc" = 7 ] || fail "retry: the second status was not passed on (got $rc)"
-grep -q "^::error::apt-retry: '$tmp/fail7.sh' failed again (status 7) on archive.ubuntu.com after 60s$" "$tmp/out" ||
-    fail "retry: no error after the second failure"
+grep -q "^::error::apt-retry: '$tmp/fail7.sh' failed again (status 7) on mirrors.edge.kernel.org after 60s; mirrors tried: azure.archive.ubuntu.com, archive.ubuntu.com, mirrors.edge.kernel.org$" "$tmp/out" ||
+    fail "retry: no error naming every mirror after the last failure: $(tail -2 "$tmp/out" | tr '\n' '|')"
 # The second try that times out names status 124
 cat >"$tmp/hang.sh" <<'S'
 #!/usr/bin/env bash
@@ -100,7 +116,43 @@ chmod +x "$tmp/hang.sh"
 rc=0
 APT_FIRST_TRY_S=2 APT_RETRY_S=5 "$here/apt-retry.sh" "$tmp/hang.sh" >"$tmp/out" 2>&1 || rc=$?
 [ "$rc" = 124 ] || fail "retry: a second timeout did not give status 124 (got $rc)"
-grep -q "failed again (status 124)" "$tmp/out" || fail "retry: no error after the second timeout"
+grep -q "failed again (status 124)" "$tmp/out" || fail "retry: no error after the last timeout"
+
+# Both Ubuntu archives stall: the third mirror (kernel.org) is reached, and only after the two others were tried.
+# The fake apt-get serves only from kernel.org (read from the list apt-setup.sh wrote), as a download would.
+cat >"$tmp/apt3.sh" <<S
+#!/usr/bin/env bash
+sed -n 1p "$tmp/apt/apt-mirrors.txt" >>"$tmp/apt3.log"
+if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$kernel" ]; then exit 0; fi
+sleep 120
+S
+chmod +x "$tmp/apt3.sh"
+printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
+: >"$tmp/apt3.log"
+APT_FIRST_TRY_S=2 APT_RETRY_S=2 "$here/apt-retry.sh" "$tmp/apt3.sh" >"$tmp/out" 2>&1 ||
+    fail "retry: the third mirror was not reached: $(tail -3 "$tmp/out" | tr '\n' '|')"
+[ "$(wc -l <"$tmp/apt3.log")" = 3 ] || fail "retry: not exactly three tries"
+sed -n 2p "$tmp/apt3.log" | grep -q archive.ubuntu.com || fail "retry: the second try was not on Canonical"
+grep -q "retrying on the kernel mirror" "$tmp/out" || fail "retry: no warning for the kernel step"
+grep -q "ended with status 124 on archive.ubuntu.com" "$tmp/out" || fail "retry: the stalled mirror is not named"
+# A warm cache needs no mirror at all: the fake apt-get reads the archives directory from the conf apt-setup.sh wrote
+# and finds the .deb there, so it succeeds although every mirror would hang.
+mkdir -p "$tmp/warm/partial"
+: >"$tmp/warm/libfoo.deb"
+APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/missing" APT_DEBS_DIR="$tmp/warm" "$here/apt-setup.sh" >"$tmp/out" || fail "warm: setup failed"
+cat >"$tmp/aptwarm.sh" <<S
+#!/usr/bin/env bash
+dir=\$(sed -n 's/^Dir::Cache::Archives "\(.*\)";\$/\1/p' "$tmp/apt/apt.conf.d/99-ci-timeouts")
+[ -e "\$dir/libfoo.deb" ] && exit 0
+sleep 120
+S
+chmod +x "$tmp/aptwarm.sh"
+"$here/apt-retry.sh" "$tmp/aptwarm.sh" >"$tmp/out" 2>&1 || fail "warm: a warm cache still needed the network"
+! grep -q retrying "$tmp/out" || fail "warm: a warm install was retried"
+mv "$tmp/warm/libfoo.deb" "$tmp/libfoo.moved"
+rc=0
+APT_FIRST_TRY_S=1 APT_RETRY_S=1 "$here/apt-retry.sh" "$tmp/aptwarm.sh" >"$tmp/out" 2>&1 || rc=$?
+[ "$rc" = 124 ] || fail "cold: an empty cache did not take the network path (got $rc)"
 
 # A failing repair step is a warning, not silence: apt-setup.sh gets a file where a directory belongs,
 # and a fake sudo makes dpkg fail
@@ -111,7 +163,7 @@ chmod +x "$tmp/bin/sudo"
 rc=0
 PATH="$tmp/bin:$PATH" APT_ETC="$tmp/notdir" APT_RETRY_NO_REPAIR='' "$here/apt-retry.sh" "$tmp/fail7.sh" >"$tmp/out" 2>&1 || rc=$?
 [ "$rc" = 7 ] || fail "retry: failing repair steps changed the status (got $rc)"
-grep -q "^::warning::apt-retry: 'apt-setup.sh --canonical' failed" "$tmp/out" || fail "retry: no warning for apt-setup.sh"
+grep -q "^::warning::apt-retry: 'apt-setup.sh --use canonical' failed" "$tmp/out" || fail "retry: no warning for apt-setup.sh"
 grep -q "^::warning::apt-retry: 'dpkg --configure -a' failed" "$tmp/out" || fail "retry: no warning for dpkg"
 # A try that times out must not leave an apt lock held: this test starts a holder in its own session
 # (as sudo does) and confirms it holds the lock before the first try, so a slow stub cannot skip the

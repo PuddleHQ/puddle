@@ -67,7 +67,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 18] = [
+const BUILT_IN: [(&str, &str); 19] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),

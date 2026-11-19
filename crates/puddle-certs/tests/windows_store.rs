@@ -211,6 +211,53 @@ fn kill_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// The machine-wide counters of [`machine_state`]: a label and the `typeperf` path, in the order
+/// `typeperf` prints their columns.
+const COUNTERS: [(&str, &str); 6] = [
+    ("% Processor Time", "\\Processor(_Total)\\% Processor Time"),
+    ("Processor Queue Length", "\\System\\Processor Queue Length"),
+    ("Processes", "\\System\\Processes"),
+    ("Handle Count", "\\Process(_Total)\\Handle Count"),
+    ("Available MBytes", "\\Memory\\Available MBytes"),
+    (
+        "Avg. Disk Queue Length",
+        "\\PhysicalDisk(_Total)\\Avg. Disk Queue Length",
+    ),
+];
+
+/// `typeperf`'s CSV as one `counters:` line: the last sample, each value named by its position in
+/// [`COUNTERS`]. The names come from here, not from the CSV header: a runner printed a header
+/// without its first name over rows that still carried every value, and a test that searched the
+/// header for `Processor Time` failed on that. Output with no sample row is kept as it came.
+fn counter_report(csv: &str) -> String {
+    let fields = |line: &str| -> Vec<String> {
+        line.trim()
+            .split("\",\"")
+            .map(|f| f.trim_matches('"').trim().to_owned())
+            .collect()
+    };
+    let sample = csv
+        .lines()
+        .filter(|l| l.trim_start().starts_with('"') && !l.contains("PDH-CSV"))
+        .map(fields)
+        .rfind(|row| row.len() == COUNTERS.len() + 1)
+        .and_then(|row| {
+            let (time, values) = row.split_first()?;
+            Some((time.clone(), values.to_vec()))
+        });
+    match sample {
+        Some((time, row)) => {
+            let values: Vec<String> = COUNTERS
+                .iter()
+                .zip(&row)
+                .map(|((label, _), value)| format!("{label} = {value}"))
+                .collect();
+            format!("counters at {}: {}\n", time, values.join(", "))
+        }
+        None => format!("counters: no sample row in typeperf output:\n{csv}\n"),
+    }
+}
+
 /// What the machine was doing at a PowerShell timeout, so the next stall names its cause: the
 /// PowerShell family, test binaries and likely CPU holders from `tasklist /v` (status, CPU time),
 /// how many `powershell.exe` run at once (other tests and the doctor start them too), and the
@@ -260,20 +307,13 @@ fn machine_state() -> String {
         }
     }
     let mut counters = Command::new("typeperf.exe");
-    counters.args([
-        "\\Processor(_Total)\\% Processor Time",
-        "\\System\\Processor Queue Length",
-        "\\System\\Processes",
-        "\\Process(_Total)\\Handle Count",
-        "\\Memory\\Available MBytes",
-        "\\PhysicalDisk(_Total)\\Avg. Disk Queue Length",
-        "-sc",
-        "2",
-    ]);
+    counters
+        .args(COUNTERS.iter().map(|(_, path)| *path))
+        .args(["-sc", "2"]);
     match run_bounded_with(counters, "typeperf", TOOL_LIMIT, false) {
-        Ok(text) => out.push_str(&text),
+        Ok(text) => out.push_str(&counter_report(&text)),
         Err(failure) => {
-            let _ = writeln!(out, "typeperf: {}", failure.into_message());
+            let _ = writeln!(out, "counters: typeperf: {}", failure.into_message());
         }
     }
     out
@@ -769,6 +809,31 @@ fn is_held(held: &Path) -> bool {
     std::fs::remove_file(held).is_err()
 }
 
+/// The output of the runner that printed no name for its first column (the timeout assertion
+/// failed on it); every value is still named.
+#[test]
+fn the_counters_are_named_by_position_not_by_the_csv_header() {
+    let headerless = "\r\n\"(PDH-CSV 4.0)\",\"\\\\host\\System\\Processor Queue Length\",\"\\\\host\\System\\Processes\"\r\n\"11/19/2026 12:38:06.989\",\"62.626197\",\"0.000000\",\"159.000000\",\"51961.000000\",\"12904.000000\",\"0.030740\"\r\n\"11/19/2026 12:38:08.004\",\"77.297987\",\"0.000000\",\"155.000000\",\"51295.000000\",\"12996.000000\",\"0.015041\"\r\nExiting, please wait...\r\n";
+    let report = counter_report(headerless);
+    assert!(
+        report.starts_with("counters at 11/19/2026 12:38:08.004: "),
+        "{report}"
+    );
+    assert!(report.contains("% Processor Time = 77.297987"), "{report}");
+    assert!(report.contains("Handle Count = 51295.000000"), "{report}");
+    assert!(
+        report.contains("Avg. Disk Queue Length = 0.015041"),
+        "{report}"
+    );
+}
+
+#[test]
+fn counters_with_no_sample_row_are_kept_as_printed() {
+    let report = counter_report("Error: no valid counters.\r\n");
+    assert!(report.starts_with("counters: no sample row"), "{report}");
+    assert!(report.contains("no valid counters"), "{report}");
+}
+
 #[test]
 fn a_hung_call_is_killed_with_its_children_and_named() {
     let dir = tempfile::tempdir().unwrap();
@@ -789,7 +854,8 @@ fn a_hung_call_is_killed_with_its_children_and_named() {
     );
     assert!(held.exists(), "the call never started its child: {message}");
     assert!(
-        message.contains("powershell.exe running at once:") && message.contains("Processor Time"),
+        message.contains("powershell.exe running at once:")
+            && message.contains("% Processor Time = "),
         "a timeout carries the machine state (process list and counters): {message}"
     );
     // The kill ends the processes a moment after `taskkill` returns, so the file is let go

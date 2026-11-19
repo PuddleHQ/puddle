@@ -55,13 +55,18 @@ pub struct SandboxProbe {
     /// does (`PUDDLE_APP_SANDBOX_PROBE_FORGET=1`), so a test can show what a real webview keeps
     /// after a delete.
     pub forget: bool,
+    /// What the window's page gets when it reads the clipboard by script
+    /// (`PUDDLE_APP_SANDBOX_PROBE_CLIPBOARD`: `ask`, `allow` or `deny`; `ask` when unset), the
+    /// workspace setting a real window is opened with.
+    pub clipboard_read: ClipboardRead,
 }
 
 impl SandboxProbe {
     /// The probe the environment asks for: `PUDDLE_APP_SANDBOX_PROBE` is the page,
     /// `PUDDLE_APP_SANDBOX_DEBUG_PORT` its debug port, and the optional
-    /// `PUDDLE_APP_SANDBOX_PROBE_WORKSPACE` and `PUDDLE_APP_SANDBOX_PROBE_FORGET` the workspace id
-    /// and the data removal.
+    /// `PUDDLE_APP_SANDBOX_PROBE_WORKSPACE`, `PUDDLE_APP_SANDBOX_PROBE_FORGET` and
+    /// `PUDDLE_APP_SANDBOX_PROBE_CLIPBOARD` the workspace id, the data removal and the clipboard
+    /// setting.
     fn from_env() -> Option<Self> {
         let var = |name| std::env::var(name).ok();
         Self::parse(
@@ -69,6 +74,7 @@ impl SandboxProbe {
             var("PUDDLE_APP_SANDBOX_DEBUG_PORT").as_deref(),
             var("PUDDLE_APP_SANDBOX_PROBE_WORKSPACE").as_deref(),
             var("PUDDLE_APP_SANDBOX_PROBE_FORGET").as_deref(),
+            var("PUDDLE_APP_SANDBOX_PROBE_CLIPBOARD").as_deref(),
         )
     }
 
@@ -79,12 +85,21 @@ impl SandboxProbe {
         debug_port: Option<&str>,
         workspace: Option<&str>,
         forget: Option<&str>,
+        clipboard: Option<&str>,
     ) -> Option<Self> {
+        let clipboard_read = match clipboard {
+            None | Some("ask") => ClipboardRead::Ask,
+            Some("allow") => ClipboardRead::Allow,
+            Some("deny") => ClipboardRead::Deny,
+            // A typo must not quietly test the default.
+            Some(_) => return None,
+        };
         Some(Self {
             workspace: WorkspaceId::new(workspace.unwrap_or("probe")).ok()?,
             url: Url::parse(url?).ok()?,
             debug_port: debug_port?.parse().ok()?,
             forget: forget == Some("1"),
+            clipboard_read,
         })
     }
 }
@@ -463,7 +478,7 @@ fn open_probe<R: Runtime>(
         display_name: probe.workspace.to_string(),
         settings: WindowSettings {
             zoom_hotkeys: true,
-            clipboard_read: ClipboardRead::Ask,
+            clipboard_read: probe.clipboard_read,
         },
         cookie: None,
         debug_port: Some(probe.debug_port),

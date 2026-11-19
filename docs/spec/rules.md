@@ -107,7 +107,10 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   waiting, so a host that is not listed is never a silent one.
 - **R-47 The refusal says the request is waiting.** The 403 body says in words that the host is
   waiting for approval in Puddle and that the tool should retry once it is approved; the headers
-  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. For an
+  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. The status line
+  carries the words too (`403 Forbidden, waiting for approval in Puddle`): a client that discards the
+  body and headers of a refused `CONNECT` (`curl`, `git`) still shows the code only, but Python, npm,
+  Go and apt print the reason phrase. For an
   `unlisted` request (R-45) the body says instead that the host is not listed for approval yet
   because Puddle holds more waiting requests for the workspace than it lists, and that answering some
   lists this one on the next try. The connection

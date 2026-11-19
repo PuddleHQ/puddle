@@ -939,6 +939,11 @@ async fn a_new_build_that_exits_before_it_started_is_dropped_for_the_previous_on
     assert_eq!(read(&r.f.out, "3.build").trim(), COMMIT);
     assert_eq!(pointer(&r.builds, "current").as_deref(), Some(COMMIT));
     assert_eq!(pointer(&r.builds, "rejected").as_deref(), Some(NEWER));
+    // The failed build's folder goes after the pointers move: wait for it, never race it.
+    eventually("the failed build to be removed", WAIT, || {
+        !r.builds.join(NEWER).exists()
+    })
+    .await;
     assert_eq!(
         names(&r.builds),
         ["confirmed", "current", COMMIT, "rejected"]

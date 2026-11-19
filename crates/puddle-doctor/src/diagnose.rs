@@ -1462,11 +1462,7 @@ fn os_credential_store(
                 "the operating system's credential store works, but this computer has no graphical login session, so its keyring may be locked after a reboot",
             )
             .finding(Finding::CredentialStoreNoDesktop)
-            .fix(if recorded {
-                "This data folder keeps its secrets in the operating system's store, and Puddle does not move them to the file vault by itself. If this computer is a server, unlock the keyring after every reboot, or use a new data folder started with `puddle serve --headless`."
-            } else {
-                "If this computer is a server, start `puddle serve --headless` (or set `PUDDLE_HEADLESS=1`) before the first secret is saved: secrets then go in Puddle's file vault, which needs no unlocked keyring."
-            });
+            .fix(no_desktop_fix(recorded, crate::SERVE_BUILT_IN));
         }
         return Check::new(
             id,
@@ -1624,6 +1620,25 @@ sandbox, this limitation is the likely cause; Puddle can't change it.",
 fn seconds(d: Duration) -> String {
     let ms = d.as_millis();
     format!("{}.{} s", ms / 1000, ms % 1000 / 100)
+}
+
+/// The fix for a working keyring on a computer with no graphical login session: the headless
+/// server mode is named only when this build has it (`serve`).
+pub(crate) fn no_desktop_fix(recorded: bool, serve: bool) -> &'static str {
+    match (recorded, serve) {
+        (true, true) => {
+            "This data folder keeps its secrets in the operating system's store, and Puddle does not move them to the file vault by itself. If this computer is a server, unlock the keyring after every reboot, or use a new data folder started with `puddle serve --headless`."
+        }
+        (true, false) => {
+            "This data folder keeps its secrets in the operating system's store, and Puddle does not move them to the file vault by itself. If this computer is a server, unlock the keyring after every reboot."
+        }
+        (false, true) => {
+            "If this computer is a server, start `puddle serve --headless` (or set `PUDDLE_HEADLESS=1`) before the first secret is saved: secrets then go in Puddle's file vault, which needs no unlocked keyring."
+        }
+        (false, false) => {
+            "If this computer is a server, unlock the keyring after every reboot: this build of Puddle has no server mode that keeps secrets in its own vault."
+        }
+    }
 }
 
 #[cfg(test)]

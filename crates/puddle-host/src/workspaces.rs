@@ -238,8 +238,10 @@ struct RuntimeNames {
 }
 
 /// The lock on the workspace list. Dropping it releases the lock first and then writes the
-/// names its holder queued, so no database write ever happens under the lock (the fields drop
-/// in the order they are declared).
+/// names its holder queued, so the name writes never happen under the lock (the fields drop in
+/// the order they are declared). Two writes still do: a create's owner row (`GitSetup::claim`)
+/// and the adoption of unowned workspaces at start. Neither takes this lock again, and the next
+/// store call that does must move out of the guard first.
 struct StateGuard<'a, R: Runtime + Clone> {
     guard: MutexGuard<'a, State>,
     _then: WriteNames<'a, R>,
@@ -461,7 +463,6 @@ fn with_leftovers(reason: OpError, leftovers: &[String]) -> OpError {
     }
 }
 
-/// The key of a problem about one workspace.
 /// How the room a root-disk grow adds compares with the free space of the drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Room {
@@ -497,6 +498,7 @@ fn editor_file_title(record: &WorkspaceRecord) -> String {
     )
 }
 
+/// The key of a problem of `kind` about one workspace.
 fn problem_key(kind: &str, name: &WorkspaceId) -> String {
     format!("{kind}:{name}")
 }

@@ -191,15 +191,23 @@ fn warn_without_headless_flag(session: LoginSession, health: StoreHealth) {
     }
     let graphical_session = session != LoginSession::NotGraphical;
     let store_works = health == StoreHealth::Working;
-    tracing::warn!(
-        graphical_session,
-        store_works,
+    let advice = headless_advice(puddle_doctor::SERVE_BUILT_IN);
+    tracing::warn!(graphical_session, store_works, "{advice}");
+}
+
+/// The warning's text. A build without the `puddle serve` command (`serve`) cannot be told to
+/// start headless, so its advice names only the keyring.
+fn headless_advice(serve: bool) -> &'static str {
+    if serve {
         "Puddle was started without --headless and keeps its secrets in the operating \
          system's credential store, which has no unlocked keyring to rely on here. On a \
          server start `puddle serve --headless` (or set PUDDLE_HEADLESS=1) so secrets go \
          in Puddle's own file vault; that takes effect only for a data folder that has \
          not recorded a store yet (`secrets/store.json`)"
-    );
+    } else {
+        "Puddle keeps its secrets in the operating system's credential store, which has \
+         no unlocked keyring to rely on here. Unlock the keyring after every reboot"
+    }
 }
 
 fn run_check(

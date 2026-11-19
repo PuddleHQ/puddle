@@ -23,7 +23,7 @@ use puddle_settings::MiseMode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash, WorkspaceId, WorkspaceStatus};
 use puddle_workspace::WORKSPACE_DIR;
 
-use super::HostWorkspaces;
+use super::{HostWorkspaces, last_stderr_line};
 use crate::workspaces::not_found;
 
 /// How long a listing may take: mise resolves versions on the way, and may ask the network.
@@ -169,16 +169,8 @@ fn read<T>(
         return Err(Failed::Changed);
     }
     if out.status.code != 0 {
-        let reason = out
-            .stderr_text()
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .map_or_else(
-                || format!("mise ended with exit code {}", out.status.code),
-                str::to_owned,
-            );
+        let reason = last_stderr_line(&out)
+            .unwrap_or_else(|| format!("mise ended with exit code {}", out.status.code));
         return Err(Failed::Reason(reason));
     }
     parse(&out.stdout_text())
@@ -343,14 +335,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// The tools mise knows by name: one answer for the life of the process, since the pinned
-    /// mise (and so its registry) is fixed in it.
+    /// The tools mise knows by name: one answer per workspace for the life of the process. The
+    /// mise that answers lives on the workspace's own disk, so no other workspace shares it.
     pub(crate) async fn tool_registry_of(
         &self,
         id: &WorkspaceId,
     ) -> Result<ToolRegistry, WorkspaceError> {
         self.require_tools(id)?;
-        if let Some(tools) = self.inner.tools.registry() {
+        if let Some(tools) = self.inner.tools.registry(id) {
             return Ok(ToolRegistry {
                 tools,
                 problem: None,
@@ -362,7 +354,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .ok_or_else(|| WorkspaceError::conflict(STOPPED))?;
         Ok(match read(outcome, parse_registry) {
             Ok(tools) => {
-                self.inner.tools.keep_registry(tools.clone());
+                self.inner.tools.keep_registry(id, tools.clone());
                 ToolRegistry {
                     tools,
                     problem: None,

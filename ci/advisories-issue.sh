@@ -39,10 +39,16 @@ trap 'rm -rf "$tmp"' EXIT
 if [ "$source" = rust ]; then
     $check 2>"$tmp/report.json" >/dev/null
     status=$?
+    # An `advisory-not-detected` warning (a stale `ignore` entry) carries no advisory object: the ignored id is the span
+    # of its "no crate matched advisory criteria" label, shown in both the Advisory and Package columns.
+    # shellcheck disable=SC2016 # $stale is a jq variable, not a shell one
     parse='select(.type == "diagnostic" and (.fields.severity == "error" or .fields.severity == "warning"))
-        | [.fields.advisory.id // .fields.code, .fields.advisory.package // "?", .fields.graphs[0].Krate.version // "?",
+        | (.fields.labels // [] | map(select(.message == "no crate matched advisory criteria") | .span) | first) as $stale
+        | [.fields.advisory.id // $stale // .fields.code, .fields.advisory.package // $stale // "?",
+           (if $stale != null and .fields.advisory == null then "-" else .fields.graphs[0].Krate.version // "?" end),
            .fields.code, (.fields.advisory.title // .fields.message | gsub("[|\n]"; " ")),
-           ((.fields.notes // []) | map(select(startswith("Solution:"))) | first // "")]
+           (if $stale != null and .fields.advisory == null then "remove the stale entry from the ignore list in deny.toml"
+            else ((.fields.notes // []) | map(select(startswith("Solution:"))) | first // "") end)]
         | @tsv'
 else
     $check >"$tmp/report.json" 2>"$tmp/check.err"

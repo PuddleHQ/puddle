@@ -37,7 +37,9 @@ bin=${FAKE_HOST_BIN:-}
 if [ -z "$bin" ]; then
     # The build runs unpinned and unloaded; only the runs are starved.
     cd "$root"
-    bin=$(cargo test -p puddle-host --test fake_host --no-run --locked --message-format=json |
+    # puddle-settings/mise: the managed tools layer is a feature, off in a bare -p build, where every tools_* and mise
+    # test of fake_host fails (as in ci/stress.sh).
+    bin=$(cargo test -p puddle-host --features puddle-settings/mise --test fake_host --no-run --locked --message-format=json |
         jq -r 'select(.reason == "compiler-artifact" and .target.name == "fake_host" and .executable != null) | .executable' | tail -n 1)
     [ -n "$bin" ] && [ -x "$bin" ] || { echo "fake-host-starved: could not find the fake_host test binary" >&2; exit 2; }
 fi

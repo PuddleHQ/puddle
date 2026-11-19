@@ -192,6 +192,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
+    /// A retired id belongs to nobody: each start removes the sandbox, rules, variables and
+    /// secrets keyed by it, so a workspace made from its disk would be stripped again every time.
+    fn not_retired(state: &State, id: &WorkspaceId) -> Result<(), WorkspaceError> {
+        if state.retired.contains(id) {
+            return Err(WorkspaceError::Conflict(format!(
+                "{} belongs to a workspace that was deleted or never finished, so its id is retired and \
+                 the disk cannot be restored; nothing was changed",
+                id.volume_name()
+            )));
+        }
+        Ok(())
+    }
+
     pub(super) async fn restore_orphan_volume(
         &self,
         id: &WorkspaceId,
@@ -217,6 +230,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ));
             }
             Self::claimed(&state, id)?;
+            Self::not_retired(&state, id)?;
         }
         // The listing boots the maintenance image like a delete check does, so it waits for the
         // same download and runs on a task the service owns.
@@ -250,6 +264,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // The disk was read without the lock, so claim it again here: another restore may
             // have taken it meanwhile, and an entry is never replaced.
             Self::claimed(&state, id)?;
+            Self::not_retired(&state, id)?;
             let name = free_name(&state, owner, &named_after);
             let mut record = WorkspaceRecord::new(id.clone(), owner, name, repositories.clone());
             record.status = WorkspaceStatus::Stopped;

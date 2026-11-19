@@ -7,7 +7,7 @@
   <b>Its disk is gone, so it can't start.</b>
   {#if detail}
     Restore the volume <span class="mono">ws-{id}</span> and start it again, or delete
-    the workspace below; nothing is lost by deleting it.
+    the workspace under Danger in Settings; nothing is lost by deleting it.
   {:else}
     Restore the volume <span class="mono">ws-{id}</span> and start it again, or open
     Details to delete it.

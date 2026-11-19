@@ -2,9 +2,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { page } from "$app/state";
-  import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
-  import RequestRow from "#lib/components/RequestRow.svelte";
   import RequestRulesSection from "#lib/components/RequestRulesSection.svelte";
   import RuleTable from "#lib/components/RuleTable.svelte";
   import WorkspaceSets from "#lib/components/WorkspaceSets.svelte";
@@ -13,15 +11,13 @@
   import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
   import { rulesStore } from "#lib/stores/rules.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+  import { tabHref } from "#lib/workspaces/tabs.ts";
   import { NO_FILTER } from "#lib/rules/model.ts";
   import "#lib/theme/controls.css";
 
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
   let now = $state(Date.now());
-  let currentId = $state<number | null>(null);
-  let heading = $state<HTMLElement>();
-  let flow = $state<ReturnType<typeof DecisionFlow>>();
 
   onMount(() => {
     const stopRules = rulesStore.start();
@@ -37,13 +33,7 @@
   });
 
   const rows = $derived(
-    pending.rows
-      .filter((r) => r.request.workspace === workspace?.id)
-      .sort(
-        (a, b) =>
-          b.request.first_seen - a.request.first_seen ||
-          b.request.id - a.request.id,
-      ),
+    pending.rows.filter((r) => r.request.workspace === workspace?.id),
   );
   const rules = $derived(
     view(
@@ -60,52 +50,13 @@
 </script>
 
 {#if workspace}
-  <section class="block" aria-labelledby="waiting-h">
-    <h2 id="waiting-h" tabindex="-1" bind:this={heading}>
-      Waiting
-      {#if rows.length > 0}<span class="count">{rows.length}</span>{/if}
-    </h2>
-    {#if pending.status === "loading"}
-      <p class="muted pad">Loading requests&hellip;</p>
-    {:else if pending.status === "failed"}
-      <LoadNotice what="the requests" message={pending.loadError} padded />
-    {:else if rows.length === 0}
-      {#if pending.loadError}
-        <LoadNotice
-          what="the requests"
-          message={pending.loadError}
-          stale
-          padded
-        />
-      {/if}
-      <p class="muted pad">Nothing is waiting for {workspace.name}.</p>
-    {:else}
-      {#if pending.loadError}
-        <LoadNotice
-          what="the requests"
-          message={pending.loadError}
-          stale
-          padded
-        />
-      {/if}
-      <ul>
-        {#each rows as row (row.request.id)}
-          <RequestRow
-            {row}
-            {now}
-            current={row.request.id === currentId}
-            blockedBy={pending.blockedBy(row.request)}
-            optionsOpen={flow?.optionsOpenFor(row.request.id) ?? false}
-            onMore={(r, anchor) => flow?.more(r, anchor)}
-            onDecide={(r, choice) => flow?.decide(r, choice)}
-            onFocusRow={(r) => {
-              currentId = r.request.id;
-            }}
-          />
-        {/each}
-      </ul>
-    {/if}
-  </section>
+  {#if rows.length > 0}
+    <p class="waiting-note" role="status">
+      {rows.length}
+      {rows.length === 1 ? "request is" : "requests are"} waiting for {workspace.name}.
+      <a href={tabHref(workspace.id, "")}>Decide on the Overview</a>
+    </p>
+  {/if}
 
   <section class="block" aria-labelledby="rules-h">
     <div class="head">
@@ -147,8 +98,6 @@
   <RequestRulesSection workspace={workspace.id} {now} />
 
   <WorkspaceSets workspace={workspace.id} />
-
-  <DecisionFlow bind:this={flow} heading={() => heading} />
 {/if}
 
 <style>
@@ -159,15 +108,16 @@
     border-radius: var(--radius-md);
   }
   h2 {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
     padding: var(--space-3) var(--space-4);
     font-size: var(--text-md);
     border-bottom: 1px solid var(--color-border-subtle);
   }
-  h2:focus {
-    outline: none;
+  .waiting-note {
+    margin: 0 0 var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
   }
   .head {
     display: flex;
@@ -178,17 +128,6 @@
   .head h2 {
     flex: 1;
     border-bottom: 0;
-  }
-  .count {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-  }
-  ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
   }
   .muted {
     margin: 0;

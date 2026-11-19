@@ -28,7 +28,7 @@ const ROUTES = [
   "/welcome/connect",
   "/welcome/interception",
   "/welcome/look",
-  "/welcome/workspace",
+  "/welcome/done",
 ] as const;
 
 test.describe("at 390 px wide", () => {

@@ -26,6 +26,7 @@ fn set_values_use_the_documented_names() {
         direct_ssh: Some(true),
         capture_logins: Some(false),
         warn_foreign_credentials: Some(false),
+        editor: EditorLayer::default(),
         extra: BTreeMap::new(),
     };
     assert_eq!(

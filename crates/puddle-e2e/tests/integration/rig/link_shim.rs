@@ -270,6 +270,7 @@ async fn carry(
     let mut up = vec![0_u8; 16 * 1024];
     let mut down = vec![0_u8; 16 * 1024];
     let mut sent = 0_u64;
+    // flake-ok: the relay loop of the link, serving both directions until a side closes; it is not a wait for a condition.
     loop {
         tokio::select! {
             read = client.read(&mut up) => {

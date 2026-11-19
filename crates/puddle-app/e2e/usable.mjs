@@ -567,14 +567,16 @@ async function terminalTab(startFolder) {
     const mode = await uia.waitFor("the Screen reader mode switch", modeSwitch);
     if (mode.checked !== true) await uia.click("Screen reader mode", modeSwitch);
     await until("Screen reader mode to be on", async () => (await uia.find(modeSwitch))[0]?.checked === true, 10_000, 500);
-    await uia.click("New terminal", inMain("button", "New terminal"));
+    // The page opens a first terminal itself when there is none; New terminal only when it did not.
+    const opened = await uia.waitFor("the first terminal tab", { window: MAIN, role: "tab", nameRegex: "^Terminal \\d+$" }, 15_000).catch(() => undefined);
+    if (!opened) await uia.click("New terminal", inMain("button", "New terminal"));
     await uia.waitFor("the shell's prompt", { window: MAIN, role: "listitem", nameRegex: "[$#]\\s*$" }, 120_000);
   });
   const command = "whoami; pwd; sudo -n true && echo sudo-ok";
   await step("the command is typed into the terminal", () => {
     // The keys go to the window in front: make sure that is this one.
     if (!mainWindow("front").foreground) throw new Error("the main window did not come to the front");
-    return uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+    return uia.type("the terminal's input", { window: MAIN, role: "edit", nameRegex: `^Terminal \\d+, ${literally(WORKSPACE)}$` }, command, { enter: true });
   });
   const shows = (text) =>
     uia.waitFor(`the terminal line "${text}"`, { window: MAIN, role: "listitem", nameRegex: `^\\s*${literally(text)}\\s*$` }, 60_000).then(

@@ -5,7 +5,6 @@
 //! guest editor's own settings when the editor starts; see `Effective::editor`.
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use puddle_types::ValidationError;
 use serde::{Deserialize, Serialize};
@@ -66,12 +65,6 @@ impl TryFrom<String> for ColourTheme {
 impl From<ColourTheme> for String {
     fn from(t: ColourTheme) -> Self {
         t.0
-    }
-}
-
-impl fmt::Display for ColourTheme {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
     }
 }
 
@@ -199,12 +192,6 @@ impl From<ExtensionId> for String {
     }
 }
 
-impl fmt::Display for ExtensionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// How many preinstalled extensions one level may list.
 pub const MAX_EXTENSIONS: usize = 50;
 
@@ -267,10 +254,7 @@ impl Keybindings {
     /// The parsed entries (the text was checked, so this is the array it holds).
     #[must_use]
     pub fn entries(&self) -> Vec<Value> {
-        match serde_json::from_str::<Value>(&self.0) {
-            Ok(Value::Array(entries)) => entries,
-            _ => Vec::new(),
-        }
+        serde_json::from_str(&self.0).unwrap_or_default()
     }
 }
 

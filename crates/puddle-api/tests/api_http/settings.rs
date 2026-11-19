@@ -337,6 +337,7 @@ async fn out_of_range_and_unknown_settings_are_refused() {
         json!({"workspace_defaults": {"editor": {"extensions": ["not an id"]}}}),
         json!({"workspace_defaults": {"editor": {"keybindings": "{}"}}}),
         json!({"workspace_defaults": {"editor": {"fonts": 1}}}),
+        json!({"workspace_defaults": {"editor": {"extensions": (0..51).map(|n| format!("p.e{n}")).collect::<Vec<_>>()}}}),
         json!({"consents": {}}),
     ] {
         let reply = api.send("PUT", "/api/settings", Some(&body)).await;

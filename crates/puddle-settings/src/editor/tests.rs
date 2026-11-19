@@ -91,3 +91,18 @@ fn keybindings_over_the_cap_are_refused() {
     assert!(text.len() > Keybindings::MAX_BYTES);
     assert!(Keybindings::new(&text).is_err());
 }
+
+#[test]
+fn accessors_give_back_what_was_checked() {
+    assert_eq!(theme(" Abyss ").as_str(), "Abyss");
+    assert_eq!(ext("A.B").as_str(), "a.b");
+    let k = Keybindings::new(r#"[{"key":"a","command":"b"}]"#).unwrap();
+    assert_eq!(k.as_str(), r#"[{"key":"a","command":"b"}]"#);
+    assert_eq!(k.entries().len(), 1);
+}
+
+#[test]
+fn a_theme_name_has_a_length_cap() {
+    assert!(ColourTheme::new(&"x".repeat(ColourTheme::MAX_CHARS)).is_ok());
+    assert!(ColourTheme::new(&"x".repeat(ColourTheme::MAX_CHARS + 1)).is_err());
+}

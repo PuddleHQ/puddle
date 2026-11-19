@@ -44,7 +44,6 @@ interface WalkStep {
   start?: Control;
   afterStart?: Control;
   continue?: Control;
-  preselected?: { role: "radio"; nameRegex: string };
 }
 // The pages and what to press on them: the list the page tests and the installed-app walk read too.
 const WALK = (
@@ -60,11 +59,6 @@ const walkStep = (heading: string): WalkStep => {
   const step = WALK.find((s) => s.heading === heading);
   if (!step) throw new Error(`no step "${heading}" in walk.json`);
   return step;
-};
-/** The radio a page opens with chosen, as walk.json names it. */
-const preselected = (page: Page, heading: string) => {
-  const radio = walkStep(heading).preselected!;
-  return page.getByRole("radio", { name: new RegExp(radio.nameRegex) });
 };
 const control = (page: Page, c: Control) =>
   page.getByRole(c.role, { name: c.name });
@@ -121,7 +115,9 @@ test("a fresh install is led through every step and then opens on the workspaces
 
   // Connect: code-server is preselected, direct SSH is off until the trust text is accepted.
   await expect(heading(page, "How do you want to connect?")).toBeVisible();
-  await expect(preselected(page, "How do you want to connect?")).toBeChecked();
+  await expect(
+    page.getByRole("radio", { name: /Built-in VS Code server/ }),
+  ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
     name: /Allow direct SSH for new workspaces/,
   });
@@ -149,7 +145,7 @@ test("a fresh install is led through every step and then opens on the workspaces
     heading(page, "Which hosts should Puddle decrypt?"),
   ).toBeVisible();
   await expect(
-    preselected(page, "Which hosts should Puddle decrypt?"),
+    page.getByRole("radio", { name: /except a known list/ }),
   ).toBeChecked();
   const kept = page.waitForResponse(
     (r) =>
@@ -435,12 +431,12 @@ for (const scheme of ["light", "dark"] as const) {
       }
       if (path === "/welcome/connect") {
         await expect(
-          preselected(page, "How do you want to connect?"),
+          page.getByRole("radio", { name: /Built-in VS Code server/ }),
         ).toBeVisible();
       }
       if (path === "/welcome/interception") {
         await expect(
-          preselected(page, "Which hosts should Puddle decrypt?"),
+          page.getByRole("radio", { name: /except a known list/ }),
         ).toBeVisible();
       }
       await expectNoAxeViolations(page, path);

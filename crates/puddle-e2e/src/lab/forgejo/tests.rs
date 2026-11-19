@@ -304,3 +304,10 @@ fn a_status_outside_the_known_ones_is_named_by_a_fixed_text() {
     assert!(!text.contains("418"), "{text}");
     assert_eq!(status_text(403), "403");
 }
+
+#[test]
+fn every_known_status_is_named_by_its_own_number() {
+    for status in [200, 201, 204, 400, 401, 403, 404, 409, 422, 500, 502, 503] {
+        assert_eq!(status_text(status), status.to_string());
+    }
+}

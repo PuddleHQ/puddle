@@ -428,7 +428,8 @@ test.describe("1000 rules", () => {
     backend,
     browserName,
   }) => {
-    test.setTimeout(240_000 * SLOWDOWN);
+    // 20 adds and 20 deletes on a 1000-row page: seconds each on a host with every lane busy (the 4 min this had ran out at the 18th delete).
+    test.setTimeout(900_000 * SLOWDOWN);
     const spaces = await makeWorkspaces(request, backend, [
       "Rules One",
       "Rules Two",

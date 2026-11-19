@@ -16,7 +16,8 @@
 #       Has Tauri's WiX bundler pack the built shell with the staged files into
 #       <out-dir>/Puddle_<version>_x64_en-US.msi, from the template in crates/puddle-app/wix/.
 #       <version> is numeric `major.minor.patch` and defaults to the workspace's. The program's own
-#       version resource stays the workspace's whatever <version> is.
+#       version resource stays the workspace's whatever <version> is. First seeds the WiX toolset in the
+#       folder Tauri reads (ci/fetch-wix.sh: retry, cache, checksum), so Tauri never downloads it itself.
 #
 # Why the staged files are named in a generated overlay and not in tauri.conf.json: Tauri checks
 # every resource and sidecar path on each build of the crate, so listing them in the committed file
@@ -95,6 +96,13 @@ shell() {
     cargo tauri build --no-bundle --ci --config "$cfg" -- --locked
 }
 
+# Tauri's bundler looks for the WiX toolset in <user cache folder>/tauri/WixTools314 (on Windows the cache
+# folder is %LOCALAPPDATA%) and downloads it, without a retry, when it is not complete there. ci/check-wix-pin.sh
+# (msi.yml) proves the binary still reads that name. WIX_TOOLS_DIR replaces the folder (tests).
+wix_seed() {
+    "$here/fetch-wix.sh" "${WIX_TOOLS_DIR:-${LOCALAPPDATA:?LOCALAPPDATA is not set}/tauri/WixTools314}"
+}
+
 # Packs the built shell and the staged files; one run per version, none rebuilds the program.
 bundle() {
     [ "$#" -ge 2 ] && [ "$#" -le 3 ] || fail "usage: $0 bundle <stage-dir> <out-dir> [<version>]"
@@ -107,6 +115,7 @@ bundle() {
     *) fail "version '$version' is not numeric major.minor.patch" ;;
     esac
     mkdir -p "$out"
+    wix_seed
     cfg=$(overlay "$stage" "$version")
     # Tauri's output name has the version; a previous build of another version must not be taken for this one.
     target=$(target_dir)

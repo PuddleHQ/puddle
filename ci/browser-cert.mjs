@@ -10,7 +10,9 @@
 // never a skip. Chromium browsers: DevTools Protocol, `Page.navigate`'s errorText (net::ERR_CERT_*). Firefox:
 // WebDriver BiDi, the document the tab ends on (about:certerror is the warning page). Each browser reads the
 // Windows certificate store the way it does for a person. Paths come from PUDDLE_EDGE, PUDDLE_CHROME and
-// PUDDLE_FIREFOX when set.
+// PUDDLE_FIREFOX when set. PUDDLE_BROWSER_URL names a page that something else serves (a guest's
+// server behind a forward): nothing is served here and the certificate and key arguments are ignored
+// (pass `-`). PUDDLE_BROWSERS is a comma list of the browsers to try (`edge,firefox`; all three when unset).
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:https";
@@ -23,11 +25,19 @@ if (!["ok", "warning"].includes(expect) || !certFile || !keyFile || !profileRoot
 }
 const PROGRAM_FILES = process.env.ProgramFiles ?? "C:\\Program Files";
 const PROGRAM_FILES_X86 = process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
-const BROWSERS = [
+const ALL_BROWSERS = [
   { name: "edge", kind: "chromium", port: 9441, exe: process.env.PUDDLE_EDGE ?? join(PROGRAM_FILES_X86, "Microsoft", "Edge", "Application", "msedge.exe") },
   { name: "chrome", kind: "chromium", port: 9443, exe: process.env.PUDDLE_CHROME ?? join(PROGRAM_FILES, "Google", "Chrome", "Application", "chrome.exe") },
   { name: "firefox", kind: "firefox", port: 9442, exe: process.env.PUDDLE_FIREFOX ?? join(PROGRAM_FILES, "Mozilla Firefox", "firefox.exe") },
 ];
+
+const wanted = process.env.PUDDLE_BROWSERS?.split(",").map((n) => n.trim());
+const BROWSERS = ALL_BROWSERS.filter((b) => !wanted || wanted.includes(b.name));
+if (BROWSERS.length === 0 || (wanted && BROWSERS.length !== wanted.length)) {
+  console.error(`PUDDLE_BROWSERS names a browser this script does not know: ${process.env.PUDDLE_BROWSERS}`);
+  process.exit(64);
+}
+const externalUrl = process.env.PUDDLE_BROWSER_URL;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ws = (u) =>
@@ -105,13 +115,15 @@ function kill(child) {
   if (child?.pid) spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
 }
 
-const server = createServer({ cert: readFileSync(certFile), key: readFileSync(keyFile) }, (_req, res) => {
-  res.writeHead(200, { "content-type": "text/plain" });
-  res.end("Puddle development certificate check\n");
-});
-await new Promise((res) => server.listen(0, "127.0.0.1", res));
-const url = `https://localhost:${server.address().port}/`;
-console.log(`serving ${url}, expecting ${expect}`);
+const server = externalUrl
+  ? undefined
+  : createServer({ cert: readFileSync(certFile), key: readFileSync(keyFile) }, (_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("Puddle development certificate check\n");
+    });
+if (server) await new Promise((res) => server.listen(0, "127.0.0.1", res));
+const url = externalUrl ?? `https://localhost:${server.address().port}/`;
+console.log(`${externalUrl ? "using" : "serving"} ${url}, expecting ${expect}`);
 
 let matched = 0;
 for (const b of BROWSERS) {
@@ -125,5 +137,5 @@ for (const b of BROWSERS) {
   if (result === expect || result.startsWith(`${expect} `)) matched++;
 }
 console.log(`SUMMARY ${BROWSERS.length} browsers, ${matched} as expected`);
-server.close();
+server?.close();
 process.exit(matched === BROWSERS.length ? 0 : 1);

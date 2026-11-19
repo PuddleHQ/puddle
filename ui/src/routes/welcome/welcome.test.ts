@@ -77,7 +77,8 @@ import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
-import { isWelcome } from "#lib/welcome/steps.ts";
+import { around, isWelcome, STEPS } from "#lib/welcome/steps.ts";
+import walk from "#lib/welcome/walk.json";
 import Layout from "./+layout.svelte";
 import Welcome from "./+page.svelte";
 import Certificates from "./certificates/+page.svelte";
@@ -653,6 +654,61 @@ describe("every step", () => {
           isWelcome(new URL(href, "http://127.0.0.1").pathname),
           href,
         ).toBe(true);
+      }
+    },
+  );
+});
+
+// walk.json is what the installed-app walk (crates/puddle-app/e2e/usable.mjs) and ui/e2e/first-run.spec.ts
+// press and wait for. A page that stops matching it fails here, in the change that made it.
+describe("the walk list", () => {
+  const pages = {
+    welcome: Welcome,
+    check: Check,
+    certificates: Certificates,
+    connect: Connect,
+    interception: Interception,
+    look: Look,
+    workspace: Workspace,
+  } as const;
+
+  it("names the steps of the flow, in order, with their paths", () => {
+    expect(walk.steps.map((s) => [s.id, s.href])).toEqual(
+      STEPS.map((s) => [s.id, s.href]),
+    );
+  });
+
+  it.each(walk.steps.map((step) => [step.id, step] as const))(
+    "the %s page has its heading and the controls the list names",
+    async (id, step) => {
+      nav.path = step.href;
+      doctor.status = "idle";
+      doctor.report = null;
+      render(pages[id as keyof typeof pages] as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(
+        await screen.findByRole("heading", { level: 1, name: step.heading }),
+      ).toBeInTheDocument();
+      const control = (c: { role: string; name: string }) =>
+        screen.queryByRole(c.role as "link" | "button", { name: c.name });
+      if ("start" in step && "afterStart" in step) {
+        // Nothing runs, and nothing of its result shows, until Start is pressed.
+        expect(control(step.afterStart)).toBeNull();
+        await fireEvent.click(
+          screen.getByRole("button", { name: step.start.name }),
+        );
+        await screen.findByText("No problems found.");
+        expect(control(step.afterStart)).not.toBeNull();
+      }
+      if ("continue" in step) {
+        const on = control(step.continue);
+        expect(
+          on,
+          `${step.continue.role} "${step.continue.name}"`,
+        ).not.toBeNull();
+        if (step.continue.role === "link") {
+          expect(on).toHaveAttribute("href", around(step.id as never).next);
+        }
       }
     },
   );

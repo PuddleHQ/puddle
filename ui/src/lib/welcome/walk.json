@@ -1,0 +1,48 @@
+{
+  "about": "What a person (or a script playing one) finds and presses on each first-run page, in order. Read by the page tests (ui/src/routes/welcome/welcome.test.ts), ui/e2e/first-run.spec.ts and the installed-app walker (crates/puddle-app/e2e/usable.mjs), so a page that changes here breaks the test of the change that made it. A control is { role, name } as the accessibility tree gives it. `start` is pressed first, and `afterStart` shows up only once the run is done; `continue` goes on to the next page.",
+  "steps": [
+    {
+      "id": "welcome",
+      "href": "/welcome",
+      "heading": "Welcome to Puddle",
+      "continue": { "role": "link", "name": "Get started" }
+    },
+    {
+      "id": "check",
+      "href": "/welcome/check",
+      "heading": "System check",
+      "start": { "role": "button", "name": "Start system check" },
+      "afterStart": { "role": "button", "name": "Copy report" },
+      "continue": { "role": "link", "name": "Continue" }
+    },
+    {
+      "id": "certificates",
+      "href": "/welcome/certificates",
+      "heading": "Certificates",
+      "continue": { "role": "link", "name": "Continue" }
+    },
+    {
+      "id": "connect",
+      "href": "/welcome/connect",
+      "heading": "How do you want to connect?",
+      "continue": { "role": "link", "name": "Continue" }
+    },
+    {
+      "id": "interception",
+      "href": "/welcome/interception",
+      "heading": "Which hosts should Puddle decrypt?",
+      "continue": { "role": "button", "name": "Continue" }
+    },
+    {
+      "id": "look",
+      "href": "/welcome/look",
+      "heading": "Look",
+      "continue": { "role": "link", "name": "Continue" }
+    },
+    {
+      "id": "workspace",
+      "href": "/welcome/workspace",
+      "heading": "Your first workspace"
+    }
+  ]
+}

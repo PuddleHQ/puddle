@@ -410,32 +410,29 @@ async function step(what, action) {
   }
 }
 
+/** What the first-run pages show and press, the same list the page tests and ui/e2e/first-run.spec.ts read. */
+const WALK = JSON.parse(readFileSync(join(here, "..", "..", "..", "ui", "src", "lib", "welcome", "walk.json"), "utf8")).steps;
+const control = (c) => inMain(c.role, c.name);
+
 /** The first-run flow, step by step, ending with the create form on the last step. */
 async function firstRunToCreateForm() {
-  await uia.waitFor("the welcome heading", heading("Welcome to Puddle"), 120_000);
-  await uia.click("Get started", inMain("link", "Get started"));
-  const pages = ["System check", "Certificates", "How do you want to connect?", "Which hosts should Puddle decrypt?", "Look", "Your first workspace"];
-  await uia.waitFor(`the "${pages[0]}" heading`, heading(pages[0]));
-  // The check waits for the person to press Start (Continue stays disabled until the run is done).
-  await uia.click("Start system check", inMain("button", "Start system check"));
-  // 6. Its report, copied to the Windows clipboard.
-  await copyTheReport();
-  for (const page of pages.slice(1)) {
-    if (page === "Look") {
-      // The interception step saves its choice with a button, not a link: the person keeps the recommended mode.
-      await uia.click(`Continue (to ${page})`, inMain("button", "Continue"));
-    } else {
-      await uia.click(`Continue (to ${page})`, inMain("link", "Continue"));
+  for (const [i, step] of WALK.entries()) {
+    await uia.waitFor(`the "${step.heading}" heading`, heading(step.heading), i === 0 ? 120_000 : undefined);
+    if (step.start) {
+      // The check waits for the person to press Start (Continue stays disabled until the run is done).
+      await uia.click(step.start.name, control(step.start));
+      // 6. Its report, copied to the Windows clipboard.
+      await copyTheReport();
     }
-    await uia.waitFor(`the "${page}" heading`, heading(page));
-    if (page === "Which hosts should Puddle decrypt?") {
+    if (step.id === "interception") {
       const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
       check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
     }
-    if (page === "How do you want to connect?") {
+    if (step.id === "connect") {
       const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
       check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
     }
+    if (step.continue) await uia.click(`${step.continue.name} (from ${step.heading})`, control(step.continue));
   }
 }
 
@@ -516,7 +513,8 @@ async function copyTheReport() {
   try {
     desktop("clipboard-set", placeholder);
     mainWindow("front");
-    await uia.click("Copy report", inMain("button", "Copy report"), 120_000);
+    const copy = WALK.find((step) => step.afterStart).afterStart;
+    await uia.click(copy.name, control(copy), 120_000);
     const said = await uia
       .waitFor("what the page says about the copy", { window: MAIN, nameRegex: "^(Report copied\\.|The browser didn't let Puddle copy)" }, 20_000)
       .catch(() => undefined);

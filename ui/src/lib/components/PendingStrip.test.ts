@@ -1,11 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { cleanup, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
+import { expectNoIdsShown } from "#lib/testing/no-ids.ts";
 import PendingStrip from "./PendingStrip.svelte";
 
 afterEach(cleanup);
 
 describe("PendingStrip", () => {
+  it("names the workspace asking, never its generated id", () => {
+    workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];
+    const { container } = render(PendingStrip, {
+      props: {
+        count: 1,
+        latest: { workspace: "g07jxx5q", host: "cdn.example.org", port: 443 },
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Shop wants");
+    expectNoIdsShown(container, ["g07jxx5q"]);
+    workspaces.list = [];
+  });
+
   it("is not there when nothing waits", () => {
     const { container } = render(PendingStrip, { props: { count: 0 } });
     expect(container.textContent?.trim()).toBe("");

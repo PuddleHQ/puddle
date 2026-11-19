@@ -189,8 +189,12 @@ pub struct RepositorySeed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceSeed {
-    /// The name (also the id).
+    /// The name it shows.
     pub name: String,
+    /// Its id, which rules, requests and settings of the scenario name it by; the name when left
+    /// out. Set it where a test needs "the id differs from the name".
+    #[serde(default)]
+    pub id: Option<String>,
     /// The repositories Puddle manages for it, in order; none when left out.
     #[serde(default)]
     pub repositories: Vec<RepositorySeed>,
@@ -241,6 +245,13 @@ pub struct WorkspaceSeed {
     /// The ports something in it listens on.
     #[serde(default)]
     pub listening_ports: Vec<u16>,
+}
+
+impl WorkspaceSeed {
+    /// The id the workspace is seeded under.
+    pub fn id(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.name)
+    }
 }
 
 /// An environment variable or a secret.

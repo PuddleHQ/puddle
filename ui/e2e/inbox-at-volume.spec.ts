@@ -54,31 +54,23 @@ async function openInbox(page: Page, backend: Backend): Promise<void> {
 }
 
 /**
- * Makes workspaces through the API, as the app does: the id is made from the name, so a name with
- * capitals and spaces gets a different id. Returns name and id, and fails if they are the same,
- * because then a test could not tell the one from the other.
+ * Starts the `ids-differ` scenario, whose workspaces have names with capitals and spaces and ids
+ * made from them, and returns name and id of the named ones. Fails if they are the same, because
+ * then a test could not tell the one from the other. Call it before the first request of a test:
+ * it resets the data.
  */
-async function makeWorkspaces(
+async function workspacesNamed(
   request: APIRequestContext,
   backend: Backend,
   names: readonly string[],
 ): Promise<{ name: string; id: string }[]> {
-  for (const name of names) {
-    const made = await request.post("/api/workspaces", {
-      headers: auth(backend),
-      data: {
-        name,
-        repositories: [{ url: "https://github.com/acme/volume.git" }],
-      },
-    });
-    expect(made.status(), `creating ${name}`).toBe(202);
-  }
+  await backend.control.reset("ids-differ");
   const listed = (await (
     await request.get("/api/workspaces", { headers: auth(backend) })
   ).json()) as { workspaces: { id: string; name: string }[] };
   return names.map((name) => {
     const found = listed.workspaces.find((w) => w.name === name);
-    expect(found, `workspace ${name} is listed`).toBeDefined();
+    expect(found, `workspace ${name} is seeded`).toBeDefined();
     expect(found?.id, `the id of ${name} differs from its name`).not.toBe(name);
     return { name, id: found!.id };
   });
@@ -249,7 +241,7 @@ test.describe("five workspaces whose id differs from the name, 50 waiting reques
     request: APIRequestContext,
     backend: Backend,
   ): Promise<{ name: string; id: string }[]> {
-    const spaces = await makeWorkspaces(request, backend, NAMES);
+    const spaces = await workspacesNamed(request, backend, NAMES);
     for (let i = 0; i < 50; i += 1) {
       await ask(backend, spaces[i % 5]!.id, `n${i}.${DOMAIN}`);
     }
@@ -384,7 +376,7 @@ test.describe("five workspaces whose id differs from the name, 50 waiting reques
     request,
     backend,
   }) => {
-    const spaces = await makeWorkspaces(request, backend, NAMES);
+    const spaces = await workspacesNamed(request, backend, NAMES);
     for (const { id } of spaces) await ask(backend, id, `same.${DOMAIN}`);
     await openInbox(page, backend);
     const same = page.locator("li.req", {
@@ -407,7 +399,7 @@ test.describe("five workspaces whose id differs from the name, 50 waiting reques
     request,
     backend,
   }) => {
-    const [flood] = await makeWorkspaces(request, backend, ["Flood Zone"]);
+    const [flood] = await workspacesNamed(request, backend, ["Flood Zone"]);
     await backend.control.step({
       do: "bulk",
       workspace: flood!.id,
@@ -432,7 +424,7 @@ test.describe("1000 rules", () => {
   }) => {
     // 20 adds and 20 deletes on a 1000-row page: seconds each on a host with every lane busy (the 4 min this had ran out at the 18th delete).
     test.setTimeout(900_000 * SLOWDOWN);
-    const spaces = await makeWorkspaces(request, backend, [
+    const spaces = await workspacesNamed(request, backend, [
       "Rules One",
       "Rules Two",
       "Rules Three",

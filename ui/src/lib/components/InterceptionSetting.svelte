@@ -31,20 +31,28 @@
   });
 
   async function choose(select: HTMLSelectElement) {
+    await setMode(select.value as WorkspaceMode, () => {
+      select.value = store.effectiveMode;
+    });
+  }
+
+  const useGlobal = () => setMode("inherit", () => {});
+
+  async function setMode(mode: WorkspaceMode, undo: () => void) {
     problem = null;
     saved = null;
-    const result = await store.setMode(select.value as WorkspaceMode);
+    const result = await store.setMode(mode);
     if (result.ok) {
       saved = "Interception mode saved.";
     } else {
       problem = result.message;
-      select.value = store.mode;
+      undo();
     }
   }
 </script>
 
 <section class="card" aria-labelledby={headingId}>
-  <h2 id={headingId}>Which hosts to decrypt</h2>
+  <h3 id={headingId}>Which hosts to decrypt</h3>
   {#if store.status === "loading"}
     <p class="muted">Loading&hellip;</p>
   {:else if store.status === "failed"}
@@ -54,29 +62,39 @@
     </div>
   {:else}
     <div class="setting">
-      <div class="grow">
-        <label for="ws-interception-mode">Interception mode</label>
-        <p class="desc" id="ws-interception-mode-desc">
-          {WARNINGS[store.effectiveMode]}
-          Connections that aren't HTTPS, servers that ask for a client certificate
-          and servers whose certificate Puddle doesn't accept go through untouched.
-          Hosts with a credential, secret, login capture or rule on method and path
-          are always decrypted. It applies at once, no restart.
-        </p>
-      </div>
       <select
         id="ws-interception-mode"
+        aria-labelledby={headingId}
         aria-describedby="ws-interception-mode-desc"
-        value={store.mode}
+        value={store.effectiveMode}
         onchange={(e) => void choose(e.currentTarget)}
       >
-        <option value="inherit">
-          Use the global setting ({NAMES[store.effectiveMode]})
-        </option>
         <option value="all">{NAMES.all}</option>
         <option value="all_except_curated">{NAMES.all_except_curated}</option>
         <option value="known_only">{NAMES.known_only}</option>
       </select>
+      <p class="desc" id="ws-interception-mode-desc">
+        {WARNINGS[store.effectiveMode]}
+        Connections that aren't HTTPS, servers that ask for a client certificate and
+        servers whose certificate Puddle doesn't accept go through untouched. Hosts
+        with a credential, secret, login capture or rule on method and path are always
+        decrypted. It applies at once, no restart.
+      </p>
+      <p class="from">
+        <span class="chip"
+          >{store.mode === "inherit"
+            ? "Global setting"
+            : "This workspace"}</span
+        >
+        {#if store.mode !== "inherit"}
+          <button
+            type="button"
+            class="reset"
+            aria-label="Use the global setting again for Which hosts to decrypt"
+            onclick={() => void useGlobal()}>Use global</button
+          >
+        {/if}
+      </p>
     </div>
     <div class="status" aria-live="polite">
       {#if saved}<p class="saved">{saved}</p>{/if}
@@ -91,7 +109,7 @@
     {#if store.globalNames.length > 0}
       <p class="desc">
         Never decrypted in any workspace (set in
-        <a href="/settings#s-net">global settings</a>):
+        <a href="/settings/network#set-interception-mode">global settings</a>):
         {store.globalNames.join(", ")}
       </p>
     {/if}
@@ -103,27 +121,13 @@
   .card {
     display: grid;
     gap: var(--space-3);
-    max-width: 48rem;
-    margin-bottom: var(--space-4);
-    padding: var(--space-4);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
   }
-  h2 {
+  h3 {
     font-size: var(--text-md);
   }
   .setting {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-  }
-  .grow {
-    flex: 1;
-    min-width: 0;
-  }
-  label {
-    font-weight: 600;
+    display: grid;
+    gap: var(--space-2);
   }
   .desc,
   .muted {
@@ -140,10 +144,25 @@
   .error {
     color: var(--color-danger);
   }
-  @media (max-width: 760px) {
-    .setting {
-      flex-direction: column;
-      align-items: stretch;
-    }
+  .from {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  .chip {
+    padding: 0 var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
+  }
+  .reset {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 </style>

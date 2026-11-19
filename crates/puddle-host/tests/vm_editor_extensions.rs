@@ -22,7 +22,9 @@ use puddle_e2e::lab::{Squid, SquidOptions};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use support::{Api, ended, named_id_options};
-use vm_support::{VmHost, guest, guest_live, start_vm_host_config, through_company_proxy_port};
+use vm_support::{
+    VmHost, guest, guest_live, guest_within, start_vm_host_config, through_company_proxy_port,
+};
 
 /// A small extension that is on Open VSX.
 const EXTENSION: &str = "EditorConfig.EditorConfig";
@@ -309,11 +311,11 @@ async fn vm_radar_company_squid_carries_pip_a_build_and_an_open_vsx_install() {
     guest(&vm.runtime, &sandbox, EDITOR_UP).await;
 
     // The image ships no Python: Debian's through apt is the first thing that goes through Squid.
-    guest_live(
+    guest_within(
         &vm.runtime,
         &sandbox,
         "apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv ca-certificates >/tmp/apt.log 2>&1 || { cat /tmp/apt.log; exit 1; }",
-        "deb.debian.org",
+        Duration::from_mins(5),
     )
     .await;
     let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();

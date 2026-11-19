@@ -88,15 +88,7 @@
     display: grid;
     gap: var(--space-1);
   }
-  input {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
+
   .btn:disabled {
     cursor: default;
     opacity: 0.6;

@@ -8,7 +8,7 @@ FAIL  Hypervisor            Windows Hypervisor Platform is off
             features > Windows Hypervisor Platform.) Virtual Machine Platform, which WSL2 uses,
             is a different feature.
       from: WinHvPlatform.dll: The specified module could not be found. (os error 126)
-info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        msb can't load a DLL it needs (0xC0000135)
       fix:  msb links the Windows Hypervisor Platform's DLL: fix "Hypervisor" above first.
@@ -33,7 +33,8 @@ ok    Global Secure Access  client not installed
     {
       "id": "virtualization",
       "status": "ok",
-      "summary": "on in firmware"
+      "summary": "on in firmware",
+      "impact": "Lets the hypervisor run each workspace as a small virtual machine, kept apart from this computer."
     },
     {
       "id": "hypervisor",
@@ -41,59 +42,73 @@ ok    Global Secure Access  client not installed
       "summary": "Windows Hypervisor Platform is off",
       "finding": "whp_not_enabled",
       "fix": "Enable the Windows Hypervisor Platform feature in PowerShell as administrator:\n  Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All\nthen restart Windows. (Or: Settings > System > Optional features > More Windows features > Windows Hypervisor Platform.) Virtual Machine Platform, which WSL2 uses, is a different feature.",
-      "detail": "WinHvPlatform.dll: The specified module could not be found. (os error 126)"
+      "detail": "WinHvPlatform.dll: The specified module could not be found. (os error 126)",
+      "impact": "Puddle can't start any workspace: the Windows Hypervisor Platform feature is off.",
+      "remedy": "Turn on Windows Hypervisor Platform in the optional Windows features, then restart Windows."
     },
     {
       "id": "code_integrity",
-      "status": "info",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+      "status": "ok",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)",
+      "impact": "Puddle has the exact runtime it was built and tested with, so workspaces start as expected."
     },
     {
       "id": "launch",
       "status": "fail",
       "summary": "msb can't load a DLL it needs (0xC0000135)",
       "finding": "dll_missing",
-      "fix": "msb links the Windows Hypervisor Platform's DLL: fix \"Hypervisor\" above first."
+      "fix": "msb links the Windows Hypervisor Platform's DLL: fix \"Hypervisor\" above first.",
+      "impact": "Puddle can't start any workspace: a Windows file its runtime needs is missing.",
+      "remedy": "Fix the Hypervisor line if it failed, then reinstall Puddle and run Windows Update."
     },
     {
       "id": "test_boot",
       "status": "skipped",
-      "summary": "not checked: no usable hypervisor"
+      "summary": "not checked: no usable hypervisor",
+      "impact": "Not checked, so Puddle can't tell yet whether a workspace can start here.",
+      "remedy": "Fix any problem above, then check again."
     },
     {
       "id": "disk_space",
       "status": "ok",
-      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)",
+      "impact": "Leaves room for workspaces to install packages and build without stopping on a full drive."
     },
     {
       "id": "disk_encryption",
       "status": "ok",
-      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)",
+      "impact": "Someone who takes this disk can't read Puddle's data or the secrets it keeps."
     },
     {
       "id": "ssh_agent",
       "status": "ok",
-      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)",
+      "impact": "Programs in a workspace can log in to servers with your SSH keys, and the keys never leave this computer."
     },
     {
       "id": "az_cli",
       "status": "ok",
-      "summary": "version 2.64.0"
+      "summary": "version 2.64.0",
+      "impact": "Workspaces can sign in to Azure DevOps through your `az` login."
     },
     {
       "id": "credential_store",
       "status": "ok",
-      "summary": "the operating system's credential store: a test write and delete worked"
+      "summary": "the operating system's credential store: a test write and delete worked",
+      "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
       "id": "global_secure_access",
       "status": "ok",
-      "summary": "client not installed"
+      "summary": "client not installed",
+      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
     }
   ],
   "elapsed_ms": 1234

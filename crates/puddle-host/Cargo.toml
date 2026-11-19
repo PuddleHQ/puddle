@@ -38,6 +38,7 @@ puddle-lifecycle = { workspace = true }
 puddle-logins = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-ports = { workspace = true }
+puddle-process = { workspace = true }
 puddle-proxy = { workspace = true }
 puddle-repos = { workspace = true }
 puddle-runtime = { workspace = true }

@@ -237,7 +237,51 @@ impl Probe for Fake {
 fn run(fake: &Fake, options: &Options) -> Report {
     let mut report = diagnose(fake, options, "0.1.0");
     report.elapsed_ms = 1234;
+    assert_explained(&report);
     report
+}
+
+/// The most characters an impact or a remedy may have: a short line, read at a glance.
+const SHORT: usize = 170;
+
+/// Every check says what it means for the person (for an ok check: what it protects or makes
+/// possible), and every check that is not ok also says what to do; each is at most two short
+/// sentences.
+fn assert_explained(report: &Report) {
+    for c in &report.checks {
+        let name = c.id.title();
+        assert_short(name, "impact", &c.impact);
+        if !matches!(c.status, Status::Ok | Status::Skipped) {
+            assert!(
+                c.finding.is_some(),
+                "{name} is {:?} without a finding",
+                c.status
+            );
+        }
+        match (c.status, &c.remedy) {
+            (Status::Ok, None) => {}
+            (Status::Ok, Some(remedy)) => panic!("{name} is ok but has a remedy: {remedy}"),
+            (_, Some(remedy)) => assert_short(name, "remedy", remedy),
+            (status, None) => panic!("{name} is {status:?} and says nothing to do"),
+        }
+    }
+}
+
+fn assert_short(name: &str, part: &str, text: &str) {
+    assert!(!text.trim().is_empty(), "{name}: empty {part}");
+    assert!(
+        text.chars().count() <= SHORT,
+        "{name}: {part} longer than {SHORT} characters: {text}"
+    );
+    assert!(
+        text.ends_with('.'),
+        "{name}: {part} is not a sentence: {text}"
+    );
+    let sentences = text.matches(". ").count() + text.matches("? ").count() + 1;
+    assert!(
+        sentences <= 2,
+        "{name}: {part} has {sentences} sentences: {text}"
+    );
 }
 
 /// Compares (or with `PUDDLE_UPDATE_SNAPSHOTS=1`, writes) `tests/snapshots/<name>.snap`.
@@ -754,9 +798,15 @@ fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
 }
 
 #[test]
-fn windows_job_unreadable_is_said_not_dropped() {
+fn windows_job_unreadable_is_said_while_the_test_boot_has_not_passed() {
     let fake = Fake {
         job: Some(JobFacts::query_failed("QueryInformationJobObject", 87)),
+        boot: BootFacts::Ran {
+            outcome: ProcessOutcome::TimedOut {
+                after: Duration::from_secs(25),
+            },
+            kept_logs: None,
+        },
         ..windows()
     };
     let r = check(
@@ -766,6 +816,38 @@ fn windows_job_unreadable_is_said_not_dropped() {
         Some(Finding::JobUnreadable),
     );
     assert_eq!(r.check(CheckId::JobObject).unwrap().status, Status::Info);
+}
+
+/// A job object only matters when it stops the test boot: once a test VM booted, the line has
+/// nothing left to say, so it is left out.
+#[test]
+fn a_job_object_line_is_left_out_once_the_test_boot_passed() {
+    for job in [
+        JobFacts::query_failed("QueryInformationJobObject", 87),
+        JobFacts::Read {
+            breakaway_allowed: false,
+        },
+    ] {
+        let fake = Fake {
+            job: Some(job),
+            ..windows()
+        };
+        let r = run(&fake, &Options::default());
+        assert_eq!(r.check(CheckId::TestBoot).unwrap().status, Status::Ok);
+        assert!(r.check(CheckId::JobObject).is_none(), "{:?}", r.checks);
+    }
+}
+
+/// An unreadable code integrity state only matters when the runtime does not start.
+#[test]
+fn an_unreadable_code_integrity_line_is_left_out_once_the_runtime_started() {
+    let fake = Fake {
+        ci: Some(CodeIntegrityFacts::query_failed(status(0xC000_0022))),
+        ..windows()
+    };
+    let r = run(&fake, &Options::default());
+    assert_eq!(r.check(CheckId::Launch).unwrap().status, Status::Ok);
+    assert!(r.check(CheckId::CodeIntegrity).is_none(), "{:?}", r.checks);
 }
 
 #[test]
@@ -846,9 +928,12 @@ fn windows_gsa_installed_warns_and_explains() {
 }
 
 #[test]
-fn windows_unreadable_code_integrity_is_an_info_check_not_a_missing_one() {
+fn windows_unreadable_code_integrity_is_an_info_check_while_the_runtime_does_not_start() {
     let fake = Fake {
         ci: Some(CodeIntegrityFacts::query_failed(status(0xC000_0022))),
+        launch: ProcessOutcome::TimedOut {
+            after: Duration::from_secs(10),
+        },
         ..windows()
     };
     let r = check(
@@ -864,7 +949,6 @@ fn windows_unreadable_code_integrity_is_an_info_check_not_a_missing_one() {
         ci.detail.as_deref().unwrap().contains("0xC0000022"),
         "{ci:?}"
     );
-    assert!(r.ok);
 }
 
 #[test]
@@ -1907,7 +1991,7 @@ fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
 }
 
 #[test]
-fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
+fn a_missing_azure_cli_is_info_and_the_report_stays_ok() {
     let fake = Fake {
         az: AzCliFacts::NotFound,
         ..windows()
@@ -1919,7 +2003,8 @@ fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
         Some(Finding::AzCliMissing),
     );
     assert!(r.ok, "the Azure CLI never fails the report");
-    assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Warn);
+    // Optional: most people never use Azure DevOps, so its absence is no warning.
+    assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Info);
 }
 
 #[test]
@@ -2022,7 +2107,8 @@ fn a_file_vault_names_its_key_source_and_only_a_key_file_is_more_than_ok() {
         );
         let check = r.check(CheckId::CredentialStore).unwrap();
         assert_eq!(check.status, status, "{tag:?}");
-        assert_eq!(check.finding, None);
+        let finding = (tag == KeySourceTag::KeyFile).then_some(Finding::CredentialStoreKeyFile);
+        assert_eq!(check.finding, finding);
         assert_eq!(check.summary, format!("Puddle's file vault, {words}"));
     }
 }
@@ -2036,7 +2122,7 @@ fn a_file_vault_with_its_key_in_a_file_says_what_that_means_for_a_copy_of_the_co
         "credential_store_file_vault_key_file",
         &fake,
         CheckId::CredentialStore,
-        None,
+        Some(Finding::CredentialStoreKeyFile),
     );
     let fix = r
         .check(CheckId::CredentialStore)
@@ -2158,14 +2244,15 @@ fn a_sealed_key_that_opens_is_ok_whatever_the_tpm_says_when_there_is_nothing_to_
 }
 
 #[test]
-fn a_file_vault_not_made_yet_is_info() {
+fn a_file_vault_not_made_yet_is_ok() {
     let r = run(
         &with_store(CredentialStoreFacts::File(VaultFacts::NoVaultYet)),
         &Options::default(),
     );
+    // Nothing to do: Puddle makes the vault at its next start.
     assert_eq!(
         r.check(CheckId::CredentialStore).unwrap().status,
-        Status::Info
+        Status::Ok
     );
 }
 
@@ -2180,6 +2267,29 @@ fn a_store_record_that_cannot_be_read_is_a_warning() {
     assert!(r.ok);
 }
 
+/// The advice names `puddle serve --headless` only in a build that has the command: the
+/// snapshots below record the build with it, this test runs the other build too (`scripts/check.sh dormant`).
+#[test]
+fn the_no_desktop_advice_names_the_serve_command_only_when_it_is_built_in() {
+    for recorded in [true, false] {
+        let fake = with_store(CredentialStoreFacts::Os {
+            recorded,
+            health: StoreHealth::Working,
+            session: LoginSession::NotGraphical,
+        });
+        let r = run(&fake, &Options::default());
+        let text = format!("{} {}", r.to_json(), r.to_text());
+        let mentions = text.contains("puddle serve") || text.contains("--headless");
+        assert_eq!(
+            mentions,
+            puddle_doctor::SERVE_BUILT_IN,
+            "{recorded}: {text}"
+        );
+        assert!(text.contains("keyring"), "{text}");
+    }
+}
+
+#[cfg(feature = "serve")]
 #[test]
 fn a_working_keyring_on_a_linux_computer_with_no_graphical_session_is_a_warning() {
     for (recorded, snapshot, fix_has) in [

@@ -8,6 +8,8 @@
   import {
     canTrust,
     devCertificateLine,
+    MORE_DETAILS,
+    PURPOSE,
     rootsLine,
     trustNote,
   } from "#lib/welcome/certificates.ts";
@@ -43,10 +45,7 @@
   ]);
 </script>
 
-<StepHeading
-  title="Certificates"
-  lead="How Puddle makes HTTPS work inside your workspaces. Nothing to decide here."
-/>
+<StepHeading title="Certificates" lead={PURPOSE} />
 
 <ul class="lines" aria-label="Certificates">
   {#each lines as line (line.title)}
@@ -55,6 +54,24 @@
       <div>
         <p class="title">{line.title}</p>
         <p class="text">{line.text}</p>
+        {#if line.impact || line.remedy}
+          <div class="toggles">
+            {#if line.impact}
+              <details>
+                <summary
+                  >{line.tone === "ok" ? "Why it matters" : "Impact"}</summary
+                >
+                <p>{line.impact}</p>
+              </details>
+            {/if}
+            {#if line.remedy}
+              <details>
+                <summary>Remediation</summary>
+                <p>{line.remedy}</p>
+              </details>
+            {/if}
+          </div>
+        {/if}
       </div>
     </li>
   {/each}
@@ -73,9 +90,15 @@
   {/if}
   <p class="note" role="status" tabindex="-1" bind:this={noteEl}>{note}</p>
 </div>
+<details class="more-details">
+  <summary>More details</summary>
+  {#each MORE_DETAILS as paragraph (paragraph)}
+    <p>{paragraph}</p>
+  {/each}
+</details>
 <p class="more">
-  Puddle shows this once. The details are in
-  <a href="/settings/network-health">Settings &rsaquo; Network health</a>.
+  Puddle shows this once. After setup, the details are in Settings &rsaquo;
+  Network health.
 </p>
 
 <div class="actions">
@@ -112,6 +135,24 @@
     align-items: center;
     flex-wrap: wrap;
     gap: var(--space-3);
+  }
+  .toggles {
+    display: grid;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+  }
+  summary {
+    width: fit-content;
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  details > p {
+    margin: var(--space-1) 0 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-surface-raised);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
   }
   .text,
   .note,

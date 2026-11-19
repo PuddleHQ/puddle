@@ -25,13 +25,21 @@
 #   - after the upgrade the newer build lists the workspace under its id and name, its system check
 #     passes against the older runtime's data (msb's home included), the workspace starts, and its
 #     files are there byte for byte, read through the newer runtime;
+#   - the older build also holds what a user builds up (crates/puddle-app/e2e/upgrade-state.mjs): a global allow
+#     rule, a workspace deny rule, a pending request, an environment variable and a secret, three settings, an
+#     identity and a file in /home/agent, and every GET of the playbook is dumped; after the quit and the upgrade
+#     every dump is equal, the build is not older, the guest sees the variable, the stand-in and the file, approving
+#     the kept request lets the guest's retry return 200, the editor's server answers, and each main screen loads
+#     with no error alert;
 #   - the workspace is deleted and the newer build uninstalled.
 # The steps before the upgrade drive the older build's API, so they use only the calls both have.
 #   - with -UpgradeMsi, an upgrade while the program runs, and again with a workspace running, is
 #     refused (the old install byte for byte as it was, nothing queued for a restart, the message
 #     in the log); once Puddle is quit the upgrade goes through.
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
-#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>]
+#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending]
+# -PlantBreakage damages the older build's data after its quit, as a broken migration would; the run must then
+# fail (the msi workflow's dispatch input plant_breakage runs it so and expects the failure).
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
 # Without -UpgradeMsi the upgrade step is skipped and the first MSI is the one uninstalled.
 # Where the machine has no usable hypervisor, a failing `virtualization` or `hypervisor` check is
@@ -45,6 +53,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$UpgradeMsi = '',
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
+    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending')][string]$PlantBreakage = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -576,6 +585,132 @@ function Test-WorkspaceLifecycle($Conn) {
     Remove-Workspace $Conn $wsId $name
 }
 
+# The buttons of the notification area (the tray) named after Puddle: what a person sees of a
+# running app beside the clock. Windows 11 puts them in a XAML island (class SystemTray.NormalButton),
+# older shells in a toolbar of Shell_TrayWnd or of the overflow window. A new icon may sit in the
+# hidden-icons overflow, which UI Automation lists only while it is open, so the overflow is opened
+# first (the "Show Hidden Icons" button, as a person would) when the taskbar has one.
+# With -Hover the pointer passes over each icon found (Windows prunes the icon of a program that is
+# gone when the pointer reaches it). Returns the icons found before any hover; the overflow is
+# closed again.
+function Get-PuddleTrayIcons([switch]$Hover) {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $A = [System.Windows.Automation.AutomationElement]
+    $buttons = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $trays = @('Shell_TrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland')
+    $find = {
+        @($A::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.ClassName -in $trays } |
+            ForEach-Object { $_.FindAll('Descendants', $buttons) })
+    }
+    $all = & $find
+    $chevron = @($all | Where-Object { $_.Current.Name -eq 'Show Hidden Icons' }) | Select-Object -First 1
+    if ($chevron) {
+        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Seconds 2
+        $all = & $find
+    }
+    $icons = @($all | Where-Object { $_.Current.Name -match '^Puddle(:|$)' })
+    if ($Hover) {
+        foreach ($icon in $icons) {
+            $r = $icon.Current.BoundingRectangle
+            [void][TrayCursor]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
+            Start-Sleep -Milliseconds 500
+        }
+        [void][TrayCursor]::SetCursorPos(0, 0)
+    }
+    if ($chevron) {
+        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 500
+    }
+    $icons
+}
+
+Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class TrayCursor {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+}
+'@
+
+# Work worth losing: a repository with 21 commits, a staged and
+# an unstaged file, in the workspace's folder, synced to the volume.
+function Get-MakeWorkScript([string]$Folder) {
+    "set -e; cd $Folder; git init -q -b main qa-crash; cd qa-crash; git config user.name 'Puddle Test'; " +
+    "git config user.email test@puddle.invalid; git config commit.gpgsign false; " +
+    "echo 0 > qa.txt; git add qa.txt; git commit -qm 'qa 0'; " +
+    "for i in `$(seq 1 20); do echo `$i >> qa.txt; git add qa.txt; git commit -qm `"qa `$i`"; done; " +
+    "echo staged > staged.txt; git add staged.txt; echo unstaged > unstaged.txt; sync; " +
+    "echo count `$(git rev-list --count HEAD)"
+}
+
+function Get-ReadWorkScript([string]$Folder) {
+    "cd $Folder/qa-crash || exit 3; echo count `$(git rev-list --count HEAD); " +
+    "if git fsck --full >/tmp/fsck.out 2>&1; then echo 'fsck clean'; else echo 'fsck failed'; cat /tmp/fsck.out; fi; " +
+    "if git diff --cached --name-only | grep -qx staged.txt; then echo 'staged kept'; else echo 'staged lost'; fi; " +
+    "if [ -f unstaged.txt ]; then echo 'unstaged kept'; else echo 'unstaged lost'; fi"
+}
+
+# A hard kill of the app, with no person: the installed app (puddle-app.exe) is ended with
+# TerminateProcess (Stop-Process -Force), as Task Manager's End task does, while a workspace with
+# work in it runs. Every runtime process it started (msb and the VMs) is gone within 5 s: the
+# kill-on-close job object ends them. The tray icon goes (Windows prunes a dead program's icon when
+# the pointer passes over it, which is what a person sees, so the test passes the pointer over it).
+# The next start shows the workspace crashed or stopped, a start runs it, and the repository has its
+# 21 commits, a clean fsck, and its staged file still staged or a problem that says it was lost.
+function Test-HardKill {
+    $name = 'qa-crash'
+    $conn = Start-Installed
+    $wsId = New-Workspace $conn $name
+    Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+    $folder = "/workspaces/$wsId"
+    $made = Invoke-InWorkspace $wsId (Get-MakeWorkScript $folder) 'making the work'
+    Expect ($made -match '(?m)^count 21\s*$') "the work was not made: $made"
+    $runtime = @(Get-RuntimeProcesses)
+    Expect ($runtime.Count -gt 0) 'no runtime process runs with the workspace, so the kill below would prove nothing'
+    Expect (@(Get-PuddleTrayIcons).Count -ge 1) 'the running app shows no tray icon, so the check after the kill would prove nothing'
+    $app = @(Get-Process -Name 'puddle-app' -ErrorAction Stop | Sort-Object StartTime)[0]
+
+    Step "TerminateProcess on puddle-app.exe ($($app.Id)) with $($runtime.Count) runtime processes running"
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    Stop-Process -Id $app.Id -Force
+    $ids = @($runtime | ForEach-Object { $_.Id })
+    Wait-Until "runtime processes still run 5 s after the kill: $(($runtime | ForEach-Object { "$($_.Name) $($_.Id)" }) -join ', ')" 5 {
+        @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count -eq 0
+    } -PollMs 100 | Out-Null
+    Write-Host "every runtime process was gone $([math]::Round($clock.Elapsed.TotalSeconds, 1)) s after the kill"
+    Expect (@(Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue).Count -eq 0) 'a puddle-app process is left after the kill'
+    $ghosts = @(Get-PuddleTrayIcons -Hover)
+    if ($ghosts.Count -gt 0) {
+        Write-Host "INFO: $($ghosts.Count) dead tray icon(s) stayed until the pointer passed over them (a Windows habit)"
+    }
+    Wait-Until 'a tray icon of the killed app is left' 10 { @(Get-PuddleTrayIcons).Count -eq 0 } -PollMs 500 | Out-Null
+
+    Step 'the next start shows the workspace crashed or stopped, and a start brings back the work'
+    $conn = Start-Installed
+    try {
+        $after = Get-WorkspaceNow $conn $wsId
+        Expect ($null -ne $after) "the workspace $wsId is not listed after the kill"
+        Expect ($after.status -in @('crashed', 'stopped')) "after the kill the workspace shows $($after.status)"
+        Expect (@(Get-PuddleTrayIcons).Count -eq 1) "the started app shows $(@(Get-PuddleTrayIcons).Count) tray icons, not one"
+        Invoke-PuddleApi $conn 'Post' "/api/workspaces/$wsId/start" | Out-Null
+        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+        $read = Invoke-InWorkspace $wsId (Get-ReadWorkScript $folder) 'reading the work'
+        Write-Host $read
+        Expect ($read -match '(?m)^count 21\s*$') "commits were lost in the kill: $read"
+        Expect ($read -match '(?m)^fsck clean\s*$') "git fsck finds damage after the kill: $read"
+        if ($read -match '(?m)^staged lost\s*$') {
+            $problems = @((Invoke-PuddleApi $conn 'Get' '/api/problems').problems)
+            $said = @($problems | Where-Object { $_.workspace -eq $wsId -and $_.detail -match 'no longer staged' })
+            Expect ($said.Count -gt 0) "the staged file was lost and no problem says so: $($problems | ConvertTo-Json -Compress -Depth 4)"
+        }
+        Stop-Workspace $conn $wsId $name
+        Remove-Workspace $conn $wsId $name
+    } finally {
+        Stop-Installed
+    }
+}
+
 # Makes a workspace from the stock image over the API and returns the id Puddle gave it.
 function New-Workspace($Conn, [string]$Name) {
     $made = Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $Name }
@@ -614,6 +749,22 @@ function Assert-NewerVersion([string]$From, [string]$To) {
     Expect ([version]$To -gt [version]$From) "the upgrade goes from $From to $To, which is not newer"
 }
 
+# Runs crates/puddle-app/e2e/upgrade-state.mjs (the state an upgrade must keep) against the running
+# installed program; fails when any of its checks fails. Its lines are the job's log.
+function Invoke-UpgradeState([string[]]$Arguments, [string]$Phase) {
+    $script = Join-Path $PSScriptRoot '..\crates\puddle-app\e2e\upgrade-state.mjs'
+    Expect (Test-Path -LiteralPath $script) "no $script"
+    Step "upgrade state, $Phase"
+    $app = Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $env:PUDDLE_APP_PID = if ($app) { "$($app.Id)" } else { '' }
+    $env:PUDDLE_INSTALL_DIR = $InstallDir
+    $lines = @(& node $script @Arguments 2>&1 | ForEach-Object { "$_" })
+    $code = $LASTEXITCODE
+    $lines | ForEach-Object { Write-Host $_ }
+    $lines | Set-Content -LiteralPath (Join-Path $LogDir "upgrade-state-$Phase.log")
+    Expect ($code -eq 0) "the upgrade-state $Phase step failed (exit $code): $(($lines | Where-Object { $_ -match '^FAIL' }) -join ' | ')"
+}
+
 # The upgrade a user makes: from the older build $Baseline to $Upgrade, with a workspace that
 # holds files. $Policy is 'run' or 'skip' (no usable hypervisor: nothing here can run).
 function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$Policy) {
@@ -627,6 +778,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
 
     Step 'the older build makes a workspace and writes files to its volume, then stops it'
     $name = 'upgrade-test'
+    $StateDir = Join-Path $LogDir 'upgrade-state'
     $token = [guid]::NewGuid().ToString()
     $conn = Start-Installed
     try {
@@ -636,10 +788,12 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
         Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
         Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
+        Invoke-UpgradeState @('before', $StateDir, $wsId) 'before'
         Stop-Workspace $conn $wsId $name
     } finally {
         Stop-Installed
     }
+    if ($PlantBreakage) { Invoke-UpgradeState @('plant', $PlantBreakage) 'plant' }
 
     Step 'upgrade to this build'
     Invoke-Msiexec @('/i', "`"$Upgrade`"") 'msi-upgrade.log'
@@ -662,6 +816,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
         Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
         Write-Host "the files in $wsId are intact after the upgrade"
+        Invoke-UpgradeState @('after', $StateDir, $wsId) 'after'
         Stop-Workspace $conn $wsId $name
         Remove-Workspace $conn $wsId $name
     } finally {
@@ -834,6 +989,12 @@ if ($policy -eq 'run') {
     $conn = Start-Installed
     try {
         Test-WorkspaceLifecycle $conn
+    } finally {
+        Stop-Installed
+    }
+    Step 'a hard kill of the app (TerminateProcess) ends its VMs within 5 s and loses no commit'
+    try {
+        Test-HardKill
     } finally {
         Stop-Installed
     }

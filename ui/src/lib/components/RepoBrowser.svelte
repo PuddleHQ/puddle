@@ -224,15 +224,7 @@
     max-width: 28rem;
     margin-bottom: var(--space-3);
   }
-  input {
-    min-height: var(--control-size);
-    padding: var(--space-1) var(--space-3);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    color: var(--color-text);
-    font: inherit;
-  }
+
   table {
     width: 100%;
     border-collapse: collapse;

@@ -7,8 +7,8 @@
 //! |---|---|---|
 //! | CPU virtualization | `IsProcessorFeaturePresent(PF_VIRT_FIRMWARE_ENABLED)`; `/proc/cpuinfo` | off in UEFI/BIOS |
 //! | Hypervisor | `WHvGetCapability(HypervisorPresent)` from System32's `WinHvPlatform.dll`; `/dev/kvm`; CPUID vendor | WHP feature off, not running yet, VM without nested virtualization |
-//! | Code integrity | `NtQuerySystemInformation(SystemCodeIntegrityInformation)` | HVCI / App Control state (info); unreadable: an info line with the `NTSTATUS` |
-//! | Job object | `IsProcessInJob`, `QueryInformationJobObject` | job without breakaway (CI runners; info); unreadable: an info line with the OS error |
+//! | Code integrity | `NtQuerySystemInformation(SystemCodeIntegrityInformation)` | HVCI / App Control state (ok); unreadable: an info line with the `NTSTATUS`, left out once the runtime starts |
+//! | Job object | `IsProcessInJob`, `QueryInformationJobObject` | job without breakaway (CI runners; info); unreadable: an info line with the OS error; both left out once the test boot passed |
 //! | Bundled runtime | [`puddle_runtime::BundledRuntime::open`], plus opening `msb` for read + execute | missing, wrong version, permissions |
 //! | Runtime starts | `msb --version` with a time limit | `AppLocker`, App Control / Smart App Control, antivirus, EDR, missing DLL, timeout |
 //! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout; says where a failed boot's logs were kept, or why not |
@@ -40,6 +40,7 @@
 
 pub mod boot;
 mod diagnose;
+mod explain;
 mod facts;
 mod launch;
 mod report;
@@ -62,3 +63,7 @@ pub use puddle_runtime::RuntimeError;
 pub use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
 pub use report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 pub use system::SystemProbe;
+
+/// Whether this build has the `puddle serve` command. Advice that names the command is worded
+/// differently, or left out, when it is false: a command the build refuses is no fix.
+pub const SERVE_BUILT_IN: bool = cfg!(feature = "serve");

@@ -4,7 +4,7 @@
 //! its server in the guest).
 
 use std::ffi::OsString;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -52,18 +52,12 @@ impl VsCodeLauncher {
     }
 
     async fn run(&self, target: &DesktopTarget) -> Result<(), LaunchError> {
-        let mut command = Command::new(&self.program);
+        let mut command = puddle_process::command(&self.program);
         command
             .args(arguments(target))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt as _;
-            // No console window for the command that starts the editor.
-            command.creation_flags(0x0800_0000);
-        }
         let child = command.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 LaunchError::new(format!(

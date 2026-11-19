@@ -583,6 +583,9 @@ jobs:
       - name: the debug app on the Puddle host (no fixture) and its pinned runtime folder
         if: steps.whp.outputs.ok == 'true'
         shell: bash
+        env:
+          # xtask reads the fork's commits from the GitHub API; anonymous calls from a runner get a 403
+          GH_TOKEN: ${{ github.token }}
         run: |
           cargo build -p puddle-app --locked
           cargo xtask runtime --out target/debug/runtime

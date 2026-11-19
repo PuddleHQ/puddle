@@ -116,7 +116,7 @@ impl FakeDoctor {
     /// A report with nothing wrong: what a fresh install on a good computer gets.
     #[must_use]
     pub fn healthy() -> DoctorReport {
-        let ok = |id: &str, title: &str, summary: &str| DoctorCheck {
+        let ok = |id: &str, title: &str, summary: &str, impact: &str| DoctorCheck {
             id: id.to_owned(),
             title: title.to_owned(),
             status: DoctorStatus::Ok,
@@ -124,6 +124,8 @@ impl FakeDoctor {
             finding: None,
             fix: None,
             detail: None,
+            impact: impact.to_owned(),
+            remedy: None,
         };
         DoctorReport {
             schema_version: puddle_doctor::SCHEMA_VERSION,
@@ -136,14 +138,31 @@ impl FakeDoctor {
                     "virtualization",
                     "CPU virtualization",
                     "on (the hypervisor uses it)",
+                    "Lets the hypervisor run each workspace as a small virtual machine.",
                 ),
-                ok("hypervisor", "Hypervisor", "KVM is available"),
-                ok("runtime", "Bundled runtime", "present, as expected"),
-                ok("launch", "Runtime starts", "answered in 0.1 s"),
+                ok(
+                    "hypervisor",
+                    "Hypervisor",
+                    "KVM is available",
+                    "Lets Puddle start workspaces as virtual machines.",
+                ),
+                ok(
+                    "runtime",
+                    "Bundled runtime",
+                    "present, as expected",
+                    "Puddle has the exact runtime it was built with.",
+                ),
+                ok(
+                    "launch",
+                    "Runtime starts",
+                    "answered in 0.1 s",
+                    "Puddle's runtime may run here.",
+                ),
                 ok(
                     "test_boot",
                     "Test boot",
                     "a test VM booted and ran a program in 1.4 s",
+                    "Shows that a workspace can start here.",
                 ),
             ],
             elapsed_ms: 1800,

@@ -89,8 +89,7 @@ pub fn backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupErro
     if dest.exists() {
         return Err(BackupError::DestinationExists(dest.to_path_buf()));
     }
-    let cwd = std::env::current_dir().map_err(io_error("cannot read the working folder", dest))?;
-    refuse_inside(&cwd, paths.data(), dest)?;
+    refuse_inside(std::env::current_dir, paths.data(), dest)?;
     if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
         private::create_dir(parent).map_err(io_error("cannot create", parent))?;
     }
@@ -126,9 +125,21 @@ fn fill(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
 /// Refuses a destination that resolves into the data folder. A relative `dest` is read against
 /// `cwd`; without that, a one-component name has no existing ancestor to resolve and would
 /// skip the check.
-fn refuse_inside(cwd: &Path, data: &Path, dest: &Path) -> Result<(), BackupError> {
+fn refuse_inside(
+    cwd: impl FnOnce() -> io::Result<PathBuf>,
+    data: &Path,
+    dest: &Path,
+) -> Result<(), BackupError> {
     let data = data.canonicalize().unwrap_or_else(|_| data.to_path_buf());
-    let absolute = cwd.join(dest);
+    // The working folder matters only for a relative destination; a host whose folder was
+    // removed can still back up to an absolute one.
+    let absolute = if dest.is_absolute() {
+        dest.to_path_buf()
+    } else {
+        cwd()
+            .map_err(io_error("cannot read the working folder", dest))?
+            .join(dest)
+    };
     // The destination does not exist yet: resolve its deepest existing ancestor.
     let resolved = absolute.ancestors().find_map(|a| a.canonicalize().ok());
     if resolved.is_some_and(|real| real.starts_with(&data)) {

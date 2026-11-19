@@ -63,6 +63,9 @@ test("a fresh install is led through every step and then opens on the workspaces
 
   // System check: a healthy machine goes on.
   await expect(heading(page, "System check")).toBeVisible();
+  // Nothing runs until the person starts it.
+  await expect(page.getByRole("list", { name: "Checks" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Start system check" }).click();
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(
     page.getByRole("list", { name: "Checks" }).getByRole("listitem"),
@@ -188,15 +191,27 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
     finding: "kvm_missing",
     fix: "Turn on virtualization in your UEFI setup.",
     detail: "No such file or directory (os error 2)",
+    impact: "Puddle can't start any workspace: KVM isn't available.",
+    remedy: "Load KVM for your CPU.",
   };
   await backend.control.step({ do: "doctor", ...broken });
 
   await page.goto("/welcome/check");
+  await page.getByRole("button", { name: "Start system check" }).click();
   await expect(
     page.getByText("1 problem to fix before Puddle can run workspaces."),
   ).toBeVisible();
+  // The row explains itself behind closed toggles; the long fix is under More details.
+  const row = page
+    .getByRole("list", { name: "Checks" })
+    .getByRole("listitem")
+    .filter({ hasText: "Hypervisor" });
+  await expect(row.getByText("Load KVM for your CPU.")).toBeHidden();
+  await row.getByText("Remediation").click();
+  await expect(row.getByText("Load KVM for your CPU.")).toBeVisible();
+  await row.getByText("More details").click();
   await expect(
-    page.getByText("Turn on virtualization in your UEFI setup."),
+    row.getByText("Turn on virtualization in your UEFI setup."),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Continue" })).toHaveCount(0);
 
@@ -290,13 +305,19 @@ test("Trust it now shows a no and a failure in words, and ends the offer after a
     page.getByText("Development certificate: not trusted yet"),
   ).toBeVisible();
   const trust = page.getByRole("button", { name: "Trust it now" });
+  // The reason for the question and what Windows will ask are on the page before the press.
+  await expect(page.getByText(/Nothing else needs it/)).toBeVisible();
+  await page.getByText("More details", { exact: true }).click();
+  await expect(page.getByText(/Manage user certificates/)).toBeVisible();
+  await page.getByText("Remediation", { exact: true }).click();
+  await expect(
+    page.getByText(/Windows asks once, in a Security Warning/),
+  ).toBeVisible();
   await expectNoAxeViolations(page);
 
   // No in Windows' dialog: the step says so and offers it again.
   await trust.click();
-  await expect(
-    page.getByText("You declined Windows' confirmation."),
-  ).toBeVisible();
+  await expect(page.getByText(/You answered No in Windows/)).toBeVisible();
   await expect(trust).toBeEnabled();
 
   // A policy refusal: the system's words show and there is nothing to press.
@@ -361,6 +382,33 @@ test("Settings runs the system check again on its own page and leads back", asyn
   await expect(page).toHaveURL(/\/settings$/);
 });
 
+test("no link on a first-run step leads out of the flow", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  const open = async (path: string, title: string) => {
+    await page.goto(path);
+    await expect(heading(page, title)).toBeVisible();
+    if (path === "/welcome/check") {
+      await page.getByRole("button", { name: "Start system check" }).click();
+      await expect(page.getByText("No problems found.")).toBeVisible();
+    }
+  };
+  const links = page.locator("main").getByRole("link");
+  for (const [path, title] of STEPS) {
+    await open(path, title);
+    const count = await links.count();
+    for (let i = 0; i < count; i++) {
+      await open(path, title);
+      const link = links.nth(i);
+      const name = (await link.textContent())?.trim();
+      await link.click();
+      await expect(page, `${path}: ${name}`).toHaveURL(/\/welcome(\/|$)/);
+    }
+  }
+});
+
 // One test per step: a scan costs seconds on a loaded host, and the steps together ran out of 30 s.
 for (const scheme of ["light", "dark"] as const) {
   for (const [path, title] of STEPS) {
@@ -373,6 +421,7 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto(path);
       await expect(heading(page, title)).toBeVisible();
       if (path === "/welcome/check") {
+        await page.getByRole("button", { name: "Start system check" }).click();
         await expect(page.getByText("No problems found.")).toBeVisible();
       }
       if (path === "/welcome/connect") {
@@ -407,11 +456,16 @@ test("the blocked system check and the form dialog pass the accessibility scan",
     finding: "kvm_missing",
     fix: "Turn on virtualization in your UEFI setup.",
     detail: "No such file or directory (os error 2)",
+    impact: "Puddle can't start any workspace: KVM isn't available.",
+    remedy: "Load KVM for your CPU.",
   };
   await backend.control.step({ do: "doctor", ...healthy });
   await page.goto("/welcome/check");
+  await page.getByRole("button", { name: "Start system check" }).click();
   await expect(page.getByText(/1 problem to fix/)).toBeVisible();
-  await page.getByText("Technical details").click();
+  for (const label of ["Impact", "Remediation", "More details"]) {
+    await page.getByText(label, { exact: true }).first().click();
+  }
   await expectNoAxeViolations(page);
 
   await page.goto("/welcome/workspace");

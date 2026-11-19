@@ -163,7 +163,8 @@ pub(crate) enum Prompts {
     reason = "the working folder only has to exist and be neutral; no file is made in it"
 )]
 pub(crate) fn command(program: &Path, prompts: Prompts) -> Command {
-    let mut cmd = Command::new(program);
+    // No console window on Windows: a console tool must not flash one on the user's desktop.
+    let mut cmd = Command::from(puddle_process::command(program));
     cmd.current_dir(std::env::temp_dir())
         .kill_on_drop(true)
         // Git and Git Credential Manager: no terminal prompt and no askpass program; no GUI
@@ -187,11 +188,6 @@ pub(crate) fn command(program: &Path, prompts: Prompts) -> Command {
         .env_remove("GITHUB_TOKEN")
         .env_remove("GH_ENTERPRISE_TOKEN")
         .env_remove("GITHUB_ENTERPRISE_TOKEN");
-    #[cfg(windows)]
-    {
-        // CREATE_NO_WINDOW: a console tool must not flash a window on the user's desktop.
-        cmd.creation_flags(0x0800_0000);
-    }
     cmd
 }
 

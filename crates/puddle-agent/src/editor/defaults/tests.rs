@@ -448,3 +448,15 @@ fn a_merge_that_writes_replaces_the_text_and_one_that_does_not_keeps_it() {
     );
     assert_eq!(written(Merged::Unchanged, b"old".to_vec()), b"old");
 }
+
+#[test]
+fn a_size_taken_out_of_the_plan_is_removed_and_the_theme_stays() {
+    let rig = Rig::new();
+    rig.plan(&dark(Some(15)));
+    apply(&rig.server);
+    rig.plan(&dark(None));
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert!(settings.get("editor.fontSize").is_none(), "{settings}");
+    assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
+}

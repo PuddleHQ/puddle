@@ -423,10 +423,11 @@ impl Squid {
     /// # Panics
     /// With the Docker mode, or when it does not come up again.
     pub fn resume(&mut self) {
-        let bin = self
-            .bin
-            .clone()
-            .expect("resume works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER");
+        assert!(
+            self.bin.is_some(),
+            "resume works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER"
+        );
+        let bin = self.bin.clone().unwrap();
         self.stop = Stop::Process(spawn_process(&bin, self.dir.path(), self.port));
         self.wait()
             .unwrap_or_else(|why| panic!("Squid did not come back on port {}: {why}", self.port));

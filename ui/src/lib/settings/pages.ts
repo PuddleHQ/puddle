@@ -353,7 +353,12 @@ export const SETTINGS: readonly SettingEntry[] = [
     "Devices and sign-in",
     "password phones browsers sessions",
   ),
-  entry("this-computer", "set-backup", "Back up", "export archive restore"),
+  entry(
+    "this-computer",
+    "set-backup",
+    "Back up and restore",
+    "export archive restore",
+  ),
   entry(
     "this-computer",
     "set-audit",

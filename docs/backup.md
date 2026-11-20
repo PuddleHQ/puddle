@@ -21,7 +21,8 @@ environment variable or a config file is the one the backup copies when you pass
 
 Settings has a "Back up" card with the button "Back up now". It makes the same backup and your
 browser or the app saves it as one file, `puddle-backup-<UTC time>.tar.gz`, that holds `puddle.db`,
-`settings/` and `workspaces.json` at its top level. The owner alone can do it, and the file is
+`settings/`, `workspaces.json` and a small `manifest.json` (the backup format, the Puddle version,
+the database's schema version and the time) at its top level. The owner alone can do it, and the file is
 built while Puddle runs, with no lock taken. It holds and leaves out what the next section lists.
 A script can ask the same thing: `POST /api/backup` with the API token answers with the file.
 
@@ -32,6 +33,7 @@ A script can ask the same thing: `POST /api/backup` with the API token answers w
 | `puddle.db` | One consistent point in time of the database: rules, pending requests, the audit log, environment rows, git identities, the users and their devices. A single file, with no `-wal` or `-shm`. |
 | `settings/` | The global and per-workspace settings documents. |
 | `workspaces.json` | The workspace list. |
+| `manifest.json` | The backup format (1), the Puddle version that made it, the database's schema version and the time. A backup without one is format 1; a format this Puddle does not know is refused. |
 
 The database copy is made with SQLite's `VACUUM INTO` on a read-only connection. It sees every
 commit up to the moment it starts and nothing half-written, and the host never waits for it.
@@ -56,7 +58,24 @@ and not yet reflected in `puddle.db`, or the other way round.
   they belong to one machine and one run.
 - Workspace volumes and the sandbox runtime: they are large and are not in this command's scope.
 
+## Checking a backup before a restore
+
+`POST /api/restore/preview` takes a backup file as the request body (the owner only) and answers
+what a restore of it would do on this machine, without changing anything: for the rules, rule
+sets, workspaces, identities, environment variables, settings and users, how many entries are in
+the backup, how many would be added, how many exist here and differ, how many are equal and how
+many exist only here; which restored workspaces have a disk on this machine; which secrets would
+need a value; and how many workspaces run. The file is read into a private staging folder in the
+data folder. A staged copy that is not applied is removed after 24 hours.
+
+A file that cannot be read faithfully is refused with the reason, and nothing stays staged: not a
+gzip archive, an entry outside `puddle.db`, `settings`, `workspaces.json` and `manifest.json`, a
+path above the top level or an absolute path, a link, more than 4 GiB unpacked, no `puddle.db`, a
+database that fails SQLite's integrity check, a schema newer than this Puddle reads, or an unknown
+format. An older schema is accepted and read forward.
+
 ## Restore
+
 
 1. Stop Puddle (`puddle serve` or the desktop app). The data folder takes one host process at a
    time.

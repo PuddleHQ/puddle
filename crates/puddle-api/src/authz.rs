@@ -126,6 +126,8 @@ pub(crate) enum Action {
     ManageUsers,
     /// A backup of the whole install: every user's rules, settings and audit.
     BackUp,
+    /// Restoring from a backup file: it can replace every user's rules and settings.
+    Restore,
     /// Serving the API beyond this computer.
     #[cfg_attr(
         not(test),
@@ -166,6 +168,7 @@ impl Action {
             | Self::UseComputerAccounts
             | Self::ManageUsers
             | Self::BackUp
+            | Self::Restore
             | Self::SetRemoteServing => true,
         }
     }
@@ -391,6 +394,10 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         | ("GET", "/api/devices")
         | ("DELETE", "/api/devices/{id}") => (A::ManageSessions, T::Own),
         ("POST", "/api/backup") => (A::BackUp, T::Install),
+        ("POST", "/api/restore/preview" | "/api/restore/apply")
+        | ("GET" | "DELETE", "/api/restore/result")
+        | ("GET", "/api/safety-copies")
+        | ("DELETE", "/api/safety-copies/{name}") => (A::Restore, T::Install),
         ("GET", "/api/admin/users" | "/api/admin/stats" | "/api/admin/audit")
         | ("POST", "/api/admin/users" | "/api/admin/users/{id}/invite")
         | ("DELETE", "/api/admin/users/{id}") => (A::ManageUsers, T::Install),

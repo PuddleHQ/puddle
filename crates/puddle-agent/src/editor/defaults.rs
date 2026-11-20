@@ -39,11 +39,9 @@ pub(super) fn merge_at_start(
     account: Option<&Account>,
 ) -> io::Result<()> {
     let done = apply(server);
-    for path in &done.made {
-        if let Some(account) = account {
-            account.own(path)?;
-        }
-    }
+    account.map_or(Ok(()), |a| {
+        done.made.iter().try_for_each(|path| a.own(path))
+    })?;
     if !done.install.is_empty() {
         tokio::spawn(install_extensions(
             server.clone(),
@@ -215,9 +213,7 @@ impl Run<'_> {
                 continue;
             }
             if let Some(value) = wanted {
-                if now != Some(&value) {
-                    sets.push(MergeEntry::json(&[key], &value));
-                }
+                sets.push(MergeEntry::json(&[key], &value));
                 self.applied.settings.insert(key.to_owned(), value);
             } else {
                 if now.is_some() {
@@ -231,7 +227,8 @@ impl Run<'_> {
         }
         let edited = edit_settings(existing, &sets, &removes);
         match edited {
-            Ok(text) => self.write_user_file(file, &text),
+            Ok(Some(text)) => self.write_user_file(file, &text),
+            Ok(None) => Ok(()),
             Err(err) => {
                 tracing::warn!(%err, "the editor settings file is left as it is");
                 Ok(())
@@ -322,37 +319,43 @@ impl Run<'_> {
 
     /// Writes `text` to `file` and notes what it made.
     fn write_user_file(&mut self, file: &Path, text: &[u8]) -> io::Result<()> {
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
-            self.outcome.made.push(dir.to_path_buf());
-        }
+        let dir = file.parent().unwrap_or(file);
+        std::fs::create_dir_all(dir)?;
+        self.outcome.made.push(dir.to_path_buf());
         puddle_fs::private::write_atomic(file, text)?;
         self.outcome.made.push(file.to_path_buf());
         Ok(())
     }
 }
 
-/// `existing` with `sets` written and `removes` taken out, or why the file is left alone.
+/// `old` or, when `merged` writes, what it writes.
+fn written(merged: Merged, old: Vec<u8>) -> Vec<u8> {
+    match merged {
+        Merged::Write(out) => out,
+        Merged::Unchanged => old,
+    }
+}
+
+/// `existing` with `sets` written and `removes` taken out: `None` when that changes nothing, or
+/// why the file is left alone.
 fn edit_settings(
     existing: Option<Vec<u8>>,
     sets: &[MergeEntry],
     removes: &[Vec<String>],
-) -> Result<Vec<u8>, String> {
-    let mut text = existing.unwrap_or_default();
+) -> Result<Option<Vec<u8>>, String> {
+    let old = existing.unwrap_or_default();
+    let mut text = old.clone();
     if !sets.is_empty() {
         let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec()).map_err(|e| e.to_string())?;
-        let existing = (!text.is_empty()).then_some(text.as_slice());
-        if let Merged::Write(out) = spec.apply(existing, &[]).map_err(|e| e.to_string())? {
-            text = out;
-        }
+        let from = (!text.is_empty()).then_some(text.as_slice());
+        let merged = spec.apply(from, &[]).map_err(|e| e.to_string())?;
+        text = written(merged, text);
     }
     if !removes.is_empty() {
-        let done = unmerge(MergeFormat::Jsonc, &text, removes).map_err(|e| e.to_string())?;
-        if let Merged::Write(out) = done.merged {
-            text = out;
-        }
+        let gone = unmerge(MergeFormat::Jsonc, &text, removes).map_err(|e| e.to_string())?;
+        text = written(gone.merged, text);
     }
-    Ok(text)
+    Ok((text != old).then_some(text))
 }
 
 /// One key binding's identity: its key, command and `when`.

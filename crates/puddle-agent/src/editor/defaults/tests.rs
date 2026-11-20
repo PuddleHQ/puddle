@@ -421,3 +421,30 @@ fn what_the_merge_made_is_handed_to_the_session_user() {
     merge_at_start(&rig.server, &program, Some(&account)).unwrap();
     assert_eq!(rig.settings()["workbench.colorTheme"], "Solarized Dark");
 }
+
+#[test]
+fn the_same_plan_at_the_next_start_rewrites_nothing_and_a_folder_for_a_file_is_an_error_not_a_panic()
+ {
+    let rig = Rig::new();
+    rig.plan(&dark(Some(15)));
+    apply(&rig.server);
+    let first = std::fs::read(rig.user("settings.json")).unwrap();
+    let again = apply(&rig.server);
+    assert_eq!(std::fs::read(rig.user("settings.json")).unwrap(), first);
+    assert!(again.made.is_empty(), "{again:?}");
+
+    let blocked = Rig::new();
+    blocked.plan(&dark(None));
+    std::fs::create_dir(blocked.user("settings.json")).unwrap();
+    let done = apply(&blocked.server);
+    assert!(done.made.is_empty(), "{done:?}");
+}
+
+#[test]
+fn a_merge_that_writes_replaces_the_text_and_one_that_does_not_keeps_it() {
+    assert_eq!(
+        written(Merged::Write(b"new".to_vec()), b"old".to_vec()),
+        b"new"
+    );
+    assert_eq!(written(Merged::Unchanged, b"old".to_vec()), b"old");
+}

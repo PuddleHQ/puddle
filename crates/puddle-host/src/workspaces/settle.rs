@@ -489,10 +489,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .get(name)
             .and_then(|live| live.guest.as_ref().map(|guest| guest.authors.clone()));
         self.settle_after_hook(name, gated.boot_report(), authors.as_ref(), HookRun::Boot);
-        let root = Layout::new(id)?.mount().clone();
+        let root = Layout::new()?.mount().clone();
         self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
             .await;
-        let mount = Layout::new(id)?.mount().clone();
+        let mount = Layout::new()?.mount().clone();
         let handle = inner.runtime.get(&name.sandbox_name()).await?;
         inner
             .lifecycle

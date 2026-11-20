@@ -27,7 +27,7 @@
 #     files are there byte for byte, read through the newer runtime;
 #   - the older build also holds what a user builds up (crates/puddle-app/e2e/upgrade-state.mjs): a global allow
 #     rule, a workspace deny rule, a pending request, an environment variable and a secret, three settings, an
-#     identity and a file in /home/agent, and every GET of the playbook is dumped; after the quit and the upgrade
+#     identity and a file in the workspace folder, and every GET of the playbook is dumped; after the quit and the upgrade
 #     every dump is equal, the build is not older, the guest sees the variable, the stand-in and the file, approving
 #     the kept request lets the guest's retry return 200, the editor's server answers, and each main screen loads
 #     with no error alert;
@@ -663,7 +663,7 @@ function Test-HardKill {
     $conn = Start-Installed
     $wsId = New-Workspace $conn $name
     Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-    $folder = "/workspaces/$wsId"
+    $folder = "/workspace"
     $made = Invoke-InWorkspace $wsId (Get-MakeWorkScript $folder) 'making the work'
     Expect ($made -match '(?m)^count 21\s*$') "the work was not made: $made"
     $runtime = @(Get-RuntimeProcesses)
@@ -784,7 +784,10 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
     try {
         $wsId = New-Workspace $conn $name
         Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-        $volume = "/workspaces/$wsId"
+        # A baseline from before the single guest folder mounts the volume at /workspaces/<id>;
+        # this build mounts it at /workspace and makes such a sandbox again at its first start.
+        $where = Invoke-InWorkspace $wsId "if grep -q ' /workspace ' /proc/mounts; then echo /workspace; else echo /workspaces/$wsId; fi" 'finding the volume'
+        $volume = @($where | ForEach-Object { $_ -split "`n" } | ForEach-Object { $_.Trim() } | Where-Object { $_ })[-1]
         $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
         Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
         Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
@@ -812,7 +815,7 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         $clock = [System.Diagnostics.Stopwatch]::StartNew()
         Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
         Write-Host "workspace $name ($wsId) running $([math]::Round($clock.Elapsed.TotalSeconds)) s after the start"
-        $read = Read-FilesReport (Invoke-InWorkspace $wsId (Get-ReadFilesScript $volume) 'reading the files')
+        $read = Read-FilesReport (Invoke-InWorkspace $wsId (Get-ReadFilesScript '/workspace') 'reading the files')
         Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
         Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
         Write-Host "the files in $wsId are intact after the upgrade"

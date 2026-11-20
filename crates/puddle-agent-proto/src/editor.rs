@@ -22,7 +22,7 @@
 //!
 //! ```
 //! use puddle_agent_proto::editor::EditorServer;
-//! let server = EditorServer::new("/workspaces/acme/.puddle/code-server", "/workspaces/acme", 300);
+//! let server = EditorServer::new("/workspace/.puddle/code-server", "/workspace", 300);
 //! let env = server.env();
 //! let back = EditorServer::from_lookup(|k| {
 //!     env.iter().find(|(name, _)| *name == k).map(|(_, v)| v.clone())

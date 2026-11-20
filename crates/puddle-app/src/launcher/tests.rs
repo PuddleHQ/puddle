@@ -141,17 +141,17 @@ async fn a_browser_attach_opens_the_multi_root_file_or_the_start_folder_the_targ
     let cases = [
         (
             OpenTarget {
-                path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+                path: "/workspace/.puddle/editor/w.code-workspace".into(),
                 is_workspace_file: true,
             },
-            "/?workspace=%2Fworkspaces%2Fw%2F.puddle%2Feditor%2Fw.code-workspace",
+            "/?workspace=%2Fworkspace%2F.puddle%2Feditor%2Fw.code-workspace",
         ),
         (
             OpenTarget {
-                path: "/workspaces/w/api".into(),
+                path: "/workspace/api".into(),
                 is_workspace_file: false,
             },
-            "/?folder=%2Fworkspaces%2Fw%2Fapi",
+            "/?folder=%2Fworkspace%2Fapi",
         ),
     ];
     for (open, expected) in cases {
@@ -185,7 +185,7 @@ async fn a_signed_in_browser_attach_navigates_to_the_place_after_the_cookie() {
     let (addr, _logins) = front(&secret).await;
     let mut target = target(addr, Some(EditorSignIn::Form(Arc::new(Password(secret)))));
     target.open = Some(OpenTarget {
-        path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+        path: "/workspace/.puddle/editor/w.code-workspace".into(),
         is_workspace_file: true,
     });
 

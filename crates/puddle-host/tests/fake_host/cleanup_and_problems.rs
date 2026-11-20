@@ -49,7 +49,7 @@ async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failu
 #[tokio::test(flavor = "multi_thread")]
 async fn stale_git_locks_that_could_not_be_cleared_are_a_problem_until_a_boot_clears_them() {
     let rig = Rig::named_ids();
-    *rig.guest.locks_answer.lock().unwrap() = Some((3, "E\t.\tcannot enter /workspaces/acme\n"));
+    *rig.guest.locks_answer.lock().unwrap() = Some((3, "E\t.\tcannot enter /workspace\n"));
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;

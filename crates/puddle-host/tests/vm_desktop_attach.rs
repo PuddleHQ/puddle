@@ -435,7 +435,7 @@ mod attach {
         assert!(
             // The folder, on an image with git and on one without: the volume holds no checkout.
             args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
-                && args.contains(&format!("+{}/workspaces/", s.alias)),
+                && args.contains(&format!("+{}/workspace", s.alias)),
             "{args}"
         );
     }
@@ -446,10 +446,7 @@ mod attach {
         let made = guest(
             &s.runtime,
             &s.sandbox,
-            &format!(
-                "! command -v git >/dev/null && mkdir -p /workspaces/{0}/api/.git /workspaces/{0}/web/.git && echo made",
-                s.name
-            ),
+            "! command -v git >/dev/null && mkdir -p /workspace/api/.git /workspace/web/.git && echo made",
         )
         .await;
         assert_eq!(made.trim(), "made", "{made}");
@@ -477,7 +474,7 @@ mod attach {
         let found = guest(
             &s.runtime,
             &s.sandbox,
-            "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspaces /opt /var 2>/dev/null; echo done",
+            "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspace /opt /var 2>/dev/null; echo done",
         )
         .await;
         assert_eq!(

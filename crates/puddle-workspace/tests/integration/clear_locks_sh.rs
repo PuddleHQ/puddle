@@ -128,7 +128,7 @@ async fn run(shell: &'static str, fx: &Fixture) -> LockReport {
         if r.program != "sh" || r.args.get(1).map(String::as_str) != Some(CLEAR_LOCKS_SH) {
             return None;
         }
-        assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
+        assert_eq!(r.args.get(3).map(String::as_str), Some("/workspace"));
         let out = command(shell)
             .args(["-c", CLEAR_LOCKS_SH, "puddle-clear-locks"])
             .arg(&vol)

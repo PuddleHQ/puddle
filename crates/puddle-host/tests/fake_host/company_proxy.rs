@@ -91,7 +91,7 @@ async fn guest_connect(rig: &Rig, workspace: &str, port: u16) -> Met {
     let authority = format!("{TARGET}:{port}");
     let request = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
-    let met = tokio::time::timeout(Duration::from_secs(20), async {
+    let answered = tokio::time::timeout(Duration::from_secs(20), async {
         let mut reply = Vec::new();
         let mut chunk = [0_u8; 1024];
         while !reply.windows(4).any(|w| w == b"\r\n\r\n") {
@@ -119,10 +119,13 @@ async fn guest_connect(rig: &Rig, workspace: &str, port: u16) -> Met {
         }
         met
     })
-    .await
-    .expect("no answer to the guest's CONNECT");
+    .await;
     driver.abort();
-    met
+    assert!(
+        answered.is_ok(),
+        "no answer to the guest's CONNECT {authority}"
+    );
+    answered.unwrap()
 }
 
 fn blocked_by(met: &Met) -> Option<String> {

@@ -247,7 +247,7 @@ async fn vm_editor_installs_an_extension_from_open_vsx_with_no_rule_added() {
 }
 
 /// What the tools of [`vm_radar_company_squid_carries_pip_a_build_and_an_open_vsx_install`] run as
-/// the workspace's user in a login shell: a wheel from PyPI into a virtual environment, then a
+/// the workspace's user in a login shell: a wheel from `PyPI` into a virtual environment, then a
 /// build from source (the sdist, and the build backend it fetches into its isolated build
 /// environment).
 const PIP_AND_A_BUILD: &str = r#"
@@ -262,7 +262,7 @@ python3 -m venv ~/venv
 /// The real tools of a day's work run behind a real Squid that is the host's company proxy:
 /// `pip` (a wheel), a build from source (an sdist and its build backend) and the editor's
 /// extension install from Open VSX all reach their hosts, and Squid's own access log is the
-/// witness that every one of them went through it. The tools reach live third parties (PyPI,
+/// witness that every one of them went through it. The tools reach live third parties (`PyPI`,
 /// Open VSX), so this is a radar: an outage there fails it, a per-pull-request job skips it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_company_squid_carries_pip_a_build_and_an_open_vsx_install() {

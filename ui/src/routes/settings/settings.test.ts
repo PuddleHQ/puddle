@@ -39,6 +39,10 @@ import Notifications from "./(pages)/notifications/+page.svelte";
 import ThisComputer from "./(pages)/this-computer/+page.svelte";
 import Workspaces from "./(pages)/workspaces/+page.svelte";
 
+// Every test here mounts all seven pages of Settings, so one test costs about a second on an idle
+// host and several times that on a loaded one; the default 5 s limit is under the loaded cost.
+vi.setConfig({ testTimeout: 30_000 });
+
 const ALL = [
   Appearance,
   Notifications,

@@ -27,7 +27,6 @@
   } = $props();
 
   let host: HTMLDivElement | undefined = $state();
-  let probe: HTMLSpanElement | undefined = $state();
   let hovered = $state<string | null>(null);
   let menu = $state<{ x: number; y: number } | null>(null);
   let canCopy = $state(false);
@@ -38,7 +37,7 @@
 
   onMount(() => {
     const target = host as HTMLDivElement;
-    const look = () => screen.applyLook(probe as HTMLSpanElement);
+    const look = () => screen.applyLook(document.body);
     screen.onHover = (text) => (hovered = text);
     screen.onLeave = onLeave;
     look();
@@ -123,7 +122,6 @@
     aria-label={name}
     oncontextmenu={openMenu}
   ></div>
-  <span class="probe" bind:this={probe} aria-hidden="true"></span>
   {#if menu}
     <div
       class="menu"
@@ -186,12 +184,6 @@
   }
   .screen :global(.xterm) {
     height: 100%;
-  }
-  .probe {
-    position: absolute;
-    width: 0;
-    height: 0;
-    overflow: hidden;
   }
   .menu {
     position: absolute;

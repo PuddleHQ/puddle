@@ -4,10 +4,6 @@
 //! The clone fails, the proxy's own 502 text says it could not connect and names the host, and
 //! once the route is back the same clone works with nothing restarted.
 #![cfg(target_os = "linux")]
-#![expect(
-    clippy::unwrap_used,
-    reason = "helpers outside #[test] functions fail the test by panicking"
-)]
 
 use puddle_e2e::lab::{GitHost, Versions, git_available};
 

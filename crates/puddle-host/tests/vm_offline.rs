@@ -6,10 +6,6 @@
 //!
 //! The control first: with the route dead, pulling an image that is not in the cache fails with
 //! the registry named, so the later start is not a start that happened to have a route.
-#![expect(
-    clippy::unwrap_used,
-    reason = "VM test: a failed step fails the test; measurements go to stderr"
-)]
 
 mod support;
 mod vm_support;

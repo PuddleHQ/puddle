@@ -7,6 +7,7 @@
 //! runtime pulls the image with no restart.
 #![cfg(target_os = "linux")]
 #![expect(
+    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]

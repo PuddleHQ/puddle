@@ -44,11 +44,8 @@ fn pattern() -> Vec<u8> {
     (0..SIZE).map(|i| (i.wrapping_mul(31) >> 3) as u8).collect()
 }
 
-fn sha(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+fn sha(bytes: &[u8]) -> Vec<u8> {
+    Sha256::digest(bytes).to_vec()
 }
 
 /// An origin that answers `GET /sized` with a `content-length` and `GET /open` with a body that
@@ -117,7 +114,7 @@ async fn get(rig: &Rig, link: &LinkShim, path: &str) -> (Vec<u8>, std::io::Resul
     let end = loop {
         match tunnel.read(&mut buf).await {
             Ok(0) => break Ok(()),
-            Ok(n) => all.extend_from_slice(&buf[..n]),
+            Ok(n) => all.extend_from_slice(buf.get(..n).unwrap_or_default()),
             Err(err) => break Err(err),
         }
     };

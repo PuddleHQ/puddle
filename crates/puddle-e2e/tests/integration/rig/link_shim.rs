@@ -248,7 +248,7 @@ async fn hold(plan: &Mutex<Plan>, counters: &Counters) {
     };
     let n = counters.chunks.fetch_add(1, Ordering::SeqCst) + 1;
     let mut wait = delay;
-    if every > 0 && n % every == 0 {
+    if every > 0 && n.is_multiple_of(every) {
         counters.stalled.fetch_add(1, Ordering::SeqCst);
         wait += stall;
     }
@@ -283,7 +283,7 @@ async fn carry(
                     return;
                 }
                 hold(&plan, &counters).await;
-                if server.write_all(&up[..n]).await.is_err() {
+                if server.write_all(up.get(..n).unwrap_or_default()).await.is_err() {
                     return;
                 }
             }
@@ -313,13 +313,13 @@ async fn carry(
                     // The bytes up to the cut go out, then both ends reset: the client reads data
                     // and then an error, never an end of file.
                     let keep = usize::try_from(after.saturating_sub(sent)).unwrap_or(0).min(n);
-                    let _ = client.write_all(&down[..keep]).await;
+                    let _ = client.write_all(down.get(..keep).unwrap_or_default()).await;
                     let _ = client.flush().await;
                     let _ = client.set_zero_linger();
                     let _ = server.set_zero_linger();
                     return;
                 }
-                if client.write_all(&down[..n]).await.is_err() {
+                if client.write_all(down.get(..n).unwrap_or_default()).await.is_err() {
                     return;
                 }
                 sent += n as u64;

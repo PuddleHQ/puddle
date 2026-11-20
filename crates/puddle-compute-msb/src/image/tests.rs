@@ -99,7 +99,7 @@ fn missing_and_empty_fields_are_none_or_empty() {
 fn a_failed_connect_says_which_registry_could_not_be_reached() {
     let reason = "registry error: error sending request for url (https://registry.test/v2/): client error (Connect): tunnel error: unsuccessful".to_owned();
     assert_eq!(
-        super::explain_connect(reason.clone(), "registry.test"),
+        explain_connect(reason.clone(), "registry.test"),
         format!("could not connect to registry.test: {reason}")
     );
 }
@@ -107,8 +107,5 @@ fn a_failed_connect_says_which_registry_could_not_be_reached() {
 #[test]
 fn a_reason_that_is_not_a_failed_connect_is_left_alone() {
     let reason = "registry error: 401 Unauthorized".to_owned();
-    assert_eq!(
-        super::explain_connect(reason.clone(), "registry.test"),
-        reason
-    );
+    assert_eq!(explain_connect(reason.clone(), "registry.test"), reason);
 }

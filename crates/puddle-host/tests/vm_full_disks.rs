@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Full disks under a real microVM (K on Linux KVM): the host's data folder sits on a file system
-//! of its own with a fixed size, the test fills it from outside and from inside the guest, and
-//! the host and the guest must say so (events, a guest that gets ENOSPC) and recover when space
-//! is freed.
+//! Full disks under a real microVM (K on Linux KVM): a full host disk, a full workspace volume and a
+//! full root disk, each filled for real, and what the host and the guest say about it.
 //!
-//! The data folder is a RAM-backed file system of a fixed size that the test mounts in a private
-//! user and mount namespace: the test machine has no loop devices and the VM tests do not run as
-//! root. The namespace is entered by running the test binary again (`unshare`), so the host, the
-//! msb runtime and every VM of the test see the small disk, and nothing outside the namespace is
-//! touched.
+//! The host-disk test puts the data folder on a RAM-backed file system of a fixed 8 GiB that it
+//! mounts in a private user and mount namespace (the test machine has no loop devices and the VM
+//! tests do not run as root). The namespace is entered by running the test binary again
+//! (`unshare`), so the host, the msb runtime and the VM of that test see the small disk, and
+//! nothing outside the namespace is touched. The volume and root-disk test needs no small disk:
+//! it fills the disks of the workspace itself.
 #![cfg(target_os = "linux")]
 #![expect(
     clippy::expect_used,
@@ -176,7 +175,7 @@ async fn running_workspace(vm: &VmHost, api: &Api, tag: &str) -> (WorkspaceId, S
 fn vm_full_host_disk_stops_guest_writes_without_harming_other_files_and_recovers() {
     let ran = in_small_disk(
         "vm_full_host_disk_stops_guest_writes_without_harming_other_files_and_recovers",
-        26,
+        8,
         |mount| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(4)
@@ -200,6 +199,13 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
     })
     .await;
     let api = Api::new(vm.host.url(), vm.host.token());
+    // The disk is 8 GiB: the warning line is 5 GB free and the failure line 3 GB, so the data
+    // folder starts above both and the fill crosses both.
+    let lines = json!({"ui": {"disk_warn_free_gb": 5, "disk_fail_free_gb": 3}});
+    assert_eq!(
+        api.put("/api/settings", &lines.to_string()).await.status,
+        200
+    );
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulh").await;
     let dir = format!("/workspaces/{name}");
 
@@ -321,23 +327,9 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
 
 // ----- a volume and the root disk fill (07 S13a, S14a) -----
 
-#[test]
-fn vm_full_volume_and_root_disk_each_say_disk_nearly_full_for_real() {
-    let ran = in_small_disk(
-        "vm_full_volume_and_root_disk_each_say_disk_nearly_full_for_real",
-        40,
-        |_| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(4)
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(volume_and_root_fill());
-        },
-    );
-    if let Some((ok, text)) = ran {
-        assert!(ok, "the run inside the small disk failed:\n{text}");
-    }
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_full_volume_and_root_disk_each_say_disk_nearly_full_for_real() {
+    volume_and_root_fill().await;
 }
 
 fn disk_warning(kind: &'static str) -> impl Fn(&Value) -> bool {
@@ -365,21 +357,18 @@ async fn volume_and_root_fill() {
     };
     assert_eq!(one().await["disk_warnings"], json!([]));
 
-    // Zeros first: does the host image grow when the guest writes zeros?
-    let host_before = free_mib(&PathBuf::from(SMALL_DISK));
+    // Zeros are written to the host like any data; the figure the list shows catches up with the
+    // host's own read.
     let out = guest_ok(
         &vm,
         &workspace,
         &format!("dd if=/dev/zero of={dir}/zeros bs=1M count=1500 conv=fsync 2>&1 | tail -1"),
     )
     .await;
-    let w = one().await;
     eprintln!(
-        "FINDING 1500 MiB of zeros in the guest: host free {} -> {} MiB, API volume used {} ({})",
-        host_before,
-        free_mib(&PathBuf::from(SMALL_DISK)),
-        w["disk_used_mib"],
-        out.trim()
+        "FINDING 1500 MiB of zeros in the guest ({}), volume used {}",
+        out.trim(),
+        one().await["disk_used_mib"]
     );
     guest_ok(&vm, &workspace, &format!("rm {dir}/zeros && sync")).await;
 

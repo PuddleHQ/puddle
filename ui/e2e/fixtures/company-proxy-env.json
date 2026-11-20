@@ -18,9 +18,7 @@
       "dead_proxies": []
     },
     "sign_in": {
-      "methods": [
-        "basic"
-      ],
+      "methods": ["basic"],
       "stored": [],
       "attempts": []
     },
@@ -47,9 +45,7 @@
         "scheme": "https",
         "host": "github.com",
         "port": 443,
-        "hops": [
-          "PROXY squid.corp.example:3128"
-        ],
+        "hops": ["PROXY squid.corp.example:3128"],
         "source": "system"
       }
     ]

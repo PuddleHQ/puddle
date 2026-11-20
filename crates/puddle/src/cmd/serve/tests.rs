@@ -333,3 +333,24 @@ fn the_secret_store_options_reach_the_hosts_setup_and_default_to_auto_and_not_he
         (StoreOption::File, false)
     );
 }
+
+#[tokio::test]
+async fn a_confirmed_restore_and_a_request_to_stop_each_end_the_wait_and_say_which() {
+    use puddle_lifecycle::ShutdownCause;
+    let never = std::future::pending::<()>();
+    let stop = stop_cause(async { Ok(ShutdownCause::Interrupt) }, never).await;
+    assert_eq!(stop, Stop::Request);
+    let stop = stop_cause(
+        std::future::pending::<std::io::Result<ShutdownCause>>(),
+        async {},
+    )
+    .await;
+    assert_eq!(stop, Stop::Restore);
+    // A signal handler that cannot be installed still stops the host.
+    let stop = stop_cause(
+        async { Err(std::io::Error::other("no signals")) },
+        std::future::pending::<()>(),
+    )
+    .await;
+    assert_eq!(stop, Stop::Request);
+}

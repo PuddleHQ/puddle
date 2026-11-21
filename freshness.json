@@ -1,4 +1,4 @@
 {
-  "signed": "{\"version\":1,\"project\":\"puddle\",\"sequence\":5,\"issued_at\":1795179292,\"expires_at\":1795784092}",
-  "signature": "HZ3o3zEC8UhpVw3LHp8kUKY49o/x2BW/1qgOywG7rON15uU2cBvdoynLXybA46ChXvUu1WqbsBHWwpsnuslwBw=="
+  "signed": "{\"version\":1,\"project\":\"puddle\",\"sequence\":6,\"issued_at\":1795264807,\"expires_at\":1795869607}",
+  "signature": "sLe0FNl4Y9vuEy4c/W53BUgnIdz7GvlpaEnaYjXo/Zqod4DkyGs338yY75M046vcFolaA/tg3g6af1UIlvzxBg=="
 }

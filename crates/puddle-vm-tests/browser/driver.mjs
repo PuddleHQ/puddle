@@ -27,12 +27,15 @@ const write = (body) => process.stdout.write(`${JSON.stringify(body)}\n`);
 
 let browser;
 let context;
-const start = async (ignoreHttpsErrors) => {
+const start = async (ignoreHttpsErrors, colorScheme) => {
   const modules = process.env.PUDDLE_VM_BROWSER_MODULES;
   if (!modules) throw new Error("PUDDLE_VM_BROWSER_MODULES is not set");
   const { chromium } = createRequire(join(modules, "..", "x.js"))("playwright-core");
   browser = await chromium.launch({ headless: true });
-  context = await browser.newContext({ ignoreHTTPSErrors: ignoreHttpsErrors === true });
+  context = await browser.newContext({
+    ignoreHTTPSErrors: ignoreHttpsErrors === true,
+    ...(colorScheme ? { colorScheme } : {}),
+  });
 };
 
 const page = (id) => {
@@ -49,7 +52,7 @@ const ready = async (entry, command) => {
 const run = async (command) => {
   switch (command.op) {
     case "start":
-      await start(command.ignoreHttpsErrors);
+      await start(command.ignoreHttpsErrors, command.colorScheme);
       return null;
     case "cookies":
       await context.addCookies(command.cookies);

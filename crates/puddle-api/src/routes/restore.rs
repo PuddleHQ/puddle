@@ -19,8 +19,8 @@ use crate::extract::Path as UrlPath;
 use crate::restore::{RestoreFacts, RestoreServiceError};
 use crate::routes::AppState;
 use crate::wire::{
-    RestoreApplied, RestoreApplyRequest, RestoreDisk, RestorePreview, RestoreResultView,
-    RestoreSecret, RestoreWorkspace, SafetyCopyList,
+    RestoreApplied, RestoreApplyRequest, RestoreDisk, RestoreIdentityToken, RestorePreview,
+    RestoreResultView, RestoreSecret, RestoreWorkspace, SafetyCopyList,
 };
 
 /// The most an upload may be: the unpacked limit, since a gzip archive that unpacks to no more
@@ -212,6 +212,18 @@ async fn enrich(state: &AppState, facts: RestoreFacts) -> Result<RestorePreview,
             });
         }
     }
+    let identity_tokens_needing_value = facts
+        .token_refs
+        .into_iter()
+        .filter(|token| {
+            !StoredId::new(&token.secret_id)
+                .is_ok_and(|id| matches!(state.secrets.get(&id), Ok(Some(_))))
+        })
+        .map(|token| RestoreIdentityToken {
+            identity: token.identity,
+            host: token.host,
+        })
+        .collect();
     Ok(RestorePreview {
         staging_id: facts.staging_id,
         format: facts.format,
@@ -221,6 +233,7 @@ async fn enrich(state: &AppState, facts: RestoreFacts) -> Result<RestorePreview,
         parts: facts.parts,
         workspaces,
         secrets_needing_value,
+        identity_tokens_needing_value,
         running_workspaces: u32::try_from(running).unwrap_or(u32::MAX),
     })
 }

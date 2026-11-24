@@ -46,6 +46,18 @@ pub struct SecretRef {
     pub secret_id: String,
 }
 
+/// A pasted token of a Git identity of the backup and the id its value would have in the
+/// credential store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityTokenRef {
+    /// The identity's label.
+    pub identity: String,
+    /// The Git host the token is for.
+    pub host: String,
+    /// The credential-store id of the token.
+    pub secret_id: String,
+}
+
 /// What the service knows about a staged file; the route adds the rest to make a [`crate::wire::RestorePreview`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreFacts {
@@ -65,6 +77,8 @@ pub struct RestoreFacts {
     pub workspaces: Vec<(String, String)>,
     /// Its secret variables.
     pub secret_refs: Vec<SecretRef>,
+    /// The pasted tokens of its Git identities.
+    pub token_refs: Vec<IdentityTokenRef>,
 }
 
 /// Reads and checks a backup file for a restore.
@@ -188,6 +202,7 @@ impl FakeRestore {
                     parts: vec![part(RestorePartName::Rules, 1, 1)],
                     workspaces: Vec::new(),
                     secret_refs: Vec::new(),
+                    token_refs: Vec::new(),
                 },
                 previews: 0,
                 last_upload_bytes: 0,

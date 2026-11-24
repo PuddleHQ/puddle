@@ -132,6 +132,18 @@ pub struct SecretEnv {
     pub secret_id: String,
 }
 
+/// A pasted token of a Git identity of the backup: the restore carries the reference, never the
+/// token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityToken {
+    /// The identity's label.
+    pub identity: String,
+    /// The Git host the token is for.
+    pub host: String,
+    /// The id the credential store keeps the token under.
+    pub secret_id: String,
+}
+
 /// What a restore of a staged database would do to the present one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabasePreview {
@@ -148,6 +160,9 @@ pub struct DatabasePreview {
     /// The backup's secret environment variables, for the caller to look up in the credential
     /// store.
     pub secret_envs: Vec<SecretEnv>,
+    /// The pasted tokens of the backup's Git identities, for the caller to look up in the
+    /// credential store.
+    pub identity_tokens: Vec<IdentityToken>,
 }
 
 /// Maps a user id of `db` to the name used as the match key: the owner is `owner` on both sides,
@@ -162,6 +177,38 @@ fn user_key(db: &str) -> String {
 /// The secret environment variables of the backup.
 const SECRET_ENVS: &str = "SELECT workspace_id, name, secret_id FROM backup.env_vars \
                            WHERE kind = 'secret' ORDER BY workspace_id, name";
+
+/// The identities of the backup with their credentials, as stored.
+const IDENTITY_CREDENTIALS: &str =
+    "SELECT label, credentials FROM backup.identities ORDER BY label";
+
+/// The pasted tokens in the credentials column of one identity: the bindings whose source is a
+/// stored token. A column that is not the expected JSON names none (the identity is still
+/// restored as it is).
+fn stored_tokens(label: &str, credentials: &str) -> Vec<IdentityToken> {
+    let Ok(serde_json::Value::Array(bindings)) = serde_json::from_str(credentials) else {
+        return Vec::new();
+    };
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let source = binding.get("source")?;
+            (source.get("kind")?.as_str()? == "stored").then(|| IdentityToken {
+                identity: label.to_owned(),
+                host: binding
+                    .get("host")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                secret_id: source
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            })
+        })
+        .collect()
+}
 
 /// Attaches the backup database as `backup`.
 fn attach(conn: &Connection, backup: &Path) -> Result<(), StoreError> {
@@ -276,6 +323,13 @@ pub fn preview_merge(present: &Path, backup: &Path) -> Result<DatabasePreview, S
             })
         })?
         .collect::<Result<_, _>>()?;
+    let mut stmt = conn.prepare(IDENTITY_CREDENTIALS)?;
+    let identity_tokens = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .flat_map(|(label, credentials)| stored_tokens(label, credentials))
+        .collect();
     Ok(DatabasePreview {
         rules: compare(&["rules", "request_rules"]),
         rule_sets: compare(&["rule_sets"]),
@@ -283,6 +337,7 @@ pub fn preview_merge(present: &Path, backup: &Path) -> Result<DatabasePreview, S
         environment: compare(&["environment"]),
         users: compare(&["users"]),
         secret_envs,
+        identity_tokens,
     })
 }
 

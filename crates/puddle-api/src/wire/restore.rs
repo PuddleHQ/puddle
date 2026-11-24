@@ -73,6 +73,16 @@ pub struct RestoreSecret {
     pub name: String,
 }
 
+/// A Git identity's pasted token that arrives without its value because this machine's store lacks
+/// it. The identity and the host only, never a value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RestoreIdentityToken {
+    /// The identity's label.
+    pub identity: String,
+    /// The Git host the token is for.
+    pub host: String,
+}
+
 /// What a restore of the uploaded file would do. Choosing a file changes nothing (BK-10).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RestorePreview {
@@ -95,6 +105,8 @@ pub struct RestorePreview {
     pub workspaces: Vec<RestoreWorkspace>,
     /// The secrets that need a value here.
     pub secrets_needing_value: Vec<RestoreSecret>,
+    /// The Git identities' pasted tokens that need to be entered again here.
+    pub identity_tokens_needing_value: Vec<RestoreIdentityToken>,
     /// How many workspaces run now (a restore stops them).
     pub running_workspaces: u32,
 }

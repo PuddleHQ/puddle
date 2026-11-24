@@ -166,6 +166,8 @@ pub struct Backend {
     extension_hosts: EndExtensionHosts,
     label: WorkspaceLabel,
     open_terminals: OpenTerminals,
+    /// Notified when the user confirms a restore (never, for a backend that cannot restore).
+    restore_requested: Arc<tokio::sync::Notify>,
     stop: Mutex<Option<Stop>>,
 }
 
@@ -198,6 +200,7 @@ impl Backend {
             }),
             label: Arc::new(|_| Box::pin(async { None })),
             open_terminals: Arc::new(|| 0),
+            restore_requested: Arc::new(tokio::sync::Notify::new()),
             stop: Mutex::new(Some(stop)),
         })
     }
@@ -230,6 +233,13 @@ impl Backend {
         self
     }
 
+    /// The same backend told of a confirmed restore through `signal`.
+    #[must_use]
+    pub(crate) fn with_restore_signal(mut self, signal: Arc<tokio::sync::Notify>) -> Self {
+        self.restore_requested = signal;
+        self
+    }
+
     /// The same backend with `ends` as its way to end a guest's extension hosts.
     #[must_use]
     pub(crate) fn with_extension_hosts(mut self, ends: EndExtensionHosts) -> Self {
@@ -242,6 +252,7 @@ impl Backend {
     fn of_host<R: puddle_compute::Runtime + Clone + 'static>(
         host: Host<R>,
     ) -> Result<Self, BackendError> {
+        let restore_signal = host.restore_signal();
         let (info, events, problems, store, settings) = (
             host.connection().clone(),
             host.events().clone(),
@@ -294,6 +305,7 @@ impl Backend {
                 .with_extension_hosts(ends)
                 .with_label(label)
                 .with_open_terminals(open_terminals)
+                .with_restore_signal(restore_signal)
         })
     }
 
@@ -314,6 +326,13 @@ impl Backend {
     #[must_use]
     pub fn open_terminals(&self) -> usize {
         (self.open_terminals)()
+    }
+
+    /// The signal that the user confirmed a restore: it applies at the next start, so the shell
+    /// restarts itself on it. Holds no reference to the host.
+    #[must_use]
+    pub fn restore_signal(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.restore_requested)
     }
 
     /// The API's origin, `http://127.0.0.1:<port>/`: the address of the main window.

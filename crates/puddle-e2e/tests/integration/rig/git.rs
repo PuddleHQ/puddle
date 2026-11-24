@@ -109,6 +109,7 @@ impl GitRig {
 
     /// As [`Self::new`], with the proxy reaching the host at `reach` (a link in front of it that
     /// the test controls) instead of at the host's own address.
+    #[cfg(target_os = "linux")]
     pub(crate) async fn behind(host: GitHost, reach: SocketAddr) -> Self {
         Self::build(host, None, Some(reach)).await
     }

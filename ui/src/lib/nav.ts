@@ -43,8 +43,9 @@ export function sectionFor(pathname: string): NavItem | undefined {
 
 /**
  * The width a route's content gets inside the one page frame: `reading` for forms and prose,
- * `full` for tables, the terminal and everything inside a workspace (its tabs share one frame, so
- * the page does not jump as the tab changes; a form tab keeps a reading-width block).
+ * `full` for tables, the terminal, Settings (its page list sits beside a reading-width column) and
+ * everything inside a workspace (its tabs share one frame, so the page does not jump as the tab
+ * changes; a form tab keeps a reading-width block).
  */
 export type Frame = "reading" | "full";
 
@@ -54,7 +55,7 @@ const FULL = [
   /^\/inbox(\/|$)/,
   /^\/rules(\/|$)/,
   /^\/activity(\/|$)/,
-  /^\/settings\/(network-health|app-errors)(\/|$)/,
+  /^\/settings(\/|$)/,
 ];
 
 export function frameFor(pathname: string): Frame {

@@ -82,7 +82,7 @@ test.describe("the app shell, served by the real API", () => {
     await expect(page.locator("main")).toBeFocused();
   });
 
-  test("keyboard: Tab visits the six section links, then the theme choices", async ({
+  test("keyboard: Tab visits the six section links, in order", async ({
     page,
   }) => {
     await page.goto("/rules");
@@ -90,7 +90,7 @@ test.describe("the app shell, served by the real API", () => {
       page.getByRole("heading", { level: 1, name: "Rules" }),
     ).toBeVisible();
     const order: string[] = [];
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 7; i += 1) {
       await page.keyboard.press("Tab");
       order.push(
         await page.evaluate(() =>
@@ -109,7 +109,6 @@ test.describe("the app shell, served by the real API", () => {
       "Identities",
       "Settings",
     ]);
-    expect(order[7]).toMatch(/^(System|Light|Dark)$/);
   });
 
   // One test per route: a scan costs seconds on a loaded host, and seven in one test ran out of 30 s.
@@ -164,7 +163,7 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
     async ({ page, backend }) => {
       await backend.signIn(page);
       await page.emulateMedia({ colorScheme: "dark" });
-      await page.goto("/inbox");
+      await page.goto("/settings/appearance");
       const scheme = () =>
         page.evaluate(
           () => getComputedStyle(document.documentElement).colorScheme,
@@ -178,7 +177,7 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
         (r) =>
           r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
       );
-      await page.getByRole("radio", { name: "Light" }).click();
+      await page.getByLabel("Theme", { exact: true }).selectOption("light");
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
       const lightBg = await bg();
       expect(lightBg).not.toBe(darkBg);
@@ -186,7 +185,7 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
       await storedTheme;
       await page.reload();
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-      await page.getByRole("radio", { name: "System" }).click();
+      await page.getByLabel("Theme", { exact: true }).selectOption("system");
       await expect(page.locator("html")).not.toHaveAttribute(
         "data-theme",
         /.*/,
@@ -199,9 +198,9 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
     "axe finds nothing with the theme override set either way",
     async ({ page, backend }) => {
       await backend.signIn(page);
-      await page.goto("/settings");
-      for (const choice of ["Light", "Dark"]) {
-        await page.getByRole("radio", { name: choice }).click();
+      await page.goto("/settings/appearance");
+      for (const choice of ["light", "dark"]) {
+        await page.getByLabel("Theme", { exact: true }).selectOption(choice);
         await expectNoAxeViolations(page, choice);
       }
     },

@@ -35,7 +35,7 @@
           >
             <span>{item.label}</span>
             {#if item.href === "/workspaces" && count}
-              <span class="count" data-testid="workspaces-count">{count}</span>
+              <span class="totals" data-testid="workspaces-count">{count}</span>
             {/if}
             {#if item.badge === "pending" && live.open > 0}
               <span class="badge" data-testid="pending-badge">
@@ -123,10 +123,12 @@
     background: var(--color-accent-subtle);
     font-weight: 600;
   }
-  .count {
+  .totals {
     margin-inline-start: auto;
     color: var(--color-text-muted);
     font-size: var(--text-sm);
+    font-weight: 400;
+    white-space: nowrap;
   }
   .badge {
     margin-inline-start: auto;

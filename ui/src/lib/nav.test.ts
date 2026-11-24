@@ -48,6 +48,8 @@ describe("the page frame", () => {
       "/inbox",
       "/rules",
       "/activity",
+      "/settings",
+      "/settings/appearance",
       "/settings/network-health",
       "/settings/app-errors",
       "/welcome/check",
@@ -55,8 +57,6 @@ describe("the page frame", () => {
       expect(frameFor(path), path).toBe("full");
     }
     for (const path of [
-      "/settings",
-      "/settings/appearance",
       "/identities",
       "/identities/abc",
       "/admin",

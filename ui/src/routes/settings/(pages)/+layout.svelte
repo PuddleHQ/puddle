@@ -144,6 +144,9 @@
     color: var(--color-text-muted);
     font-size: var(--text-sm);
   }
+  .content {
+    max-width: var(--page-reading-width);
+  }
   .content :global(:target) {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;

@@ -259,11 +259,11 @@ const TOKENS = {
   },
 } as const;
 
-// What each screen has on it: its first heading's size (the same in both densities) and the
+// What each screen has on it: its first heading's size (24 on every screen, in both densities) and the
 // controls the checks below measure.
 const LAYOUT = {
   "/settings": {
-    h1: 32,
+    h1: 24,
     card: true,
     cardSelector: ".group",
     cardGap: false,

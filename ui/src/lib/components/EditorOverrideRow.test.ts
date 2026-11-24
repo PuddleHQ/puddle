@@ -21,7 +21,7 @@ function mount(props: Record<string, unknown>) {
       onsave: () => Promise.resolve(true),
       onreset: () => Promise.resolve(true),
       ...props,
-    },
+    } as never,
   });
 }
 

@@ -55,6 +55,10 @@
 # and the develop runs between 06:41 and 07:03 UTC ran into the job limit.
 # ci.yml saves the `linux` entry whenever its restore was not an exact hit, so a lost one costs the
 # next develop run, not every pull request until the next dependency change.
+# 2026-11-24 (T-2030): the 20 GB storage limit set on the repo does not apply to saves. Above 10 GB every save fails,
+# a fresh unique key too, with "Unable to reserve cache ... another job may be creating this cache"; with usage at
+# 10.75 GB no develop run had saved anything since 2026-11-23, and one save worked again after a 3.1 GB entry was
+# deleted. ci/cache-gc.sh therefore also keeps what is left under BUDGET_MB (9000), dropping the cheapest rebuilds first.
 name: cache-gc
 
 on:

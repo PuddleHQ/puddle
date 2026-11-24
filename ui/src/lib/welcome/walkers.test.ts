@@ -46,7 +46,7 @@ describe("the installed-app walk", () => {
       resolve(import.meta.dirname, "../../routes/welcome/connect/+page.svelte"),
       "utf8",
     );
-    const bold = [...page.matchAll(/<b>([^<]+)<\/b>/g)].map((m) => m[1]);
+    const bold = [...page.matchAll(/<b>([^<]+)<\/b>/g)].map((m) => m[1] ?? "");
     const connect = text.match(/"the bundled code-server choice", \{[^}]*\}/);
     expect(connect).not.toBeNull();
     const name = [...(connect?.[0] ?? "").matchAll(regex)][0]?.[1] ?? "";

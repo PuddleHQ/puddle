@@ -44,6 +44,24 @@ test("a corporate network: the setup, sign-in, roots and routes, no notice, no C
   await staysEmpty(page, csp);
 });
 
+test("a proxy found in the environment shows as such, with its address and the sign-in a Basic proxy asks for", async ({
+  page,
+  backend,
+}) => {
+  const csp = await watchCsp(page);
+  await open(page, backend, "company-proxy-env");
+  const setup = page.getByRole("region", { name: "Proxy setup" });
+  await expect(setup.getByText("Proxy environment variables")).toBeVisible();
+  await expect(setup.getByText("squid.corp.example:3128")).toBeVisible();
+  await expect(setup).not.toContainText("Automatic proxy script");
+  await expect(setup.getByText("Not used")).toBeVisible();
+  const sign = page.getByRole("region", { name: "Signing in to the proxy" });
+  await expect(sign).toContainText("Basic");
+  await expect(page.getByText("No problems found.")).toBeVisible();
+  await expectNoAxeViolations(page);
+  await staysEmpty(page, csp);
+});
+
 test("a network change updates the open page, and trouble raises a notice that clears again", async ({
   page,
   backend,

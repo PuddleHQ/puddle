@@ -14,6 +14,8 @@
 #     PUDDLE_QUEUE_SKIP_PUSH=on when this workflow has a green merge queue (`merge_group`) run on
 #     exactly this commit (the queue fast-forwards develop to the commit it tested). An API error
 #     or any doubt gives false, so the push run tests the commit again.
+#     With PUDDLE_LIGHT_CI=on the merge queue runs only the unit tier (ci/scope.sh), so a green
+#     queue run proves nothing about the heavy jobs: false.
 set -euo pipefail
 
 workflow=${1:?usage: should-run.sh <workflow-file> [--events <event>,... | --queue-tested]}
@@ -39,6 +41,8 @@ if [ "$mode" = queue ]; then
     tested=false
     if [ "${PUDDLE_QUEUE_SKIP_PUSH:-}" != on ]; then
         echo "PUDDLE_QUEUE_SKIP_PUSH is not on: the push run tests this commit"
+    elif [ "${PUDDLE_LIGHT_CI:-}" = on ]; then
+        echo "PUDDLE_LIGHT_CI is on: the merge queue ran only the unit tier, so the push run tests this commit"
     elif [ "${GITHUB_EVENT_NAME:-}" != push ] || [ "${GITHUB_REF:-}" != refs/heads/develop ]; then
         echo "not a push to develop: the run tests this commit"
     elif ! n=$(green merge_group); then

@@ -1107,16 +1107,13 @@ async fn an_index_git_dies_on_is_left_alone_and_reported() {
         let bin = fx.tmp.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         let fake = bin.join("git");
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &fake,
-            format!(
+            &format!(
                 "#!/bin/sh\nif [ \"$1\" = ls-files ]; then kill -BUS $$; fi\nexec {} \"$@\"\n",
                 real_git.trim()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        );
         let index = fx.vol.join("api/.git/index");
         let before = std::fs::read(&index).unwrap();
         let report = run_with_path(shell, &fx, Some(&bin)).await;

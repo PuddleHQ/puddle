@@ -13,6 +13,8 @@ mod support;
 
 #[path = "fake_host/attach_places.rs"]
 mod attach_places;
+#[path = "fake_host/backup_restore.rs"]
+mod backup_restore;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
 #[path = "fake_host/contract.rs"]

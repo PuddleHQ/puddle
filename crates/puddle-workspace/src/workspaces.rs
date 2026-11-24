@@ -62,7 +62,7 @@ impl WorkspaceConfig {
     /// Default [`WorkspaceConfig::default_size`]: 32 GiB.
     pub const DEFAULT_SIZE: DiskSize = DiskSize::gib(32);
     /// Default [`WorkspaceConfig::maintenance_image`]: the stock devcontainer image, pinned by digest.
-    pub const DEFAULT_MAINTENANCE_IMAGE: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
+    pub const DEFAULT_MAINTENANCE_IMAGE: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:41ff7ce12ec45f2704f27a6e091831186ad922ec8112e6339425bfefdf5a70f9";
     /// Default [`WorkspaceConfig::maintenance_memory`], in MiB.
     pub const DEFAULT_MAINTENANCE_MEMORY_MIB: u32 = 1024;
 }

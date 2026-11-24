@@ -27,6 +27,36 @@ async fn a_failed_sync_that_cannot_be_cleaned_up_names_what_is_left_in_the_failu
     host.shutdown().await;
 }
 
+/// What the real registry client reports when a TLS-intercepting company proxy re-signs the
+/// registry's certificate and Puddle does not trust the proxy's root (the lab's own run:
+/// `image_pull_intercepting_proxy.rs`, whose test pins that this is the text a real pull makes).
+const INTERCEPTED_PULL: &str = "registry error: error sending request for url (https://registry.corp.test/v2/): client error (Connect): invalid peer certificate: UnknownIssuer";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pull_that_fails_on_a_company_certificate_ends_the_create_with_that_text_for_the_user() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.runtime.inject(
+        Op::PullImage,
+        Fault::always(puddle_compute::ComputeError::ImagePull {
+            image: "registry.corp.test/acme/base:1".into(),
+            reason: INTERCEPTED_PULL.into(),
+        }),
+    );
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("could not be pulled") && detail.contains("certificate"),
+        "the user reads the certificate, not a bare network error: {detail}"
+    );
+    assert!(detail.contains("UnknownIssuer"), "{detail}");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
     let rig = Rig::named_ids();

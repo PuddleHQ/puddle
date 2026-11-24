@@ -65,6 +65,16 @@ jobs:
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast --no-tests=fail \
               -E 'test(/(^|::)vm_radar_(private_feeds|artifacts_credential_provider|token_placements)_/)'
+      - name: Squid (the company proxy of the tools-through-a-proxy radar test)
+        run: |
+          ci/apt-setup.sh
+          ci/apt-retry.sh sudo apt-get update
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends squid
+          # The package starts its own daemon; the test runs its own Squid on a free port.
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
+          echo "PUDDLE_SQUID_BIN=/usr/sbin/squid" >> "$GITHUB_ENV"
+          echo "PUDDLE_REQUIRE_SQUID=1" >> "$GITHUB_ENV"
       - name: the radar (one test at a time, never retried)
         run: |
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \

@@ -14,7 +14,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_upstream::{Chain, ChainError, Destination, Form, Request, RouteWatch, Scheme, Secret};
+use puddle_upstream::{
+    Chain, ChainError, Destination, Form, Hop, Request, RouteWatch, Scheme, Secret,
+};
 use tokio::net::TcpStream;
 
 use puddle_types::ConnectionOutcome;
@@ -171,7 +173,7 @@ pub(crate) async fn connect_out(
     }
 }
 
-/// The guest-facing refusal for a failed chain. It never names the company proxy (the log does):
+/// The guest-facing refusal for a failed chain. It never gives the company proxy's address (the log does):
 /// the guest learns what to ask its administrator, not where the proxy is.
 fn refusal(err: &ChainError, target: &Target) -> Refusal {
     let host = &target.host;
@@ -203,6 +205,18 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
             "signing in to the company proxy failed; check the proxy credentials in Puddle",
         )
         .header("x-puddle-blocked-by", "upstream-auth"),
+        // A route through a company proxy that does not answer says so: the guest's user can tell
+        // their administrator the proxy is down instead of hunting for a fault in the target.
+        ChainError::Unreachable { tried, .. }
+            if tried.iter().any(|(hop, _)| matches!(hop, Hop::Proxy(_))) =>
+        {
+            Refusal::new(
+                "502 Bad Gateway",
+                format!(
+                    "could not connect to {host}:{port}: the company proxy did not answer (Puddle does not go around it)"
+                ),
+            )
+        }
         ChainError::Unreachable { .. } => Refusal::new(
             "502 Bad Gateway",
             format!("could not connect to {host}:{port} (no route to it works)"),

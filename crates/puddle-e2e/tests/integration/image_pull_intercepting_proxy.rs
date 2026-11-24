@@ -89,10 +89,18 @@ async fn an_image_pull_through_an_intercepting_proxy_fails_on_the_certificate_wi
         format!("{err:?}").contains("UnknownIssuer"),
         "the failure must be the issuer: {err:?}"
     );
+    // The text a failed create shows the user (the host puts the error's `Display` into the
+    // failure): it has to say the certificate, not only "error sending request".
+    let shown = err.to_string();
+    assert!(
+        shown.contains("could not be pulled") && shown.contains("certificate"),
+        "the create-failure text must name the certificate: {shown}"
+    );
     assert!(
         pull.seen.requests().is_empty(),
         "no HTTP request got through: {:?}",
         pull.seen.requests()
     );
     assert!(!format!("{err:?}").contains(&pull.token));
+    assert!(!shown.contains(&pull.token));
 }

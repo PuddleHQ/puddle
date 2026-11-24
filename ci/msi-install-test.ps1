@@ -184,7 +184,7 @@ function Invoke-Msiexec([string[]]$Arguments, [string]$LogName) {
 function Invoke-MsiexecRefused([string[]]$Arguments, [string]$LogName) {
     $log = Join-Path $LogDir $LogName
     $all = $Arguments + @('/qn', '/norestart', '/l*v', "`"$log`"")
-    Step "msiexec $($Arguments -join ' ') while Puddle runs, expecting a refusal  (log: $log)"
+    Step "msiexec $($Arguments -join ' '), expecting a refusal  (log: $log)"
     $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList $all -Wait -PassThru
     $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
     [pscustomobject]@{ Code = $p.ExitCode; Log = $text }
@@ -322,6 +322,23 @@ function Assert-UpgradeRefused([string]$UpgradeMsi, [string]$Why, [string]$LogNa
     $pending = @(Get-PendingReplacements)
     Expect ($pending.Count -eq 0) "the refused upgrade $Why queued files for the next restart: $($pending -join '; ')"
     Write-Host "refused $Why (exit $($refused.Code)); the install folder is byte for byte as it was, nothing queued for a restart"
+}
+
+# The refusal of a downgrade: the lower package changes nothing. The installed program is the one
+# of version $InstalledVersion. Tauri's WiX template words it as DowngradeErrorMessage does.
+$DowngradeRefusalText = 'A newer version of Puddle is already installed.'
+function Assert-DowngradeRefused([string]$LowerMsi, [string]$InstalledVersion, [string]$LogName) {
+    $digest = Get-TreeDigest
+    $refused = Invoke-MsiexecRefused @('/i', "`"$LowerMsi`"") $LogName
+    Expect ($refused.Code -ne 0) 'the lower version installed over the higher one; it must refuse'
+    Expect ($refused.Log.Contains($DowngradeRefusalText)) "the downgrade was refused without saying '$DowngradeRefusalText'; see $(Join-Path $LogDir $LogName)"
+    $same = Get-TreeDigest
+    Expect (($same -join "`n") -eq ($digest -join "`n")) 'the refused downgrade changed the install folder'
+    $entries = @(Get-UninstallEntries)
+    Expect ($entries.Count -eq 1 -and $entries[0].Version -eq $InstalledVersion) "the refused downgrade changed the installed version: $(($entries | ForEach-Object Version) -join ', ')"
+    $pending = @(Get-PendingReplacements)
+    Expect ($pending.Count -eq 0) "the refused downgrade queued files for the next restart: $($pending -join '; ')"
+    Write-Host "refused the downgrade (exit $($refused.Code)); the install folder is byte for byte as it was"
 }
 
 function Stop-Installed {
@@ -1057,6 +1074,14 @@ if ($UpgradeMsi) {
     Expect ($lost.Count -eq 0) "the upgrade removed data files: $($lost -join ', ')"
     Assert-InstalledWorks $policy
     $current = $UpgradeMsi
+
+    Step 'the lower version does not install over the higher one, and what the higher one holds stays'
+    Assert-DowngradeRefused $Msi $second.Version 'msi-downgrade-refused.log'
+    Expect ((Get-Content -LiteralPath $marker -Raw) -eq $markerText) 'the refused downgrade changed the marker in the data folder'
+    $dataKept = @(Get-ChildItem -LiteralPath $DataDir -Recurse -Force -File | ForEach-Object { $_.FullName })
+    $lostToDowngrade = @($dataAfter | Where-Object { $dataKept -notcontains $_ })
+    Expect ($lostToDowngrade.Count -eq 0) "the refused downgrade removed data files: $($lostToDowngrade -join ', ')"
+    Assert-InstalledWorks $policy
 }
 
 Expect ((Get-LoginEntry) -eq (Get-ExpectedLoginEntry)) 'the sign-in entry is not in place before the uninstall: the check below would prove nothing'

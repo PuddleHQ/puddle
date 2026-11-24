@@ -29,6 +29,7 @@ import { PAGES, SETTINGS } from "#lib/settings/pages.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import Appearance from "./appearance/+page.svelte";
+import Editor from "./editor/+page.svelte";
 import EditorAndGit from "./editor-and-git/+page.svelte";
 import Network from "./network/+page.svelte";
 import Notifications from "./notifications/+page.svelte";
@@ -40,6 +41,7 @@ const BY_PAGE = {
   notifications: Notifications,
   workspaces: Workspaces,
   network: Network,
+  editor: Editor,
   "editor-and-git": EditorAndGit,
   "this-computer": ThisComputer,
 } as const;
@@ -61,7 +63,7 @@ const open = async (pages: (typeof BY_PAGE)[keyof typeof BY_PAGE][]) => {
 };
 
 describe("the list of pages", () => {
-  it("lists the six pages and marks the one that is open", async () => {
+  it("lists the seven pages and marks the one that is open", async () => {
     await open([Notifications]);
     const nav = screen.getByRole("navigation", { name: "Settings pages" });
     const links = within(nav).getAllByRole("link");
@@ -70,6 +72,7 @@ describe("the list of pages", () => {
       "Notifications",
       "Workspaces",
       "Network",
+      "Editor",
       "Editor and Git",
       "This computer",
     ]);

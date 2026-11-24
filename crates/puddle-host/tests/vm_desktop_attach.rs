@@ -314,10 +314,10 @@ mod attach {
             settings,
             root,
             ..
-        } = start_vm_host_config(tag, options, move |config| {
+        } = Box::pin(start_vm_host_config(tag, options, move |config| {
             config.ssh.bridge_program = Some(exe);
             config.ssh.user_config = Some(uc);
-        })
+        }))
         .await;
         let name = format!("{}-{tag}", settings.prefix.as_str());
         let workspace = WorkspaceId::new(&name).unwrap();

@@ -122,6 +122,7 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
             "DELETE /api/identities/{id} Own",
             "DELETE /api/proxy-sign-ins/{proxy} Install",
             "DELETE /api/rule-sets/{id} Own",
+            "DELETE /api/safety-copies/{name} Install",
             "GET /api/identities/{id} Own",
             "GET /api/rule-sets/{id}/entries Own",
             "POST /api/admin/users/{id}/invite Install",
@@ -188,6 +189,7 @@ fn owner_only_actions_and_the_install_token_rule() {
         Action::UseComputerAccounts,
         Action::ManageUsers,
         Action::BackUp,
+        Action::Restore,
         Action::SetRemoteServing,
     ] {
         assert!(action.owner_only(), "{action:?}");
@@ -255,6 +257,7 @@ fn the_owner_alone_does_install_things_and_only_with_the_token_widens_reach() {
         (Action::ReadService, ResourceRef::Install),
         (Action::ManageUsers, ResourceRef::Own),
         (Action::BackUp, ResourceRef::Install),
+        (Action::Restore, ResourceRef::Install),
         (Action::UseComputerAccounts, ResourceRef::Install),
     ] {
         assert!(

@@ -438,7 +438,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ["-c", "[ -d \"$1\" ]", "puddle-start-folder", path.as_str()].map(str::to_owned),
         )
         .as_user("root")
-        .with_timeout(Duration::from_secs(10));
+        .with_timeout(Duration::from_secs(10))
+        .with_max_output(ExecRequest::PROBE_MAX_OUTPUT);
         let exists = match gated.ungated().exec(request).await {
             Ok(output) => output.status.success(),
             Err(e) => {

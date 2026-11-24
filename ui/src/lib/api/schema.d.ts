@@ -1272,6 +1272,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/restore/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirms a restore: the staged copy `staging_id` and the mode the user chose. Makes a safety copy
+         *     of the present state first and does not start when it cannot; then leaves the restore for the next
+         *     start of Puddle (which stops the workspaces the normal way) and asks for that start. Nothing
+         *     that exists changes until then.
+         */
+        post: operations["apply_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/restore/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reads the uploaded backup (the file as the request body: a `.tar.gz` made by "Back up now") into
+         *     a private staging area, checks it and answers what restoring it would do on this machine: counts
+         *     of what would be added, replaced, kept or dropped, which restored workspaces have a disk here,
+         *     which secrets need a value, and how many workspaces run. Nothing that exists changes. A file
+         *     that cannot be read faithfully is refused with the reason (a file that is not a gzip archive, an
+         *     entry outside the backup's three names or its manifest, a path or link that points out of it,
+         *     more than 4 GiB unpacked, no database, a failed integrity check, a newer schema, an unknown
+         *     format) and leaves nothing staged. A staged copy that is not applied is removed at the next
+         *     start and after 24 hours.
+         */
+        post: operations["preview_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/restore/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the last restore did, after the restart: whether it was applied or undone, what changed or
+         *     why, and where the safety copy is. `result` is `null` when there is nothing to show.
+         */
+        get: operations["get_restore_result"];
+        put?: never;
+        post?: never;
+        /** Forgets the last restore's result, once the user has seen it. */
+        delete: operations["dismiss_restore_result"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rule-sets": {
         parameters: {
             query?: never;
@@ -1463,6 +1533,46 @@ export interface paths {
          */
         post: operations["undo_decision"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/safety-copies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The safety copies of the state each restore replaced, newest first, with their sizes. Puddle
+         *     never removes one; the user does, one at a time.
+         */
+        get: operations["list_safety_copies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/safety-copies/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deletes one safety copy by its name. Restoring from it first is an ordinary restore of the file
+         *     it holds; once it is deleted that way back is gone.
+         */
+        delete: operations["delete_safety_copy"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5808,6 +5918,33 @@ export interface components {
             /** @description The values. */
             value: string[];
         };
+        /** @description A restore that is confirmed and waits for the next start. */
+        RestoreApplied: {
+            /**
+             * @description Whether Puddle must be started again for the restore to apply. The desktop app restarts
+             *     itself; `puddle serve` exits and applies the restore at its next start.
+             */
+            restart_required: boolean;
+            /** @description The safety copy of the present state, a folder name in the safety copies list. */
+            safety_copy: string;
+        };
+        /** @description `POST /api/restore/apply`. */
+        RestoreApplyRequest: {
+            /** @description The mode the user confirmed. */
+            mode: components["schemas"]["RestoreMode"];
+            /** @description The staged copy a preview named. */
+            staging_id: string;
+        };
+        /**
+         * @description Whether the disk of a restored workspace is on this machine.
+         * @enum {string}
+         */
+        RestoreDisk: "present" | "missing";
+        /**
+         * @description How a restore treats what is already on this machine.
+         * @enum {string}
+         */
+        RestoreMode: "add" | "replace";
         /** @description `POST /api/orphan-volumes/{id}/restore`. */
         RestoreOrphanRequest: {
             /**
@@ -5815,6 +5952,116 @@ export interface components {
              *     remote of a checkout there. An HTTPS address; an SSH one is refused as in a create.
              */
             repository?: string | null;
+        };
+        /** @description How one part of the backup compares with this machine (entries match by natural key). */
+        RestorePart: {
+            /**
+             * Format: int32
+             * @description In the backup and not here: both modes add them.
+             */
+            add: number;
+            /**
+             * Format: int32
+             * @description In both and different: "Add what is missing" keeps yours, "Replace" takes the backup's.
+             */
+            differ: number;
+            /**
+             * Format: int32
+             * @description Entries in the backup.
+             */
+            in_backup: number;
+            /** @description Which part. */
+            name: components["schemas"]["RestorePartName"];
+            /**
+             * Format: int32
+             * @description Here and not in the backup: "Add what is missing" keeps them, "Replace" drops them.
+             */
+            only_here: number;
+            /**
+             * Format: int32
+             * @description In both and equal.
+             */
+            same: number;
+        };
+        /**
+         * @description A part of a backup that the preview counts.
+         * @enum {string}
+         */
+        RestorePartName: "rules" | "rule_sets" | "workspaces" | "identities" | "environment" | "settings" | "users";
+        /** @description What a restore of the uploaded file would do. Choosing a file changes nothing (BK-10). */
+        RestorePreview: {
+            /**
+             * Format: int64
+             * @description When it was made, in milliseconds since the Unix epoch; none without a manifest.
+             */
+            created_at_ms: number | null;
+            /**
+             * Format: int32
+             * @description The backup format (1).
+             */
+            format: number;
+            /** @description How each part compares with this machine. */
+            parts: components["schemas"]["RestorePart"][];
+            /** @description The Puddle that made the backup; none for a backup without a manifest. */
+            puddle_version: string | null;
+            /**
+             * Format: int32
+             * @description How many workspaces run now (a restore stops them).
+             */
+            running_workspaces: number;
+            /**
+             * Format: int32
+             * @description The schema version of the backup's database (before it is read forward).
+             */
+            schema_version: number;
+            /** @description The secrets that need a value here. */
+            secrets_needing_value: components["schemas"]["RestoreSecret"][];
+            /**
+             * @description Names the staged copy for the apply step. A copy that is not applied is removed at the next
+             *     start and after 24 hours.
+             */
+            staging_id: string;
+            /** @description The workspaces the backup lists, with whether their disk is here. */
+            workspaces: components["schemas"]["RestoreWorkspace"][];
+        };
+        /** @description What the last restore did. */
+        RestoreResult: {
+            /** @description Whether it was applied; `false` means it was undone and the old state is in use. */
+            applied: boolean;
+            /**
+             * Format: int64
+             * @description When it finished, in milliseconds since the Unix epoch.
+             */
+            at_ms: number;
+            /** @description What changed, or why it was undone. */
+            message: string;
+            /** @description The mode that was asked for. */
+            mode: components["schemas"]["RestoreMode"];
+            /** @description The safety copy's folder name. */
+            safety_copy: string;
+        };
+        /** @description The last restore's result, until the user has seen it. */
+        RestoreResultView: {
+            result: components["schemas"]["RestoreResult"] | null;
+        };
+        /**
+         * @description A secret variable that arrives without a value because this machine's store lacks it. Names
+         *     only, never a value.
+         */
+        RestoreSecret: {
+            /** @description The variable's name. */
+            name: string;
+            /** @description The workspace it belongs to; none for a global variable. */
+            workspace_id: string | null;
+        };
+        /** @description A workspace the backup lists. */
+        RestoreWorkspace: {
+            /** @description Whether its disk is here. */
+            disk: components["schemas"]["RestoreDisk"];
+            /** @description Its id. */
+            id: string;
+            /** @description What the backup calls it. */
+            name: string;
         };
         /**
          * @description A colour as `#rrggbb`.
@@ -6115,6 +6362,21 @@ export interface components {
          * @enum {string}
          */
         RuleSwitchKind: "rule" | "request_rule" | "builtin_entry";
+        /** @description One safety copy of the state a restore replaced. */
+        SafetyCopy: {
+            /** @description The folder name, the UTC time it was made (`20261115T225500Z`). */
+            name: string;
+            /**
+             * Format: int64
+             * @description What it takes on disk.
+             */
+            size_bytes: number;
+        };
+        /** @description The safety copies, newest first. Puddle never removes one; the user does. */
+        SafetyCopyList: {
+            /** @description The copies. */
+            copies: components["schemas"]["SafetyCopy"][];
+        };
         /**
          * @description A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`).
          * @example my-project
@@ -12529,6 +12791,282 @@ export interface operations {
             };
         };
     };
+    apply_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description the restore waits for the next start */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreApplied"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the staged copy is gone; choose the file again */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the backup cannot be merged with this machine's data */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the safety copy could not be made, so the restore did not start */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    preview_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description the backup file */
+        requestBody: {
+            content: {
+                "application/gzip": number[];
+            };
+        };
+        responses: {
+            /** @description what a restore of this file would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestorePreview"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the file cannot be read faithfully; the message says why */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the file cannot be staged on this machine */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_restore_result: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the last restore's result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResultView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    dismiss_restore_result: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description forgotten */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     list_rule_sets: {
         parameters: {
             query?: never;
@@ -13516,6 +14054,128 @@ export interface operations {
                 };
             };
             /** @description no such rule */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_safety_copies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the safety copies */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SafetyCopyList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_safety_copy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the safety copy's folder name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may restore */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no safety copy by that name */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -312,7 +312,7 @@ pub(crate) fn lookup<'a>(
 
 /// The image a workspace gets when the request names none, pinned by digest so a registry change reaches users
 /// only through a reviewed update (`ci/image-pins.sh`).
-pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
+pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:41ff7ce12ec45f2704f27a6e091831186ad922ec8112e6339425bfefdf5a70f9";
 
 /// The volume size a new workspace gets (32 GiB, sparse on the host apart from the 64 MiB journal
 /// written when the volume is made).

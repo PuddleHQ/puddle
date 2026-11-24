@@ -316,6 +316,15 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 | L4 real machine (**R**) | what hosted runners can't show: real client OS, mains power, sleep/resume, Defender, corporate network | same crate, named `vm_machine_*` | `ci/windows-e2e.ps1` on a real Windows machine, posts the `puddle/windows-e2e` status; before a release |
 | L5 manual | VS Code attach, sleep/resume, network drop | release checklist | each release candidate |
 
+### CI-only checks
+
+Three checks have no `scripts/check.sh` gate and no local run; they run in CI only, on purpose:
+`terminal-keys-webkit.mjs` and `origins-webkit.mjs` (WebKitGTK driven by WebKitWebDriver under Xvfb)
+and the secret-store contract test on a real keyring (`ci/with-keyring.sh cargo test -p puddle-secrets
+--test store_contract`). Each needs system packages (`webkit2gtk-driver`, a Secret Service daemon) that
+a developer machine and the host lane do not carry, and the CI job installs them per run. A change to
+the code behind one of them is verified by the pull request's required checks, not before the push.
+
 ### Rules
 
 - **New behaviour is tested at the lowest tier that can catch its bug, plus the tier that proves it

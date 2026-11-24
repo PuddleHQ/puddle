@@ -269,7 +269,7 @@ export const test = base.extend<
         );
       }
       await throttleCpu(page, browserName);
-      resendUnansweredNavigations(page, workerBackend);
+      failUnansweredNavigations(page, workerBackend);
       await use(page);
     },
     { scope: "test", timeout: WARM_UP_TIMEOUT_MS * MAX_LOAD_FACTOR },
@@ -284,11 +284,11 @@ export { expect } from "@playwright/test";
 const RESPONSE_HEAD_MS = 30_000 * slowdown();
 
 /**
- * `page.goto` that sends a navigation again when its request gets no response (see
+ * `page.goto` that fails a navigation by name when its request gets no response (see
  * scripts/navigation-watchdog.ts). A WebKit load on the starved stress job sat on one for the test's
  * whole 24 minutes; the same address answered in 2 s every other time.
  */
-function resendUnansweredNavigations(page: Page, backend: Backend): void {
+function failUnansweredNavigations(page: Page, backend: Backend): void {
   const goto = page.goto.bind(page);
   page.goto = (url, options) =>
     navigateWithWatchdog({
@@ -317,9 +317,6 @@ function resendUnansweredNavigations(page: Page, backend: Backend): void {
         } catch (error) {
           return `a plain fetch of it failed after ${String(Date.now() - began)} ms: ${String(error)}`;
         }
-      },
-      warn: (line) => {
-        console.warn(line);
       },
     });
 }

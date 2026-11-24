@@ -950,12 +950,13 @@ jobs:
         uses: ./.github/actions/apt-debs-cache
         with:
           name: gates
-      - name: WebKitGTK dev package (clippy and the tests compile the desktop shell)
+      # libayatana-appindicator3-1 and xvfb: the tray unit test opens the tray library at run time on a virtual display it starts itself.
+      - name: System packages (WebKitGTK to compile the desktop shell; the tray library and Xvfb for its unit test)
         timeout-minutes: 10
         run: |
           ci/apt-setup.sh
           ci/apt-retry.sh sudo apt-get update
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb
       - name: fmt
         run: scripts/check.sh fmt
       - name: quick gates (platform literals, silent skips, early-exit pipes, spawn, test hooks)

@@ -55,6 +55,7 @@ mod ports;
 mod proxy_passwords;
 mod proxy_sign_ins;
 mod quit_trims;
+mod restore;
 mod settings_read;
 mod shell_init;
 mod space_watch;
@@ -79,8 +80,8 @@ pub use accounts::{
     remove_user, reset_user,
 };
 pub use backup::{
-    BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupArchive, BackupError, BackupReport,
-    backup, backup_archive,
+    BACKUP_DATABASE, BACKUP_FORMAT, BACKUP_MANIFEST, BACKUP_SETTINGS, BACKUP_WORKSPACES,
+    BackupArchive, BackupError, BackupReport, Manifest, backup, backup_archive,
 };
 pub use company_signals::{HostSignals, PacReader, PacTiming};
 pub use config::{
@@ -100,6 +101,10 @@ pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
 pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
 pub use puddle_store::AuditStats;
+pub use restore::{
+    MAX_UNPACKED_BYTES, Refusal, RestoreError, Staged, discard, stage_archive, stage_folder,
+    staging_dir,
+};
 pub use space_watch::Space;
 pub use ssh_config::{SshSettings, ssh_host};
 pub use vscode::VsCodeLauncher;

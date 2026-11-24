@@ -47,6 +47,7 @@ use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
 use crate::remote_editor::RemoteEditor;
 use crate::repos::{NoRepos, RepoService};
+use crate::restore::{NoRestore, RestoreService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
 use crate::signin::SignIn;
@@ -171,6 +172,9 @@ pub struct Services {
     /// The backup download in Settings. [`Services::new`] starts with [`NoBackup`], which answers
     /// 503; set the real one with [`Services::with_backup`].
     pub backup: Arc<dyn BackupService>,
+    /// The restore preview in Settings. [`Services::new`] starts with [`NoRestore`], which answers
+    /// 503; set the real one with [`Services::with_restore`].
+    pub restore: Arc<dyn RestoreService>,
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
@@ -232,6 +236,7 @@ impl Services {
             secrets: Arc::new(NoSecretStore),
             repos: Arc::new(NoRepos),
             backup: Arc::new(NoBackup),
+            restore: Arc::new(NoRestore),
             doctor: Arc::new(NoDoctor),
             credential_store: Arc::new(NoCredentialStore),
             dev_cert: Arc::new(NoDevCert),
@@ -316,6 +321,13 @@ impl Services {
     #[must_use]
     pub fn with_backup(mut self, backup: Arc<dyn BackupService>) -> Self {
         self.backup = backup;
+        self
+    }
+
+    /// These services with this restore reader.
+    #[must_use]
+    pub fn with_restore(mut self, restore: Arc<dyn RestoreService>) -> Self {
+        self.restore = restore;
         self
     }
 
@@ -628,6 +640,48 @@ async fn sign_in_for(
     Ok(Some(sign_in))
 }
 
+/// The shared state every route handler gets, built from the injected services.
+fn app_state(
+    services: Services,
+    admin: Option<Arc<AdminService>>,
+    sign_in: Option<Arc<SignIn>>,
+    ui_build_id: Option<String>,
+    shutdown: watch::Receiver<bool>,
+    sockets: crate::routes::Sockets,
+) -> AppState {
+    AppState {
+        admin,
+        authorizer: Arc::new(Isolation::new(services.store.clone())),
+        store: services.store,
+        settings: services.settings,
+        events: services.events,
+        presence: Arc::new(crate::presence::Presence::default()),
+        problems: services.problems,
+        ui_errors: Arc::new(crate::ui_errors::UiErrors::default()),
+        clock: services.clock,
+        workspaces: services.workspaces,
+        network_health: services.network_health,
+        credentials: services.credentials,
+        secrets: services.secrets,
+        repos: services.repos,
+        backup: services.backup,
+        restore: services.restore,
+        doctor: services.doctor,
+        credential_store: services.credential_store,
+        dev_cert: services.dev_cert,
+        ports: services.ports,
+        learned: services.learned,
+        terminal_service: services.terminals,
+        terminals: Arc::new(Registry::default()),
+        proxy_sign_ins: services.proxy_sign_ins,
+        company_signals: services.company_signals,
+        sign_in,
+        ui_build_id,
+        shutdown,
+        sockets,
+    }
+}
+
 /// The owner's admin screen: only with several users on, and only where there is sign-in.
 fn admin_for(
     config: &ApiConfig,
@@ -708,36 +762,14 @@ impl ApiServer {
         let sign_in = sign_in_for(&config, &services).await?;
         let admin = admin_for(&config, sign_in.as_ref(), &services);
         let sockets = crate::routes::Sockets::default();
-        let state = AppState {
-            admin: admin.clone(),
-            authorizer: Arc::new(Isolation::new(services.store.clone())),
-            store: services.store,
-            settings: services.settings,
-            events: services.events,
-            presence: Arc::new(crate::presence::Presence::default()),
-            problems: services.problems,
-            ui_errors: Arc::new(crate::ui_errors::UiErrors::default()),
-            clock: services.clock,
-            workspaces: services.workspaces,
-            network_health: services.network_health,
-            credentials: services.credentials,
-            secrets: services.secrets,
-            repos: services.repos,
-            backup: services.backup,
-            doctor: services.doctor,
-            credential_store: services.credential_store,
-            dev_cert: services.dev_cert,
-            ports: services.ports,
-            learned: services.learned,
-            terminal_service: services.terminals,
-            terminals: Arc::new(Registry::default()),
-            proxy_sign_ins: services.proxy_sign_ins,
-            company_signals: services.company_signals,
-            sign_in: sign_in.clone(),
-            ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
+        let state = app_state(
+            services,
+            admin.clone(),
+            sign_in.clone(),
+            config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
-            sockets: sockets.clone(),
-        };
+            sockets.clone(),
+        );
         let picker = start_background(&state).await;
         let editor = editor_for(&config, &state);
         let ui = config

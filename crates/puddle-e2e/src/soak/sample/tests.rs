@@ -99,6 +99,8 @@ fn processes_are_found_by_command_name_prefix() {
         std::fs::write(dir.path().join(pid).join("comm"), comm).unwrap();
     }
     std::fs::create_dir(dir.path().join("self")).unwrap();
+    // a process that ended between the listing and the read has a directory but no `comm`
+    std::fs::create_dir(dir.path().join("15")).unwrap();
     let prefixes = ["puddle".to_owned(), "msb".to_owned()];
     assert_eq!(
         find_processes(dir.path(), &prefixes),

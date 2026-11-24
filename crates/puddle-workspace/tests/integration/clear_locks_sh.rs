@@ -121,22 +121,36 @@ fn fixture() -> Fixture {
 }
 
 async fn run(shell: &'static str, fx: &Fixture) -> LockReport {
+    run_with_path(shell, fx, None).await
+}
+
+/// [`run`] with `bin` searched before the host's `PATH`, for a stand-in `git`.
+async fn run_with_path(shell: &'static str, fx: &Fixture, bin: Option<&Path>) -> LockReport {
     let rt = FakeRuntime::new();
     let vol = fx.vol.clone();
     let proc_dir = fx.proc_dir.clone();
+    let path = bin.map(|b| {
+        let mut dirs = vec![b.to_path_buf()];
+        dirs.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::join_paths(dirs).unwrap()
+    });
     rt.on_exec(move |_: &mut ExecContext<'_>, r: &ExecRequest| {
         if r.program != "sh" || r.args.get(1).map(String::as_str) != Some(CLEAR_LOCKS_SH) {
             return None;
         }
         assert_eq!(r.args.get(3).map(String::as_str), Some("/workspace"));
-        let out = command(shell)
-            .args(["-c", CLEAR_LOCKS_SH, "puddle-clear-locks"])
+        let mut cmd = command(shell);
+        cmd.args(["-c", CLEAR_LOCKS_SH, "puddle-clear-locks"])
             .arg(&vol)
             .arg(&proc_dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .unwrap();
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        if let Some(path) = &path {
+            cmd.env("PATH", path);
+        }
+        let out = cmd.output().unwrap();
         Some(ExecOutput::new(
             out.status.code().unwrap_or(-1),
             out.stdout,
@@ -1055,10 +1069,14 @@ async fn an_index_cut_off_inside_an_entry_is_left_alone_and_reported() {
         // The file ends in the middle of an entry, at a 4 KiB block edge.
         let cut = &bytes[..4096];
         std::fs::write(&index, cut).unwrap();
+        // Git refuses the cut index, but how depends on the stat bytes it reads past the cut: a
+        // message, or a bus error once it reads past the end of the mapped file (about one run in three).
         let err = git(&api, &["ls-files", "--stage"]);
         assert!(
-            String::from_utf8_lossy(&err.stderr).contains("unknown index entry format"),
-            "{shell}: {}",
+            String::from_utf8_lossy(&err.stderr).contains("unknown index entry format")
+                || err.status.code().is_none(),
+            "{shell}: {:?} {}",
+            err.status,
             String::from_utf8_lossy(&err.stderr)
         );
         let report = run(shell, &fx).await;
@@ -1069,5 +1087,45 @@ async fn an_index_cut_off_inside_an_entry_is_left_alone_and_reported() {
             "{shell}"
         );
         assert_eq!(std::fs::read(&index).unwrap(), cut, "{shell}");
+    }
+}
+
+/// Git reads a cut index through a memory map, and reading past the cut ends it with a bus error
+/// and nothing on stderr: that index is left as it is and reported the same way.
+#[tokio::test]
+async fn an_index_git_dies_on_is_left_alone_and_reported() {
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    for shell in shells() {
+        let fx = repair_fixture();
+        let bin = fx.tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let fake = bin.join("git");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = ls-files ]; then kill -BUS $$; fi\nexec {} \"$@\"\n",
+                real_git.trim()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let index = fx.vol.join("api/.git/index");
+        let before = std::fs::read(&index).unwrap();
+        let report = run_with_path(shell, &fx, Some(&bin)).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.damaged.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].contains("cut off inside an entry"),
+            "{shell}: {report:?}"
+        );
+        assert_eq!(std::fs::read(&index).unwrap(), before, "{shell}");
     }
 }

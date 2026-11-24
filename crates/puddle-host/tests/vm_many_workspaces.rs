@@ -7,7 +7,8 @@
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
-    reason = "VM test: a failed step fails the test; helpers outside #[test] fns panic"
+    clippy::print_stderr,
+    reason = "VM test: a failed step fails the test; helpers outside #[test] fns panic; the timings go to stderr for the log"
 )]
 
 mod support;
@@ -171,38 +172,27 @@ fn assert_all_running(rows: &[(String, String, String, Value)], ids: &[String]) 
     }
 }
 
-/// Eight workspaces through their life: made in a row (the later ones no slower than the early ones), four deleted and their names made again in two concurrent pairs (every id new and
-/// none retired one), all eight stopped at once and started at once (every one running, none
-/// left busy, within a bound), and a quit and a launch of Puddle (the same eight, each once,
-/// stopped).
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn vm_eight_workspaces_are_made_remade_started_together_and_listed_after_a_restart() {
-    let vm = start_vm_host("eight").await;
-    let prefix = vm.settings.prefix.as_str().to_owned();
-    let names: Vec<String> = (1..=8).map(|i| format!("{prefix}-m{i}")).collect();
-    let api = Api::new(vm.host.url(), vm.host.token());
-    let mut events = api.events().await;
-    let api = &api;
-
-    // Eight creates in a row: each ends done, and the ones after the first (which pulls the image
-    // and builds the first disk) take no longer than it.
+/// Creates every name in a row and returns the ids and how long each create took. Each ends
+/// done; piling workspaces up does not slow a create down. One create on a loaded shared host can
+/// take minutes (a single spike), so no single create is held to a ratio: the median of the last
+/// four may not be more than a multiple of the median of the first four, and none may take longer
+/// than a bound that only a hang reaches.
+async fn create_in_a_row(
+    api: &Api,
+    events: &mut Events,
+    names: &[String],
+) -> (Vec<String>, Vec<Duration>) {
     let mut ids = Vec::new();
     let mut took = Vec::new();
-    for name in &names {
-        let (id, elapsed) = create_one(api, &mut events, name).await;
+    for name in names {
+        let (id, elapsed) = create_one(api, events, name).await;
         eprintln!("create of {name} ({id}) took {elapsed:?}");
+        assert!(
+            elapsed <= CREATE_HANG,
+            "the create of {name} took {elapsed:?}"
+        );
         ids.push(id);
         took.push(elapsed);
-    }
-    // Piling workspaces up does not slow a create down. One create on a loaded shared host can
-    // take minutes (a single spike), so no single create is held to the ratio: the median of the
-    // last four may not be more than a multiple of the median of the first four, and none may
-    // take longer than a bound that only a hang reaches.
-    for (name, elapsed) in names.iter().zip(&took) {
-        assert!(
-            *elapsed <= CREATE_HANG,
-            "the create of {name} took {elapsed:?}: {took:?}"
-        );
     }
     let median = |part: &[Duration]| {
         let mut sorted = part.to_vec();
@@ -215,6 +205,104 @@ async fn vm_eight_workspaces_are_made_remade_started_together_and_listed_after_a
         "creates five to eight took {late:?} at the median against {early:?} for the first four \
          (bound: {CREATE_SLOWDOWN} times): {took:?}"
     );
+    (ids, took)
+}
+
+/// The book on disk and the runtime's volumes agree with the eight workspaces in use: each once,
+/// none of them retired, every deleted id retired and without a volume, eight distinct boots.
+async fn assert_book_and_runtime(vm: &vm_support::VmHost, current: &[String], old: &[String]) {
+    let (entries, retired) = book_on_disk(&vm.root);
+    let entry_ids: BTreeSet<&str> = entries.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(entries.len(), 8, "no duplicate in the book: {entries:?}");
+    assert_eq!(entry_ids, current.iter().map(String::as_str).collect());
+    for id in old {
+        assert!(retired.contains(id), "{id} is retired: {retired:?}");
+    }
+    for id in current {
+        assert!(!retired.contains(id), "{id} is in use but retired");
+    }
+    let volumes: Vec<String> = vm
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name)
+        .collect();
+    for id in current {
+        assert!(volumes.contains(&format!("ws-{id}")), "{id}: {volumes:?}");
+    }
+    for id in old {
+        assert!(!volumes.contains(&format!("ws-{id}")), "{id}: {volumes:?}");
+    }
+    let mut boots = BTreeSet::new();
+    for id in current {
+        let sandbox = WorkspaceId::new(id).unwrap();
+        boots.insert(
+            guest(&vm.runtime, &sandbox, "cat /proc/sys/kernel/random/boot_id")
+                .await
+                .trim()
+                .to_owned(),
+        );
+    }
+    assert_eq!(boots.len(), 8, "eight machines, eight boots: {boots:?}");
+}
+
+/// Stops, deletes and makes again under the same names the first four workspaces, two at once
+/// and then two at once. Returns the new ids of those four.
+async fn remake_four(
+    api: &Api,
+    events: &mut Events,
+    ids: &[String],
+    names: &[String],
+) -> Vec<String> {
+    all_at_once(api, events, &ids[..4], "stop").await;
+    for id in &ids[..4] {
+        delete_stopped(api, events, id).await;
+    }
+    let mut again = create_together(api, events, &names[..2]).await;
+    again.extend(create_together(api, events, &names[2..4]).await);
+    again
+}
+
+/// All eight stop at once, then start at once: every one stopped and then running, none left busy.
+async fn stop_and_start_together(
+    vm: &vm_support::VmHost,
+    api: &Api,
+    events: &mut Events,
+    current: &[String],
+) {
+    let stopped_in = all_at_once(api, events, current, "stop").await;
+    eprintln!("eight stopped in {stopped_in:?}");
+    assert!(stopped_in < STOP_ALL_BOUND, "{stopped_in:?}");
+    for (id, _, status, busy) in &listed(api).await {
+        assert_eq!(status, "stopped", "{id}");
+        assert_eq!(*busy, Value::Null, "{id} is still busy");
+    }
+    let started_in = all_at_once(api, events, current, "start").await;
+    eprintln!("eight started in {started_in:?}");
+    assert!(started_in < START_ALL_BOUND, "{started_in:?}");
+    assert_all_running(&listed(api).await, current);
+    for id in current {
+        let sandbox = WorkspaceId::new(id).unwrap();
+        assert_eq!(guest(&vm.runtime, &sandbox, "echo up").await.trim(), "up");
+    }
+}
+
+/// Eight workspaces through their life: made in a row (the later ones no slower than the early
+/// ones), four deleted and their names made again in two concurrent pairs (every id new and none
+/// a retired one), all eight stopped at once and started at once (every one running, none left
+/// busy, within a bound), and a quit and a launch of Puddle (the same eight, each once, stopped).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_eight_workspaces_are_made_remade_started_together_and_listed_after_a_restart() {
+    let vm = start_vm_host("eight").await;
+    let prefix = vm.settings.prefix.as_str().to_owned();
+    let names: Vec<String> = (1..=8).map(|i| format!("{prefix}-m{i}")).collect();
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let mut events = api.events().await;
+    let api = &api;
+
+    let (ids, _took) = create_in_a_row(api, &mut events, &names).await;
     assert_eq!(
         ids.iter().collect::<BTreeSet<_>>().len(),
         8,
@@ -222,18 +310,10 @@ async fn vm_eight_workspaces_are_made_remade_started_together_and_listed_after_a
     );
     assert_all_running(&listed(api).await, &ids);
 
-    // Four are stopped, deleted, and made again under the same names, two at once and then two
-    // at once.
     let old: Vec<String> = ids[..4].to_vec();
-    all_at_once(api, &mut events, &old, "stop").await;
-    for id in &old {
-        delete_stopped(api, &mut events, id).await;
-    }
-    let mut again = create_together(api, &mut events, &names[..2]).await;
-    again.extend(create_together(api, &mut events, &names[2..4]).await);
+    let again = remake_four(api, &mut events, &ids, &names).await;
     let mut current: Vec<String> = again.clone();
     current.extend(ids[4..].iter().cloned());
-
     assert_eq!(
         current.iter().collect::<BTreeSet<_>>().len(),
         8,
@@ -250,58 +330,9 @@ async fn vm_eight_workspaces_are_made_remade_started_together_and_listed_after_a
         names.iter().map(String::as_str).collect(),
         "the names are the same eight, each once: {rows:?}"
     );
-    let (entries, retired) = book_on_disk(&vm.root);
-    let entry_ids: BTreeSet<&str> = entries.iter().map(|e| e.0.as_str()).collect();
-    assert_eq!(entries.len(), 8, "no duplicate in the book: {entries:?}");
-    assert_eq!(entry_ids, current.iter().map(String::as_str).collect());
-    for id in &old {
-        assert!(retired.contains(id), "{id} is retired: {retired:?}");
-    }
-    for id in &current {
-        assert!(!retired.contains(id), "{id} is in use but retired");
-    }
-    let volumes: Vec<String> = vm
-        .runtime
-        .list_volumes()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|v| v.name)
-        .collect();
-    for id in &current {
-        assert!(volumes.contains(&format!("ws-{id}")), "{id}: {volumes:?}");
-    }
-    for id in &old {
-        assert!(!volumes.contains(&format!("ws-{id}")), "{id}: {volumes:?}");
-    }
-    let mut boots = BTreeSet::new();
-    for id in &current {
-        let sandbox = WorkspaceId::new(id).unwrap();
-        boots.insert(
-            guest(&vm.runtime, &sandbox, "cat /proc/sys/kernel/random/boot_id")
-                .await
-                .trim()
-                .to_owned(),
-        );
-    }
-    assert_eq!(boots.len(), 8, "eight machines, eight boots: {boots:?}");
+    assert_book_and_runtime(&vm, &current, &old).await;
 
-    // All eight stop at once, then start at once.
-    let stopped_in = all_at_once(api, &mut events, &current, "stop").await;
-    eprintln!("eight stopped in {stopped_in:?}");
-    assert!(stopped_in < STOP_ALL_BOUND, "{stopped_in:?}");
-    for (id, _, status, busy) in &listed(api).await {
-        assert_eq!(status, "stopped", "{id}");
-        assert_eq!(*busy, Value::Null, "{id} is still busy");
-    }
-    let started_in = all_at_once(api, &mut events, &current, "start").await;
-    eprintln!("eight started in {started_in:?}");
-    assert!(started_in < START_ALL_BOUND, "{started_in:?}");
-    assert_all_running(&listed(api).await, &current);
-    for id in &current {
-        let sandbox = WorkspaceId::new(id).unwrap();
-        assert_eq!(guest(&vm.runtime, &sandbox, "echo up").await.trim(), "up");
-    }
+    stop_and_start_together(&vm, api, &mut events, &current).await;
 
     // A quit with all eight running and a launch: the same eight, each once, all stopped.
     let before: BTreeSet<(String, String)> =

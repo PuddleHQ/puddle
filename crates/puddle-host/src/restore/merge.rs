@@ -148,25 +148,55 @@ fn entries_of(book: &Map<String, Value>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Whether the present and the backup's workspace lists can be merged: both have the current
-/// format, or one of them has no workspaces.
+/// The oldest workspace list format whose entries are the current ones without an owner: formats
+/// 3 and 4 differ only by that field, so two lists in them merge. Formats 1 and 2 name and shape
+/// their entries differently, and guessing the translation could lose a workspace's settings.
+const OLDEST_MERGEABLE: u64 = 3;
+
+/// Whether the present and the backup's workspace lists can be merged: one of them has no
+/// workspaces, or both are in a format whose entries have the current shape (3 or 4).
 pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), String> {
     let (Some(here), Some(there)) = (read_book(here)?, read_book(there)?) else {
         return Ok(());
     };
+    let (ours, theirs) = (version_of(&here), version_of(&there));
     if entries_of(&here).is_empty()
         || entries_of(&there).is_empty()
-        || version_of(&here) == version_of(&there)
+        || ours == theirs
+        || (ours >= OLDEST_MERGEABLE && theirs >= OLDEST_MERGEABLE)
     {
         return Ok(());
     }
+    let old = if theirs < OLDEST_MERGEABLE {
+        theirs
+    } else {
+        ours
+    };
+    let whose = if theirs < OLDEST_MERGEABLE {
+        "the backup's"
+    } else {
+        "this machine's"
+    };
     Err(format!(
-        "the workspace list in the backup is in format {} and this machine's in format {}; \
-         start the Puddle that made the backup once and back up again, or restore on a machine \
-         with no workspaces",
-        version_of(&there),
-        version_of(&here)
+        "the workspace list in the backup is in format {theirs} and this machine's in format \
+         {ours}. Puddle can merge formats {OLDEST_MERGEABLE} and {BOOK_VERSION}, but {whose} \
+         format {old} describes workspaces differently, so adding would risk losing their \
+         settings. Start the Puddle that made the backup once and back up again, choose Replace, \
+         or restore on a machine with no workspaces"
     ))
+}
+
+/// The entries of a list with the owner `owner` given to each that names none.
+fn with_owners(entries: Vec<Value>, owner: i64) -> Vec<Value> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(object) = entry.as_object_mut() {
+                object.entry("owner").or_insert_with(|| Value::from(owner));
+            }
+            entry
+        })
+        .collect()
 }
 
 fn owner_of(entry: &Value, restored: &RestoredDatabase) -> i64 {
@@ -230,6 +260,9 @@ pub(super) fn book(
     if let Some(ours) = &ours {
         if mode == ApplyMode::Add && !entries_of(ours).is_empty() && !workspaces.is_empty() {
             check_book_versions(here, there).map_err(RestoreError::Merge)?;
+            // A list in format 3 beside one in format 4: the merged list is format 4, and the
+            // entries that name no owner get this machine's, as the loader gives them.
+            let mixed = version_of(ours) != version_of(&theirs);
             let mut all = entries_of(ours);
             let present: BTreeSet<String> = all
                 .iter()
@@ -242,6 +275,10 @@ pub(super) fn book(
             );
             workspaces = all;
             out.clone_from(ours);
+            if mixed {
+                workspaces = with_owners(workspaces, restored.owner_id);
+                out.insert("version".into(), Value::from(BOOK_VERSION));
+            }
         }
         // An id retired on either side is never given out again.
         let mut retired = ids_of(ours, "retired_ids");

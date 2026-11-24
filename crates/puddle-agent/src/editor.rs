@@ -427,7 +427,7 @@ struct Launch {
 /// variables when there is one (else as the agent's own user, root).
 fn command(
     launch: &Launch,
-    password: &str,
+    password: Option<&str>,
     inherited: impl IntoIterator<Item = String>,
     account: Option<&Account>,
 ) -> Command {
@@ -436,7 +436,7 @@ fn command(
         .args(&launch.args)
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    if launch.password_env {
+    if let Some(password) = password.filter(|_| launch.password_env) {
         command.env("PASSWORD", password);
     }
     for name in inherited.into_iter().filter(|n| withheld(n)) {
@@ -981,8 +981,11 @@ async fn start_once(
             }
         }
     }
+    if config.server.kind == ServerKind::CodeServer {
+        defaults::merge_at_start(&config.server, &launch.program, account.as_ref())?;
+    }
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
-    let mut child = command(launch, &password, inherited, account.as_ref()).spawn()?;
+    let mut child = command(launch, Some(&password), inherited, account.as_ref()).spawn()?;
     tracing::info!(
         port = config.server.port,
         grace_secs = config.server.grace_secs,
@@ -1016,6 +1019,8 @@ async fn start_once(
     }
     status
 }
+
+mod defaults;
 
 #[cfg(test)]
 mod tests;

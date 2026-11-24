@@ -31,3 +31,5 @@ pub use allocated::allocated_bytes;
 pub use data_dir::{DataDirError, data_dir, data_dir_in, user_ssh_config, user_ssh_config_in};
 pub use free::free_bytes;
 pub use lock::{DataLock, LockError};
+
+// light CI probe: a comment-only change, never merged

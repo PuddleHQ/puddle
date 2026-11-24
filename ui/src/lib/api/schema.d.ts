@@ -5941,6 +5941,16 @@ export interface components {
          */
         RestoreDisk: "present" | "missing";
         /**
+         * @description A Git identity's pasted token that arrives without its value because this machine's store lacks
+         *     it. The identity and the host only, never a value.
+         */
+        RestoreIdentityToken: {
+            /** @description The Git host the token is for. */
+            host: string;
+            /** @description The identity's label. */
+            identity: string;
+        };
+        /**
          * @description How a restore treats what is already on this machine.
          * @enum {string}
          */
@@ -6000,6 +6010,8 @@ export interface components {
              * @description The backup format (1).
              */
             format: number;
+            /** @description The Git identities' pasted tokens that need to be entered again here. */
+            identity_tokens_needing_value: components["schemas"]["RestoreIdentityToken"][];
             /** @description How each part compares with this machine. */
             parts: components["schemas"]["RestorePart"][];
             /** @description The Puddle that made the backup; none for a backup without a manifest. */

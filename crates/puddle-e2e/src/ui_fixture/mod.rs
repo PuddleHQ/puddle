@@ -1496,6 +1496,7 @@ fn restore_facts(missing_disks: &[String], secrets: &[String]) -> puddle_api::Re
                 secret_id: format!("restore-fixture-{name}"),
             })
             .collect(),
+        token_refs: Vec::new(),
     }
 }
 

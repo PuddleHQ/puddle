@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import AuditRetention from "#lib/components/AuditRetention.svelte";
   import BackupCard from "#lib/components/BackupCard.svelte";
+  import RestoreCard from "#lib/components/RestoreCard.svelte";
   import DevicesPanel from "#lib/components/DevicesPanel.svelte";
   import SelectRow from "#lib/components/SelectRow.svelte";
   import SettingRow from "#lib/components/SettingRow.svelte";
@@ -83,8 +84,9 @@
     <DevicesPanel {session} store={devices} />
   </SettingsGroup>
 
-  <SettingsGroup title="Back up" id="set-backup">
+  <SettingsGroup title="Back up and restore" id="set-backup">
     <BackupCard />
+    <RestoreCard />
   </SettingsGroup>
 
   <SettingsGroup title="Activity log" id="set-audit">

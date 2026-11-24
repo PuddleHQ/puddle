@@ -192,21 +192,18 @@
    * the global value again where it is not.
    */
   function saveEditor<K extends EditorField>(
+    own: EditorSettings,
     key: K,
     value: EditorSettings[K],
     what: string,
   ) {
-    const own = settings.overrides?.editor;
-    if (!own) return Promise.resolve(false);
     const next =
       value === null ? (EMPTY_MEANS[key] as EditorSettings[K]) : value;
     return save({ editor: { ...own, [key]: next } }, what);
   }
 
   /** Makes one editor default follow the global value again. */
-  function resetEditor(key: EditorField, what: string) {
-    const own = settings.overrides?.editor;
-    if (!own) return Promise.resolve(false);
+  function resetEditor(own: EditorSettings, key: EditorField, what: string) {
     return save({ editor: { ...own, [key]: null } }, what);
   }
 
@@ -385,6 +382,7 @@
       {#if settings.reason}<p class="error">{settings.reason}</p>{/if}
     </div>
   {:else}
+    {@const ownEditor = settings.overrides.editor}
     <UnknownFields fields={settings.unknownFields} />
 
     <div class="status" aria-live="polite">
@@ -471,9 +469,10 @@
           parse={parseTheme}
           onsave={(v) =>
             v === null
-              ? resetEditor("colour_theme", "Editor colour theme")
-              : saveEditor("colour_theme", v, "Editor colour theme")}
-          onreset={() => resetEditor("colour_theme", "Editor colour theme")}
+              ? resetEditor(ownEditor, "colour_theme", "Editor colour theme")
+              : saveEditor(ownEditor, "colour_theme", v, "Editor colour theme")}
+          onreset={() =>
+            resetEditor(ownEditor, "colour_theme", "Editor colour theme")}
         />
         <EditorOverrideRow
           id="editor-font-size"
@@ -484,9 +483,9 @@
           parse={parseFontSize}
           onsave={(v) =>
             v === null
-              ? resetEditor("font_size", "Font size")
-              : saveEditor("font_size", v, "Font size")}
-          onreset={() => resetEditor("font_size", "Font size")}
+              ? resetEditor(ownEditor, "font_size", "Font size")
+              : saveEditor(ownEditor, "font_size", v, "Font size")}
+          onreset={() => resetEditor(ownEditor, "font_size", "Font size")}
         />
         <EditorOverrideRow
           id="editor-extensions"
@@ -496,8 +495,8 @@
           source={settings.effective.editor.extensions.source}
           parse={parseExtensions}
           multiline
-          onsave={(v) => saveEditor("extensions", v, "Extensions")}
-          onreset={() => resetEditor("extensions", "Extensions")}
+          onsave={(v) => saveEditor(ownEditor, "extensions", v, "Extensions")}
+          onreset={() => resetEditor(ownEditor, "extensions", "Extensions")}
         />
         <EditorOverrideRow
           id="editor-keybindings"
@@ -507,8 +506,9 @@
           source={settings.effective.editor.keybindings.source}
           parse={parseKeybindings}
           multiline
-          onsave={(v) => saveEditor("keybindings", v, "Key bindings")}
-          onreset={() => resetEditor("keybindings", "Key bindings")}
+          onsave={(v) =>
+            saveEditor(ownEditor, "keybindings", v, "Key bindings")}
+          onreset={() => resetEditor(ownEditor, "keybindings", "Key bindings")}
         />
       </tbody>
       <tbody>

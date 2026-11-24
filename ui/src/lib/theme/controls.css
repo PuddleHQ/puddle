@@ -79,6 +79,14 @@
   font-family: var(--font-mono);
 }
 
+/* A small fact about a thing (off, built in, a source): plain muted words. A pill is for one thing
+   only, a live state (Running, Stopped, Waiting, Allowed, Denied). */
+.meta {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
 /* The modal shared by the confirm dialog and the form dialogs. */
 .confirm-overlay {
   position: fixed;
@@ -106,6 +114,7 @@
 .confirm-title {
   margin: 0;
   font-size: var(--text-lg);
+  font-weight: 600;
 }
 .confirm-detail {
   color: var(--color-text-muted);

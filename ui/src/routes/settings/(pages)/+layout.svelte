@@ -94,9 +94,6 @@
 <Toast />
 
 <style>
-  h1 {
-    margin: 0;
-  }
   .sub,
   .muted {
     color: var(--color-text-muted);
@@ -146,9 +143,6 @@
   .where {
     color: var(--color-text-muted);
     font-size: var(--text-sm);
-  }
-  .content {
-    max-width: 48rem;
   }
   .content :global(:target) {
     outline: 2px solid var(--color-accent);

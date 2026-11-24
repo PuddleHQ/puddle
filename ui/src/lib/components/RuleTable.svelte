@@ -122,11 +122,13 @@
           class:off={!rule.enabled}
         >
           <td class="host">
-            <span class="mono">{patternLabel(rule)}</span>
-            {#if rule.pattern_kind === "suffix"}
-              <span class="chip">and subdomains</span>
-            {/if}
-            {#if !rule.enabled}<span class="chip">off</span>{/if}
+            <span
+              class="mono"
+              title={rule.pattern_kind === "suffix"
+                ? "This host and every subdomain of it"
+                : undefined}>{patternLabel(rule)}</span
+            >
+            {#if !rule.enabled}<span class="meta">off</span>{/if}
           </td>
           <td>
             <span class="chip {rule.effect}"
@@ -148,7 +150,6 @@
                   ? "Expired"
                   : relativeTime(rule.expires_at, now)}</time
               >
-              {#if expired}<span class="chip">no longer applies</span>{/if}
             {/if}
           </td>
           <td>

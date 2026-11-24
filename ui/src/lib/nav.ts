@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The one list of top-level sections. Later rows add a screen by adding an entry here (and a
 // folder under src/routes), never by editing the layout.
-import Inbox from "@lucide/svelte/icons/inbox";
-import Boxes from "@lucide/svelte/icons/boxes";
-import ShieldCheck from "@lucide/svelte/icons/shield-check";
-import ScrollText from "@lucide/svelte/icons/scroll-text";
-import KeyRound from "@lucide/svelte/icons/key-round";
-import UsersRound from "@lucide/svelte/icons/users-round";
-import Settings from "@lucide/svelte/icons/settings";
-import type { Component } from "svelte";
 import { isWelcome, stepFor } from "./welcome/steps.ts";
 
 export interface NavItem {
@@ -16,7 +8,6 @@ export interface NavItem {
   href: string;
   /** Sidebar label and page title. */
   label: string;
-  icon: Component;
   /** Show the pending-requests badge. */
   badge?: "pending";
   /** Listed only where the server has an admin screen for the signed-in owner. */
@@ -24,21 +15,19 @@ export interface NavItem {
 }
 
 export const NAV: readonly NavItem[] = [
-  { href: "/workspaces", label: "Workspaces", icon: Boxes as Component },
+  { href: "/workspaces", label: "Workspaces" },
   {
     href: "/inbox",
     label: "Inbox",
-    icon: Inbox as Component,
     badge: "pending",
   },
-  { href: "/rules", label: "Rules", icon: ShieldCheck as Component },
-  { href: "/activity", label: "Activity", icon: ScrollText as Component },
-  { href: "/identities", label: "Identities", icon: KeyRound as Component },
-  { href: "/settings", label: "Settings", icon: Settings as Component },
+  { href: "/rules", label: "Rules" },
+  { href: "/activity", label: "Activity" },
+  { href: "/identities", label: "Identities" },
+  { href: "/settings", label: "Settings" },
   {
     href: "/admin",
     label: "Admin",
-    icon: UsersRound as Component,
     owner: true,
   },
 ];
@@ -50,6 +39,26 @@ export function sectionFor(pathname: string): NavItem | undefined {
   return NAV.find(
     (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
+}
+
+/**
+ * The width a route's content gets inside the one page frame: `reading` for forms and prose,
+ * `full` for tables, the terminal and everything inside a workspace (its tabs share one frame, so
+ * the page does not jump as the tab changes; a form tab keeps a reading-width block).
+ */
+export type Frame = "reading" | "full";
+
+const FULL = [
+  /^\/welcome(\/|$)/,
+  /^\/workspaces(\/|$)/,
+  /^\/inbox(\/|$)/,
+  /^\/rules(\/|$)/,
+  /^\/activity(\/|$)/,
+  /^\/settings\/(network-health|app-errors)(\/|$)/,
+];
+
+export function frameFor(pathname: string): Frame {
+  return FULL.some((pattern) => pattern.test(pathname)) ? "full" : "reading";
 }
 
 /** `Inbox (3) - Puddle`: the document title, with the pending count when there is one. */

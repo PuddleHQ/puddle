@@ -44,7 +44,6 @@
 
 <style>
   details {
-    max-width: 60rem;
     margin-top: var(--space-4);
   }
   pre {

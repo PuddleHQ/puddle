@@ -326,13 +326,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    max-width: 64rem;
-  }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
   }
   .sub,
   .muted {
@@ -353,7 +346,6 @@
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
-    max-width: 64rem;
   }
   .empty {
     padding: var(--space-6);

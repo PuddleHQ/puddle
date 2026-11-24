@@ -306,12 +306,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     font-size: var(--text-lg);
     margin: var(--space-4) 0 var(--space-2);
@@ -327,7 +321,7 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .error {
     color: var(--color-danger);

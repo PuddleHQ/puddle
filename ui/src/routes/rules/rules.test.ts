@@ -211,12 +211,12 @@ describe("the list", () => {
     await loaded();
     expect(hosts()).toEqual([
       "old.example.com",
-      "*.github.com and subdomains",
+      "*.github.com",
       "registry.npmjs.org",
     ]);
     const old = rows()[0]!;
     expect(within(old).getByText("Expired")).toBeInTheDocument();
-    expect(within(old).getByText("no longer applies")).toBeInTheDocument();
+    expect(within(old).queryByText("no longer applies")).toBeNull();
     expect(within(rows()[1]!).getByText("Deny")).toBeInTheDocument();
     expect(within(rows()[1]!).getByText("shop")).toBeInTheDocument();
     expect(within(rows()[2]!).getByText("Every workspace")).toBeInTheDocument();
@@ -230,7 +230,7 @@ describe("the list", () => {
     seed();
     await loaded();
     await fireEvent.click(screen.getByRole("button", { name: "Sort by host" }));
-    expect(hosts()[0]).toBe("*.github.com and subdomains");
+    expect(hosts()[0]).toBe("*.github.com");
     expect(screen.getByRole("columnheader", { name: /Host/ })).toHaveAttribute(
       "aria-sort",
       "ascending",
@@ -367,7 +367,7 @@ describe("adding", () => {
     expect(toasts.items[0]?.message).toBe(
       "Added: deny *.example.org for workspace shop.",
     );
-    expect(hosts()).toContain("*.example.org and subdomains");
+    expect(hosts()).toContain("*.example.org");
   });
   it("checks the form before asking the server", async () => {
     const dialog = await open();
@@ -535,7 +535,7 @@ describe("editing a rule in place", () => {
       "Saved: allow api.github.com for workspace shop.",
     );
     expect(hosts()).toContain("api.github.com");
-    expect(hosts()).not.toContain("*.github.com and subdomains");
+    expect(hosts()).not.toContain("*.github.com");
     expect(rows()).toHaveLength(3);
   });
 
@@ -813,9 +813,10 @@ describe("live", () => {
       await vi.waitFor(() =>
         expect(screen.getByRole("table")).toBeInTheDocument(),
       );
-      expect(screen.queryByText("no longer applies")).not.toBeInTheDocument();
+      const table = within(screen.getByRole("table"));
+      expect(table.queryByText("Expired")).not.toBeInTheDocument();
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(screen.getByText("no longer applies")).toBeInTheDocument();
+      expect(table.getByText("Expired")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

@@ -541,7 +541,6 @@
   }
   table {
     width: 100%;
-    max-width: 64rem;
     border-collapse: collapse;
   }
   thead th {

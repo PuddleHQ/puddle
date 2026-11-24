@@ -304,12 +304,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     font-size: var(--text-lg);
   }
@@ -320,7 +314,7 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .author {
     color: var(--color-text);
@@ -395,7 +389,6 @@
     border-color: var(--color-accent);
   }
   .empty {
-    max-width: 40rem;
     padding: var(--space-6);
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);

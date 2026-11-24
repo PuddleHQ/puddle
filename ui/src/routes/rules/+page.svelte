@@ -469,12 +469,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   .sub,
   .muted,
   .count {
@@ -482,7 +476,7 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .filters {
     display: flex;
@@ -506,7 +500,6 @@
   }
   .empty {
     padding: var(--space-6);
-    max-width: 64rem;
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);

@@ -2,6 +2,7 @@
 use std::net::SocketAddr;
 
 use axum::Router;
+#[cfg(target_os = "linux")]
 use axum::response::sse::{Event, Sse};
 use axum::routing::get as get_route;
 use tokio::net::TcpListener;
@@ -241,6 +242,7 @@ async fn the_prober_records_a_good_and_a_failed_request() {
     assert!(window.lock().unwrap().fail_share(10, 300).unwrap() > 0.0);
 }
 
+#[cfg(target_os = "linux")]
 fn fake_api() -> Router {
     Router::new()
         .route("/api/health", get_route(|| async { "ok" }))

@@ -673,6 +673,12 @@ describe("the walk list", () => {
         await screen.findByText("No problems found.");
         expect(control(step.afterStart)).not.toBeNull();
       }
+      if ("preselected" in step) {
+        const radio = screen.getByRole("radio", {
+          name: new RegExp(step.preselected.nameRegex),
+        });
+        expect(radio).toBeChecked();
+      }
       if ("continue" in step) {
         const on = control(step.continue);
         expect(

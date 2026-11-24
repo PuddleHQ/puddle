@@ -460,3 +460,17 @@ fn a_size_taken_out_of_the_plan_is_removed_and_the_theme_stays() {
     assert!(settings.get("editor.fontSize").is_none(), "{settings}");
     assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
 }
+
+#[test]
+fn a_removal_alone_edits_the_file_without_a_merge() {
+    let out = edit_settings(
+        Some(br#"{"a": 1, "b": 2}"#.to_vec()),
+        &[],
+        &[vec!["a".to_owned()]],
+    )
+    .expect("the file is editable")
+    .expect("the key is gone");
+    let text = String::from_utf8(out).expect("utf-8");
+    assert!(!text.contains("\"a\""), "{text}");
+    assert!(text.contains("\"b\": 2"), "{text}");
+}

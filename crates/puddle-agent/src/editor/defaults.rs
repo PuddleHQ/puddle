@@ -346,16 +346,21 @@ fn edit_settings(
     let old = existing.unwrap_or_default();
     let mut text = old.clone();
     if !sets.is_empty() {
-        let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec()).map_err(|e| e.to_string())?;
-        let from = (!text.is_empty()).then_some(text.as_slice());
-        let merged = spec.apply(from, &[]).map_err(|e| e.to_string())?;
-        text = written(merged, text);
+        text = with_sets(text, sets)?;
     }
     if !removes.is_empty() {
         let gone = unmerge(MergeFormat::Jsonc, &text, removes).map_err(|e| e.to_string())?;
         text = written(gone.merged, text);
     }
     Ok((text != old).then_some(text))
+}
+
+/// `text` with `sets` merged in, or why the file is left alone.
+fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, String> {
+    let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec()).map_err(|e| e.to_string())?;
+    let from = (!text.is_empty()).then_some(text.as_slice());
+    let merged = spec.apply(from, &[]).map_err(|e| e.to_string())?;
+    Ok(written(merged, text))
 }
 
 /// One key binding's identity: its key, command and `when`.
@@ -472,7 +477,7 @@ pub(super) async fn install_extensions(
             build: None,
         };
         let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
-        let mut command = command(&launch, "", inherited, account.as_ref());
+        let mut command = command(&launch, None, inherited, account.as_ref());
         command.stdout(Stdio::null()).stderr(Stdio::null());
         let status = match command.spawn() {
             Ok(mut child) => tokio::time::timeout(INSTALL_BUDGET, child.wait())

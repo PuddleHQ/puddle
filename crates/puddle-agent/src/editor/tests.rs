@@ -313,7 +313,7 @@ fn the_server_gets_the_password_in_its_environment_and_none_of_the_editor_hand_o
         password_env: true,
         build: None,
     };
-    let cmd = command(&launch, &password, inherited, None);
+    let cmd = command(&launch, Some(&password), inherited, None);
     let envs: std::collections::BTreeMap<String, Option<String>> = cmd
         .as_std()
         .get_envs()
@@ -354,7 +354,7 @@ fn a_server_run_as_the_session_user_gets_its_login_variables() {
     )
     .unwrap();
     let password = puddle_types::fixture::password("editor");
-    let cmd = command(&launch, &password, ["HOME".to_owned()], Some(&agent));
+    let cmd = command(&launch, Some(&password), ["HOME".to_owned()], Some(&agent));
     let envs: std::collections::BTreeMap<String, Option<String>> = cmd
         .as_std()
         .get_envs()

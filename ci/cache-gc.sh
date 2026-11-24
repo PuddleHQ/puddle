@@ -12,7 +12,7 @@
 #     that one queue entry could read it, and the steps that save on a miss on any ref (npm,
 #     cargo-xwin, the msb build) would otherwise add hundreds of MB per landing.
 # Never touches the cargo-xwin entry on develop (so entries of older cargo-xwin versions stay, about 137 MB each). DRY_RUN=1 lists instead of deleting.
-# Self-test: ci/cache-gc-test.sh. BUDGET_MB (default 9000) is the size the entries left must fit.
+# Self-test: ci/cache-gc-test.sh. BUDGET_MB (default 9500: the wanted set of about 10.5 GB does not fit under 9000 without dropping a big entry that the next run saves again) is the size the entries left must fit.
 # Needs GH_TOKEN, GITHUB_REPOSITORY and, to delete, `actions: write`.
 set -euo pipefail
 
@@ -58,7 +58,7 @@ while IFS=$'\t' read -r id ref key size; do
 # both a fresh key and the forgejo key). So what is left after the deletions above must fit BUDGET_MB. Over it, drop
 # trunk entries that are cheapest to rebuild first (clippy, mutants, fuzz, windows, gates, linux; oldest use first
 # within a kind). Never the small ones whose loss costs a download.
-budget_mb=${BUDGET_MB:-9000}
+budget_mb=${BUDGET_MB:-9500}
 gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_caches[]' |
     jq -rs --arg gone "$gone" --argjson budget "$budget_mb" '
       def rank: if (.key | test("^v0-rust-.*clippy")) then 1

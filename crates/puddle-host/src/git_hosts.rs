@@ -244,8 +244,12 @@ pub(crate) fn authors(git: &WorkspaceGit) -> Authors {
                 }
             }
             for chunk in globs.chunks(MAX_GIT_AUTHOR_GLOBS) {
-                if let Ok(rule) = GitAuthorRule::new(chunk.to_vec(), author.clone()) {
-                    rules.push(rule);
+                match GitAuthorRule::new(chunk.to_vec(), author.clone()) {
+                    Ok(rule) => rules.push(rule),
+                    Err(why) => left_out.push(format!(
+                        "an author rule of the identity {} is left out: {why}",
+                        identity.label
+                    )),
                 }
             }
         }

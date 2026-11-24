@@ -82,3 +82,17 @@ fn an_azure_cli_whose_version_cannot_be_read_only_warns() {
     assert!(check.summary.contains("exited with Some(1)"));
     assert!(check.fix.is_some());
 }
+
+#[test]
+fn the_no_desktop_fix_names_the_serve_command_only_in_a_build_that_has_it() {
+    for recorded in [true, false] {
+        let with = no_desktop_fix(recorded, true);
+        let without = no_desktop_fix(recorded, false);
+        assert!(with.contains("puddle serve --headless"), "{with}");
+        assert!(
+            !without.contains("puddle serve") && !without.contains("--headless"),
+            "{without}"
+        );
+        assert!(without.contains("keyring"), "{without}");
+    }
+}

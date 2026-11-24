@@ -322,7 +322,7 @@ readable as JSONL (one record per line).
   identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
   plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
-  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
+  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `git_switches_changed` (a workspace's "only listed repositories" switch for push or pull changed), `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
   `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
   at boot; `detail` names the file and what was done) and three for the filtered SSH agent:
   `ssh_agent_signed` (actor `system`: it signed a login, `detail` names the host, the key family and the
@@ -739,7 +739,10 @@ allows can be ranked when one exists.
   with trailing spaces or control characters recognised or not; trailing dots alone or trailing
   dots and spaces in any mix dropped from a segment; a `?` or `#` that only decoding
   reveals ending the path; and a leading `//name` read as an authority (`//evil.example/admin` is
-  `/admin` to a server that resolves the target against a base URL).
+  `/admin` to a server that resolves the target against a base URL). A path longer than 2048
+  bytes (up to the query) is not read in all these ways, which would cost the proxy time in
+  proportion to its length: every rule on its host and method refuses it, as if the rule's path
+  named it.
 - **R-52 A method** is matched ignoring case. A request is also judged as every method it asks
   to be read as: an `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header and a
   `_method` key in the query string, read as PHP reads it (pairs split at `&` or `;`, `+` a space,

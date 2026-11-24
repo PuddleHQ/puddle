@@ -15,9 +15,10 @@ import {
   START_TIMEOUT_MS,
   waitForBackend,
 } from "../scripts/backend-start.ts";
-import { throttleCpu } from "./cpu-throttle.ts";
+import { slowdown, throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
 import { loadFactor, MAX_LOAD_FACTOR } from "../scripts/load-budget.ts";
+import { navigateWithWatchdog } from "../scripts/navigation-watchdog.ts";
 import { WARM_UP_TIMEOUT_MS, within } from "./warm-up.ts";
 import { guardPrototype } from "./prototype-guard.ts";
 
@@ -246,7 +247,7 @@ export const test = base.extend<
   // 40-core host. Playwright fixes a fixture's own limit up front, so that is the largest the
   // open can be given and `within` holds it to the scaled one.
   page: [
-    async ({ context, browserName }, use) => {
+    async ({ context, browserName, workerBackend }, use) => {
       const began = Date.now();
       const slow = setTimeout(() => {
         console.warn(
@@ -268,6 +269,7 @@ export const test = base.extend<
         );
       }
       await throttleCpu(page, browserName);
+      resendUnansweredNavigations(page, workerBackend);
       await use(page);
     },
     { scope: "test", timeout: WARM_UP_TIMEOUT_MS * MAX_LOAD_FACTOR },
@@ -277,3 +279,47 @@ export const test = base.extend<
   },
 });
 export { expect } from "@playwright/test";
+
+/** How long a navigation's request may go without a response head; it grows with the stress job's slowdown. */
+const RESPONSE_HEAD_MS = 30_000 * slowdown();
+
+/**
+ * `page.goto` that sends a navigation again when its request gets no response (see
+ * scripts/navigation-watchdog.ts). A WebKit load on the starved stress job sat on one for the test's
+ * whole 24 minutes; the same address answered in 2 s every other time.
+ */
+function resendUnansweredNavigations(page: Page, backend: Backend): void {
+  const goto = page.goto.bind(page);
+  page.goto = (url, options) =>
+    navigateWithWatchdog({
+      what: `opening ${url}`,
+      start: () => ({
+        answered: page
+          .waitForEvent("response", {
+            predicate: (response) =>
+              response.request().isNavigationRequest() &&
+              response.frame() === page.mainFrame(),
+            timeout: RESPONSE_HEAD_MS,
+          })
+          .then(
+            () => true,
+            () => false,
+          ),
+        settled: goto(url, options),
+      }),
+      evidence: async () => {
+        const began = Date.now();
+        try {
+          const response = await fetch(new URL(url, backend.url), {
+            signal: AbortSignal.timeout(10_000),
+          });
+          return `a plain fetch of it answered ${String(response.status)} in ${String(Date.now() - began)} ms`;
+        } catch (error) {
+          return `a plain fetch of it failed after ${String(Date.now() - began)} ms: ${String(error)}`;
+        }
+      },
+      warn: (line) => {
+        console.warn(line);
+      },
+    });
+}

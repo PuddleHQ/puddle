@@ -29,6 +29,24 @@ pub const BACKUP_SETTINGS: &str = "settings";
 /// The workspace list's file name inside a backup.
 pub const BACKUP_WORKSPACES: &str = "workspaces.json";
 
+/// The manifest's file name inside a backup (BK-4).
+pub const BACKUP_MANIFEST: &str = "manifest.json";
+/// The backup format this Puddle writes and reads. A backup without a manifest is this format.
+pub const BACKUP_FORMAT: u32 = 1;
+
+/// `manifest.json`: what made the backup and which format it is in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Manifest {
+    /// The backup format; a number this Puddle does not know is refused by a restore.
+    pub format: u32,
+    /// The version of the Puddle that made the backup.
+    pub puddle_version: String,
+    /// The database's schema version.
+    pub schema_version: u32,
+    /// When the backup was made, in milliseconds since the Unix epoch.
+    pub created_at_ms: u64,
+}
+
 /// What a finished backup holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupReport {
@@ -89,8 +107,13 @@ pub fn backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupErro
     if dest.exists() {
         return Err(BackupError::DestinationExists(dest.to_path_buf()));
     }
-    let cwd = std::env::current_dir().map_err(io_error("cannot read the working folder", dest))?;
-    refuse_inside(&cwd, paths.data(), dest)?;
+    refuse_inside(std::env::current_dir, paths.data(), dest)?;
+    make_backup(paths, dest)
+}
+
+/// Makes the backup in the new folder `dest` (created owner-only with its parents) without the
+/// checks of [`backup`]: for the safety copy a restore keeps inside the data folder.
+pub(crate) fn make_backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
     if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
         private::create_dir(parent).map_err(io_error("cannot create", parent))?;
     }
@@ -113,6 +136,19 @@ fn fill(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
     // the file is tightened too so a later move out of the folder keeps it private.
     private::tighten_file(&db).map_err(io_error("cannot restrict", &db))?;
 
+    let manifest = Manifest {
+        format: BACKUP_FORMAT,
+        puddle_version: env!("CARGO_PKG_VERSION").to_owned(),
+        schema_version: info.schema_version,
+        created_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+    };
+    let path = dest.join(BACKUP_MANIFEST);
+    // A struct of numbers and strings always serialises.
+    let body = serde_json::to_vec_pretty(&manifest).unwrap_or_default();
+    private::write_atomic(&path, &body).map_err(io_error("cannot write", &path))?;
+
     let settings_files = copy_tree(&paths.settings(), &dest.join(BACKUP_SETTINGS))?;
     let workspace_list = copy_file(&paths.workspace_book(), &dest.join(BACKUP_WORKSPACES))?;
     Ok(BackupReport {
@@ -126,9 +162,21 @@ fn fill(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
 /// Refuses a destination that resolves into the data folder. A relative `dest` is read against
 /// `cwd`; without that, a one-component name has no existing ancestor to resolve and would
 /// skip the check.
-fn refuse_inside(cwd: &Path, data: &Path, dest: &Path) -> Result<(), BackupError> {
+fn refuse_inside(
+    cwd: impl FnOnce() -> io::Result<PathBuf>,
+    data: &Path,
+    dest: &Path,
+) -> Result<(), BackupError> {
     let data = data.canonicalize().unwrap_or_else(|_| data.to_path_buf());
-    let absolute = cwd.join(dest);
+    // The working folder matters only for a relative destination; a host whose folder was
+    // removed can still back up to an absolute one.
+    let absolute = if dest.is_absolute() {
+        dest.to_path_buf()
+    } else {
+        cwd()
+            .map_err(io_error("cannot read the working folder", dest))?
+            .join(dest)
+    };
     // The destination does not exist yet: resolve its deepest existing ancestor.
     let resolved = absolute.ancestors().find_map(|a| a.canonicalize().ok());
     if resolved.is_some_and(|real| real.starts_with(&data)) {

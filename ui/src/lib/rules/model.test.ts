@@ -152,7 +152,7 @@ describe("helpers", () => {
     expect(EXPIRY_OPTIONS[0]?.secs).toBeNull();
   });
   it("checks a workspace name as the API does", () => {
-    expect(workspaceNameError("")).toMatch(/name the workspace/i);
+    expect(workspaceNameError("")).toMatch(/choose the workspace/i);
     expect(workspaceNameError("my-shop")).toBeNull();
     expect(workspaceNameError("a")).toBeNull();
     for (const bad of ["Shop", "-a", "a-", "a b", "a".repeat(64), "a.b"])

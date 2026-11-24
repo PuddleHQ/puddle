@@ -37,7 +37,8 @@
 //!
 //! [`VsCodeRelease`], [`VsCodeLaunch`] and [`VsCodeWindow`] start the pinned desktop VS Code on
 //! Remote-SSH and drive it over the DevTools Protocol (module docs in `vscode.rs`); tests that use
-//! them are named `vm_vscode_*`, which `ci/vm-filter.sh` keeps out of the partitions: one job runs them.
+//! them are named `vm_vscode_*`, which `ci/vm-filter.sh` keeps out of the partitions: one job runs them. So does a test
+//! that needs the runner's desktop for real browsers and the Windows trust confirmation: it is named `vm_nightly_*`.
 //!
 //! # Running
 //!
@@ -83,7 +84,7 @@ pub use vscode::{
 };
 
 /// The stock devcontainer image every VM tier boots first.
-pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
+pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian@sha256:41ff7ce12ec45f2704f27a6e091831186ad922ec8112e6339425bfefdf5a70f9";
 
 /// Environment variable naming the directory that holds `msb` and `libkrunfw`.
 pub const RUNTIME_DIR_VAR: &str = "PUDDLE_VM_RUNTIME_DIR";

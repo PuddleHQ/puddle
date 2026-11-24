@@ -3,6 +3,7 @@
 // and a page address. Pure: nothing here touches the page or the network.
 import type { components } from "#lib/api/schema.d.ts";
 import { actorLabel } from "#lib/rules/model.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 
 type Schemas = components["schemas"];
 export type AuditEntry = Schemas["AuditEntry"];
@@ -429,11 +430,18 @@ function endpoint(host: string | null, port: number | null): string | null {
   return port === null ? host : `${host}:${port}`;
 }
 
+/** "workspace demo": a workspace for a sentence, by its name (the id only when it is gone or shares a name). */
+function workspaceWords(id: string | null): string {
+  return id === null
+    ? "workspace ?"
+    : `workspace ${workspaces.spokenLabelOf(id)}`;
+}
+
 function requestRuleLabel(rule: Schemas["AuditRequestRule"]): string {
   const where =
     rule.scope === "global"
       ? "every workspace"
-      : `workspace ${rule.workspace_id ?? "?"}`;
+      : workspaceWords(rule.workspace_id);
   const methods =
     rule.methods.length === 0 ? "any method" : rule.methods.join(", ");
   return `refuse ${methods} ${rule.path} for ${where}`;
@@ -445,7 +453,7 @@ function ruleLabel(rule: Schemas["AuditRule"]): string {
   const where =
     rule.scope === "global"
       ? "every workspace"
-      : `workspace ${rule.workspace_id ?? "?"}`;
+      : workspaceWords(rule.workspace_id);
   return `${rule.effect} for ${where}`;
 }
 
@@ -500,6 +508,10 @@ const WORKSPACE_OPS: Record<
   repo_removed: {
     done: "Repository removed",
     failed: "Removing a repository failed",
+  },
+  git_switches_changed: {
+    done: "Git switches changed",
+    failed: "Changing the Git switches failed",
   },
   root_disk_grown: {
     done: "Root disk made bigger",
@@ -880,7 +892,7 @@ export function describe(record: AuditRecord): RowView {
         type,
         destination: record.set_id,
         outcome: null,
-        detail: `${switchLabel(record.enabled)} for ${record.workspace_id === null ? "every workspace" : `workspace ${record.workspace_id}`}, by ${record.actor}`,
+        detail: `${switchLabel(record.enabled)} for ${record.workspace_id === null ? "every workspace" : workspaceWords(record.workspace_id)}, by ${record.actor}`,
       };
     case "rule_set_changed":
       return {

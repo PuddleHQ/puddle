@@ -399,7 +399,7 @@ jobs:
       contents: read
       actions: write
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: whp
@@ -483,10 +483,12 @@ jobs:
         with:
           name: vm-windows-agent
           path: ${{ runner.temp }}/bundle
-      - name: desktop VS Code tests (vm_vscode_*)
+      # Also `vm_nightly_*` (ci/vm-filter.sh vscode): the development certificate behind a forward in Edge and Firefox, with the
+      # Windows trust confirmation answered No and then Yes (ci/trust-dialog.ps1).
+      - name: desktop VS Code tests (vm_vscode_*) and nightly desktop tests (vm_nightly_*)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: |
           export PUDDLE_AGENT_BIN
           PUDDLE_AGENT_BIN=$(cygpath -w "$RUNNER_TEMP/bundle/puddle-agent")
@@ -542,7 +544,7 @@ jobs:
   # Microsoft's real VS Code server in the app's real WebView2 window (a secret kept across a reopen, and the multi-root view): the debug
   # app runs the Puddle host on real microVMs, the editor window is opened from the Connect step and read over DevTools, a test
   # extension's canary session survives closing and reopening the window, and a two-checkout workspace shows one root per
-  # checkout (crates/puddle-app/e2e/microsoft-editor.mjs). Accepts Microsoft's server licence terms on the runner, as the
+  # checkout, and three workspaces open three editor windows at once (crates/puddle-app/e2e/microsoft-editor.mjs). Accepts Microsoft's server licence terms on the runner, as the
   # product does once for a person. Nightly and by dispatch; it is in no partition and not a required check.
   microsoft-editor:
     name: vm-windows Microsoft editor window (nightly)
@@ -552,7 +554,7 @@ jobs:
       contents: read
       actions: write
     runs-on: windows-2025
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: whp
@@ -583,6 +585,9 @@ jobs:
       - name: the debug app on the Puddle host (no fixture) and its pinned runtime folder
         if: steps.whp.outputs.ok == 'true'
         shell: bash
+        env:
+          # xtask reads the fork's commits from the GitHub API; anonymous calls from a runner get a 403
+          GH_TOKEN: ${{ github.token }}
         run: |
           cargo build -p puddle-app --locked
           cargo xtask runtime --out target/debug/runtime
@@ -605,7 +610,7 @@ jobs:
       - name: the Microsoft editor window run
         if: steps.whp.outputs.ok == 'true'
         shell: pwsh
-        timeout-minutes: 50
+        timeout-minutes: 75
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'ms-editor-out'
           New-Item -ItemType Directory -Force -Path $out | Out-Null

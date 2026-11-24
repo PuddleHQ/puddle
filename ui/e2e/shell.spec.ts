@@ -15,7 +15,7 @@ const sections = [
   { path: "/rules", name: "Rules" },
   { path: "/activity", name: "Activity" },
   { path: "/identities", name: "Identities" },
-  { path: "/settings", name: "Settings" },
+  { path: "/settings/appearance", name: "Settings" },
 ];
 
 test.describe("the app shell, served by the real API", () => {
@@ -23,7 +23,7 @@ test.describe("the app shell, served by the real API", () => {
     await signIn(page);
   });
 
-  test("the start page lands on the workspaces, with the live pending count", async ({
+  test("the start page lands on the workspaces, with the live pending count in the sidebar and no banner", async ({
     page,
   }) => {
     const violations = await watchCsp(page);
@@ -34,7 +34,7 @@ test.describe("the app shell, served by the real API", () => {
     ).toBeVisible();
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
     await expect(page).toHaveTitle("Workspaces - Puddle");
-    await expect(page.getByText("1 request waiting.")).toBeVisible();
+    await expect(page.getByText("1 request waiting.")).toHaveCount(0);
     await staysEmpty(page, violations);
   });
 

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rule } from "#lib/testing/fake-rules.ts";
 import { DEFAULT_SORT } from "#lib/rules/model.ts";
@@ -125,5 +131,49 @@ describe("RuleTable", () => {
     await fireEvent.click(second);
     expect(onEnabled).toHaveBeenCalledWith(mixed[1], true);
     expect(second).not.toBeChecked();
+  });
+
+  describe("with many rules", () => {
+    const many = Array.from({ length: 1000 }, (_, i) =>
+      rule(i + 1, { pattern: `host${i}.example.com` }),
+    );
+    const rows = () => document.querySelectorAll("tbody tr").length;
+
+    // Drawing every row costs jsdom about 0.4 ms each (0.4 s for 1000 rules alone, 3 to 7 s on a
+    // host with a load of 28), so the test that waits for all of them uses a few chunks, not 1000:
+    // the slicing is the same at any length past the first slice, and the page's 1000-rule case is
+    // covered in the browser by the "1000 rules" block of e2e/inbox-at-volume.spec.ts.
+    const few = many.slice(0, 160);
+
+    it("draws a first slice at once, then every row, so none is out of reach", async () => {
+      render(RuleTable, {
+        props: { rules: few, sort: DEFAULT_SORT, now: 5_000_000 },
+      });
+      expect(rows()).toBeGreaterThan(0);
+      expect(rows()).toBeLessThan(few.length);
+      await waitFor(() => expect(rows()).toBe(few.length));
+      expect(
+        document.querySelector("tbody tr:last-child td.host")?.textContent,
+      ).toContain("host159.example.com");
+    });
+
+    it("tells assistive technology the true row count while rows are still coming", () => {
+      render(RuleTable, {
+        props: { rules: many, sort: DEFAULT_SORT, now: 5_000_000 },
+      });
+      const table = screen.getByRole("table");
+      expect(table).toHaveAttribute("aria-rowcount", "1001");
+      expect(document.querySelector("tbody tr:first-child")).toHaveAttribute(
+        "aria-rowindex",
+        "2",
+      );
+    });
+
+    it("shows a short list in full on the first render", () => {
+      render(RuleTable, {
+        props: { rules, sort: DEFAULT_SORT, now: 5_000_000 },
+      });
+      expect(rows()).toBe(2);
+    });
   });
 });

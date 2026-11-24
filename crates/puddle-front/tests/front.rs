@@ -1113,3 +1113,23 @@ async fn a_client_that_sends_bytes_that_are_not_http_is_answered_and_its_connect
     )
     .await;
 }
+
+#[tokio::test]
+async fn connections_that_have_all_ended_do_not_count_against_the_next_one() {
+    // Both ends of every connection live in this process.
+    let limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
+    assert!(
+        limit.allows(3 * puddle_front::MAX_CONNECTIONS as u64),
+        "{limit:?}"
+    );
+    let rig = rig().await;
+    let mut open = Vec::new();
+    for _ in 0..puddle_front::MAX_CONNECTIONS {
+        open.push(TcpStream::connect(rig.front.local_addr()).await.unwrap());
+    }
+    drop(open);
+    // The front reaps in its loop; give every ended connection time to finish first.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let answer = ask(&rig.front, &get(&rig, &host(&rig, "none"), "/whoami", "")).await;
+    assert_eq!(answer.status, 404, "{}", answer.head);
+}

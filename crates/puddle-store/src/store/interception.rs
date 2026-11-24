@@ -2,7 +2,7 @@
 //! The "decrypt every host" switch of each workspace and the names that are never decrypted.
 
 use puddle_types::{Event, InterceptionMode, WorkspaceId};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, lock};
 use crate::error::StoreError;
@@ -98,6 +98,67 @@ fn changed_everywhere(tx: &Transaction<'_>, fx: &mut Vec<Event>) -> Result<(), S
     Ok(())
 }
 
+/// `workspace`'s switch and names as `conn` sees them; a setter reads them inside its own write
+/// transaction so the change it reports is against what it replaces.
+fn workspace_interception_in(
+    conn: &Connection,
+    workspace: &WorkspaceId,
+) -> Result<WorkspaceInterception, StoreError> {
+    let mode = conn
+        .query_row(
+            "SELECT mode FROM workspace_interception WHERE workspace_id = ?1",
+            [workspace.as_str()],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten()
+        .and_then(|name| InterceptionMode::parse(&name));
+    let mut stmt =
+        conn.prepare("SELECT pattern FROM never_decrypt WHERE workspace_id = ?1 ORDER BY pattern")?;
+    let never_decrypt = stmt
+        .query_map([workspace.as_str()], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(WorkspaceInterception {
+        mode,
+        never_decrypt,
+    })
+}
+
+fn interception_settings_in(conn: &Connection) -> Result<InterceptionSettings, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT mode, learn, notice_seen FROM interception_settings WHERE id = 1",
+            [],
+            |r| {
+                Ok(InterceptionSettings {
+                    mode: r
+                        .get::<_, Option<String>>(0)?
+                        .and_then(|name| InterceptionMode::parse(&name)),
+                    learn_from_rejections: r.get(1)?,
+                    notice_seen: r.get(2)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
+fn learned_limits_in(conn: &Connection) -> Result<LearnedLimits, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT ttl_secs, cap FROM learned_limits WHERE id = 1",
+            [],
+            |r| {
+                Ok(LearnedLimits {
+                    ttl_secs: r.get(0)?,
+                    cap: r.get(1)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
 impl Store {
     /// `workspace`'s switch and its own never-decrypt names.
     ///
@@ -107,26 +168,7 @@ impl Store {
         &self,
         workspace: &WorkspaceId,
     ) -> Result<WorkspaceInterception, StoreError> {
-        let conn = lock(&self.conn);
-        let mode = conn
-            .query_row(
-                "SELECT mode FROM workspace_interception WHERE workspace_id = ?1",
-                [workspace.as_str()],
-                |r| r.get::<_, Option<String>>(0),
-            )
-            .optional()?
-            .flatten()
-            .and_then(|name| InterceptionMode::parse(&name));
-        let mut stmt = conn.prepare(
-            "SELECT pattern FROM never_decrypt WHERE workspace_id = ?1 ORDER BY pattern",
-        )?;
-        let never_decrypt = stmt
-            .query_map([workspace.as_str()], |r| r.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(WorkspaceInterception {
-            mode,
-            never_decrypt,
-        })
+        workspace_interception_in(&lock(&self.conn), workspace)
     }
 
     /// The global interception setting (the defaults until saved).
@@ -134,23 +176,7 @@ impl Store {
     /// # Errors
     /// A database error.
     pub fn interception_settings(&self) -> Result<InterceptionSettings, StoreError> {
-        let conn = lock(&self.conn);
-        Ok(conn
-            .query_row(
-                "SELECT mode, learn, notice_seen FROM interception_settings WHERE id = 1",
-                [],
-                |r| {
-                    Ok(InterceptionSettings {
-                        mode: r
-                            .get::<_, Option<String>>(0)?
-                            .and_then(|name| InterceptionMode::parse(&name)),
-                        learn_from_rejections: r.get(1)?,
-                        notice_seen: r.get(2)?,
-                    })
-                },
-            )
-            .optional()?
-            .unwrap_or_default())
+        interception_settings_in(&lock(&self.conn))
     }
 
     /// Saves the global interception setting and tells every workspace when it changes what they
@@ -162,8 +188,8 @@ impl Store {
         &self,
         settings: InterceptionSettings,
     ) -> Result<(), StoreError> {
-        let before = self.interception_settings()?;
         self.change(|tx, _now, fx| {
+            let before = interception_settings_in(tx)?;
             tx.execute(
                 "INSERT INTO interception_settings (id, mode, learn, notice_seen)
                  VALUES (1, ?1, ?2, ?3)
@@ -226,20 +252,7 @@ impl Store {
     /// # Errors
     /// A database error.
     pub fn learned_limits(&self) -> Result<LearnedLimits, StoreError> {
-        let conn = lock(&self.conn);
-        Ok(conn
-            .query_row(
-                "SELECT ttl_secs, cap FROM learned_limits WHERE id = 1",
-                [],
-                |r| {
-                    Ok(LearnedLimits {
-                        ttl_secs: r.get(0)?,
-                        cap: r.get(1)?,
-                    })
-                },
-            )
-            .optional()?
-            .unwrap_or_default())
+        learned_limits_in(&lock(&self.conn))
     }
 
     /// Saves the learned-list limits (both greater than zero; the caller has checked the range)
@@ -248,8 +261,8 @@ impl Store {
     /// # Errors
     /// A database error, or a zero value; nothing changes then.
     pub fn set_learned_limits(&self, limits: LearnedLimits) -> Result<(), StoreError> {
-        let before = self.learned_limits()?;
         self.change(|tx, _now, fx| {
+            let before = learned_limits_in(tx)?;
             tx.execute(
                 "INSERT INTO learned_limits (id, ttl_secs, cap) VALUES (1, ?1, ?2)
                  ON CONFLICT (id) DO UPDATE SET ttl_secs = ?1, cap = ?2",
@@ -272,8 +285,8 @@ impl Store {
         workspace: &WorkspaceId,
         mode: Option<InterceptionMode>,
     ) -> Result<(), StoreError> {
-        let before = self.workspace_interception(workspace)?.mode;
         self.change(|tx, _now, fx| {
+            let before = workspace_interception_in(tx, workspace)?.mode;
             tx.execute(
                 "INSERT INTO workspace_interception (workspace_id, mode) VALUES (?1, ?2)
                  ON CONFLICT (workspace_id) DO UPDATE SET mode = ?2",
@@ -296,8 +309,8 @@ impl Store {
         workspace: &WorkspaceId,
         patterns: &[String],
     ) -> Result<(), StoreError> {
-        let before = self.workspace_interception(workspace)?.never_decrypt;
         self.change(|tx, _now, fx| {
+            let before = workspace_interception_in(tx, workspace)?.never_decrypt;
             tx.execute(
                 "DELETE FROM never_decrypt WHERE workspace_id = ?1",
                 [workspace.as_str()],
@@ -318,6 +331,53 @@ impl Store {
         })
     }
 
+    /// Adds one name to `workspace`'s own never-decrypt names in one transaction, so adds that
+    /// overlap with each other or with a read never drop a name. `Ok(false)` when the list
+    /// already holds `max` other names; a name already on the list is `Ok(true)`.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn add_never_decrypt(
+        &self,
+        workspace: &WorkspaceId,
+        pattern: &str,
+        max: usize,
+    ) -> Result<bool, StoreError> {
+        self.change(|tx, _now, fx| {
+            let held: i64 = scalar(tx, COUNT_OWN, [workspace.as_str()])?;
+            let added = tx.execute(
+                "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern)
+                 SELECT ?1, ?2 WHERE ?3 > ?4",
+                params![workspace.as_str(), pattern, max_names(max), held],
+            )?;
+            if added == 1 {
+                changed(fx, workspace);
+            }
+            let present: bool = scalar(tx, HOLDS_OWN, [workspace.as_str(), pattern])?;
+            Ok(present)
+        })
+    }
+
+    /// Adds one name to the names no workspace decrypts, as [`Self::add_never_decrypt`] does for
+    /// one workspace, and tells every workspace when the list grew.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn add_global_never_decrypt(&self, pattern: &str, max: usize) -> Result<bool, StoreError> {
+        self.change(|tx, _now, fx| {
+            let held: i64 = scalar(tx, COUNT_GLOBAL, [])?;
+            let added = tx.execute(
+                "INSERT OR IGNORE INTO never_decrypt_global (pattern) SELECT ?1 WHERE ?2 > ?3",
+                params![pattern, max_names(max), held],
+            )?;
+            if added == 1 {
+                changed_everywhere(tx, fx)?;
+            }
+            let present: bool = scalar(tx, HOLDS_GLOBAL, [pattern])?;
+            Ok(present)
+        })
+    }
+
     /// Replaces the names no workspace decrypts with `patterns`, and tells every workspace.
     ///
     /// # Errors
@@ -335,6 +395,26 @@ impl Store {
             Ok(())
         })
     }
+}
+
+const COUNT_OWN: &str = "SELECT COUNT(*) FROM never_decrypt WHERE workspace_id = ?1";
+const COUNT_GLOBAL: &str = "SELECT COUNT(*) FROM never_decrypt_global";
+const HOLDS_OWN: &str =
+    "SELECT EXISTS (SELECT 1 FROM never_decrypt WHERE workspace_id = ?1 AND pattern = ?2)";
+const HOLDS_GLOBAL: &str = "SELECT EXISTS (SELECT 1 FROM never_decrypt_global WHERE pattern = ?1)";
+
+/// The one value a query selects.
+fn scalar<T: rusqlite::types::FromSql>(
+    tx: &Transaction<'_>,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> Result<T, StoreError> {
+    Ok(tx.query_row(sql, params, |r| r.get(0))?)
+}
+
+/// A list limit as SQLite holds integers.
+fn max_names(max: usize) -> i64 {
+    i64::try_from(max).unwrap_or(i64::MAX)
 }
 
 /// Removes what a deleted workspace held. The workspace's own change event covers it.

@@ -56,7 +56,7 @@ describe("the Connect dialog", () => {
       screen.getByText(/opens only on the computer Puddle runs on/),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /Open in the browser/ }),
+      screen.getByRole("button", { name: /Open isolated VS Code/ }),
     ).toBeTruthy();
   });
 
@@ -74,7 +74,7 @@ describe("the Connect dialog", () => {
     expect(
       screen.queryByText(/downloaded by Puddle from Microsoft/),
     ).toBeNull();
-    expect(screen.getByText(/Keeps the workspace isolated/)).toBeVisible();
+    expect(screen.getByText(/It is not your own VS Code/)).toBeVisible();
   });
 
   it("says why the browser editor cannot be installed, and still lets the user try", async () => {
@@ -88,7 +88,7 @@ describe("the Connect dialog", () => {
       "The browser editor could not be installed in shop: the download does not match.",
     );
     await fireEvent.click(
-      screen.getByRole("button", { name: "Open in the browser" }),
+      screen.getByRole("button", { name: "Open isolated VS Code" }),
     );
     expect(onBrowser).toHaveBeenCalledTimes(1);
   });
@@ -105,7 +105,7 @@ describe("the Connect dialog", () => {
     const link = screen.getByRole("link", {
       name: "Change the server in Settings",
     });
-    expect(link).toHaveAttribute("href", "/settings#s-vsc");
+    expect(link).toHaveAttribute("href", "/settings/editor-and-git#set-server");
     link.addEventListener("click", (event) => event.preventDefault());
     await fireEvent.click(link);
     await gone();
@@ -133,7 +133,9 @@ describe("the Connect dialog", () => {
   it("opens the browser editor and closes, with direct SSH off", async () => {
     const { onBrowser } = open({ direct_ssh: false });
     await screen.findByRole("dialog");
-    const button = screen.getByRole("button", { name: "Open in the browser" });
+    const button = screen.getByRole("button", {
+      name: "Open isolated VS Code",
+    });
     expect(button).toBeEnabled();
     await fireEvent.click(button);
     expect(onBrowser).toHaveBeenCalledWith(

@@ -189,8 +189,12 @@ pub struct RepositorySeed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceSeed {
-    /// The name (also the id).
+    /// The name it shows.
     pub name: String,
+    /// Its id, which rules, requests and settings of the scenario name it by; the name when left
+    /// out. Set it where a test needs "the id differs from the name".
+    #[serde(default)]
+    pub id: Option<String>,
     /// The repositories Puddle manages for it, in order; none when left out.
     #[serde(default)]
     pub repositories: Vec<RepositorySeed>,
@@ -241,6 +245,14 @@ pub struct WorkspaceSeed {
     /// The ports something in it listens on.
     #[serde(default)]
     pub listening_ports: Vec<u16>,
+}
+
+impl WorkspaceSeed {
+    /// The id the workspace is seeded under.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.name)
+    }
 }
 
 /// An environment variable or a secret.
@@ -376,9 +388,33 @@ pub struct CredentialsSeed {
     /// Credentials that cannot be read: not signed in.
     #[serde(default)]
     pub signed_out: Vec<CredentialSource>,
+    /// Credentials that cannot be read for a reason other than "not signed in", as a missing or
+    /// wrong Azure CLI would leave them.
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSeed>,
     /// What a sign-in shows; a code and address when left out.
     #[serde(default)]
     pub sign_in: Option<SignInStarted>,
+}
+
+/// A credential that cannot be read, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnreadableSeed {
+    /// The credential's source.
+    pub source: CredentialSource,
+    /// Why it cannot be read.
+    pub why: UnreadableWhy,
+}
+
+/// Why a seeded credential cannot be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnreadableWhy {
+    /// The Azure CLI is not installed.
+    AzMissing,
+    /// The Azure CLI's account is not in the credential's tenant.
+    WrongTenant,
 }
 
 const fn ok_state() -> RepoListState {
@@ -823,6 +859,35 @@ pub enum Step {
         /// What the failure says.
         #[serde(default)]
         reason: Option<String>,
+    },
+    /// Sets what a restore preview of an uploaded file answers: one new rule, the workspaces named
+    /// without a disk on this machine, and the secrets named without a value here.
+    RestorePreview {
+        /// Workspaces whose disk is not here.
+        #[serde(default)]
+        missing_disks: Vec<String>,
+        /// Secrets that need a value.
+        #[serde(default)]
+        secrets: Vec<String>,
+    },
+    /// Makes every confirm of a restore fail with `reason` from now on; without one, it succeeds.
+    RestoreApplyFails {
+        /// What the failure says.
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    /// Sets what the last restore did, as read after a restart; no message clears it.
+    RestoreResult {
+        /// Whether it was applied.
+        applied: bool,
+        /// What it says.
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Sets the safety copies the list shows, newest first.
+    SafetyCopies {
+        /// Their folder names.
+        names: Vec<String>,
     },
     /// Sets where the development certificate stands and what the next presses of "Trust it now"
     /// come to (a yes, a no, a failure with the system's words).

@@ -140,7 +140,7 @@ test.describe("the switch on the workspace's tab", () => {
     backend,
   }) => {
     await backend.signIn(page);
-    await page.goto("/workspaces/web-shop/ssh-agent");
+    await page.goto("/workspaces/web-shop/settings/ssh-agent");
     await expect(
       page.getByRole("heading", { level: 2, name: "SSH agent" }),
     ).toBeVisible();
@@ -164,7 +164,7 @@ test.describe("the switch on the workspace's tab", () => {
     backend,
   }) => {
     await backend.signIn(page);
-    await page.goto("/workspaces/web-shop/ssh-agent");
+    await page.goto("/workspaces/web-shop/settings/ssh-agent");
     await page.getByLabel("Host").fill("build.example.com");
     await page
       .getByLabel("Only these keys (optional)")
@@ -181,7 +181,7 @@ test.describe("the switch on the workspace's tab", () => {
     backend,
   }) => {
     await backend.signIn(page);
-    await page.goto("/workspaces/web-shop/ssh-agent");
+    await page.goto("/workspaces/web-shop/settings/ssh-agent");
     await page.getByLabel("Host").fill("build.example.com");
     await page.getByLabel("Only these keys (optional)").fill(KEY);
     await page.getByRole("button", { name: "Turn on" }).click();

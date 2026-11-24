@@ -10,11 +10,11 @@ const ROUTES = [
   "/workspaces/web-shop",
   "/workspaces/web-shop/settings",
   "/workspaces/web-shop/network",
-  "/workspaces/web-shop/ports",
+  "/workspaces/web-shop/settings/ports",
   "/workspaces/web-shop/terminal",
   "/workspaces/web-shop/git",
-  "/workspaces/web-shop/environment",
-  "/workspaces/web-shop/shell-init",
+  "/workspaces/web-shop/settings/environment",
+  "/workspaces/web-shop/settings/shell-init",
   "/inbox",
   "/rules",
   "/activity",
@@ -28,7 +28,7 @@ const ROUTES = [
   "/welcome/connect",
   "/welcome/interception",
   "/welcome/look",
-  "/welcome/workspace",
+  "/welcome/done",
 ] as const;
 
 test.describe("at 390 px wide", () => {

@@ -641,7 +641,7 @@ mod proxy_script {
     fn the_answers_kept_are_bounded() {
         let os = script(corporate);
         let pac = reader(&os, PacTiming::default());
-        for n in 0..(MAX_NAMES_FOR_TEST + 5) {
+        for n in 0..(pac::MAX_NAMES + 5) {
             pac.direct(&format!("host{n}.corp.example"));
         }
         // The newest answer survives the clearing that kept the table bounded.
@@ -649,8 +649,6 @@ mod proxy_script {
         pac.direct("x.intranet.corp.example");
         assert!(pac.direct("x.intranet.corp.example"));
     }
-
-    const MAX_NAMES_FOR_TEST: usize = 1024;
 
     #[tokio::test]
     async fn the_default_reader_evaluates_on_a_thread_of_its_own() {

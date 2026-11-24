@@ -2,6 +2,8 @@
 // The first-run flow against the real API on the fixture backend: the whole way through, a
 // blocking finding, skipping, the certificates step with company roots, and the system check
 // run again from Settings. Each test has a backend of its own, reset before it.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
@@ -32,15 +34,44 @@ async function freshInstall(page: Page, backend: Backend) {
 const heading = (page: Page, name: string) =>
   page.getByRole("heading", { level: 1, name });
 
-const STEPS = [
-  ["/welcome", "Welcome to Puddle"],
-  ["/welcome/check", "System check"],
-  ["/welcome/certificates", "Certificates"],
-  ["/welcome/connect", "How do you want to connect?"],
-  ["/welcome/interception", "Which hosts should Puddle decrypt?"],
-  ["/welcome/look", "Look"],
-  ["/welcome/workspace", "Your first workspace"],
-] as const;
+interface Control {
+  role: "link" | "button";
+  name: string;
+}
+interface WalkStep {
+  href: string;
+  heading: string;
+  start?: Control;
+  afterStart?: Control;
+  continue?: Control;
+}
+// The pages and what to press on them: the list the page tests and the installed-app walk read too.
+const WALK = (
+  JSON.parse(
+    readFileSync(
+      join(import.meta.dirname, "../src/lib/welcome/walk.json"),
+      "utf8",
+    ),
+  ) as { steps: WalkStep[] }
+).steps;
+const STEPS = WALK.map((step) => [step.href, step.heading] as const);
+const walkStep = (heading: string): WalkStep => {
+  const step = WALK.find((s) => s.heading === heading);
+  if (!step) throw new Error(`no step "${heading}" in walk.json`);
+  return step;
+};
+const control = (page: Page, c: Control) =>
+  page.getByRole(c.role, { name: c.name });
+/** Presses what takes a person on from the page with this heading. */
+const goOn = (page: Page, heading: string) =>
+  control(page, walkStep(heading).continue!).click();
+/** Starts the system check and waits for its result. */
+async function runTheCheck(page: Page) {
+  const check = walkStep("System check");
+  await control(page, check.start!).click();
+  await expect(page.getByText("No problems found.")).toBeVisible();
+  await expect(control(page, check.afterStart!)).toBeVisible();
+}
 
 test("a fresh install is led through every step and then opens on the workspaces", async ({
   page,
@@ -59,18 +90,17 @@ test("a fresh install is led through every step and then opens on the workspaces
   await expect(
     page.getByRole("listitem").filter({ hasText: "Welcome" }),
   ).toHaveAttribute("aria-current", "step");
-  await page.getByRole("link", { name: "Get started" }).click();
+  await goOn(page, "Welcome to Puddle");
 
   // System check: a healthy machine goes on.
   await expect(heading(page, "System check")).toBeVisible();
   // Nothing runs until the person starts it.
   await expect(page.getByRole("list", { name: "Checks" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Start system check" }).click();
-  await expect(page.getByText("No problems found.")).toBeVisible();
+  await runTheCheck(page);
   await expect(
     page.getByRole("list", { name: "Checks" }).getByRole("listitem"),
   ).toHaveCount(5);
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "System check");
 
   // Certificates: nothing about a development certificate is known yet, and this machine has no
   // company roots.
@@ -81,12 +111,12 @@ test("a fresh install is led through every step and then opens on the workspaces
   await expect(
     page.getByText("Company certificates: not read yet"),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "Certificates");
 
   // Connect: code-server is preselected, direct SSH is off until the trust text is accepted.
   await expect(heading(page, "How do you want to connect?")).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: /code-server \(bundled\)/ }),
+    page.getByRole("radio", { name: /Built-in VS Code server/ }),
   ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
     name: /Allow direct SSH for new workspaces/,
@@ -108,7 +138,7 @@ test("a fresh install is led through every step and then opens on the workspaces
     await request.get("/api/settings", { headers: auth(backend) })
   ).json()) as { effective: { direct_ssh: { value: boolean } } };
   expect(settings.effective.direct_ssh.value).toBe(true);
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "How do you want to connect?");
 
   // Interception: the recommended mode is preselected and Continue keeps it.
   await expect(
@@ -121,7 +151,7 @@ test("a fresh install is led through every step and then opens on the workspaces
     (r) =>
       r.request().method() === "PUT" && r.url().endsWith("/api/interception"),
   );
-  await page.getByRole("button", { name: "Continue" }).click();
+  await goOn(page, "Which hosts should Puddle decrypt?");
   await kept;
   const mode = (await (
     await request.get("/api/interception", { headers: auth(backend) })
@@ -138,23 +168,13 @@ test("a fresh install is led through every step and then opens on the workspaces
   await page.getByRole("radio", { name: /^Meadow/ }).check();
   await expect(page.locator("html")).toHaveAttribute("data-palette", "meadow");
   await expect(page.getByText("Colours saved.")).toBeVisible();
-  await page.getByRole("link", { name: "Continue" }).click();
+  await goOn(page, "Look");
 
-  // First workspace: the usual form, then the workspace list with the workspace on it.
-  await expect(heading(page, "Your first workspace")).toBeVisible();
-  await page.getByRole("button", { name: "Create a workspace" }).click();
-  const form = page.getByRole("dialog", { name: "New workspace" });
-  await form
-    .getByLabel(/Git repository/)
-    .fill("https://github.com/example/shop-api.git");
-  await expect(form.getByLabel("Name")).toHaveValue("shop-api");
-  // The form is settled once the host note is in: it appears 300 ms after the typing stops and
-  // pushes the button down, so a press that began before it can end on something else and
-  // submit nothing.
-  await expect(form.getByTestId("hosts-new")).toContainText("github.com");
-  await form.getByRole("button", { name: "Create workspace" }).click();
+  // Done: says where settings live, then opens the workspace list.
+  await expect(heading(page, "You're all set")).toBeVisible();
+  await expect(page.getByText(/Feedback is very welcome/)).toBeVisible();
+  await goOn(page, "You're all set");
   await expect(page).toHaveURL(/\/workspaces$/);
-  await expect(page.getByText("shop-api").first()).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
 
   // It was shown once: the start page now leads to the workspaces, and the choices stuck.
@@ -258,19 +278,6 @@ test("skipping the setup ends it for good", async ({
   await expect(page).toHaveURL(/\/workspaces$/);
 });
 
-test("the first workspace can be skipped", async ({
-  page,
-  backend,
-  request,
-}) => {
-  await freshInstall(page, backend);
-  await page.goto("/welcome/workspace");
-  await page.getByRole("button", { name: "Skip" }).click();
-  await expect(page).toHaveURL(/\/workspaces$/);
-  expect((await firstRun(request, backend)).completed).toBe(true);
-  await expect(page.getByText("shop-api")).toHaveCount(0);
-});
-
 test("the certificates step counts the company roots Puddle will add", async ({
   page,
   backend,
@@ -305,13 +312,19 @@ test("Trust it now shows a no and a failure in words, and ends the offer after a
     page.getByText("Development certificate: not trusted yet"),
   ).toBeVisible();
   const trust = page.getByRole("button", { name: "Trust it now" });
+  // The reason for the question and what Windows will ask are on the page before the press.
+  await expect(page.getByText(/Nothing else needs it/)).toBeVisible();
+  await page.getByText("More details", { exact: true }).click();
+  await expect(page.getByText(/Manage user certificates/)).toBeVisible();
+  await page.getByText("Remediation", { exact: true }).click();
+  await expect(
+    page.getByText(/Windows asks once, in a Security Warning/),
+  ).toBeVisible();
   await expectNoAxeViolations(page);
 
   // No in Windows' dialog: the step says so and offers it again.
   await trust.click();
-  await expect(
-    page.getByText("You declined Windows' confirmation."),
-  ).toBeVisible();
+  await expect(page.getByText(/You answered No in Windows/)).toBeVisible();
   await expect(trust).toBeEnabled();
 
   // A policy refusal: the system's words show and there is nothing to press.
@@ -366,14 +379,14 @@ test("Settings runs the system check again on its own page and leads back", asyn
   backend,
 }) => {
   await backend.signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings/this-computer");
   await page.getByRole("link", { name: "Run the system check again" }).click();
   await expect(page).toHaveURL(/\/welcome\/check\?from=settings$/);
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(page.getByRole("list", { name: "Setup steps" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Continue" })).toHaveCount(0);
   await page.getByRole("link", { name: "Back to Settings" }).click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/this-computer$/);
 });
 
 test("no link on a first-run step leads out of the flow", async ({
@@ -385,8 +398,7 @@ test("no link on a first-run step leads out of the flow", async ({
     await page.goto(path);
     await expect(heading(page, title)).toBeVisible();
     if (path === "/welcome/check") {
-      await page.getByRole("button", { name: "Start system check" }).click();
-      await expect(page.getByText("No problems found.")).toBeVisible();
+      await runTheCheck(page);
     }
   };
   const links = page.locator("main").getByRole("link");
@@ -415,12 +427,11 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto(path);
       await expect(heading(page, title)).toBeVisible();
       if (path === "/welcome/check") {
-        await page.getByRole("button", { name: "Start system check" }).click();
-        await expect(page.getByText("No problems found.")).toBeVisible();
+        await runTheCheck(page);
       }
       if (path === "/welcome/connect") {
         await expect(
-          page.getByRole("radio", { name: /code-server/ }),
+          page.getByRole("radio", { name: /Built-in VS Code server/ }),
         ).toBeVisible();
       }
       if (path === "/welcome/interception") {
@@ -462,10 +473,7 @@ test("the blocked system check and the form dialog pass the accessibility scan",
   }
   await expectNoAxeViolations(page);
 
-  await page.goto("/welcome/workspace");
-  await page.getByRole("button", { name: "Create a workspace" }).click();
-  await expect(
-    page.getByRole("dialog", { name: "New workspace" }),
-  ).toBeVisible();
+  await page.goto("/welcome/done");
+  await expect(heading(page, "You're all set")).toBeVisible();
   await expectNoAxeViolations(page);
 });

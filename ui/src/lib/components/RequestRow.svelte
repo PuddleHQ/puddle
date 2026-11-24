@@ -36,6 +36,12 @@
   } = $props();
 
   const request = $derived(row.request);
+  // The first time is worth a word only when it says something the last one does not.
+  const firstDiffers = $derived(
+    request.attempts > 1 &&
+      relativeTime(request.first_seen, now) !==
+        relativeTime(request.last_seen, now),
+  );
   const why = $derived(companySignalText(request.company_signal));
 </script>
 
@@ -55,19 +61,18 @@
       >{:else}<span class="port">:{request.port}</span>{/if}
   </p>
   <p class="facts">
-    Workspace <b class="mono">{workspaces.labelOf(request.workspace)}</b> · {request.attempts}
-    {request.attempts === 1 ? "attempt" : "attempts"} · First seen
-    <time
-      datetime={new Date(request.first_seen).toISOString()}
-      title={absoluteTime(request.first_seen)}
-      >{relativeTime(request.first_seen, now)}</time
-    >
-    · Last seen
+    <b class="mono">{workspaces.labelOf(request.workspace)}</b> · {request.attempts}
+    {request.attempts === 1 ? "try," : "tries, last"}
     <time
       datetime={new Date(request.last_seen).toISOString()}
       title={absoluteTime(request.last_seen)}
       >{relativeTime(request.last_seen, now)}</time
-    >
+    >{#if firstDiffers}, first
+      <time
+        datetime={new Date(request.first_seen).toISOString()}
+        title={absoluteTime(request.first_seen)}
+        >{relativeTime(request.first_seen, now)}</time
+      >{/if}
   </p>
   <DecisionControl
     target={{ host: request.host, registrableDomain: row.domain }}
@@ -94,7 +99,9 @@
     <p class="blocked">
       <b>{LOCAL_LABELS[blockedBy]}</b> destinations are switched off, so this
       can't be approved yet. Turn on
-      <a href="/settings#local-destinations">{LOCAL_LABELS[blockedBy]}</a>
+      <a href="/settings/network#local-destinations"
+        >{LOCAL_LABELS[blockedBy]}</a
+      >
       in Settings to make it approvable; it will still need your approval after that.
     </p>
   {/if}

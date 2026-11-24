@@ -55,14 +55,33 @@ export interface TerminalLook {
   fontFamily: string;
 }
 
-/** Reads the look from the tokens as `probe` (an element in the page) resolves them now. */
-export function readLook(probe: HTMLElement): TerminalLook {
-  const style = globalThis.getComputedStyle(probe);
-  const color = (token: string, fallback: string): Rgb | string => {
-    probe.style.color = "";
-    probe.style.color = `var(${token})`;
-    return parseRgb(style.color) ?? fallback;
+/**
+ * Reads the look from the tokens as they resolve under `host` now. Each read uses a new element: in
+ * the installed app's WebView2 a probe that was given a colour before kept the inherited text colour
+ * for every later token (so the terminal got one colour for the text and every ANSI colour and drew
+ * grey on a light box), while a new element resolved each token right.
+ */
+export function readLook(host: HTMLElement): TerminalLook {
+  const read = <T>(
+    set: (el: HTMLElement) => void,
+    get: (s: CSSStyleDeclaration) => T,
+  ): T => {
+    const probe = host.ownerDocument.createElement("span");
+    set(probe);
+    host.append(probe);
+    try {
+      return get(globalThis.getComputedStyle(probe));
+    } finally {
+      probe.remove();
+    }
   };
+  const color = (token: string, fallback: string): Rgb | string =>
+    parseRgb(
+      read(
+        (el) => (el.style.color = `var(${token})`),
+        (s) => s.color,
+      ),
+    ) ?? fallback;
   const css = (value: Rgb | string): string =>
     typeof value === "string" ? value : hex(value);
   const bg = color("--color-surface", FALLBACK_BG);
@@ -74,10 +93,11 @@ export function readLook(probe: HTMLElement): TerminalLook {
   const green = color("--color-success", "#52c78f");
   const yellow = color("--color-warning", "#f2c063");
   const selection = color("--color-accent-subtle", "#133746");
-  probe.style.color = "";
-  probe.style.fontFamily = "var(--font-mono)";
-  const fontFamily = style.fontFamily || "monospace";
-  probe.style.fontFamily = "";
+  const fontFamily =
+    read(
+      (el) => (el.style.fontFamily = "var(--font-mono)"),
+      (s) => s.fontFamily,
+    ) || "monospace";
   return {
     fontFamily,
     theme: {

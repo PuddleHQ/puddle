@@ -35,7 +35,7 @@ describe("a change that did not reach a running workspace", () => {
       tone: "warning",
       title: "A change to the environment of web did not reach it.",
       detail: "the credential store is locked",
-      link: { href: "/workspaces/web/environment" },
+      link: { href: "/workspaces/web/settings/environment" },
     });
   });
 
@@ -54,7 +54,7 @@ describe("a kept forward that could not be opened", () => {
       key: "port:web:3000",
       tone: "warning",
       title: "Port 3000 of web could not be forwarded to 127.0.0.1:3001.",
-      link: { href: "/workspaces/web/ports" },
+      link: { href: "/workspaces/web/settings/ports" },
     });
     expect(center.items[0]?.detail).toContain("in use by node");
   });

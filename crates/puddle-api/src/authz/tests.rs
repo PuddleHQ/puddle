@@ -122,6 +122,7 @@ fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
             "DELETE /api/identities/{id} Own",
             "DELETE /api/proxy-sign-ins/{proxy} Install",
             "DELETE /api/rule-sets/{id} Own",
+            "DELETE /api/safety-copies/{name} Install",
             "GET /api/identities/{id} Own",
             "GET /api/rule-sets/{id}/entries Own",
             "POST /api/admin/users/{id}/invite Install",
@@ -188,6 +189,7 @@ fn owner_only_actions_and_the_install_token_rule() {
         Action::UseComputerAccounts,
         Action::ManageUsers,
         Action::BackUp,
+        Action::Restore,
         Action::SetRemoteServing,
     ] {
         assert!(action.owner_only(), "{action:?}");
@@ -255,6 +257,7 @@ fn the_owner_alone_does_install_things_and_only_with_the_token_widens_reach() {
         (Action::ReadService, ResourceRef::Install),
         (Action::ManageUsers, ResourceRef::Own),
         (Action::BackUp, ResourceRef::Install),
+        (Action::Restore, ResourceRef::Install),
         (Action::UseComputerAccounts, ResourceRef::Install),
     ] {
         assert!(
@@ -1672,4 +1675,13 @@ async fn a_users_audit_holds_their_records_and_the_owners_does_not() {
         "{audit}"
     );
     shut_down(pair).await;
+}
+
+#[test]
+fn a_method_without_a_declaration_is_405_on_a_declared_path_and_500_on_a_path_with_none() {
+    let refused = undeclared(&Method::POST, "/api/rule-sets/{id}/switch");
+    assert_eq!(refused.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(refused.headers()["allow"], "PUT");
+    let missing = undeclared(&Method::GET, "/api/no-such-route");
+    assert_eq!(missing.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }

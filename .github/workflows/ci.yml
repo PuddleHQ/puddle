@@ -272,12 +272,17 @@ jobs:
           cache-dependency-path: |
             crates/puddle-api/openapi/package-lock.json
             ui/package-lock.json
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: rust-tests
       - name: System packages (WebKitGTK, the tray library and Xvfb for the desktop shell, Squid for the upstream-chaining e2e, busybox for the guest scripts' shell)
         timeout-minutes: 10
         run: |
           # The image's default mirror hands some runners a backend that serves 40 to 250 kB/s (a 62 MB
           # install took 26 minutes): ci/apt-setup.sh keeps to a fast backend or goes to Canonical, and
-          # ci/apt-retry.sh moves to Canonical when the install itself stalls anyway.
+          # ci/apt-retry.sh moves to Canonical, then to kernel.org, when the install itself stalls anyway,
+          # and ci/apt-debs-cache keeps the downloaded .deb files so a warm run needs no mirror.
           ci/apt-setup.sh
           ci/apt-retry.sh sudo apt-get update
           # libayatana-appindicator3-1: the tray icon library, opened at run time (the build does not
@@ -487,6 +492,10 @@ jobs:
           cache-dependency-path: |
             crates/puddle-api/openapi/package-lock.json
             ui/package-lock.json
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: gates
       - name: WebKitGTK dev package (clippy and the doc build compile the desktop shell)
         timeout-minutes: 10
         run: |
@@ -795,6 +804,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: ui-chromium
       - name: Playwright Chromium and its system libraries
         timeout-minutes: 10
         run: |
@@ -871,6 +884,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: ui-webkit
       - name: Playwright WebKit and its system libraries
         timeout-minutes: 10
         run: |

@@ -28,6 +28,8 @@ export class GlobalSettings {
   reason = $state<string | null>(null);
   readonly #api: StoreApi;
   #queue: Promise<unknown> = Promise.resolve();
+  /** Counts the saves that landed, so a read that began before one can tell its answer is older. */
+  #saved = 0;
 
   constructor(api: StoreApi = defaultApi) {
     this.#api = api;
@@ -39,11 +41,17 @@ export class GlobalSettings {
       this.status = "loading";
       this.reason = null;
     }
+    const saved = this.#saved;
     try {
       const [settings, consents] = await Promise.all([
         this.#api.GET("/api/settings"),
         this.#api.GET("/api/consents"),
       ]);
+      if (this.#saved !== saved && this.view) {
+        // A save landed while this read was out: its answer is older than what is on screen.
+        if (this.status === "loading") this.status = "ready";
+        return;
+      }
       if (settings.data && consents.data) {
         this.view = settings.data;
         this.consents = consents.data;
@@ -143,6 +151,7 @@ export class GlobalSettings {
           : refused(error?.message);
       }
       this.view = data;
+      this.#saved++;
       return { ok: true };
     } catch {
       return unreachable();

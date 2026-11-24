@@ -271,14 +271,9 @@ impl BootHook {
             }
         }
         let _boot = gate.lock_boot().await;
-        let previous = open_boot(gate);
-        match runtime.create(spec).await {
-            Ok(sandbox) => self.finish(sandbox, plan, gate).await,
-            Err(e) => {
-                gate.set(previous);
-                Err(e.into())
-            }
-        }
+        let booting = Booting::open(gate);
+        let sandbox = runtime.create(spec).await?;
+        self.finish(sandbox, plan, booting).await
     }
 
     /// Starts a stopped or crashed sandbox, runs the hook, opens the gate (the guest resets its
@@ -295,14 +290,9 @@ impl BootHook {
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
-        let previous = open_boot(gate);
-        match runtime.start(name).await {
-            Ok(sandbox) => self.finish(sandbox, plan, gate).await,
-            Err(e) => {
-                gate.set(previous);
-                Err(e.into())
-            }
-        }
+        let booting = Booting::open(gate);
+        let sandbox = runtime.start(name).await?;
+        self.finish(sandbox, plan, booting).await
     }
 
     /// Re-adopts a running sandbox a previous Puddle left behind and runs the hook again
@@ -319,25 +309,21 @@ impl BootHook {
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
-        let previous = open_boot(gate);
-        match runtime.get(name).await {
-            Ok(sandbox) => self.finish(sandbox, plan, gate).await,
-            Err(e) => {
-                gate.set(previous);
-                Err(e.into())
-            }
-        }
+        let booting = Booting::open(gate);
+        let sandbox = runtime.get(name).await?;
+        self.finish(sandbox, plan, booting).await
     }
 
     async fn finish<S: Sandbox>(
         &self,
         sandbox: S,
         plan: &BootPlan,
-        gate: &Gate,
+        booting: Booting<'_>,
     ) -> Result<GatedSandbox<S>, BootError> {
+        let gate = booting.gate;
         match self.run(&sandbox, plan).await {
             Ok(report) => {
-                gate.set(GateState::Ready);
+                booting.settle(GateState::Ready);
                 Ok(GatedSandbox::new(
                     sandbox,
                     gate.clone(),
@@ -346,7 +332,7 @@ impl BootHook {
                 ))
             }
             Err(failure) => {
-                gate.set(GateState::Failed(failure.clone()));
+                booting.settle(GateState::Failed(failure.clone()));
                 let stop_error = sandbox.stop().await.err().map(Box::new);
                 Err(BootError::Hook {
                     sandbox: sandbox.name().to_string(),
@@ -358,11 +344,38 @@ impl BootHook {
     }
 }
 
-/// Sets the gate to `Booting` and returns what it was.
-fn open_boot(gate: &Gate) -> GateState {
-    let previous = gate.state();
-    gate.set(GateState::Booting);
-    previous
+/// One boot's hold on the gate: `Booting` from [`Booting::open`] until [`Booting::settle`]. A boot
+/// that ends another way (a runtime error, or the caller dropping the future at an await) puts
+/// back the state from before, so the gate never stays `Booting` with nobody booting. Neither
+/// overwrites a stop that closed the gate meanwhile.
+struct Booting<'g> {
+    gate: &'g Gate,
+    previous: Option<GateState>,
+}
+
+impl<'g> Booting<'g> {
+    fn open(gate: &'g Gate) -> Self {
+        let previous = gate.state();
+        gate.set(GateState::Booting);
+        Self {
+            gate,
+            previous: Some(previous),
+        }
+    }
+
+    /// The boot ended with `state`.
+    fn settle(mut self, state: GateState) {
+        self.previous = None;
+        self.gate.settle(state);
+    }
+}
+
+impl Drop for Booting<'_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            self.gate.settle(previous);
+        }
+    }
 }
 
 /// Turns the exec result into progress lines or a [`BootFailure`].

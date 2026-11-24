@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The WiX 3 toolset Tauri's MSI bundler packs with: `<version> <url> <sha256>`. Tauri downloads it itself
+# when its tools folder lacks it (no retry: one HTTP 500 from github.com failed the whole msi chain on
+# 2026-11-18), so ci/build-msi.sh seeds the folder from here first (ci/fetch-wix.sh: retry, cache, checksum).
+# The URL and hash are the ones compiled into the pinned Tauri command line (tauri-bundler's WIX_URL and
+# WIX_SHA256); ci/check-wix-pin.sh fails when that binary names something else, so bump this file together
+# with ci/tauri-cli.sha256.
+3.14.1 https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip 6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31

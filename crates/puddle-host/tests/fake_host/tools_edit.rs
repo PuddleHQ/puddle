@@ -200,6 +200,30 @@ async fn the_registry_is_asked_once_and_a_failed_ask_is_not_kept() {
     host.shutdown().await;
 }
 
+/// The registry comes from the guest's own mise, so one guest's answer is never shown for another
+/// workspace: each workspace is asked and shows what its own guest said.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_workspace_shows_the_registry_its_own_guest_gave() {
+    let rig = rig_on();
+    let (host, api) = running(&rig).await;
+    *rig.guest.mise_registry.lock().unwrap() = Some("reg\tubi:attacker/node\tNode.js\n");
+    let first = api.get("/api/workspaces/acme/tools/registry").await;
+    assert_eq!(first.status, 200, "{}", first.body);
+    *rig.guest.mise_registry.lock().unwrap() = None;
+    let mut events = api.events().await;
+    create_as(&api, &mut events, "beta", "beta").await;
+    let second = api.get("/api/workspaces/beta/tools/registry").await;
+    assert_eq!(
+        second.json(),
+        json!({"tools": [{"name": "node", "description": "JavaScript runtime"}], "problem": null})
+    );
+    assert_eq!(
+        first.json()["tools"],
+        json!([{"name": "ubi:attacker/node", "description": "Node.js"}])
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn versions_come_newest_first_and_a_mise_that_cannot_list_them_gives_its_reason() {
     let rig = rig_on();

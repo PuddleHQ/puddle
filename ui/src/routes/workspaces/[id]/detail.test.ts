@@ -1512,6 +1512,116 @@ describe("the settings tab", () => {
     await vi.waitFor(() => expect(theme.value).toBe("Default Dark Modern"));
   });
 
+  it("saves, clears and resets the font size, extensions and key bindings of a workspace on their own", async () => {
+    await open();
+    const row = (name: string) =>
+      document.querySelector(`[data-setting="${name}"]`) as HTMLElement;
+    const own = (name: string) =>
+      vi.waitFor(() =>
+        expect(within(row(name)).getByText("This workspace")).toBeVisible(),
+      );
+    const keys = '[{"key":"ctrl+k","command":"a.b"}]';
+
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "20" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.font_size).toBe(20),
+    );
+    await own("editor-font-size");
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.font_size).toBeNull(),
+    );
+
+    await fireEvent.input(screen.getByLabelText("Extensions to install"), {
+      target: { value: "a.b" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Extensions to install" }),
+    );
+    await own("editor-extensions");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Extensions to install",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.extensions).toBeNull(),
+    );
+
+    await fireEvent.input(screen.getByLabelText("Key bindings"), {
+      target: { value: keys },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Key bindings" }),
+    );
+    await own("editor-keybindings");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Key bindings",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.keybindings).toBeNull(),
+    );
+
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "Solarized Dark" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await own("editor-theme");
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
+    );
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "21" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    );
+    await own("editor-font-size");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Font size (pixels)",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.font_size).toBeNull(),
+    );
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "Nord" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await own("editor-theme");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Editor colour theme",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
+    );
+  });
+
   it("holds an automatic reload while an editor default is typed and not saved", async () => {
     await open();
     expect(hasUnsavedEdits()).toBe(false);

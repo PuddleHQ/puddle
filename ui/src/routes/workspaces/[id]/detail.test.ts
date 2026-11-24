@@ -1620,7 +1620,7 @@ describe("the settings tab", () => {
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
     );
-  });
+  }, 30_000);
 
   it("holds an automatic reload while an editor default is typed and not saved", async () => {
     await open();

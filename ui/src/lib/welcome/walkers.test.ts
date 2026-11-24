@@ -38,4 +38,21 @@ describe("the installed-app walk", () => {
       expect(source, words).not.toContain(`"${words}"`);
     }
   });
+
+  it("looks for the Connect step's radio by a name the page renders", () => {
+    const text = readFileSync(walker, "utf8");
+    const regex = /role: "radio", nameRegex: "([^"]+)"/g;
+    const page = readFileSync(
+      resolve(import.meta.dirname, "../../routes/welcome/connect/+page.svelte"),
+      "utf8",
+    );
+    const bold = [...page.matchAll(/<b>([^<]+)<\/b>/g)].map((m) => m[1] ?? "");
+    const connect = text.match(/"the bundled code-server choice", \{[^}]*\}/);
+    expect(connect).not.toBeNull();
+    const name = [...(connect?.[0] ?? "").matchAll(regex)][0]?.[1] ?? "";
+    expect(
+      bold.some((label) => new RegExp(name).test(label)),
+      `${name} matches none of ${bold.join(", ")}`,
+    ).toBe(true);
+  });
 });

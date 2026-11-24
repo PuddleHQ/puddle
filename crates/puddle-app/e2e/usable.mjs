@@ -445,7 +445,7 @@ async function firstRunToCreateForm() {
       check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
     }
     if (step.id === "connect") {
-      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
+      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "Built-in VS Code server" });
       check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
     }
     if (step.continue) await uia.click(`${step.continue.name} (from ${step.heading})`, control(step.continue));

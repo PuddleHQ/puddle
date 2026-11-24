@@ -110,7 +110,7 @@
       />
       <span>
         <b>Built-in VS Code server</b>
-        <span class="chip">default</span>
+        <span class="meta">default</span>
         <span class="desc">{CODE_SERVER_NOTE}</span>
       </span>
     </label>
@@ -223,13 +223,6 @@
     cursor: pointer;
   }
 
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    color: var(--color-text-muted);
-  }
   .actions {
     display: flex;
     justify-content: flex-end;

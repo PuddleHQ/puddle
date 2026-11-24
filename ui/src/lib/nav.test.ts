@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { documentTitle, NAV, sectionFor } from "./nav.ts";
+import { documentTitle, frameFor, NAV, sectionFor } from "./nav.ts";
 
 describe("nav", () => {
   it("has the top-level sections, in order, the owner's Admin last", () => {
@@ -34,5 +34,36 @@ describe("nav", () => {
     expect(documentTitle("/welcome", 3)).toBe("Welcome - Puddle");
     expect(documentTitle("/welcome/connect", 3)).toBe("Connect - Puddle");
     expect(documentTitle("/welcome/unknown", 0)).toBe("Welcome - Puddle");
+  });
+});
+
+describe("the page frame", () => {
+  it("gives forms the reading width and tables, the terminal and a workspace's tabs the full width", () => {
+    for (const path of [
+      "/workspaces",
+      "/workspaces/abc",
+      "/workspaces/abc/network",
+      "/workspaces/abc/terminal",
+      "/workspaces/abc/settings/ports",
+      "/inbox",
+      "/rules",
+      "/activity",
+      "/settings/network-health",
+      "/settings/app-errors",
+      "/welcome/check",
+    ]) {
+      expect(frameFor(path), path).toBe("full");
+    }
+    for (const path of [
+      "/settings",
+      "/settings/appearance",
+      "/identities",
+      "/identities/abc",
+      "/admin",
+      "/invite",
+      "/no-such-page",
+    ]) {
+      expect(frameFor(path), path).toBe("reading");
+    }
   });
 });

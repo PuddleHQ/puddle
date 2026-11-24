@@ -86,6 +86,9 @@
   font-size: var(--text-sm);
   white-space: nowrap;
 }
+.meta.warn {
+  color: var(--color-warning);
+}
 
 /* The modal shared by the confirm dialog and the form dialogs. */
 .confirm-overlay {

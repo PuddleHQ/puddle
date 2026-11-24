@@ -188,7 +188,7 @@
           <div class="main">
             <div class="titleline">
               <h3>{user.name}</h3>
-              {#if user.role === "owner"}<span class="chip">Owner</span>{/if}
+              {#if user.role === "owner"}<span class="meta">Owner</span>{/if}
               <span class="chip {user.state}">{stateText(user)}</span>
             </div>
             <dl class="facts">

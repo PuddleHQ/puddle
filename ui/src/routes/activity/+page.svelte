@@ -360,11 +360,9 @@
   .count {
     font-size: var(--text-sm);
   }
+  /* An empty screen is plain words on the page, not a box. */
   .empty {
-    padding: var(--space-6);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+    padding-block: var(--space-4);
   }
   .empty h2,
   .empty p {

@@ -1320,7 +1320,8 @@ describe("the settings tab", () => {
       screen.getByText(/A change applies at the next restart/),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Global setting").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Puddle's default").length).toBeGreaterThan(0);
+    // The default is the visible resting value of the control: it carries no pill of its own.
+    expect(screen.queryByText("Puddle's default")).toBeNull();
     // Following the global setting needs no reset link.
     expect(screen.queryByRole("button", { name: /again for/ })).toBeNull();
     for (const label of [

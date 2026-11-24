@@ -1706,3 +1706,99 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
 
     editor.finish().await;
 }
+
+/// A TypeScript file whose second line has a symbol only the language server can describe: the
+/// type of `total` is inferred from the call, so no text of the file says it.
+const HOVER_FILES: &str = r#"
+set -e
+cd "$1"
+git init -q api && git init -q web && echo loose >notes.txt
+printf 'function add(a: number, b: number): number { return a + b; }\nconst total = add(1, 2);\n' >api/hover.ts
+chown -R agent:agent .
+"#;
+
+/// The visible hover widgets' text (spaces normalised) and where the cursor is.
+const HOVER_STATE: &str = "({ hover: [...document.querySelectorAll('.monaco-hover')].filter(e => !e.classList.contains('hidden') && e.offsetParent).map(e => e.textContent.replace(/\\u00a0/g, ' ')).join(' | '), cursor: /Ln \\d+, Col \\d+/.exec(document.querySelector('.part.statusbar')?.textContent ?? '')?.[0] })";
+
+/// K tier, code-server. A TypeScript file opened in the window and a symbol hovered: the editor's
+/// language server answers with the inferred type (the playbooks' "hover a symbol" step). The
+/// answer is the server's own, so it is also what tells that the language server runs in the guest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_language_server_infers()
+ {
+    let editor = Box::pin(Editor::start("whv", None)).await;
+    let (shell, name, root) = (&editor.shell, &editor.name, &editor.root);
+    editor
+        .guest(&format!(
+            "sh -c '{}' sh {root}",
+            HOVER_FILES.replace('\'', "'\\''")
+        ))
+        .await;
+    editor.attach().await;
+    editor.explorer("window").await;
+    let page = shell.page(name).await;
+
+    shell.press(name, "Control+p").await;
+    shell.type_text(name, "hover.ts").await;
+    shell
+        .rows_with(page, ".quick-input-list .monaco-list-row", "hover.ts")
+        .await;
+    shell.press(name, "Enter").await;
+    shell
+        .wait(
+            name,
+            "document.querySelector('.tabs-container .tab.active')?.getAttribute('aria-label')?.startsWith('hover.ts') && document.querySelector('.monaco-editor .view-lines')?.textContent.replace(/\\u00a0/g, ' ').includes('const total')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+
+    // The cursor goes into `total` on line 2 ("const " is six characters).
+    shell.press(name, "Control+g").await;
+    shell.type_text(name, "2\n").await;
+    let at = |column: u32| {
+        format!(
+            "/Ln 2, Col {column}\\b/.test(document.querySelector('.part.statusbar')?.textContent ?? '')"
+        )
+    };
+    shell.wait(name, &at(1), "true", PAGE_BUDGET).await;
+    for _ in 0..7 {
+        shell.press(name, "ArrowRight").await;
+    }
+    shell.wait(name, &at(8), "true", PAGE_BUDGET).await;
+
+    // The language server starts with the window, so the first asks may find it still loading.
+    // "Show or Focus Hover" asks again until the widget carries the type.
+    let shown = puddle_test_kit::eventually_async(
+        "the hover shows the inferred type of `total`",
+        Duration::from_secs(90),
+        || async {
+            shell.press(name, "Control+k").await;
+            shell.press(name, "Control+i").await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let request = PageRequest::new("", "true")
+                .result(HOVER_STATE)
+                .budget(Duration::from_secs(5));
+            let state = shell
+                .browser
+                .lock()
+                .await
+                .wait(page, &request)
+                .await
+                .map_err(|e| e.to_string())?
+                .result;
+            let hover = state["hover"].as_str().unwrap_or_default().to_string();
+            if hover.contains("const total: number") {
+                Ok(hover)
+            } else {
+                Err(state.to_string())
+            }
+        },
+    )
+    .await;
+    eprintln!("hover: {shown}");
+
+    let errors = shell.page_errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "the pages reported errors: {errors:?}");
+    editor.finish().await;
+}

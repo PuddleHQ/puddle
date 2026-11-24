@@ -333,6 +333,64 @@ fn a_second_shell_on_the_same_data_folder_says_why_and_opens_no_window() {
     tauri::async_runtime::block_on(first.shutdown());
 }
 
+/// The bytes of every file in `dir` named `puddle.db*` (the database and any journal beside it),
+/// by name.
+fn database_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("puddle.db"))
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read(entry.path()).unwrap(),
+            )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn an_old_app_on_data_a_newer_puddle_saved_says_so_and_leaves_the_database_as_it_was() {
+    let dir = puddle_test_kit::private_tempdir();
+    let options = options_in(dir.path());
+    let data = dir.path().join("data");
+    // A database the way a clean quit leaves it, then marked as a newer Puddle's: SQLite keeps
+    // `user_version` in the header, 4 bytes big-endian at offset 60.
+    tauri::async_runtime::block_on(start(&options, &Machine::default()).unwrap().shutdown());
+    let newer = puddle_store::SCHEMA_VERSION + 1;
+    let path = data.join("puddle.db");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[60..64].copy_from_slice(&newer.to_be_bytes());
+    std::fs::write(&path, bytes).unwrap();
+    let before = database_files(&data);
+
+    let app = app();
+    let err = shell::start(
+        app.handle(),
+        &options,
+        Source::prepare(&options, &Machine::default()),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ShellError::Backend(BackendError::Host(HostError::Store(
+                puddle_store::StoreError::SchemaTooNew { found, .. }
+            ))) if found == newer
+        ),
+        "{err}"
+    );
+    // What the user is shown (a message box in a release build, which has no console).
+    let shown = puddle_app::report_startup_failure(&options, &err);
+    assert!(shown.contains("saved by a newer Puddle"), "{shown}");
+    assert!(shown.contains(&newer.to_string()), "{shown}");
+    assert!(app.get_webview_window(MAIN_LABEL).is_none());
+    // Not one byte of the database, nor a journal beside it, changed.
+    assert!(before == database_files(&data), "the database changed");
+}
+
 #[cfg(feature = "fixture")]
 #[test]
 fn the_fixture_never_asks_the_machine() {

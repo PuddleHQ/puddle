@@ -23,6 +23,11 @@
 # the pull request changes. The separate `advisories` and `advisories-npm` jobs run on pull requests to main, on
 # pushes, nightly and by hand, never on a pull request to develop or a merge queue run (the `cargo-deny` step
 # there checks bans, licences and sources).
+# With PUDDLE_LIGHT_CI set to `on` (the light CI mode, ci/scope.sh), a pull request to develop and a
+# merge queue run skip every heavy job here and in windows.yml, vm-linux.yml and vm-windows.yml: only
+# the `light` job and the unit tier (`unit`: fmt, clippy, deny, quick gates, Rust unit tests;
+# `unit-ui`: the UI gate without its end-to-end tests) run, and the result jobs accept the skips. The
+# full set then runs on every push to develop and by hand (`workflow_dispatch`).
 name: ci
 
 on:
@@ -78,6 +83,8 @@ jobs:
       ui: ${{ steps.scope.outputs.ui }}
       light: ${{ steps.scope.outputs.light }}
       defer_linux_webkit: ${{ steps.scope.outputs.defer_linux_webkit }}
+      unit: ${{ steps.scope.outputs.unit }}
+      unit_ui: ${{ steps.scope.outputs.unit_ui }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,6 +100,7 @@ jobs:
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
+          PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}
         run: ci/scope.sh
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
@@ -122,6 +130,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
+          PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}
         run: ci/should-run.sh ci.yml --queue-tested
       # The Rust key hashes the toolchain, the manifests and the environment, as in the rust job (no extra
       # CARGO or RUST variables may be set in this job, or the key differs). If the two keys ever drift
@@ -535,6 +544,9 @@ jobs:
       - name: spawn (a host process start opens no console window on Windows)
         if: ${{ !cancelled() }}
         run: scripts/check.sh spawn
+      - name: workflow-yaml (every workflow and action file parses)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh workflow-yaml
       - name: test hooks (a test-only feature stays out of release builds; a test that starts a doctor sets az_search_path)
         if: ${{ !cancelled() }}
         run: scripts/check.sh test-hooks
@@ -616,7 +628,10 @@ jobs:
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
         run: scripts/check.sh openapi
-      - name: doc tests and rustdoc
+      - name: rustdoc (warnings are errors)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh rustdoc
+      - name: doc tests
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
       # Off the light mode (worked out again from the event, not from `scope`) the gate must have run.
@@ -744,6 +759,9 @@ jobs:
       - name: quality (every unsafe, suppression and TODO says why)
         if: ${{ !cancelled() }}
         run: scripts/check.sh quality
+      - name: workflow-yaml (every workflow and action file parses)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh workflow-yaml
       - name: gitleaks download cache (the script still checks the pin)
         if: ${{ !cancelled() }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -912,6 +930,111 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
+  # The light CI mode's Rust unit tier (PUDDLE_LIGHT_CI=on, ci/scope.sh `unit`): what a pull request to develop and a merge
+  # queue run check in that mode instead of the `rust`, `gates` and `msvc` jobs. Off the mode scope says `unit=false` and it
+  # skips. It restores the `gates` job's Rust cache (its clippy, doc test and desktop shell builds cover these) and saves none.
+  unit:
+    name: unit (fmt, clippy, Rust unit tests)
+    needs: scope
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.unit != 'false' }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: free disk space on a runner that starts low
+        run: ci/free-disk.sh
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: gates
+          save-if: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.146,cargo-deny@0.20.2
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: gates
+      # libayatana-appindicator3-1 and xvfb: the tray unit test opens the tray library at run time on a virtual display it starts itself.
+      - name: System packages (WebKitGTK to compile the desktop shell; the tray library and Xvfb for its unit test)
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          ci/apt-retry.sh sudo apt-get update
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb
+      - name: fmt
+        run: scripts/check.sh fmt
+      - name: quick gates (platform literals, silent skips, early-exit pipes, spawn, test hooks)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh platform-literals silent-skips early-exit-pipes spawn test-hooks
+      - name: clippy (linux)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh clippy
+      - name: cargo-deny (bans, licences, sources)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh deny
+      - name: Rust unit tests (every crate's library tests, all features)
+        if: ${{ !cancelled() }}
+        run: cargo nextest run --workspace --lib --all-features --locked
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The light CI mode's UI unit tier (scope `unit_ui`): the `ui` job's UI gate (format, lint, types, unit and component tests
+  # with coverage, build) without the licences and end-to-end steps. Off the mode it skips.
+  unit-ui:
+    name: unit (UI format, lint, types, unit tests)
+    needs: scope
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.unit_ui != 'false' }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the diff-coverage gate needs the base commit
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Playwright browsers cache
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: ui-chromium
+      - name: Playwright Chromium and its system libraries
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          ../ci/apt-retry.sh npx playwright install-deps chromium
+          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
+            npx playwright install chromium
+          fi
+      - name: UI (format, lint, types, unit and component tests with coverage, build)
+        run: scripts/check.sh ui
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
   # RustSec advisories (`scripts/check.sh advisories`). The result job needs it, but it skips on a pull
   # request to develop and on a merge queue run by its own event rule (not a scope verdict; the result job
   # accepts a skip of a job it does not scope), so a new advisory fails no pull request to develop. It runs where the answer matters: a release path (pull request
@@ -977,7 +1100,7 @@ jobs:
   # develop push the Rust, msvc and UI jobs may also skip when `queue-tested` said so (`pushskip`).
   linux:
     name: linux (all gates)
-    needs: [scope, queue-tested, rust, gates, msvc, light, ui, ui-webkit, advisories, advisories-npm]
+    needs: [scope, queue-tested, rust, gates, msvc, light, ui, ui-webkit, unit, unit-ui, advisories, advisories-npm]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -992,4 +1115,4 @@ jobs:
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
           PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
+        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui

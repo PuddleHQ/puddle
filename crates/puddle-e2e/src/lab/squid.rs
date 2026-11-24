@@ -35,6 +35,10 @@ pub struct SquidOptions {
     /// direct (a corporate proxy's own parent): it is how a lab Squid reaches a name that only
     /// that proxy knows, on a port the hosts file cannot change.
     pub parent_port: Option<u16>,
+    /// Whether Squid resolves names with the machine's own resolver, so it reaches the live
+    /// internet (the radar tests that run real package tools through it). Off by default: a lab
+    /// Squid resolves only [`Self::names`] and a lookup of anything else fails at once.
+    pub live_dns: bool,
 }
 
 impl SquidOptions {
@@ -46,7 +50,15 @@ impl SquidOptions {
             names: vec!["echo.corp.test".into(), "web.corp.test".into()],
             basic_auth: true,
             parent_port: None,
+            live_dns: false,
         }
+    }
+
+    /// Lets Squid resolve every name with the machine's resolver (see [`Self::live_dns`]).
+    #[must_use]
+    pub fn live(mut self) -> Self {
+        self.live_dns = true;
+        self
     }
 
     /// Sends every tunnel through the proxy on loopback port `port` (see [`Self::parent_port`]).
@@ -73,6 +85,8 @@ pub struct Squid {
     dir: tempfile::TempDir,
     stop: Stop,
     started: StartCost,
+    /// The program a process-mode Squid was started from, so [`Squid::resume`] starts the same.
+    bin: Option<std::ffi::OsString>,
 }
 
 enum Stop {
@@ -167,6 +181,11 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
             "http_access deny probe_host\nhttp_access allow all",
         )
     };
+    let dns = if options.live_dns {
+        ""
+    } else {
+        "dns_nameservers 127.0.0.2\n"
+    };
     let parent = options.parent_port.map_or_else(String::new, |parent| {
         format!("cache_peer {LOCAL} parent {parent} 0 no-query no-digest\nnever_direct allow all\n")
     });
@@ -185,7 +204,7 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              {access}\n\
              http_access deny all\n\
              hosts_file {hosts}\n\
-             dns_nameservers 127.0.0.2\n\
+             {dns}\
              {parent}\
              cache deny all\n\
              buffered_logs off\n\
@@ -203,6 +222,21 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
         ),
     )
     .unwrap();
+}
+
+/// Starts a Squid process on `port` from the configuration already in `dir`.
+fn spawn_process(bin: &std::ffi::OsStr, dir: &Path, port: u16) -> Child {
+    let log = fs::File::create(dir.join("squid.stderr")).unwrap();
+    let name = instance_name(port);
+    remove_shared_memory(&name);
+    Command::new(bin)
+        .arg("-f")
+        .arg(dir.join("squid.conf"))
+        .args(["-N", "-Y", "-C", "-n", &name])
+        .stdout(Stdio::null())
+        .stderr(log)
+        .spawn()
+        .unwrap()
 }
 
 /// The path of the request that [`squid_answers`] sends; Squid does not log it.
@@ -292,18 +326,7 @@ impl Squid {
         } else {
             let bin = bin.unwrap();
             require_file(bin, "PUDDLE_SQUID_BIN");
-            let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
-            let name = instance_name(port);
-            remove_shared_memory(&name);
-            let child = Command::new(bin)
-                .arg("-f")
-                .arg(dir.path().join("squid.conf"))
-                .args(["-N", "-Y", "-C", "-n", &name])
-                .stdout(Stdio::null())
-                .stderr(log)
-                .spawn()
-                .unwrap();
-            Stop::Process(child)
+            Stop::Process(spawn_process(bin, dir.path(), port))
         };
         // A failed attempt drops `squid`, which stops it and removes its directory.
         let mut squid = Self {
@@ -312,6 +335,7 @@ impl Squid {
             dir,
             stop,
             started: StartCost::default(),
+            bin: bin.map(std::ffi::OsString::from),
         };
         squid.wait()?;
         let process = match &squid.stop {
@@ -374,6 +398,39 @@ impl Squid {
             }
         }
         Ok(())
+    }
+
+    /// Stops Squid but keeps its port, configuration and logs, as a company proxy that goes
+    /// down: connecting to [`Squid::port`] is refused until [`Squid::resume`]. A stopped Squid
+    /// is stopped again, harmlessly.
+    ///
+    /// # Panics
+    /// With the Docker mode, which cannot start again on the same port.
+    pub fn pause(&mut self) {
+        assert!(
+            self.bin.is_some(),
+            "pause works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER"
+        );
+        if let Stop::Process(child) = &mut self.stop {
+            stop(child);
+            remove_shared_memory(&instance_name(self.port));
+        }
+    }
+
+    /// Starts a [`Squid::pause`]d Squid again on the same port with the same configuration (the
+    /// access log keeps what it had).
+    ///
+    /// # Panics
+    /// With the Docker mode, or when it does not come up again.
+    pub fn resume(&mut self) {
+        assert!(
+            self.bin.is_some(),
+            "resume works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER"
+        );
+        let bin = self.bin.clone().unwrap();
+        self.stop = Stop::Process(spawn_process(&bin, self.dir.path(), self.port));
+        self.wait()
+            .unwrap_or_else(|why| panic!("Squid did not come back on port {}: {why}", self.port));
     }
 
     /// The port Squid listens on (`127.0.0.1`).

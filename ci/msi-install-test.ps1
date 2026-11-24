@@ -861,7 +861,31 @@ public static class PuddleWin {
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc p, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr h);
   delegate bool EnumProc(IntPtr h, IntPtr l);
+  // Every visible top-level window of the processes (or of a MsiDialog class) with its child controls:
+  // each row is "top handle|top class|top title|child handle|child class|child text|child enabled".
+  // Windows Installer draws plain Win32 controls, so this reads them when UI Automation shows none.
+  public static string[] DialogControls(uint[] pids) {
+    var rows = new List<string>();
+    EnumWindows((h, l) => {
+      uint owner; GetWindowThreadProcessId(h, out owner);
+      var cls = new StringBuilder(256); GetClassName(h, cls, 256);
+      if (Array.IndexOf(pids, owner) < 0 && !cls.ToString().StartsWith("MsiDialog")) return true;
+      if (!IsWindowVisible(h)) return true;
+      var title = new StringBuilder(256); GetWindowText(h, title, 256);
+      EnumChildWindows(h, (c, l2) => {
+        var cc = new StringBuilder(256); GetClassName(c, cc, 256);
+        var ct = new StringBuilder(1024); GetWindowText(c, ct, 1024);
+        rows.Add(h.ToInt64() + "|" + cls + "|" + title + "|" + c.ToInt64() + "|" + cc + "|" + ct.ToString().Replace("\r", " ").Replace("\n", " ") + "|" + IsWindowEnabled(c));
+        return true;
+      }, IntPtr.Zero);
+      return true;
+    }, IntPtr.Zero);
+    return rows.ToArray();
+  }
   // The titles of the process's visible top-level windows that have a title bar: what a person sees
   // of the program besides its tray icon.
   public static string[] VisibleWindows(uint pid) {
@@ -912,7 +936,24 @@ function Get-InstallerDialogs {
     }
 }
 
+# The dialogs as Win32 controls: Static text and Button children of the installer's windows.
+function Get-InstallerDialogsWin32 {
+    $ids = [uint32[]]@(Get-Process -Name msiexec -ErrorAction SilentlyContinue | ForEach-Object Id)
+    $rows = foreach ($r in [PuddleWin]::DialogControls($ids)) {
+        $f = $r -split '\|', 7
+        [pscustomobject]@{ Top = $f[0]; Title = $f[2]; Handle = [int64]$f[3]; Class = $f[4]; Text = $f[5]; Enabled = ($f[6] -eq 'True') }
+    }
+    foreach ($g in @($rows) | Group-Object Top) {
+        $texts = @($g.Group | Where-Object { $_.Class -eq 'Static' -and $_.Text.Trim() } | ForEach-Object { $_.Text.Trim() })
+        $buttons = @($g.Group | Where-Object { $_.Class -eq 'Button' -and $_.Text.Trim() } | ForEach-Object {
+            [pscustomobject]@{ Name = $_.Text.Trim(); Enabled = $_.Enabled; Element = $null; Handle = $_.Handle } })
+        if ($texts.Count -eq 0 -and $buttons.Count -eq 0) { continue }
+        [pscustomobject]@{ Title = $g.Group[0].Title; Texts = $texts; Buttons = $buttons }
+    }
+}
+
 function Invoke-DialogButton($Button) {
+    if (-not $Button.Element) { [void][PuddleWin]::PostMessage([IntPtr]$Button.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero); return }
     $handle = $Button.Element.Current.NativeWindowHandle
     if ($handle -ne 0) { [void][PuddleWin]::PostMessage([IntPtr]$handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero); return } # BM_CLICK
     $Button.Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
@@ -936,7 +977,9 @@ function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$Time
             Stop-Process -Id $p.Id -Force
             Fail "msiexec $($Arguments -join ' ') was still running after $TimeoutSec s; dialogs so far: $(($seen.Keys) -join ' || ')"
         }
-        foreach ($d in @(Get-InstallerDialogs)) {
+        $found = @(Get-InstallerDialogs)
+        if ($found.Count -eq 0) { $found = @(Get-InstallerDialogsWin32) }
+        foreach ($d in $found) {
             $key = "$($d.Title) | $($d.Texts -join ' / ')"
             if ($seen.Contains($key)) { continue }
             $seen[$key] = $d
@@ -958,6 +1001,8 @@ function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$Time
             $top = [System.Windows.Automation.AutomationElement]::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition)
             $rows = @($top | ForEach-Object { "$($_.Current.ProcessId) '$($_.Current.ClassName)' '$($_.Current.Name)'" })
             $note = "no dialog read after 20 s; msiexec pids: $((Get-Process -Name msiexec -ErrorAction SilentlyContinue | ForEach-Object Id) -join ','); top-level windows: $($rows -join ' ; ')"
+            $controls = @([PuddleWin]::DialogControls([uint32[]]@(Get-Process -Name msiexec -ErrorAction SilentlyContinue | ForEach-Object Id)))
+            $note += "; win32 controls: $($controls -join ' ;; ')"
             Write-Host $note
             Add-Content -LiteralPath $dialogLog -Value $note
         }

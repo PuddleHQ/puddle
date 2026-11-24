@@ -563,6 +563,33 @@ async fn an_orphan_whose_get_says_it_is_down_is_not_stopped() {
 }
 
 #[tokio::test]
+async fn an_orphan_left_starting_draining_or_paused_is_killed_and_its_record_removed() {
+    for held in [
+        WorkspaceStatus::Starting,
+        WorkspaceStatus::Draining,
+        WorkspaceStatus::Paused,
+    ] {
+        let rt = FakeRuntime::new();
+        let name = SandboxName::new("stuck").unwrap();
+        let left = rt.create(spec("stuck")).await.unwrap();
+        assert!(rt.set_status(&name, held));
+        // `get` refuses a sandbox that is not running, so the stop path cannot reach it.
+        let report = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(report.stopped, vec![name.clone()], "{held:?}");
+        assert!(
+            report.failures.is_empty(),
+            "{held:?}: {:?}",
+            report.failures
+        );
+        assert_eq!(report.removed, vec![name.clone()], "{held:?}");
+        assert_eq!(status_of(&rt, "stuck").await, None, "{held:?}");
+        drop(left);
+    }
+}
+
+#[tokio::test]
 async fn reconcile_fails_only_when_the_runtime_cannot_list() {
     for op in [Op::List, Op::StaleDirs, Op::ListVolumes] {
         let rt = FakeRuntime::new();

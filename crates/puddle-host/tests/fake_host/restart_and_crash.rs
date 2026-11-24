@@ -375,6 +375,8 @@ enum VmAfterKill {
     Died,
     /// It went on running (no watchdog or job object ended it): the next start must stop it.
     LeftRunning,
+    /// It was left in the state the stop had put it in: the runtime refuses to connect to it.
+    LeftDraining,
 }
 
 /// Puddle is killed (no shutdown) while a stop runs, at the stop's first guest command. Whatever
@@ -384,7 +386,11 @@ enum VmAfterKill {
 // requests need one; on the one CPU the nightly stress job pins to, the default of one worker starved them for 20 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn puddle_killed_during_a_stop_leaves_the_workspace_stopped_or_crashed_and_a_start_works() {
-    for vm in [VmAfterKill::Died, VmAfterKill::LeftRunning] {
+    for vm in [
+        VmAfterKill::Died,
+        VmAfterKill::LeftRunning,
+        VmAfterKill::LeftDraining,
+    ] {
         let rig = Rig::named_ids();
         let host = rig.start().await;
         let api1 = api(&host);
@@ -408,6 +414,9 @@ async fn puddle_killed_during_a_stop_leaves_the_workspace_stopped_or_crashed_and
         let set = match vm {
             VmAfterKill::Died => rig.runtime.set_status(&sandbox, WorkspaceStatus::Crashed),
             VmAfterKill::LeftRunning => rig.runtime.outlive_owner(&sandbox),
+            VmAfterKill::LeftDraining => {
+                rig.runtime.set_status(&sandbox, WorkspaceStatus::Draining)
+            }
         };
         assert!(set, "{vm:?}");
 

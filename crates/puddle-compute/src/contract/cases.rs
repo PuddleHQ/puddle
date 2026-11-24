@@ -65,6 +65,7 @@ cases! {
     get_readopts_a_running_sandbox_without_owning_it => "get re-adopts a running sandbox without owning it",
     unknown_names_are_not_found => "an unknown or removed name is not found",
     remove_needs_a_stopped_sandbox_and_frees_the_name => "remove refuses a running sandbox and frees the name of a stopped one",
+    kill_ends_a_vm_by_name_and_is_idempotent => "kill ends a running VM without a handle's help, a down one is a no-op, an unknown name is not found",
     exec_exit_codes_are_exact => "exit codes 0, 3 and 127 come through exactly",
     signal_killed_exec_is_a_failure => "a SIGKILLed command reports a failure code, not success",
     exec_timeout_is_enforced => "a command that outlives its timeout fails with ExecTimeout",
@@ -399,6 +400,26 @@ async fn remove_needs_a_stopped_sandbox_and_frees_the_name<R: Runtime>(c: &Case<
         "still listed after remove"
     );
     let _again = step("create again", rt.create(spec(c, &name))).await?;
+    Ok(())
+}
+
+async fn kill_ends_a_vm_by_name_and_is_idempotent<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let _sb = step("create", rt.create(spec(c, &name))).await?;
+    step("kill", rt.kill(&name)).await?;
+    let after = status_in_list(rt, &name).await?;
+    check!(
+        after.is_some_and(WorkspaceStatus::is_down),
+        "after kill the sandbox reads {after:?}, want a down state"
+    );
+    step("kill again", rt.kill(&name)).await?;
+    let gone = c.sandbox("never-created")?;
+    let err = fails("kill unknown", rt.kill(&gone)).await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
     Ok(())
 }
 

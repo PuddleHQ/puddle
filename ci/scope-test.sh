@@ -256,7 +256,7 @@ printf 'ui/src/a.ts\nui/src/b.ts\n' >"$tmp/ui.txt"
 MAIN_ENV=()
 run_main() {
     local event=$1 base=$2 mode=$3 files=$4 head=${5:-abc123}
-    env -u PUDDLE_QUEUE -u PUDDLE_TIER PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
+    env -u PUDDLE_QUEUE -u PUDDLE_TIER -u PUDDLE_LIGHT_CI PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
         PR_HEAD_SHA="$head" FAKE_MODE="$mode" FAKE_FILES="$files" FAKE_HEAD=abc123 FAKE_CONTENTS="$tmp/contents" GITHUB_OUTPUT="$tmp/out" \
         "${MAIN_ENV[@]}" "$scope" 2>/dev/null
     local rc=$?
@@ -270,7 +270,7 @@ main_case() { # main_case <label> <want class> <args of run_main>
     grep -q "^class=$exp$" <<<"$out" || bad "main: $label: want class $exp, got: $(tr '\n' ' ' <<<"$out")"
     grep -q '^rc=0$' <<<"$out" || bad "main: $label: exit status not 0"
     grep -q "^class=$exp$" "$tmp/out" || bad "main: $label: GITHUB_OUTPUT lacks class=$exp"
-    [ "$(grep -c . "$tmp/out")" = 10 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the ten outputs"
+    [ "$(grep -c . "$tmp/out")" = 12 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the twelve outputs"
     grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
 printf '.github/workflows/ci.yml\ncrates/puddle-host/tests/fake_host.rs\n' >"$tmp/other-workflow.txt"
@@ -407,6 +407,47 @@ MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_QUEUE=on)
 main_case "queue: rust-only merge group" rust merge_group "" ok "$tmp/rust.txt"
 want_out win_rust=true "queue: a rust-only merge group runs the Windows tests"
 MAIN_ENV=()
+
+# The light CI mode (PUDDLE_LIGHT_CI=on exactly): a pull request to develop and a merge queue run get
+# every heavy output false and the unit tier the Rust and UI answers; every other event, a pull
+# request to main and a doubtful file list run the full set with the unit tier off.
+light_ci_want() { # light_ci_want <label> <want "ci_rust win_rust ui vm unit unit_ui"> <args of main_case>
+    local label=$1 exp=$2 got
+    shift 2
+    main_case "light CI: $label" "$@"
+    got=$(awk -F= '{v[$1]=$2} END {print v["ci_rust"], v["win_rust"], v["ui"], v["vm"], v["unit"], v["unit_ui"]}' "$tmp/out")
+    [ "$got" = "$exp" ] || bad "main: light CI: $label: got '$got', want '$exp'"
+}
+HEAVY_OFF="false false false false"
+# A crate no UI or VM job builds: the Rust unit tier only.
+printf 'crates/puddle-freshness/src/lib.rs\n' >"$tmp/rust-only.txt"
+MAIN_ENV=(PUDDLE_LIGHT_CI=on)
+light_ci_want "rust-only pull request" "$HEAVY_OFF true false" rust pull_request develop ok "$tmp/rust-only.txt"
+light_ci_want "ui-only pull request" "$HEAVY_OFF false true" ui pull_request develop ok "$tmp/ui.txt"
+light_ci_want "docs-only pull request" "$HEAVY_OFF false false" docs pull_request develop ok "$tmp/docs.txt"
+light_ci_want "always-run path" "$HEAVY_OFF true true" full pull_request develop ok "$tmp/rename.txt"
+light_ci_want "fixture-only pull request" "$HEAVY_OFF true true" mixed pull_request develop ok "$tmp/fixture.txt"
+light_ci_want "a crate the UI tests build" "$HEAVY_OFF true true" rust pull_request develop ok "$tmp/rust.txt"
+light_ci_want "pull request to main" "true true true true false false" full pull_request main ok "$tmp/ui.txt"
+light_ci_want "push" "true true true true false false" full push develop ok "$tmp/ui.txt"
+light_ci_want "schedule" "true true true true false false" full schedule develop ok "$tmp/ui.txt"
+light_ci_want "workflow_dispatch" "true true true true false false" full workflow_dispatch develop ok "$tmp/ui.txt"
+light_ci_want "file list fails" "true true true true false false" full pull_request develop error "$tmp/ui.txt"
+light_ci_want "stale head" "true true true true false false" full pull_request develop ok "$tmp/ui.txt" deadbeef
+MAIN_ENV=(PUDDLE_LIGHT_CI=on PUDDLE_QUEUE=on)
+WANT_LIGHT=true light_ci_want "with the light pull request mode too" "$HEAVY_OFF true false" rust pull_request develop ok "$tmp/rust-only.txt"
+MAIN_ENV=(PUDDLE_LIGHT_CI=on MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
+light_ci_want "merge group, rust-only diff" "$HEAVY_OFF true false" rust merge_group "" ok "$tmp/rust-only.txt"
+light_ci_want "merge group, always-run path" "$HEAVY_OFF true true" full merge_group "" ok "$tmp/rename.txt"
+light_ci_want "merge group, compare fails" "true true true true false false" full merge_group "" error "$tmp/ui.txt"
+MAIN_ENV=(PUDDLE_LIGHT_CI=on PUDDLE_TIER=on MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
+light_ci_want "merge group in the nightly tier" "$HEAVY_OFF false true" ui merge_group "" ok "$tmp/ui.txt"
+for v in ON On true 1 yes "on " off ""; do
+    MAIN_ENV=("PUDDLE_LIGHT_CI=$v")
+    light_ci_want "PUDDLE_LIGHT_CI='$v' is not on" "true true false false false false" rust pull_request develop ok "$tmp/rust-only.txt"
+done
+MAIN_ENV=()
+light_ci_want "PUDDLE_LIGHT_CI unset" "true true false false false false" rust pull_request develop ok "$tmp/rust-only.txt"
 
 # The nightly tier through the whole script: only a merge queue run with PUDDLE_TIER=on, and the
 # outputs of the group's diff; any doubt prints the full set with nothing deferred.
@@ -635,6 +676,8 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
 matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
+# ci.yml's light CI unit tier, apart: its two outputs vary independently of the others (one matrix would be 81 states a context).
+matrix_bg ci-unit "" unit,unit_ui unit=unit unit-ui=unit_ui
 matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui
 matrix_bg vm-linux --nightly-skips vm build=vm,queue agent=vm,queue tests=vm,queue
 matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
@@ -774,7 +817,7 @@ if python3 -c 'import yaml' 2>/dev/null; then
 import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
-    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit"),
+    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui"),
     "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue agent=vm,queue tests=vm,queue"),
     "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
@@ -815,6 +858,7 @@ for wf, (rid, rname, want_specs) in results.items():
         bad.append(f"{wf}: scope job has no output light")
     scope_env = [s for s in sc["steps"] if s.get("run") == "ci/scope.sh"][0].get("env", {})
     for k, v in (("PUDDLE_QUEUE", "${{ vars.PUDDLE_QUEUE }}"),
+                 ("PUDDLE_LIGHT_CI", "${{ vars.PUDDLE_LIGHT_CI }}"),
                  ("MERGE_GROUP_BASE_SHA", "${{ github.event.merge_group.base_sha }}"),
                  ("MERGE_GROUP_HEAD_SHA", "${{ github.event.merge_group.head_sha }}"),
                  ("PR_BASE_REF", "${{ github.event.pull_request.base.ref }}")):
@@ -885,6 +929,9 @@ for wf, (rid, rname, want_specs) in results.items():
             for part in ("github.event_name=='push'", "github.ref=='refs/heads/develop'", "vars.PUDDLE_QUEUE_SKIP_PUSH=='on'"):
                 if part not in cond:
                     bad.append(f"ci: job queue-tested if={cond!r} lacks {part}")
+            # In the light CI mode a green queue run tested only the unit tier: the lookup must know the mode.
+            if "PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}" not in yaml.safe_dump(jobs[j]["steps"], width=1000).replace("'", ""):
+                bad.append("ci: the queue-tested lookup step needs PUDDLE_LIGHT_CI from vars")
         elif not (wf == "windows" and j == "release"):
             bad.append(f"{wf}: needed job {j} is neither scoped nor the release build")
     if wf == "windows" and "merge_group" in flat(jobs["release"].get("if", "")):

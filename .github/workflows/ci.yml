@@ -544,6 +544,9 @@ jobs:
       - name: spawn (a host process start opens no console window on Windows)
         if: ${{ !cancelled() }}
         run: scripts/check.sh spawn
+      - name: workflow-yaml (every workflow and action file parses)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh workflow-yaml
       - name: test hooks (a test-only feature stays out of release builds; a test that starts a doctor sets az_search_path)
         if: ${{ !cancelled() }}
         run: scripts/check.sh test-hooks
@@ -625,7 +628,10 @@ jobs:
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
         run: scripts/check.sh openapi
-      - name: doc tests and rustdoc
+      - name: rustdoc (warnings are errors)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh rustdoc
+      - name: doc tests
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
       # Off the light mode (worked out again from the event, not from `scope`) the gate must have run.
@@ -753,6 +759,9 @@ jobs:
       - name: quality (every unsafe, suppression and TODO says why)
         if: ${{ !cancelled() }}
         run: scripts/check.sh quality
+      - name: workflow-yaml (every workflow and action file parses)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh workflow-yaml
       - name: gitleaks download cache (the script still checks the pin)
         if: ${{ !cancelled() }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -24,6 +24,10 @@
 #             the same for the WebKit half of the Linux UI end-to-end tests: the `ui-webkit` job skips
 #   light     the light pull request mode (below): the Windows clippy and UI jobs and the VM jobs skip, and so do the
 #             Linux steps marked for it (the Windows tests job does not: it follows win_rust); true only in that mode, so a lost output runs everything
+#   unit      the light CI mode's Rust unit tier (ci.yml's `unit` job: fmt, clippy, deny, the quick gates, the Rust unit tests);
+#             true only in that mode (below) when the change needs the Rust gates, so a lost output runs it too
+#   unit_ui   the light CI mode's UI unit tier (ci.yml's `unit-ui` job: format, lint, types, unit tests); true only in that mode
+#             when the change needs the UI gates
 #   class     full | docs | ui | rust | mixed (a label for the log and the tests)
 #
 # Nightly tier: with the repository variable PUDDLE_TIER set to `on`, a merge queue run skips the
@@ -42,6 +46,16 @@
 # stale file list, 300 or more files, an empty list, a path no rule names, and any error in this
 # script all give `true` for every scoped output (and `light=false`). The job reading the outputs
 # also treats a missing output as `true`.
+#
+# Light CI mode: with the repository variable PUDDLE_LIGHT_CI set to `on`, a pull request to develop
+# and a merge queue run run only the unit tier: every heavy output (ci_rust, win_rust, ui, vm) is
+# `false`, so the Rust, UI, msvc, Windows and VM jobs skip and the result jobs accept it, and `unit`
+# and `unit_ui` take the values ci_rust and ui would have had. ci.yml's `light` job (the typos, spdx,
+# ShellCheck, standalone, quality and secrets gates) runs because ci_rust is false. The full set then runs by
+# hand (`workflow_dispatch`, every output true) and on every push to develop (ci.yml). A file list
+# that cannot be trusted still runs everything (fail open), and so does any other event, any other
+# value of the variable and a pull request to another branch. The queue-tested lookup never counts a
+# merge queue run in this mode (ci/should-run.sh).
 #
 # A merge queue run (`merge_group`) is scoped by the diff between the queue's base and the commit
 # it tests (the GitHub compare API), which covers every pull request in the group.
@@ -140,7 +154,7 @@ vm_unrelated() {
 }
 
 full_outputs() {
-    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\ndefer_linux_webkit=false\nlight=false\nclass=full\n'
+    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\ndefer_linux_webkit=false\nlight=false\nunit=false\nunit_ui=false\nclass=full\n'
 }
 
 # Nightly tier: the repository variable PUDDLE_TIER is exactly `on` and this is a merge queue run.
@@ -208,6 +222,38 @@ light_mode() {
     [ "${PUDDLE_QUEUE:-}" = on ] && [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "${PR_BASE_REF:-}" = develop ]
 }
 
+# Light CI mode: the repository variable PUDDLE_LIGHT_CI is exactly `on` and this is a merge queue run
+# or a pull request to develop (develop is the only branch with a merge queue).
+light_ci_mode() {
+    [ "${PUDDLE_LIGHT_CI:-}" = on ] || return 1
+    case ${GITHUB_EVENT_NAME:-} in
+    merge_group) return 0 ;;
+    pull_request) [ "${PR_BASE_REF:-}" = develop ] ;;
+    *) return 1 ;;
+    esac
+}
+
+# stdin: classify's outputs. stdout: the light CI mode's: the unit tier takes the Rust and UI answers, every heavy job skips.
+light_ci() {
+    local line ci_rust=true ui=true
+    local -a lines=()
+    while IFS= read -r line; do
+        case $line in
+        ci_rust=*) ci_rust=${line#*=} ;;
+        ui=*) ui=${line#*=} ;;
+        esac
+        lines+=("$line")
+    done
+    for line in "${lines[@]}"; do
+        case $line in
+        ci_rust=* | win_rust=* | ui=* | vm=*) echo "${line%%=*}=false" ;;
+        unit=*) echo "unit=$ci_rust" ;;
+        unit_ui=*) echo "unit_ui=$ui" ;;
+        *) echo "$line" ;;
+        esac
+    done
+}
+
 # stdin: paths. stdout: the outputs.
 classify() {
     local always=0 gate=0 fixture=0 ui=0 crates=0 vm=0 e2e=0 n=0 p c name esc=" " j
@@ -259,7 +305,7 @@ classify() {
         case "$esc" in *" clippy "*) ;; *) d_clip=true ;; esac
         case "$esc" in *" webkit "*) ;; *) d_wk=true ;; esac
     fi
-    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\ndefer_vm_windows=%s\ndefer_win_ui=%s\ndefer_win_clippy=%s\ndefer_linux_webkit=%s\nlight=false\nclass=%s\n' \
+    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\ndefer_vm_windows=%s\ndefer_win_ui=%s\ndefer_win_clippy=%s\ndefer_linux_webkit=%s\nlight=false\nunit=false\nunit_ui=false\nclass=%s\n' \
         "$ci_rust" "$win_rust" "$uib" "$vmb" "$d_vm" "$d_ui" "$d_clip" "$d_wk" "$class"
 }
 
@@ -326,6 +372,10 @@ scope() {
     if light_mode; then
         echo "scope: light mode (PUDDLE_QUEUE=on, pull request to develop): the merge queue runs the full set" >&2
         out=${out/light=false/light=true}
+    fi
+    if light_ci_mode; then
+        echo "scope: light CI mode (PUDDLE_LIGHT_CI=on): only the unit tier runs here; the full set runs by hand and on the push to develop" >&2
+        out=$(light_ci <<<"$out")
     fi
     printf '%s\n' "$out"
 }
@@ -442,9 +492,9 @@ main() {
     full-steps) shift; full_steps "$@" ;;
     "")
         out=$(scope) || out=$(full_outputs)
-        # Anything but the ten keys (or a lost one) means something broke: run everything.
-        out=$(grep -E '^(ci_rust|win_rust|ui|vm|defer_vm_windows|defer_win_ui|defer_win_clippy|defer_linux_webkit|light|class)=' <<<"$out")
-        [ "$(grep -c . <<<"$out")" = 10 ] || out=$(full_outputs)
+        # Anything but the twelve keys (or a lost one) means something broke: run everything.
+        out=$(grep -E '^(ci_rust|win_rust|ui|vm|defer_vm_windows|defer_win_ui|defer_win_clippy|defer_linux_webkit|light|unit|unit_ui|class)=' <<<"$out")
+        [ "$(grep -c . <<<"$out")" = 12 ] || out=$(full_outputs)
         echo "$out"
         [ -z "${GITHUB_OUTPUT:-}" ] || echo "$out" >>"$GITHUB_OUTPUT"
         [ -z "${GITHUB_STEP_SUMMARY:-}" ] || {

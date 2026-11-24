@@ -488,6 +488,38 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
 }
 
 #[test]
+fn a_failure_the_setup_hook_stored_is_what_run_returns_and_tauri_s_own_otherwise() {
+    let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
+        op: "assign",
+        source: std::io::Error::other("denied"),
+    })));
+    let tauri_error = || tauri::Error::InvalidWebviewUrl("x");
+    assert!(matches!(
+        build_failure(&stored, tauri_error()),
+        ShellError::Containment(_)
+    ));
+    // Taken once: a second failure is Tauri's.
+    assert!(matches!(
+        build_failure(&stored, tauri_error()),
+        ShellError::Tauri(_)
+    ));
+}
+
+#[test]
+fn the_installer_refuses_to_replace_a_newer_version_with_an_older_one() {
+    // `bundle.windows.allowDowngrades` is what makes the WiX template write the
+    // DowngradeErrorMessage; Tauri's default (true) lets an older package install over a newer
+    // one. The compiled-in context leaves the bundle section out, so the file itself is read.
+    // ci/msi-install-test.ps1 runs the refusal on a real package.
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    assert_eq!(
+        config["bundle"]["windows"]["allowDowngrades"],
+        serde_json::Value::Bool(false)
+    );
+}
+
+#[test]
 fn the_probe_opens_with_the_clipboard_setting_the_environment_names_and_refuses_a_typo() {
     let page = Some("http://probe.localhost:4900/");
     let with = |value| SandboxProbe::parse(page, Some("9444"), None, None, value);

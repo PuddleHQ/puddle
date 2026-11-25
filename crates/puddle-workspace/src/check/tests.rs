@@ -58,7 +58,7 @@ fn malformed_or_unfinished_output_is_refused() {
         ("R\ta\nM\tU\tmany\nD\n", "bad count line"),
         ("D\nO\tlate\n", "after the end marker"),
     ] {
-        let err = parse(out).unwrap_err();
+        let err = parse(out).unwrap_err().to_string();
         assert!(err.contains(want), "{out:?}: {err}");
     }
 }
@@ -84,6 +84,7 @@ fn hostile_output_stays_bounded() {
     assert!(
         parse(&format!("{repos}D\n"))
             .unwrap_err()
+            .to_string()
             .contains("checkouts")
     );
 

@@ -63,6 +63,6 @@ pub use runtime::{
     Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo, VolumeSpec,
 };
 pub use spec::{
-    DiskSize, FileMount, MountKind, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,
-    check_checkout_dir,
+    CheckoutDirRefusal, DiskSize, FileMount, MountKind, NetworkPolicy, OwnedDisk, SandboxSpec,
+    VolumeMount, VsockRoute, check_checkout_dir,
 };

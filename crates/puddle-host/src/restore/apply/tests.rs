@@ -4,7 +4,7 @@ use std::sync::Arc;
 use puddle_store::{Limits, Store, SystemClock};
 
 use super::*;
-use crate::restore::stage_archive;
+use crate::restore::{BookRefusal, stage_archive};
 
 fn sql(paths: &HostPaths, statements: &str) {
     rusqlite::Connection::open(paths.store())
@@ -410,7 +410,10 @@ fn a_failed_swap_puts_the_moved_parts_back() {
     // The database and the settings swap, then the workspace list fails: the first two go back.
     let failing = |paths: &HostPaths, new: &Path, old: &Path, part: &str| {
         if part == "workspaces.json" {
-            return Err(RestoreError::Merge("the disk went away".into()));
+            return Err(RestoreError::Merge(BookRefusal::Unreadable {
+                path: paths.workspace_book(),
+                source: io::Error::other("the disk went away"),
+            }));
         }
         swap_part(paths, new, old, part)
     };

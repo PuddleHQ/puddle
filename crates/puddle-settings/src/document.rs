@@ -39,7 +39,7 @@ pub enum SettingsError {
         /// The newest version this build reads.
         supported: u32,
     },
-    /// A migration step failed.
+    /// No migration step starts from this version.
     #[error("cannot migrate {kind} settings from schema version {from}: {reason}")]
     Migration {
         /// The document kind.

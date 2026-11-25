@@ -9,7 +9,7 @@ fn restored() -> RestoredDatabase {
     }
 }
 
-fn write(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, body).unwrap();
@@ -173,7 +173,7 @@ fn lists_in_a_format_older_than_three_are_refused_and_the_message_says_why() {
         "there.json",
         r#"{"version":2,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
     );
-    let err = check_book_versions(&here, &there).unwrap_err();
+    let err = check_book_versions(&here, &there).unwrap_err().to_string();
     assert!(
         err.contains("format 2") && err.contains("format 4"),
         "{err}"
@@ -184,7 +184,7 @@ fn lists_in_a_format_older_than_three_are_refused_and_the_message_says_why() {
     );
     assert!(err.contains("choose Replace"), "{err}");
     // The same the other way round names this machine's list.
-    let err = check_book_versions(&there, &here).unwrap_err();
+    let err = check_book_versions(&there, &here).unwrap_err().to_string();
     assert!(err.contains("this machine's format 2"), "{err}");
     let err = book(
         ApplyMode::Add,
@@ -278,7 +278,7 @@ fn a_document_that_cannot_be_read_back_is_an_io_error() {
 fn a_workspace_list_that_cannot_be_read_is_named() {
     let dir = tempfile::tempdir().unwrap();
     // A folder where the list should be.
-    let err = read_book(dir.path()).unwrap_err();
+    let err = read_book(dir.path()).unwrap_err().to_string();
     assert!(err.contains("cannot read"), "{err}");
 }
 

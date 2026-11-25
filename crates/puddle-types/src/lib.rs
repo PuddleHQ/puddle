@@ -38,6 +38,7 @@ mod local;
 mod memory;
 mod merge;
 mod name;
+mod origin_refusal;
 pub mod panic_hook;
 mod percent;
 mod policy;
@@ -84,6 +85,7 @@ pub use source_name::{
 pub use source_spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 
 pub use hex::hex_lower;
+pub use origin_refusal::OriginRefusal;
 pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,

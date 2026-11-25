@@ -145,8 +145,13 @@ test("a fresh install is led through every step and then opens on the workspaces
     heading(page, "Which hosts should Puddle decrypt?"),
   ).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: /except a known list/ }),
+    page.getByRole("radio", { name: /except sites known to break/ }),
   ).toBeChecked();
+  const more = page.getByText("More details", { exact: true });
+  await expect(more).toBeVisible();
+  await expect(page.getByText(/own certificate, which/)).toBeHidden();
+  await more.click();
+  await expect(page.getByText(/own certificate, which/)).toBeVisible();
   const kept = page.waitForResponse(
     (r) =>
       r.request().method() === "PUT" && r.url().endsWith("/api/interception"),
@@ -436,7 +441,7 @@ for (const scheme of ["light", "dark"] as const) {
       }
       if (path === "/welcome/interception") {
         await expect(
-          page.getByRole("radio", { name: /except a known list/ }),
+          page.getByRole("radio", { name: /except sites known to break/ }),
         ).toBeVisible();
       }
       await expectNoAxeViolations(page, path);

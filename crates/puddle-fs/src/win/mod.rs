@@ -200,6 +200,32 @@ fn owner_only_descriptor(rights: &str, inherit: bool) -> io::Result<LocalBox> {
     LocalBox::security_descriptor(&owner_only_sddl(&sid, rights, inherit))
 }
 
+/// Why a file's access list is not owner-only. It displays as the finding's detail line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum NotOwnerOnly {
+    /// The file has no access list, which grants everyone access.
+    #[error("it has no access list, which grants everyone access")]
+    NoAccessList,
+    /// An entry names an account other than the current user.
+    #[error("entry {index} grants access to another account")]
+    OtherAccount {
+        /// The entry's position.
+        index: u32,
+    },
+    /// An entry is a deny, audit or other entry.
+    #[error("entry {index} is not a plain allow entry")]
+    NotPlainAllow {
+        /// The entry's position.
+        index: u32,
+    },
+    /// An entry is too small to hold the SID it claims.
+    #[error("entry {index} is too short to hold a SID")]
+    TooShort {
+        /// The entry's position.
+        index: u32,
+    },
+}
+
 /// Reads the DACL of an open file: `Ok(())` if it is non-null and every ACE allows only the
 /// current user, otherwise `Err(reason)`. Needs the handle opened with `READ_CONTROL`, which any
 /// read open has.
@@ -208,8 +234,7 @@ fn owner_only_descriptor(rights: &str, inherit: bool) -> io::Result<LocalBox> {
 ///
 /// The outer error is an OS failure reading the DACL or the user's SID; the inner one says why
 /// the file is not owner-only.
-// string-error-ok: the inner text is the finding's detail line; the OS failure is the typed outer error
-pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
+pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), NotOwnerOnly>> {
     let mut dacl: *mut ACL = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
     // SAFETY: the handle is open for the call; the out-pointers are valid; `descriptor` is freed
@@ -232,9 +257,7 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
     // SAFETY: `descriptor` came from GetSecurityInfo, which allocates with LocalAlloc.
     let _owned = unsafe { LocalBox::from_raw(descriptor) };
     if dacl.is_null() {
-        return Ok(Err(
-            "it has no access list, which grants everyone access".to_owned()
-        ));
+        return Ok(Err(NotOwnerOnly::NoAccessList));
     }
     let mut info = ACL_SIZE_INFORMATION::default();
     // SAFETY: `dacl` is a valid ACL inside `descriptor`; `info` is the size the class needs.
@@ -260,16 +283,14 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
                 // SAFETY: `allowed_sid` showed the whole SID is inside `ace`; `EqualSid` only
                 // reads it, and the user's SID is valid while `user` lives.
                 if unsafe { EqualSid(sid, user.sid()) } == 0 {
-                    return Ok(Err(format!(
-                        "entry {index} grants access to another account"
-                    )));
+                    return Ok(Err(NotOwnerOnly::OtherAccount { index }));
                 }
             }
             Err(AceRefusal::NotAllowEntry) => {
-                return Ok(Err(format!("entry {index} is not a plain allow entry")));
+                return Ok(Err(NotOwnerOnly::NotPlainAllow { index }));
             }
             Err(AceRefusal::TooShort) => {
-                return Ok(Err(format!("entry {index} is too short to hold a SID")));
+                return Ok(Err(NotOwnerOnly::TooShort { index }));
             }
         }
     }

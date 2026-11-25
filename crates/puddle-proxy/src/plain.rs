@@ -304,7 +304,7 @@ where
         }
     };
     if let Some((refusal, change)) = refuse_by_request_rule(
-        proxy,
+        &proxy.seen(&request.workspace),
         &request,
         &incoming.head,
         Some(&incoming.parsed.target),

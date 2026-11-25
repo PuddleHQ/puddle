@@ -34,6 +34,27 @@ pub(crate) async fn admit(
     (admitted, event)
 }
 
+/// The refusal of SSH to a Git host's name that Puddle does not serve
+/// ([`super::plan::ConnectionPlan::SshRefused`]), with its audit event. It comes instead of
+/// [`admit`]: before the name stage (so the reason is the protocol, not a toggle that turning on
+/// would only lead to the same refusal) and before any rule, so it never becomes a pending row or
+/// an allow.
+pub(crate) async fn refuse_ssh(
+    proxy: &Proxy,
+    request: &EgressRequest,
+) -> (Refusal, ConnectionEvent) {
+    let event = ConnectionEvent::new(
+        request,
+        ConnectionDecision::Blocked,
+        ConnectionReason::Blocked(BlockReason::SshUnsupported),
+    );
+    let mut refusal = block(request, &[BlockReason::SshUnsupported]);
+    if let Some(message) = proxy.azure_devops_ssh_message(request).await {
+        refusal.message = message;
+    }
+    (refusal, event)
+}
+
 /// Records each decision `admit` takes in `event`.
 fn note(
     event: &mut ConnectionEvent,
@@ -102,18 +123,6 @@ async fn admit_into(
 ) -> Result<Admitted, Refusal> {
     let host = &request.host;
     let port = request.port;
-    // SSH to a Git host's name is refused whatever the destination is: before the name stage (so
-    // the reason is the protocol, not a toggle that turning on would only lead to the same
-    // refusal) and before any rule, so it never becomes a pending row or an allow. SSH to any
-    // other name is decided below like every connection.
-    if proxy.refuses_ssh(request) {
-        note_block(event, BlockReason::SshUnsupported);
-        let mut refusal = block(request, &[BlockReason::SshUnsupported]);
-        if let Some(message) = proxy.azure_devops_ssh_message(request).await {
-            refusal.message = message;
-        }
-        return Err(refusal);
-    }
     // Name stage: a literal or a name that is blocked by itself never reaches the rules, so it
     // never becomes a pending row (R-14).
     let target = puddle_netpolicy::Target::from_host(host.clone());

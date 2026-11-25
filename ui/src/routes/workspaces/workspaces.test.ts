@@ -64,6 +64,8 @@ function reset() {
   workspaces.oom = {};
   workspaceActions.createOpen = false;
   workspaceActions.connectOpen = false;
+  workspaceActions.renameOpen = false;
+  workspaceActions.renaming = null;
   workspaceActions.trustOpen = false;
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 }
@@ -186,6 +188,29 @@ describe("the workspace list", () => {
       expect(workspaces.byId("w-docs")?.busy).toBe("starting"),
     );
     expect(screen.getByRole("article")).toHaveTextContent("Starting");
+  });
+
+  it("asks to rename or delete a workspace from its row menu", async () => {
+    const ask = vi
+      .spyOn(workspaceActions, "askDelete")
+      .mockResolvedValue(undefined);
+    api.list = [workspace("docs")];
+    await mount();
+    const choose = async (item: string) => {
+      await fireEvent.keyDown(
+        await screen.findByRole("button", { name: "More about docs" }),
+        { key: "Enter" },
+      );
+      await fireEvent.click(
+        await screen.findByRole("menuitem", { name: item }),
+      );
+    };
+    await choose("Rename docs");
+    expect(workspaceActions.renameOpen).toBe(true);
+    expect(workspaceActions.renaming?.id).toBe("w-docs");
+    await choose("Delete docs");
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ id: "w-docs" }));
+    ask.mockRestore();
   });
 
   it("shows each row's own waiting count and no banner above the list", async () => {

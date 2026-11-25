@@ -361,11 +361,13 @@ describe("the detail layout", () => {
             entry: "e-web",
             url: "https://github.com/acme/web.git",
             directory: "web",
+            branch: null,
           },
           {
             entry: "e-api",
             url: "https://github.com/acme/api.git",
             directory: "api",
+            branch: null,
           },
         ],
       }),
@@ -448,6 +450,7 @@ describe("the overview", () => {
       entry: "e-demo",
       url: "https://github.com/acme/demo.git",
       directory: "demo",
+      branch: null,
     };
     api.checkouts["w-demo"] = listing([checkout("demo", { entry })]);
     await load();

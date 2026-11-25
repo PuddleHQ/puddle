@@ -207,5 +207,48 @@ pub fn judge_rounds(out: &str, min_rounds: usize) -> Result<usize, String> {
     Ok(rounds.len())
 }
 
+/// The drive's use may move this share of its size from one churn round to the next.
+pub const DISK_BACK_PERCENT: u64 = 1;
+
+/// The resident memory may stay this many percent above its level before the churn.
+pub const RSS_BACK_PERCENT: u64 = 10;
+
+/// Checks that the used bytes of a drive are back after a round that made and removed something.
+///
+/// # Errors
+///
+/// A sentence with both figures, when `after` is more than [`DISK_BACK_PERCENT`] of `size` above or
+/// below `before`, or when `size` is zero (a figure that was not read proves nothing).
+pub fn judge_disk_back(before: u64, after: u64, size: u64) -> Result<(), String> {
+    if size == 0 {
+        return Err("the drive's size reads as 0".to_owned());
+    }
+    let moved = before.abs_diff(after);
+    if u128::from(moved) * 100 > u128::from(size) * u128::from(DISK_BACK_PERCENT) {
+        return Err(format!(
+            "the drive's use went from {before} to {after} bytes ({moved} apart), over {DISK_BACK_PERCENT} % of its {size}"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks that resident memory is back near its level before a round.
+///
+/// # Errors
+///
+/// A sentence with both figures, when `after` is more than [`RSS_BACK_PERCENT`] above `before`, or
+/// when `before` is zero (a figure that was not read proves nothing).
+pub fn judge_rss_back(before: u64, after: u64) -> Result<(), String> {
+    if before == 0 {
+        return Err("the resident memory before reads as 0".to_owned());
+    }
+    if u128::from(after) * 100 > u128::from(before) * u128::from(100 + RSS_BACK_PERCENT) {
+        return Err(format!(
+            "resident memory went from {before} to {after} bytes, over {RSS_BACK_PERCENT} % above"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;

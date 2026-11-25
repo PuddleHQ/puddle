@@ -4,8 +4,10 @@ ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 warn  Bundled runtime       msb 0.7.7-puddle.2 accepted by the developer override; its files differ from the ones this build ships with
-      note: Development builds only. Unset PUDDLE_DEV_ANY_RUNTIME to test the shipped
-            combination.
+      impact: This development build runs a runtime it wasn't tested with.
+      remedy: Unset PUDDLE_DEV_ANY_RUNTIME to test the runtime Puddle ships with.
+      note:   Development builds only. Unset PUDDLE_DEV_ANY_RUNTIME to test the shipped
+              combination.
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)

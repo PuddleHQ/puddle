@@ -95,7 +95,7 @@ on:
         required: false
         default: ""
       plant_footprint:
-        description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install or no-refusal) and expect it to fail: shows that each footprint check catches the breakage it guards against"
+        description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal or kill-skipped) and expect it to fail: shows that each footprint check catches the breakage it guards against"
         required: false
         default: ""
       plant_breakage:

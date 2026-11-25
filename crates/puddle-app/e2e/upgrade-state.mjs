@@ -235,7 +235,7 @@ async function plant(breakage) {
   const sql = {
     "drop-table": "DROP TABLE rules",
     "empty-env": "DELETE FROM env_vars",
-    "empty-pending": "DELETE FROM pending",
+    "empty-pending": "UPDATE pending SET state = 'expired'",
   }[breakage];
   if (!sql) throw new Error(`unknown breakage ${breakage}: drop-table, empty-env, empty-pending or route-throws`);
   db.exec("PRAGMA foreign_keys = OFF");

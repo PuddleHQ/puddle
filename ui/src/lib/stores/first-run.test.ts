@@ -5,6 +5,7 @@ import { FirstRunStore, type FirstRun } from "./first-run.svelte.ts";
 const open: FirstRun = {
   completed: false,
   completed_at: null,
+  step: null,
   dev_certificate: "not_checked",
 };
 const done: FirstRun = { ...open, completed: true, completed_at: 5 };

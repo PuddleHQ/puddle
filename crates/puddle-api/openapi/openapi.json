@@ -3328,7 +3328,7 @@
         "tags": [
           "first-run"
         ],
-        "summary": "Records that the first-run flow was finished or skipped (`true`), or makes it run again at the\nnext start (`false`). Doing it twice keeps the first time.",
+        "summary": "Records that the first-run flow was finished or skipped (`true`), or makes it run again at the\nnext start (`false`). Doing it twice keeps the first time. A `step` records where the person\nis, so reopening the flow resumes there.",
         "operationId": "put_first_run",
         "requestBody": {
           "content": {
@@ -18815,6 +18815,7 @@
         "required": [
           "completed",
           "completed_at",
+          "step",
           "dev_certificate"
         ],
         "properties": {
@@ -18834,23 +18835,58 @@
           "dev_certificate": {
             "$ref": "#/components/schemas/DevCertificate",
             "description": "What the certificates step says about a development certificate."
+          },
+          "step": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FirstRunStep",
+                "description": "The step the person was on when they left the flow, so reopening it resumes there; `null`\nbefore they moved on from the first screen, and once the flow is completed."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
       },
       "FirstRunRequest": {
         "type": "object",
-        "description": "Marks the first-run flow finished, or open again.",
-        "required": [
-          "completed"
-        ],
+        "description": "Marks the first-run flow finished or open again, and/or records the step the person is on.",
         "properties": {
           "completed": {
-            "type": "boolean",
-            "description": "`true` records that the flow was finished or skipped (the time of the first such call is\nkept); `false` makes it run again at the next start."
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` records that the flow was finished or skipped (the time of the first such call is\nkept); `false` makes it run again at the next start, from the first step. Left out, the\nflow's completion is not touched."
+          },
+          "step": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FirstRunStep",
+                "description": "The step the person is on, kept so reopening the flow resumes there. Ignored once the flow\nis completed."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
+      },
+      "FirstRunStep": {
+        "type": "string",
+        "description": "A step of the first-run flow, in the order the person walks them (the ids of the UI's step list).",
+        "enum": [
+          "welcome",
+          "check",
+          "certificates",
+          "connect",
+          "interception",
+          "look",
+          "done"
+        ]
       },
       "ForeignCredentialKind": {
         "type": "string",
@@ -21125,7 +21161,8 @@
           "head_too_large",
           "request_timeout",
           "protocol_unsupported",
-          "stream_limit"
+          "stream_limit",
+          "workspace_not_running"
         ]
       },
       "ReasonPrefix": {

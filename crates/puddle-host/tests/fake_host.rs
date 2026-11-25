@@ -11,10 +11,18 @@
 
 mod support;
 
+#[cfg(target_os = "linux")]
+#[path = "fake_host/api_latency.rs"]
+mod api_latency;
 #[path = "fake_host/attach_places.rs"]
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]
 mod backup_restore;
+#[path = "fake_host/backup_round_trip.rs"]
+mod backup_round_trip;
+#[cfg(target_os = "linux")]
+#[path = "fake_host/churn.rs"]
+mod churn;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
 #[cfg(unix)]

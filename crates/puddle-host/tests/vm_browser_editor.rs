@@ -1953,3 +1953,72 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
     assert!(errors.is_empty(), "the pages reported errors: {errors:?}");
     editor.finish().await;
 }
+
+/// Rounds before the memory baseline is read.
+const WARM_UP_ROUNDS: u32 = 2;
+
+/// What the guest's processes hold in memory, summed (bytes).
+const GUEST_RSS: &str = "ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'";
+
+/// K tier, code-server, soak bar. The window opened and closed ten times in a row: after each
+/// close the guest has no extension host, and after the tenth the guest's memory is within 10 % of
+/// what it was after the warm-up (the first rounds fill code-server's caches: the guest grew
+/// 48 MB from round 1 to 2, then stayed within 4 % of round 3). `PUDDLE_VM_SOAK_BREAK=keep-extension-host`
+/// stops the hosts at each close and skips the cleanup, which must turn the no-extension-host bar red.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_host_and_the_memory_back()
+ {
+    let editor = Box::pin(Editor::start("wch", None)).await;
+    let sandbox = &editor.sandbox;
+    let windows = editor.vm.host.editor_windows();
+    editor
+        .guest(&format!(
+            "cd {} && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .",
+            editor.root
+        ))
+        .await;
+    let broken = std::env::var("PUDDLE_VM_SOAK_BREAK").is_ok_and(|v| v == "keep-extension-host");
+    let mut first = 0;
+    let mut last = 0;
+    for round in 1..=10 {
+        editor.attach().await;
+        editor.explorer(&format!("window {round}")).await;
+        windows_become(windows, sandbox, true).await;
+        let open = counts_until(
+            &editor.vm.runtime,
+            sandbox,
+            "the window's extension host",
+            |l| count(l, "hosts") >= 1,
+        )
+        .await;
+        if broken {
+            editor.guest(STOP_HOSTS).await;
+        }
+        editor.shell.close_pages(&editor.name).await;
+        windows_become(windows, sandbox, false).await;
+        if !broken {
+            editor
+                .vm
+                .host
+                .workspaces()
+                .end_extension_hosts(sandbox)
+                .await
+                .expect("the agent answered");
+        }
+        let closed = counts_until(
+            &editor.vm.runtime,
+            sandbox,
+            "no extension host after the close",
+            |l| count(l, "hosts") == 0,
+        )
+        .await;
+        let rss: u64 = editor.guest(GUEST_RSS).await.trim().parse().unwrap();
+        eprintln!("round {round}: guest memory {rss} bytes; open {open}; closed {closed}");
+        if round == WARM_UP_ROUNDS + 1 {
+            first = rss;
+        }
+        last = rss;
+    }
+    puddle_vm_tests::soak::judge_rss_back(first, last).unwrap();
+    editor.finish().await;
+}

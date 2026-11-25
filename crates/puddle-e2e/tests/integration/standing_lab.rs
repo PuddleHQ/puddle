@@ -369,3 +369,114 @@ fn a_termination_signal_stops_the_lab_cleanly() {
         || !listening(port),
     );
 }
+
+/// A `docker` that only keeps books: `run` records the container name in `containers` (and, when
+/// `listening` is set, writes the `cache.log` line of a Squid that listens, though nothing does),
+/// `rm -f` forgets it. The lab runs it as it would the real one.
+#[cfg(unix)]
+fn fake_docker(dir: &Path, listening: bool) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("bin");
+    let state = dir.join("containers");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&state).unwrap();
+    let listen = if listening {
+        r#"echo "Accepting HTTP Socket connections at conn3 local=127.0.0.1:1" > "$mount/cache.log""#
+    } else {
+        ":"
+    };
+    let script = format!(
+        r#"#!/bin/sh
+case "$1" in
+  run)
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) name="$2"; shift ;;
+        -v) mount="${{2%%:*}}"; shift ;;
+      esac
+      shift
+    done
+    echo "$name" > "{state}/$name"
+    {listen}
+    ;;
+  rm) for last; do :; done; rm -f "{state}/$last" ;;
+  inspect) echo true ;;
+esac
+"#,
+        state = state.display()
+    );
+    let docker = bin.join("docker");
+    std::fs::write(&docker, script).unwrap();
+    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (bin, state)
+}
+
+#[cfg(unix)]
+fn self_test_in_docker_mode(bin: &Path) -> Command {
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut command = lab();
+    command
+        .args(["--self-test", "--squid"])
+        .env("PATH", path)
+        .env("PUDDLE_SQUID_DOCKER", "fake/squid")
+        .env_remove("PUDDLE_SQUID_BIN");
+    command
+}
+
+#[cfg(unix)]
+fn containers(state: &Path) -> usize {
+    std::fs::read_dir(state).unwrap().count()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_docker_squid_the_host_cannot_reach_fails_at_once_and_names_host_networking() {
+    let dir = tempfile::tempdir().unwrap();
+    let (bin, state) = fake_docker(dir.path(), true);
+    let begun = std::time::Instant::now();
+    let output = self_test_in_docker_mode(&bin).output().unwrap();
+    let text = stderr(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("Docker Desktop needs host networking") && text.contains("PUDDLE_SQUID_BIN"),
+        "{text}"
+    );
+    assert!(
+        begun.elapsed() < Duration::from_secs(30),
+        "the start waited {:?}",
+        begun.elapsed()
+    );
+    assert_eq!(
+        containers(&state),
+        0,
+        "the failed start removes its container"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_self_test_stopped_by_a_signal_removes_the_containers_it_started() {
+    for signal in ["-TERM", "-INT"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (bin, state) = fake_docker(dir.path(), false);
+        let mut child = self_test_in_docker_mode(&bin)
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        eventually_blocking("the self-test starts its container", MAX_WAIT, || {
+            (containers(&state) == 1).then_some(())
+        });
+        let sent = Command::new("kill")
+            .args([signal, &child.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(sent.success());
+        assert!(!child.wait().unwrap().success());
+        assert_eq!(containers(&state), 0, "{signal} left a container");
+    }
+}

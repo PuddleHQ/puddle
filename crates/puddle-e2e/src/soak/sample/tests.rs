@@ -5,6 +5,7 @@ use axum::Router;
 #[cfg(target_os = "linux")]
 use axum::response::sse::{Event, Sse};
 use axum::routing::get as get_route;
+use puddle_test_kit::eventually;
 use tokio::net::TcpListener;
 
 use super::*;
@@ -356,10 +357,14 @@ async fn a_reader_that_cannot_connect_keeps_trying_and_counts_each_try() {
     let task = tokio::spawn(read_events(dead, state.clone()));
     // A refused connect to a closed port fails at once on Linux but takes about 2 s on Windows
     // (the stack retries the SYN), so wait for the first counted try instead of a fixed time.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while state.read().1 < 1 && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    eventually("one counted try", Duration::from_secs(20), || {
+        let seen = state.read();
+        if seen.1 >= 1 {
+            Ok(())
+        } else {
+            Err(format!("{seen:?}"))
+        }
+    })
+    .await;
     task.abort();
-    assert!(state.read().1 >= 1, "{:?}", state.read());
 }

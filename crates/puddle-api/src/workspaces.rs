@@ -21,13 +21,11 @@ use sha2::{Digest, Sha256};
 
 mod admission;
 mod launch;
+pub mod phase;
 mod repositories;
 mod service;
 
-pub use admission::{
-    admit_delete_fingerprint, admit_delete_status, admit_grow_size, admit_idle,
-    admit_reset_root_disk, admit_settled, admit_start, admit_stop, not_found,
-};
+pub use admission::{admit_delete_fingerprint, admit_grow_size, not_found};
 pub use launch::{
     BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
     Launcher, OpenTarget,

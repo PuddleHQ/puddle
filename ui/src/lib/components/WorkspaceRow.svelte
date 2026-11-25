@@ -13,9 +13,7 @@
   import { relativeTime } from "#lib/format/relative-time.ts";
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
-    canAttach,
-    canStart,
-    canStop,
+    allows,
     diskPercent,
     formatMib,
     isDown,
@@ -99,7 +97,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canStart(workspace)}
+          disabled={!allows(workspace, "start")}
           onclick={() => onStart(workspace)}
         >
           <Play aria-hidden="true" size={16} />Start
@@ -109,7 +107,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canAttach(workspace)}
+          disabled={!allows(workspace, "attach")}
           onclick={() => onConnect(workspace)}
         >
           <Plug aria-hidden="true" size={16} />Connect
@@ -133,7 +131,7 @@
             {#if !down}
               <DropdownMenu.Item
                 class="row-menu-item"
-                disabled={!canStop(workspace)}
+                disabled={!allows(workspace, "stop")}
                 onSelect={() => onStop(workspace)}
               >
                 Stop <span class="visually-hidden">{workspace.name}</span>

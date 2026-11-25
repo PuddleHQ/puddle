@@ -265,6 +265,8 @@ struct State {
 /// What the running guest was set up with, kept to set it up again with one thing changed.
 #[derive(Clone)]
 struct GuestState {
+    /// The workspace's name as the prompt in the guest shows it now.
+    label: String,
     /// The image's config, so a plan can be rebuilt without pulling.
     image: ImageConfig,
     /// This start's CA certificate.

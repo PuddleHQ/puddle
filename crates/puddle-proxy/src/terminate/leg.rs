@@ -45,6 +45,16 @@ pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(20);
 /// the same connection: every frame costs a parse and a copy on each leg.
 pub(crate) const MAX_FRAME_SIZE: u32 = 64 * 1024;
 
+/// The flow-control windows announced to an HTTP/2 server: per stream, and for the whole connection.
+/// Fixed, not adaptive. hyper's adaptive window (BDP estimation) pings the server and raises the
+/// windows again and again while a download runs, and real servers answer that by closing the
+/// connection or resetting the streams: 5 to 8 of 12 two-stream downloads of a 42 MB npm tarball
+/// from registry.npmjs.org failed with an abrupt TLS close, none of 24 with fixed windows. The
+/// guest sees that as curl exit 92 (`INTERNAL_ERROR`, `PROTOCOL_ERROR`). The windows are twice the
+/// guest leg's, so the proxy can buffer a little ahead of a slow guest and no more.
+pub(crate) const UPSTREAM_STREAM_WINDOW: u32 = 1024 * 1024;
+pub(crate) const UPSTREAM_CONNECTION_WINDOW: u32 = 4 * 1024 * 1024;
+
 /// The largest header list accepted from the upstream on HTTP/2 (RFC 9113 §6.5.2).
 const MAX_UPSTREAM_HEADER_LIST: u32 = 64 * 1024;
 
@@ -222,7 +232,8 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
         Proto::H2 => {
             let (sender, connection) = http2::Builder::new(TokioExecutor::new())
                 .timer(TokioTimer::new())
-                .adaptive_window(true)
+                .initial_stream_window_size(UPSTREAM_STREAM_WINDOW)
+                .initial_connection_window_size(UPSTREAM_CONNECTION_WINDOW)
                 .max_frame_size(MAX_FRAME_SIZE)
                 .keep_alive_interval(PING_INTERVAL)
                 .keep_alive_timeout(PING_TIMEOUT)

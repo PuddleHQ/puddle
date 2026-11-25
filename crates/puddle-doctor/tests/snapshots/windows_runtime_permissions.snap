@@ -4,12 +4,18 @@ ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 FAIL  Bundled runtime       you aren't allowed to read or run C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe
-      fix:  The file's permissions deny your account. Restore the inherited permissions:
-              icacls "C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe" /reset
-            (as administrator if Puddle is installed for all users), or reinstall Puddle.
-      from: Access is denied. (os error 5)
+      impact: Puddle can't start any workspace: your account may not run its runtime.
+      remedy: Reset the permissions of the runtime file, or reinstall Puddle.
+      fix:    The file's permissions deny your account. Restore the inherited permissions:
+                icacls "C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe" /reset
+              (as administrator if Puddle is installed for all users), or reinstall Puddle.
+      from:   Access is denied. (os error 5)
 skip  Runtime starts        not checked: the bundled runtime isn't usable
+      impact: Not checked, so Puddle can't tell yet whether its runtime may run here.
+      remedy: Fix any problem above, then check again.
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

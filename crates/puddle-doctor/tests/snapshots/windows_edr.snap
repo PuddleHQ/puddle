@@ -5,12 +5,17 @@ ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        Windows refused to start msb although its file permissions allow it
-      fix:  Endpoint security (EDR) blocking new programs is the usual cause. Check its console
-            or log for C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe; it must be
-            allowed to run and to start virtual machines through the Windows Hypervisor
-            Platform.
-      from: Access is denied. (os error 5)
+      impact: Puddle can't start any workspace: security software stops its runtime.
+      remedy: Ask whoever runs your endpoint security to allow Puddle's runtime and its virtual
+              machines.
+      fix:    Endpoint security (EDR) blocking new programs is the usual cause. Check its console
+              or log for C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe; it must be
+              allowed to run and to start virtual machines through the Windows Hypervisor
+              Platform.
+      from:   Access is denied. (os error 5)
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

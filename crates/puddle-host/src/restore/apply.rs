@@ -338,7 +338,13 @@ fn refresh_safety_copy(paths: &HostPaths, name: &str) -> Result<(), RestoreError
     // A leftover of a crash is ours: it ends in `.refresh`, which no safety copy's name does.
     drop(fs::remove_dir_all(&fresh));
     make_backup(paths, &fresh).map_err(|e| fail("cannot make it", &e))?;
-    fs::remove_dir_all(&copy).map_err(|e| fail("cannot replace the earlier copy", &e))?;
+    // An earlier copy the user deleted since the confirm leaves nothing to replace.
+    match fs::remove_dir_all(&copy) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            return Err(fail("cannot replace the earlier copy", &e));
+        }
+        _ => {}
+    }
     fs::rename(&fresh, &copy).map_err(|e| fail("cannot put it in place", &e))
 }
 

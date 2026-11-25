@@ -414,7 +414,7 @@ impl<R: Runtime + Clone> Host<R> {
         steps.push(Step::WorkspacesAdopted);
 
         // From here the host serves.
-        let serving = serve_background(&shared, &outbound, pull, &mut steps).await?;
+        let serving = serve_background(&shared, &outbound, pull, &mut steps)?;
 
         let lifecycle = Arc::new(Lifecycle::new(
             opened.runtime.clone(),
@@ -984,7 +984,7 @@ struct Serving {
 
 /// The pull proxy first: the first create pulls an image. Then the sweeper, the network watch and
 /// the browser editor's front.
-async fn serve_background(
+fn serve_background(
     shared: &Shared<'_>,
     outbound: &Outbound,
     pull: PullProxy,
@@ -1014,8 +1014,7 @@ async fn serve_background(
         outbound.ports.clone(),
         flavours.clone(),
         shared.problems,
-    )
-    .await?;
+    )?;
     steps.push(Step::BackgroundStarted);
     Ok(Serving {
         pull,

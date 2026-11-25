@@ -165,3 +165,14 @@ fn the_new_kinds_describe_themselves() {
         "reverse proxy in front of Puddle"
     );
 }
+
+#[test]
+fn bind_registers_the_port_the_system_picked_never_zero() {
+    let endpoints = PuddleEndpoints::new();
+    let (listener, registration) = endpoints.bind("127.0.0.1:0", EndpointKind::Other).unwrap();
+    let addr = listener.local_addr().unwrap();
+    assert_ne!(addr.port(), 0);
+    assert_eq!(endpoints.find(addr, &Lan), Some(EndpointKind::Other));
+    drop(registration);
+    assert_eq!(endpoints.find(addr, &Lan), None);
+}

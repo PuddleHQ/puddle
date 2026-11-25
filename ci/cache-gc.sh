@@ -54,7 +54,7 @@ while IFS=$'\t' read -r id ref key size; do
 
 # Budget: GitHub stops saving ANY new entry (a fresh unique key included) once the repo holds more than 10 GB, whatever
 # the 20 GB storage-limit setting says, and reports it as "Unable to reserve cache ... another job may be creating this
-# cache" (T-2030, 2026-11-24: usage 10.75 GB, a probe could not save; after deleting a 3.1 GB entry the same probe saved
+# cache" (2026-11-24: usage 10.75 GB, a probe could not save; after deleting a 3.1 GB entry the same probe saved
 # both a fresh key and the forgejo key). So what is left after the deletions above must fit BUDGET_MB. Over it, drop
 # trunk entries that are cheapest to rebuild first (clippy, mutants, fuzz, windows, gates, linux; oldest use first
 # within a kind). Never the small ones whose loss costs a download.

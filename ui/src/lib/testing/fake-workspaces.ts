@@ -160,6 +160,13 @@ export class FakeWorkspaces {
   /** Unknown fields per workspace document. */
   unknown: Record<string, string[]> = {};
   globalMemory = 8192;
+  /** The global editor defaults a workspace inherits. */
+  globalEditor: components["schemas"]["EditorSettings"] = {
+    colour_theme: null,
+    font_size: null,
+    extensions: null,
+    keybindings: null,
+  };
   /** The computer's logical cores, the most CPUs a workspace may have here. */
   hostCpus = 16;
   /** What a workspace without a count gets. */
@@ -263,6 +270,18 @@ export class FakeWorkspaces {
     return this.list.find((w) => w.id === id);
   }
 
+  /** One editor default as the API resolves it: the workspace's own, else the global one, else the default. */
+  private editorField<
+    K extends keyof components["schemas"]["EditorSettings"],
+    V extends NonNullable<components["schemas"]["EditorSettings"][K]>,
+  >(own: V | null, key: K, fallback: V | null) {
+    if (own !== null) return resolved(own, "workspace" as const);
+    const global = this.globalEditor[key] as V | null;
+    return global !== null
+      ? resolved(global, "global" as const)
+      : resolved(fallback, "default" as const);
+  }
+
   private effective(name: string) {
     const o = this.overrides[name] ?? noLayer();
     const pick = (v: boolean | null) =>
@@ -300,6 +319,20 @@ export class FakeWorkspaces {
         o.warn_foreign_credentials === null
           ? resolved(true, "default")
           : resolved(o.warn_foreign_credentials, "workspace"),
+      editor: {
+        colour_theme: this.editorField(
+          o.editor.colour_theme,
+          "colour_theme",
+          null,
+        ),
+        font_size: this.editorField(o.editor.font_size, "font_size", null),
+        extensions: this.editorField(o.editor.extensions, "extensions", []),
+        keybindings: this.editorField(
+          o.editor.keybindings,
+          "keybindings",
+          null,
+        ),
+      },
     };
   }
 

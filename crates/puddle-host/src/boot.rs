@@ -145,6 +145,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) start_folder: Option<&'a StartFolder>,
     /// The multi-root file for the editor, when the workspace has two or more checkouts.
     pub(crate) editor_file: Option<&'a GuestFile>,
+    /// The editor defaults (theme, font size, extensions, key bindings) the agent merges into the
+    /// editor's settings, when any is set.
+    pub(crate) editor_defaults: Option<&'a GuestFile>,
     /// The guest user sessions run as: the boot hook adds it, and per-user settings go to its
     /// home.
     pub(crate) session_user: SessionUser,
@@ -339,6 +342,9 @@ impl BootKit {
                 &crate::editor_file::start_path(guest.root, guest.start_folder),
             ));
         if let Some(file) = guest.editor_file {
+            builder = builder.file(file.clone());
+        }
+        if let Some(file) = guest.editor_defaults {
             builder = builder.file(file.clone());
         }
         if let Some(lines) = guest.ssh.and_then(SshListing::lines) {

@@ -104,3 +104,18 @@ fn unmerge_of_an_empty_file_is_a_no_op() {
     assert_eq!(u.merged, Merged::Unchanged);
     assert!(u.empty);
 }
+
+#[test]
+fn parse_reads_any_top_level_value_in_json_or_jsonc_and_nothing_else() {
+    let jsonc = b"[ // keys\n {\"a\": 1},\n]";
+    assert_eq!(parse(MergeFormat::Jsonc, jsonc).unwrap(), json!([{"a": 1}]));
+    assert!(
+        parse(MergeFormat::Json, jsonc).is_err(),
+        "strict JSON has no comments"
+    );
+    assert_eq!(parse(MergeFormat::Json, b"  \n").unwrap(), json!(null));
+    assert!(matches!(
+        parse(MergeFormat::KnownHosts, b"[]"),
+        Err(MergeRefusal::Syntax { .. })
+    ));
+}

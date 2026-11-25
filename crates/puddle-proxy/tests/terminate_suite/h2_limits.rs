@@ -824,8 +824,7 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
 #[tokio::test]
 async fn the_upstream_leg_announces_fixed_windows_and_never_adapts_them() {
     let pki = Pki::new();
-    let mut config =
-        Arc::into_inner(pki.server_config("bound.test", Flaw::None)).unwrap();
+    let mut config = Arc::into_inner(pki.server_config("bound.test", Flaw::None)).unwrap();
     config.alpn_protocols = vec![b"h2".to_vec()];
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))

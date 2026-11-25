@@ -444,7 +444,8 @@ impl Sampler {
     pub async fn sample(&mut self, now: u64, into: &mut Series) {
         self.host(now, into);
         let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
-        if let Some(root) = *self.root.lock().unwrap() {
+        let root = *self.root.lock().unwrap();
+        if let Some(root) = root {
             let ours = descendants(root);
             procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
         }

@@ -714,7 +714,8 @@ export interface paths {
         get: operations["get_first_run"];
         /**
          * Records that the first-run flow was finished or skipped (`true`), or makes it run again at the
-         *     next start (`false`). Doing it twice keeps the first time.
+         *     next start (`false`). Doing it twice keeps the first time. A `step` records where the person
+         *     is, so reopening the flow resumes there.
          */
         put: operations["put_first_run"];
         post?: never;
@@ -4587,15 +4588,23 @@ export interface components {
             completed_at: number | null;
             /** @description What the certificates step says about a development certificate. */
             dev_certificate: components["schemas"]["DevCertificate"];
+            step: components["schemas"]["FirstRunStep"] | null;
         };
-        /** @description Marks the first-run flow finished, or open again. */
+        /** @description Marks the first-run flow finished or open again, and/or records the step the person is on. */
         FirstRunRequest: {
             /**
              * @description `true` records that the flow was finished or skipped (the time of the first such call is
-             *     kept); `false` makes it run again at the next start.
+             *     kept); `false` makes it run again at the next start, from the first step. Left out, the
+             *     flow's completion is not touched.
              */
-            completed: boolean;
+            completed?: boolean | null;
+            step?: components["schemas"]["FirstRunStep"] | null;
         };
+        /**
+         * @description A step of the first-run flow, in the order the person walks them (the ids of the UI's step list).
+         * @enum {string}
+         */
+        FirstRunStep: "welcome" | "check" | "certificates" | "connect" | "interception" | "look" | "done";
         /**
          * @description What Puddle can tell about a credential it did not add: by its bytes alone, never by whose it
          *     is (the user's own token and a leaked one look the same). See [`Event::ForeignCredential`].
@@ -5658,7 +5667,7 @@ export interface components {
          * @description The reason codes that stand alone, without a prefix. Serialises as its [`ReasonCode::as_str`].
          * @enum {string}
          */
-        ReasonCode: "rule" | "no_rule" | "suppressed" | "merged" | "request_rule" | "request_rule_port" | "puddle_endpoint" | "ssh_unsupported" | "udp_unsupported" | "local_address" | "settings_unreadable" | "policy_unavailable" | "puddle_request" | "pki_distribution_point" | "sni_mismatch" | "guest_tls_rejected" | "certificate_unavailable" | "connection_limit" | "ip_rule" | "push_denied" | "pull_denied" | "bad_git_path" | "ssh_command_unsupported" | "ssh_channel_refused" | "credential_rejected" | "credential_unavailable" | "credential_ambiguous" | "git_settings_unavailable" | "login_not_kept" | "token_endpoint_spliced" | "peek_refused" | "body_too_large" | "answer_encoding" | "answer_withheld" | "bad_request" | "misdirected_host" | "expectation_unsupported" | "head_too_large" | "request_timeout" | "protocol_unsupported" | "stream_limit";
+        ReasonCode: "rule" | "no_rule" | "suppressed" | "merged" | "request_rule" | "request_rule_port" | "puddle_endpoint" | "ssh_unsupported" | "udp_unsupported" | "local_address" | "settings_unreadable" | "policy_unavailable" | "puddle_request" | "pki_distribution_point" | "sni_mismatch" | "guest_tls_rejected" | "certificate_unavailable" | "connection_limit" | "ip_rule" | "push_denied" | "pull_denied" | "bad_git_path" | "ssh_command_unsupported" | "ssh_channel_refused" | "credential_rejected" | "credential_unavailable" | "credential_ambiguous" | "git_settings_unavailable" | "login_not_kept" | "token_endpoint_spliced" | "peek_refused" | "body_too_large" | "answer_encoding" | "answer_withheld" | "bad_request" | "misdirected_host" | "expectation_unsupported" | "head_too_large" | "request_timeout" | "protocol_unsupported" | "stream_limit" | "workspace_not_running";
         /**
          * @description The text before the colon of a reason that carries a code after it. Serialises as its
          *     [`ReasonPrefix::as_str`], without the colon.

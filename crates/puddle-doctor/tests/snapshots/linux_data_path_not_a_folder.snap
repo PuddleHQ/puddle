@@ -7,10 +7,13 @@ ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot           a test VM booted and ran a program in 1.1 s
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 FAIL  Data folder path    /home/dev/.local is not a folder, so msb will not open Puddle's data below it
-      fix:  /home/dev/.local is a file or another kind of entry, but Puddle's data has to live
-            below a folder. Rename or remove it (for example `mv /home/dev/.local
-            /home/dev/.local.old`), or point XDG_DATA_HOME at a folder you own.
-      from: /home/dev/.local not a folder
+      impact: Puddle can't start any workspace: a folder above its data is not a folder, or
+              belongs to someone else.
+      remedy: Fix or move that folder, or point XDG_DATA_HOME at a folder you own.
+      fix:    /home/dev/.local is a file or another kind of entry, but Puddle's data has to live
+              below a folder. Rename or remove it (for example `mv /home/dev/.local
+              /home/dev/.local.old`), or point XDG_DATA_HOME at a folder you own.
+      from:   /home/dev/.local not a folder
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0

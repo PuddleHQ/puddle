@@ -302,6 +302,9 @@ run_gate() {
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
+        # fuzz/ is its own workspace (nightly libFuzzer), so the line above never sees it; it builds on stable
+        # for a lint run, and carries a copy of the workspace lint table (fuzz/Cargo.toml `[lints]`).
+        (cd fuzz && "$cargo" clippy --all-targets --locked -- -D warnings)
         ;;
     dormant)
         # the build that ships (default features, so the `serve` and `mise` cargo features
@@ -459,12 +462,16 @@ run_gate() {
         ui_install
         target=${CARGO_TARGET_DIR:-target}
         coverage_unlock "$target"
+        # The totals count the crates compiled into the shipped binaries only; the check fails first when a
+        # workspace crate is neither (scripts/coverage-crates.txt). The lcov report stays whole: the diff gate reads it.
+        python3 -I scripts/coverage-crates.py --self-test
+        totals_ignore=$(CARGO="$plain_cargo" python3 -I scripts/coverage-crates.py)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
         "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
-        "$plain_cargo" llvm-cov report --summary-only
-        "$plain_cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
+        "$plain_cargo" llvm-cov report --summary-only --ignore-filename-regex "$totals_ignore"
+        "$plain_cargo" llvm-cov report --json --summary-only --ignore-filename-regex "$totals_ignore" --output-path "$target/coverage-summary.json"
         ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"
         ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
         [ -n "${CI:-}" ] || ratchet="$ratchet --write"

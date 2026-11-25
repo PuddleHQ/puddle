@@ -191,7 +191,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Lints** (`[workspace.lints]` in `Cargo.toml`): clippy `pedantic` plus a set of restriction
   lints (`unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `todo`, `print_stdout`, …),
   all denied in CI with `-D warnings`. To silence one, use `#[expect(lint, reason = "…")]` on the
-  smallest item; never `#[allow]` (itself linted), never crate-wide without a written reason.
+  smallest item; never `#[allow]` or `#![allow]` (the gate fails both, `ban-allow`; `cfg_attr(<cfg>, expect(..))` for a lint that fires under one cfg only), never crate-wide without a written reason. `fuzz/` is its own workspace and carries a copy of this table; `scripts/check.sh clippy` lints it too.
   Tests may unwrap, expect, panic and index (`clippy.toml`).
 - **Unsafe:** every crate root (`lib.rs`, `main.rs`, each `src/bin/*.rs` and `build.rs`) says `#![forbid(unsafe_code)]`, and the quality
   gate fails a root that does not. A crate that needs FFI on one platform (Windows pipe DACLs, say) says
@@ -280,7 +280,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   that cross crates live in `puddle-types` or are converted at the boundary.
 - **Binaries:** `puddle` maps errors to a user message and an exit code at the top; it may use
   `anyhow` only in `main`-level glue, never in the libraries (`deny.toml` bans it with a list of the crates that may depend on it).
-- Don't stringly-type errors, don't discard them (`let _ =` on a `Result` needs a comment), and
+- Don't stringly-type errors (the gate fails a `Result<_, String>` in production code, `ban-result-string`, unless a `// string-error-ok: <why>` comment on or within three lines above says the text is the whole contract), don't discard them (`let _ =` on a `Result` needs a comment), and
   don't log *and* return the same error (the handler that consumes it logs it).
 - Error messages are lower-case, no trailing period, and never contain secret values. The quality gate fails a `#[error("...")]` that starts with a capital or ends with a period (`ban-error-capital`, `ban-error-period`), and a `#[serde(untagged)]` (`ban-untagged`, ADR 0002).
 
@@ -418,6 +418,15 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
 
 - Measured by `cargo llvm-cov nextest` over the whole workspace on Linux, in every CI run; the UI by
   vitest's v8 coverage (`npm test`).
+- **The totals count only code compiled into what Puddle ships.** Every test runs, but the Rust totals (the
+  floors, the ratchet, the CI job summary) leave out the files of the crates no shipped binary depends on
+  (`cargo llvm-cov report --ignore-filename-regex`). `scripts/coverage-crates.txt` names the shipped binaries
+  (`ship`) and the workspace crates that are not part of one (`test-only`: test harnesses and build tooling);
+  `scripts/coverage-crates.py` takes the dependency closure of the shipped binaries from `cargo metadata`
+  (normal and build dependencies, all features) and fails the `coverage` gate when a workspace crate is neither
+  in it nor listed `test-only`, or a `test-only` crate is in it. A new crate needs no entry while a shipped binary
+  depends on it; a new harness crate gets a `test-only` line. The lcov report stays whole, so the diff gate
+  and the 100 % crates still see every file.
 - **Gate: lines ≥ 92 %, regions ≥ 90 %** (workspace totals, floors in `scripts/check.sh`), and a
   **ratchet**: coverage may not fall more than 0.05 points below `scripts/coverage-baseline.json`, the best
   value reached so far (rounded down to 0.1). The floors and the baseline only go up; lowering either needs
@@ -534,8 +543,9 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
   branch of a decision (allow/deny/pending, each toggle) has a test. A change that lowers a
   crate's coverage says why in the commit.
 - Code that can't run in CI (Windows-only code on Linux, VM paths) is covered by its own tier
-  (Windows job, L3/L4), not excluded from the report. Exclusions from the report
-  (`--ignore-filename-regex`) only for generated code, listed in `scripts/check.sh` with a comment;
+  (Windows job, L3/L4), not excluded from the report. Exclusions from the totals are the test-only crates
+  above and nothing finer (no single file), so a shipped crate's unreachable file is covered by its tier or
+  listed in the diff-gate exclusions;
   exclusions from the diff gate are the file above.
 
 ### Mutation testing

@@ -92,14 +92,15 @@ impl Watch {
 }
 
 /// One read: measures the drive, classifies it by the lines the settings hold now and says what
-/// changed. A drive the OS will not measure says nothing to the app (the system check shows why)
-/// and logs one warning per episode, until a read works again.
+/// changed, returning the new level when it said one. A drive the OS will not measure says nothing
+/// to the app (the system check shows why) and logs one warning per episode, until a read works
+/// again.
 pub(crate) async fn read_once<S: Space>(
     space: &Arc<S>,
     settings: &dyn SettingsRepo,
     events: &dyn EventSink,
     watch: &mut Watch,
-) {
+) -> Option<DiskSpaceLevel> {
     let reading = Arc::clone(space);
     let free = match tokio::task::spawn_blocking(move || reading.free_bytes()).await {
         Ok(Ok(free)) => free,
@@ -107,15 +108,18 @@ pub(crate) async fn read_once<S: Space>(
             if watch.note_unreadable() {
                 tracing::warn!(?failed, "the free space could not be read");
             }
-            return;
+            return None;
         }
     };
     let level = disk_limits(settings).level(free);
-    if let Some(event) = watch.observe(level, free) {
-        tracing::info!(?level, free, "free disk space changed level");
-        events.emit(event);
-    }
+    let event = watch.observe(level, free)?;
+    tracing::info!(?level, free, "free disk space changed level");
+    events.emit(event);
+    Some(level)
 }
+
+/// What the host does when the free space changes level.
+pub(crate) type OnLevel = Arc<dyn Fn(DiskSpaceLevel) + Send + Sync>;
 
 /// Reads after `timing.first_read` and then every `timing.period` until the returned task is
 /// aborted. A drive takes minutes to fill and a read is one system call, so the period is a minute.
@@ -124,6 +128,7 @@ pub(crate) fn spawn<S: Space>(
     timing: FreeSpaceTiming,
     settings: Arc<dyn SettingsRepo>,
     events: Arc<dyn EventSink>,
+    on_level: OnLevel,
 ) -> tokio::task::JoinHandle<()> {
     let space = Arc::new(space);
     tokio::spawn(async move {
@@ -135,7 +140,11 @@ pub(crate) fn spawn<S: Space>(
         let mut watch = Watch::default();
         loop {
             tick.tick().await;
-            read_once(&space, settings.as_ref(), events.as_ref(), &mut watch).await;
+            if let Some(level) =
+                read_once(&space, settings.as_ref(), events.as_ref(), &mut watch).await
+            {
+                on_level(level);
+            }
         }
     })
 }

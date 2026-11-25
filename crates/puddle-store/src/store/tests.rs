@@ -631,7 +631,8 @@ struct RaceClock {
 
 impl Clock for RaceClock {
     fn now_ms(&self) -> u64 {
-        if let Some(hook) = lock(&self.hook).take() {
+        let hook = lock(&self.hook).take();
+        if let Some(hook) = hook {
             hook();
         }
         self.clock.now_ms()

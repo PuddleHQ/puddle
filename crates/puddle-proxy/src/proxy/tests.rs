@@ -348,7 +348,21 @@ async fn ssh_is_blocked_before_the_policy_is_asked() {
     policy.allow(&host("github.com"));
     let p = proxy(policy.clone(), StaticResolver::new());
     let req = request("github.com").with_protocol(ProtocolHint::Ssh);
-    let refusal = admit(&p, &req).await.unwrap_err();
+    let head = Head {
+        method: "CONNECT".into(),
+        uri: "github.com:443".into(),
+        version: "HTTP/1.1".into(),
+        headers: vec![],
+    };
+    let plan = plan::ConnectionPlan::new(
+        &p,
+        &p.seen(&req.workspace),
+        &req,
+        &head,
+        plan::GuestHints::of(&req, &head),
+    );
+    assert!(matches!(plan, plan::ConnectionPlan::SshRefused));
+    let (refusal, _) = admit::refuse_ssh(&p, &req).await;
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("blocked"));
     assert_eq!(
         header(&refusal, "x-puddle-blocked"),
@@ -416,7 +430,7 @@ async fn local_addresses_of_an_allowed_name_are_blocked_by_default() {
     assert!(
         refusal
             .message
-            .contains("turn on 'loopback' (host loopback) or 'metadata' (cloud metadata)"),
+            .contains("turn on 'This computer (loopback)' or 'Cloud metadata'"),
         "{}",
         refusal.message
     );
@@ -518,7 +532,7 @@ async fn the_audit_event_follows_each_admit_path() {
     // Name stage: SSH to a Git host's name never reaches the rules.
     let p = proxy(Arc::new(StaticPolicy::new()), resolver());
     let req = request("gitlab.com").with_protocol(ProtocolHint::Ssh);
-    let (_, e) = super::admit(&p, &req).await;
+    let (_, e) = admit::refuse_ssh(&p, &req).await;
     assert_eq!(
         kind(&e),
         (
@@ -915,6 +929,26 @@ mod guard {
     }
 
     #[tokio::test]
+    async fn block_text_names_the_workspace_by_its_name_not_its_id() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.set_workspace_name("Client work");
+        policy.allow(&host("10.1.2.3"));
+        let p = guarded(
+            policy,
+            StaticResolver::new(),
+            all_on().with_toggle(LocalCategory::Private, false),
+        );
+        let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
+        assert!(
+            refusal
+                .message
+                .contains("turn on 'Private networks' globally or for workspace Client work;"),
+            "{}",
+            refusal.message
+        );
+    }
+
+    #[tokio::test]
     async fn toggle_off_allowed_local_destination_is_blocked_naming_the_toggle() {
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("10.1.2.3"));
@@ -926,9 +960,9 @@ mod guard {
         let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
         assert_eq!(blocked(&refusal), Some("toggle:private"));
         assert!(
-            refusal.message.contains(
-                "turn on 'private' (local/private network) globally or for workspace box"
-            ),
+            refusal
+                .message
+                .contains("turn on 'Private networks' globally or for workspace box"),
             "{}",
             refusal.message
         );
@@ -1520,7 +1554,9 @@ mod termination {
         let proxy = terminating_proxy();
         for from_container in [false, true] {
             assert_eq!(
-                proxy.skipped(&at("github.com", 443, workspace()), from_container),
+                proxy
+                    .seen(&workspace())
+                    .skipped(&at("github.com", 443, workspace()), from_container),
                 None
             );
         }

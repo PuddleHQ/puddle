@@ -90,12 +90,12 @@ impl GitSshUpstream for Recording {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(command.clone());
-            if let Some(message) = self
+            let failure = self
                 .fail
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .clone()
-            {
+                .clone();
+            if let Some(message) = failure {
                 return Err(GitSshFailure::new(message));
             }
             let hello = format!("HELLO {} {}\n", command.service.command(), command.path);

@@ -252,19 +252,20 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
     }
 }
 
-/// The user-facing explanation for a block (the `403` body), naming what would change it.
+/// The user-facing explanation for a block (the `403` body), naming what would change it. The
+/// toggle is named as the Settings screen labels it, and `workspace` is the workspace's name
+/// (the caller falls back to its id when it has no name).
 ///
 /// ```
 /// use puddle_netpolicy::block_message;
-/// use puddle_types::{BlockReason, Host, LocalCategory, WorkspaceId};
+/// use puddle_types::{BlockReason, Host, LocalCategory};
 ///
-/// let workspace = WorkspaceId::new("box").unwrap();
 /// let host = Host::parse_normalised("10.0.0.1").unwrap();
-/// let msg = block_message(&host, &workspace, &[BlockReason::LocalToggle(LocalCategory::Private)]);
-/// assert!(msg.contains("turn on 'private' (local/private network) globally or for workspace box"));
+/// let msg = block_message(&host, "box", &[BlockReason::LocalToggle(LocalCategory::Private)]);
+/// assert!(msg.contains("turn on 'Private networks' globally or for workspace box"));
 /// ```
 #[must_use]
-pub fn block_message(host: &Host, workspace: &WorkspaceId, reasons: &[BlockReason]) -> String {
+pub fn block_message(host: &Host, workspace: &str, reasons: &[BlockReason]) -> String {
     let mut toggles: Vec<LocalCategory> = reasons
         .iter()
         .filter_map(|r| match r {
@@ -314,7 +315,7 @@ pub fn block_message(host: &Host, workspace: &WorkspaceId, reasons: &[BlockReaso
         .join(" or ");
     let switch = toggles
         .iter()
-        .map(|c| format!("'{}' ({})", c.key(), c.describe()))
+        .map(|c| format!("'{}'", c.label()))
         .collect::<Vec<_>>()
         .join(" or ");
     format!(

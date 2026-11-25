@@ -434,6 +434,22 @@ impl Store {
         Ok(())
     }
 
+    /// The current name of `workspace` as last set with [`Store::set_workspace_name`], or `None`
+    /// when none was set or the database can't be read.
+    pub fn current_workspace_name(&self, workspace: &WorkspaceId) -> Option<String> {
+        let conn = self.audit_read();
+        conn.query_row(
+            "SELECT name FROM workspace_names WHERE workspace_id = ?1",
+            [workspace.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap_or_else(|err| {
+            tracing::warn!(%workspace, error = %err, "the workspace's name could not be read");
+            None
+        })
+    }
+
     /// [`Store::set_workspace_name`] for a caller that cannot act on a failure: it is logged and
     /// dropped, and the records written meanwhile carry no name (a reader shows the id). Returns
     /// whether the name was written.

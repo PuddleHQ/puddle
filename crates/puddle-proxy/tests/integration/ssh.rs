@@ -18,10 +18,12 @@ use futures_util::StreamExt;
 use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
+use puddle_proxy::terminate::Terminations;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{BoxFuture, PortProbe, Proxy, Resolver, Route};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, WorkspaceId,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, ReasonCode,
+    WorkspaceId,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -273,6 +275,47 @@ async fn an_announced_ssh_connect_to_a_git_host_is_refused_on_any_port_before_an
     assert_eq!(rig.policy.pending().len(), 0, "nothing in the inbox");
     assert_eq!(rig.resolver.lookups(), 0, "nothing was resolved");
     assert_ssh_refusals(&rig.events(authorities.len()).await, authorities.len());
+}
+
+/// A workspace the host holds no termination for (it stopped, or a start failed) reaches nothing:
+/// a `CONNECT` and a plain-HTTP request are answered `503` before any rule runs, whatever the
+/// port, and recorded as blocked.
+#[tokio::test]
+async fn a_workspace_with_no_termination_gets_a_503_on_connect_and_on_plain_http() {
+    let rig = Rig::with_proxy(&["a.test"], |proxy| {
+        proxy.with_termination(
+            Arc::new(Terminations::new()),
+            puddle_upstream::TlsClient::new([]).unwrap(),
+        )
+    });
+    rig.policy.allow(&host("a.test"));
+    let mut guest = rig.guest().await;
+    let answers = [
+        guest.exchange(connect("a.test:443", &[]).as_bytes()).await,
+        guest.exchange(connect("a.test:8443", &[]).as_bytes()).await,
+        guest.announce("github.com:22").await,
+        guest
+            .exchange(b"GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\n\r\n")
+            .await,
+    ];
+    for answer in &answers {
+        assert!(answer.starts_with("HTTP/1.1 503"), "{answer}");
+        assert!(
+            answer.contains("x-puddle-decision: blocked\r\n")
+                && answer.contains("x-puddle-blocked: workspace_not_running\r\n"),
+            "{answer}"
+        );
+    }
+    assert_eq!(rig.policy.decisions(), 0, "the rules were never asked");
+    assert_eq!(rig.policy.pending().len(), 0, "nothing in the inbox");
+    assert_eq!(rig.resolver.lookups(), 0, "nothing was resolved");
+    for event in rig.events(answers.len()).await {
+        assert_eq!(event.decision, ConnectionDecision::Blocked);
+        assert_eq!(
+            event.reason,
+            ConnectionReason::Refused(ReasonCode::WorkspaceNotRunning)
+        );
+    }
 }
 
 /// A probe that answers as set and counts how often it was asked.

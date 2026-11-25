@@ -125,7 +125,7 @@ const USAGE: &str = "usage: puddle-lab [--squid | --squid-basic] [--interceptor 
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut cmd = Command::default();
     while let Some(flag) = args.next() {
-        let mut value = || args.next().ok_or(format!("{flag} needs a value"));
+        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--squid" => set_squid(&mut cmd.plan, SquidAuth::Open)?,
             "--squid-basic" => set_squid(&mut cmd.plan, SquidAuth::Basic)?,
@@ -136,7 +136,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
             "--all" => {
                 let rest = std::mem::take(&mut cmd.plan);
                 cmd.plan = Plan {
-                    interceptor: rest.interceptor.or(Plan::everything().interceptor),
+                    interceptor: rest.interceptor.or_else(|| Plan::everything().interceptor),
                     names: rest.names,
                     allowed_ports: rest.allowed_ports,
                     squid_through: rest.squid_through,
@@ -176,7 +176,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
             );
         }
         cmd.plan = Plan {
-            interceptor: cmd.plan.interceptor.or(Plan::everything().interceptor),
+            interceptor: cmd
+                .plan
+                .interceptor
+                .or_else(|| Plan::everything().interceptor),
             names: cmd.plan.names,
             allowed_ports: cmd.plan.allowed_ports,
             squid_through: cmd.plan.squid_through,
@@ -636,20 +639,23 @@ fn run(cmd: &Command) -> Result<(), String> {
         .ca
         .clone()
         .unwrap_or_else(|| info_path.with_extension("ca.pem"));
-    let cleanup = CleanupOnSignal::start()?;
-    let lab = Lab::start(&cmd.plan, &ca)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    // Listening before the info file exists: a script that signals the lab as soon as it is ready
-    // must get a clean stop, not the default action of a signal nobody handles yet.
-    let signals = {
-        let _entered = runtime.enter();
-        Signals::listen()?
+    // The guard covers the start only: when the scope ends the run's own handlers are in place,
+    // and its pieces stop on drop from there on.
+    let (lab, runtime, signals) = {
+        let _cleanup = CleanupOnSignal::start()?;
+        let lab = Lab::start(&cmd.plan, &ca)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        // Listening before the info file exists: a script that signals the lab as soon as it is
+        // ready must get a clean stop, not the default action of a signal nobody handles yet.
+        let signals = {
+            let _entered = runtime.enter();
+            Signals::listen()?
+        };
+        (lab, runtime, signals)
     };
-    // The run's own handlers are in place, and its pieces stop on drop from here on.
-    drop(cleanup);
     // Written last and in one go: a script waits for the file.
     let part = info_path.with_extension("part");
     std::fs::write(&part, lab.info().to_string())

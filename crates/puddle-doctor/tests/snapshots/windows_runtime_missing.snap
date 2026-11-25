@@ -4,11 +4,17 @@ ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 FAIL  Bundled runtime       bundled runtime is missing: C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe does not exist; reinstall Puddle
-      fix:  Reinstall Puddle: its runtime folder
-            C:\Users\dev\AppData\Local\Programs\puddle\runtime is incomplete. The runtime ships
-            with Puddle and must sit next to Puddle's program file.
+      impact: Puddle can't start any workspace: part of its runtime is missing.
+      remedy: Reinstall Puddle.
+      fix:    Reinstall Puddle: its runtime folder
+              C:\Users\dev\AppData\Local\Programs\puddle\runtime is incomplete. The runtime ships
+              with Puddle and must sit next to Puddle's program file.
 skip  Runtime starts        not checked: the bundled runtime isn't usable
+      impact: Not checked, so Puddle can't tell yet whether its runtime may run here.
+      remedy: Fix any problem above, then check again.
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

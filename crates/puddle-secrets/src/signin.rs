@@ -241,6 +241,7 @@ impl SignIns {
         let (host, path, username) = (host.clone(), path.clone(), username.cloned());
         let window = self.window;
         let start = SignInStart::default();
+        // string-error-ok: the text is the window's failure message, sent once to the waiting caller and shown as is
         let (tell, told) = tokio::sync::oneshot::channel::<Result<(), String>>();
         self.open_while(spec, &start, async move {
             let query = GitQuery::new(&host, &path, username.as_ref());

@@ -54,6 +54,5 @@
   }
   .port.usual {
     color: var(--color-text-muted);
-    opacity: 0.7;
   }
 </style>

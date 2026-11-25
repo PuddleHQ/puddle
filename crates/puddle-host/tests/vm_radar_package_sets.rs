@@ -43,6 +43,11 @@ use support::Api;
 use vm_support::{VmHost, create_workspace_from, guest_as, start_vm_host};
 
 /// The live third parties, for the failure messages.
+/// The host of Puddle's own managed-tools download (the radar builds with the `mise` feature, so
+/// every workspace start fetches mise there). It is the platform's traffic, not a tool's: the audit
+/// leaves it out of every step's hosts.
+const MANAGED_TOOLS_HOST: &str = "mise.jdx.dev";
+
 const LIVE_NOTE: &str = "live third parties: Debian, npm, PyPI, crates.io, static.rust-lang.org, \
     GitHub, the Playwright CDN, Docker Hub; an outage there fails this test";
 
@@ -94,39 +99,39 @@ command -v docker || dpkg -l 'docker*' | tail -5
 docker --version
 "#;
 
-const NPM_PNPM: &str = r"
+const NPM_PNPM: &str = "
 sudo npm install -g pnpm@9.15.0
 pnpm --version
 ";
 
 /// Written by [`PROJECT_FILES`]; the lockfile is made first, so the frozen install is real.
-const PNPM_LOCK: &str = r"
+const PNPM_LOCK: &str = "
 cd ~/js
 pnpm install --lockfile-only --reporter=append-only
 test -s pnpm-lock.yaml
 ";
 
-const PNPM_FROZEN: &str = r"
+const PNPM_FROZEN: &str = "
 cd ~/js
 CI=true pnpm install --frozen-lockfile --reporter=append-only
 # The install scripts ran: esbuild's binary answers.
 node_modules/.bin/esbuild --version
 ";
 
-const PNPM_OFFLINE: &str = r"
+const PNPM_OFFLINE: &str = "
 cd ~/js
 rm -rf node_modules
 CI=true pnpm install --frozen-lockfile --prefer-offline --reporter=append-only
 node_modules/.bin/esbuild --version
 ";
 
-const PLAYWRIGHT: &str = r"
+const PLAYWRIGHT: &str = "
 cd ~/js
 npx playwright install chromium
 ls ~/.cache/ms-playwright | grep -q chromium
 ";
 
-const PIP: &str = r"
+const PIP: &str = "
 python3 -m venv ~/py
 . ~/py/bin/activate
 pip install --disable-pip-version-check -r ~/requirements.txt
@@ -134,7 +139,7 @@ pip install --disable-pip-version-check -r ~/requirements.txt
 python -c 'import yaml, numpy, pandas; print(yaml.__version__)'
 ";
 
-const UV: &str = r"
+const UV: &str = "
 . ~/py/bin/activate
 pip install --disable-pip-version-check uv
 uv venv ~/uvenv
@@ -142,25 +147,25 @@ uv pip install --python ~/uvenv -r ~/requirements.txt
 ~/uvenv/bin/python -c 'import yaml, numpy, pandas'
 ";
 
-const RUSTUP: &str = r"
+const RUSTUP: &str = "
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 . ~/.cargo/env
 rustc --version
 ";
 
-const NEXTEST: &str = r"
+const NEXTEST: &str = "
 . ~/.cargo/env
 cargo install cargo-nextest --locked
 cargo nextest --version
 ";
 
-const GIT_DEPENDENCY: &str = r"
+const GIT_DEPENDENCY: &str = "
 . ~/.cargo/env
 cd ~/gitdep
 cargo fetch
 ";
 
-const DOCKER: &str = r"
+const DOCKER: &str = "
 sudo mkdir -p /var/lib/docker
 (sudo nohup dockerd >/tmp/dockerd.log 2>&1 &)
 for i in $(seq 1 60); do sudo docker info >/dev/null 2>&1 && break; sleep 1; done
@@ -360,6 +365,9 @@ async fn run_tool(
     };
     for r in records.iter().skip(*seen) {
         let host = r["host"].as_str().unwrap_or("?").to_owned();
+        if host == MANAGED_TOOLS_HOST {
+            continue;
+        }
         if r["decision"] != "allow" {
             report.refused.insert(host);
         } else if r["rule_set"]

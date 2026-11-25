@@ -42,7 +42,7 @@ async fn a_thrown_error_reaches_the_log_scrubbed_and_settings_lists_it() {
     assert!(line.contains("route=/workspaces/abc/terminal "), "{line}");
     assert!(line.contains("build=1700000000000"), "{line}");
     assert!(
-        line.contains(r"at https://h.example/x.js:1:2"),
+        line.contains("at https://h.example/x.js:1:2"),
         "the stack is in the line: {line}"
     );
     // The failure names the value, never prints it: a scrubber that broke must not put the

@@ -84,7 +84,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
                 tracing::info!(host = %request.host, port = request.port, "ssh in a tunnel refused");
                 let message = block_message(
                     &request.host,
-                    &request.workspace,
+                    request.workspace.as_str(),
                     &[BlockReason::SshUnsupported],
                 );
                 // best effort: the peer may already have closed, and nothing else depends on this write

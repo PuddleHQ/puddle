@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The soak sampler: what one sample of `metrics.tsv` holds and how each part is read. Linux
-//! reads the host and processes from `/proc`; the Windows readings (handles, commit charge) are
-//! added where that run lives. Every reader returns plain numbers, so the tests feed it files
+//! reads the host and processes from `/proc`; Windows reads them through [`super::winhost`]
+//! (handle counts, working sets, commit charge). Every reader returns plain numbers, so the tests feed it files
 //! and servers of their own.
 
 use std::collections::VecDeque;
@@ -15,6 +15,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use super::series::Series;
+#[cfg(windows)]
+use super::winhost;
 
 /// Longest a single request may take before it counts as failed.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -193,12 +195,21 @@ pub async fn read_events_at(slot: ApiSlot, state: Arc<SseState>) {
 #[derive(Debug, Default)]
 pub struct W4Window {
     seen: VecDeque<(u64, bool)>,
+    paused: bool,
 }
 
 impl W4Window {
-    /// Notes the outcome of one request at `time` (epoch seconds).
+    /// Notes the outcome of one request at `time` (epoch seconds); nothing while paused.
     pub fn record(&mut self, time: u64, ok: bool) {
-        self.seen.push_back((time, ok));
+        if !self.paused {
+            self.seen.push_back((time, ok));
+        }
+    }
+
+    /// Stops (or resumes) counting requests: a planned restart of the server leaves the forwarded
+    /// port unanswered by design, so that gap is not a failure.
+    pub fn pause(&mut self, paused: bool) {
+        self.paused = paused;
     }
 
     /// The share of the requests in the last `window` seconds that failed; `None` with no request
@@ -395,11 +406,16 @@ pub struct Sampler {
     root: Arc<Mutex<Option<u32>>>,
     sse: Arc<SseState>,
     w4: Arc<Mutex<W4Window>>,
+    w4_window_secs: u64,
     cpu_before: Option<(u64, u64)>,
 }
 
-/// Seconds the failed-request share covers.
+/// Seconds the failed-request share covers when the caller names no other (5 playbook minutes of
+/// the full profile).
 pub const W4_WINDOW_SECS: u64 = 300;
+
+/// Seconds between the web-app requests when the caller names no other.
+pub const W4_EVERY: Duration = Duration::from_secs(10);
 
 impl Sampler {
     /// A sampler with its event reader and web-app prober started on the current tokio runtime.
@@ -409,23 +425,43 @@ impl Sampler {
         let api = Arc::new(Mutex::new(cfg.api.clone()));
         tokio::spawn(read_events_at(api.clone(), sse.clone()));
         let w4 = Arc::new(Mutex::new(W4Window::default()));
-        if let Some(target) = cfg.w4.clone() {
-            tokio::spawn(probe_web_app(
-                target,
-                "/".to_owned(),
-                Duration::from_secs(10),
-                w4.clone(),
-                now,
-            ));
-        }
-        Self {
+        let mut sampler = Self {
             cfg,
             api,
             root: Arc::new(Mutex::new(None)),
             sse,
             w4,
+            w4_window_secs: W4_WINDOW_SECS,
             cpu_before: None,
+        };
+        if let Some(target) = sampler.cfg.w4.clone() {
+            sampler.watch_web_app(target, W4_EVERY, W4_WINDOW_SECS, now);
         }
+        sampler
+    }
+
+    /// Starts requesting the web app every `every`; the share that failed covers `window_secs`.
+    /// A run calls this once the app is up, so the time it took to start is not counted.
+    pub fn watch_web_app(
+        &mut self,
+        target: Target,
+        every: Duration,
+        window_secs: u64,
+        now: fn() -> u64,
+    ) {
+        self.w4_window_secs = window_secs;
+        tokio::spawn(probe_web_app(
+            target,
+            "/".to_owned(),
+            every,
+            self.w4.clone(),
+            now,
+        ));
+    }
+
+    /// Stops counting the web-app requests (or counts them again) around a planned restart.
+    pub fn w4_paused(&self, paused: bool) {
+        self.w4.lock().unwrap().pause(paused);
     }
 
     /// Measures only the processes `root` is or started (from the next sample on), so another
@@ -443,8 +479,26 @@ impl Sampler {
     /// (a missing line is a gap in the series, never a made-up zero).
     pub async fn sample(&mut self, now: u64, into: &mut Series) {
         self.host(now, into);
+        self.processes(now, into);
+        self.files(now, into);
+        self.api(now, into).await;
+        let (age, reconnects) = self.sse.read();
+        into.push(now, "sse.age_s", age);
+        #[expect(clippy::cast_precision_loss, reason = "reconnect counts are tiny")]
+        into.push(now, "sse.reconnects", reconnects as f64);
+        let window = self.w4_window_secs;
+        let share = self.w4.lock().unwrap().fail_share(now, window);
+        if let Some(share) = share {
+            into.push(now, "w4.fail_share", share);
+        }
+    }
+
+    /// The readings of every Puddle process: from `/proc`.
+    #[cfg(not(windows))]
+    fn processes(&self, now: u64, into: &mut Series) {
         let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
-        if let Some(root) = *self.root.lock().unwrap() {
+        let root = *self.root.lock().unwrap();
+        if let Some(root) = root {
             let ours = descendants(root);
             procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
         }
@@ -454,19 +508,30 @@ impl Sampler {
                 into.push(now, &format!("proc.{comm}.{pid}.{field}"), v);
             }
         }
-        self.files(now, into);
-        self.api(now, into).await;
-        let (age, reconnects) = self.sse.read();
-        into.push(now, "sse.age_s", age);
-        #[expect(clippy::cast_precision_loss, reason = "reconnect counts are tiny")]
-        into.push(now, "sse.reconnects", reconnects as f64);
-        if self.cfg.w4.is_some()
-            && let Some(share) = self.w4.lock().unwrap().fail_share(now, W4_WINDOW_SECS)
-        {
-            into.push(now, "w4.fail_share", share);
+    }
+
+    /// The readings of every Puddle process: working set, threads and handle count.
+    #[cfg(windows)]
+    fn processes(&self, now: u64, into: &mut Series) {
+        let all = winhost::native::snapshot();
+        let root = *self.root.lock().unwrap();
+        for (comm, pid) in winhost::select(&all, &self.cfg.process_prefixes, root) {
+            let Some((rss_kb, handles)) = winhost::native::process(pid) else {
+                continue;
+            };
+            let threads = all.iter().find(|p| p.pid == pid).map_or(0, |p| p.threads);
+            into.push(now, &format!("proc.{comm}.{pid}.rss_kb"), rss_kb);
+            into.push(
+                now,
+                &format!("proc.{comm}.{pid}.threads"),
+                f64::from(threads),
+            );
+            into.push(now, &format!("proc.{comm}.{pid}.handles"), handles);
         }
     }
 
+    /// Free RAM, CPU and free disk of the machine, from `/proc` and `df`.
+    #[cfg(not(windows))]
     fn host(&mut self, now: u64, into: &mut Series) {
         if let Some(kb) = std::fs::read_to_string("/proc/meminfo")
             .ok()
@@ -489,6 +554,37 @@ impl Sampler {
         }
         self.cpu_before = jiffies;
         if let Some(kb) = self.cfg.disk.as_deref().and_then(free_disk_kb) {
+            into.push(now, "host.free_disk_kb", kb);
+        }
+    }
+
+    /// Free RAM, commit charge and its limit, CPU and free disk of the machine.
+    #[cfg(windows)]
+    fn host(&mut self, now: u64, into: &mut Series) {
+        for (name, v) in winhost::native::memory()
+            .into_iter()
+            .flat_map(winhost::Memory::readings)
+        {
+            into.push(now, &format!("host.{name}"), v);
+        }
+        let ticks = winhost::native::cpu_ticks();
+        if let (Some((b0, t0)), Some((b1, t1))) = (self.cpu_before, ticks)
+            && t1 > t0
+        {
+            #[expect(clippy::cast_precision_loss, reason = "tick counts")]
+            into.push(
+                now,
+                "host.cpu_pct",
+                100.0 * (b1 - b0) as f64 / (t1 - t0) as f64,
+            );
+        }
+        self.cpu_before = ticks;
+        if let Some(kb) = self
+            .cfg
+            .disk
+            .as_deref()
+            .and_then(winhost::native::free_disk_kb)
+        {
             into.push(now, "host.free_disk_kb", kb);
         }
     }

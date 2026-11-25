@@ -14,7 +14,7 @@ use crate::dev_cert::DevCertService;
 use crate::error::{ApiError, blocking};
 use crate::routes::AppState;
 use crate::routes::settings::load_global;
-use crate::wire::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
+use crate::wire::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest, FirstRunStep};
 
 /// How long the button waits for the system's confirmation: the limit a workspace start puts on
 /// it. The route lives in the slow router, whose time limit is longer, so this answers first.
@@ -24,6 +24,11 @@ fn view(first_run: &puddle_settings::FirstRun, dev_certificate: DevCertificate) 
     FirstRun {
         completed: first_run.is_completed(),
         completed_at: first_run.completed_at.map(|at| at.0),
+        // A step id this build does not know (written by a newer Puddle) resumes at the start.
+        step: first_run
+            .step
+            .as_deref()
+            .and_then(|id| serde_json::from_value::<FirstRunStep>(id.into()).ok()),
         dev_certificate,
     }
 }
@@ -51,7 +56,8 @@ pub(crate) async fn get_first_run(
 }
 
 /// Records that the first-run flow was finished or skipped (`true`), or makes it run again at the
-/// next start (`false`). Doing it twice keeps the first time.
+/// next start (`false`). Doing it twice keeps the first time. A `step` records where the person
+/// is, so reopening the flow resumes there.
 #[utoipa::path(
     put,
     path = "/api/first-run",
@@ -72,13 +78,24 @@ pub(crate) async fn put_first_run(
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
         let first_run = &mut loaded.settings.first_run;
+        let before = first_run.clone();
         match (body.completed, first_run.completed_at) {
-            (true, None) => first_run.completed_at = Some(UnixMillis(now)),
-            (false, Some(_)) => first_run.completed_at = None,
-            _ => return Ok(view(first_run, state.dev_cert.status())),
+            (Some(true), None) => first_run.completed_at = Some(UnixMillis(now)),
+            (Some(false), Some(_)) => first_run.completed_at = None,
+            _ => {}
+        }
+        // The flow restarts from its first step when reopened, and has no step once completed.
+        if body.completed.is_some() {
+            first_run.step = None;
+        }
+        if let (Some(step), None) = (body.step, first_run.completed_at) {
+            first_run.step = Some(step.id().to_owned());
+        }
+        if *first_run == before {
+            return Ok(view(first_run, state.dev_cert.status()));
         }
         repo.save_global(loaded.settings.to_document()?)?;
-        tracing::info!(completed = body.completed, "first-run state changed");
+        tracing::info!(completed = ?body.completed, step = ?body.step, "first-run state changed");
         Ok(view(&loaded.settings.first_run, state.dev_cert.status()))
     })
     .await?;

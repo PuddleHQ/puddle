@@ -154,6 +154,7 @@ fn merge_documents(ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
         .flatten()
 }
 
+// string-error-ok: the text is the refusal shown to the user before a restore starts; no caller branches on a kind
 fn read_book(path: &Path) -> Result<Option<Map<String, Value>>, String> {
     let body = match fs::read(path) {
         Ok(body) => body,
@@ -184,6 +185,7 @@ const OLDEST_MERGEABLE: u64 = 3;
 
 /// Whether the present and the backup's workspace lists can be merged: one of them has no
 /// workspaces, or both are in a format whose entries have the current shape (3 or 4).
+// string-error-ok: the text is the refusal shown to the user before a restore starts; no caller branches on a kind
 pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), String> {
     let (Some(here), Some(there)) = (read_book(here)?, read_book(there)?) else {
         return Ok(());

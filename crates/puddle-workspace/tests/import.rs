@@ -67,7 +67,8 @@ impl Guest {
                     return Some(ExecOutput::new(128, "", "fatal: bad object HEAD\n"));
                 }
             }
-            if let Some((src, rm_code)) = g.fail_finish_of.lock().unwrap().clone() {
+            let fail_finish = g.fail_finish_of.lock().unwrap().clone();
+            if let Some((src, rm_code)) = fail_finish {
                 if r.program == "sh" && r.args.get(4) == Some(&src) {
                     return Some(ExecOutput::new(1, "", "fatal: couldn't find remote ref\n"));
                 }

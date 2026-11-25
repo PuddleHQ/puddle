@@ -102,6 +102,7 @@ pub fn run(args: &AuditArgs) -> ExitCode {
     }
 }
 
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn paths(flags: &Flags) -> Result<HostPaths, String> {
     let data = match data_folder::configured_here(flags).map_err(|e| e.to_string())? {
         Some(dir) => dir,
@@ -141,6 +142,7 @@ fn status_text(s: &puddle_host::AuditStats) -> String {
     )
 }
 
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn execute(args: &AuditArgs) -> Result<String, String> {
     let paths = paths(&args.flags)?;
     match args.action {

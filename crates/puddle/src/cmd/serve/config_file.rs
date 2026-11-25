@@ -142,7 +142,7 @@ pub fn parse(text: &str, path: &Path) -> Result<FileValues, ConfigError> {
             fix,
         }
     })?;
-    let folder = path.parent().unwrap_or(Path::new(""));
+    let folder = path.parent().unwrap_or_else(|| Path::new(""));
     let mut found: Vec<(usize, Entry)> = Vec::new();
     for (key, value) in table.get_ref() {
         let line = position(text, key.span().start).0;
@@ -176,6 +176,7 @@ pub fn parse(text: &str, path: &Path) -> Result<FileValues, ConfigError> {
 }
 
 /// The value of a TOML entry as the option's kind, or a description of what the file has.
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn value_of(value: &DeValue<'_>, kind: Kind, folder: &Path) -> Result<Value, String> {
     match (kind, value) {
         (Kind::Port, DeValue::Integer(int)) => i64::from_str_radix(int.as_str(), int.radix())

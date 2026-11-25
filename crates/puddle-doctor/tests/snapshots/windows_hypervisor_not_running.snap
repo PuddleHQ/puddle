@@ -2,14 +2,19 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization    on in firmware
 FAIL  Hypervisor            Windows Hypervisor Platform is on, but the hypervisor isn't running
-      fix:  Restart Windows: a newly enabled hypervisor only starts after a restart. If it still
-            doesn't run, the boot configuration turns it off; in a terminal as administrator run
-              bcdedit /set hypervisorlaunchtype auto
-            and restart again.
+      impact: Puddle can't start any workspace: the Windows hypervisor isn't running.
+      remedy: Restart Windows. If it still doesn't run, run `bcdedit /set hypervisorlaunchtype
+              auto` as administrator and restart.
+      fix:    Restart Windows: a newly enabled hypervisor only starts after a restart. If it still
+              doesn't run, the boot configuration turns it off; in a terminal as administrator run
+                bcdedit /set hypervisorlaunchtype auto
+              and restart again.
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot             not checked: no usable hypervisor
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

@@ -54,6 +54,7 @@ pub struct LocalCheckout {
     pub folder: PathBuf,
     /// The HTTPS address of its `origin` remote, when it has one Puddle can use; the reason
     /// otherwise.
+    // string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
     pub origin: Result<String, String>,
 }
 
@@ -65,6 +66,7 @@ impl LocalCheckout {
     /// A message for the user: the folder is missing, holds no `.git`, is a bare repository, its
     /// `.git` is a worktree's or submodule's link file or not a git directory, or its objects
     /// are kept elsewhere.
+    // string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
     pub fn open(folder: &Path) -> Result<Self, String> {
         if !folder.is_absolute() {
             return Err(format!("{} is not an absolute path", folder.display()));
@@ -129,6 +131,7 @@ fn layout(e: impl std::fmt::Display) -> WorkspaceError {
     }
 }
 
+// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
 fn read_config(config: &Path) -> Result<String, String> {
     if !std::fs::symlink_metadata(config).is_ok_and(|m| m.is_file()) {
         return Err("it has no config file, so no origin remote".into());
@@ -162,6 +165,7 @@ const UNREADABLE: &str = "its origin is written in a way Puddle does not read (a
 /// The first `url` in the `[remote "origin"]` section of git config text. Text git could read
 /// differently from this reader (a line continued with `\`, an include before the origin, an
 /// escape other than `\"` and `\\`) is refused rather than guessed at.
+// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
 fn origin_url(text: &str) -> Result<String, String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     if text.lines().any(|l| l.trim_end().ends_with('\\')) {
@@ -263,6 +267,7 @@ fn authority(rest: &str) -> (&str, &str) {
 ///
 /// Why the address can't be used, for a remote of any other kind; the message never shows a
 /// password the address held.
+// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
 pub fn https_form(url: &str) -> Result<String, String> {
     let shown = redacted(url);
     if url.chars().any(|c| c.is_whitespace() || c.is_control()) {

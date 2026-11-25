@@ -261,6 +261,7 @@ pub(crate) async fn run<S: Sandbox>(
 }
 
 /// Parses the check's output (see `guest/delete-check.sh`).
+// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
 pub(crate) fn parse(stdout: &str) -> Result<Findings, String> {
     let mut findings = Findings::default();
     let mut done = false;

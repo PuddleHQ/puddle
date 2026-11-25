@@ -8,7 +8,7 @@
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
-#![allow(
+#![expect(
     clippy::indexing_slicing,
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]

@@ -138,6 +138,7 @@ pub(crate) fn failure_text(failure: io::ErrorKind, port: u16) -> String {
 }
 
 /// Connects to `port` on the guest's loopback, IPv4 then IPv6; the reason is for the user.
+// string-error-ok: the text is only shown to the user as the reason a connection failed; no caller branches on a kind
 pub(crate) async fn connect(port: u16) -> Result<TcpStream, String> {
     let v4 = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, port));

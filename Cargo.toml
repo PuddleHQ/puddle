@@ -70,11 +70,11 @@ puddle-proxy-test-support = { path = "crates/puddle-proxy-test-support" }
 # required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
 # and a release msb refuses it ("missing field `sandbox_slot`"). `ssh` for the in-process
 # SSH server.
-microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false, features = ["local", "net", "ssh"] }
+microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
-microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false }
+microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
 # Only for building the SDK's boot error in tests.
-microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false }
+microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
 object = { version = "0.41", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
@@ -247,6 +247,15 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
+# Idiom audit lints that keep the cleaned-up shapes cleaned up.
+redundant_clone = "warn"
+or_fun_call = "warn"
+use_self = "warn"
+needless_raw_strings = "warn"
+str_to_string = "warn"
+string_add = "warn"
+needless_collect = "warn"
+significant_drop_in_scrutinee = "warn"
 # clippy.toml names std::env::temp_dir: make a test's files with `tempfile`, or say why in an
 # #[expect(clippy::disallowed_methods, reason = "...")] (scripts/flake-lints-test.sh proves the rule fires).
 disallowed_methods = "deny"

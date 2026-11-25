@@ -21,8 +21,9 @@ import {
 } from "#lib/stores/workspaces.svelte.ts";
 import type { Identity } from "#lib/identities/model.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
+import { clearDraft, savedDraft } from "#lib/workspaces/draft.ts";
 import { session } from "#lib/session/session.svelte.ts";
-import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
+import CreateWorkspaceForm from "./CreateWorkspaceForm.svelte";
 
 // The limit is 100 (pinned in repo-rows.test.ts); a form with that many rows takes seconds to
 // build in jsdom, so the dialog's use of the limit is tested with a small one.
@@ -64,6 +65,7 @@ vi.mock("#lib/desktop/folder-picker.ts", () => ({
 vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
 afterEach(() => {
+  clearDraft();
   h.desktop = false;
   session.mode = "checking";
   session.user = null;
@@ -82,8 +84,8 @@ function mount(
     typeof result === "function" ? result() : result,
   );
   const onCreated = vi.fn();
-  render(CreateWorkspaceDialog, {
-    props: { open: true, store: { create }, onCreated, settings: settings() },
+  render(CreateWorkspaceForm, {
+    props: { store: { create }, onCreated, settings: settings() },
   } as never);
   return { create, onCreated };
 }
@@ -104,9 +106,8 @@ function settings(
 
 describe("the default image's description", () => {
   function mountWith(description: string | null) {
-    render(CreateWorkspaceDialog, {
+    render(CreateWorkspaceForm, {
       props: {
-        open: true,
         store: { create: vi.fn() },
         settings: settings(),
         defaultImage: { description, load: vi.fn(async () => {}) },
@@ -116,9 +117,6 @@ describe("the default image's description", () => {
 
   it("shows what the default image is under the empty Image field", async () => {
     mountWith("Debian trixie dev container with git");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     const hint = await screen.findByText(
       "Default: Debian trixie dev container with git",
     );
@@ -130,16 +128,10 @@ describe("the default image's description", () => {
 
   it("drops the line once an image is typed, and shows none before it is known", async () => {
     mountWith("Debian trixie dev container with git");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     await type("Image", "ghcr.io/acme/dev:1");
     expect(screen.queryByText(/^Default:/)).toBeNull();
     cleanup();
     mountWith(null);
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     expect(screen.queryByText(/^Default:/)).toBeNull();
   });
 });
@@ -154,8 +146,8 @@ function mountWithLimits(
 ) {
   const create = vi.fn(async (_body: unknown) => result);
   const source = settings(limits, byDefault) as { load: () => void };
-  render(CreateWorkspaceDialog, {
-    props: { open: true, store: { create }, settings: source },
+  render(CreateWorkspaceForm, {
+    props: { store: { create }, settings: source },
   } as never);
   return { create, source };
 }
@@ -167,10 +159,10 @@ const submit = () =>
 const type = (label: string, value: string) =>
   fireEvent.input(field(label), { target: { value } });
 
-describe("CreateWorkspaceDialog", () => {
+describe("CreateWorkspaceForm", () => {
   it("is a dialog with the repository first", async () => {
     mount();
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    const dialog = await screen.findByRole("region", { name: "New workspace" });
     const first = dialog.querySelector("input");
     expect(first).toBe(screen.getByTestId("source-address"));
     expect(first).toBeChecked();
@@ -181,7 +173,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("puts focus on the address when it opens, not on the source choice", async () => {
     mount();
-    await screen.findByRole("dialog", { name: "New workspace" });
+    await screen.findByRole("region", { name: "New workspace" });
     await vi.waitFor(() =>
       expect(document.activeElement).toBe(field("Git repository (HTTPS)")),
     );
@@ -189,7 +181,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("starts from a folder on this computer: only the folder is needed, and the origin fills in the address", async () => {
     const { create, onCreated } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByTestId("source-folder"));
     expect(screen.queryByLabelText("Git repository (HTTPS)")).toBeNull();
     expect(
@@ -211,13 +203,13 @@ describe("CreateWorkspaceDialog", () => {
   it("offers the folder source to the owner and to a window with nothing to sign in to", async () => {
     session.mode = "local";
     mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(screen.getByTestId("source-folder")).toBeInTheDocument();
     cleanup();
     session.mode = "signed-in";
     session.user = { id: 1, name: "ann", role: "owner" };
     mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(screen.getByTestId("source-folder")).toBeInTheDocument();
   });
 
@@ -225,7 +217,7 @@ describe("CreateWorkspaceDialog", () => {
     session.mode = "signed-in";
     session.user = { id: 2, name: "bob", role: "user" };
     mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(screen.queryByTestId("source-folder")).toBeNull();
     expect(screen.queryByText(/From a folder on this computer/)).toBeNull();
     expect(screen.getByTestId("source-address")).toBeInTheDocument();
@@ -233,7 +225,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("offers no folder dialog in a browser", async () => {
     mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByTestId("source-folder"));
     expect(screen.queryByTestId("choose-folder")).toBeNull();
   });
@@ -246,7 +238,7 @@ describe("CreateWorkspaceDialog", () => {
     it("fills the folder field from the dialog, and the name follows", async () => {
       h.pick.mockResolvedValue("/home/you/Shop");
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await fireEvent.click(screen.getByTestId("source-folder"));
       await fireEvent.click(
         screen.getByRole("button", { name: "Choose folder" }),
@@ -261,7 +253,7 @@ describe("CreateWorkspaceDialog", () => {
     it("leaves the typed path alone when the dialog is cancelled", async () => {
       h.pick.mockResolvedValue(null);
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await fireEvent.click(screen.getByTestId("source-folder"));
       await type("Folder of the checkout", "/home/you/typed");
       await fireEvent.click(screen.getByTestId("choose-folder"));
@@ -273,7 +265,7 @@ describe("CreateWorkspaceDialog", () => {
     it("says so and keeps the typed path when the dialog cannot open", async () => {
       h.pick.mockRejectedValue(new Error("no dialog"));
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await fireEvent.click(screen.getByTestId("source-folder"));
       await type("Folder of the checkout", "/home/you/typed");
       await fireEvent.click(screen.getByTestId("choose-folder"));
@@ -294,7 +286,7 @@ describe("CreateWorkspaceDialog", () => {
       field: "repo_url",
       at: { row: 1, input: "localPath" },
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByTestId("source-folder"));
     await type("Folder of the checkout", "shop");
     await type("Name", "shop");
@@ -325,7 +317,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("drops the quotes of a copied Windows path before sending it", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByTestId("source-folder"));
     await type("Folder of the checkout", '"C:\\Users\\you\\shop"');
     await type("Name", "shop");
@@ -338,7 +330,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("refuses the root of a drive on the folder field", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByTestId("source-folder"));
     await type("Folder of the checkout", "C:\\");
     await type("Name", "root");
@@ -349,7 +341,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("forgets a refusal shown on the folder when the source option changes", async () => {
     mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByTestId("source-folder"));
     await type("Folder of the checkout", "shop");
     await type("Name", "shop");
@@ -366,7 +358,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("takes any text as the name: spaces, capitals and other scripts go as typed", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/shop.git");
     await type("Name", "  Shop API \u00fc (prod)  ");
     await fireEvent.click(submit());
@@ -380,7 +372,7 @@ describe("CreateWorkspaceDialog", () => {
   it("checks the name only for empty, too long, a control character and another workspace's name", async () => {
     workspaces.list = [workspace("a", { name: "Web shop" })];
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/shop.git");
     for (const [text, problem] of [
       ["", "Give the workspace a name."],
@@ -398,7 +390,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("names the workspace after the repository until a name is typed", async () => {
     mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type(
       "Git repository (HTTPS)",
       "https://github.com/acme/Ledger_Service.git",
@@ -411,7 +403,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("sends what was typed, leaving out the image and memory when blank", async () => {
     const { create, onCreated } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", " https://github.com/acme/web.git ");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalled());
@@ -423,11 +415,8 @@ describe("CreateWorkspaceDialog", () => {
 
   it("sends the image and the memory in MiB when given", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     await type("Image", " ghcr.io/acme/dev:1 ");
     await type("Memory (GiB)", "3");
     await fireEvent.click(submit());
@@ -445,12 +434,9 @@ describe("CreateWorkspaceDialog", () => {
       { max_cpus: 12, host_cpus: 12 },
       4,
     );
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(source.load).toHaveBeenCalledWith(true);
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     const slider = screen.getByLabelText("CPUs") as HTMLInputElement;
     expect([slider.type, slider.min, slider.max, slider.value]).toEqual([
       "range",
@@ -478,7 +464,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("stores the default count when the slider is left alone, and a single CPU at the bottom", async () => {
     const { create } = mountWithLimits({ max_cpus: 2, host_cpus: 2 }, 1);
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
@@ -487,10 +473,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("shows no slider and sends no count before the limits are known", async () => {
     mount();
-    await screen.findByRole("dialog");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
+    await screen.findByRole("region");
     expect(screen.queryByLabelText("CPUs")).toBeNull();
   });
 
@@ -500,7 +483,7 @@ describe("CreateWorkspaceDialog", () => {
       field: "cpus",
       message: "cpus: 12 is more than the most CPUs a workspace may have (8)",
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
@@ -514,7 +497,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("checks the fields first and puts focus on the first bad one", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(submit());
     expect(screen.getAllByRole("alert")).toHaveLength(2);
     expect(field("Git repository (HTTPS)")).toHaveAttribute(
@@ -533,7 +516,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("takes an SSH address of a Git host, shows its HTTPS address and sends that", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "git@github.com:acme/web.git");
     await type("Name", "web");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -558,7 +541,7 @@ describe("CreateWorkspaceDialog", () => {
       "reads %j as %j, says so under the field and sends that",
       async (typed, url) => {
         const { create } = mount();
-        await screen.findByRole("dialog");
+        await screen.findByRole("region");
         await type("Git repository (HTTPS)", typed);
         expect(screen.getByText(`Will clone ${url}`)).toBeInTheDocument();
         expect(repo()).toHaveAccessibleDescription(`Will clone ${url}`);
@@ -572,14 +555,14 @@ describe("CreateWorkspaceDialog", () => {
 
     it("says nothing extra for an address that is already the one cloned", async () => {
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
       expect(screen.queryByText(/^Will clone/)).toBeNull();
     });
 
     it("refuses an address with credentials at the keystroke, before Create", async () => {
       const { create } = mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await type("Git repository (HTTPS)", "https://user:pw@github.com/x/y");
       // No timer, no blur: the message is there as soon as the typing event is handled.
       expect(screen.getByRole("alert")).toHaveTextContent(
@@ -592,7 +575,7 @@ describe("CreateWorkspaceDialog", () => {
 
     it("refuses a bad address while typing, and takes the message away once it is fixed", async () => {
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await type("Git repository (HTTPS)", "user:pw@github.com/x/y");
       expect(screen.getByRole("alert")).toHaveTextContent(
         "Remove the user name and password from the URL",
@@ -606,7 +589,7 @@ describe("CreateWorkspaceDialog", () => {
 
     it("waits for the field to be left before calling a half-typed owner/repo wrong", async () => {
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await type("Git repository (HTTPS)", "sharkdp");
       expect(screen.queryByRole("alert")).toBeNull();
       await fireEvent.blur(repo());
@@ -617,7 +600,7 @@ describe("CreateWorkspaceDialog", () => {
 
     it("does not nag about an empty field until Create", async () => {
       mount();
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await fireEvent.blur(repo());
       expect(screen.queryByRole("alert")).toBeNull();
       await fireEvent.click(submit());
@@ -641,7 +624,7 @@ describe("CreateWorkspaceDialog", () => {
       "puts the refusal of %j at the field when it is left",
       async (typed, message) => {
         mount();
-        await screen.findByRole("dialog");
+        await screen.findByRole("region");
         await type("Git repository (HTTPS)", typed);
         await fireEvent.blur(repo());
         expect(screen.getByRole("alert")).toHaveTextContent(message);
@@ -651,11 +634,8 @@ describe("CreateWorkspaceDialog", () => {
 
   it("checks the memory field too", async () => {
     const { create } = mount();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     await type("Memory (GiB)", "plenty");
     await fireEvent.click(submit());
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -674,23 +654,20 @@ describe("CreateWorkspaceDialog", () => {
     "shows a refusal about %s at that field",
     async (fieldName, label, message) => {
       mount({ ok: false, message, field: fieldName });
-      await screen.findByRole("dialog");
+      await screen.findByRole("region");
       await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-      await fireEvent.click(
-        screen.getByText("Start folder, image, memory and CPUs"),
-      );
       await fireEvent.click(submit());
       await vi.waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(message),
       );
       expect(field(label)).toHaveAttribute("aria-invalid", "true");
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("region")).toBeInTheDocument();
     },
   );
 
   it("shows any other refusal for the whole form, and keeps what was typed", async () => {
     mount({ ok: false, message: "Puddle's service isn't answering." });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() =>
@@ -708,22 +685,67 @@ describe("CreateWorkspaceDialog", () => {
     const { create } = mount(
       () => new Promise((resolve) => (finish = resolve)),
     );
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
-    await fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
+    await fireEvent.submit(screen.getByRole("region").querySelector("form")!);
     expect(create).toHaveBeenCalledTimes(1);
     finish({ ok: true, value: workspace("web") });
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await vi.waitFor(() => expect(savedDraft()).toBeNull());
   });
 
-  it("forgets what was typed when it is cancelled", async () => {
-    mount();
-    await screen.findByRole("dialog");
+  it("forgets what was typed when it is cancelled, and says so", async () => {
+    const onCancel = vi.fn();
+    render(CreateWorkspaceForm, {
+      props: { store: { create: vi.fn() }, onCancel, settings: settings() },
+    } as never);
     await type("Name", "half-done");
+    expect(savedDraft()?.name).toBe("half-done");
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(savedDraft()).toBeNull();
+  });
+
+  describe("an unsent draft", () => {
+    const again = () =>
+      render(CreateWorkspaceForm, {
+        props: { store: { create: vi.fn() }, settings: settings() },
+      } as never);
+
+    it("comes back when the screen is left and opened again", async () => {
+      const first = render(CreateWorkspaceForm, {
+        props: { store: { create: vi.fn() }, settings: settings() },
+      } as never);
+      await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+      await type("Name", "mine");
+      await type("Memory (GiB)", "3");
+      first.unmount();
+      again();
+      expect(field("Git repository (HTTPS)").value).toBe(
+        "https://github.com/acme/web.git",
+      );
+      expect(field("Name").value).toBe("mine");
+      expect(field("Memory (GiB)").value).toBe("3");
+    });
+
+    it("is replaced by a repository handed in", async () => {
+      const first = render(CreateWorkspaceForm, {
+        props: { store: { create: vi.fn() }, settings: settings() },
+      } as never);
+      await type("Name", "mine");
+      first.unmount();
+      render(CreateWorkspaceForm, {
+        props: {
+          store: { create: vi.fn() },
+          settings: settings(),
+          prefill: { url: "https://github.com/acme/api.git", identity: null },
+        },
+      } as never);
+      expect(field("Git repository (HTTPS)").value).toBe(
+        "https://github.com/acme/api.git",
+      );
+    });
   });
   it("warns with the identity it got when none covers the repository, and offers the Git tab", async () => {
     const { goto } = await import("$app/navigation");
@@ -737,7 +759,7 @@ describe("CreateWorkspaceDialog", () => {
         identities: [{ identity: "Personal", basis: "default", warning }],
       }),
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(toasts.items).toHaveLength(1));
@@ -756,7 +778,7 @@ describe("CreateWorkspaceDialog", () => {
         identities: [{ identity: "Work", basis: "covers", warning: null }],
       }),
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(covered.onCreated).toHaveBeenCalled());
@@ -764,7 +786,7 @@ describe("CreateWorkspaceDialog", () => {
   });
 });
 
-describe("CreateWorkspaceDialog identities and repositories", () => {
+describe("CreateWorkspaceForm identities and repositories", () => {
   const work = identity(1, {
     label: "Work",
     credentials: [
@@ -804,9 +826,8 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
   ) {
     const create = vi.fn(async (_body: unknown) => result);
     const onCreated = vi.fn();
-    render(CreateWorkspaceDialog, {
+    render(CreateWorkspaceForm, {
       props: {
-        open: true,
         store: { create },
         identities: { ...store, ensureLoaded },
         prefill,
@@ -821,13 +842,13 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("reads the identities when it opens", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(ensureLoaded).toHaveBeenCalled();
   });
 
   it("offers the identities that cover a typed address and chooses the one that covers its owner", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(identityBox()).toHaveDisplayValue("Let Puddle choose");
     expect(screen.queryByRole("group", { name: "Cover this repository" })).toBe(
       null,
@@ -851,7 +872,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("shows which identity the repository will get as the address and the pick change", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(screen.queryByText(/Uses |No identity covers/)).toBeNull();
     await type("Git repository (HTTPS)", "https://github.com/acme/web");
     expect(identityBox()).toHaveAccessibleDescription(
@@ -876,14 +897,14 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("says a workspace gets no identity when there are none, and waits for the identities", async () => {
     open(null, undefined, { identities: [] });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web");
     expect(identityBox()).toHaveAccessibleDescription(
       /no commit author and no credential/,
     );
     cleanup();
     open(null, undefined, { identities: [work], status: "loading" });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web");
     expect(identityBox()).not.toHaveAccessibleDescription();
   });
@@ -895,7 +916,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       credentials: [credential({ rest: true })],
     });
     open(null, undefined, { identities: [work, personal, both] });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/web");
     await fireEvent.click(
       screen.getByRole("button", { name: "Add another repository" }),
@@ -927,7 +948,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it('fills the repository from "Create a workspace for this" and chooses the identity that listed it', async () => {
     open({ url: "https://github.com/acme/web", identity: 2 });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     expect(field("Git repository (HTTPS)").value).toBe(
       "https://github.com/acme/web",
     );
@@ -942,7 +963,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       url: "https://github.com/acme/web",
       identity: 2,
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(create.mock.calls[0]?.[0]).toMatchObject({
@@ -952,7 +973,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("sends an identity picked by hand", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://gitlab.com/acme/web");
     await fireEvent.change(identityBox(), { target: { value: "1" } });
     expect(identityBox()).toHaveDisplayValue("Work");
@@ -968,7 +989,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       url: "https://github.com/acme/web",
       identity: 1,
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.change(identityBox(), { target: { value: "" } });
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
@@ -980,7 +1001,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("takes the repository and identity of a pick from the list, and moves focus to the name", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(screen.getByText("Choose from your repositories"));
     await fireEvent.click(
       await screen.findByRole("button", { name: /acme\/web/ }),
@@ -997,7 +1018,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("forgets the identity that listed it when the address is typed over", async () => {
     open({ url: "https://github.com/acme/web", identity: 2 });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/api");
     expect(identityBox()).toHaveDisplayValue("Work");
     expect(screen.queryByText(/listed this repository/)).toBeNull();
@@ -1005,7 +1026,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
 
   it("warns about an Azure DevOps project with a space in the address", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await type(
       "Git repository (HTTPS)",
       "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
@@ -1016,7 +1037,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
   });
 });
 
-describe("CreateWorkspaceDialog with several repositories", () => {
+describe("CreateWorkspaceForm with several repositories", () => {
   const url = (n: number) =>
     within(row(n)).getByLabelText("Git repository (HTTPS)") as HTMLInputElement;
   const row = (n: number) =>
@@ -1037,9 +1058,8 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     },
   ) {
     const create = vi.fn(async (_body: unknown) => result);
-    render(CreateWorkspaceDialog, {
+    render(CreateWorkspaceForm, {
       props: {
-        open: true,
         store: { create },
         identities: { identities: [], ensureLoaded: async () => {} },
       },
@@ -1055,7 +1075,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("adds a row and puts focus on its address; Remove puts focus on the next row's address, or on Add", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await vi.waitFor(() => expect(url(2)).toHaveFocus());
     await fireEvent.click(add());
@@ -1074,7 +1094,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("says an empty list makes an ordinary workspace, and sends an empty list", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(
       screen.getByRole("button", { name: "Remove repository 1" }),
     );
@@ -1093,7 +1113,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("names the workspace after the first repository only", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await fireEvent.input(url(2), {
       target: { value: "https://github.com/acme/second.git" },
@@ -1107,7 +1127,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("sends each row with its directory and switches, and the start folder", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
@@ -1118,9 +1138,6 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     await typeIn(2, "Directory", " frontend ");
     await fireEvent.click(
       within(row(2)).getByRole("checkbox", { name: "Push" }),
-    );
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
     );
     await type("Start folder", " api/src ");
     await fireEvent.click(submit());
@@ -1141,7 +1158,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("sends a row whose Pull switch was cleared", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
@@ -1158,7 +1175,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("puts focus on the name when only the name is wrong", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
@@ -1175,7 +1192,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     repos.sources = [repoSource({ repo_count: 1 })];
     h.repos = repos;
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await vi.waitFor(() => expect(url(2)).toHaveFocus());
     await fireEvent.click(
@@ -1190,7 +1207,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("flags two rows that share a directory as you type, naming a free one, and clears it when one changes", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
@@ -1216,7 +1233,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("refuses a submit with a clash, a bad address or a bad directory, and focuses the first", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
@@ -1242,7 +1259,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("refuses the same repository in two spellings", async () => {
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/Acme/API.git" },
@@ -1260,18 +1277,12 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("checks the start folder as you type and opens the options when it is refused", async () => {
     const { create } = open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     await type("Start folder", "../escape");
     expect(field("Start folder")).toHaveAttribute("aria-invalid", "true");
-    await fireEvent.click(
-      screen.getByText("Start folder, image, memory and CPUs"),
-    );
     await fireEvent.click(submit());
     expect(field("Start folder")).toHaveFocus();
     expect(create).not.toHaveBeenCalled();
@@ -1285,7 +1296,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
       field: "repo_url",
       at: { row: 2, input: "directory" },
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
@@ -1306,7 +1317,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   it("puts a refusal about an address at the form when it names no row of several", async () => {
     open({ ok: false, message: "the host is unreachable", field: "repo_url" });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.click(add());
     await fireEvent.input(url(2), {
       target: { value: "https://github.com/acme/web.git" },
@@ -1326,7 +1337,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
       message: "the start folder is odd",
       field: "start_folder",
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
@@ -1347,7 +1358,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
         ],
       }),
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/a/api.git" },
     });
@@ -1369,7 +1380,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
         ],
       }),
     });
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/a/api.git" },
     });
@@ -1383,7 +1394,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
   it("stops adding at the row limit", async () => {
     h.rowLimit = 4;
     open();
-    await screen.findByRole("dialog");
+    await screen.findByRole("region");
     const button = add();
     for (let i = 1; i < 4; i++) await fireEvent.click(button);
     expect(
@@ -1397,7 +1408,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
   });
 });
 
-describe("CreateWorkspaceDialog host check", () => {
+describe("CreateWorkspaceForm host check", () => {
   it("names the new host and greys out Create while a rule blocks one", async () => {
     const hostCheck = vi.fn(async (urls: string[]) => [
       urls[0]?.includes("blocked")
@@ -1412,10 +1423,10 @@ describe("CreateWorkspaceDialog host check", () => {
       ok: true as const,
       value: workspace("made", { busy: "creating", status: "created" }),
     }));
-    render(CreateWorkspaceDialog, {
-      props: { open: true, store: { create }, hostCheck },
+    render(CreateWorkspaceForm, {
+      props: { store: { create }, hostCheck },
     } as never);
-    await screen.findByRole("dialog", { name: "New workspace" });
+    await screen.findByRole("region", { name: "New workspace" });
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     expect(await screen.findByTestId("hosts-new")).toHaveTextContent(
       "github.com",
@@ -1436,10 +1447,10 @@ describe("CreateWorkspaceDialog host check", () => {
         allowed_hosts: [{ host: "github.com", rule_id: 9 }],
       },
     }));
-    render(CreateWorkspaceDialog, {
-      props: { open: true, store: { create }, hostCheck: async () => [] },
+    render(CreateWorkspaceForm, {
+      props: { store: { create }, hostCheck: async () => [] },
     } as never);
-    await screen.findByRole("dialog", { name: "New workspace" });
+    await screen.findByRole("region", { name: "New workspace" });
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() =>

@@ -144,6 +144,7 @@ type Stop = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = HostShutdown> + Send
 
 /// Asks a workspace's guest to end its editor's extension hosts (the editor window closed). The
 /// error says why it did not reach the guest, for a log: a stopped workspace has none to end.
+// string-error-ok: the text only goes to a log; no caller branches on a kind
 pub type EndExtensionHosts =
     Arc<dyn Fn(WorkspaceId) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
 

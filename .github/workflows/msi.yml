@@ -15,7 +15,12 @@
 # the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
 # -BaselineMsi), and that the state a user builds up (rules, a pending request, variables, a secret,
 # settings, an identity, a file in the workspace folder) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
-# dispatch input `plant_breakage` shows the job fails when a migration loses data.
+# dispatch input `plant_breakage` shows the job fails when a migration loses data. The msi job installs
+# through the installer's own dialogs (UI Automation clicks them and logs their text, under 60 s), opens
+# Puddle from the Start menu shortcut ("Welcome to Puddle"), reads the refusal dialog of an upgrade over a
+# running Puddle, launches with --at-login (tray icon, no window) and uninstalls with a stopped workspace
+# (data and volume stay, a reinstall lists it with its files); the dispatch input `plant_footprint` shows
+# each of those checks fails on the breakage it guards against.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
 # this run built, per user, starts the installed app, and drives its real window with Windows UI Automation, plus the REST API for what
@@ -87,6 +92,10 @@ on:
     inputs:
       msi_run_id:
         description: "Run only the usable job, on the MSI that this earlier run of the workflow kept (skips the build)"
+        required: false
+        default: ""
+      plant_footprint:
+        description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install or no-refusal) and expect it to fail: shows that each footprint check catches the breakage it guards against"
         required: false
         default: ""
       plant_breakage:
@@ -206,7 +215,22 @@ jobs:
       - name: install, start, boot a workspace, upgrade, uninstall
         if: steps.changed.outputs.run == 'true'
         shell: pwsh
-        run: ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs"
+        env:
+          PLANT_FOOTPRINT: ${{ inputs.plant_footprint }}
+        run: |
+          if (-not $env:PLANT_FOOTPRINT) {
+            ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs"
+            return
+          }
+          # A by-hand run with one installer breakage planted: the step passes only when the test fails.
+          $failed = $false
+          try {
+            ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs" -PlantFootprint $env:PLANT_FOOTPRINT
+          } catch {
+            $failed = $true
+            Write-Host "the planted breakage '$env:PLANT_FOOTPRINT' failed the install test, as it must: $_"
+          }
+          if (-not $failed) { throw "the planted breakage '$env:PLANT_FOOTPRINT' did not fail the install test" }
       - name: upload the MSI
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

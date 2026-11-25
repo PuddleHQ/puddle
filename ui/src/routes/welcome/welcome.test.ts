@@ -106,6 +106,7 @@ beforeEach(() => {
   h.firstRun.state = {
     completed: false,
     completed_at: null,
+    step: null,
     dev_certificate: "not_checked",
   };
   h.prefs.reset();
@@ -160,6 +161,21 @@ describe("the flow's frame", () => {
     // A finished step is a tick and normal text; the steps still to do keep their number.
     expect(items[0]!.querySelector("svg.tick")).not.toBeNull();
     expect(items[3]!.querySelector("svg")).toBeNull();
+  });
+
+  it("tells Puddle which step the person is on, so the flow resumes there", async () => {
+    nav.path = "/welcome/interception";
+    render(Layout, { children: (() => {}) as never });
+    await waitFor(() => expect(h.firstRun.state.step).toBe("interception"));
+    expect(h.firstRun.bodies).toEqual([{ step: "interception" }]);
+  });
+
+  it("records no step for the system check opened from Settings", async () => {
+    nav.path = "/welcome/check";
+    nav.search = "?from=settings";
+    render(Layout, { children: (() => {}) as never });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.firstRun.bodies).toEqual([]);
   });
 
   it("leaves the step bar out when the system check runs on its own from Settings", () => {

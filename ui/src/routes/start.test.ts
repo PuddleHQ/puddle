@@ -41,6 +41,21 @@ describe("the start page", () => {
     expect(script.asked).toEqual(["/api/first-run"]);
   });
 
+  it("resumes the flow on the step that was left", async () => {
+    expect(
+      await redirectsTo({ data: { completed: false, step: "interception" } }),
+    ).toBe("/welcome/interception");
+  });
+
+  it("starts the flow at the welcome screen when no step was left, or one this build lacks", async () => {
+    expect(await redirectsTo({ data: { completed: false, step: null } })).toBe(
+      "/welcome",
+    );
+    expect(
+      await redirectsTo({ data: { completed: false, step: "gone" } }),
+    ).toBe("/welcome");
+  });
+
   it("opens the workspace list once it has", async () => {
     expect(await redirectsTo({ data: { completed: true } })).toBe(
       "/workspaces",

@@ -1244,11 +1244,12 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
     store.then([SetStep::Pass, SetStep::Park(started, wait)]);
     tokio::spawn(async move {
         parked.await.unwrap();
+        // simulated latency: the write returns after the capture's 100 ms limit
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let _ = go.send(());
     });
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    // Let a write that is still on its way land, so a late one cannot hide.
+    // An absence window: a late write that the capture did not wait for would land in it.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
     for (role, real, given) in [

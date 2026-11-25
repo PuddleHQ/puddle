@@ -333,7 +333,6 @@ fn the_command_runs_the_probe_with_a_private_home() {
 /// VM is gone.
 #[cfg(unix)]
 fn fake_msb_with_a_slow_vm(dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     let script = format!(
         r#"#!/bin/sh
 d=$(dirname "$0")
@@ -350,8 +349,7 @@ esac
 "#
     );
     let msb = dir.join("msb");
-    std::fs::write(&msb, script).unwrap();
-    std::fs::set_permissions(&msb, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&msb, &script);
 }
 
 #[cfg(unix)]

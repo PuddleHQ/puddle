@@ -1,0 +1,19 @@
+# The crates the coverage totals count (docs/STANDARDS.md, "Coverage"): only code compiled into what Puddle ships.
+# scripts/coverage-crates.py reads this file and `cargo metadata`:
+#   ship <crate>       a binary that ships; the crates in its dependency closure (normal and build
+#                      dependencies, all features) are product crates and are counted
+#   test-only <crate>  a workspace crate no shipped binary depends on (test harnesses, build tooling); its
+#                      files are left out of the totals
+# Every workspace crate must be in the closure or listed test-only, so a new crate cannot slip out of the
+# totals unseen; a test-only crate a shipped binary depends on fails too.
+ship puddle
+ship puddle-agent
+ship puddle-app
+# The binary the daily freshness workflow builds and runs.
+ship puddle-freshness
+test-only puddle-e2e
+test-only puddle-proxy-test-support
+test-only puddle-test-kit
+test-only puddle-vm-tests
+# Build tooling (`cargo xtask`), never part of a shipped binary.
+test-only xtask

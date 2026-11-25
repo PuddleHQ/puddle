@@ -71,6 +71,18 @@ export class FirstRunStore {
     }
   }
 
+  /**
+   * Tells Puddle which step the person is on, so reopening the flow resumes there. Best effort: a
+   * failure only means the flow restarts at the first step, so it never throws or shows anything.
+   */
+  async recordStep(step: NonNullable<FirstRun["step"]>): Promise<void> {
+    try {
+      await this.#api.PUT("/api/first-run", { body: { step } });
+    } catch {
+      // Resuming is a convenience; the flow works without it.
+    }
+  }
+
   /** Records that the flow was finished or skipped; says why when Puddle could not keep that. */
   async complete(): Promise<{ ok: true } | { ok: false; message: string }> {
     try {

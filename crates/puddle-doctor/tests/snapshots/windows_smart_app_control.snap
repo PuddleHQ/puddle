@@ -5,14 +5,20 @@ ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        App Control for Business (WDAC) or Smart App Control blocks msb
-      fix:  A code integrity policy doesn't allow
-            C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe. Allow Puddle's files or
-            signer in that policy; Event Viewer > Applications and Services Logs > Microsoft >
-            Windows > CodeIntegrity > Operational names the rule. Smart App Control has no
-            exceptions: it can only be turned off (Windows Security > App & browser control >
-            Smart App Control).
-      from: An Application Control policy has blocked this file. (os error 4580)
+      impact: Puddle can't start any workspace: App Control or Smart App Control blocks its
+              runtime.
+      remedy: Ask whoever manages this PC to allow Puddle. Smart App Control can only be turned
+              off.
+      fix:    A code integrity policy doesn't allow
+              C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe. Allow Puddle's files or
+              signer in that policy; Event Viewer > Applications and Services Logs > Microsoft >
+              Windows > CodeIntegrity > Operational names the rule. Smart App Control has no
+              exceptions: it can only be turned off (Windows Security > App & browser control >
+              Smart App Control).
+      from:   An Application Control policy has blocked this file. (os error 4580)
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

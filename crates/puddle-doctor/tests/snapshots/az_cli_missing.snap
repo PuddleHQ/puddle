@@ -10,8 +10,10 @@ ok    Disk space            120 GB free on the drive that holds Puddle's data (/
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
 info  Azure CLI (az)        not found; needed only for Azure DevOps through `az`
-      note: Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az
-            login --tenant <tenant>` in a terminal.
+      impact: Workspaces can't sign in to Azure DevOps through `az`. Nothing else needs it.
+      remedy: If you use Azure DevOps, install the Azure CLI and run `az login`.
+      note:   Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az
+              login --tenant <tenant>` in a terminal.
 ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed
 

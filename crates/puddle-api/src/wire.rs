@@ -80,6 +80,7 @@ pub use environment::{
 };
 pub use first_run::{
     CredentialStoreRetry, DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest,
+    FirstRunStep,
 };
 pub use identities::{
     AttachIdentityRequest, CheckedBy, CredentialCoverage, CredentialSource, GitDefaultsView,

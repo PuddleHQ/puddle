@@ -3,12 +3,18 @@ puddle doctor (puddle 0.1.0, linux x86_64)
 ok    CPU virtualization  on (the hypervisor uses it)
 ok    Hypervisor          /dev/kvm is usable
 FAIL  Bundled runtime     you aren't allowed to read or run /opt/puddle/runtime/msb
-      fix:  Make it readable and executable again:
-              chmod a+rx "/opt/puddle/runtime/msb"
-            or reinstall Puddle.
-      from: not executable
+      impact: Puddle can't start any workspace: your account may not run its runtime.
+      remedy: Reset the permissions of the runtime file, or reinstall Puddle.
+      fix:    Make it readable and executable again:
+                chmod a+rx "/opt/puddle/runtime/msb"
+              or reinstall Puddle.
+      from:   not executable
 skip  Runtime starts      not checked: the bundled runtime isn't usable
+      impact: Not checked, so Puddle can't tell yet whether its runtime may run here.
+      remedy: Fix any problem above, then check again.
 skip  Test boot           not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)

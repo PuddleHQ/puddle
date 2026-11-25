@@ -121,3 +121,21 @@ fn a_listing_line_with_a_fourth_field_or_a_bad_size_is_ignored() {
     let tree = parse_tree("obj/a.gz 1.5 100 extra\nobj/b.gz 1.5 many\nobj/c.gz 1.5 7\n");
     assert_eq!(tree.keys().collect::<Vec<_>>(), ["obj/c.gz"]);
 }
+
+#[test]
+fn a_drive_that_holds_one_percent_more_after_a_round_fails_and_a_small_move_passes() {
+    let size = 100_000_000_000;
+    assert!(judge_disk_back(40_000_000_000, 40_000_500_000, size).is_ok());
+    assert!(judge_disk_back(40_000_000_000, 39_500_000_000, size).is_ok());
+    // A volume left behind by a delete: 2 GB more.
+    assert!(judge_disk_back(40_000_000_000, 42_000_000_000, size).is_err());
+    assert!(judge_disk_back(1, 1, 0).is_err());
+}
+
+#[test]
+fn memory_ten_percent_up_passes_and_eleven_fails() {
+    assert!(judge_rss_back(1_000, 1_100).is_ok());
+    assert!(judge_rss_back(1_000, 1_101).is_err());
+    assert!(judge_rss_back(1_000, 400).is_ok());
+    assert!(judge_rss_back(0, 5).is_err());
+}

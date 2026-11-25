@@ -1,15 +1,25 @@
 puddle doctor (puddle 0.1.0, linux x86_64)
 
 info  CPU virtualization  unknown
+      impact: Puddle couldn't read whether CPU virtualization is on.
+      remedy: Fix the Hypervisor line first. If it stays, check that virtualization is on in the
+              UEFI/BIOS setup.
 FAIL  Hypervisor          the hypervisor query failed
-      fix:  Run puddle doctor again. If this stays, include the line below when you report it.
-      from: /dev/kvm: Is a directory (os error 21)
+      impact: Puddle can't tell whether it can start workspaces here.
+      remedy: Restart the computer and check again. If it stays, copy the report and send it with
+              a bug report.
+      fix:    Run puddle doctor again. If this stays, include the line below when you report it.
+      from:   /dev/kvm: Is a directory (os error 21)
 ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 FAIL  Runtime starts      msb was killed by a signal instead of answering
-      fix:  If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it
-            may have stopped the process. Otherwise reinstall Puddle and include the lines below
-            when you report it.
+      impact: Puddle can't start any workspace: its runtime stops right after it starts.
+      remedy: Look for msb in your security software's log, or reinstall Puddle.
+      fix:    If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it
+              may have stopped the process. Otherwise reinstall Puddle and include the lines below
+              when you report it.
 skip  Test boot           not checked: no usable hypervisor
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)

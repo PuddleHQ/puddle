@@ -4,10 +4,16 @@ ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 FAIL  Bundled runtime       cannot read the version of the bundled runtime C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe: not an executable
-      fix:  Reinstall Puddle: the runtime in C:\Users\dev\AppData\Local\Programs\puddle\runtime
-            is damaged.
+      impact: Puddle can't start any workspace: its runtime is damaged.
+      remedy: Reinstall Puddle.
+      fix:    Reinstall Puddle: the runtime in C:\Users\dev\AppData\Local\Programs\puddle\runtime
+              is damaged.
 skip  Runtime starts        not checked: the bundled runtime isn't usable
+      impact: Not checked, so Puddle can't tell yet whether its runtime may run here.
+      remedy: Fix any problem above, then check again.
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

@@ -12,10 +12,14 @@ ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys
 ok    Azure CLI (az)        version 2.64.0
 ok    Credential store      the operating system's credential store: a test write and delete worked
 info  Global Secure Access  could not check whether the client is installed
-      note: Puddle works without it. If company resources reached through Microsoft Entra Global
-            Secure Access don't work from a sandbox, see whether its client is installed on this
-            PC: it doesn't tunnel virtual machines' traffic.
-      from: OpenSCManagerW: Access is denied. (os error 5)
+      impact: Puddle couldn't tell whether a client is installed that keeps workspaces from
+              company resources.
+      remedy: If company resources fail from a workspace, check whether the Global Secure Access
+              client is installed.
+      note:   Puddle works without it. If company resources reached through Microsoft Entra Global
+              Secure Access don't work from a sandbox, see whether its client is installed on this
+              PC: it doesn't tunnel virtual machines' traffic.
+      from:   OpenSCManagerW: Access is denied. (os error 5)
 
 No problems found. (1.2 s)
 

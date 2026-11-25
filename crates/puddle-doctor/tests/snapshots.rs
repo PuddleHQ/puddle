@@ -241,6 +241,10 @@ fn run(fake: &Fake, options: &Options) -> Report {
     report
 }
 
+fn squeeze(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// The most characters an impact or a remedy may have: a short line, read at a glance.
 const SHORT: usize = 170;
 
@@ -248,8 +252,26 @@ const SHORT: usize = 170;
 /// possible), and every check that is not ok also says what to do; each is at most two short
 /// sentences.
 fn assert_explained(report: &Report) {
+    // The text wraps long sentences, so compare with the whitespace squeezed.
+    let text = report
+        .to_text()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for c in &report.checks {
         let name = c.id.title();
+        if c.status != Status::Ok {
+            assert!(
+                text.contains(&format!("impact: {}", squeeze(&c.impact))),
+                "{name}: the text report lacks the impact"
+            );
+            if let Some(remedy) = &c.remedy {
+                assert!(
+                    text.contains(&format!("remedy: {}", squeeze(remedy))),
+                    "{name}: the text report lacks the remedy"
+                );
+            }
+        }
         assert_short(name, "impact", &c.impact);
         if !matches!(c.status, Status::Ok | Status::Skipped) {
             assert!(

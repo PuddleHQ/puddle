@@ -76,3 +76,28 @@ fn lookups() {
     assert!(r.check(CheckId::Runtime).is_some());
     assert!(r.check(CheckId::TestBoot).is_none());
 }
+
+#[test]
+fn every_line_that_is_not_ok_prints_its_impact_and_remedy() {
+    for status in [Status::Warn, Status::Fail, Status::Skipped] {
+        let mut c = Check::new(CheckId::DiskSpace, status, "x");
+        c.impact = "It costs you something.".into();
+        c.remedy = Some("Do this first.".into());
+        let text = report(vec![c]).to_text();
+        assert!(
+            text.contains("impact: It costs you something."),
+            "{status:?}: {text}"
+        );
+        assert!(
+            text.contains("remedy: Do this first."),
+            "{status:?}: {text}"
+        );
+    }
+    let mut ok = Check::new(CheckId::DiskSpace, Status::Ok, "x");
+    ok.impact = "Fine.".into();
+    let text = report(vec![ok]).to_text();
+    assert!(
+        !text.contains("impact:") && !text.contains("remedy:"),
+        "{text}"
+    );
+}

@@ -43,6 +43,24 @@ jobs:
       - name: terminate_suite perf::, ignored tests only
         run: cargo nextest run --release -p puddle-proxy --test terminate_suite -E "test(/^perf::/)" --run-ignored only --no-capture --test-threads 1
 
+  # The polled API calls on a database the size of a long-lived install (100 000 audit records, 1000
+  # rules, 1000 open requests): the p95 of each call's CPU time must stay under 100 ms
+  # (crates/puddle-host/tests/fake_host/api_latency.rs). CPU time, not wall time, so a busy shared runner
+  # does not fail it.
+  api-latency:
+    name: perf (API call CPU time on a long history)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: fake_host api_latency::, ignored tests only
+        run: cargo nextest run --release -p puddle-host --test fake_host -E "test(/^api_latency::/)" --run-ignored only --no-capture --test-threads 1
+
   # What a zero-on-free allocator would cost the proxy (hardening of the secret store: a freed block is
   # wiped before it goes back). The perf tests' global allocator wraps `System` and wipes every freed
   # block when PUDDLE_PERF_ZERO_ON_FREE is set (crates/puddle-proxy/tests/terminate_suite/zeroing_alloc.rs),

@@ -29,11 +29,6 @@ fn matches_only_the_exact_token() {
 }
 
 #[test]
-fn hex_encodes_every_nibble() {
-    assert_eq!(hex(&[0x00, 0x9f, 0xff, 0x10]), "009fff10");
-}
-
-#[test]
 fn parse_rejects_malformed_tokens() {
     for bad in ["", "abc", &"g".repeat(64), &"A".repeat(64), &"a".repeat(65)] {
         assert!(ApiToken::parse(bad.to_owned()).is_err(), "{bad}");

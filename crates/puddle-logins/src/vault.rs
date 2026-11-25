@@ -12,7 +12,6 @@
 //! it) but is kept beside the token so the pair survives a restart of the workspace, whose disk
 //! still holds the stand-in.
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -197,12 +196,7 @@ pub fn is_saved_login_of(id: &StoredId, workspace: &WorkspaceId) -> bool {
 /// 16 hex characters of the hash of a workspace's name: what names its entries and its marker.
 pub(crate) fn workspace_hash(workspace: &str) -> String {
     let digest = Sha256::digest(workspace.as_bytes());
-    let mut hex = String::with_capacity(16);
-    for byte in digest.iter().take(8) {
-        // writing into a `String` cannot fail
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
+    puddle_types::hex_lower(digest.get(..8).unwrap_or_default())
 }
 
 #[cfg(test)]

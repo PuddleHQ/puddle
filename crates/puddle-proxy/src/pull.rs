@@ -33,7 +33,7 @@
 //! Pulls leave through the company proxy route when one is set ([`PullProxy::with_upstream`]),
 //! and connect directly otherwise.
 
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -103,14 +103,7 @@ impl PullToken {
     pub fn generate() -> io::Result<Self> {
         let mut bytes = zeroize::Zeroizing::new([0u8; TOKEN_BYTES]);
         getrandom::fill(&mut *bytes).map_err(|err| io::Error::other(err.to_string()))?;
-        let text = bytes
-            .iter()
-            .fold(String::with_capacity(TOKEN_BYTES * 2), |mut text, b| {
-                // writing into a `String` cannot fail
-                let _ = write!(text, "{b:02x}");
-                text
-            });
-        Ok(Self(text))
+        Ok(Self(puddle_types::hex_lower(&*bytes)))
     }
 
     /// The token text.

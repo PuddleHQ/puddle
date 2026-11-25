@@ -6513,6 +6513,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "puddle-fs",
+ "puddle-types",
  "rustix",
  "tempfile",
  "thiserror 2.0.21",
@@ -6728,6 +6729,7 @@ dependencies = [
  "puddle-fs",
  "puddle-process",
  "puddle-test-kit",
+ "puddle-types",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
@@ -11032,6 +11034,7 @@ dependencies = [
  "puddle-api",
  "puddle-runtime",
  "puddle-test-kit",
+ "puddle-types",
  "serde",
  "serde_json",
  "sha2 0.11.1",

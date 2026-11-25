@@ -37,7 +37,7 @@ impl ApiToken {
     pub fn generate() -> Result<Self, ConnectionFileError> {
         let mut bytes = Zeroizing::new([0u8; TOKEN_BYTES]);
         getrandom::fill(&mut *bytes).map_err(ConnectionFileError::Random)?;
-        Ok(Self(hex(&*bytes)))
+        Ok(Self(puddle_types::hex_lower(&*bytes)))
     }
 
     /// Whether `presented` is this token, compared in constant time. A different length is
@@ -78,19 +78,6 @@ impl fmt::Debug for ApiToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ApiToken(<redacted>)")
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        for nibble in [b >> 4, b & 0xf] {
-            out.push(char::from(
-                DIGITS.get(usize::from(nibble)).copied().unwrap_or(b'0'),
-            ));
-        }
-    }
-    out
 }
 
 /// Where the API listens and the token it wants: what a client needs to connect.

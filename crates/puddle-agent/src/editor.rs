@@ -306,13 +306,9 @@ fn boot_password(config: &EditorConfig) -> io::Result<String> {
 ///
 /// When the system has no randomness (the server must not start with a guessable password).
 pub fn new_password() -> io::Result<String> {
-    use std::fmt::Write as _;
     let mut bytes = [0_u8; PASSWORD_BYTES];
     getrandom::fill(&mut bytes).map_err(|e| io::Error::other(format!("no randomness: {e}")))?;
-    Ok(bytes.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}"); // writing to a String can't fail
-        s
-    }))
+    Ok(puddle_types::hex_lower(&bytes))
 }
 
 /// The password already in `path`, when it is one this module wrote.

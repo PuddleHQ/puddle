@@ -4,21 +4,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use sha2::{Digest as _, Sha256};
 
 use super::*;
 
 const BINARY_BYTES: &[u8] = b"#!/bin/sh\necho mise 9.9.9\n";
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::new(), |mut s, b| {
-            let _ = write!(s, "{b:02x}");
-            s
-        })
-}
 
 /// A tarball the way mise packs it: a top folder with the binary, a manual page and a licence.
 fn tarball_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -46,7 +35,7 @@ fn pin_for(tarball: &[u8]) -> Pin {
     Pin {
         version: "9.9.9".to_owned(),
         asset: "mise-v9.9.9-linux-x64-musl.tar.gz".to_owned(),
-        sha256: hex(tarball),
+        sha256: puddle_types::hex_lower(tarball),
     }
 }
 
@@ -128,7 +117,11 @@ async fn a_good_download_is_installed_and_nothing_else_stays() {
     }
     assert_eq!(
         std::fs::read_to_string(dir.path().join(MARKER)).unwrap(),
-        format!("9.9.9 {} {}\n", pin.sha256, hex(BINARY_BYTES))
+        format!(
+            "9.9.9 {} {}\n",
+            pin.sha256,
+            puddle_types::hex_lower(BINARY_BYTES)
+        )
     );
     // Only the binary and the marker: no tarball, no partial file, nothing of the rest of the tarball.
     assert_eq!(leftovers(dir.path()), [".puddle-mise", "mise"]);

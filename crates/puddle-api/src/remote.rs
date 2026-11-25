@@ -8,7 +8,7 @@
 //! ([`NetworkListener`]).
 
 use std::collections::BTreeSet;
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::net::IpAddr;
 
 use puddle_front::host_header::{Refusal, Route};
@@ -424,11 +424,7 @@ impl TlsIdentity {
     #[must_use]
     pub fn fingerprint(&self) -> String {
         let digest = Sha256::digest(&self.cert_der);
-        digest.iter().fold(String::new(), |mut hex, b| {
-            // writing into a `String` cannot fail
-            let _ = write!(hex, "{b:02x}");
-            hex
-        })
+        puddle_types::hex_lower(&digest)
     }
 }
 

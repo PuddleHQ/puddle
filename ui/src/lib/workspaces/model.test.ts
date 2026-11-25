@@ -136,6 +136,7 @@ describe("words", () => {
 
   it("tells the operation from a step alone", () => {
     expect(operationOfStep("cloning")).toBe("creating");
+    expect(operationOfStep("unpacking_image")).toBe("creating");
     expect(operationOfStep("syncing")).toBe("starting");
     expect(operationOfStep("stopping")).toBe("stopping");
     expect(operationOfStep("removing")).toBe("deleting");

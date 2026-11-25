@@ -52,7 +52,7 @@ use super::token_body::TokenBody;
 
 mod answer;
 mod scan;
-mod target;
+mod url_target;
 
 pub(crate) use answer::{
     ANSWER_WITHHELD, NotScrubbed, ScrubBody, ScrubNotes, answer_encoding_refusal,

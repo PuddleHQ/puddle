@@ -15,7 +15,7 @@ use super::inject::Injection;
 use super::response::GuestHttp;
 use crate::http::{self, Body, Head};
 use crate::proxy::Refusal;
-use crate::target::Target;
+use crate::request_target::Target;
 
 /// The default port of `https`, the only port that is terminated.
 pub(crate) const HTTPS_PORT: u16 = 443;

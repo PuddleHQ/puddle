@@ -396,7 +396,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
     }
 
     async fn run() {
-        let mut story = boot().await;
+        let mut story = Box::pin(boot()).await;
         let mut window = phase_attach(&story).await;
         phase_guard_on(&story, &mut window).await;
         phase_trusted_mode(&story, &mut window).await;

@@ -28,7 +28,7 @@ use super::{
 use crate::counted::Counted;
 use crate::destination::BoxFuture;
 use crate::proxy::admit;
-use crate::target::Target;
+use crate::request_target::Target;
 use crate::terminate::h1::{BoxError, UpBody};
 use crate::terminate::{self, Outcome};
 

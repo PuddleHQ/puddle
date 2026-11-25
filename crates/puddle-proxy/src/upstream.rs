@@ -22,7 +22,7 @@ use tokio::net::TcpStream;
 use puddle_types::ConnectionOutcome;
 
 use crate::proxy::{Refusal, connect_first};
-use crate::target::Target;
+use crate::request_target::Target;
 
 /// The company proxy route in front of the host's connections.
 #[derive(Debug, Clone)]

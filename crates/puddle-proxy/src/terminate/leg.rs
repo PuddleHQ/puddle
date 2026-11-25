@@ -230,13 +230,11 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
                 .handshake::<_, UpBody>(io)
                 .await
                 .map_err(setup_failed)?;
-            #[cfg(feature = "testing")]
             let ended = Arc::clone(&cx.proxy.upstream_ended);
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
                     tracing::debug!(error = %err, "upstream HTTP/2 connection ended");
                 }
-                #[cfg(feature = "testing")]
                 ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             });
             Connected::H2(H2Conn { sender })
@@ -257,10 +255,6 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
 /// The client library could not start on the connection.
 pub(crate) async fn h1<I>(
     io: I,
-    #[cfg_attr(
-        not(feature = "testing"),
-        expect(unused_variables, reason = "only the `testing` end counter reads it")
-    )]
     upstream_ended: &Arc<std::sync::atomic::AtomicU64>,
 ) -> Result<H1Conn, hyper::Error>
 where
@@ -271,13 +265,11 @@ where
         .max_headers(MAX_RESPONSE_HEADERS)
         .handshake::<_, UpBody>(io)
         .await?;
-    #[cfg(feature = "testing")]
     let ended = Arc::clone(upstream_ended);
     let driver = tokio::spawn(async move {
         if let Err(err) = connection.with_upgrades().await {
             tracing::debug!(error = %err, "upstream connection ended");
         }
-        #[cfg(feature = "testing")]
         ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     });
     Ok(H1Conn {

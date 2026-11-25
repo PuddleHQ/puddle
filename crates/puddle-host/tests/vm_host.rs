@@ -3690,7 +3690,7 @@ threads() { for t in /proc/$1/task/*/stat; do awk '{print $1, $2, $14+$15}' "$t"
   sleep 25
   N=$(pgrep -x node | head -1)
   threads "$N" > "$W/th0"; sleep 10; threads "$N" > "$W/th1"
-  join "$W/th0" "$W/th1" | awk '{d=($6-$3)/10; if (d>0) printf "TRACE thread busy=%03.0f%% tid=%s name=%s\n", d, $1, $2}' | sort -r | head -6 > "$W/threads.log"
+  join "$W/th0" "$W/th1" | awk '{d=($5-$3)/10; if (d>0) printf "TRACE thread busy=%03.0f%% tid=%s name=%s\n", d, $1, $2}' | sort -r | head -6 > "$W/threads.log"
 ) &
 TH=$!
 { time (cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http > "$W/npm.log" 2>&1) ; } 2> "$W/time.log"

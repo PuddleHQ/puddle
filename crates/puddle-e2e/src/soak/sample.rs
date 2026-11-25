@@ -244,6 +244,34 @@ pub async fn probe_web_app(
     }
 }
 
+/// Seconds the web app may take to answer again after a planned restart, counted from the moment
+/// the workspaces are back; slower is a MAJOR finding.
+pub const W4_RECOVERY_BOUND: Duration = Duration::from_secs(60);
+
+/// Requests `path` from `target` every `poll` until it answers with a 2xx or 3xx status; the time
+/// that took, or `None` when it still has not answered after `bound`.
+pub async fn time_to_answer(
+    target: &Target,
+    path: &str,
+    bound: Duration,
+    poll: Duration,
+) -> Option<Duration> {
+    let start = Instant::now();
+    // flake-ok: the run's own wait for the app after a restart, bounded by `bound`, not a test wait
+    loop {
+        if get(target, path)
+            .await
+            .is_ok_and(|r| (200..400).contains(&r.status))
+        {
+            return Some(start.elapsed());
+        }
+        if start.elapsed() >= bound {
+            return None;
+        }
+        tokio::time::sleep(poll).await;
+    }
+}
+
 /// RSS in KiB, threads and open file descriptors of one process, from `proc_dir` (`/proc/<pid>`).
 /// The descriptors are left out when their folder cannot be read: `puddle serve` makes itself
 /// non-dumpable, which gives `/proc/<pid>/fd` to root, while `status` stays readable.
@@ -462,6 +490,15 @@ impl Sampler {
     /// Stops counting the web-app requests (or counts them again) around a planned restart.
     pub fn w4_paused(&self, paused: bool) {
         self.w4.lock().unwrap().pause(paused);
+    }
+
+    /// After a planned restart: how long the web app takes to answer, or `None` past `bound`; a run
+    /// that does not watch the web app has nothing to wait for (zero).
+    pub async fn web_recovery(&self, bound: Duration) -> Option<Duration> {
+        match &self.cfg.w4 {
+            Some(target) => time_to_answer(target, "/", bound, Duration::from_secs(1)).await,
+            None => Some(Duration::ZERO),
+        }
     }
 
     /// Measures only the processes `root` is or started (from the next sample on), so another

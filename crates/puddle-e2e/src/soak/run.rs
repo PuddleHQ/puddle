@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 
 use super::judge::{Schedule, Severity, judge};
 use super::plan::{Event, Profile, Workload, events, rounds};
-use super::sample::{Config, Sampler, Target, descendants};
+use super::sample::{Config, Sampler, Target, W4_RECOVERY_BOUND, descendants};
 use super::series::Series;
 
 /// What a run needs.
@@ -448,6 +448,27 @@ impl Run {
         self.setup_web().await;
     }
 
+    /// The requests of a planned restart are not counted, so a web app that comes back slowly is
+    /// judged here: it must answer within `W4_RECOVERY_BOUND` of the workspaces being back.
+    async fn judge_web_recovery(&mut self, event: Event) {
+        let took = self
+            .sampler
+            .lock()
+            .await
+            .web_recovery(W4_RECOVERY_BOUND)
+            .await;
+        match took {
+            Some(d) => self.log.line(&format!(
+                "web app answered {} s after {event:?}",
+                d.as_secs()
+            )),
+            None => self.major(format!(
+                "the web app did not answer within {} s of the workspaces being back after {event:?}",
+                W4_RECOVERY_BOUND.as_secs()
+            )),
+        }
+    }
+
     fn space(&self, name: &str) -> Option<Space> {
         self.spaces.iter().find(|s| s.name == name).cloned()
     }
@@ -622,6 +643,7 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.judge_web_recovery(e).await;
                 self.sampler.lock().await.w4_paused(false);
             }
             Event::HardKill => {
@@ -641,6 +663,7 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.judge_web_recovery(e).await;
                 self.sampler.lock().await.w4_paused(false);
             }
             Event::Backup => {

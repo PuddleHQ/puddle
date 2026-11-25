@@ -440,7 +440,7 @@
                 </select>
               </td>
               <td class="from">
-                {#if row.source !== "default"}<span class="meta"
+                {#if row.source !== "default"}<span class="meta wrap"
                     >{sourceLabel(row.source)}</span
                   >{/if}
                 {#if row.source === "workspace"}
@@ -703,6 +703,10 @@
     }
     .from {
       white-space: normal;
+    }
+    .pick {
+      width: 100%;
+      min-width: 0;
     }
   }
 </style>

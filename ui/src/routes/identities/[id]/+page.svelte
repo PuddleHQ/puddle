@@ -330,6 +330,8 @@
     list-style: none;
   }
   .cred {
+    min-width: 0;
+    overflow-wrap: anywhere;
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;

@@ -104,6 +104,7 @@ unsafe impl Sync for WinHttpWatch {}
 
 impl WinHttpWatch {
     /// Registers `on_change` with WinHTTP, or says why it could not.
+    // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
     fn register(on_change: &ChangeCallback) -> Result<Self, String> {
         let library = wide("winhttp.dll");
         // SAFETY: valid terminated name; the reserved file handle is null as required. A bare name
@@ -260,6 +261,7 @@ fn watch_loop(
 }
 
 impl RegistryWatch {
+    // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
     fn start(on_change: ChangeCallback, on_problem: &ProblemCallback) -> Result<Self, String> {
         Self::start_at(INTERNET_SETTINGS, on_change, on_problem)
     }
@@ -269,6 +271,7 @@ impl RegistryWatch {
         key_name: &str,
         on_change: ChangeCallback,
         on_problem: &ProblemCallback,
+        // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
     ) -> Result<Self, String> {
         let wide_name = wide(key_name);
         let mut key: HKEY = std::ptr::null_mut();
@@ -392,6 +395,7 @@ impl WatchGuard for Guard {}
 /// The guard for what could be registered, reporting each part that could not be to
 /// `on_problem`. `None` when neither part works: nothing would ever call `on_change`.
 fn assemble(
+    // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
     winhttp: Result<WinHttpWatch, String>,
     registry: Result<RegistryWatch, String>,
     on_problem: &ProblemCallback,

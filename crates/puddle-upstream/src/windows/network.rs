@@ -53,6 +53,7 @@ impl NetworkOs for WinNetwork {
 }
 
 /// Every adapter with its addresses, from `GetAdaptersAddresses`.
+// string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
 fn adapters() -> Result<Vec<Adapter>, String> {
     let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     let mut size: u32 = 16 * 1024;
@@ -168,6 +169,7 @@ impl Drop for ForwardTable {
 }
 
 /// The IPv4 forwarding table.
+// string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
 fn routes() -> Result<Vec<Route>, String> {
     let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
     // SAFETY: `table` is a valid out-pointer; Windows allocates the table.

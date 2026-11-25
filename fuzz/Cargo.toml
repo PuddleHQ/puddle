@@ -23,6 +23,46 @@ tokio = { version = "1.52", default-features = false, features = ["io-util", "ne
 
 [workspace]
 
+# A copy of `[workspace.lints]` in ../Cargo.toml (this crate is its own workspace, so it cannot inherit the table):
+# `scripts/check.sh clippy` lints fuzz/ with it. Change both together.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Restriction lints picked for a security tool written mostly by agents.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+exit = "warn"
+expect_used = "warn"
+get_unwrap = "warn"
+indexing_slicing = "warn"
+mem_forget = "warn"
+panic = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+wildcard_dependencies = "warn"
+redundant_clone = "warn"
+or_fun_call = "warn"
+use_self = "warn"
+needless_raw_strings = "warn"
+str_to_string = "warn"
+string_add = "warn"
+needless_collect = "warn"
+significant_drop_in_scrutinee = "warn"
+# clippy.toml names std::env::temp_dir: make a test's files with `tempfile`, or say why in an
+# #[expect(clippy::disallowed_methods, reason = "...")] (scripts/flake-lints-test.sh proves the rule fires).
+disallowed_methods = "deny"
+
 [[bin]]
 name = "head_parser"
 path = "fuzz_targets/head_parser.rs"

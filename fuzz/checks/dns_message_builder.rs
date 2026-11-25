@@ -16,6 +16,7 @@ use puddle_agent::capture::wire::{QueryName, Rcode, Rdata, Record};
 #[derive(Debug)]
 pub struct Message {
     bytes: Vec<u8>,
+    /// What the stub must make of the message.
     pub expect: Expect,
     /// What the stub answers if the message is a query, to read back from the wire.
     pub reply: Reply,
@@ -25,11 +26,15 @@ pub struct Message {
 /// caller of `respond` promises labels of 1 to 63 bytes and at most 253 bytes in all).
 #[derive(Debug)]
 pub struct Reply {
+    /// The response code.
     pub rcode: Rcode,
+    /// The records of the answer section.
     pub answers: Vec<Record>,
+    /// The records of the additional section.
     pub additional: Vec<Record>,
 }
 
+/// What the stub must do with a built message.
 #[derive(Debug)]
 pub enum Expect {
     /// Too short to have an id, or a response: dropped.
@@ -38,10 +43,15 @@ pub enum Expect {
     Answer(Rcode),
     /// Read as this query; `edns` is `Unchecked` when the message has a shape the model does not follow.
     Query {
+        /// The queried name.
         name: QueryName,
+        /// The question's type.
         qtype: u16,
+        /// The question's class.
         qclass: u16,
+        /// The `OPT` payload size the stub must find.
         edns: Edns,
+        /// The question's bytes as written, which the answer must carry back unchanged.
         question: Vec<u8>,
     },
     /// Cut off or counted wrongly in a way the model does not follow: only the byte-level checks apply.
@@ -51,8 +61,11 @@ pub enum Expect {
 /// The `OPT` record's advertised payload size the stub must find.
 #[derive(Debug)]
 pub enum Edns {
+    /// The message has a shape the model does not follow: not checked.
     Unchecked,
+    /// No `OPT` record.
     Absent,
+    /// An `OPT` record advertising this size (at least 512).
     Size(u16),
 }
 
@@ -406,6 +419,7 @@ impl Message {
     /// What the grammar says the stub does with the message: `drop`, `answer` (an error code),
     /// `query` or `unchecked`.
     #[cfg(test)]
+    #[must_use]
     pub fn shape(&self) -> &'static str {
         match self.expect {
             Expect::Drop => "drop",
@@ -416,6 +430,7 @@ impl Message {
     }
 
     /// The message as the stub reads it.
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }

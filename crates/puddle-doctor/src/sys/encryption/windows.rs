@@ -80,6 +80,7 @@ fn powershell() -> PathBuf {
     root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe")
 }
 
+// string-error-ok: the text becomes one finding's detail line; no caller branches on a kind
 fn run(letter: char) -> Result<String, String> {
     let mut command = puddle_process::command(powershell());
     command

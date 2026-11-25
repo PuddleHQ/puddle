@@ -147,6 +147,7 @@ fn write_result(out: &mut impl Write, result: &str) -> ExitCode {
     }
 }
 
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn execute(args: &UserArgs) -> Result<Output, String> {
     // Only `add` and `reset` need the whole option table (the invite origin); `list` and `remove`
     // read the data folder alone, so a bad value of another option does not stop them.
@@ -266,6 +267,7 @@ fn ago(now: u64, then: Option<u64>) -> String {
 
 /// The address an invite link points at: the first public host. Checked before anything is
 /// changed, so a reset never leaves a user without a password and without a link.
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn invite_origin(options: &Effective) -> Result<String, String> {
     let remote = options.remote().map_err(|e| e.to_string())?;
     remote

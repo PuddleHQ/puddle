@@ -448,6 +448,7 @@ fn restored_database(
 }
 
 /// Whether the two workspace lists can be merged, for the request to refuse early.
+// string-error-ok: the text is the refusal shown to the user before a restore starts; no caller branches on a kind
 fn book_versions_agree(paths: &HostPaths, staged: &Path) -> Result<(), String> {
     merge::check_book_versions(&paths.workspace_book(), &staged.join(BACKUP_WORKSPACES))
 }

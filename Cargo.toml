@@ -247,6 +247,15 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
+# Idiom audit lints that keep the cleaned-up shapes cleaned up.
+redundant_clone = "warn"
+or_fun_call = "warn"
+use_self = "warn"
+needless_raw_strings = "warn"
+str_to_string = "warn"
+string_add = "warn"
+needless_collect = "warn"
+significant_drop_in_scrutinee = "warn"
 # clippy.toml names std::env::temp_dir: make a test's files with `tempfile`, or say why in an
 # #[expect(clippy::disallowed_methods, reason = "...")] (scripts/flake-lints-test.sh proves the rule fires).
 disallowed_methods = "deny"

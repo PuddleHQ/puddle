@@ -367,13 +367,18 @@ pub async fn stage_update(
         return Ok(Update::UpToDate);
     };
     let latest = resolve_latest(fetch, platform).await?;
-    let skip = current == latest.commit
-        || pointer(builds, REJECTED).as_deref() == Some(latest.commit.as_str());
-    if skip {
+    let rejected =
+        |builds: &Path| pointer(builds, REJECTED).as_deref() == Some(latest.commit.as_str());
+    if current == latest.commit || rejected(builds) {
         return Ok(Update::UpToDate);
     }
     tokio::fs::create_dir_all(builds).await?;
     download_build(fetch, platform, builds, &latest).await?;
+    // A rollback can have rejected this build while it downloaded (the caller's pointer lock is
+    // not held across a download), and a staged build runs at the next switch.
+    if rejected(builds) {
+        return Ok(Update::UpToDate);
+    }
     write_pointer(builds, STAGED, &latest.commit)?;
     Ok(Update::Staged(latest.commit))
 }

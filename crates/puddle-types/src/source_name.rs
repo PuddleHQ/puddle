@@ -154,13 +154,13 @@ impl From<HostNameLit> for HostName {
 /// A [`HostName`] from a constant string, checked at build time: no `Result`, no `expect`.
 ///
 /// ```
-/// use puddle_secrets::{HostName, host_name};
+/// use puddle_types::{HostName, host_name};
 /// let host: HostName = host_name!("github.com");
 /// assert_eq!(host.as_str(), "github.com");
 /// ```
 ///
 /// ```compile_fail
-/// use puddle_secrets::host_name;
+/// use puddle_types::host_name;
 /// let _ = host_name!("-option");
 /// ```
 #[macro_export]

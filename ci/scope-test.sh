@@ -528,31 +528,33 @@ verdict push 1 "a skipped job off a pull request without the flag" "$CI_FULL" ru
 verdict push 0 "ci push, all passed" "$CI_FULL" rust=ci_rust ui=ui -- rust=success ui=success
 CI_UI='{"ci_rust":"false","ui":"true"}'
 CI_DOCS='{"ci_rust":"false","ui":"false"}'
-ci_specs=(rust=ci_rust gates=ci_rust 'light=!ci_rust' ui=ui 'ui-webkit=ui,queue,defer:defer_linux_webkit')
-verdict pull_request 0 "ci full run" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
-verdict pull_request 0 "ci ui-only: light and ui" "$CI_UI" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
-verdict pull_request 0 "ci docs-only: light only" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=skipped ui-webkit=skipped
-verdict pull_request 1 "ci docs-only: light failed" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped light=failure ui=skipped ui-webkit=skipped
-verdict pull_request 1 "ci docs-only: light skipped too" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped light=skipped ui=skipped ui-webkit=skipped
-verdict pull_request 1 "ci full: rust skipped, light ran" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
-verdict pull_request 1 "ci full: rust failed" "$CI_FULL" "${ci_specs[@]}" -- rust=failure gates=failure light=skipped ui=success ui-webkit=success
-verdict pull_request 1 "ci ui job skipped though needed" "$CI_UI" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=skipped ui-webkit=skipped
-verdict pull_request 0 "ci scope failed: everything ran" '{}' "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
-verdict pull_request 1 "ci scope failed: rust skipped" '{}' "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
-verdict pull_request 1 "ci full: gates failed, tests passed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=failure light=skipped ui=success ui-webkit=success
-verdict pull_request 1 "ci full: gates skipped though needed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=skipped light=skipped ui=success ui-webkit=success
-verdict pull_request 1 "ci full: webkit failed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=failure
-verdict pull_request 1 "ci full: webkit skipped without the light mode" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+ci_specs=(rust=ci_rust gates=ci_rust hooks=ci_rust 'light=!ci_rust' ui=ui 'ui-webkit=ui,queue,defer:defer_linux_webkit')
+verdict pull_request 0 "ci full run" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=success
+verdict pull_request 0 "ci ui-only: light and ui" "$CI_UI" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=success ui=success ui-webkit=success
+verdict pull_request 0 "ci docs-only: light only" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=success ui=skipped ui-webkit=skipped
+verdict pull_request 1 "ci docs-only: light failed" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=failure ui=skipped ui-webkit=skipped
+verdict pull_request 1 "ci docs-only: light skipped too" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=skipped ui=skipped ui-webkit=skipped
+verdict pull_request 1 "ci full: rust skipped, light ran" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=success ui=success ui-webkit=success
+verdict pull_request 1 "ci full: rust failed" "$CI_FULL" "${ci_specs[@]}" -- rust=failure gates=failure hooks=failure light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci ui job skipped though needed" "$CI_UI" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=success ui=skipped ui-webkit=skipped
+verdict pull_request 0 "ci scope failed: everything ran" '{}' "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci scope failed: rust skipped" '{}' "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=success ui=success ui-webkit=success
+verdict pull_request 1 "ci full: hooks failed, the rest passed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=failure light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci full: hooks skipped though needed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=skipped light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci full: gates failed, tests passed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=failure hooks=failure light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci full: gates skipped though needed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=skipped hooks=skipped light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci full: webkit failed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=failure
+verdict pull_request 1 "ci full: webkit skipped without the light mode" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=skipped
 # The nightly tier skips the WebKit job on a merge queue run when scope says so, and nowhere else.
 CI_WK='{"ci_rust":"true","ui":"true","defer_linux_webkit":"true"}'
 CI_NOWK='{"ci_rust":"true","ui":"true","defer_linux_webkit":"false"}'
 VERDICT_ENV=(PUDDLE_TIER=on)
-verdict merge_group 0 "tier: webkit deferred" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
-verdict merge_group 1 "tier: webkit kept in the queue but skipped" "$CI_NOWK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
-verdict merge_group 1 "tier: chromium skipped, only webkit may defer" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=skipped ui-webkit=skipped
-verdict pull_request 1 "tier: a pull request never defers webkit" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+verdict merge_group 0 "tier: webkit deferred" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=skipped
+verdict merge_group 1 "tier: webkit kept in the queue but skipped" "$CI_NOWK" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=skipped
+verdict merge_group 1 "tier: chromium skipped, only webkit may defer" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=skipped ui-webkit=skipped
+verdict pull_request 1 "tier: a pull request never defers webkit" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=skipped
 VERDICT_ENV=()
-verdict merge_group 1 "tier unset: webkit deferred" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+verdict merge_group 1 "tier unset: webkit deferred" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=skipped
 # Windows: the release build is not scoped (its own event rule skips it on a pull request to develop).
 WIN_UI='{"win_rust":"false","ui":"true"}'
 verdict pull_request 0 "windows ui-only, release skipped" "$WIN_UI" clippy=win_rust test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui ui-unit=ui -- \
@@ -675,17 +677,17 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 # The three run side by side (about 2000 cases); each prints its case count.
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
-matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
+matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
 # ci.yml's light CI unit tier, apart: its two outputs vary independently of the others (one matrix would be 81 states a context).
 matrix_bg ci-unit "" unit,unit_ui unit=unit unit-ui=unit_ui
 matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui
 matrix_bg vm-linux --nightly-skips vm build=vm,queue agent=vm,queue tests=vm,queue
 matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
 for p in "${mpids[@]}"; do wait "$p" || fail=1; done
-verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
-verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
-verdict workflow_dispatch 0 "ci dispatch: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
-verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
+verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=success
+verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=success
+verdict workflow_dispatch 0 "ci dispatch: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success hooks=success light=skipped ui=success ui-webkit=success
+verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=success ui=success ui-webkit=success
 
 # The light mode: a queue-only job may skip on a pull request to develop with PUDDLE_QUEUE=on, and
 # nowhere else. The verdict works the mode out from the event, not from the scope job's output.
@@ -704,7 +706,7 @@ verdict pull_request 1 "light: docs-only, a windows job failed" "$WIN_DOCS" "${W
 verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success agent=success tests=success
 verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure agent=failure tests=skipped
 verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
-verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped hooks=skipped light=skipped ui=success ui-webkit=success
 verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=main)
@@ -760,7 +762,7 @@ VERDICT_ENV=()
 
 # A develop push run whose commit a green merge queue run tested: the heavy ci jobs may skip when
 # PUDDLE_QUEUE_SKIP_PUSH=on and the queue-tested job succeeded and said so; anything else runs them.
-CI_P=('rust=ci_rust,pushskip' 'gates=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip' 'ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit')
+CI_P=('rust=ci_rust,pushskip' 'gates=ci_rust,pushskip' 'hooks=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip' 'ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit')
 TESTED='queue-tested=success'
 needs_tested() { needs "$@" | jq -c '.["queue-tested"].outputs = {skip: "'"${SKIP_OUT-true}"'"}'; }
 push_case() { # push_case <want> <label> <job=result>...
@@ -771,20 +773,20 @@ push_case() { # push_case <want> <label> <job=result>...
     [ "$rc" = "$exp" ] || bad "verdict: tested push: $label: exit $rc, want $exp"
 }
 VERDICT_ENV=(PUDDLE_QUEUE_SKIP_PUSH=on)
-push_case 0 "all heavy jobs skipped" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
-push_case 0 "heavy jobs ran anyway" rust=success gates=success msvc=success light=skipped ui=success ui-webkit=success "$TESTED"
-push_case 1 "rust failed" rust=failure gates=failure msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
-push_case 1 "lookup failed" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped queue-tested=failure
-push_case 1 "lookup skipped" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped queue-tested=skipped
-SKIP_OUT=false push_case 1 "lookup said run" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
-SKIP_OUT="" push_case 1 "lookup output lost" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
-PUSH_REF=refs/heads/main push_case 1 "a push to main" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
-PUSH_EVENT=workflow_dispatch push_case 1 "a dispatch" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
-PUSH_EVENT=merge_group push_case 1 "a merge queue run" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 0 "all heavy jobs skipped" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 0 "heavy jobs ran anyway" rust=success gates=success hooks=success msvc=success light=skipped ui=success ui-webkit=success "$TESTED"
+push_case 1 "rust failed" rust=failure gates=failure hooks=failure msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 1 "lookup failed" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped queue-tested=failure
+push_case 1 "lookup skipped" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped queue-tested=skipped
+SKIP_OUT=false push_case 1 "lookup said run" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+SKIP_OUT="" push_case 1 "lookup output lost" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+PUSH_REF=refs/heads/main push_case 1 "a push to main" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+PUSH_EVENT=workflow_dispatch push_case 1 "a dispatch" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+PUSH_EVENT=merge_group push_case 1 "a merge queue run" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
 VERDICT_ENV=()
-push_case 1 "PUDDLE_QUEUE_SKIP_PUSH unset" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 1 "PUDDLE_QUEUE_SKIP_PUSH unset" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
 VERDICT_ENV=(PUDDLE_QUEUE_SKIP_PUSH=yes)
-push_case 1 "PUDDLE_QUEUE_SKIP_PUSH=yes is not on" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 1 "PUDDLE_QUEUE_SKIP_PUSH=yes is not on" rust=skipped gates=skipped hooks=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
 VERDICT_ENV=()
 
 # full-steps: off the light mode every guarded step must have succeeded; in the light mode anything goes.
@@ -817,7 +819,7 @@ if python3 -c 'import yaml' 2>/dev/null; then
 import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
-    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui"),
+    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui"),
     "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue agent=vm,queue tests=vm,queue"),
     "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),

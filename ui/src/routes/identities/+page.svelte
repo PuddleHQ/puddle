@@ -159,7 +159,7 @@
               void setDefault("only_push_listed", next);
             }}
           />
-          Only push to listed repos
+          Only push to allowed repositories
         </label>
         <p class="muted">
           {defaults.only_push_listed
@@ -179,7 +179,7 @@
               void setDefault("only_pull_listed", next);
             }}
           />
-          Only pull from listed repos
+          Only pull from allowed repositories
         </label>
         <p class="muted">
           {defaults.only_pull_listed

@@ -166,7 +166,10 @@ async fn vm_radar_forgejo_clones_pushes_and_deletes_a_branch_and_the_guest_never
          git push origin HEAD:main 2>&1 || true",
     )
     .await;
-    assert!(out.contains("not on this workspace's push list"), "{out}");
+    assert!(
+        out.contains("not in this workspace's allowed repositories"),
+        "{out}"
+    );
     assert_eq!(
         forgejo.branch_head("acme/other", "main").unwrap(),
         other_head,

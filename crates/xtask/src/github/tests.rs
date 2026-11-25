@@ -70,12 +70,12 @@ fn a_missing_asset_fails_and_leaves_no_file() {
 
 #[test]
 fn a_host_without_curl_is_told_what_to_install() {
-    let gh = GitHub::at(
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-        "puddle-no-such-curl",
-    );
+    // An absolute path is never searched on PATH, so a Windows folder on PATH (permission denied
+    // instead of not found) cannot change the error.
     let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("puddle-no-such-curl");
+    let name = missing.display();
+    let gh = GitHub::at("http://127.0.0.1:1", "http://127.0.0.1:1", &missing);
     for err in [
         gh.api("repos/f/m/commits/v1", false)
             .unwrap_err()
@@ -84,10 +84,7 @@ fn a_host_without_curl_is_told_what_to_install() {
             .unwrap_err()
             .to_string(),
     ] {
-        assert!(
-            err.contains("`puddle-no-such-curl` is not installed"),
-            "{err}"
-        );
+        assert!(err.contains(&format!("`{name}` is not installed")), "{err}");
         assert!(err.contains("install it"), "{err}");
     }
 }

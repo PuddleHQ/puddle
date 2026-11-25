@@ -358,6 +358,28 @@ impl From<ConnectionOrigin> for puddle_types::ConnectionOrigin {
     }
 }
 
+/// What the `method` and `path` of a connection record are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionProtocol {
+    /// An HTTP request: `method` is the HTTP method.
+    Http,
+    /// Git over SSH, which Puddle ends: `method` is the command (`git-receive-pack`,
+    /// `git-upload-pack`, `git-lfs-upload`, `git-lfs-download`) or what was refused (`ssh-command`
+    /// for a command Puddle does not serve, `ssh-channel` for a session request).
+    Ssh,
+}
+
+impl From<puddle_types::ConnectionProtocol> for ConnectionProtocol {
+    fn from(protocol: puddle_types::ConnectionProtocol) -> Self {
+        match protocol {
+            puddle_types::ConnectionProtocol::Ssh => Self::Ssh,
+            // A protocol this API doesn't know yet is read as HTTP.
+            _ => Self::Http,
+        }
+    }
+}
+
 /// How reaching the destination went after the proxy let a connection through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -483,6 +505,10 @@ pub enum WorkspaceOpKind {
     SshAgentRefused,
     /// The user answered the filtered SSH agent's first-use question.
     SshAgentAnswered,
+    /// The days the activity log is kept were changed (the detail says from how many to how many).
+    AuditRetentionChanged,
+    /// Records older than the retention were deleted on request, with `puddle audit prune`.
+    AuditPruned,
 }
 
 impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
@@ -509,6 +535,8 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::SshAgentSigned => Self::SshAgentSigned,
             K::SshAgentRefused => Self::SshAgentRefused,
             K::SshAgentAnswered => Self::SshAgentAnswered,
+            K::AuditRetentionChanged => Self::AuditRetentionChanged,
+            K::AuditPruned => Self::AuditPruned,
         }
     }
 }

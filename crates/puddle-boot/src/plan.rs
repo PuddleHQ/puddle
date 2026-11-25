@@ -33,6 +33,10 @@ pub const ENV_FILE_GUEST: &str = "/etc/profile.d/01-puddle-env.sh";
 /// folder. It sorts after the environment file and the shell init loader.
 pub const START_FOLDER_FILE_GUEST: &str = "/etc/profile.d/03-puddle-start-folder.sh";
 
+/// The login-shell file that shows the workspace's name where an interactive bash prompt shows the
+/// host name (see [`prompt_name_file`]).
+pub const PROMPT_NAME_FILE_GUEST: &str = "/etc/profile.d/04-puddle-prompt-name.sh";
+
 /// The sudo rule that gives a non-root session user root without a password.
 pub const SUDOERS_SESSION_GUEST: &str = "/etc/sudoers.d/puddle-session";
 
@@ -805,6 +809,36 @@ pub fn start_folder_file(root: &GuestPath, folder: &GuestPath) -> GuestFile {
         root = sh_word(root.as_str()),
     );
     GuestFile::new(guest_path!(START_FOLDER_FILE_GUEST), text.into_bytes())
+}
+
+/// The login-shell file that makes an interactive bash prompt, and the terminal title that comes
+/// with it, read `agent@<name>` instead of `agent@<guest host name>`.
+///
+/// The guest's host name stays the workspace id (a typed name is never an identifier), so the
+/// file swaps the `\h` and `\H` of whatever `PS1` the user's rc files set, from `PROMPT_COMMAND`
+/// (the rc files run after this file, so the swap has to wait for the first prompt). The name sits
+/// in a variable that the prompt expands, so a `$`, a backtick or a backslash in it is text, never
+/// code. Other shells and a non-interactive bash are left alone.
+#[must_use]
+pub fn prompt_name_file(name: &str) -> GuestFile {
+    let name: String = name.chars().filter(|c| !c.is_control()).collect();
+    let text = format!(
+        "{GENERATED}[ -n \"${{BASH_VERSION-}}\" ] || return 0\n\
+         case $- in *i*) ;; *) return 0 ;; esac\n\
+         shopt -q promptvars || return 0\n\
+         __puddle_name={name}\n\
+         __puddle_prompt() {{\n\
+         \tcase $PS1 in\n\
+         \t*'\\h'* | *'\\H'*)\n\
+         \t\tPS1=${{PS1//'\\h'/'${{__puddle_name}}'}}\n\
+         \t\tPS1=${{PS1//'\\H'/'${{__puddle_name}}'}}\n\
+         \t\t;;\n\
+         \tesac\n\
+         }}\n\
+         PROMPT_COMMAND=\"__puddle_prompt${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"\n",
+        name = sh_word(&name),
+    );
+    GuestFile::new(guest_path!(PROMPT_NAME_FILE_GUEST), text.into_bytes())
 }
 
 /// A quoted git config value.

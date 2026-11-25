@@ -10,7 +10,6 @@
 pub mod pull;
 pub mod registry;
 
-use std::fmt::Write as _;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -76,8 +75,5 @@ pub fn lab_pki() -> (String, rustls::ServerConfig) {
 #[must_use]
 pub fn sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    digest.iter().fold(String::from("sha256:"), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
+    format!("sha256:{}", puddle_types::hex_lower(&digest))
 }

@@ -1011,7 +1011,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
     );
     expect(screen.getByTestId("table-cannot-hold")).toHaveTextContent(
-      "Only push to listed repos",
+      "Only push to allowed repositories",
     );
   });
 });

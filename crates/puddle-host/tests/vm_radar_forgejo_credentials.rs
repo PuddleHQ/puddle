@@ -348,7 +348,8 @@ async fn vm_radar_forgejo_credential_changes_apply_to_the_running_workspace_and_
     )
     .await;
     assert!(
-        refused.contains("not on this workspace's push list") && !refused.contains("exit=0"),
+        refused.contains("not in this workspace's allowed repositories")
+            && !refused.contains("exit=0"),
         "{refused}"
     );
     assert_eq!(

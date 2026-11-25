@@ -190,7 +190,9 @@ async fn a_push_to_a_repository_that_is_not_listed_says_how_to_allow_it_and_noth
     let ran = rig.run(&clone, &["push", "origin", "main"]).await;
     assert!(!ran.ok);
     assert!(
-        ran.stderr.contains("not on this workspace's push list") && ran.stderr.contains("403"),
+        ran.stderr
+            .contains("not in this workspace's allowed repositories")
+            && ran.stderr.contains("403"),
         "{}",
         ran.stderr
     );
@@ -238,7 +240,8 @@ async fn a_repository_listed_for_pulls_only_clones_and_refuses_a_push() {
     let ran = rig.run(&clone, &["push", "origin", "main"]).await;
     assert!(!ran.ok);
     assert!(
-        ran.stderr.contains("not on this workspace's push list"),
+        ran.stderr
+            .contains("not in this workspace's allowed repositories"),
         "{}",
         ran.stderr
     );
@@ -363,7 +366,7 @@ async fn an_lfs_upload_to_a_push_listed_repository_carries_the_credential_and_on
         )
         .await;
     assert_eq!(r.status, 403, "{}", r.body);
-    assert!(r.body.contains("push list"), "{}", r.body);
+    assert!(r.body.contains("allowed repositories"), "{}", r.body);
     let r = rig
         .request(
             "PUT",
@@ -567,7 +570,7 @@ async fn hg18_a_push_to_an_unlisted_repository_by_a_path_trick_is_refused_and_ne
     ] {
         let r = rig.request("GET", &path, &[], b"").await;
         assert_eq!(r.status, 403, "{path}: {}", r.body);
-        assert!(r.body.contains("push list"), "{}", r.body);
+        assert!(r.body.contains("allowed repositories"), "{}", r.body);
     }
     assert!(
         rig.host.seen().is_empty(),

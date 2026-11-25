@@ -438,6 +438,7 @@ async fn a_listed_repository_is_read_and_written_and_the_record_says_who_with_wh
         (line.method(), line.path()),
         ("git-upload-pack", "/acme/web")
     );
+    assert_eq!(line.protocol(), puddle_types::ConnectionProtocol::Ssh);
     assert!(event.injected);
     assert!(event.binding_id.is_some());
     assert!(event.bytes_up > 0 && event.bytes_down > 0);
@@ -457,7 +458,7 @@ async fn a_push_to_a_repository_off_the_list_ends_before_anything_goes_upstream(
     assert_eq!(refused.exit, Some(1), "{refused:?}");
     assert!(
         refused.err.starts_with(
-            "puddle: push to bound.test/acme/other is not on this workspace's push list"
+            "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push"
         ),
         "{refused:?}"
     );
@@ -625,7 +626,10 @@ async fn git_lfs_falls_back_to_https_with_no_token_in_the_answer() {
     )
     .await;
     assert_eq!(off.exit, Some(1));
-    assert!(off.err.contains("push to bound.test/acme/other"), "{off:?}");
+    assert!(
+        off.err.contains("Blocked this push: bound.test/acme/other"),
+        "{off:?}"
+    );
     assert_eq!(t.upstream.calls().len(), 0);
 }
 
@@ -984,7 +988,7 @@ async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capp
         ssh.channel_open_session().await.is_err(),
         "a third channel is over the cap"
     );
-    // flake-ok: an absence window; the idle limit is 300 ms and nothing signals that it did not fire.
+    // flake-ok: an absence window; the idle limit is 200 ms and nothing signals that it did not fire.
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert!(!ssh.is_closed(), "busy, so not idle");
     first.eof().await.unwrap();
@@ -1168,7 +1172,8 @@ async fn a_download_of_lfs_objects_asks_the_table_about_a_fetch() {
     .await;
     assert_eq!(off.exit, Some(1), "{off:?}");
     assert!(
-        off.err.contains("pull from bound.test/acme/other"),
+        off.err
+            .contains("Blocked this fetch: bound.test/acme/other"),
         "{off:?}"
     );
     let on = exec(

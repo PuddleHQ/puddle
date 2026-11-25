@@ -46,6 +46,7 @@
 
 mod error;
 mod name;
+mod tcp;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -65,6 +66,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pub use error::IpcError;
+pub use tcp::accept_tcp;
 
 /// How many idle pipe instances a Windows [`Listener`] keeps ready (taken from the `PoC`, which
 /// needed this many for bursts such as a parallel package restore). Unused on Unix, where the

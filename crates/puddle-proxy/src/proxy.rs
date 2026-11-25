@@ -48,7 +48,7 @@ mod relay;
 use admit::resolve_destination;
 pub(crate) use admit::{Unresolved, admit};
 pub use config::ProxyConfig;
-pub(crate) use forward::{connect_first, forward, tunnel};
+pub(crate) use forward::{connect_first, tunnel};
 pub(crate) use refusal::{Refusal, refuse};
 use relay::relay;
 
@@ -85,8 +85,7 @@ pub struct Proxy {
     pub(crate) config: ProxyConfig,
     /// How many guest connections are being served right now, the audit record of each included.
     open_guest_streams: Arc<std::sync::atomic::AtomicUsize>,
-    /// How many upstream connections have ended; tests wait on it (feature `testing`).
-    #[cfg(feature = "testing")]
+    /// How many upstream connections have ended; tests wait on it through `upstream_connections_ended`.
     pub(crate) upstream_ended: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -124,7 +123,6 @@ impl Proxy {
             reports: None,
             config: ProxyConfig::default(),
             open_guest_streams: Arc::default(),
-            #[cfg(feature = "testing")]
             upstream_ended: Arc::default(),
         }
     }

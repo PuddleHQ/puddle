@@ -185,4 +185,4 @@ export function tableCannotHold(url: string): boolean {
 
 /** The warning for such an address, with the way out. */
 export const TABLE_CANNOT_HOLD =
-  "This project's name has a space in it, which a workspace's repository table can't hold. The workspace is made, but while “Only push to listed repos” is on, pushes from it are refused: turn that off on the workspace's Git tab, or use a project without a space.";
+  "This project's name has a space in it, which a workspace's repository table can't hold. The workspace is made, but while “Only push to allowed repositories” is on, pushes from it are refused: turn that off on the workspace's Git tab (Repositories), or use a project without a space.";

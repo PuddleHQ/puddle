@@ -691,6 +691,29 @@ proptest! {
 }
 
 #[test]
+fn a_record_names_the_protocol_of_its_request_and_older_lines_have_none() {
+    let mut e = event();
+    e.http = None;
+    assert_eq!(ConnectionRecord::from_event(1, &e).protocol, None);
+    e.http = Some(HttpRequestLine::new("GET", "/x"));
+    assert_eq!(
+        ConnectionRecord::from_event(1, &e).protocol,
+        Some(ConnectionProtocol::Http)
+    );
+    e.http = Some(HttpRequestLine::ssh("git-upload-pack", "/acme/web"));
+    let record = ConnectionRecord::from_event(1, &e);
+    assert_eq!(record.protocol, Some(ConnectionProtocol::Ssh));
+    let mut line: Value =
+        serde_json::from_str(&AuditRecord::connection(record).to_line().unwrap()).unwrap();
+    assert_eq!(line["protocol"], "ssh");
+    line.as_object_mut().unwrap().remove("protocol");
+    match serde_json::from_value::<AuditRecord>(line).unwrap() {
+        AuditRecord::Connection(c) => assert_eq!(c.protocol, None),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn kinds_lists_every_type_tag_once() {
     let kinds: Vec<&str> = every_record().iter().map(AuditRecord::kind).collect();
     for kind in kinds {

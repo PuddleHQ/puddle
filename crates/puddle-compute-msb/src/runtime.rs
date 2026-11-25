@@ -278,9 +278,10 @@ impl MsbRuntime {
         self.inner.sandboxes_dir.join(name)
     }
 
-    /// Deletes the root images a grow of this stopped sandbox left behind (see [`grow_orphans`]):
-    /// call it after a grow that took the next-start path, and `start` runs it as well. A failure
-    /// is logged and never fails the caller, since the sandbox works with the orphans in place.
+    /// Deletes the root images that grows of this stopped sandbox left behind (see [`grow_orphans`]).
+    /// Only `start` calls it, before it boots the sandbox, so a grow leaves its orphans in place
+    /// until the next start. A failure is logged and never fails the caller, since the sandbox
+    /// works with the orphans in place.
     pub(crate) fn prune_grow_orphans(&self, name: &str) {
         grow_orphans::prune_logged(name, &self.sandbox_dir(name));
     }

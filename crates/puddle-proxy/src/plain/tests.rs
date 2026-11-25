@@ -198,3 +198,49 @@ async fn a_guest_whose_close_fails_after_it_stops_sending_requests_is_dropped() 
         logs.text()
     );
 }
+
+#[tokio::test]
+async fn a_pull_answer_is_followed_by_a_close_of_the_guest_side() {
+    let (logs, _guard) = capture_logs();
+    let rig = rig().await;
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let mut guest = ResetOnClose {
+        script: Builder::new()
+            .read(request(rig.port, "Content-Length: 0\r\n").as_bytes())
+            .build(),
+        written: Arc::clone(&written),
+    };
+    let mut head_reader = BufReader::new(&mut guest);
+    let head = read_request(&mut head_reader, rig.handler.proxy.config.head_timeout)
+        .await
+        .unwrap();
+    drop(head_reader);
+    let (target, path, _) = parse_request(&head).unwrap();
+    let incoming = Incoming::new(head, target, path.unwrap()).unwrap();
+    let out = Out {
+        stream: tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, rig.port))
+            .await
+            .unwrap(),
+        addr: None,
+        hop: None,
+        via: None,
+        watch: None,
+    };
+    let (stream, _) = Counted::new(guest);
+    let reader = BufReader::new(stream);
+    forward_once(
+        &rig.handler.proxy.config,
+        &Arc::default(),
+        reader,
+        out,
+        &incoming,
+    )
+    .await;
+    let answer = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    assert!(answer.ends_with("ok"), "{answer}");
+    assert!(
+        logs.text().contains("guest went away before the close"),
+        "{}",
+        logs.text()
+    );
+}

@@ -14,7 +14,7 @@
 //! proxies that had a sign-in and have none, and the host shows a problem until each is entered again.
 
 use std::collections::BTreeMap;
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -332,11 +332,7 @@ fn list_id(prefix: &str) -> Result<StoredId, StoreError> {
 
 fn entry_id(prefix: &str, proxy: &ProxyAddr) -> Result<StoredId, StoreError> {
     let digest = Sha256::digest(proxy.to_string().as_bytes());
-    let hex = digest.iter().take(16).fold(String::new(), |mut hex, byte| {
-        // writing into a `String` cannot fail
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
+    let hex = puddle_types::hex_lower(digest.get(..16).unwrap_or_default());
     StoredId::new(format!("{prefix}{hex}")).map_err(|_| StoreError)
 }
 

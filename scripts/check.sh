@@ -312,9 +312,21 @@ run_gate() {
         # the advice (doctor findings, the vault warning) names no command this build refuses
         "$cargo" test --locked -p puddle-doctor --test snapshots the_no_desktop_advice_names_the_serve_command_only_when_it_is_built_in
         "$cargo" test --locked -p puddle-host --lib the_warning_says_whether_the_login_is_graphical_and_whether_the_store_works
+        # and no unit test needs a dormant feature to pass: the same lib tests with the shipped
+        # (default) features. A test that checks the layer branches on `Tools::AVAILABLE` or
+        # carries `#[cfg(feature = ...)]`, so it cannot hide behind the `test` gate's --all-features.
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        "$cargo" test --locked --workspace $skip_app --lib --no-fail-fast
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        "$cargo" test --locked --doc --workspace $skip_app --no-fail-fast
+        # the fake-host and HTTP suites are the integration tests that exercise the layer; the
+        # others of the workspace need a VM (vm_*) or a UI build
+        "$cargo" test --locked -p puddle-host --test fake_host
+        "$cargo" test --locked -p puddle-api --test api_http
+        "$cargo" test --locked -p puddle --test cli --test serve_config
+        "$cargo" test --locked -p puddle-settings --test properties
         # and the release pipeline passes neither feature
         ci/check-dormant-release.sh
-        "$cargo" test --locked -p puddle-api --test api_http nothing_of_the_mise_layer_shows_in_a_build_without_it
         ;;
     clippy-windows)
         # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)

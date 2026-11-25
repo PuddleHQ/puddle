@@ -16,8 +16,9 @@ use std::time::Duration;
 use common::{FakeRoot, alive, kill9, shells, show};
 use puddle_boot::{
     BootHook, BootPlan, CA_DIR_GUEST, ENV_FILE_GUEST, GIT_CONFIG_GUEST, Gate, GateState,
-    GitIdentity, MACHINE_SETTINGS_GUEST, PATH_FILE_GUEST, PLAN_HEADER, START_FOLDER_FILE_GUEST,
-    SUDOERS_SESSION_GUEST, machine_settings_path, start_folder_file,
+    GitIdentity, MACHINE_SETTINGS_GUEST, PATH_FILE_GUEST, PLAN_HEADER, PROMPT_NAME_FILE_GUEST,
+    START_FOLDER_FILE_GUEST, SUDOERS_SESSION_GUEST, machine_settings_path, prompt_name_file,
+    start_folder_file,
 };
 use puddle_compute::ImageConfig;
 use puddle_test_kit::eventually_blocking;
@@ -1317,6 +1318,61 @@ fn the_start_folder_file_moves_only_an_interactive_shell_that_starts_in_home() {
         assert_eq!(at(true, &home), real(&odd), "{why}");
         assert!(!fr.path("/workspace/pwned").exists());
         assert!(!home.join("pwned").exists());
+    }
+}
+
+#[test]
+fn the_prompt_name_file_shows_the_workspace_name_where_bash_shows_the_host_name() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        let is_bash = sh.file_name().is_some_and(|n| n == "bash");
+        let why = sh.display().to_string();
+        let run = |name: &str, interactive: bool, script: &str| {
+            let written = prompt_name_file(name);
+            assert_eq!(written.path().as_str(), PROMPT_NAME_FILE_GUEST);
+            let file = fr.path("/prompt-name.sh");
+            std::fs::write(&file, written.contents()).unwrap();
+            let mut command = std::process::Command::new(&fr.shell);
+            if interactive {
+                command.arg("-i");
+            }
+            let out = command
+                .arg("-c")
+                .arg(format!(". '{}'; {script}", file.display()))
+                .current_dir(fr.path("/"))
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("HOME", fr.path("/"))
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{why}: {out:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        };
+        // Every shell can source it, interactive or not, and none of them runs anything.
+        assert_eq!(run("qa-first", false, "echo ok"), "ok", "{why}");
+        assert_eq!(run("qa-first", true, "echo ok"), "ok", "{why}");
+        if !is_bash {
+            continue;
+        }
+        let shown = |name: &str| {
+            run(
+                name,
+                true,
+                "PS1='agent@\\h:\\H$ '; eval \"$PROMPT_COMMAND\"; echo \"${PS1@P}\"",
+            )
+        };
+        // The host name is swapped for the name, in both spellings of it.
+        assert_eq!(shown("qa-first"), "agent@qa-first:qa-first$", "{why}");
+        // Whatever the name holds is text: nothing runs and nothing expands.
+        let odd = "it's $(touch pwned) `x` $HOME \\h \\u";
+        assert_eq!(shown(odd), format!("agent@{odd}:{odd}$"), "{why}");
+        assert!(!fr.path("/pwned").exists());
+        // A non-interactive bash keeps its variables to itself.
+        assert_eq!(
+            run("qa-first", false, "echo \"[${PROMPT_COMMAND-}]\""),
+            "[]",
+            "{why}"
+        );
     }
 }
 

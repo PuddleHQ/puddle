@@ -158,6 +158,23 @@ pub(crate) async fn list_workspaces(
     }))
 }
 
+/// The image a create boots when the form names none, with a line from the image's own labels
+/// that says what is in it. The line is `null` until the host has read the labels.
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/default-image",
+    tag = "workspaces",
+    responses((status = OK, description = "the default image", body = crate::wire::DefaultImage))
+)]
+pub(crate) async fn default_image(
+    State(state): State<AppState>,
+) -> Json<crate::wire::DefaultImage> {
+    Json(crate::wire::DefaultImage {
+        image: crate::DEFAULT_IMAGE.to_owned(),
+        description: state.workspaces.default_image_description(),
+    })
+}
+
 /// The workspaces of `records` that are `principal`'s.
 async fn own(
     state: &AppState,

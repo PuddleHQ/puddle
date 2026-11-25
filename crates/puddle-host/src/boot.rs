@@ -156,6 +156,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) ssh_agent: bool,
     /// The managed mise layer, when it is on for this workspace.
     pub(crate) mise: Option<&'a MiseLayer>,
+    /// The workspace's name, which an interactive bash prompt shows instead of the guest's host
+    /// name (the id).
+    pub(crate) label: &'a str,
 }
 
 /// Where the managed mise layer lives in one workspace and what it may trust.
@@ -337,6 +340,7 @@ impl BootKit {
             .files(trust.guest_files())
             .files(mise.map(|m| m.files).unwrap_or_default())
             .file(shell_init::loader())
+            .file(puddle_boot::prompt_name_file(guest.label))
             .file(puddle_boot::start_folder_file(
                 guest.root,
                 &crate::editor_file::start_path(guest.root, guest.start_folder),

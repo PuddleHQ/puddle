@@ -762,6 +762,22 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
+    fn default_image_description(&self) -> Option<String> {
+        // The labels the real default image carries, so the form shows what it shows with Puddle.
+        let labels = [
+            ("dev.containers.id", "base-debian"),
+            ("dev.containers.variant", "trixie"),
+            (
+                "devcontainer.metadata",
+                r#"[{"id":"ghcr.io/devcontainers/features/common-utils:2"},{"id":"ghcr.io/devcontainers/features/git:1"}]"#,
+            ),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        crate::describe_image(&labels)
+    }
+
     fn names(&self) -> Vec<(WorkspaceId, String)> {
         lock(&self.inner.state)
             .entries

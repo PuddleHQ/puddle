@@ -323,6 +323,8 @@ async fn a_sample_holds_every_family_of_the_measurement_list() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut s = Series::default();
     sampler.sample(100, &mut s).await;
+    // the CPU reading needs /proc/stat to have moved on by a jiffy (10 ms) between the two samples
+    tokio::time::sleep(Duration::from_millis(50)).await;
     sampler.sample(400, &mut s).await;
     let value = |m: &str| s.points(m).first().map(|p| p.1);
     assert_eq!(value("file.db.bytes"), Some(4096.0));

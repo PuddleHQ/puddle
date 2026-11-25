@@ -24,6 +24,10 @@
     globalSettings as globalSettingsStore,
     type GlobalSettings,
   } from "#lib/stores/global-settings.svelte.ts";
+  import {
+    defaultImage as defaultImageStore,
+    type DefaultImage,
+  } from "#lib/stores/default-image.svelte.ts";
   import { cpuLabel } from "#lib/settings/cpus.ts";
   import { inDesktopApp, pickFolder } from "#lib/desktop/folder-picker.ts";
   import {
@@ -64,6 +68,7 @@
     onCreated,
     settings = globalSettingsStore,
     hostCheck = undefined,
+    defaultImage = defaultImageStore,
   }: {
     open?: boolean;
     store?: Pick<WorkspaceStore, "create">;
@@ -81,6 +86,8 @@
     settings?: Pick<GlobalSettings, "view" | "load">;
     /** For tests: the host check. */
     hostCheck?: HostCheck;
+    /** What the default image is, read each time the form opens (the host may only know it after the first download). */
+    defaultImage?: Pick<DefaultImage, "description" | "load">;
   } = $props();
   let hostBlocked = $state(false);
 
@@ -112,6 +119,9 @@
   // The CPU limits are read each time the form opens: the maximum can change in Settings.
   $effect(() => {
     if (open) void settings.load(true);
+  });
+  $effect(() => {
+    if (open) void defaultImage.load();
   });
   const limits = $derived(settings.view?.effective_limits ?? null);
   /** What the slider shows: the count it was moved to, else what a new workspace gets by default. */
@@ -760,11 +770,19 @@
           placeholder="Default development image"
           bind:value={image}
           aria-invalid={errors.image ? "true" : undefined}
-          aria-describedby={errors.image ? "new-ws-image-error" : undefined}
+          aria-describedby={errors.image
+            ? "new-ws-image-error"
+            : image.trim() === "" && defaultImage.description
+              ? "new-ws-image-hint"
+              : undefined}
         />
         {#if errors.image}
           <p class="error" id="new-ws-image-error" role="alert">
             {errors.image}
+          </p>
+        {:else if image.trim() === "" && defaultImage.description}
+          <p class="hint" id="new-ws-image-hint">
+            Default: {defaultImage.description}
           </p>
         {/if}
       </div>

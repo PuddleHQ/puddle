@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle serve --config`: the built binary refuses a bad file and prints what it would use, and
 //! the options of a good file reach a running host.
+//! `puddle serve` is the dormant `serve` cargo feature; without it there is nothing to test.
+#![cfg(feature = "serve")]
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,

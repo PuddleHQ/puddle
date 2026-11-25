@@ -180,7 +180,7 @@ async fn note_tunnel(
     let end = tunnel(
         guest,
         stream,
-        Some(request).filter(|_| git_ssh_name),
+        git_ssh_name.then_some(request),
         watch,
         termination,
         kex,

@@ -29,10 +29,14 @@ function connection(): { url: string; token: string } {
  * this: it does not match an element whose text is spread over child elements.
  */
 export function hostName(scope: Page | Locator, host: string): Locator {
-  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return scope.locator("span.host", {
-    hasText: new RegExp(`^${escaped}(:\\d+)?$`),
-  });
+  if (host.includes("'")) throw new Error(`host name with a quote: ${host}`);
+  const text = "normalize-space(.)";
+  const rest = `substring-after(${text}, '${host}:')`;
+  const isHost = `${text} = '${host}'`;
+  const hasPort = `starts-with(${text}, '${host}:') and ${rest} != '' and translate(${rest}, '0123456789', '') = ''`;
+  return scope.locator(
+    `xpath=.//span[contains(concat(' ', normalize-space(@class), ' '), ' host ')][${isHost} or (${hasPort})]`,
+  );
 }
 
 /** What the desktop shell's init script does: hand the page the token before the app starts. */

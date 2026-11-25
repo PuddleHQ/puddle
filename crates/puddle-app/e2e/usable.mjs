@@ -201,6 +201,8 @@ if (company) {
 // installed app one, which the Terminal tab's rendering check reads (terminal-render.mjs). The value is
 // removed at the end.
 const DEBUG_PORT = 9223;
+// With no start folder and one repository, a new terminal starts in that repository (the lab repository is cloned as app).
+const REPO_FOLDER = "/workspace/app";
 try {
   debugPortPolicy(DEBUG_PORT);
 } catch (err) {
@@ -882,7 +884,7 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create allowed the forge itself before the first clone, so nobody approves it and nobody
   // clones again: the checkout is there and the rule says who made it.
-  const checkout = `/workspace/app/package.json`;
+  const checkout = `${REPO_FOLDER}/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
   const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
   check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
@@ -987,7 +989,7 @@ try {
   if (!company) {
     const listed = (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id);
     const phase = (what, run) => run().catch((err) => check(`${what} ran to the end`, false, String(err?.message ?? err)));
-    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? "/workspace"));
+    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? REPO_FOLDER));
     await phase("the close button", () => closeToTray(id));
     await phase("the request notifications", () => requestNotifications(id));
     await phase("the Activity export", exportActivity);

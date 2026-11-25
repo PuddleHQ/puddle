@@ -110,6 +110,42 @@ impl Node {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.run_timed(args, envs, stdin, budget, false).await
+    }
+
+    /// Like [`Node::run`], but the budget starts when node prints its first byte (to stdout or
+    /// stderr), so a slow start under load does not eat it. Until then only [`START_LIMIT`]
+    /// applies, so a node that never prints still ends in [`HarnessError::NodeHung`].
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Node::run`].
+    pub async fn run_after_first_output<I, S>(
+        &self,
+        args: I,
+        envs: &[(&str, &OsStr)],
+        stdin: &str,
+        budget: Duration,
+    ) -> Result<NodeOutput, HarnessError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.run_timed(args, envs, stdin, budget, true).await
+    }
+
+    async fn run_timed<I, S>(
+        &self,
+        args: I,
+        envs: &[(&str, &OsStr)],
+        stdin: &str,
+        budget: Duration,
+        budget_starts_at_output: bool,
+    ) -> Result<NodeOutput, HarnessError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = self.command(args);
         command.envs(envs.iter().copied());
         let program = PathBuf::from(&self.program);
@@ -137,6 +173,22 @@ impl Node {
             .stderr
             .take()
             .map(|pipe| progress.drain(pipe, Stream::Err));
+        let budget = if budget_starts_at_output {
+            let first = tokio::time::timeout(START_LIMIT, progress.first_output.notified()).await;
+            // Never printed: the start limit was the whole budget, and the error names it.
+            if first.is_ok() {
+                budget
+            } else {
+                Duration::ZERO
+            }
+        } else {
+            budget
+        };
+        let reported = if budget.is_zero() {
+            START_LIMIT
+        } else {
+            budget
+        };
         let waited = tokio::time::timeout(budget, async {
             let status = child.wait().await;
             progress.exited.store(true, Ordering::SeqCst);
@@ -155,7 +207,7 @@ impl Node {
             let stage = progress.stage();
             let _ = child.start_kill();
             return Err(HarnessError::NodeHung {
-                limit: budget,
+                limit: reported,
                 pid,
                 spawn_took,
                 stage,
@@ -173,6 +225,9 @@ impl Node {
     }
 }
 
+/// How long [`Node::run_after_first_output`] waits for node's first byte.
+const START_LIMIT: Duration = Duration::from_secs(120);
+
 #[derive(Clone, Copy)]
 enum Stream {
     Out,
@@ -189,6 +244,8 @@ struct Progress {
     err_closed: AtomicBool,
     out: Mutex<Vec<u8>>,
     err: Mutex<Vec<u8>>,
+    /// Permit stored when the first byte arrives on either pipe.
+    first_output: tokio::sync::Notify,
 }
 
 impl Progress {
@@ -204,6 +261,7 @@ impl Progress {
                 let Some(got) = chunk.get(..read).filter(|got| !got.is_empty()) else {
                     break;
                 };
+                this.first_output.notify_one();
                 this.buffer(stream)
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)

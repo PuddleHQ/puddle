@@ -79,8 +79,9 @@ async fn node_that_hangs_is_stopped_at_the_budget() {
 
 #[tokio::test]
 async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
+    // The budget starts at node's first byte: a slow start under parallel load must not eat it.
     let err = Node::from_env()
-        .run(
+        .run_after_first_output(
             [
                 "-e",
                 "console.log('out-line'); console.error('err-line'); setInterval(()=>{},1000)",

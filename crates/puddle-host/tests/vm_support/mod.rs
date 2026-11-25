@@ -509,7 +509,7 @@ async fn guest_with_third_party(
 }
 
 /// A script that writes more than the exec output cap is cut with exit code 0: fail the test
-/// by name instead of letting it read a short answer (T-2197, T-2203).
+/// by name instead of letting it read a short answer.
 fn assert_whole(out: &puddle_compute::ExecOutput, script: &str) {
     assert!(
         !out.stdout_truncated && !out.stderr_truncated,

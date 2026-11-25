@@ -43,6 +43,8 @@ impl Holdings {
 /// when it is back, or at the end of the wait.
 async fn settled_near(baseline: Holdings) -> Holdings {
     let mut now = Holdings::now();
+    // flake-ok: a bounded settle of 10 s whose end is the answer (the report of a leak), which
+    // `eventually` would turn into a panic
     for _ in 0..100 {
         if now.drift_from(baseline).is_none() {
             break;

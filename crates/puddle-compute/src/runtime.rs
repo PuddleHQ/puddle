@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 
 use puddle_types::{
-    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+    CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -61,6 +61,9 @@ pub struct SandboxInfo {
     /// host can start it again only when it serves each of them. Empty when the runtime can't
     /// tell.
     pub routes: Vec<VsockRoute>,
+    /// Where it mounts its named volumes in the guest, as it was made. Empty when the runtime
+    /// can't tell.
+    pub volume_mounts: Vec<GuestPath>,
 }
 
 /// The root disk of a sandbox (home directory, tool caches, installed packages): its capacity and

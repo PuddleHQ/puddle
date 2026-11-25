@@ -314,7 +314,7 @@ async fn the_launcher_records_what_it_opened() {
     );
     let target = DesktopTarget {
         ssh_host: "puddle-w".into(),
-        path: "/workspaces/w".into(),
+        path: "/workspace".into(),
         is_workspace_file: false,
     };
     launcher.open_desktop(&record, &target).await.unwrap();

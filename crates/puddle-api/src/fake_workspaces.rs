@@ -1269,7 +1269,7 @@ impl WorkspaceService for FakeWorkspaces {
                 AttachMode::Desktop => {
                     let target = DesktopTarget {
                         ssh_host: format!("puddle-{}", record.id),
-                        path: format!("/workspaces/{}", record.id),
+                        path: "/workspace".to_owned(),
                         is_workspace_file: false,
                     };
                     Ok(

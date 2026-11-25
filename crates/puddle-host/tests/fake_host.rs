@@ -436,7 +436,7 @@ impl Guest {
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
-                "cannot create /workspaces/x/.puddle: read-only file system",
+                "cannot create /workspace/.puddle: read-only file system",
             ),
             "layout" => ExecOutput::new(0, "D\n", ""),
             "locks" => match *self.locks_answer.lock().unwrap() {
@@ -450,9 +450,7 @@ impl Guest {
                 ExecOutput::new(0, "R\tapi\nU\t?? notes.txt\nD\n", "")
             }
             "check" => ExecOutput::new(0, "R\tapi\nD\n", ""),
-            "trim" | "shutdown-trim" => {
-                ExecOutput::new(0, "/workspaces/x: 4096 bytes trimmed\n", "")
-            }
+            "trim" | "shutdown-trim" => ExecOutput::new(0, "/workspace: 4096 bytes trimmed\n", ""),
             "clone" => self.answer_clone(r),
             "sync" if self.fail_sync.load(Ordering::SeqCst) => {
                 ExecOutput::new(1, "", "sync: I/O error")
@@ -683,7 +681,7 @@ impl Guest {
             return ExecOutput::new(4, "E\t.\tgit is not installed in the image\n", "");
         }
         if self.fail_listing.load(Ordering::SeqCst) {
-            return ExecOutput::new(3, "E\t.\tcannot enter /workspaces/adds\n", "");
+            return ExecOutput::new(3, "E\t.\tcannot enter /workspace\n", "");
         }
         let mut lines: Vec<(String, String)> = Vec::new();
         for (dir, why) in self.unreadable.lock().unwrap().iter() {

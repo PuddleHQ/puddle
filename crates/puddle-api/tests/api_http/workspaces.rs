@@ -1212,7 +1212,7 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
         json!({
             "opened": true,
             "message": null,
-            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspace"
         })
     );
     assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
@@ -1423,7 +1423,7 @@ async fn a_desktop_that_cannot_open_says_why() {
         json!({
             "opened": false,
             "message": "VS Code is not installed",
-            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspace"
         })
     );
     api.running.shutdown().await;

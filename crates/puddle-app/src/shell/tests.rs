@@ -195,7 +195,7 @@ fn closing_a_popup_asks_nothing_and_the_last_window_asks_once() {
     // A second window of the same workspace (the editor's "New Window"), counted as the
     // window system does.
     windows.opened(&demo);
-    let ended = windows.on_event(demo.clone());
+    let ended = windows.on_event(demo);
     ended(&tauri::WindowEvent::Destroyed);
     // An absence window: a call for the first window's end would have arrived by now.
     std::thread::sleep(std::time::Duration::from_millis(100));

@@ -552,7 +552,7 @@ impl SandboxWindows {
             .zoom_hotkeys_enabled(settings.zoom_hotkeys)
             .devtools(false)
             .on_navigation(navigation_handler(
-                policy.clone(),
+                policy,
                 hooks.open_external.clone(),
                 hooks.refused.clone(),
             ))
@@ -786,7 +786,7 @@ pub fn start_url(origin: &Url, open: &OpenTarget) -> Url {
 /// The blank page a window starts on before it has anything to show. `fallback` is only there
 /// because parsing returns a `Result`.
 fn blank(fallback: &Url) -> Url {
-    Url::parse("about:blank").unwrap_or(fallback.clone())
+    Url::parse("about:blank").unwrap_or_else(|_| fallback.clone())
 }
 
 /// The permission callback of a window with `settings`.

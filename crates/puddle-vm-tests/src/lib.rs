@@ -64,7 +64,6 @@ mod prefix;
 mod runtime;
 pub mod soak;
 pub mod sockets;
-pub mod transparency;
 mod vscode;
 
 pub use browser::{

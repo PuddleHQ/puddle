@@ -287,3 +287,26 @@ input[type="checkbox"][role="switch"]:checked::after {
   background: var(--color-accent-contrast);
   transform: translateX(1.125rem);
 }
+
+/* The menu behind a row's "..." button (bits-ui DropdownMenu, drawn in a portal). */
+.row-menu {
+  z-index: 30;
+  display: grid;
+  min-width: 10rem;
+  padding: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.row-menu-item {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.row-menu-item[data-highlighted] {
+  background: var(--color-surface);
+}
+.row-menu-item[data-disabled] {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}

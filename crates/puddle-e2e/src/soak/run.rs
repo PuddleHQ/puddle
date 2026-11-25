@@ -958,9 +958,10 @@ async fn page_loads(api: Arc<Mutex<Target>>, every: Duration) {
     }
 }
 
-/// The memory and disk the run needs, from `/proc/meminfo` and `df`.
+/// The memory and disk the run needs, from `/proc/meminfo` and `df`. A host with no
+/// `/proc/meminfo` (Windows) reads as no free memory, so a run that needs some is BLOCKED.
 fn preflight(opts: &Options) -> Result<(), String> {
-    let meminfo = std::fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
+    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
     let ram_gib = super::sample::available_ram_kb(&meminfo).unwrap_or(0.0) / 1024.0 / 1024.0;
     let disk_gib = super::sample::free_disk_kb(&opts.out).unwrap_or(0.0) / 1024.0 / 1024.0;
     #[expect(clippy::cast_precision_loss, reason = "GiB counts are small")]

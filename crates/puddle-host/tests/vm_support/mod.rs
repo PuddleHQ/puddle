@@ -498,6 +498,7 @@ async fn guest_with_third_party(
         .await
         .map_err(|e| format!("the guest script failed to finish: {e}{note}\n{script}"))
         .unwrap();
+    assert_whole(&out, script);
     assert!(
         out.status.success(),
         "{script}\n{}{}{note}",
@@ -505,6 +506,15 @@ async fn guest_with_third_party(
         out.stderr_text()
     );
     format!("{}{}", out.stdout_text(), out.stderr_text())
+}
+
+/// A script that writes more than the exec output cap is cut with exit code 0: fail the test
+/// by name instead of letting it read a short answer.
+fn assert_whole(out: &puddle_compute::ExecOutput, script: &str) {
+    assert!(
+        !out.stdout_truncated && !out.stderr_truncated,
+        "the guest script's output was cut at the exec output cap; run it with `.uncapped()` or print less:\n{script}"
+    );
 }
 
 /// `"first""second"`: the shell joins them, so the script text never holds the value.
@@ -581,6 +591,7 @@ pub(crate) async fn guest_as(
         )
         .await
         .unwrap_or_else(|e| panic!("the guest script did not finish: {e}\n{script}"));
+    assert_whole(&out, script);
     (
         out.status.code,
         format!("{}{}", out.stdout_text(), out.stderr_text()),

@@ -173,6 +173,11 @@ fn read<T>(
             .unwrap_or_else(|| format!("mise ended with exit code {}", out.status.code));
         return Err(Failed::Reason(reason));
     }
+    if out.stdout_truncated {
+        return Err(Failed::Reason(
+            "the guest's answer was longer than the output cap and was cut".to_owned(),
+        ));
+    }
     parse(&out.stdout_text())
         .ok_or_else(|| Failed::Reason("the guest's answer could not be read".to_owned()))
 }

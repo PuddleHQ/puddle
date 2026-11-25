@@ -599,3 +599,22 @@ async fn not_knowing_whether_a_folder_is_there_is_an_error_not_a_no() {
         "{err}"
     );
 }
+
+/// A listing longer than the exec output cap is refused by name: it must not be read as a short
+/// one (a cut after a whole record would otherwise look like fewer checkouts).
+#[tokio::test]
+async fn a_listing_cut_by_the_output_cap_is_refused_and_says_so() {
+    let g = sandbox_answering(|r| {
+        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH)).then(|| {
+            let mut out = String::from("D\n");
+            out.insert_str(0, &"x".repeat(2 * ExecRequest::DEFAULT_MAX_OUTPUT));
+            ExecOutput::new(0, out, "")
+        })
+    })
+    .await;
+    let err = g.w.list_checkouts(&g.sb, &id()).await.unwrap_err();
+    assert!(
+        matches!(err, WorkspaceError::Checkouts { .. }) && err.to_string().contains("cut"),
+        "{err}"
+    );
+}

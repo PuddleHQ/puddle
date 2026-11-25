@@ -101,7 +101,7 @@ pub(crate) async fn run<S: Sandbox>(
             MAX_REASON,
         )));
     }
-    parse(&out.stdout_text()).map_err(fail)
+    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?).map_err(fail)
 }
 
 /// Adds `path: note` to `list` unless it is full.

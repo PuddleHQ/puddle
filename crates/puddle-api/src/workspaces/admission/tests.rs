@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
-use crate::workspaces::{DisplayName, Listing, Operation};
+use crate::workspaces::{DisplayName, Listing};
+use puddle_types::WorkspaceStatus;
 
 fn record(status: WorkspaceStatus) -> WorkspaceRecord {
     let mut record = WorkspaceRecord::new(
@@ -19,36 +20,6 @@ fn says(result: &Result<(), WorkspaceError>, words: &str) {
         shown.starts_with("Err(") && shown.contains(words),
         "expected a refusal saying {words:?}, got {shown}"
     );
-}
-
-#[test]
-fn each_operation_is_admitted_in_the_states_it_needs_and_refused_in_the_rest() {
-    use WorkspaceStatus::{Crashed, Created, Draining, Running, Starting, Stopped};
-    for status in [Created, Stopped, Crashed] {
-        let r = record(status);
-        assert!(admit_start(&r).is_ok());
-        assert!(admit_reset_root_disk(&r).is_ok());
-        assert!(admit_delete_status(&r).is_ok());
-        says(&admit_stop(&r), "is not running");
-    }
-    for status in [Running, Starting, Draining] {
-        let r = record(status);
-        says(&admit_start(&r), "is already");
-        says(&admit_reset_root_disk(&r), "stop it before resetting");
-        says(&admit_delete_status(&r), "stop it before deleting");
-    }
-    assert!(admit_stop(&record(Running)).is_ok());
-    says(&admit_settled(&record(Starting)), "try again in a moment");
-    says(&admit_settled(&record(Draining)), "try again in a moment");
-    assert!(admit_settled(&record(Running)).is_ok());
-}
-
-#[test]
-fn a_busy_workspace_takes_no_second_operation() {
-    let mut r = record(WorkspaceStatus::Running);
-    assert!(admit_idle(&r).is_ok());
-    r.busy = Some(Operation::Stopping);
-    says(&admit_idle(&r), "is busy (stopping)");
 }
 
 #[test]

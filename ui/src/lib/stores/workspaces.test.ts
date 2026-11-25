@@ -677,6 +677,8 @@ describe("ids and names", () => {
     store.handleEvent(status("w-a-shop", "crashed"));
     expect(store.byId("w-a-shop")?.status).toBe("crashed");
     expect(store.byId("w-b-site")?.status).toBe("stopped");
+    expect(store.byId("w-a-shop")?.actions).toEqual([]);
+    await store.refresh(); // what the new state admits is read from the server
     store.handleEvent(step("w-a-shop", "stopping"));
     expect(Object.keys(store.progress)).toEqual(["w-a-shop"]);
     expect(store.labelOf("w-a-shop")).toBe("Shop");
@@ -709,11 +711,14 @@ describe("listening", () => {
     expect(reads()).toBe(1);
     source.emit(status("w-b-site", "running"));
     expect(store.byId("w-b-site")?.status).toBe("running");
-    source.resync();
+    // A change of an idle workspace's state is read again, for what it admits now.
     await vi.advanceTimersByTimeAsync(0);
     expect(reads()).toBe(2);
+    source.resync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads()).toBe(3);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(reads()).toBeGreaterThanOrEqual(3);
+    expect(reads()).toBeGreaterThanOrEqual(4);
     stop();
     const after = reads();
     source.emit(status("w-b-site", "crashed"));

@@ -11,9 +11,9 @@
 //! A replacement writes the new pieces under a fresh generation before it swaps the head, so an
 //! entry that fails half-way still holds its old value, and the old pieces are removed after.
 
-use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
+use puddle_types::StoredId;
 
 /// The most UTF-16 code units in one entry: 2000 bytes as the Windows store holds them, under its
 /// 2560-byte limit.
@@ -90,12 +90,7 @@ fn pieces_of(value: &str) -> Vec<&str> {
 fn generation() -> Result<String, StoreError> {
     let mut bytes = [0_u8; 4];
     getrandom::fill(&mut bytes).map_err(|_| StoreError)?;
-    Ok(bytes.iter().fold(String::new(), |mut hex, b| {
-        use std::fmt::Write as _;
-        // writing into a `String` cannot fail
-        let _ = write!(hex, "{b:02x}");
-        hex
-    }))
+    Ok(puddle_types::hex_lower(&bytes))
 }
 
 impl<S: SecretStore> ChunkedStore<S> {

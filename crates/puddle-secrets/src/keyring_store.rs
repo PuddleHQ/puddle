@@ -4,10 +4,10 @@
 
 use zeroize::Zeroize;
 
-use crate::name::StoredId;
 use crate::os_store::ensure_os_store;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
+use puddle_types::StoredId;
 
 /// Service name every Puddle entry is filed under; the entry's user is `credential:<id>`.
 const SERVICE: &str = "puddle";

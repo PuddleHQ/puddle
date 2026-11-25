@@ -11,10 +11,8 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/coverage-cargo-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "coverage-cargo-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 # shellcheck disable=SC2046 # the list is words by design
 unset $(git rev-parse --local-env-vars)
 

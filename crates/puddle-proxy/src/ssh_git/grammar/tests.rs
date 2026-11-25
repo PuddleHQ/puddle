@@ -271,3 +271,28 @@ fn only_the_https_hosts_of_the_built_in_git_hosts_count_as_built_in() {
         );
     }
 }
+
+#[test]
+fn the_built_in_hosts_are_the_ones_the_ui_and_the_store_read() {
+    // The same file drives the UI's table (`SSH_HOSTS`) and the store's reader of SSH addresses.
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../puddle-store/tests/data/repo-urls.json"
+    ))
+    .unwrap();
+    let listed: Vec<(&str, &str)> = vectors["ssh_hosts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (h["ssh"].as_str().unwrap(), h["https"].as_str().unwrap()))
+        .collect();
+    let names: Vec<String> = built_in_names().iter().map(ToString::to_string).collect();
+    assert_eq!(
+        names,
+        listed.iter().map(|(ssh, _)| *ssh).collect::<Vec<_>>(),
+        "the same SSH names, in the same order"
+    );
+    for (ssh, https) in listed {
+        let found = built_in(&Host::parse_normalised(ssh).unwrap()).unwrap();
+        assert_eq!(found.https.to_string(), https, "{ssh}");
+    }
+}

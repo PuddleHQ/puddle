@@ -9,10 +9,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/fork-upkeep-issue-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "fork-upkeep-issue-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 cat >"$tmp/gh" <<'STUB'
 #!/bin/sh

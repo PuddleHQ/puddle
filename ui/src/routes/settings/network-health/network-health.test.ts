@@ -74,11 +74,41 @@ describe("network health page", () => {
     ).toHaveAttribute("href", "/settings/network#local-destinations");
   });
 
-  it("says nothing was found when this computer can't be read for the company network", () => {
+  it("collapses what has nothing in it to one line, and shows the state in one sentence", () => {
+    const r = report();
+    r.proxy.detected = "direct";
+    r.proxy.pac_url = null;
+    r.proxy.pac_state = "not_used";
+    r.pull_proxy.via_upstream = false;
+    store.report = r;
     render(Page);
-    const card = section("Company network");
-    expect(card).toHaveTextContent("None found");
-    expect(card).not.toHaveTextContent("One is installed");
+    expect(
+      screen.getByText(
+        "No proxy (direct connection), no company certificates.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("No problems found.")).toBeInTheDocument();
+    expect(screen.getByText(/^Nothing found for:/)).toHaveTextContent(
+      "Nothing found for: proxy setup, proxy sign-in, company certificates, company network, image downloads, routes.",
+    );
+    expect(
+      screen.queryAllByRole("heading", { level: 2 }).map((h) => h.textContent),
+    ).toEqual(["Summary"]);
+    expect(screen.queryByText(/None found|None\.|Nothing\./)).toBeNull();
+  });
+
+  it("shows a section as soon as it has something, and names only the quiet ones", () => {
+    const r = report();
+    r.sign_in.stored = [{ proxy: "p:8080", user: "svc-alice" }];
+    r.pull_proxy.via_upstream = false;
+    store.report = r;
+    render(Page);
+    expect(
+      screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
+    ).toEqual(["Summary", "Proxy setup", "Signing in to the proxy"]);
+    expect(screen.getByText(/^Nothing found for:/)).toHaveTextContent(
+      "Nothing found for: company certificates, company network, image downloads, routes.",
+    );
   });
 
   it("shows a healthy setup: found setup, sign-in method, roots, routes", () => {
@@ -213,22 +243,10 @@ describe("network health page", () => {
     ).toBeInTheDocument();
   });
 
-  it("names each stored proxy sign-in by proxy and user, and points to the setting when there is none", () => {
+  it("names each stored proxy sign-in by proxy and user", () => {
     const r = report();
-    store.report = r;
-    store.status = "ready";
-    const { unmount } = render(Page);
-    const none = section("Signing in to the proxy");
-    expect(
-      within(none).getByText(/No user name and password is stored/),
-    ).toBeInTheDocument();
-    expect(
-      within(none).getByRole("link", { name: /Enter one in Settings/ }),
-    ).toHaveAttribute("href", "/settings/network");
-    unmount();
-
     r.sign_in.stored = [{ proxy: "p:8080", user: "svc-alice" }];
-    store.report = { ...r };
+    store.report = r;
     render(Page);
     const sign = section("Signing in to the proxy");
     expect(within(sign).getByText("p:8080")).toBeInTheDocument();

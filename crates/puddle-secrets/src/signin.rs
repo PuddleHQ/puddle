@@ -18,10 +18,10 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::error::{SourceError, Tool};
-use crate::name::{AccountName, HostName, UrlPath};
 use crate::run::{Prompts, ToolPaths, command, run_with, spawn_error};
 use crate::sources::GitQuery;
-use crate::spec::SourceSpec;
+use puddle_types::SourceSpec;
+use puddle_types::{AccountName, HostName, UrlPath};
 
 /// How long a sign-in may stay open before Puddle ends it.
 const SIGN_IN_WINDOW: Duration = Duration::from_mins(5);

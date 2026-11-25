@@ -471,7 +471,7 @@ describe("a record as a row", () => {
     const detail = (reason: string) =>
       row(connection(1, { reason, rule_id: null }).record).detail;
     expect(detail("push_denied")).toBe(
-      'because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+      'because the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
     );
     for (const reason of [
       "push_denied",
@@ -526,6 +526,7 @@ describe("a record as a row", () => {
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method,
         path,
         reason: "rule",
@@ -539,11 +540,12 @@ describe("a record as a row", () => {
       `${words} · rule set builtin:git · credential added`,
     );
   });
-  it("words a refused SSH push with the push list's reason, and leaves HTTP alone", () => {
+  it("words a refused SSH push with the allowed repositories' reason, and leaves HTTP alone", () => {
     const refused = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "git-receive-pack",
         path: "/acme/other",
         decision: "blocked",
@@ -553,11 +555,12 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
     expect(refused.detail).toBe(
-      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+      'SSH: push to github.com/acme/other · because the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
     );
     const http = row(
       connection(2, {
         host: "github.com",
+        protocol: "http",
         method: "POST",
         path: "/acme/other/git-receive-pack",
         decision: "blocked",
@@ -567,11 +570,27 @@ describe("a record as a row", () => {
     );
     expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
   });
+  it("words a method by the record's protocol, not by its spelling", () => {
+    const base = { host: "github.com", path: "/acme/app", reason: "rule" };
+    const http = row(
+      connection(1, {
+        ...base,
+        protocol: "http",
+        method: "git-receive-pack",
+      }).record,
+    );
+    expect(http.detail).toMatch(/^git-receive-pack \/acme\/app · /);
+    const newer = row(
+      connection(2, { ...base, protocol: "ssh", method: "git-archive" }).record,
+    );
+    expect(newer.detail).toMatch(/^SSH: git-archive \/acme\/app · /);
+  });
   it("words a command or a channel request Puddle refused over SSH", () => {
     const command = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-command",
         path: "/",
         decision: "blocked",
@@ -586,6 +605,7 @@ describe("a record as a row", () => {
       connection(2, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-channel",
         path: "/",
         decision: "blocked",
@@ -863,6 +883,8 @@ describe("a record as a row", () => {
       "git_switches_changed",
       "root_disk_grown",
       "git_repaired",
+      "audit_retention_changed",
+      "audit_pruned",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }

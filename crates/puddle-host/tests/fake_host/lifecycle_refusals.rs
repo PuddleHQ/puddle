@@ -128,3 +128,22 @@ async fn reclaim_trims_the_running_workspace() {
     assert!(rig.guest.commands().iter().any(|c| c.ends_with(" trim")));
     host.shutdown().await;
 }
+
+/// A boot whose hook failed and stopped its sandbox leaves nothing to the lifecycle: the shutdown
+/// finds no sandbox to stop.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_boot_leaves_no_sandbox_for_the_shutdown_to_stop() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.sandboxes.is_empty(), "{down:?}");
+}

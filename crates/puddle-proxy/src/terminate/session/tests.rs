@@ -115,16 +115,6 @@ mod stream_failures {
     async fn a_guest_that_resets_at_the_100_continue_ends_the_body_read_and_is_logged() {
         let (logs, _guard) = capture_logs();
         let cx = context(Mode::Bound);
-        let mut conn = Conn {
-            cx: &cx,
-            reader: BufReader::new(Builder::new().build()),
-            writer: Builder::new().write_error(reset()).build(),
-            upstream: None,
-            deferred: None,
-            outcome: Outcome::default(),
-            unknown_tokens: Arc::new(AnswerReport::of(&cx)),
-            first: true,
-        };
         let parsed = Parsed {
             method: "POST".into(),
             target: "/".into(),
@@ -134,8 +124,16 @@ mod stream_failures {
             close: false,
             upgrade: false,
         };
-        let read = conn.read_whole_body(&parsed, 1024).await;
-        assert!(matches!(read, Err(Flow::Abort)));
+        let mut reader = BufReader::new(Builder::new().build());
+        let mut writer = Builder::new().write_error(reset()).build();
+        let mut wire = H1Wire {
+            cx: &cx,
+            reader: &mut reader,
+            writer: &mut writer,
+            parsed: &parsed,
+        };
+        let read = wire.read_body(1024).await;
+        assert!(matches!(read, Err(Stop::Abort)));
         assert!(
             logs.text().contains("guest went away before its body"),
             "{}",

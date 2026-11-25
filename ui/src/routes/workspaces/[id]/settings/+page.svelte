@@ -34,7 +34,7 @@
     DIRECT_SSH_LABEL,
   } from "#lib/workspaces/direct-ssh.ts";
   import {
-    canDelete,
+    allows,
     diskLabel,
     diskWarned,
     rootDiskLabel,
@@ -594,7 +594,7 @@
             <button
               type="button"
               class="btn deny"
-              disabled={!canDelete(workspace)}
+              disabled={!allows(workspace, "delete")}
               onclick={() => void actions.askDelete(workspace)}
             >
               <Trash2 aria-hidden="true" size={16} />{actions.checking ===
@@ -602,7 +602,7 @@
                 ? "Checking…"
                 : "Delete workspace…"}
             </button>
-            {#if !canDelete(workspace) && workspace.busy === null}
+            {#if !allows(workspace, "delete") && workspace.busy === null}
               <p class="why">Stop the workspace before deleting it.</p>
             {/if}
           </td>

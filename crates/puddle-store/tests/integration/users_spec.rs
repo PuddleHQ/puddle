@@ -10,7 +10,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::testing::{all_users, own};
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, Author, Coverage, CredentialBinding, EnvDraft, EnvName,
@@ -18,6 +17,7 @@ use puddle_store::{
     PatternChoice, Precedence, Resolution, Scope, ScopeChoice, Store, StoreError, SystemPlan,
     SystemReason, UserId, UserName,
 };
+use puddle_types::{AccountName, HostName, SourceSpec};
 use puddle_types::{
     CollectingSink, Decision, EgressRequest, Event, Host, Methods, PathPattern, PendingOutcome,
     RuleSetId, SuffixAllows, WorkspaceId,

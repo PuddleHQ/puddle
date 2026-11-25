@@ -279,16 +279,7 @@ impl HostFile {
 
 /// The SHA-256 of `bytes` in lower-case hex.
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    hex(&Sha256::digest(bytes))
-}
-
-/// Lower-case hex of `bytes`.
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    puddle_types::hex_lower(&Sha256::digest(bytes))
 }
 
 /// The host's folder that holds the mounted files: each named file's state and the names in it.

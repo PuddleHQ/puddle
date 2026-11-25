@@ -64,7 +64,7 @@ pub use assets::{
     CODE_SERVER_GUEST, MOUNT_DIR_GUEST, with_boot_mounts, with_code_server_mount, write_assets,
 };
 pub use gate::{Gate, GateState, GatedError, GatedSandbox, NotReady};
-pub use hook::{BootError, BootFailure, BootHook, BootReport, STDERR_LIMIT};
+pub use hook::{BootError, BootFailure, BootHook, BootReport, CallerKeeps, Keeper, STDERR_LIMIT};
 pub use machine::{
     MACHINE_SETTINGS_GUEST, MACHINE_SETTINGS_RELATIVE, machine_settings, machine_settings_path,
 };

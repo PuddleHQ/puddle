@@ -8,7 +8,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-gitleaks-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 mkdir -p "$tmp/ci" "$tmp/bin" "$tmp/src"
 cp "$here/fetch-gitleaks.sh" "$here/fetch-retry.sh" "$tmp/ci/"

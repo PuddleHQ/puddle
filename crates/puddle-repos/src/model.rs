@@ -123,8 +123,11 @@ impl Problem {
 
     pub(crate) fn from_source(source: &SourceSpec, err: &SourceError) -> Self {
         let message = match err {
-            _ if source.fix_step(err).is_some() => {
-                format!("{err}. {}", source.fix_step(err).unwrap_or_default())
+            _ if puddle_secrets::fix_step(source, err).is_some() => {
+                format!(
+                    "{err}. {}",
+                    puddle_secrets::fix_step(source, err).unwrap_or_default()
+                )
             }
             SourceError::NotSignedIn => "not signed in, or the sign-in has expired".to_owned(),
             SourceError::Timeout(tool) => format!(

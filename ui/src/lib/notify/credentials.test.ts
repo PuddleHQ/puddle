@@ -193,6 +193,17 @@ describe("a push or fetch the table refused", () => {
     );
   });
 
+  it("says in plain words what to do, with the one term the Git tab uses", () => {
+    notices.handle(denied("push"));
+    expect(only().detail).toBe(
+      "It is not in the workspace's allowed repositories for push. Click the button to allow it, or open the workspace's Git tab > Repositories and tick Push for it.",
+    );
+    center.clear();
+    notices.handle(denied("pull"));
+    expect(only().detail).toContain("tick Pull for it");
+    expect(only().detail).not.toMatch(/restart|list yet|turn the list off/);
+  });
+
   it("lists the repository with just the access asked for", async () => {
     notices.handle(denied("pull"));
     await only().action!.run();

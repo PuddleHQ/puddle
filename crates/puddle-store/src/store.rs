@@ -191,7 +191,7 @@ pub struct WorkspaceDeletion {
     /// The secrets it had of its own, by name and by the id of the value in the operating
     /// system's credential store (the values are not in the database, so the caller removes them
     /// there).
-    pub secrets: Vec<(crate::EnvName, puddle_secrets::StoredId)>,
+    pub secrets: Vec<(crate::EnvName, puddle_types::StoredId)>,
 }
 
 /// Per-workspace in-memory limits state (R-26). Lost on restart, which only resets the limits.

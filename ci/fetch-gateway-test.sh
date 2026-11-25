@@ -6,7 +6,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-gateway-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 # A release the way JetBrains packs it: one top folder holding bin/gateway.sh.
 mkdir -p "$tmp/site" "$tmp/pack/Gateway-1/bin" "$tmp/ci"

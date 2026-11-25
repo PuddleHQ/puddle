@@ -45,7 +45,7 @@ fn fingerprint(path: &Path) -> String {
         }
         offset += n as u64;
     }
-    support::mount_attack::hex(&hasher.finalize())
+    puddle_types::hex_lower(&hasher.finalize())
 }
 
 /// Fills `buf` from `file` unless the file ends first, so pieces start at fixed offsets.

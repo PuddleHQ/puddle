@@ -26,28 +26,20 @@ use hyper::body::Incoming;
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use puddle_types::{HttpRequestLine, LimitCode, ReasonCode};
+use puddle_types::{LimitCode, ReasonCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 use tokio::time::Instant;
-use zeroize::Zeroizing;
 
-use super::exchange::{
-    AnswerBody, AnswerError, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body,
-};
+use super::exchange::AnswerBody;
 use super::guest::{ALPN_H2, ALPN_HTTP11};
-use super::inject::{
-    Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
-};
+use super::inject::{Injection, body_too_large};
 use super::leg::{self, BoxError, Connected, H1Pool, H2Conn, Lease, UpBody};
+use super::pipeline::{self, GuestHeaders, GuestRequest, Prepared, RequestAudit, Wire};
 use super::request::{self, UpstreamVersion, bad, misdirected};
-use super::request_rules::{self, Refused};
 use super::session::short;
 use super::session::{Context, Outcome};
-use super::stand_in::{
-    AnswerReport, NotScrubbed, ScrubNotes, answer_encoding_refusal, answer_failed_refusal,
-    limit_accept_encoding, scan_answer, scrub_answer,
-};
+use super::stand_in::{AnswerReport, ScrubNotes};
 use super::streams::{
     Activity, Clock, Registry, SWEEP_INTERVAL, Step, StreamGuard, Sweeper, ended,
 };
@@ -537,18 +529,78 @@ async fn exchange(
     let checked = check(&request, &cx.target).inspect_err(|refusal| {
         tracing::info!(host = %cx.target.host, status = %refusal.status, "terminated request refused: {}", refusal.message);
     })?;
-    let shown = cx.termination.stand_ins().redact_target(&checked.path);
-    {
-        let mut outcome = shared
-            .outcome
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if outcome.http.is_none() {
-            outcome.http = Some(HttpRequestLine::new(checked.method.as_str(), &shown));
-        }
+    let guest_upgrade = checked
+        .protocol
+        .is_some()
+        .then(|| hyper::upgrade::on(&mut request));
+    let (parts, mut body) = request.into_parts();
+    let lines = header_lines(&parts.headers, &cx.target.host.to_string());
+    let req = GuestRequest {
+        method: checked.method.as_str(),
+        target: &checked.path,
+        lines: &lines,
+        headers: GuestHeaders::Map(&parts.headers),
+        extended_connect: checked.protocol.is_some(),
+    };
+    let mut audit = RequestAudit::default();
+    let prepared = prepare(shared, &checked, &req, &mut body, &mut audit).await;
+    shared
+        .outcome
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .absorb(cx, audit);
+    let (mut route, prepared) = prepared?;
+    let Prepared {
+        headers,
+        target,
+        body: prefetched,
+        mut exchange,
+        injection,
+        unauthorized,
+    } = prepared;
+    let path = target
+        .as_ref()
+        .map_or(checked.path.as_str(), |path| path.as_str());
+    if let Some(guest_upgrade) = guest_upgrade {
+        return websocket(shared, guest_upgrade, &checked, path, route, headers, guard).await;
     }
-    tracing::debug!(host = %cx.target.host, method = %checked.method, path = %puddle_types::request_path(&shown), "terminated request (h2)");
-    refuse_by_rule(shared, &checked, request.headers())?;
+    let version = route.version();
+    let head_only = checked.method == Method::HEAD;
+    let activity = guard.activity();
+    let sent = Arc::new(Sent::default());
+    let body = request_body(body, prefetched, injection.as_ref(), &activity, &sent);
+    let upstream_request = build_request(cx, version, checked.method, path, headers, body)?;
+    let response = send(shared, &mut route, upstream_request, &sent).await?;
+    if let Some(refusal) = pipeline::replaced_401(cx, response.status(), unauthorized.as_ref()) {
+        return Err(refusal);
+    }
+    let response = pipeline::answer(
+        cx,
+        exchange.as_mut(),
+        response,
+        head_only,
+        &shared.scrubbed,
+        &shared.unknown_tokens,
+    )
+    .await?;
+    let lease = match route {
+        Route::H1(lease) => Some(lease),
+        Route::H2(_) => None,
+    };
+    Ok(guest_response(response, head_only, &sent, lease, guard))
+}
+
+/// The request side of the pipeline for one stream, with the route to the server taken between
+/// the rules and the injector. A route taken for a request that is then refused goes back unused.
+async fn prepare(
+    shared: &Shared,
+    checked: &Checked,
+    req: &GuestRequest<'_>,
+    body: &mut Incoming,
+    audit: &mut RequestAudit,
+) -> Result<(Route, Prepared), Refusal> {
+    let cx = &shared.cx;
+    pipeline::admit(cx, req, audit)?;
     if let Some(protocol) = &checked.protocol
         && protocol.as_str() != "websocket"
     {
@@ -558,79 +610,15 @@ async fn exchange(
         )
         .coded(ReasonCode::ProtocolUnsupported));
     }
-    let mut route = shared.route().await?;
-    let version = route.version();
-    let prefetched = match body_wanted(shared, &checked, request.headers(), version) {
-        Some(limit) => match read_whole_body(shared, request.body_mut(), limit).await {
-            Ok(body) => Some(body),
-            Err(refusal) => {
-                route.unused();
-                return Err(refusal);
-            }
-        },
-        None => None,
-    };
-    let Forwarding {
-        injection,
-        unauthorized,
-        own_git_credential,
-    } = match decide(
-        shared,
-        &checked,
-        request.headers(),
-        version,
-        prefetched.as_deref(),
-    )
-    .await
-    {
-        Ok(forwarding) => forwarding,
+    let route = shared.route().await?;
+    let mut wire = H2Wire { cx, body };
+    match pipeline::prepare(cx, &mut wire, req, route.version(), audit).await {
+        Ok(prepared) => Ok((route, prepared)),
         Err(refusal) => {
             route.unused();
-            return Err(refusal);
+            Err(refusal)
         }
-    };
-    let mut headers =
-        request::upstream_headers_h2(request.headers(), &cx.target, injection.as_ref(), version)?;
-    record_injection(shared, injection.as_ref());
-    let swapped_path = swap_stand_ins(
-        shared,
-        &mut headers,
-        &checked.path,
-        injection.as_ref(),
-        own_git_credential,
-    );
-    let path = swapped_path
-        .as_ref()
-        .map_or(checked.path.as_str(), |path| path.as_str());
-    if checked.protocol.is_some() {
-        let guest_upgrade = hyper::upgrade::on(&mut request);
-        return websocket(shared, guest_upgrade, &checked, path, route, headers, guard).await;
     }
-    let (mut exchange, prefetched) =
-        match begin_exchange(shared, &checked, &mut request, &mut headers, prefetched).await {
-            Ok(begun) => begun,
-            Err(refusal) => {
-                route.unused();
-                return Err(refusal);
-            }
-        };
-    let head_only = checked.method == Method::HEAD;
-    let activity = guard.activity();
-    let sent = Arc::new(Sent::default());
-    let (_, body) = request.into_parts();
-    let body = request_body(body, prefetched, injection.as_ref(), &activity, &sent);
-    let upstream_request = build_request(cx, version, checked.method, path, headers, body)?;
-    let response = send(shared, &mut route, upstream_request, &sent).await?;
-    if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
-        return Err(refusal);
-    }
-    let response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
-    let response = scrub(shared, response, head_only).await?;
-    let lease = match route {
-        Route::H1(lease) => Some(lease),
-        Route::H2(_) => None,
-    };
-    Ok(guest_response(response, head_only, &sent, lease, guard))
 }
 
 /// The body of the request sent upstream: the one that was read in full already, or the guest's
@@ -658,257 +646,6 @@ fn request_body(
         })
         .unwrap_or_default();
     GuestBody::new(body, activity, sent, injected).boxed_unsync()
-}
-
-/// Asks the workspace's exchange rewriter about the request and, if it is a token exchange, gets
-/// it ready as the HTTP/1.1 path does: the answer will be read, so the upstream is asked for it
-/// unencoded; and the body is read in full and has its stand-ins swapped for the real values when
-/// the exchange asks for that.
-async fn begin_exchange(
-    shared: &Shared,
-    checked: &Checked,
-    request: &mut Request<Incoming>,
-    headers: &mut HeaderMap,
-    prefetched: Option<Bytes>,
-) -> Result<(Option<Exchange>, Option<Bytes>), Refusal> {
-    let cx = &shared.cx;
-    let began = cx.termination.exchanges().and_then(|rewriter| {
-        rewriter.begin(
-            &cx.target.host,
-            checked.method.as_str(),
-            puddle_types::request_path(&checked.path),
-        )
-    });
-    let Some(exchange) = began else {
-        return Ok((None, prefetched));
-    };
-    let mut exchange = exchange;
-    if exchange.answer_mut().is_some() {
-        headers.remove(header::ACCEPT_ENCODING);
-    }
-    if !exchange.wants_request_body() {
-        return Ok((Some(exchange), prefetched));
-    }
-    let body = match prefetched {
-        Some(body) => body,
-        None => read_whole_body(shared, request.body_mut(), MAX_EXCHANGE_BODY).await?,
-    };
-    let content_type = request
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok());
-    let host = &cx.target.host;
-    let (swapped, report) = swap_request_body(
-        cx.termination.stand_ins(),
-        &exchange,
-        content_type,
-        &body,
-        host,
-    );
-    shared
-        .outcome
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .record_stand_ins(host, &report);
-    Ok((Some(exchange), Some(swapped.unwrap_or(body))))
-}
-
-/// Lets the exchange's rewriter read the answer, when it has one to read.
-async fn read_exchange_answer(
-    shared: &Shared,
-    exchange: Option<&mut Exchange>,
-    response: Response<Incoming>,
-) -> Result<Response<AnswerBody>, Refusal> {
-    let Some(answer) = exchange.and_then(Exchange::answer_mut) else {
-        return Ok(response.map(AnswerBody::Streaming));
-    };
-    let cx = &shared.cx;
-    read_answer(answer, response, cx.proxy.config.body_idle_timeout)
-        .await
-        .map_err(|err| match err {
-            AnswerError::Refused(refusal) => {
-                tracing::info!(host = %cx.target.host, code = %refusal.code(), "the answer was refused");
-                refusal.to_refusal()
-            }
-            AnswerError::Upstream(err) => {
-                tracing::info!(host = %cx.target.host, error = %err, "the answer could not be read");
-                Refusal::new(
-                    "502 Bad Gateway",
-                    format!("{} did not finish its answer", cx.target.host),
-                )
-            }
-        })
-}
-
-/// Refuses the request when a rule on method and path names it, before anything is sent
-/// upstream, as the HTTP/1.1 path does. Only this stream is refused; the connection goes on.
-/// An extended `CONNECT` is also judged as the `GET` it stands for: an HTTP/1.1 server is sent
-/// that `GET`, and a rule written for a WebSocket upgrade on HTTP/1.1 names it.
-fn refuse_by_rule(shared: &Shared, checked: &Checked, headers: &HeaderMap) -> Result<(), Refusal> {
-    let cx = &shared.cx;
-    let lines = header_lines(headers, &cx.target.host.to_string());
-    let rules = cx.termination.request_rules();
-    let mut methods = vec![checked.method.as_str()];
-    if checked.protocol.is_some() {
-        methods.push(Method::GET.as_str());
-    }
-    let Some(rule) = methods.into_iter().find_map(|method| {
-        rules.refusing(
-            &cx.target.host,
-            &RequestView::new(method, &checked.path, &lines),
-        )
-    }) else {
-        return Ok(());
-    };
-    tracing::info!(host = %cx.target.host, %rule, "request refused by a rule on method and path (h2)");
-    shared
-        .outcome
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .refused_by_rule
-        .get_or_insert_with(|| Refused {
-            rule,
-            line: HttpRequestLine::new(
-                checked.method.as_str(),
-                &shared
-                    .cx
-                    .termination
-                    .stand_ins()
-                    .redact_target(&checked.path),
-            ),
-        });
-    Err(request_rules::refusal(
-        rule,
-        checked.method.as_str(),
-        &cx.target.host,
-    ))
-}
-
-/// Asks the injector about the request, as the HTTP/1.1 path does: what it may add, or why the
-/// request is refused.
-async fn decide(
-    shared: &Shared,
-    checked: &Checked,
-    headers: &HeaderMap,
-    version: UpstreamVersion,
-    body: Option<&[u8]>,
-) -> Result<Forwarding, Refusal> {
-    let cx = &shared.cx;
-    let (method, lines) = injector_lines(checked, headers, version, &cx.target.host.to_string());
-    let context = InjectContext {
-        workspace: &cx.workspace,
-        host: &cx.target.host,
-    };
-    let view = RequestView::new(method, &checked.path, &lines);
-    let decision = match body {
-        Some(body) => {
-            cx.termination
-                .injector()
-                .decide(&context, &view.with_body(body))
-                .await
-        }
-        None => cx.termination.injector().decide(&context, &view).await,
-    };
-    decision.into_forwarding().map_err(|refusal| {
-        tracing::info!(host = %cx.target.host, code = %refusal.code(), "request refused by the credential rules");
-        refusal.to_refusal()
-    })
-}
-
-/// The method and header lines the injector sees. A WebSocket over an extended CONNECT reaches an
-/// HTTP/1.1 server as a `GET` with `Upgrade` headers; the rules judge what the server will be sent.
-fn injector_lines<'a>(
-    checked: &'a Checked,
-    headers: &HeaderMap,
-    version: UpstreamVersion,
-    host: &str,
-) -> (&'a str, Vec<String>) {
-    let mut lines = header_lines(headers, host);
-    if checked.protocol.is_some() && version == UpstreamVersion::H1 {
-        lines.push("connection: upgrade".to_owned());
-        lines.push("upgrade: websocket".to_owned());
-        return (Method::GET.as_str(), lines);
-    }
-    (checked.method.as_str(), lines)
-}
-
-/// How much of the request body the injector wants to see before it decides, if any.
-fn body_wanted(
-    shared: &Shared,
-    checked: &Checked,
-    headers: &HeaderMap,
-    version: UpstreamVersion,
-) -> Option<usize> {
-    let cx = &shared.cx;
-    if checked.protocol.is_some() {
-        return None;
-    }
-    let (method, lines) = injector_lines(checked, headers, version, &cx.target.host.to_string());
-    let context = InjectContext {
-        workspace: &cx.workspace,
-        host: &cx.target.host,
-    };
-    let view = RequestView::new(method, &checked.path, &lines);
-    cx.termination.injector().body_wanted(&context, &view)
-}
-
-/// Reads the guest's whole request body (at most `limit` bytes) for an injector that decides on
-/// it. Trailers are not read into it, and the request goes on without them.
-async fn read_whole_body(
-    shared: &Shared,
-    body: &mut Incoming,
-    limit: usize,
-) -> Result<Bytes, Refusal> {
-    let too_large = || body_too_large(limit);
-    let declared = body.size_hint().exact();
-    if declared.is_some_and(|n| n > limit as u64) {
-        return Err(too_large());
-    }
-    let idle = shared.cx.proxy.config.body_idle_timeout;
-    let mut whole = Vec::new();
-    loop {
-        match tokio::time::timeout(idle, body.frame()).await {
-            Err(_) => {
-                return Err(
-                    Refusal::new("408 Request Timeout", "the request body did not arrive")
-                        .coded(ReasonCode::RequestTimeout),
-                );
-            }
-            Ok(None) => break,
-            Ok(Some(Err(err))) => {
-                tracing::info!(host = %shared.cx.target.host, error = %err, "request body failed");
-                return Err(bad("the request body could not be read"));
-            }
-            Ok(Some(Ok(frame))) => {
-                if let Some(data) = frame.data_ref() {
-                    whole.extend_from_slice(data);
-                    if whole.len() > limit {
-                        return Err(too_large());
-                    }
-                }
-            }
-        }
-    }
-    // A guest may end a stream cleanly short of its `Content-Length` (as `GuestBody` guards).
-    if declared.is_some_and(|n| n != whole.len() as u64) {
-        return Err(bad("the request body ended before its Content-Length"));
-    }
-    Ok(Bytes::from(whole))
-}
-
-/// The refusal that replaces the server's answer when it is a `401` for a request whose
-/// credential was Puddle's to choose.
-fn unauthorized_answer<B>(
-    shared: &Shared,
-    response: &Response<B>,
-    unauthorized: Option<&Unauthorized>,
-) -> Option<Refusal> {
-    if response.status() != StatusCode::UNAUTHORIZED {
-        return None;
-    }
-    let refusal = unauthorized?.refusal()?;
-    tracing::info!(host = %shared.cx.target.host, code = %refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
-    Some(refusal.to_refusal())
 }
 
 /// The request for the real server: `:authority` and `:scheme` from the URI on HTTP/2, the
@@ -1092,7 +829,15 @@ async fn websocket(
     };
     if !agreed {
         // The server said no: its answer goes to the guest as any other.
-        let response = scrub(shared, response.map(AnswerBody::Streaming), false).await?;
+        let response = pipeline::answer(
+            cx,
+            None,
+            response,
+            false,
+            &shared.scrubbed,
+            &shared.unknown_tokens,
+        )
+        .await?;
         let sent = Arc::new(Sent::default());
         sent.finish();
         return Ok(guest_response(response, false, &sent, lease, guard));
@@ -1146,86 +891,6 @@ async fn websocket(
 /// The system had no random bytes for a WebSocket key.
 fn no_random_bytes() -> Refusal {
     Refusal::new("502 Bad Gateway", "no random bytes for the WebSocket key")
-}
-
-/// Swaps the workspace's stand-ins in `headers` (the injected headers are left alone) and in the
-/// request `target` for their real values, as the HTTP/1.1 path does, and notes both for the
-/// audit. The target to send when one was swapped in it.
-fn swap_stand_ins(
-    shared: &Shared,
-    headers: &mut HeaderMap,
-    target: &str,
-    injection: Option<&Injection>,
-    own_git_credential: bool,
-) -> Option<Zeroizing<String>> {
-    let host = &shared.cx.target.host;
-    let mut foreign = shared.cx.termination.stand_ins().foreign_credentials(
-        headers,
-        injection,
-        own_git_credential,
-    );
-    let swapped = shared
-        .cx
-        .termination
-        .stand_ins()
-        .swap(headers, host, injection);
-    let (target, in_target) = shared.cx.termination.stand_ins().swap_target(target, host);
-    let mut outcome = shared
-        .outcome
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    outcome.record_stand_ins(host, &swapped);
-    outcome.record_stand_ins(host, &in_target);
-    foreign.extend(super::session::stale_kind(&[&swapped, &in_target]));
-    outcome.record_foreign(&shared.cx, &foreign);
-    if shared.cx.termination.stand_ins().scrubs_answers_from(host) {
-        limit_accept_encoding(headers);
-    }
-    target
-}
-
-/// The answer with its real values put back as stand-ins (see [`scrub_answer`]); one in an
-/// encoding Puddle does not read is refused.
-async fn scrub(
-    shared: &Shared,
-    response: Response<AnswerBody>,
-    head_only: bool,
-) -> Result<Response<AnswerBody>, Refusal> {
-    let cx = &shared.cx;
-    scrub_answer(
-        cx.termination.stand_ins(),
-        response,
-        &cx.target.host,
-        head_only,
-        &shared.scrubbed,
-        cx.proxy.config.body_idle_timeout,
-    )
-    .await
-    .map(|scrubbed| {
-        scan_answer(
-            cx.termination.stand_ins(),
-            scrubbed,
-            head_only,
-            &shared.unknown_tokens,
-        )
-    })
-    .map_err(|why| match why {
-        NotScrubbed::Encoding => answer_encoding_refusal(&cx.target.host),
-        NotScrubbed::Failed => answer_failed_refusal(&cx.target.host),
-    })
-}
-
-fn record_injection(shared: &Shared, injection: Option<&Injection>) {
-    if let Some(injection) = injection {
-        let mut outcome = shared
-            .outcome
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        outcome.injected = true;
-        outcome
-            .binding_id
-            .get_or_insert_with(|| injection.binding_id().to_owned());
-    }
 }
 
 /// Headers of a response that describe the upstream connection, not the message.
@@ -1288,6 +953,57 @@ fn guest_response(
         UpstreamBody::new(body, sent, lease, guard).boxed_unsync()
     };
     Response::from_parts(parts, body)
+}
+
+/// The guest's HTTP/2 stream, as the pipeline reads a request body from it.
+struct H2Wire<'a> {
+    cx: &'a Context,
+    body: &'a mut Incoming,
+}
+
+impl Wire for H2Wire<'_> {
+    type Stop = Refusal;
+
+    /// Reads the body's data frames; trailers are not read into it, and the request goes on
+    /// without them.
+    async fn read_body(&mut self, limit: usize) -> Result<Bytes, Refusal> {
+        let too_large = || body_too_large(limit);
+        let declared = self.body.size_hint().exact();
+        if declared.is_some_and(|n| n > limit as u64) {
+            return Err(too_large());
+        }
+        let idle = self.cx.proxy.config.body_idle_timeout;
+        let mut whole = Vec::new();
+        loop {
+            match tokio::time::timeout(idle, self.body.frame()).await {
+                Err(_) => {
+                    return Err(Refusal::new(
+                        "408 Request Timeout",
+                        "the request body did not arrive",
+                    )
+                    .coded(ReasonCode::RequestTimeout));
+                }
+                Ok(None) => break,
+                Ok(Some(Err(err))) => {
+                    tracing::info!(host = %self.cx.target.host, error = %err, "request body failed");
+                    return Err(bad("the request body could not be read"));
+                }
+                Ok(Some(Ok(frame))) => {
+                    if let Some(data) = frame.data_ref() {
+                        whole.extend_from_slice(data);
+                        if whole.len() > limit {
+                            return Err(too_large());
+                        }
+                    }
+                }
+            }
+        }
+        // A guest may end a stream cleanly short of its `Content-Length` (as `GuestBody` guards).
+        if declared.is_some_and(|n| n != whole.len() as u64) {
+            return Err(bad("the request body ended before its Content-Length"));
+        }
+        Ok(Bytes::from(whole))
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

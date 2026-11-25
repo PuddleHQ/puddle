@@ -127,14 +127,9 @@ pub(crate) async fn create_terminal(
 }
 
 fn new_ticket() -> Result<String, ApiError> {
-    use std::fmt::Write as _;
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| ApiError::internal(&e))?;
-    Ok(bytes.iter().fold(String::with_capacity(64), |mut out, b| {
-        // writing into a `String` cannot fail
-        let _ = write!(out, "{b:02x}");
-        out
-    }))
+    Ok(puddle_types::hex_lower(&bytes))
 }
 
 /// The ticket among the offered sub-protocols (`puddle-terminal.v1, ticket.<hex>`), when the

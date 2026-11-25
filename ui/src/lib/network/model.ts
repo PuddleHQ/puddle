@@ -287,3 +287,85 @@ export function expiryText(notAfter: number, now: number): string {
   if (notAfter < now) return "expired";
   return new Date(notAfter).toISOString().slice(0, 10);
 }
+
+/** The sections of the network-health page, in page order. */
+export type SectionId =
+  "proxy" | "sign-in" | "roots" | "company" | "pull" | "routes";
+
+export const SECTION_LABEL: Record<SectionId, string> = {
+  proxy: "proxy setup",
+  "sign-in": "proxy sign-in",
+  roots: "company certificates",
+  company: "company network",
+  pull: "image downloads",
+  routes: "routes",
+};
+
+const SECTION_ORDER: readonly SectionId[] = [
+  "proxy",
+  "sign-in",
+  "roots",
+  "company",
+  "pull",
+  "routes",
+];
+
+/** Whether a section has anything to show: a setup that is the plain default says nothing. */
+function hasContent(report: NetworkHealth, id: SectionId): boolean {
+  const { proxy, sign_in, roots, company_network, pull_proxy } = report;
+  switch (id) {
+    case "proxy":
+      return (
+        proxy.detected !== "direct" ||
+        fixedProxies(proxy).length > 0 ||
+        proxy.dead_proxies.length > 0 ||
+        proxy.settings_error !== null ||
+        proxy.bypass_entries > 0
+      );
+    case "sign-in":
+      return (
+        proxy.detected !== "direct" ||
+        sign_in.attempts.length > 0 ||
+        sign_in.stored.length > 0
+      );
+    case "roots":
+      return (
+        roots.certificates.length > 0 ||
+        roots.skipped.length > 0 ||
+        roots.left_out_of_tls.length > 0 ||
+        roots.unreadable_stores.length > 0
+      );
+    case "company":
+      return (
+        company_network.private_access_client ||
+        company_network.dns_suffixes.length > 0
+      );
+    case "pull":
+      return pull_proxy.via_upstream;
+    case "routes":
+      return report.routes.length > 0;
+  }
+}
+
+/** The sections that show on the page. */
+export function shownSections(report: NetworkHealth): SectionId[] {
+  return SECTION_ORDER.filter((id) => hasContent(report, id));
+}
+
+/** `Nothing found for: proxy sign-in, routes.`, or `""` when every section has something. */
+export function quietLine(report: NetworkHealth): string {
+  const quiet = SECTION_ORDER.filter((id) => !hasContent(report, id));
+  return quiet.length === 0
+    ? ""
+    : `Nothing found for: ${quiet.map((id) => SECTION_LABEL[id]).join(", ")}.`;
+}
+
+/** The state in one sentence: `No proxy (direct connection), no company certificates.` */
+export function stateSentence(report: NetworkHealth): string {
+  const certs = report.roots.certificates.length;
+  const roots =
+    certs === 0
+      ? "no company certificates"
+      : `${certs} company ${certs === 1 ? "certificate" : "certificates"}`;
+  return `${DETECTED_LABEL[report.proxy.detected]}, ${roots}.`;
+}

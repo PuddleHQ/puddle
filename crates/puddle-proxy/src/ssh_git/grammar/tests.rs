@@ -242,3 +242,32 @@ fn the_built_in_names_map_to_their_https_hosts() {
         assert!(built_in(&Host::parse_normalised(other).unwrap()).is_none());
     }
 }
+
+#[test]
+fn only_the_https_hosts_of_the_built_in_git_hosts_count_as_built_in() {
+    for https in [
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "dev.azure.com",
+        "visualstudio.com",
+    ] {
+        assert!(
+            is_built_in_https(&Host::parse_normalised(https).unwrap()),
+            "{https}"
+        );
+    }
+    // A self-hosted host, a look-alike, and an SSH name (the table's other column) are not.
+    for other in [
+        "git.example.com",
+        "api.github.com",
+        "github.io",
+        "ssh.github.com",
+        "ssh.dev.azure.com",
+    ] {
+        assert!(
+            !is_built_in_https(&Host::parse_normalised(other).unwrap()),
+            "{other}"
+        );
+    }
+}

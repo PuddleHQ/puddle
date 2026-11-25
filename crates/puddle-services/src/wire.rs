@@ -68,7 +68,7 @@ pub use auth::{
     SignInMethodView, SignInMethods, UserView,
 };
 pub use consent::{Consent, ConsentDecision, ConsentKind, ConsentRequest, Consents};
-pub(crate) use credentials::source_problem;
+pub use credentials::source_problem;
 pub use credentials::{
     CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,
     SignInStarted, StoreTokenRequest, StoredToken,
@@ -125,7 +125,7 @@ pub use rule_sets::{
     RuleSetList, RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest,
     RuleSetView, SystemManagedHost, SystemReason,
 };
-pub(crate) use rules::checked_precedence;
+pub use rules::checked_precedence;
 pub use rules::{
     Actor, DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, NewRuleRequest,
     PatternKind, PendingList, PendingRequest, PendingState, Rule, RuleEnabledRequest,

@@ -6101,6 +6101,7 @@ dependencies = [
  "puddle-netpolicy",
  "puddle-repos",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-store",
  "puddle-test-kit",
@@ -6763,6 +6764,37 @@ dependencies = [
  "windows-native-keyring-store",
  "zbus-secret-service-keyring-store",
  "zeroize",
+]
+
+[[package]]
+name = "puddle-services"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "futures-util",
+ "getrandom 0.4.3",
+ "proptest",
+ "puddle-certs",
+ "puddle-doctor",
+ "puddle-netpolicy",
+ "puddle-repos",
+ "puddle-secrets",
+ "puddle-services",
+ "puddle-settings",
+ "puddle-store",
+ "puddle-test-kit",
+ "puddle-types",
+ "puddle-upstream",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "utoipa",
 ]
 
 [[package]]

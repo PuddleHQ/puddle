@@ -128,7 +128,9 @@ pub struct DeviceView {
 }
 
 impl DeviceView {
-    pub(crate) fn of(device: &store::Device, current: bool) -> Self {
+    /// Builds the wire form from its source values.
+    #[must_use]
+    pub fn of(device: &store::Device, current: bool) -> Self {
         Self {
             id: device.id.get(),
             name: device.name.clone(),

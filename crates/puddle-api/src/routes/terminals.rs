@@ -68,22 +68,6 @@ struct Ended<'a> {
     message: Option<&'a str>,
 }
 
-impl From<TerminalError> for ApiError {
-    fn from(err: TerminalError) -> Self {
-        match err {
-            TerminalError::Unavailable(m) => {
-                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
-            }
-            TerminalError::NotRunning(m) => Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, m),
-            TerminalError::Ended(end) => Self::new(
-                StatusCode::CONFLICT,
-                ErrorCode::Conflict,
-                end.message.unwrap_or_else(|| "the terminal ended".into()),
-            ),
-        }
-    }
-}
-
 /// Asks for a terminal in a running or starting workspace. The session opens when the socket
 /// connects, so a ticket that is never used leaves nothing behind.
 #[utoipa::path(

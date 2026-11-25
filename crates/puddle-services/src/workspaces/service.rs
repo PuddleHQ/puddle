@@ -458,7 +458,7 @@ pub trait WorkspaceService: Send + Sync {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoWorkspaces;
 
-pub(crate) fn unavailable<T: Send + 'static>() -> BoxFuture<'static, Result<T, WorkspaceError>> {
+pub(super) fn unavailable<T: Send + 'static>() -> BoxFuture<'static, Result<T, WorkspaceError>> {
     Box::pin(async {
         Err(WorkspaceError::Unavailable(
             "workspaces are not available in this build yet".into(),

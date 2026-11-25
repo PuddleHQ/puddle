@@ -507,7 +507,8 @@ fn refuse_duplicates(checked: &[NewRepository]) -> Result<(), RepositoryListErro
 /// `url` as an error message may quote it: trimmed, cut to a readable length, and with any user
 /// name or password replaced by `***`, so a refusal never echoes a credential. That holds without
 /// a scheme too (`token@host/path`); only the SSH convention's bare `git@` is kept.
-pub(crate) fn shown(url: &str) -> String {
+#[must_use]
+pub fn shown(url: &str) -> String {
     const MAX_SHOWN: usize = 200;
     let url = url.trim();
     let shown = match url.split_once("://") {
@@ -539,7 +540,7 @@ fn masked(address: &str) -> Option<String> {
 }
 
 /// How the repository table spells an entry's repository, when its address names one.
-pub(crate) fn table_spelling(
+pub(super) fn table_spelling(
     repository: &NewRepository,
 ) -> Result<RepoRef, puddle_store::StoreError> {
     RepoRef::from_https_url(repository.repository.url.as_str())

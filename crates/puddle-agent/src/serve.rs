@@ -125,6 +125,10 @@ where
 }
 
 async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
+    // Responses reach the client in many small writes; Nagle would hold each tail back for an ACK.
+    if let Err(err) = client.set_nodelay(true) {
+        tracing::debug!(error = %err, "nodelay");
+    }
     let mut stream = match upstream.open().await {
         Ok(stream) => stream,
         Err(err) => {

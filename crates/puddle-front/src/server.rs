@@ -14,7 +14,7 @@ use puddle_netpolicy::{EndpointKind, PuddleEndpoints, Registration};
 use puddle_types::WorkspaceId;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 
 use crate::editor::{Guests, Unreachable};
 use crate::keys::ServerHalves;
@@ -170,34 +170,29 @@ impl Front {
 }
 
 async fn serve(listener: TcpListener, shared: Arc<Shared>) {
-    let mut connections = JoinSet::new();
-    loop {
-        while connections.try_join_next().is_some() {}
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(err) => {
-                tracing::warn!(error = %err, "the front could not accept");
-                tokio::time::sleep(ACCEPT_BACKOFF).await;
-                continue;
+    puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_BACKOFF,
+        "front",
+        std::future::pending(),
+        |connections, stream, peer| {
+            if !peer.ip().is_loopback() || connections.len() >= MAX_CONNECTIONS {
+                tracing::warn!(open = connections.len(), "a front connection was refused");
+                return;
             }
-        };
-        // Connections that ended while the loop waited in `accept` must not count.
-        while connections.try_join_next().is_some() {}
-        if !peer.ip().is_loopback() || connections.len() >= MAX_CONNECTIONS {
-            tracing::warn!(open = connections.len(), "a front connection was refused");
-            continue;
-        }
-        let shared = Arc::clone(&shared);
-        let service = service_fn(move |request| handle(Arc::clone(&shared), request));
-        let connection = http1::Builder::new()
-            .timer(TokioTimer::new())
-            .header_read_timeout(HEADER_READ_TIMEOUT)
-            .serve_connection(TokioIo::new(stream), service)
-            .with_upgrades();
-        connections.spawn(async move {
-            if let Err(err) = connection.await {
-                tracing::debug!(error = %err, "a front connection ended with an error");
-            }
-        });
-    }
+            let shared = Arc::clone(&shared);
+            let service = service_fn(move |request| handle(Arc::clone(&shared), request));
+            let connection = http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEADER_READ_TIMEOUT)
+                .serve_connection(TokioIo::new(stream), service)
+                .with_upgrades();
+            connections.spawn(async move {
+                if let Err(err) = connection.await {
+                    tracing::debug!(error = %err, "a front connection ended with an error");
+                }
+            });
+        },
+    )
+    .await;
 }

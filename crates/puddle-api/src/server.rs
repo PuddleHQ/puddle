@@ -25,7 +25,7 @@ use puddle_store::{AccountSecrets, Clock, Store};
 use puddle_types::Problems;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
 
@@ -1042,60 +1042,52 @@ async fn serve(
     admission: Admission,
     dispatch: Dispatch,
     open: Arc<Semaphore>,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) {
-    let mut connections = JoinSet::new();
-    loop {
-        // Reap finished connections so the set does not grow without bound.
-        while connections.try_join_next().is_some() {}
-        let accepted = tokio::select! {
-            _ = shutdown.wait_for(|stop| *stop) => break,
-            accepted = listener.accept() => accepted,
-        };
-        let (stream, peer) = match accepted {
-            Ok(accepted) => accepted,
-            Err(err) => {
-                tracing::warn!(error = %err, "api accept failed");
-                tokio::time::sleep(ACCEPT_BACKOFF).await;
-                continue;
+    let mut stopper = shutdown.clone();
+    let mut connections = puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_BACKOFF,
+        "api",
+        async move {
+            let _ = stopper.wait_for(|stop| *stop).await;
+        },
+        |connections, stream, peer| {
+            // Before any bytes are read, and for the network listener before the TLS handshake.
+            if !admission.admits(peer.ip()) {
+                tracing::warn!(%peer, "api connection refused: peer not admitted");
+                return;
             }
-        };
-        // Before any bytes are read, and for the network listener before the TLS handshake.
-        if !admission.admits(peer.ip()) {
-            tracing::warn!(%peer, "api connection refused: peer not admitted");
-            drop(stream);
-            continue;
-        }
-        let Ok(permit) = open.clone().try_acquire_owned() else {
-            tracing::warn!(%peer, "api connection refused: too many open");
-            drop(stream);
-            continue;
-        };
-        let dispatch = dispatch.clone();
-        let stop = shutdown.clone();
-        match &admission {
-            Admission::Loopback => {
-                connections.spawn(async move {
-                    serve_connection(stream, dispatch, stop).await;
-                    drop(permit);
-                });
-            }
-            Admission::Proxies { tls, .. } => {
-                let tls = tls.clone();
-                connections.spawn(async move {
-                    match tokio::time::timeout(HEADER_READ_TIMEOUT, tls.accept(stream)).await {
-                        Ok(Ok(stream)) => serve_connection(stream, dispatch, stop).await,
-                        Ok(Err(err)) => {
-                            tracing::debug!(error = %err, "api TLS handshake failed");
+            let Ok(permit) = open.clone().try_acquire_owned() else {
+                tracing::warn!(%peer, "api connection refused: too many open");
+                return;
+            };
+            let dispatch = dispatch.clone();
+            let stop = shutdown.clone();
+            match &admission {
+                Admission::Loopback => {
+                    connections.spawn(async move {
+                        serve_connection(stream, dispatch, stop).await;
+                        drop(permit);
+                    });
+                }
+                Admission::Proxies { tls, .. } => {
+                    let tls = tls.clone();
+                    connections.spawn(async move {
+                        match tokio::time::timeout(HEADER_READ_TIMEOUT, tls.accept(stream)).await {
+                            Ok(Ok(stream)) => serve_connection(stream, dispatch, stop).await,
+                            Ok(Err(err)) => {
+                                tracing::debug!(error = %err, "api TLS handshake failed");
+                            }
+                            Err(_) => tracing::debug!("api TLS handshake timed out"),
                         }
-                        Err(_) => tracing::debug!("api TLS handshake timed out"),
-                    }
-                    drop(permit);
-                });
+                        drop(permit);
+                    });
+                }
             }
-        }
-    }
-    drop(listener);
+        },
+    )
+    .await;
     let drained = async { while connections.join_next().await.is_some() {} };
     if tokio::time::timeout(SHUTDOWN_GRACE, drained).await.is_err() {
         tracing::warn!("api connections still open after the grace period; closing them");

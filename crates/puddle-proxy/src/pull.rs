@@ -53,7 +53,7 @@ use subtle::ConstantTimeEq;
 use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 use tracing::Instrument;
 
 use crate::coalesce::Coalescing;
@@ -366,23 +366,18 @@ struct Shared {
 }
 
 async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
-    let mut conns = JoinSet::new();
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => {
-                    let shared = Arc::clone(&shared);
-                    let span = tracing::debug_span!("pull", %peer);
-                    conns.spawn(async move { serve(&shared, stream).await }.instrument(span));
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "image-pull proxy accept failed");
-                    tokio::time::sleep(ACCEPT_BACKOFF).await;
-                }
-            },
-            Some(_) = conns.join_next(), if !conns.is_empty() => {}
-        }
-    }
+    puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_BACKOFF,
+        "image-pull proxy",
+        std::future::pending(),
+        |conns, stream, peer| {
+            let shared = Arc::clone(&shared);
+            let span = tracing::debug_span!("pull", %peer);
+            conns.spawn(async move { serve(&shared, stream).await }.instrument(span));
+        },
+    )
+    .await;
 }
 
 /// Whether `head` carries exactly one `Proxy-Authorization: Basic` header with `credentials`.

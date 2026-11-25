@@ -15,7 +15,7 @@ getrandom = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

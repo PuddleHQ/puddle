@@ -745,13 +745,13 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
 }
 
 #[cfg(test)]
-mod room_for_a_grow;
+mod room_for_a_grow_tests;
 
 #[cfg(test)]
-mod kept_login_rows;
+mod kept_login_rows_tests;
 
 #[cfg(test)]
-mod no_link_words;
+mod no_link_words_tests;
 
 /// Why the runtime refuses a checkout, as the user is told: the reason of a refused spec as it is
 /// (the runtime's own wording names the folder), any other failure by its message.

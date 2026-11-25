@@ -984,7 +984,7 @@ async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capp
         ssh.channel_open_session().await.is_err(),
         "a third channel is over the cap"
     );
-    // flake-ok: an absence window; the idle limit is 300 ms and nothing signals that it did not fire.
+    // flake-ok: an absence window; the idle limit is 200 ms and nothing signals that it did not fire.
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert!(!ssh.is_closed(), "busy, so not idle");
     first.eof().await.unwrap();

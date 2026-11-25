@@ -14,6 +14,8 @@
 //! request. A refusal ends the connection too, for the same reason: its body was never read.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use ::http::HeaderValue;
 use ::http::header::{HOST, PROXY_AUTHORIZATION};
@@ -36,7 +38,7 @@ use crate::request_target::Target;
 use crate::terminate::h1::{
     self, Abort, AnswerBody, BoxError, ChannelBody, H1Conn, Parsed, UpBody, Written,
 };
-use crate::upstream::{Admitted, ProxyForm, connect_out};
+use crate::upstream::{Admitted, Out, ProxyForm, connect_out};
 
 /// What feeds a request body to the upstream client.
 type BodySender = tokio::sync::mpsc::Sender<bytes::Bytes>;
@@ -122,6 +124,22 @@ struct Kept {
 }
 
 impl Kept {
+    /// Starts HTTP/1.1 on `out`, a connection made for `target`.
+    async fn begin(out: Out, target: &Target, ended: &Arc<AtomicU64>) -> Result<Self, Refusal> {
+        let name = target.host.to_string();
+        let conn = h1::handshake(TokioIo::new(out.stream), ended)
+            .await
+            .map_err(|err| h1::setup_refusal(&name, &h1::short(&err)))?;
+        Ok(Self {
+            target: target.clone(),
+            conn,
+            addr: out.addr,
+            hop: out.hop,
+            via: out.via,
+            watch: out.watch,
+        })
+    }
+
     /// Whether a request for `target`, admitted as `admitted`, may go out on this connection: the
     /// same host and port, an address the request's own checks let through, no network change
     /// since it was made, and a connection the server left open after its last answer.
@@ -317,7 +335,7 @@ where
     event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = conn.addr.map(|addr| addr.ip());
     event.upstream.clone_from(&conn.hop);
-    let flow = exchange(proxy, guest, &mut conn, incoming, last).await;
+    let flow = exchange(&proxy.config, guest, &mut conn, incoming, last).await;
     if flow == Flow::Continue {
         *kept = Some(conn);
     }
@@ -334,24 +352,46 @@ async fn connect(proxy: &Proxy, target: &Target, admitted: &Admitted) -> Result<
         proxy.config.connect_timeout,
     )
     .await?;
-    let name = target.host.to_string();
-    let conn = h1::handshake(TokioIo::new(out.stream), proxy)
-        .await
-        .map_err(|err| h1::setup_refusal(&name, &h1::short(&err)))?;
-    Ok(Kept {
-        target: target.clone(),
-        conn,
-        addr: out.addr,
-        hop: out.hop,
-        via: out.via,
-        watch: out.watch,
-    })
+    Kept::begin(out, target, &proxy.upstream_ended).await
+}
+
+/// Serves the one plain-HTTP request of a connection that carries only it (the image-pull
+/// listener's way) on `out`, an upstream connection the caller made and checked: the same
+/// exchange a workspace's plain HTTP gets, with the answer saying it closes. Then the guest side
+/// is closed; the upstream connection is dropped.
+pub(crate) async fn forward_once<S>(
+    config: &ProxyConfig,
+    ended: &Arc<AtomicU64>,
+    reader: ClientReader<S>,
+    out: Out,
+    incoming: &Incoming,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let (read, mut writer) = tokio::io::split(reader);
+    let mut reader = BufReader::new(read);
+    let mut conn = match Kept::begin(out, &incoming.target, ended).await {
+        Ok(conn) => conn,
+        Err(refusal) => {
+            refuse(&mut writer, &refusal).await;
+            return;
+        }
+    };
+    let mut guest = Guest {
+        reader: &mut reader,
+        writer: &mut writer,
+    };
+    if exchange(config, &mut guest, &mut conn, incoming, true).await != Flow::Stop
+        && let Err(err) = writer.shutdown().await
+    {
+        tracing::debug!(error = %err, "guest went away before the close");
+    }
 }
 
 /// Sends `incoming` upstream on `conn`, its body streamed from the guest, and writes the answer
 /// back. `last`: the connection's request limit is reached, so the answer says it closes.
 async fn exchange<R, W>(
-    proxy: &Proxy,
+    config: &ProxyConfig,
     guest: &mut Guest<'_, R, W>,
     conn: &mut Kept,
     incoming: &Incoming,
@@ -361,7 +401,6 @@ where
     R: AsyncBufRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
 {
-    let config = proxy.config;
     let parsed = &incoming.parsed;
     let request = match upstream_request(incoming, conn.via.as_ref()) {
         Ok(request) => request,
@@ -387,7 +426,7 @@ where
         guest.reader,
         request,
         (parsed.body, tx, abort),
-        &config,
+        config,
     )
     .await;
     let body_complete = matches!(pumped, Some(Ok(())));

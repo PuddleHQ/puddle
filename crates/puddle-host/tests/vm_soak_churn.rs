@@ -201,7 +201,7 @@ async fn vm_soak_churn_five_creates_and_deletes_leave_no_volume_no_vm_process_an
 }
 
 /// The build: thirty gzip runs over random data, each a few seconds of CPU and a burst of disk.
-const BUILD: &str = r"set -eu
+const BUILD: &str = "set -eu
 for i in $(seq 1 30); do head -c 8000000 /dev/urandom | gzip -9 > /tmp/build-$i.gz; done
 echo BUILD_OK";
 

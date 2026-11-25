@@ -483,6 +483,10 @@ pub enum WorkspaceOpKind {
     SshAgentRefused,
     /// The user answered the filtered SSH agent's first-use question.
     SshAgentAnswered,
+    /// The days the activity log is kept were changed (the detail says from how many to how many).
+    AuditRetentionChanged,
+    /// Records older than the retention were deleted on request, with `puddle audit prune`.
+    AuditPruned,
 }
 
 impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
@@ -509,6 +513,8 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::SshAgentSigned => Self::SshAgentSigned,
             K::SshAgentRefused => Self::SshAgentRefused,
             K::SshAgentAnswered => Self::SshAgentAnswered,
+            K::AuditRetentionChanged => Self::AuditRetentionChanged,
+            K::AuditPruned => Self::AuditPruned,
         }
     }
 }

@@ -19,6 +19,9 @@
 #            CI clone fetches every branch, so in CI this would fail every pull request on any one
 #            branch's finding; nothing runs it by default.
 #
+# PUDDLE_SECRETS_REPORT=<path> also writes gitleaks' JSON report there (secrets redacted); the nightly audit
+# (.github/workflows/secrets-audit.yml, ci/secrets-audit-issue.sh) reads file, line, rule and commit from it.
+#
 # --self-test proves the gate works, on throwaway repositories with the real configuration: a
 # real-shaped token fails, a listed fake fixture passes, a real-shaped token in the fixture's
 # own file still fails, a canary outside the listed paths fails, and each scope sees exactly the
@@ -89,7 +92,7 @@ log_opts() {
 
 scan() { # <repo dir> <scope> <diff base>: exit 1 when gitleaks reports a finding (it prints each one, secret redacted)
     opts=$(log_opts "$1" "$2" "${3:-}")
-    gitleaks git --no-banner --verbose --redact --no-color --exit-code 1 --config "$root/.gitleaks.toml" ${opts:+"--log-opts=$opts"} "$1"
+    gitleaks git --no-banner --verbose --redact --no-color --exit-code 1 --config "$root/.gitleaks.toml" ${PUDDLE_SECRETS_REPORT:+--report-format json --report-path "$PUDDLE_SECRETS_REPORT"} ${opts:+"--log-opts=$opts"} "$1"
 }
 
 # scan_commit <repo dir> <sha>: scan that one commit under the .gitleaks.toml it holds itself (not

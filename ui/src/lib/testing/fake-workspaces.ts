@@ -4,6 +4,7 @@
 import type { components } from "#lib/api/schema.d.ts";
 import type { DeleteCheck, Workspace } from "#lib/workspaces/model.ts";
 import type { Checkout, CheckoutListing } from "#lib/workspaces/checkouts.ts";
+import { actionsFor, withActions } from "./workspace-actions.ts";
 
 type Layer = components["schemas"]["SettingsLayer"];
 
@@ -16,35 +17,37 @@ export function workspace(
   name: string,
   over: Partial<Workspace> = {},
 ): Workspace {
-  return {
-    id: "w-" + name,
-    name,
-    repositories: [
-      {
-        entry: entryOf(name),
-        url: `https://github.com/acme/${name}.git`,
-        directory: name,
-      },
-    ],
-    start_folder: null,
-    allowed_hosts: [],
-    session_user: "agent",
-    image: "mcr.microsoft.com/devcontainers/base:debian",
-    memory_mib: 8192,
-    status: "stopped",
-    busy: null,
-    created_at: 1_000_000,
-    disk_size_mib: 32_768,
-    disk_used_mib: 2048,
-    root_disk_size_mib: 4096,
-    root_disk_used_mib: 1024,
-    disk_warnings: [],
-    direct_ssh: false,
-    settings_error: null,
-    first_connect_notice_due: false,
-    identities: [],
-    ...over,
-  };
+  const made: Omit<Workspace, "actions"> & Partial<Pick<Workspace, "actions">> =
+    {
+      id: "w-" + name,
+      name,
+      repositories: [
+        {
+          entry: entryOf(name),
+          url: `https://github.com/acme/${name}.git`,
+          directory: name,
+        },
+      ],
+      start_folder: null,
+      allowed_hosts: [],
+      session_user: "agent",
+      image: "mcr.microsoft.com/devcontainers/base:debian",
+      memory_mib: 8192,
+      status: "stopped",
+      busy: null,
+      created_at: 1_000_000,
+      disk_size_mib: 32_768,
+      disk_used_mib: 2048,
+      root_disk_size_mib: 4096,
+      root_disk_used_mib: 1024,
+      disk_warnings: [],
+      direct_ssh: false,
+      settings_error: null,
+      first_connect_notice_due: false,
+      identities: [],
+      ...over,
+    };
+  return { actions: actionsFor(made.status, made.busy), ...made };
 }
 
 /** A checkout the guest holds, with the list entry that has its directory (none by default). */
@@ -148,8 +151,22 @@ const resolved = <T>(value: T, source: "workspace" | "global" | "default") => ({
   source,
 });
 
+const isWorkspace = (data: unknown): data is Workspace =>
+  typeof data === "object" &&
+  data !== null &&
+  "status" in data &&
+  "busy" in data &&
+  "repositories" in data;
+
 export class FakeWorkspaces {
-  list: Workspace[] = [];
+  #list: Workspace[] = [];
+  /** The workspaces it serves; each one set carries the actions its state admits. */
+  get list(): Workspace[] {
+    return this.#list;
+  }
+  set list(next: Workspace[]) {
+    this.#list = next.map(withActions);
+  }
   overrides: Record<string, Layer> = {};
   /** Each workspace's tool switches (absent: both unset). */
   tools: Record<string, components["schemas"]["WorkspaceTools"]> = {};
@@ -238,6 +255,8 @@ export class FakeWorkspaces {
     },
   ) {
     const response = { status, ok: status < 400 } as Response;
+    // A workspace an operation answers with carries what its new state admits.
+    if (isWorkspace(data)) data = withActions(data);
     return status < 400
       ? { data, response }
       : {
@@ -462,7 +481,7 @@ export class FakeWorkspaces {
         busy: "creating",
         memory_mib: Number(body["memory_mib"] ?? 8192),
       });
-      this.list.push(created);
+      this.list = [...this.list, created];
       return this.reply(202, created);
     }
     const id = init.params?.path?.["id"];

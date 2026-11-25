@@ -450,8 +450,10 @@ fn allowed(
         }
         Ok(Decision::Pending(outcome)) => {
             tracing::info!(%workspace, %host, port, pending = ?outcome.pending_id(), "pending approval");
+            // The reason phrase says it too: a client prints it where it shows neither the body
+            // nor the headers of a refused `CONNECT` (Python, npm, Go and apt do; curl and git do not).
             let refusal = Refusal::new(
-                "403 Forbidden",
+                "403 Forbidden, waiting for approval in Puddle",
                 match outcome {
                     PendingOutcome::Unlisted => format!(
                         "{host} is not listed for approval in Puddle yet: this workspace already has more waiting requests than Puddle lists. Answer some of them in Puddle, then retry and this one is listed"

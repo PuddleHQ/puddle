@@ -6,9 +6,9 @@
 //! not fails the fake's run, and the other way round. It speaks HTTP shapes only (paths, status
 //! codes, JSON fields), never the service's types, so an implementation needs no hook for it.
 //!
-//! The pure admission rules live in [`crate::admit_start`] and its siblings, which both services
-//! call; this suite checks that each service wires them to the right operation and ends every
-//! operation in the state the API promises.
+//! The lifecycle's rules live in [`crate::phase`] (one transition function and the actions it
+//! admits), which both services call; this suite checks that each service wires them to the
+//! right operation and ends every operation in the state the API promises.
 #![expect(clippy::panic, reason = "a contract case fails its test by panicking")]
 
 use std::time::Duration;
@@ -172,10 +172,30 @@ async fn an_unknown_workspace_is_not_found(subject: &dyn Subject) {
     expect_refusal(case, "delete", &gone, 404, "ghost");
 }
 
+/// The workspace's `actions`, as the answer lists them.
+fn actions(reply: &Reply) -> Vec<String> {
+    field(reply, "actions")
+        .as_array()
+        .unwrap_or_else(|| panic!("no actions in {}", text(reply)))
+        .iter()
+        .map(|a| a.as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
 /// A stopped workspace refuses stop; a running one refuses start, a root-disk reset and a delete.
+/// Each answer lists what its state admits, and nothing while an operation runs.
 async fn the_state_decides_which_operation_is_admitted(subject: &dyn Subject) {
     let case = "states";
     let id = created(subject, case).await;
+    let down = settled(subject, case, &id).await;
+    let offered = actions(&down);
+    assert!(
+        ["start", "delete", "reset_root_disk"]
+            .iter()
+            .all(|a| offered.iter().any(|o| o == a))
+            && !offered.iter().any(|o| o == "stop" || o == "attach"),
+        "{case}: a workspace that is down offers start and delete, not stop: {offered:?}"
+    );
     expect_refusal(
         case,
         "stop a stopped workspace",
@@ -183,13 +203,24 @@ async fn the_state_decides_which_operation_is_admitted(subject: &dyn Subject) {
         409,
         "is not running",
     );
-    expect_status(
-        case,
-        "start",
-        &op(subject, &id, "start", json!({})).await,
-        202,
+    let starting = op(subject, &id, "start", json!({})).await;
+    expect_status(case, "start", &starting, 202);
+    assert_eq!(
+        actions(&starting),
+        Vec::<String>::new(),
+        "{case}: nothing is offered while the start runs"
     );
-    settled(subject, case, &id).await;
+    let up = settled(subject, case, &id).await;
+    let offered = actions(&up);
+    assert!(
+        ["stop", "attach", "add_repository"]
+            .iter()
+            .all(|a| offered.iter().any(|o| o == a))
+            && !offered
+                .iter()
+                .any(|o| o == "start" || o == "delete" || o == "reset_root_disk"),
+        "{case}: a running workspace offers stop and attach, not start or delete: {offered:?}"
+    );
     expect_refusal(
         case,
         "start a running workspace",

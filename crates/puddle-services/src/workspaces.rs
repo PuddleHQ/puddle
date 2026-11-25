@@ -32,7 +32,7 @@ pub use launch::{
     BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
     Launcher, OpenTarget,
 };
-pub(crate) use repositories::shown;
+pub use repositories::shown;
 pub use repositories::{
     CheckoutProblem, EntryProblem, LocalCheckoutError, LocalSource, MAX_REPO_URL_LEN,
     MAX_REPOSITORIES, NewRepository, NoFreeEntryId, RepoUrl, RepoUrlError, Repository,
@@ -299,7 +299,7 @@ pub fn check_rename<'a>(
 /// ends. A workspace whose id and name both match counts once. At most one match is the normal
 /// case; two happen only when one workspace's id is another's name (a legacy id).
 #[must_use]
-pub(crate) fn lookup<'a>(
+pub fn lookup<'a>(
     records: impl IntoIterator<Item = &'a WorkspaceRecord>,
     query: &str,
 ) -> Vec<&'a WorkspaceRecord> {

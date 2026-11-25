@@ -182,7 +182,10 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
 
 impl SettingsLayer {
     /// Writes these values into `layer`, leaving its unknown fields alone.
-    pub(crate) fn apply_to(self, layer: &mut settings::WorkspaceLayer) -> Result<(), ApiError> {
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn apply_to(self, layer: &mut settings::WorkspaceLayer) -> Result<(), ApiError> {
         let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err);
         let Self {
             memory,
@@ -1090,7 +1093,9 @@ pub struct EffectiveLimits {
 }
 
 impl EffectiveLimits {
-    pub(crate) fn new(global: &settings::GlobalSettings, host_cores: u32) -> Self {
+    /// Builds the wire form from its source values.
+    #[must_use]
+    pub fn new(global: &settings::GlobalSettings, host_cores: u32) -> Self {
         Self {
             max_cpus: u32::from(global.limits.max_cpus_on(host_cores).get()),
             host_cpus: host_cores,
@@ -1100,7 +1105,11 @@ impl EffectiveLimits {
 }
 
 impl GlobalSettingsRequest {
-    pub(crate) fn apply_to(self, global: &mut settings::GlobalSettings) -> Result<(), ApiError> {
+    /// Applies the request to the stored layer.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn apply_to(self, global: &mut settings::GlobalSettings) -> Result<(), ApiError> {
         let Self {
             workspace_defaults,
             vscode_server:
@@ -1156,7 +1165,8 @@ fn revision_of(global: &settings::GlobalSettings) -> String {
 impl GlobalSettingsRequest {
     /// Whether the save was made from the settings now stored; a save without a revision always
     /// was.
-    pub(crate) fn matches(&self, global: &settings::GlobalSettings) -> bool {
+    #[must_use]
+    pub fn matches(&self, global: &settings::GlobalSettings) -> bool {
         self.revision
             .as_deref()
             .is_none_or(|revision| revision == revision_of(global))
@@ -1164,7 +1174,8 @@ impl GlobalSettingsRequest {
 }
 
 impl GlobalSettingsView {
-    pub(crate) fn new(loaded: &settings::Loaded<settings::GlobalSettings>) -> Self {
+    /// Builds the wire form from its source values.
+    pub fn new(loaded: &settings::Loaded<settings::GlobalSettings>) -> Self {
         let global = &loaded.settings;
         let host_cores = settings::host_cpu_count();
         Self {

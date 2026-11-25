@@ -2,6 +2,7 @@
 //! Error responses: one JSON shape for every refusal and failure.
 
 use axum::Json;
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use puddle_settings::SettingsError;
@@ -16,7 +17,8 @@ use crate::network_health::NetworkHealthError;
 use crate::ports::PortsServiceError;
 use crate::proxy_sign_in::ProxySignInError;
 use crate::repos::ReposError;
-use crate::settings::SettingsRepoError;
+use crate::restore::RestoreServiceError;
+use crate::terminals::TerminalError;
 use crate::workspaces::WorkspaceError;
 
 /// What went wrong, as a stable code a client can switch on.
@@ -117,7 +119,7 @@ impl std::error::Error for ApiErrorBody {}
 
 /// An error a handler or the guard returns; becomes a status and an [`ApiErrorBody`].
 #[derive(Debug)]
-pub(crate) struct ApiError {
+pub struct ApiError {
     status: StatusCode,
     body: ApiErrorBody,
     /// What went wrong, for the host's own use; never serialized (the client of an internal
@@ -128,7 +130,8 @@ pub(crate) struct ApiError {
 }
 
 impl ApiError {
-    pub(crate) fn new(status: StatusCode, error: ErrorCode, message: impl Into<String>) -> Self {
+    /// Builds the wire form from its source values.
+    pub fn new(status: StatusCode, error: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             status,
             body: ApiErrorBody {
@@ -144,21 +147,22 @@ impl ApiError {
 
     /// Says the refusal is about the request's input `field`.
     #[must_use]
-    pub(crate) fn at_field(mut self, field: ErrorField) -> Self {
+    pub fn at_field(mut self, field: ErrorField) -> Self {
         self.body.field = Some(field);
         self
     }
 
     /// Says the refusal is about the input `field` of the entry `row` (from 1) of the list.
     #[must_use]
-    pub(crate) fn at_row(mut self, row: usize, field: ErrorField) -> Self {
+    pub fn at_row(mut self, row: usize, field: ErrorField) -> Self {
         self.body.field = Some(field);
         self.body.row = u32::try_from(row).ok();
         self
     }
 
     /// Too many attempts: try again in `seconds`.
-    pub(crate) fn rate_limited(seconds: u64) -> Self {
+    #[must_use]
+    pub fn rate_limited(seconds: u64) -> Self {
         Self::too_many(
             format!("too many sign-in attempts; try again in {seconds} seconds"),
             seconds,
@@ -166,7 +170,7 @@ impl ApiError {
     }
 
     /// Too many requests of this kind: `message` says which, `Retry-After` is `seconds`.
-    pub(crate) fn too_many(message: impl Into<String>, seconds: u64) -> Self {
+    pub fn too_many(message: impl Into<String>, seconds: u64) -> Self {
         let mut err = Self::new(
             StatusCode::TOO_MANY_REQUESTS,
             ErrorCode::RateLimited,
@@ -176,11 +180,13 @@ impl ApiError {
         err
     }
 
-    pub(crate) fn not_found(message: impl Into<String>) -> Self {
+    /// The not found.
+    pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, ErrorCode::NotFound, message)
     }
 
-    pub(crate) fn invalid(message: impl std::fmt::Display) -> Self {
+    /// The invalid.
+    pub fn invalid(message: impl std::fmt::Display) -> Self {
         Self::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Invalid,
@@ -188,13 +194,14 @@ impl ApiError {
         )
     }
 
-    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
+    /// The bad request.
+    pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, ErrorCode::BadRequest, message)
     }
 
     /// A failure inside Puddle. `detail` is logged here (this is where the error is consumed);
     /// the client only learns that something failed.
-    pub(crate) fn internal(detail: &dyn std::fmt::Display) -> Self {
+    pub fn internal(detail: &dyn std::fmt::Display) -> Self {
         tracing::error!(error = %detail, "api request failed");
         let mut err = Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -206,7 +213,8 @@ impl ApiError {
     }
 
     /// A save made from settings that have changed since.
-    pub(crate) fn settings_changed() -> Self {
+    #[must_use]
+    pub fn settings_changed() -> Self {
         Self::new(
             StatusCode::CONFLICT,
             ErrorCode::SettingsChanged,
@@ -216,7 +224,7 @@ impl ApiError {
 
     /// Stored settings that cannot be read: the message names `what` and the cause, so the
     /// settings page can show it; `reason` stays the bare cause.
-    pub(crate) fn settings_unreadable(what: &str, cause: &dyn std::fmt::Display) -> Self {
+    pub fn settings_unreadable(what: &str, cause: &dyn std::fmt::Display) -> Self {
         tracing::warn!(%what, error = %cause, "settings cannot be read");
         let mut err = Self::new(
             StatusCode::CONFLICT,
@@ -230,28 +238,33 @@ impl ApiError {
     }
 
     /// The cause as the host sees it: the detail of an internal error, else the message.
-    pub(crate) fn reason(&self) -> &str {
+    #[must_use]
+    pub fn reason(&self) -> &str {
         self.detail.as_deref().unwrap_or(&self.body.message)
     }
 
     /// What the refusal says.
-    #[cfg(test)]
-    pub(crate) fn message(&self) -> &str {
+    /// The message a client would read.
+    #[must_use]
+    pub fn message(&self) -> &str {
         &self.body.message
     }
 
     /// The body a client would get.
-    pub(crate) fn into_body(self) -> ApiErrorBody {
+    #[must_use]
+    pub fn into_body(self) -> ApiErrorBody {
         self.body
     }
 
-    #[cfg(test)]
-    pub(crate) fn status(&self) -> StatusCode {
+    /// The HTTP status.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
         self.status
     }
 
-    #[cfg(test)]
-    pub(crate) fn code(&self) -> ErrorCode {
+    /// The stable error code.
+    #[must_use]
+    pub fn code(&self) -> ErrorCode {
         self.body.error
     }
 }
@@ -433,15 +446,75 @@ impl From<PortsServiceError> for ApiError {
     }
 }
 
-impl From<SettingsRepoError> for ApiError {
-    fn from(err: SettingsRepoError) -> Self {
-        Self::internal(&err)
+impl From<JsonRejection> for ApiError {
+    fn from(rejection: JsonRejection) -> Self {
+        let message = rejection.body_text();
+        match rejection {
+            JsonRejection::MissingJsonContentType(_) => Self::new(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                ErrorCode::UnsupportedMediaType,
+                "the body must be application/json",
+            ),
+            JsonRejection::BytesRejection(ref bytes)
+                if bytes.status() == StatusCode::PAYLOAD_TOO_LARGE =>
+            {
+                Self::new(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    ErrorCode::PayloadTooLarge,
+                    "the body is too large",
+                )
+            }
+            _ => Self::bad_request(message),
+        }
+    }
+}
+
+impl From<PathRejection> for ApiError {
+    fn from(rejection: PathRejection) -> Self {
+        Self::bad_request(rejection.body_text())
+    }
+}
+
+impl From<QueryRejection> for ApiError {
+    fn from(rejection: QueryRejection) -> Self {
+        Self::bad_request(rejection.body_text())
+    }
+}
+
+impl From<RestoreServiceError> for ApiError {
+    fn from(err: RestoreServiceError) -> Self {
+        match err {
+            RestoreServiceError::Refused(m) => Self::invalid(m),
+            RestoreServiceError::NotStaged(m) => Self::not_found(m),
+            RestoreServiceError::Unavailable(m) | RestoreServiceError::Failed(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+        }
+    }
+}
+
+impl From<TerminalError> for ApiError {
+    fn from(err: TerminalError) -> Self {
+        match err {
+            TerminalError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+            TerminalError::NotRunning(m) => Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, m),
+            TerminalError::Ended(end) => Self::new(
+                StatusCode::CONFLICT,
+                ErrorCode::Conflict,
+                end.message.unwrap_or_else(|| "the terminal ended".into()),
+            ),
+        }
     }
 }
 
 /// Runs blocking work (`SQLite`, settings storage) off the async threads. A panic in it becomes a
 /// 500, never a crashed server.
-pub(crate) async fn blocking<T, F>(work: F) -> Result<T, ApiError>
+///
+/// # Errors
+/// An invalid-request or internal [`ApiError`].
+pub async fn blocking<T, F>(work: F) -> Result<T, ApiError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, ApiError> + Send + 'static,

@@ -144,6 +144,49 @@ fn a_release_without_a_usable_version_is_refused() {
 }
 
 #[test]
+fn beginning_an_install_checks_the_release_and_leaves_the_copy_to_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let share = tmp.path().join("share");
+    std::fs::create_dir(&share).unwrap();
+    let (target, copy) = begin_code_server_install(&release(tmp.path(), "4.1.0"), &share).unwrap();
+    assert_eq!(target, share.join("code-server"));
+    assert!(!target.exists());
+    copy.unwrap().run().unwrap();
+    assert!(target.join(INSTALLED_MARKER).is_file());
+    let (_, again) = begin_code_server_install(&release(tmp.path(), "4.1.0"), &share).unwrap();
+    assert!(again.is_none());
+}
+
+#[tokio::test]
+async fn a_start_waits_for_the_background_copy_and_a_complete_folder_needs_no_wait() {
+    let tmp = tempfile::tempdir().unwrap();
+    let share = tmp.path().join("share");
+    std::fs::create_dir(&share).unwrap();
+    let release = release(tmp.path(), "4.1.0");
+    let server = CodeServer::begin(&release, &share).unwrap();
+    assert!(server.installing.is_some());
+    server.ready().await.unwrap();
+    assert!(server.path.join("bin/code-server").is_file());
+    assert!(
+        CodeServer::begin(&release, &share)
+            .unwrap()
+            .installing
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_copy_that_fails_fails_the_start_that_needs_it_and_not_the_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let share = tmp.path().join("share");
+    std::fs::create_dir(&share).unwrap();
+    std::fs::write(share.join("code-server.partial"), "in the way").unwrap();
+    let server = CodeServer::begin(&release(tmp.path(), "4.1.0"), &share).unwrap();
+    let err = server.ready().await.unwrap_err().to_string();
+    assert!(err.contains("install code-server"), "{err}");
+}
+
+#[test]
 fn files_are_copied_where_a_link_is_not_possible() {
     let tmp = tempfile::tempdir().unwrap();
     let from = release(tmp.path(), "4.1.0");

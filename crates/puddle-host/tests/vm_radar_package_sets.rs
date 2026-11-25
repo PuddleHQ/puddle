@@ -43,6 +43,11 @@ use support::Api;
 use vm_support::{VmHost, create_workspace_from, guest_as, start_vm_host};
 
 /// The live third parties, for the failure messages.
+/// The host of Puddle's own managed-tools download (the radar builds with the `mise` feature, so
+/// every workspace start fetches mise there). It is the platform's traffic, not a tool's: the audit
+/// leaves it out of every step's hosts.
+const MANAGED_TOOLS_HOST: &str = "mise.jdx.dev";
+
 const LIVE_NOTE: &str = "live third parties: Debian, npm, PyPI, crates.io, static.rust-lang.org, \
     GitHub, the Playwright CDN, Docker Hub; an outage there fails this test";
 
@@ -360,6 +365,9 @@ async fn run_tool(
     };
     for r in records.iter().skip(*seen) {
         let host = r["host"].as_str().unwrap_or("?").to_owned();
+        if host == MANAGED_TOOLS_HOST {
+            continue;
+        }
         if r["decision"] != "allow" {
             report.refused.insert(host);
         } else if r["rule_set"]

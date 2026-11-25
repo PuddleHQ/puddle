@@ -5666,11 +5666,9 @@ async fn vm_host_a_reset_of_the_root_disk_loses_packages_and_home_files_and_keep
     guest(
         &runtime,
         &sandbox,
-        &format!(
-            "set -e; mkdir -p /workspace/app; cd /workspace/app; \
-             git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
-             echo kept > notes.txt; echo volume > /workspace/volume-file; sync"
-        ),
+        "set -e; mkdir -p /workspace/app; cd /workspace/app; \
+        git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
+        echo kept > notes.txt; echo volume > /workspace/volume-file; sync",
     )
     .await;
     assert_eq!(
@@ -5705,9 +5703,7 @@ async fn vm_host_a_reset_of_the_root_disk_loses_packages_and_home_files_and_keep
     let kept = guest(
         &runtime,
         &sandbox,
-        &format!(
-            "cat /workspace/volume-file; cd /workspace/app; git log --format=%s; cat notes.txt"
-        ),
+        "cat /workspace/volume-file; cd /workspace/app; git log --format=%s; cat notes.txt",
     )
     .await;
     assert_eq!(

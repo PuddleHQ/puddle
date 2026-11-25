@@ -235,8 +235,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )
             .await
             .map_err(|e| {
-                // The hook stopped the sandbox it failed in.
-                inner.lifecycle.release(&name.sandbox_name());
+                // A sandbox the hook stopped again leaves the lifecycle; one it could not stop
+                // stays, so the shutdown stops it.
+                if !e.left_running() {
+                    inner.lifecycle.release(&name.sandbox_name());
+                }
                 if let BootError::Compute(ComputeError::StartRefused { cause, .. }) = &e {
                     self.raise_start_refused(name, *cause);
                 }

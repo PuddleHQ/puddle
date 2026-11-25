@@ -668,7 +668,7 @@ async fn a_change_that_comes_while_an_author_rewrite_runs_waits_for_it_and_the_n
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writes_nothing() {
+async fn a_stop_waits_for_the_author_rewrite_that_holds_the_guest() {
     let rig = Rig::named_ids();
     let held = Arc::new(HeldRewrite::default());
     *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
@@ -679,8 +679,7 @@ async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writ
     let identity = make_identity(&api, "Ada", "github.com", &[]).await;
     let booted = rig.guest.boots();
 
-    // The attach's rewrite starts while the workspace runs and waits at the gate; the workspace
-    // is stopped before it looks at it.
+    // The attach's rewrite holds the guest and waits at the gate; a stop comes meanwhile.
     held.armed.store(true, Ordering::SeqCst);
     host.store()
         .attach_identity(&name("acme"), puddle_store::IdentityId(identity), None)
@@ -689,13 +688,28 @@ async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writ
         held.arrived.load(Ordering::SeqCst)
     })
     .await;
-    stop_and_wait(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    // flake-ok: a negative check: the stop must not trim within this time while the rewrite holds
+    // the guest.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !rig.guest.commands().contains(&"acme trim".to_owned()),
+        "the stop trimmed while a rewrite held the guest: {:?}",
+        rig.guest.commands()
+    );
+    // The rewrite goes on (here with nothing to change), then the stop.
     held.release.notify_one();
+    events.until(ended("acme"), Duration::from_secs(20)).await;
     eventually("the attach rewrite ends", APPLY, || {
         held.ended.load(Ordering::SeqCst)
     })
     .await;
-    assert_eq!(rig.guest.boots(), booted, "a stopped guest was written to");
+    // The rewrite wrote the new authors before the stop trimmed the guest, never after.
+    let commands = rig.guest.commands();
+    let trim = commands.iter().position(|c| c == "acme trim").unwrap();
+    let last_boot = commands.iter().rposition(|c| c == "acme boot").unwrap();
+    assert!(last_boot < trim, "{commands:?}");
+    assert_eq!(rig.guest.boots(), booted + 1, "the attach was not written");
     assert!(
         !has_problem(&host, "git-credentials:acme"),
         "{:?}",

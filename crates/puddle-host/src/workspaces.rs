@@ -121,9 +121,9 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     }
 }
 
-/// Runs when an author rewrite starts, before it waits for its workspace's rewrite lock, and
+/// Runs when an author rewrite holds its guest's rewrite lock, before it looks at the guest, and
 /// returns once the rewrite may go on; the value it returns is dropped when the rewrite ends. Tests
-/// use it to hold one rewrite back and see what waits behind it. A host without one lets every
+/// use it to hold one rewrite back and see what waits behind it (the next change, a stop). A host without one lets every
 /// rewrite go on at once.
 pub type RewriteGate = Arc<dyn Fn(&WorkspaceId) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
 

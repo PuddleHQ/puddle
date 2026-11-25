@@ -121,8 +121,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Ok(())
             }
             Err(e) => {
-                // The hook stopped the sandbox it failed in.
-                inner.lifecycle.release(&name.sandbox_name());
+                // A sandbox the hook stopped again leaves the lifecycle; one it could not stop
+                // stays, so the shutdown stops it.
+                if !e.left_running() {
+                    inner.lifecycle.release(&name.sandbox_name());
+                }
                 inner.injection.end(name);
                 let reason = self.abort_attachment(attachment, e.into()).await;
                 route.shutdown().await;
@@ -341,10 +344,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// and `settle` runs one more after a boot.
     pub(crate) async fn rewrite_authors(&self, name: &WorkspaceId) {
         let inner = &self.inner;
-        let _held = match &inner.rewrite_gate {
-            Some(gate) => Some(gate(name).await),
-            None => None,
-        };
         let rewrite = {
             let live = inner.live.lock().await;
             match live.get(name) {
@@ -353,6 +352,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         let _one_at_a_time = rewrite.lock().await;
+        let _held = match &inner.rewrite_gate {
+            Some(gate) => Some(gate(name).await),
+            None => None,
+        };
         let (gated, guest) = {
             let live = inner.live.lock().await;
             match live

@@ -141,6 +141,10 @@ fn enqueue<G: Changes>(
     drop(map);
     let (waiting, service) = (Arc::clone(waiting), service.clone());
     queues.spawn(async move {
+        let _leave = LeaveOnPanic {
+            waiting: &waiting,
+            workspace: &workspace,
+        };
         while let Some(change) = next(&waiting, &workspace) {
             match change {
                 Change::Authors => service.rewrite_authors(workspace.clone()).await,
@@ -149,6 +153,25 @@ fn enqueue<G: Changes>(
             }
         }
     });
+}
+
+/// Takes a queue whose task panicked out of the map, so the next change to its workspace starts a
+/// new task instead of waiting behind one that is gone. A task that ends normally has left the
+/// map in [`next`] already, and the entry may by then be a newer task's.
+struct LeaveOnPanic<'a> {
+    waiting: &'a Waiting,
+    workspace: &'a WorkspaceId,
+}
+
+impl Drop for LeaveOnPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.waiting
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(self.workspace);
+        }
+    }
 }
 
 /// The next change of `workspace`'s queue, or `None` after taking the workspace out of the map

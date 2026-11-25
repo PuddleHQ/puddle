@@ -183,6 +183,24 @@ pub enum BootError {
     },
 }
 
+impl BootError {
+    /// Whether the sandbox may still run after the failure: the hook or the keeper failed and
+    /// stopping it failed too. Its owner should keep the handle so a later stop reaches it.
+    #[must_use]
+    pub fn left_running(&self) -> bool {
+        matches!(
+            self,
+            Self::Hook {
+                stop_error: Some(_),
+                ..
+            } | Self::NotKept {
+                stop_error: Some(_),
+                ..
+            }
+        )
+    }
+}
+
 /// Who owns a sandbox from the moment the runtime has made or started it, before the boot hook
 /// runs in it: Puddle's lifecycle, which trims and stops it at shutdown. The boot goes on with a
 /// handle that does not own the VM, so a boot that is ended half-way (a shutdown that ends the

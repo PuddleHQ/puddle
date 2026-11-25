@@ -441,7 +441,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// and keeps the next one waiting until the guard is dropped. An operation that takes the guest
     /// down holds it until the guest is gone from `live`, so no change runs the boot hook in a
     /// guest that is stopping; the changes that waited then find no guest and leave it to the next
-    /// start. `None` when no sandbox was served.
+    /// start. The wait is bounded by the boot hook's own time limit, which a rewrite runs under.
+    /// `None` when no sandbox was served.
     pub(super) async fn hold_guest(
         &self,
         name: &WorkspaceId,

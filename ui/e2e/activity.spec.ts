@@ -706,7 +706,10 @@ test.describe("keyboard only", () => {
     await toggle.focus();
     await page.keyboard.press("Enter");
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    const showRaw = page.getByRole("button", { name: "Show raw record" });
+    // The button's name flips to "Hide raw record" once it is open: match both.
+    const showRaw = page.getByRole("button", {
+      name: /(Show|Hide) raw record/,
+    });
     await showRaw.focus();
     await page.keyboard.press("Enter");
     await expect(showRaw).toHaveAttribute("aria-expanded", "true");

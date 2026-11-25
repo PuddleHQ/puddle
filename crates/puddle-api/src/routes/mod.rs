@@ -218,6 +218,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             workspaces::create_workspace
         ))
         .routes(routes!(workspaces::lookup_workspace))
+        .routes(routes!(workspaces::default_image))
         .routes(routes!(
             workspaces::get_workspace,
             workspaces::rename_workspace,

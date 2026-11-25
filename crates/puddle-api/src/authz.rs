@@ -438,7 +438,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/orphan-volumes/{id}/restore",
         ) => (A::ChangeInstall, T::Install),
         ("GET", "/api/workspaces" | "/api/workspaces/lookup") => (A::ListWorkspaces, T::Own),
-        ("POST", "/api/workspaces" | "/api/repository-hosts") => (A::CreateWorkspace, T::Own),
+        ("GET", "/api/workspaces/default-image")
+        | ("POST", "/api/workspaces" | "/api/repository-hosts") => (A::CreateWorkspace, T::Own),
         (
             "GET",
             "/api/workspaces/{id}"

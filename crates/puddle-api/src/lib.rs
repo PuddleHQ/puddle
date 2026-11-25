@@ -147,5 +147,6 @@ pub use workspaces::{
     RepositoryListError, ShellInitCheck, StartFolder, StartFolderChange, StartFolderError,
     WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint, admit_grow_size,
     check_rename, check_repositories, check_repositories_with, check_session_user_change,
-    check_start_folder_change, entry_id_from_text, label_taken, new_entry_id, not_found,
+    check_start_folder_change, describe_image, entry_id_from_text, label_taken, new_entry_id,
+    not_found,
 };

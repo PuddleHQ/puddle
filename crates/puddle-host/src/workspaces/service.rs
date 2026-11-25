@@ -105,6 +105,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn default_image_description(&self) -> Option<String> {
+        self.default_image_note()
+    }
+
     fn names(&self) -> Vec<(WorkspaceId, String)> {
         self.state()
             .slots

@@ -75,8 +75,8 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
 
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
-        let found =
-            LocalCheckout::open(std::path::Path::new(path)).map_err(LocalCheckoutError::Refused)?;
+        let found = LocalCheckout::open(std::path::Path::new(path))
+            .map_err(|why| LocalCheckoutError::Refused(why.to_string()))?;
         // The runtime's own rule (owner, Puddle's folders) now, not only when the create runs.
         self.inner
             .runtime

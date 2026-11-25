@@ -14,6 +14,7 @@ use std::time::Duration;
 use puddle_compute::{ExecRequest, Sandbox};
 use puddle_types::WorkspaceId;
 
+use crate::guest_output::ScriptOutputError;
 use crate::guest_text::clean;
 use crate::{Layout, WorkspaceError};
 
@@ -101,7 +102,8 @@ pub(crate) async fn run<S: Sandbox>(
             MAX_REASON,
         )));
     }
-    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?).map_err(fail)
+    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?)
+        .map_err(|e| fail(e.to_string()))
 }
 
 /// Adds `path: note` to `list` unless it is full.
@@ -112,13 +114,12 @@ fn push_bounded(list: &mut Vec<String>, path: &str, note: &str) {
 }
 
 /// Parses the script's output.
-// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
-pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
+pub(crate) fn parse(stdout: &str) -> Result<LockReport, ScriptOutputError> {
     let mut report = LockReport::default();
     let mut done = false;
     for line in stdout.lines() {
         if done {
-            return Err("output after the end marker".into());
+            return Err(ScriptOutputError::AfterEnd);
         }
         let mut fields = line.splitn(3, '\t');
         let tag = fields.next().unwrap_or_default();
@@ -144,15 +145,18 @@ pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
             ("R", Some(path), Some(what)) => push_bounded(&mut report.repaired, path, what),
             ("P", Some(path), Some(why)) => push_bounded(&mut report.damaged, path, why),
             _ => {
-                let shown: String = line.chars().take(80).collect();
-                return Err(format!("unexpected output line {shown:?}"));
+                return Err(ScriptOutputError::UnexpectedLine {
+                    line: line.chars().take(80).collect(),
+                });
             }
         }
     }
     if done {
         Ok(report)
     } else {
-        Err("the script did not finish (no end marker)".into())
+        Err(ScriptOutputError::Unfinished {
+            script: "the script",
+        })
     }
 }
 

@@ -17,7 +17,6 @@
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
     clippy::indexing_slicing,
     reason = "VM test: a failed step fails the test (a missing key in the API's JSON too); progress goes to the log"
 )]
@@ -27,11 +26,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use puddle_test_kit::eventually_async;
+use puddle_test_kit::{Api, eventually_async};
 use puddle_vm_tests::{Settings, test_owner};
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::net::TcpStream;
 
 /// The bar for a hard kill: every process Puddle started is gone within 5 s.
 const KILL_BAR: Duration = Duration::from_secs(5);
@@ -138,14 +135,7 @@ impl Serve {
         )
         .await;
         let url = info["url"].as_str().unwrap();
-        let api = Api {
-            addr: url
-                .strip_prefix("http://")
-                .unwrap_or_else(|| panic!("not a loopback http URL: {url}"))
-                .trim_end_matches('/')
-                .to_owned(),
-            token: info["token"].as_str().unwrap().to_owned(),
-        };
+        let api = Api::from_url(url, info["token"].as_str().unwrap());
         Self { child, api }
     }
 
@@ -159,145 +149,6 @@ impl Serve {
         let code = self.child.wait().unwrap().code();
         assert_eq!(code, Some(0), "puddle serve did not stop cleanly");
     }
-}
-
-/// A client of the API, over plain HTTP/1.1 (the API listens on loopback).
-struct Api {
-    addr: String,
-    token: String,
-}
-
-impl Api {
-    async fn call(&self, method: &str, path: &str, body: Option<&Value>) -> (u16, Value) {
-        let mut stream = TcpStream::connect(&self.addr).await.unwrap();
-        let body = body.map(Value::to_string).unwrap_or_default();
-        let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
-             Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            self.addr,
-            self.token,
-            body.len()
-        );
-        stream.write_all(request.as_bytes()).await.unwrap();
-        let mut raw = Vec::new();
-        stream.read_to_end(&mut raw).await.unwrap();
-        let text = String::from_utf8_lossy(&raw).into_owned();
-        let (head, rest) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
-        let status = head
-            .split(' ')
-            .nth(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("no status in {head:?}"));
-        let rest = if head
-            .to_ascii_lowercase()
-            .contains("transfer-encoding: chunked")
-        {
-            dechunk(rest)
-        } else {
-            rest.to_owned()
-        };
-        (status, serde_json::from_str(&rest).unwrap_or(Value::Null))
-    }
-
-    async fn workspace(&self, id: &str) -> Value {
-        let (status, body) = self
-            .call("GET", &format!("/api/workspaces/{id}"), None)
-            .await;
-        assert_eq!(status, 200, "{body}");
-        body
-    }
-
-    /// Opens the event stream; events from here on are seen.
-    async fn events(&self) -> Events {
-        let mut stream = TcpStream::connect(&self.addr).await.unwrap();
-        let request = format!(
-            "GET /api/events HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
-             Accept: text/event-stream\r\n\r\n",
-            self.addr, self.token
-        );
-        stream.write_all(request.as_bytes()).await.unwrap();
-        let mut events = Events {
-            stream,
-            buf: String::new(),
-        };
-        events
-            .fill(|b| b.contains("\r\n\r\n"), Duration::from_secs(10))
-            .await;
-        assert!(events.buf.starts_with("HTTP/1.1 200"), "{}", events.buf);
-        events.buf = events.buf.split_once("\r\n\r\n").unwrap().1.to_owned();
-        events
-    }
-}
-
-/// The API's server-sent events, read as they arrive.
-struct Events {
-    stream: TcpStream,
-    buf: String,
-}
-
-impl Events {
-    /// Reads until `done` holds for what was read; panics at the deadline.
-    async fn fill(&mut self, done: impl Fn(&str) -> bool, within: Duration) {
-        let deadline = Instant::now() + within;
-        let mut chunk = [0_u8; 4096];
-        while !done(&self.buf) {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match tokio::time::timeout(left, self.stream.read(&mut chunk)).await {
-                Ok(Ok(0)) => panic!("the event stream ended; buffer: {:?}", self.buf),
-                Ok(Ok(n)) => self.buf.push_str(&String::from_utf8_lossy(&chunk[..n])),
-                Ok(Err(e)) => panic!("event stream: {e}"),
-                Err(elapsed) => panic!(
-                    "nothing more within {within:?} ({elapsed}); buffer: {:?}",
-                    self.buf
-                ),
-            }
-        }
-    }
-
-    /// The `workspace_progress` event that ends workspace `id`'s operation (`done` or `failed`).
-    // flake-ok: reads the server-sent event stream (it consumes input, so a re-run probe cannot
-    // do it); bounded by `within` (an image pull takes minutes, past a probe's limit), and the
-    // panic shows what was read.
-    async fn ended(&mut self, id: &str, within: Duration) -> Value {
-        let deadline = Instant::now() + within;
-        loop {
-            while let Some(end) = self.buf.find("\n\n") {
-                let record: String = self.buf.drain(..end + 2).collect();
-                let data: String = record
-                    .lines()
-                    .filter_map(|l| l.strip_prefix("data:"))
-                    .map(str::trim_start)
-                    .collect();
-                if let Ok(e) = serde_json::from_str::<Value>(&data)
-                    && e["type"] == "workspace_progress"
-                    && e["workspace"] == id
-                    && matches!(e["step"].as_str(), Some("done" | "failed"))
-                {
-                    return e;
-                }
-            }
-            let before = self.buf.len();
-            let left = deadline.saturating_duration_since(Instant::now());
-            self.fill(|b| b.len() > before && b.contains("\n\n"), left)
-                .await;
-        }
-    }
-}
-
-fn dechunk(body: &str) -> String {
-    let mut out = String::new();
-    let mut rest = body;
-    while let Some((size, after)) = rest.split_once("\r\n") {
-        let Ok(n) = usize::from_str_radix(size.trim(), 16) else {
-            break;
-        };
-        if n == 0 {
-            break;
-        }
-        out.push_str(after.get(..n).unwrap_or(after));
-        rest = after.get(n + 2..).unwrap_or("");
-    }
-    out
 }
 
 /// Runs `script` with argument `arg` in the guest of workspace `id` through the run's msb, as

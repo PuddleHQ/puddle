@@ -29,8 +29,9 @@ use crate::wire::{
 };
 use crate::workspaces::{WorkspaceRecord, WorkspaceService};
 
-/// How often the reaper looks for deletions to finish when nobody asks.
-const REAP_EVERY: Duration = Duration::from_secs(10);
+/// How often the reaper looks for deletions to finish when nobody asks, unless the
+/// configuration says otherwise.
+pub(crate) const REAP_EVERY: Duration = Duration::from_secs(10);
 
 /// The most audit lines the screen asks for.
 pub(crate) const AUDIT_LINES: u32 = 100;
@@ -41,6 +42,7 @@ pub(crate) struct AdminService {
     sign_in: Arc<SignIn>,
     workspaces: Arc<dyn WorkspaceService>,
     reap: Notify,
+    reap_every: Duration,
 }
 
 fn conflict(message: &str) -> ApiError {
@@ -83,12 +85,14 @@ impl AdminService {
         store: Arc<Store>,
         sign_in: Arc<SignIn>,
         workspaces: Arc<dyn WorkspaceService>,
+        reap_every: Duration,
     ) -> Self {
         Self {
             store,
             sign_in,
             workspaces,
             reap: Notify::new(),
+            reap_every,
         }
     }
 
@@ -325,7 +329,7 @@ impl AdminService {
             self.reap_once().await;
             tokio::select! {
                 () = self.reap.notified() => {}
-                () = tokio::time::sleep(REAP_EVERY) => {}
+                () = tokio::time::sleep(self.reap_every) => {}
                 _ = shutdown.changed() => return,
             }
         }

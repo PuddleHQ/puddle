@@ -415,7 +415,7 @@ jobs:
           {
             echo '### Coverage'
             echo '```'
-            cargo llvm-cov report --summary-only
+            cargo llvm-cov report --summary-only --ignore-filename-regex "$(python3 -I scripts/coverage-crates.py)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: disk after the tests with coverage (evidence, never a gate)

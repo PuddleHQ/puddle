@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use puddle_api::WorkspaceRecord;
+use puddle_api::phase::Move;
 use puddle_api::{EndReason, TerminalError};
 use puddle_boot::GatedSandbox;
 use puddle_compute::{DiskSize, RootDiskGrowth, Runtime};
@@ -261,14 +262,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    /// Sets the workspace's status and tells the windows.
-    pub(super) fn set_status(&self, id: &WorkspaceId, status: WorkspaceStatus) {
+    /// Moves a grow's restart a leg on ([`Move::RestartStops`], [`Move::RestartStarts`]) and
+    /// tells the windows.
+    pub(super) fn restart_leg(&self, id: &WorkspaceId, leg: Move) {
         let record = {
             let mut state = self.state();
             let Some(slot) = state.slots.get_mut(id) else {
                 return;
             };
-            slot.record.status = status;
+            if let Err(why) = slot.record.apply(leg) {
+                tracing::warn!(workspace = %id, ?leg, ?why, "a grow's restart is out of step with the workspace");
+                return;
+            }
             slot.record.clone()
         };
         self.status_event(&record);
@@ -385,11 +390,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                             .to_owned(),
                     ),
                 );
-                self.set_status(name, WorkspaceStatus::Draining);
+                self.restart_leg(name, Move::RestartStops);
                 inner.reports.pause(name);
                 let restarted = async {
                     self.stop_work(record.clone()).await?;
-                    self.set_status(name, WorkspaceStatus::Starting);
+                    self.restart_leg(name, Move::RestartStarts);
                     self.start_work(record.clone()).await
                 }
                 .await;

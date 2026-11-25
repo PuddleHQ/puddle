@@ -7165,6 +7165,11 @@ export interface components {
          */
         Workspace: {
             /**
+             * @description What the workspace's state admits now, from the same rules the calls are checked by:
+             *     offer these and grey out the rest. Empty while an operation runs.
+             */
+            actions: components["schemas"]["WorkspaceAction"][];
+            /**
              * @description The hosts creating the workspace, or adding a repository to it, allowed for it because no
              *     rule decided them (each is a rule made by the create, on the Rules screen). Only those
              *     answers fill it; every other answer has an empty list.
@@ -7260,6 +7265,12 @@ export interface components {
             /** @description The workspace's state. */
             status: components["schemas"]["WorkspaceStatus"];
         };
+        /**
+         * @description Something the user can ask of a workspace. A workspace lists the ones its state admits now in
+         *     `actions`; the call for any other is refused with 409.
+         * @enum {string}
+         */
+        WorkspaceAction: "start" | "stop" | "attach" | "delete" | "reclaim" | "reset_root_disk" | "grow_root_disk" | "add_repository";
         /**
          * @description What a workspace sees: its own variables and the global ones, by name. A global variable that
          *     the workspace's own of the same name hides is listed after it with `overridden` set. The

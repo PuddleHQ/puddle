@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use puddle_api::phase::begin;
 use puddle_api::{
     AddRepository, Checkouts, Found, FoundList, NewRepository, RemoteNote, RepoUrl, check_addition,
     check_seen, checkouts_view, why_no_remote,
@@ -327,7 +328,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.save_repositories(&mut state, id, before)?;
             }
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            slot.record.busy = Some(Operation::Cloning);
+            begin(&mut slot.record, Operation::Cloning)?;
             self.ticket(slot.record.clone(), Operation::Cloning)
         };
         let record = ticket.record().clone();

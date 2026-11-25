@@ -179,6 +179,8 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "memory_mib": 8192,
             "status": "created",
             "busy": "creating",
+            // Nothing is admitted while the create runs.
+            "actions": [],
             "created_at": START_MS,
             "disk_size_mib": puddle_api::DEFAULT_DISK_MIB,
             "disk_used_mib": 0,

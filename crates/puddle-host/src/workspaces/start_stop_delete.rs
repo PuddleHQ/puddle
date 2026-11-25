@@ -2,6 +2,7 @@
 //! Starting, stopping and deleting a workspace.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use puddle_api::EndReason;
 use puddle_api::{DisplayName, WorkspaceError, WorkspaceRecord};
@@ -21,6 +22,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn start_work(&self, record: WorkspaceRecord) -> Result<(), OpError> {
         let inner = &self.inner;
         let name = &record.id;
+        let began = Instant::now();
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
@@ -38,6 +40,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // An earlier run of Puddle made it: it is kept when this run can serve its route.
             route_alive = self.adopt_sandbox(name, &sandbox.routes).await;
         }
+        let looked = began.elapsed();
         let restarted = exists && route_alive && !moved && self.restart_in_place(&record).await?;
         if moved {
             // A runtime cannot move the mount of a sandbox it already made.
@@ -74,9 +77,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.boot_new(&record, &mut created_volume, BootFor::Start)
                 .await?;
         }
+        let booted = began.elapsed();
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, Undo::Keep, reason).await);
         }
+        // Where a slow start went (a restart took 128 s in a first-day walk, with nothing to say
+        // which part): the boot of the virtual machine, or what runs after it.
+        let (look_ms, boot_ms) = (millis(looked), millis(booted.saturating_sub(looked)));
+        let (settle_ms, total_ms) = (
+            millis(began.elapsed().saturating_sub(booted)),
+            millis(began.elapsed()),
+        );
+        tracing::info!(workspace = %name, restarted_in_place = restarted, look_ms, boot_ms, settle_ms, total_ms, "workspace start timings");
         self.refresh_checkouts_later(&record.id);
         Ok(())
     }
@@ -516,6 +528,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         }
     }
+}
+
+/// `d` in whole milliseconds, for a log line.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Whether `sandbox` mounts its volume somewhere other than [`WORKSPACE_DIR`], as one made by an

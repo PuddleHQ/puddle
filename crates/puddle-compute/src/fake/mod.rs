@@ -66,8 +66,8 @@ pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
 use crate::{
     Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind,
-    RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo,
-    VolumeSpec,
+    PullProgress, PullReport, RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo,
+    SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -282,6 +282,8 @@ struct State {
     terminals: bool,
     /// [`FakeRuntime::set_live_root_grow`] turned off: a running sandbox grows at its next boot.
     no_live_root_grow: bool,
+    /// [`FakeRuntime::script_pull`]: what every pull reports to its caller before it answers.
+    pull_script: Vec<PullProgress>,
     /// [`FakeRuntime::wait_in_every_call`]: each call waits once before it answers.
     waits: bool,
 }
@@ -434,6 +436,12 @@ impl FakeRuntime {
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Makes every [`Runtime::pull_image_reporting`] report `steps`, in order, before it answers,
+    /// as a pull that downloads would.
+    pub fn script_pull(&self, steps: Vec<PullProgress>) {
+        self.lock().pull_script = steps;
     }
 
     /// Makes `image` pullable with `config`.
@@ -673,6 +681,18 @@ impl Runtime for FakeRuntime {
                 image: image.to_string(),
                 reason: "manifest unknown".into(),
             })
+    }
+
+    async fn pull_image_reporting<'a>(
+        &'a self,
+        image: &'a ImageRef,
+        report: PullReport<'a>,
+    ) -> Result<ImageConfig, ComputeError> {
+        let script = self.lock().pull_script.clone();
+        for step in script {
+            report(step);
+        }
+        self.pull_image(image).await
     }
 
     async fn create(&self, spec: SandboxSpec) -> Result<FakeSandbox, ComputeError> {

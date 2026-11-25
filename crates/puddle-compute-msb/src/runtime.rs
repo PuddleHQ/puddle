@@ -407,6 +407,23 @@ impl Runtime for MsbRuntime {
                 &self.inner.local,
                 &self.inner.config.registry_roots,
                 image,
+                None,
+            ))
+            .await
+        })
+    }
+
+    fn pull_image_reporting<'a>(
+        &'a self,
+        image: &'a ImageRef,
+        report: puddle_compute::PullReport<'a>,
+    ) -> impl Future<Output = Result<ImageConfig, ComputeError>> + Send + 'a {
+        Box::pin(async move {
+            Box::pin(image::pull(
+                &self.inner.local,
+                &self.inner.config.registry_roots,
+                image,
+                Some(report),
             ))
             .await
         })

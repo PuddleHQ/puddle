@@ -38,6 +38,67 @@ describe("ProgressLine", () => {
     expect(line.querySelector("b b")).toBeNull();
   });
 
+  it("shows how much of the image is downloaded, with a bar", () => {
+    const mib = 1024 * 1024;
+    render(ProgressLine, {
+      props: {
+        busy: "creating",
+        progress: {
+          step: "pulling_image",
+          detail: null,
+          repository: null,
+          bytes: { done: 120 * mib, total: 480 * mib },
+          operation: "creating",
+          failed: false,
+        },
+      },
+    });
+    const line = screen.getByRole("status");
+    expect(line).toHaveTextContent("Downloading the image");
+    expect(line).toHaveTextContent("120 MB of 480 MB, 25 %");
+    expect(line).toHaveTextContent("step 2 of 3");
+    expect(
+      screen.getByRole("progressbar", { name: "Downloading the image" }),
+    ).toHaveAttribute("value", "25");
+  });
+
+  it("shows the size so far without a bar while the total is not known", () => {
+    render(ProgressLine, {
+      props: {
+        busy: "creating",
+        progress: {
+          step: "unpacking_image",
+          detail: null,
+          repository: null,
+          bytes: { done: 3 * 1024 * 1024, total: null },
+          operation: "creating",
+          failed: false,
+        },
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing the image");
+    expect(screen.getByRole("status")).toHaveTextContent("3.0 MB");
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("says why a start takes a while", () => {
+    render(ProgressLine, {
+      props: {
+        busy: "starting",
+        progress: {
+          step: "starting",
+          detail: null,
+          repository: null,
+          operation: "starting",
+          failed: false,
+        },
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "takes a minute or two, every time it starts",
+    );
+  });
+
   it("names the checkout a cloning step is on, and its place in a list of several", () => {
     const progress = {
       step: "cloning" as const,

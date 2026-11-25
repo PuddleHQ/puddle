@@ -54,6 +54,8 @@ mod live_settings_changes;
 mod missing_volume_and_ids;
 #[path = "fake_host/proxy_sign_ins_and_audit.rs"]
 mod proxy_sign_ins_and_audit;
+#[path = "fake_host/pull_progress.rs"]
+mod pull_progress;
 #[path = "fake_host/repositories.rs"]
 mod repositories;
 #[path = "fake_host/restart_and_crash.rs"]

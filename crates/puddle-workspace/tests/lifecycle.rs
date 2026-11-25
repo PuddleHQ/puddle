@@ -135,7 +135,7 @@ async fn a_new_workspace_gets_its_volume_mounted_with_kind_and_size() {
     assert!(att.created_volume());
     assert_eq!(
         att.mount(),
-        &VolumeMount::named(id.volume_name(), path("/workspaces/acme"))
+        &VolumeMount::named(id.volume_name(), path("/workspace"))
             .ensure_size(WorkspaceConfig::DEFAULT_SIZE)
     );
     let sb = rt.create(att.add_to(spec("box"))).await.unwrap();
@@ -161,7 +161,7 @@ async fn a_recreated_sandbox_reuses_the_volume_and_its_files() {
         .await
         .unwrap();
     let out = sb
-        .exec(ExecRequest::new("tee", ["/workspaces/acme/api/marker"]).with_stdin("kept\n"))
+        .exec(ExecRequest::new("tee", ["/workspace/api/marker"]).with_stdin("kept\n"))
         .await
         .unwrap();
     assert!(out.status.success());
@@ -176,9 +176,7 @@ async fn a_recreated_sandbox_reuses_the_volume_and_its_files() {
         .await
         .unwrap();
     assert_eq!(
-        sh(&again, "cat /workspaces/acme/api/marker")
-            .await
-            .stdout_text(),
+        sh(&again, "cat /workspace/api/marker").await.stdout_text(),
         "kept\n"
     );
     let vols = rt.list_volumes().await.unwrap();
@@ -231,10 +229,9 @@ async fn a_running_holder_puddle_does_not_track_is_found_through_the_runtime() {
     .await
     .unwrap();
     let _other = rt
-        .create(spec("foreign").with_volume(VolumeMount::named(
-            id.volume_name(),
-            path("/workspaces/acme"),
-        )))
+        .create(
+            spec("foreign").with_volume(VolumeMount::named(id.volume_name(), path("/workspace"))),
+        )
         .await
         .unwrap();
     let err = w.create(&rt, &id, spec("mine"), None).await.unwrap_err();
@@ -441,7 +438,7 @@ async fn stop_trims_every_owned_workspace_first() {
     let calls = rt.calls();
     let fstrim = calls
         .iter()
-        .position(|c| c.detail.as_deref() == Some("fstrim -v /workspaces/acme"))
+        .position(|c| c.detail.as_deref() == Some("fstrim -v /workspace"))
         .unwrap();
     let stop = calls.iter().position(|c| c.op == Op::Stop).unwrap();
     assert!(fstrim < stop, "trim before stop");
@@ -860,7 +857,7 @@ async fn a_check_script_that_exits_non_zero_is_an_error() {
     let rt = FakeRuntime::new();
     rt.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
         (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(DELETE_CHECK_SH))
-            .then(|| ExecOutput::new(3, "E\t.\tcannot enter /workspaces/acme\n", ""))
+            .then(|| ExecOutput::new(3, "E\t.\tcannot enter /workspace\n", ""))
     });
     let w = Workspaces::default();
     let id = ws("acme");
@@ -979,7 +976,7 @@ fn stub_prepare(rt: &FakeRuntime, user: SessionUser, code: i32, output: &'static
             assert_eq!(r.user.as_deref(), Some("root"));
             assert_eq!(
                 r.args.iter().skip(3).collect::<Vec<_>>(),
-                ["/workspaces/acme", user.name()]
+                ["/workspace", user.name()]
             );
             ExecOutput::new(code, output, "chown: no such user\n")
         })
@@ -1066,14 +1063,14 @@ async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
         .await
         .unwrap();
     w.sync(&sb, &id).await.unwrap();
-    assert_eq!(path.as_str(), "/workspaces/acme/api-2");
+    assert_eq!(path.as_str(), "/workspace/api-2");
     let seen = seen.lock().unwrap().clone();
     assert_eq!(seen.len(), 2, "{seen:?}");
     assert!(
         seen[0].starts_with("sh -c ")
             && seen[0].ends_with(
                 " puddle-clone https://h.example/acme/api.git \
-                 /workspaces/acme/.puddle/cloning/api-2 /workspaces/acme/api-2 [agent]"
+                 /workspace/.puddle/cloning/api-2 /workspace/api-2 [agent]"
             ),
         "{seen:?}"
     );
@@ -1132,7 +1129,7 @@ fn stub_clear_locks(rt: &FakeRuntime, code: i32, output: &'static str) {
             && r.args.get(1).map(String::as_str) == Some(puddle_workspace::CLEAR_LOCKS_SH))
         .then(|| {
             assert_eq!(r.user.as_deref(), Some("root"));
-            assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
+            assert_eq!(r.args.get(3).map(String::as_str), Some("/workspace"));
             let _ = ctx;
             ExecOutput::new(code, output, "")
         })
@@ -1174,7 +1171,7 @@ async fn a_lock_clearing_failure_does_not_fail_the_boot() {
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
     stub_prepare(&rt, SessionUser::Root, 0, "D\n");
-    stub_clear_locks(&rt, 3, "E\t.\tcannot enter /workspaces/acme\n");
+    stub_clear_locks(&rt, 3, "E\t.\tcannot enter /workspace\n");
     let locks = w.after_boot(&sb, &id, SessionUser::Root).await.unwrap();
     let err = locks.unwrap_err();
     assert!(matches!(err, WorkspaceError::Locks { .. }), "{err}");

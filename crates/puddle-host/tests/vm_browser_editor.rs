@@ -126,11 +126,11 @@ const WINDOW_STORAGE: &str = r"(async () => {
 const SERVER_STATE: &str = r#"
 ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-2000
 data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
-for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
-echo "== /workspaces/*/.puddle/editor"; ls -la --time-style=full-iso /workspaces/*/.puddle/editor/
+for f in /workspace/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
+echo "== /workspace/.puddle/editor"; ls -la --time-style=full-iso /workspace/.puddle/editor/
 echo "== boot report"; tail -n 20 /run/puddle/boot.log
 for f in $(find "$data" -path '*CachedConfigurations*' -type f 2>/dev/null); do echo "== $f"; head -c 2000 "$f"; echo; done
-echo "== volume"; ls -a /workspaces/*/
+echo "== volume"; ls -a /workspace/
 for f in $(find "$data/logs" -type f 2>/dev/null | sort | tail -n 12); do echo "== $f"; tail -n 30 "$f"; done
 echo "== agent"; tail -n 30 /run/puddle/agent.log
 true
@@ -642,7 +642,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let root = format!("/workspaces/{name}");
+    let root = "/workspace".to_string();
     guest(
         &runtime,
         &sandbox,
@@ -1186,9 +1186,9 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
 
     // The builds go on the volume (the agent found none to start: no internet here), and the next
     // start runs the current one without asking Microsoft.
-    let builds = format!("/workspaces/{name}/.puddle/vscode-server/servers");
+    let builds = "/workspace/.puddle/vscode-server/servers".to_string();
     // On the volume, so it is there after the restart below.
-    let tools = format!("/workspaces/{name}/.puddle/stand-in");
+    let tools = "/workspace/.puddle/stand-in".to_string();
     guest(
         &runtime,
         &sandbox,

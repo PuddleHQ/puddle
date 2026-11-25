@@ -19,7 +19,7 @@ fn no_release_folder_means_no_server() {
 
 #[test]
 fn the_host_s_variables_read_back_and_defaults_apply() {
-    let server = EditorServer::new("/workspaces/a/.puddle/code-server", "/workspaces/a", 600);
+    let server = EditorServer::new("/workspace/.puddle/code-server", "/workspace", 600);
     let env = server.env();
     let vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
     assert_eq!(read(&vars), Ok(Some(server)));
@@ -59,15 +59,15 @@ fn the_workspace_file_is_optional_and_reads_back() {
 fn microsoft_s_server_keeps_its_builds_below_its_data_and_reads_back() {
     for (telemetry, auto_update) in [(false, true), (true, false), (false, false)] {
         let server = EditorServer::microsoft(
-            "/workspaces/a/.puddle/vscode-server",
-            "/workspaces/a",
+            "/workspace/.puddle/vscode-server",
+            "/workspace",
             90,
             MicrosoftOptions {
                 telemetry,
                 auto_update,
             },
         );
-        assert_eq!(server.dir, "/workspaces/a/.puddle/vscode-server/servers");
+        assert_eq!(server.dir, "/workspace/.puddle/vscode-server/servers");
         assert_eq!(
             server.kind,
             ServerKind::Microsoft {

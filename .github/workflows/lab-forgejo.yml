@@ -9,7 +9,10 @@
 #             checks the server's host key (the SSH Git server the SSH leg's VM tests reuse);
 #   vm        `vm_radar_forgejo_*`: in a real microVM the guest's git clones, pushes a branch and
 #             deletes it through the host's wiring, a push to an unlisted repository is refused,
-#             and the guest is searched for the token.
+#             and the guest is searched for the token; and the credential's day
+#             (vm_radar_forgejo_credentials.rs): a private create no identity covers, push turned on
+#             for a repository, a token revoked on the forge and a new one pasted in, all while
+#             the workspace runs.
 # The `windows` job runs the same two on a windows-2025 runner (WHP, msb microVMs) against Gitea's
 # Windows release (Forgejo ships none; `ci/fetch-forgejo.sh <dir> "" windows`, pinned in
 # ci/forgejo.sha256): the fixture's HTTPS half, and the VM test, so vm-windows has a real Git
@@ -34,6 +37,7 @@ on:
       - crates/puddle-e2e/src/lab/**
       - crates/puddle-e2e/tests/integration/forgejo_lab.rs
       - crates/puddle-host/tests/vm_radar_forgejo.rs
+      - crates/puddle-host/tests/vm_radar_forgejo_credentials.rs
 
 permissions:
   contents: read

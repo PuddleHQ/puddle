@@ -195,7 +195,7 @@ async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is
         Some("/dev/null"),
         "no hook may run in the import"
     );
-    assert_eq!(args.last().unwrap(), "/workspaces/local/shop");
+    assert_eq!(args.last().unwrap(), "/workspace/shop");
     // The import sandbox had no route and is gone; the workspace's has its own.
     let names: Vec<String> = rig
         .runtime

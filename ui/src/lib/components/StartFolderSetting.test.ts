@@ -63,13 +63,22 @@ describe("the start folder setting", () => {
     mount({ start_folder: "api/services/web" });
     expect(field()).toHaveValue("api/services/web");
     expect(
-      screen.getByText(/land in \/workspaces\/w-dev\/api\/services\/web/),
+      screen.getByText(/land in \/workspace\/api\/services\/web,/),
     ).toBeInTheDocument();
   });
 
-  it("names the workspace root when nothing is set", () => {
+  it("names the one repository's folder when nothing is set", () => {
     mount();
-    expect(screen.getByText(/land in the workspace root/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/land in \/workspace\/dev, the one repository,/),
+    ).toBeInTheDocument();
+  });
+
+  it("names the workspace root when nothing is set and there is no one repository", () => {
+    mount({ repositories: [] });
+    expect(
+      screen.getByText(/land in the workspace root, \/workspace,/),
+    ).toBeInTheDocument();
   });
 
   it("checks the path as typed and sends nothing while it is wrong", async () => {

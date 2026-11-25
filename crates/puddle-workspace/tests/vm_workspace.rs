@@ -346,7 +346,7 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
             .with_route(VsockRoute::new(ROUTE_PORT, route.endpoint().path()))
     };
     let w = workspaces();
-    let layout = Layout::new(&id).unwrap();
+    let layout = Layout::new().unwrap();
     let mount = layout.mount().to_string();
 
     let sb = boot.create(rt, &w, &id, spec()).await;
@@ -516,7 +516,7 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
     let (id, name) = names(&settings, "fsync");
     let boot = Boot::new(rt, "fsync", &GuestEnv::new(), false).await;
     let w = workspaces();
-    let repo = Layout::new(&id).unwrap().checkout(&repo_dir()).unwrap();
+    let repo = Layout::new().unwrap().checkout(&repo_dir()).unwrap();
     let repo = repo.as_str();
     let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
     assert_eq!(
@@ -665,7 +665,7 @@ async fn vm_trim_returns_deleted_space_to_the_host_image() {
     let rt = &rt;
     let (id, name) = names(&settings, "trim");
     let w = workspaces();
-    let mount = Layout::new(&id).unwrap().mount().to_string();
+    let mount = Layout::new().unwrap().mount().to_string();
     let image = settings
         .home()
         .join("volumes")
@@ -763,7 +763,7 @@ async fn vm_restore_reads_checkouts_of_an_unheld_volume() {
     let rt = &rt;
     let (id, name) = names(&settings, "orphan");
     let w = workspaces();
-    let layout = Layout::new(&id).unwrap();
+    let layout = Layout::new().unwrap();
     let repo = layout.checkout(&repo_dir()).unwrap();
 
     let sb = w
@@ -886,7 +886,7 @@ async fn vm_reset_root_disk_keeps_the_volume_and_makes_a_fresh_root_disk() {
     let rt = &rt;
     let (id, name) = names(&settings, "reset");
     let w = workspaces();
-    let mount = Layout::new(&id).unwrap().mount().to_string();
+    let mount = Layout::new().unwrap().mount().to_string();
     let upper = settings
         .home()
         .join("sandboxes")
@@ -996,7 +996,7 @@ async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
     let env = proxy_env();
     let boot = Boot::new(rt, "clonekill", &env, true).await;
     let w = workspaces();
-    let layout = Layout::new(&id).unwrap();
+    let layout = Layout::new().unwrap();
     let mount = layout.mount().to_string();
     let spec = base_spec(&name)
         .with_env(&env)
@@ -1077,7 +1077,7 @@ async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
     let (id, name) = names(&settings, "locks");
     let boot = Boot::new(rt, "locks", &GuestEnv::new(), false).await;
     let w = workspaces();
-    let repo = Layout::new(&id).unwrap().checkout(&repo_dir()).unwrap();
+    let repo = Layout::new().unwrap().checkout(&repo_dir()).unwrap();
     let repo = repo.as_str();
     let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
     sh_ok(
@@ -1164,7 +1164,7 @@ async fn vm_zero_filled_head_and_index_are_repaired_at_boot() {
     let (id, name) = names(&settings, "gitfix");
     let boot = Boot::new(rt, "gitfix", &GuestEnv::new(), false).await;
     let w = workspaces();
-    let repo = Layout::new(&id).unwrap().checkout(&repo_dir()).unwrap();
+    let repo = Layout::new().unwrap().checkout(&repo_dir()).unwrap();
     let repo = repo.as_str();
     let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
     sh_ok(

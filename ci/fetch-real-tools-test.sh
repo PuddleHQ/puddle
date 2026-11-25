@@ -6,6 +6,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck disable=SC1091 # the helper sits in scripts/
 . "$(dirname "$0")/../scripts/test-fail.sh"
 
 # A gh release and a GCM release as the script expects them (Linux archives; the Windows zips are cut the same way).

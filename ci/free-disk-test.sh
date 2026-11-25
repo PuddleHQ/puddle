@@ -7,6 +7,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -r "$tmp"' EXIT
+# shellcheck disable=SC1091 # the helper sits in scripts/
 . "$(dirname "$0")/../scripts/test-fail.sh"
 
 mkdir -p "$tmp/a" "$tmp/b" "$tmp/keep"

@@ -11,7 +11,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 unset $(git rev-parse --local-env-vars)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/diff-coverage-crates-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-# shellcheck source=../scripts/test-fail.sh
+# shellcheck disable=SC1091 # the helper sits in scripts/
 . "$(dirname "$0")/../scripts/test-fail.sh"
 git init -q "$tmp/repo"
 cd "$tmp/repo"

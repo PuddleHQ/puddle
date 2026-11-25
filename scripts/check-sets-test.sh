@@ -7,7 +7,7 @@
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 check="$here/scripts/check.sh"
-# shellcheck source=../scripts/test-fail.sh
+# shellcheck disable=SC1091 # the helper sits in scripts/
 . "$(dirname "$0")/../scripts/test-fail.sh"
 
 all=$("$check" --list all)

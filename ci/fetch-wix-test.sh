@@ -7,6 +7,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck disable=SC1091 # the helper sits in scripts/
 . "$(dirname "$0")/../scripts/test-fail.sh"
 
 files="candle.exe candle.exe.config darice.cub light.exe light.exe.config wconsole.dll winterop.dll wix.dll WixUIExtension.dll WixUtilExtension.dll"

@@ -12,6 +12,7 @@ cpu=$(taskset -cp $$ | sed 's/.*: //; s/[-,].*//')
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/stress-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck disable=SC1091 # the helper sits in scripts/
 . "$(dirname "$0")/../scripts/test-fail.sh"
 FLAKY="$here/flaky-report.py"
 bt='`' # markdown code ticks, for the patterns below

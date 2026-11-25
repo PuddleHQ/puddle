@@ -19,8 +19,8 @@ use puddle_agent_proto::host::{
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
-    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PassThroughCode, Policy,
-    PolicyError, ProtocolHint, ReasonCode, SuffixAllows, WorkspaceId,
+    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, Policy, PolicyError,
+    ProtocolHint, ReasonCode, SuffixAllows, WorkspaceId,
 };
 use tokio::io::{AsyncBufRead, BufReader};
 use tokio::sync::Semaphore;
@@ -42,6 +42,7 @@ use crate::upstream::{Admitted, Upstream};
 mod admit;
 mod config;
 mod forward;
+mod plan;
 mod refusal;
 mod relay;
 
@@ -49,6 +50,8 @@ use admit::resolve_destination;
 pub(crate) use admit::{Unresolved, admit};
 pub use config::ProxyConfig;
 pub(crate) use forward::{connect_first, tunnel};
+use plan::Seen;
+pub(crate) use plan::is_git_ssh_name;
 pub(crate) use refusal::{Refusal, refuse};
 use relay::relay;
 
@@ -263,30 +266,6 @@ impl Proxy {
         })
     }
 
-    /// The Git SSH server and host for `request`, when SSH to its name is served by Puddle: a
-    /// built-in Git host, or a host of one of the workspace's Git credentials.
-    fn git_ssh_for(
-        &self,
-        request: &EgressRequest,
-    ) -> Option<(
-        &crate::ssh_git::GitSsh,
-        Arc<terminate::Termination>,
-        crate::ssh_git::GitHost,
-    )> {
-        let git = self.git_ssh.as_ref()?;
-        let termination = self.termination_of(request)?;
-        let host = crate::ssh_git::built_in(&request.host).or_else(|| {
-            termination
-                .git_ssh_hosts()
-                .contains(&request.host)
-                .then(|| crate::ssh_git::GitHost {
-                    https: request.host.clone(),
-                    form: crate::ssh_git::PathForm::Plain,
-                })
-        })?;
-        Some((git, termination, host))
-    }
-
     /// Passes what each workspace's agent says about the guest (the way to open a stream to it,
     /// the ports it listens on) to `watcher`. Without one the proxy ignores both.
     #[must_use]
@@ -326,7 +305,8 @@ impl Proxy {
     }
 
     /// The termination of `request`'s workspace, if this connection is to be terminated: a
-    /// `CONNECT` to a name of the workspace's termination set on port 443.
+    /// `CONNECT` to a name of the workspace's termination set on port 443. Reads the registry: for
+    /// a leg made later than its connection (Git over SSH), which must see a stop.
     pub(crate) fn terminating(
         &self,
         request: &EgressRequest,
@@ -337,11 +317,9 @@ impl Proxy {
         &puddle_upstream::TlsClient,
     )> {
         let terminations = self.terminations.as_ref()?;
-        if request.port != terminate::request::HTTPS_PORT {
-            return None;
-        }
-        let termination = terminations.source.termination(&request.workspace)?;
-        let mode = termination.mode_for(&request.host, from_container)?;
+        let seen = self.seen(&request.workspace);
+        let mode = seen.mode(request, from_container)?;
+        let termination = Arc::clone(seen.termination()?);
         Some((termination, mode, &terminations.tls))
     }
 
@@ -362,25 +340,6 @@ impl Proxy {
         Some((termination, terminate::Mode::Bound, &terminations.tls))
     }
 
-    /// The workspace's termination, which also holds its rules on method and path.
-    fn termination_of(&self, request: &EgressRequest) -> Option<Arc<terminate::Termination>> {
-        self.terminations
-            .as_ref()?
-            .source
-            .termination(&request.workspace)
-    }
-
-    /// Why a host that the workspace would decrypt (it decrypts every host) is passed through
-    /// instead: on its never-decrypt list, or one its tools did not accept the certificate for.
-    fn skipped(&self, request: &EgressRequest, from_container: bool) -> Option<PassThroughCode> {
-        let terminations = self.terminations.as_ref()?;
-        if request.port != terminate::request::HTTPS_PORT {
-            return None;
-        }
-        let termination = terminations.source.termination(&request.workspace)?;
-        termination.skipped(&request.host, from_container)
-    }
-
     pub(crate) fn addresses(&self) -> &dyn AddressCheck {
         self.addresses.as_ref()
     }
@@ -398,21 +357,6 @@ impl Proxy {
         self.upstream
             .as_ref()
             .is_some_and(Upstream::resolves_unknown_names)
-    }
-
-    /// Whether `request`'s name is one whose SSH Puddle serves itself or refuses, never splices:
-    /// a built-in Git host or a host of one of the workspace's Git credentials.
-    pub(crate) fn is_git_ssh_name(&self, request: &EgressRequest) -> bool {
-        crate::ssh_git::built_in(&request.host).is_some()
-            || self
-                .termination_of(request)
-                .is_some_and(|t| t.git_ssh_hosts().contains(&request.host))
-    }
-
-    /// Whether `request` is SSH to a Git host's name that Puddle does not serve: refused at once,
-    /// before the rules (SSH to any other name is spliced after a rules decision).
-    pub(crate) fn refuses_ssh(&self, request: &EgressRequest) -> bool {
-        request.protocol == Some(ProtocolHint::Ssh) && self.is_git_ssh_name(request)
     }
 
     /// The refusal text for SSH to Azure DevOps when this machine's own probe of the port failed
@@ -496,11 +440,6 @@ impl Proxy {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, PolicyError> {
-        if self.refuses_ssh(request) {
-            return Ok(Decision::Blocked {
-                reason: BlockReason::SshUnsupported,
-            });
-        }
         let policy = Arc::clone(&self.policy);
         let request = request.clone();
         // A miss writes a pending row, so the call may block on SQLite.
@@ -790,13 +729,12 @@ type RecordChange = Box<dyn FnOnce(&mut ConnectionEvent) + Send>;
 /// decrypting: a plain-HTTP request, and (because a tunnel's content is not readable) a tunnel
 /// to a covered host on a port that is not decrypted. `None`: nothing refuses it.
 pub(crate) fn refuse_by_request_rule(
-    proxy: &Proxy,
+    seen: &Seen,
     request: &EgressRequest,
     head: &Head,
     path: Option<&str>,
 ) -> Option<(Refusal, RecordChange)> {
-    let termination = proxy.termination_of(request)?;
-    let rules = termination.request_rules();
+    let rules = seen.request_rules()?;
     let covering = rules.covering(&request.host)?;
     let Some(path) = path else {
         if request.port == terminate::request::HTTPS_PORT {

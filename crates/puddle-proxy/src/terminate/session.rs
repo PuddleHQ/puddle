@@ -513,7 +513,8 @@ async fn pass_through<S>(
     // SSH to a Git host's name is refused here as in any tunnel: what is not TLS on port 443 of
     // such a name (`ssh.github.com`) is passed through only when it is not SSH.
     let request = EgressRequest::new(cx.workspace.clone(), cx.target.host.clone(), cx.target.port);
-    let ssh_for = Some(&request).filter(|request| cx.proxy.is_git_ssh_name(request));
+    let ssh_for = Some(&request)
+        .filter(|request| crate::proxy::is_git_ssh_name(Some(&cx.termination), &request.host));
     let guest = Opened {
         stream: guest,
         early: replay,

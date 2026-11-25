@@ -14,8 +14,10 @@
 #
 #   scripts/check-silent-revert.sh [BASE [HEAD]]   BASE defaults to scripts/diff-base.sh, HEAD to HEAD
 #   scripts/check-silent-revert.sh --self-test     prove the gate on a throwaway repository
-# The pull request's title and body come from $PR_TITLE and $PR_BODY (the workflow sets them); a run without
-# them sees only the commit messages.
+# The pull request's title and body come from $PR_TITLE and $PR_BODY (the workflow sets them from the event
+# payload); a run without them sees only the commit messages. A rerun of a job reuses the old payload, so when
+# $PR_NUMBER and $GH_TOKEN are set the script reads the live title and body with `gh pr view` instead and keeps
+# the payload values only when that call fails: editing the body and rerunning the job clears the gate.
 set -euo pipefail
 
 DAYS=14
@@ -42,11 +44,26 @@ undone() {
         }' "$1" "$2"
 }
 
+# Replaces PR_TITLE and PR_BODY with the live ones when the pull request can be read; otherwise keeps them.
+refresh_pr_text() {
+    local json
+    [ -n "${PR_NUMBER:-}" ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] || return 0
+    command -v gh >/dev/null 2>&1 || return 0
+    if json=$(GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh pr view "$PR_NUMBER" --json title,body 2>/dev/null) &&
+        command -v jq >/dev/null 2>&1; then
+        PR_TITLE=$(jq -r '.title // ""' <<<"$json")
+        PR_BODY=$(jq -r '.body // ""' <<<"$json")
+    else
+        echo "silent-revert: could not read the live pull request; using the event payload" >&2
+    fi
+}
+
 check() {
     local base=$1 head=$2 text c f files u t su st sha num subj tmp
     tmp=$(mktemp -d)
     # shellcheck disable=SC2064 # expand now: $tmp is local
     trap "rm -rf '$tmp'" RETURN
+    refresh_pr_text
     text="${PR_TITLE:-}"$'\n'"${PR_BODY:-}"$'\n'"$(git log --format='%H %B' "$base..$head")"
     local fail=0
     git diff --name-only "$base" "$head" >"$tmp/changed"
@@ -126,6 +143,19 @@ Reverts #77'
     }
     out=$(check_in "$d" pr-innocent 2>&1) || {
         echo "self-test: an unrelated change failed: $out" >&2
+        return 1
+    }
+    # The live body wins over a stale payload: a stub gh returns a body that names #77.
+    mkdir "$d/bin"
+    printf '#!/bin/sh\necho "{\\"title\\":\\"t\\",\\"body\\":\\"Reverts #77\\"}"\n' >"$d/bin/gh"
+    chmod +x "$d/bin/gh"
+    out=$(PATH="$d/bin:$PATH" PR_NUMBER=1 GH_TOKEN=x PR_BODY=stale check_in "$d" pr-revert 2>&1) || {
+        echo "self-test: a live body that names #77 did not clear the gate: $out" >&2
+        return 1
+    }
+    printf '#!/bin/sh\nexit 1\n' >"$d/bin/gh"
+    out=$(PATH="$d/bin:$PATH" PR_NUMBER=1 GH_TOKEN=x PR_BODY='Reverts #77' check_in "$d" pr-revert 2>&1) || {
+        echo "self-test: a failed live read did not fall back to the payload: $out" >&2
         return 1
     }
     echo "silent-revert self-test ok"

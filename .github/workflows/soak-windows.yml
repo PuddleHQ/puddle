@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"plant":"","name":"soak windows (12 minute day)"},{"plant":"lose-a-workspace","name":"soak windows (planted: a workspace lost over the tray quit)"},{"plant":"keep-the-editor-open","name":"soak windows (planted: an editor window left open)"}]' || '[{"plant":"","name":"soak windows (the day)"}]') }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"plant":"","name":"soak windows (12 minute day)"},{"plant":"lose-a-workspace","name":"soak windows (planted, a workspace lost over the tray quit)"},{"plant":"keep-the-editor-open","name":"soak windows (planted, an editor window left open)"}]' || '[{"plant":"","name":"soak windows (the day)"}]') }}
     runs-on: windows-2025
     timeout-minutes: 355
     env:

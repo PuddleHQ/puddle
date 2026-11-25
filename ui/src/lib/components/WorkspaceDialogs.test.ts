@@ -38,7 +38,6 @@ beforeEach(async () => {
   api.calls = [];
   api.check = null;
   await workspaces.refresh();
-  actions.createOpen = false;
   actions.connectOpen = false;
   actions.trustOpen = false;
   actions.deleteOpen = false;
@@ -54,22 +53,6 @@ describe("WorkspaceDialogs", () => {
     render(WorkspaceDialogs);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("alertdialog")).toBeNull();
-  });
-
-  it("opens the create form from the action", async () => {
-    render(WorkspaceDialogs);
-    actions.openCreate();
-    expect(
-      await screen.findByRole("dialog", { name: "New workspace" }),
-    ).toBeInTheDocument();
-  });
-
-  it("closes the create form when Escape is pressed", async () => {
-    render(WorkspaceDialogs);
-    actions.openCreate();
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    await fireEvent.keyDown(dialog, { key: "Escape" });
-    await vi.waitFor(() => expect(actions.createOpen).toBe(false));
   });
 
   it("renames from the dialog: starts from the current name, refuses a clash before asking, then saves and says so", async () => {

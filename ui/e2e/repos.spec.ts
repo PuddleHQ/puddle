@@ -46,7 +46,7 @@ const create = (page: Page, name: string) =>
     exact: true,
   });
 const dialog = (page: Page) =>
-  page.getByRole("dialog", { name: "New workspace" });
+  page.getByRole("region", { name: "New workspace" });
 
 test("lists what the identity reaches on every host, with role and traits, and says what the list leaves out", async ({
   page,

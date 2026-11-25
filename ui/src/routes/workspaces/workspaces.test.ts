@@ -14,6 +14,8 @@ const h = await vi.hoisted(async () => {
   };
 });
 
+const goto = vi.hoisted(() => vi.fn());
+vi.mock("$app/navigation", () => ({ goto }));
 vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   const mod = await original<typeof import("#lib/stores/pending.svelte.ts")>();
   return {
@@ -62,7 +64,7 @@ function reset() {
   workspaces.status = "loading";
   workspaces.progress = {};
   workspaces.oom = {};
-  workspaceActions.createOpen = false;
+  goto.mockClear();
   workspaceActions.connectOpen = false;
   workspaceActions.trustOpen = false;
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
@@ -138,7 +140,7 @@ describe("the workspace list", () => {
     expect(screen.queryByText("No workspaces yet")).toBeNull();
     expect(screen.queryByRole("button", { name: "New workspace" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    expect(workspaceActions.createOpen).toBe(true);
+    expect(goto).toHaveBeenCalledWith("/workspaces/new");
   });
 
   it("creates the first workspace from the address alone, named after the repository", async () => {
@@ -167,13 +169,13 @@ describe("the workspace list", () => {
     expect(api.bodies).toHaveLength(0);
   });
 
-  it("opens the create dialog from the header button", async () => {
+  it("opens the New workspace screen from the header button", async () => {
     api.list = [workspace("a")];
     await mount();
     await fireEvent.click(
       await screen.findByRole("button", { name: "New workspace" }),
     );
-    expect(workspaceActions.createOpen).toBe(true);
+    expect(goto).toHaveBeenCalledWith("/workspaces/new");
   });
 
   it("starts a workspace from its row", async () => {
